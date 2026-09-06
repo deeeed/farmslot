@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  hasLiveParkRecord,
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePausePreviewParams,
@@ -43,8 +44,6 @@ import {
   type RuntimePostureApplyResult,
   type RuntimePostureStatusResult,
 } from '@farmslot/protocol';
-
-import { hasLiveParkRecord } from '../run-engine/park-slot-binding.js';
 
 const POLICY_SOURCE_RANK: Record<ResourcePosturePolicySource, number> = {
   'gate-choice': 3,

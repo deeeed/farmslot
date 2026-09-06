@@ -10,6 +10,7 @@ import {
   type FleetStatus,
   type FleetStatusParams,
   type FleetStatusResult,
+  isSlotFreedByPark,
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
@@ -37,7 +38,6 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
-import { isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 

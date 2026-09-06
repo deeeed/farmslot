@@ -34,6 +34,7 @@ import {
   type MachinePauseReviewedTarget,
   type MachinePauseSelector,
   type MachinePauseStatusResult,
+  needsGateParkRestore,
   PipelineSteps,
   type ResourcePressureMachine,
   type Run,
@@ -81,7 +82,6 @@ import {
   runtimeCapabilityStatus,
 } from '../methods/runtime-capabilities.js';
 import { isGateHeldPublicationRun } from '../run-engine/gate-held-lifecycle.js';
-import { needsGateParkRestore } from '../run-engine/park-slot-binding.js';
 import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,

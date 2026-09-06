@@ -3,6 +3,8 @@ import {
   DETACHED_HEAD_BRANCH,
   isCdpLiveValue,
   isDispatchScoreStale,
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
   isSlotRefreshStaleBranch,
   type Run,
   type RunStatus,
@@ -16,10 +18,6 @@ import {
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
-import {
-  isGateParkInFlightOrFreed,
-  isSlotFreedByPark,
-} from '../../run-engine/park-slot-binding.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 

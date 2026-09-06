@@ -1,6 +1,5 @@
-import { Events } from '@farmslot/protocol';
+import { Events, isSlotFreedByPark } from '@farmslot/protocol';
 
-import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
 import { listRuns, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;

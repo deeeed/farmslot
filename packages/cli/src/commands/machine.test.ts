@@ -17,7 +17,11 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  formatGateParkLine,
   formatMachinePauseResult,
+  gateParkedPreviewRuns,
+  gateParkedRuns,
+  gateParksHoldingFreedSlot,
   isPartialMachineResult,
   machineRunSelector,
   pauseNextCommand,
@@ -26,6 +30,7 @@ import {
   resolveReviewedPreviewId,
   restoreNextCommand,
   reviewedTargetsFromPreview,
+  withGateParks,
 } from './machine.js';
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -543,4 +548,183 @@ test('machine JSON execution accepts a matching pin and preserves a stale previe
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
+});
+
+function gateParkRecord(overrides: Partial<MachineParkRecord> = {}): MachineParkRecord {
+  return {
+    version: 1,
+    operationId: 'operation-2',
+    previewId: 'preview-2',
+    runId: 'run-4',
+    generation: 7,
+    machine: 'macwork',
+    slotId: 'macwork-ff-1',
+    mode: 'release',
+    phase: 'parked',
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 6, name: 'human-gate', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-09-05T10:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: '2026-09-05T10:00:00.000Z',
+    updatedAt: '2026-09-05T10:05:00.000Z',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-05T10:05:00.000Z',
+    preservedWorkspace: {
+      branch: 'feat/free-slot',
+      headSha: 'abc1234',
+      detachedAt: '2026-09-05T10:04:00.000Z',
+    },
+    ...overrides,
+  };
+}
+
+test('durable status lists gate-parked runs with disposition, freed slot, and target', () => {
+  const parks = gateParkedRuns([gateParkRecord()]);
+  assert.equal(parks.length, 1);
+  assert.equal(parks[0].slotDisposition, 'freed');
+  assert.equal(parks[0].freedSlotId, 'macwork-ff-1');
+  assert.equal(parks[0].restoreTarget.slotId, 'macwork-ff-1');
+  // `machine status` reads durable records and probes nothing, so it must not
+  // claim the slot is free.
+  assert.equal(parks[0].restoreTarget.available, null);
+
+  const line = formatGateParkLine(parks[0]);
+  assert.match(line, /run-4/u);
+  assert.match(line, /Parked, slot freed for dispatch/u);
+  assert.match(line, /freed=macwork-ff-1/u);
+  assert.match(line, /restore=macwork-ff-1 \(availability not read\)/u);
+  assert.match(line, /branch feat\/free-slot at abc1234/u);
+});
+
+test('a refused restore is carried onto the status line', () => {
+  const [view] = gateParkedRuns([
+    gateParkRecord({
+      restoreRefusal: {
+        code: 'RESTORE_SLOT_TAKEN',
+        reason: 'macwork-ff-1 is now running run-9',
+        at: '2026-09-05T11:00:00.000Z',
+      },
+    }),
+  ]);
+  assert.match(
+    formatGateParkLine(view),
+    /refused RESTORE_SLOT_TAKEN: macwork-ff-1 is now running/u,
+  );
+});
+
+test('retained and settled records are not gate parks', () => {
+  assert.deepEqual(gateParkedRuns([gateParkRecord({ slotDisposition: 'retained' })]), []);
+  assert.deepEqual(gateParkedRuns([gateParkRecord({ phase: 'restored' })]), []);
+  assert.deepEqual(gateParkedRuns([]), []);
+});
+
+test('the status formatter adds a gate-park section only when a park holds a freed slot', () => {
+  const withPark = formatMachinePauseResult({
+    machine: 'macwork',
+    pressure,
+    records: [gateParkRecord()],
+  });
+  assert.match(withPark, /Gate parks {2}1 run\(s\), 1 holding a freed slot/u);
+  assert.match(withPark, /freed=macwork-ff-1/u);
+
+  const withoutPark = formatMachinePauseResult({
+    machine: 'macwork',
+    pressure,
+    records: [gateParkRecord({ slotDisposition: 'retained' })],
+  });
+  assert.doesNotMatch(withoutPark, /Gate parks/u);
+});
+
+function restorePreviewResult(record: MachineParkRecord, available: boolean) {
+  return {
+    ok: true as const,
+    outcome: 'preview' as const,
+    execute: false as const,
+    previewId: 'restore-1',
+    machine: 'macwork',
+    selector: { kind: 'all' as const },
+    records: [],
+    runs: [
+      {
+        runId: record.runId,
+        generation: 0,
+        selected: true,
+        eligibility: available
+          ? {
+              eligible: true as const,
+              code: 'ELIGIBLE_FREED_SLOT_RESTORE',
+              reason: 'the freed slot is still free',
+            }
+          : {
+              eligible: false as const,
+              code: 'RESTORE_SLOT_TAKEN',
+              reason: 'macwork-ff-1 is now running run-9',
+            },
+        restoreTarget: {
+          slotId: record.slotId,
+          disposition: 'freed' as const,
+          available,
+        },
+        record,
+      },
+    ],
+  };
+}
+
+test('a restore preview prints gate parks with the Gateway availability verdict', () => {
+  // The surface that HAS a verdict used to print no gate-park line at all,
+  // because the section read `records`, which is undefined beside preview runs.
+  const preview = restorePreviewResult(gateParkRecord(), true);
+  const output = formatMachinePauseResult(preview);
+  assert.match(output, /Gate parks {2}1 run\(s\), 1 holding a freed slot/u);
+  assert.match(output, /restore=macwork-ff-1 \(available\)/u);
+  assert.doesNotMatch(output, /availability not read/u);
+
+  const views = gateParkedPreviewRuns(preview.runs);
+  assert.equal(views[0].restoreTarget.available, true);
+  assert.equal(views[0].restoreTarget.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
+});
+
+test('a taken slot is reported as not available with the Gateway reason', () => {
+  const output = formatMachinePauseResult(restorePreviewResult(gateParkRecord(), false));
+  assert.match(output, /not available: macwork-ff-1 is now running run-9/u);
+});
+
+test('the header counts what is actually holding a freed slot, not what is listed', () => {
+  // A park still landing has released nothing; one mid-restore has taken its
+  // slot back. Counting either as "holding a freed slot" overstates the gain.
+  const landing = gateParkRecord({ phase: 'resources-stopping' });
+  delete landing.slotFreedAt;
+  const restoring = gateParkRecord({
+    runId: 'run-5',
+    phase: 'resources-restoring',
+    slotReboundAt: '2026-09-05T11:00:00.000Z',
+  });
+  const views = gateParkedRuns([gateParkRecord(), landing, restoring]);
+  assert.equal(views.length, 3, 'all three are live gate parks worth listing');
+  assert.equal(gateParksHoldingFreedSlot(views), 1);
+  const output = formatMachinePauseResult({
+    machine: 'macwork',
+    pressure,
+    records: [gateParkRecord(), landing, restoring],
+  });
+  assert.match(output, /Gate parks {2}3 run\(s\), 1 holding a freed slot/u);
+});
+
+test('every machine envelope carries the derived gate parks beside the raw payload', () => {
+  const status = withGateParks({ machine: 'macwork', records: [gateParkRecord()] });
+  assert.equal(status.gateParks.length, 1);
+  assert.equal(status.gateParks[0].restoreTarget.available, null, 'status probes nothing');
+  assert.equal(status.records.length, 1, 'the raw records survive for existing readers');
+
+  const preview = withGateParks(restorePreviewResult(gateParkRecord(), true));
+  assert.equal(preview.gateParks.length, 1);
+  assert.equal(preview.gateParks[0].restoreTarget.available, true, 'a preview has a verdict');
+  assert.equal(preview.runs.length, 1, 'the raw runs survive for existing readers');
 });

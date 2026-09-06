@@ -1,5 +1,6 @@
 import {
   Events,
+  isSlotFreedByPark,
   MachineParkEligibilityCodes,
   type Run,
   type RunCancelParams,
@@ -24,7 +25,6 @@ import {
   type RunEngineStepStartAcknowledgement,
   startRunWithStepAcknowledgement,
 } from '../../run-engine/orchestrator.js';
-import { isSlotFreedByPark } from '../../run-engine/park-slot-binding.js';
 import {
   cancelTransitionDeps,
   defaultCancelCollaborators,

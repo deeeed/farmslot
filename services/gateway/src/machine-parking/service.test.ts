@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type {
-  MachineParkRecord,
-  MachinePauseRecoveryHandle,
-  Run,
-  RuntimeCapabilityCatalogEntry,
-  RuntimeCapabilityStatusResult,
-  SlotResource,
+import {
+  isGateParkInFlightOrFreed,
+  isSlotFreedByPark,
+  type MachineParkRecord,
+  type MachinePauseRecoveryHandle,
+  needsGateParkRestore,
+  type Run,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityStatusResult,
+  type SlotResource,
 } from '@farmslot/protocol';
 
 import {
@@ -19,11 +22,6 @@ import {
   gateParkRestorePlan,
   gateParkResumeAcknowledgement,
 } from '../methods/run/lifecycle-control.js';
-import {
-  isGateParkInFlightOrFreed,
-  isSlotFreedByPark,
-  needsGateParkRestore,
-} from '../run-engine/park-slot-binding.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import type { RunnerParkHostPlan } from '../runners/session-lifecycle.js';

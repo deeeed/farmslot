@@ -1,0 +1,67 @@
+{
+  "runId": "aee49175-c87c-4b1d-816d-059c7a8a7018",
+  "testedSha": "57ba6abb763365516816329389ac5540618041ee+dirty(19 files)",
+  "capturedAt": "2026-09-06T11:13:55.556Z",
+  "slotId": "macwork-ff-1",
+  "machine": "macwork",
+  "before": {
+    "park": {
+      "phase": "restored",
+      "slotDisposition": "freed",
+      "slotFreedAt": null,
+      "slotReboundAt": "2026-09-06T00:43:46.133Z",
+      "preservedBranch": "feat/manual-000119-regenerate-gateway-api-docs",
+      "preservedHeadSha": "e8110332ab842e98a8eeb07ad11075c3f0e7ccd5",
+      "restoreStages": ["rebind", "reattach", "reacquire", "reload"],
+      "refusal": null,
+      "workerProofKind": "structured"
+    },
+    "pendingDecisions": ["5c25f1f9-78cf-40bf-8805-403a4bd49a69"],
+    "surfaces": {
+      "parkBlockPresent": false,
+      "parkSlotState": null,
+      "parkSlotDisposition": null,
+      "parkFreedSlot": null,
+      "parkRestoreFirst": null,
+      "parkRestoreAvailable": null,
+      "parkState": null,
+      "parkSummary": null,
+      "parkFreedLine": null,
+      "parkTargetLine": null,
+      "parkRefusalLine": null,
+      "noticePresent": false,
+      "noticeKind": null,
+      "noticeText": null,
+      "slotBadgeFreedMarker": null,
+      "postureName": "Terminal"
+    }
+  },
+  "parkable": false,
+  "runStatus": "done",
+  "control": {
+    "attempted": true,
+    "runId": "26f4c35a-4cb6-4dce-9670-2dc09ae5a6c2",
+    "surfaces": {
+      "parkBlockPresent": false,
+      "parkSlotState": null,
+      "parkSlotDisposition": null,
+      "parkFreedSlot": null,
+      "parkRestoreFirst": null,
+      "parkRestoreAvailable": null,
+      "parkState": null,
+      "parkSummary": null,
+      "parkFreedLine": null,
+      "parkTargetLine": null,
+      "parkRefusalLine": null,
+      "noticePresent": false,
+      "noticeKind": null,
+      "noticeText": null,
+      "slotBadgeFreedMarker": null,
+      "postureName": "Active"
+    }
+  },
+  "parkCycleSkipped": "run aee49175-c87c-4b1d-816d-059c7a8a7018 is 'done', so it cannot be parked; supply a gate-held run to prove the park cycle",
+  "failures": [],
+  "ok": true,
+  "note": "Fix-round re-capture for PR 594. Stamped with the branch HEAD plus the uncommitted fix-round tree (testedSha carries both). The park/restore CYCLE could not be re-proven: no parkable gate-held run exists on the fleet (98c3657b and aee49175 both reached done, and the scripted runner cannot produce a publication gate), so parkCycleSkipped states why. What DID run live: the settled-park control on aee49175 and the negative control on a run with no park record, both against the real Gateway through the rendered DOM. cc-probe-run-gate-park-surfaces.json holds the full park/restore cycle captured before the fix round."
+}

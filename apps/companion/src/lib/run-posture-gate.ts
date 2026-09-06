@@ -40,7 +40,7 @@ const GATE_CHOICE_COPY: Record<ResourcePostureGateChoice, { label: string; help:
   },
   'free-slot': {
     label: 'Free the slot',
-    help: 'Park this run through machine parking. Gate-held runs are not eligible yet.',
+    help: 'Park this run through machine parking and hand its slot back to dispatch. The gate stays answerable; answering restores the run into that slot first.',
   },
   'project-default': {
     label: 'Project default',

@@ -7,8 +7,10 @@
  */
 import {
   Events,
+  isGateParkInFlightOrFreed,
   isResourcePosture,
   isResourcePostureGateChoice,
+  isSlotFreedByPark,
   MachineParkEligibilityCodes,
   RESOURCE_POSTURE_GATE_CHOICES,
   RESOURCE_POSTURES,
@@ -23,7 +25,6 @@ import {
 import { GatewayMethodError } from '../core/method-error.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { machineParkingService } from '../machine-parking/service.js';
-import { isGateParkInFlightOrFreed, isSlotFreedByPark } from '../run-engine/park-slot-binding.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { RunResourcePostureReconciler } from '../runtime-capabilities/posture.js';
 

@@ -1,0 +1,10 @@
+{
+  "note": "farmslot machine status macwork --json against the live dev gateway (ws://localhost:7801) during the PR 594 fix round. Both park records on the machine are settled (phase restored), so the derived gateParks list is correctly empty — this exercises the liveGateParkView settled filter against real records. The earlier capture of a NON-empty list, taken while run 98c3657b was gate-parked with its slot freed, is in runner-validate-macwork-claude-gate-park-cli-status.json under cliStatus.entry.",
+  "capturedAt": "2026-09-06T11:14:39.601Z",
+  "command": "yarn farmslot machine status macwork --json",
+  "status": "ok",
+  "envelopeCommand": "machine.status",
+  "recordCount": 2,
+  "recordPhases": ["restored", "restored"],
+  "gateParks": []
+}

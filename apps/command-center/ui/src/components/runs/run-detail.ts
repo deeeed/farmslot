@@ -19,7 +19,12 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, Events, Methods } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  Events,
+  liveGateParkView,
+  Methods,
+} from '@farmslot/protocol';
 
 import './step-inspector.js';
 import './run-pipeline-mini.js';
@@ -1000,21 +1005,27 @@ export class RunDetail extends RunDetailState {
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
       // The gate disappears when the decision resolves, so the correlated result
       // and the pending notice live on the persistent summary instead.
-      _renderPosture: () =>
-        renderRunPostureSummary(this._postureStatus, {
-          ...(this._postureGate.appliedTransition
-            ? { appliedTransition: this._postureGate.appliedTransition }
-            : {}),
-          ...(this._postureGate.appliedTransitionAttributed !== undefined
-            ? { appliedTransitionAttributed: this._postureGate.appliedTransitionAttributed }
-            : {}),
-          ...(this._postureGate.reconciliationPending !== undefined
-            ? { reconciliationPending: this._postureGate.reconciliationPending }
-            : {}),
-          // The gate panel is hidden exactly when a choice is withheld, so the
-          // persistent summary is the only place the operator can be told.
-          withheldChoiceReason: postureChoiceWithheldReason(this._postureGateStateForRender()),
-        }),
+      _renderPosture: (run) =>
+        renderRunPostureSummary(
+          this._postureStatus,
+          {
+            ...(this._postureGate.appliedTransition
+              ? { appliedTransition: this._postureGate.appliedTransition }
+              : {}),
+            ...(this._postureGate.appliedTransitionAttributed !== undefined
+              ? { appliedTransitionAttributed: this._postureGate.appliedTransitionAttributed }
+              : {}),
+            ...(this._postureGate.reconciliationPending !== undefined
+              ? { reconciliationPending: this._postureGate.reconciliationPending }
+              : {}),
+            // The gate panel is hidden exactly when a choice is withheld, so the
+            // persistent summary is the only place the operator can be told.
+            withheldChoiceReason: postureChoiceWithheldReason(this._postureGateStateForRender()),
+          },
+          // The park record is the authority for where this run's slot went; the
+          // posture read only says what the run is holding.
+          liveGateParkView(run),
+        ),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>
         renderRunAgentSessions(run, {

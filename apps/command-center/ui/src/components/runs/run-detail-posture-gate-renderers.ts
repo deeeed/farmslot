@@ -12,6 +12,10 @@
 import { html, nothing } from 'lit';
 
 import {
+  gateParkGateNotice,
+  gateParkSummaryLine,
+  type GateParkView,
+  liveGateParkView,
   RESOURCE_POSTURE_GATE_CHOICES,
   type ResourcePosture,
   type ResourcePostureGateChoice,
@@ -41,7 +45,7 @@ const GATE_CHOICE_COPY: Record<ResourcePostureGateChoice, { label: string; help:
   },
   'free-slot': {
     label: 'Free the slot',
-    help: 'Park this run through machine parking. Gate-held runs are not eligible yet.',
+    help: 'Park this run through machine parking and hand its slot back to dispatch. The gate stays answerable; answering restores the run into that slot first.',
   },
   'project-default': {
     label: 'Project default',
@@ -400,17 +404,101 @@ export function canResolveWithPostureChoice(state: RunPostureGateStateWithAvaila
   return postureResolveBlockReason(state) === null;
 }
 
+/**
+ * The gate park to render beside this decision, from the shared protocol
+ * reading. Taken from the run rather than passed in as a flag so a caller
+ * cannot forget it, and so the notice cannot disagree with the record.
+ */
+export function gateParkForDecision(
+  run: Pick<Run, 'id' | 'park'> | null | undefined,
+): GateParkView | null {
+  return run ? liveGateParkView(run) : null;
+}
+
+const GATE_PARK_STYLES = html`
+  <style>
+    .posture-park-notice {
+      border: 1px solid ${colors.bgCardHover};
+      border-radius: 4px;
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeXs};
+      margin: 10px 0 0;
+      padding: 6px 8px;
+    }
+    .posture-park-notice.blocked {
+      border-color: ${colors.statusWarn};
+      color: ${colors.statusWarn};
+    }
+    .posture-park-detail {
+      font-family: ${fonts.mono};
+      margin-top: 4px;
+    }
+  </style>
+`;
+
+/**
+ * What the operator has to know before answering a gate on a parked run.
+ *
+ * This renders whether or not the gate CHOICES do. A `free-slot` park moves the
+ * run's posture to `parked`, which is exactly when the choice panel hides — and
+ * exactly when "answering restores the run into this slot first" is the most
+ * important thing on the screen. Hiding both together is how a parked run's
+ * gate came to look like an ordinary one.
+ */
+export function renderRunGateParkNotice(view: GateParkView | null): unknown {
+  const notice = gateParkGateNotice(view);
+  if (!view || !notice) return nothing;
+  // The shared contract decides this. Inferring it from `kind` puts a stop sign
+  // on `park-answerable`, which is a gate the Gateway will accept.
+  const blocked = notice.blocking;
+  return html`
+    ${GATE_PARK_STYLES}
+    <div
+      class="posture-park-notice ${blocked ? 'blocked' : ''}"
+      role=${blocked ? 'alert' : 'note'}
+      data-testid="run-posture-park-notice"
+      data-kind=${notice.kind}
+      data-slot-state=${view.slotState}
+    >
+      ${notice.message}
+      <div class="posture-park-detail" data-testid="run-posture-park-notice-summary">
+        ${gateParkSummaryLine(view)}
+      </div>
+      ${notice.refusal
+        ? html`<div
+            class="posture-park-detail"
+            data-testid="run-posture-park-notice-refusal"
+            data-superseded=${notice.refusalSuperseded ? 'true' : 'false'}
+          >
+            ${notice.refusalSuperseded ? 'An earlier restore' : 'The last restore'} refused
+            (${notice.refusal.code}):
+            ${notice.refusal.reason}${notice.refusalSuperseded
+              ? ' — the Gateway now reports that slot available.'
+              : ''}
+          </div>`
+        : nothing}
+    </div>
+  `;
+}
+
 export interface RunPostureGateRenderContext {
   state: RunPostureGateState;
   disabled: boolean;
   onSelect: (choice: ResourcePostureGateChoice | null) => void;
+  /**
+   * The run this gate belongs to, for its park record. Required so a caller
+   * cannot silently drop the park notice on the surface that needs it most.
+   */
+  run: Pick<Run, 'id' | 'park'>;
 }
 
 export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): unknown {
   const { state } = ctx;
+  const parkNotice = renderRunGateParkNotice(gateParkForDecision(ctx.run));
   // Outside an operator wait the Gateway ignores a gate choice, so there is
   // nothing honest to show. The guard lives here so no caller can bypass it.
-  if (!postureChoicesApply(state.runPosture)) return nothing;
+  // The park notice is not a choice and survives it.
+  if (!postureChoicesApply(state.runPosture)) return parkNotice;
   const plan = state.status === 'ready' ? state.plan : undefined;
   return html`
     <style>
@@ -466,6 +554,7 @@ export function renderRunPostureGateChoices(ctx: RunPostureGateRenderContext): u
       }
     </style>
     <div class="posture-gate" data-testid="run-posture-gate">
+      ${parkNotice}
       <div class="posture-gate-title">Resource posture for this wait</div>
       <div class="posture-gate-choices">
         ${RUN_POSTURE_GATE_CHOICES.map(

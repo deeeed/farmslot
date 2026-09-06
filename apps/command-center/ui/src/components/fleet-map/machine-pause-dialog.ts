@@ -1,14 +1,17 @@
 import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type {
-  MachineParkRecord,
-  MachinePauseMode,
-  MachinePausePreviewResult,
-  MachinePauseRestoreResult,
-  MachinePauseSelector,
-  MachinePauseStatusResult,
-  ResourcePressureMachine,
+import {
+  gateParkSummaryLine,
+  gateParkView,
+  type MachineParkRecord,
+  type MachinePauseMode,
+  type MachinePausePreviewResult,
+  type MachinePauseRestorePreviewRun,
+  type MachinePauseRestoreResult,
+  type MachinePauseSelector,
+  type MachinePauseStatusResult,
+  type ResourcePressureMachine,
 } from '@farmslot/protocol';
 
 import {
@@ -550,6 +553,7 @@ export class MachinePauseDialog extends LitElement {
                 <div class="mpd-run-meta">
                   ${run.record.slotId} · ${run.record.mode} · generation ${run.generation}
                 </div>
+                ${this.renderGateParkLine(run)}
               </div>
               <span class="mpd-phase ${run.record.phase}">${run.record.phase}</span>
               <div>
@@ -565,6 +569,31 @@ export class MachinePauseDialog extends LitElement {
         )}
       </div>
     </section>`;
+  }
+
+  /**
+   * The park's slot disposition and the Gateway's restore verdict for one run.
+   *
+   * The verdict is the Gateway's own `restoreTarget` and eligibility, passed
+   * straight into the shared reading. This is the one surface that HAS a live
+   * availability answer, so it is the one that may state it; every other
+   * surface reports the target without claiming it is free.
+   */
+  private renderGateParkLine(run: MachinePauseRestorePreviewRun) {
+    const view = gateParkView(
+      { id: run.runId, park: run.record },
+      { target: run.restoreTarget, eligibility: run.eligibility },
+    );
+    if (!view) return nothing;
+    return html`<div
+      class="mpd-run-meta"
+      data-testid="machine-pause-restore-gate-park-${run.runId}"
+      data-slot-state=${view.slotState}
+      data-restore-available=${String(view.restoreTarget.available)}
+    >
+      ${gateParkSummaryLine(view)} · restore into ${view.restoreTarget.slotId}
+      ${view.restoreTarget.available ? 'available' : 'not available'}
+    </div>`;
   }
 
   private renderDurableStatus() {

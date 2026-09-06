@@ -8,9 +8,12 @@ import {
   failedRunCancelEffects,
   FLOW_STEPS,
   type IndependentReviewStatus,
+  isGateParkInFlightOrFreed,
   isInteractiveDevRun,
+  isSlotFreedByPark,
   isTerminalRunStatus,
   MachineParkEligibilityCodes,
+  needsGateParkRestore,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
@@ -78,11 +81,6 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
-import {
-  isGateParkInFlightOrFreed,
-  isSlotFreedByPark,
-  needsGateParkRestore,
-} from '../run-engine/park-slot-binding.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   normalizeExhaustedReviewContinuationsForRun,
