@@ -33,6 +33,7 @@ import {
   type ResourcePostureTransitionOutcome,
   type ResourcePostureWaitPolicy,
   type RunResourcePostureState,
+  type RunResourceWait,
 } from '@farmslot/protocol';
 
 /**
@@ -145,6 +146,8 @@ export interface RunPostureSummary {
   lastTransition?: ResourcePostureTransition;
   /** Transition failures not already carried on a capability row. */
   unreportedFailures: ResourcePostureTransitionFailure[];
+  /** Set while the run holds a place in a scoped claim's queue. */
+  resourceWait?: RunResourceWait;
   updatedAt: string;
 }
 
@@ -164,6 +167,7 @@ export function summarizeRunPosture(state: RunResourcePostureState): RunPostureS
       state.capabilities,
       state.lastTransition,
     ),
+    ...(state.resourceWait ? { resourceWait: state.resourceWait } : {}),
     updatedAt: state.updatedAt,
   };
 }
@@ -184,6 +188,22 @@ export function posturePolicyLine(summary: RunPostureSummary): string {
   if (summary.gateChoice) parts.push(`choice ${summary.gateChoice}`);
   if (summary.waitPolicy) parts.push(`dispatch preset ${summary.waitPolicy}`);
   return parts.join(' · ');
+}
+
+/**
+ * The one waiting line Companion shows for a run queued behind a scoped claim.
+ *
+ * Compact by design — Companion is a read surface — but it still names the run
+ * that holds the claim, which is usually on another slot and is the only thing
+ * an operator can act on.
+ */
+export function resourceWaitLine(wait: RunResourceWait): string {
+  // Granted is its own line: the claim is this run's already and nobody is
+  // ahead of it, so a position and a blocking run would both be wrong.
+  if (wait.phase === 'granted') {
+    return `Granted ${wait.capabilityId} · '${wait.claimId}' (${wait.scope}) reserved · waiting for its provider to start`;
+  }
+  return `Waiting for ${wait.capabilityId} · position ${wait.position} for '${wait.claimId}' (${wait.scope}) · held by ${wait.blockingOwner.runId}`;
 }
 
 /** Last transition, stated as an outcome with its progress rather than a status word. */

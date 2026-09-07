@@ -30,6 +30,10 @@ import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import {
+  prepareRunPostureForValidation,
+  type PrepareRunPostureOutcome,
+} from '../run-engine/resource-posture.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
@@ -46,6 +50,7 @@ import {
 import {
   type RuntimeCapabilityActionResult,
   type RuntimeCapabilityCatalogContext,
+  type RuntimeCapabilityClaimGrant,
   runtimeCapabilityProviderDigest,
   RuntimeCapabilityRegistry,
   type WarmSweepSummary,
@@ -152,6 +157,10 @@ async function catalogForSlot(slotId: string): Promise<RuntimeCapabilityCatalogC
   return {
     slotId,
     project: slotVars.projectName,
+    // Stamped onto every lease this slot takes, so a `machine`-scoped claim can
+    // be arbitrated later from the lease snapshot alone rather than by
+    // re-reading a foreign slot's config mid-acquire.
+    machine: slotVars.machine,
     capabilities,
     ...(configured?.posture ? { posture: structuredClone(configured.posture) } : {}),
   };
@@ -212,11 +221,16 @@ async function runProviderAction(
 /**
  * Refuse a device target that another slot's live lease is already driving.
  *
- * Capability leases are slot-scoped, so nothing else stops two runs booting one
- * simulator once a target can name a device outside the slot's own config.
- * Fleet-scoped arbitration with a wait queue is the separate
- * `fleet-scoped-device-claims` item; until it lands this refuses rather than
- * queues.
+ * This is device IDENTITY, not arbitration: it refuses a second boot of one
+ * physical device whatever the capability catalog says, because two `simctl
+ * boot` calls on one udid is a mechanical fault, not a scheduling decision.
+ *
+ * Scoped resource claims are the arbitration, and they run FIRST when the
+ * acquire asked to queue (`queueOnConflict`): the two runs are then contending
+ * for one declared resource and the second takes a place in line instead of
+ * being told no. With no queue requested this still refuses, unchanged — the
+ * two never disagree about the same acquire, because only one of them is
+ * consulted for it.
  */
 /** The config reads the guard needs, injectable so the rule can be tested. */
 export interface DeviceTargetGuardDeps {
@@ -410,7 +424,105 @@ const registry = new RuntimeCapabilityRegistry({
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },
+  /**
+   * A claim was reserved for a run that was waiting; go finish it.
+   *
+   * The registry stops at the reservation on purpose — it knows nothing about
+   * how a run prepares — so completion runs the run's OWN preparation, the same
+   * `validation-prepare` boundary the run would have hit anyway. That path
+   * reuses the reserved lease, boots the provider, and clears the run's
+   * resource wait; if it fails, its rollback releases the claim and drains the
+   * queue again, so the next waiter is served rather than stranded.
+   */
+  onClaimGranted(grant) {
+    void completeGrantedClaim(grant);
+  },
 });
+
+/**
+ * Complete one granted reservation, off the registry's mutation lock.
+ *
+ * Detached because a provider boot takes minutes and the release that produced
+ * the grant must not wait on it.
+ *
+ * Whatever happens, the reservation is settled. Preparation can be refused
+ * before it ever reaches the provider — host pressure, an archived run, a slot
+ * that no longer resolves, a park, a catalog read that throws — and every one of
+ * those used to leave the lease `acquiring` with the fleet claim held and
+ * nothing left to complete it, which locks every other slot out of that device
+ * for good. So the reservation is re-read afterwards: if it survived, the
+ * completion did not happen, and it is either put back at the head of its own
+ * queue (host pressure, which clears on its own) or rolled back so the next
+ * waiter is served.
+ */
+export async function completeGrantedClaim(grant: RuntimeCapabilityClaimGrant): Promise<void> {
+  let settlement: ReservationSettlement;
+  try {
+    settlement = reservationSettlement(
+      grant,
+      await prepareRunPostureForValidation(grant.owner.runId),
+    );
+  } catch (error) {
+    settlement = reservationSettlement(grant, error);
+  }
+  const settled = await registry.settleReservation(grant.leaseId, settlement);
+  // `not-reserved` is the ordinary outcome: the completing acquire took the
+  // lease over, so there is no reservation left and nothing to report.
+  if (settled === 'not-reserved') return;
+  console.warn(
+    `[runtime-capabilities] ${settled} the reservation of '${grant.claimId}' for run ${grant.owner.runId}: ${settlement.detail}`,
+  );
+}
+
+/** What to do with a reservation whose completion is over. */
+export interface ReservationSettlement {
+  requeue: boolean;
+  detail: string;
+}
+
+/**
+ * Decide what a finished completion attempt owes its reservation.
+ *
+ * Only the HOST-pressure refusal keeps the place in line: it is not about this
+ * run, it clears on its own, and the owner earned that place. Every other
+ * ending — a refusal about the run, a wait on some other capability, a throw —
+ * gives the claim back, because there is nothing left that will complete it and
+ * a held claim with no provider locks out every other slot.
+ *
+ * A successful outcome still asks: preparation walks the reserved requirement
+ * first, so `ok` normally means the lease was taken over and there is no
+ * reservation left to settle. If one IS still there, the claim was not the one
+ * that succeeded, and it must not be left behind.
+ */
+export function reservationSettlement(
+  grant: RuntimeCapabilityClaimGrant,
+  outcome: PrepareRunPostureOutcome | unknown,
+): ReservationSettlement {
+  if (outcome instanceof Error || !isPrepareOutcome(outcome)) {
+    return {
+      requeue: false,
+      detail: `completing reserved claim '${grant.claimId}' threw: ${
+        outcome instanceof Error ? outcome.message : String(outcome)
+      }`,
+    };
+  }
+  if (outcome.ok) {
+    return {
+      requeue: false,
+      detail: `preparation reported success but reserved claim '${grant.claimId}' was never completed`,
+    };
+  }
+  return {
+    requeue: outcome.conflict?.kind === 'host-pressure',
+    detail: outcome.waiting
+      ? `run ${grant.owner.runId} queued on another capability while '${grant.claimId}' was reserved for it: ${outcome.reason}`
+      : `preparation for reserved claim '${grant.claimId}' did not complete: ${outcome.reason}`,
+  };
+}
+
+function isPrepareOutcome(value: unknown): value is PrepareRunPostureOutcome {
+  return typeof value === 'object' && value !== null && 'ok' in value;
+}
 
 export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<void> {
   broadcastFn = broadcast;
@@ -422,6 +534,24 @@ export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<v
           `[runtime-capabilities] keep-warm cleanup failed: ${(error as Error).message}`,
         );
       });
+      // The backstop for a completion that never got to settle its own
+      // reservation — the Gateway went down between the grant and the acquire,
+      // or the completer died. Without it that claim is held by a lease with no
+      // provider until someone notices by hand.
+      void registry.reclaimStaleReservations().then(
+        (reclaimed) => {
+          for (const lease of reclaimed) {
+            console.warn(
+              `[runtime-capabilities] reclaimed a stale reservation of '${lease.wait?.kind === 'scoped-claim' ? lease.wait.claimId : lease.capabilityId}' held for run ${lease.owner.runId} on slot ${lease.slotId}`,
+            );
+          }
+        },
+        (error: unknown) => {
+          console.warn(
+            `[runtime-capabilities] stale reservation sweep failed: ${(error as Error).message}`,
+          );
+        },
+      );
     }, 30_000);
     keepWarmCleanupTimer.unref();
   }

@@ -1,7 +1,10 @@
 import {
   observedStateForLease,
   type ResourcePostureObservedState,
+  type RunResourceWaitPhase,
   type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityClaimScope,
+  type RuntimeCapabilityClaimWaiter,
   type RuntimeCapabilityLease,
   type RuntimeCapabilityStopWarmResult,
 } from '@farmslot/protocol';
@@ -91,10 +94,22 @@ function retentionReasonFor(input: {
   if (lease.state === 'error') {
     return 'the last lifecycle action failed; the provider state is not proven';
   }
+  if (lease.state === 'acquiring' && lease.wait?.kind === 'scoped-claim') {
+    // A RESERVATION, not a boot. The queue drain handed this run the claim and
+    // no provider action has run for it — "an acquiring action is in flight"
+    // described a device that is starting, which is the one thing this is not.
+    return `'${lease.wait.claimId}' is reserved for this run at ${lease.wait.scope} scope; its provider has not started yet`;
+  }
   if (lease.state === 'acquiring' || lease.state === 'releasing') {
     return `a ${lease.state} action is in flight`;
   }
   if (lease.state === 'queued') {
+    // A scoped claim names the run that actually holds it, which is usually on
+    // another slot — and this panel is slot-filtered, so nothing else on the
+    // row could tell an operator where to look.
+    if (lease.wait?.kind === 'scoped-claim') {
+      return `queued behind '${lease.wait.claimId}' at ${lease.wait.scope} scope, held by ${lease.wait.blockingOwner.runId}`;
+    }
     return lease.pressure?.reason ?? 'the reservation is queued behind another holder';
   }
   if (lease.state === 'released') {
@@ -256,5 +271,60 @@ export function stopWarmOutcomeView(
     tone: 'error',
     keepStopAction: true,
     observedState,
+  };
+}
+
+/** This slot's place in a scoped claim's queue, for one capability row. */
+export interface RuntimeCapabilityQueueView {
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  blockingRunId: string;
+  /** `granted` once the claim is reserved for this slot's run. */
+  phase: RunResourceWaitPhase;
+  /** 1-based place, absent when granted or when the Gateway sent no queue. */
+  position?: number;
+  /** Waiters on this claim across every slot in scope. */
+  total?: number;
+  summary: string;
+}
+
+/**
+ * Where this slot's queued lease sits in the claim's fleet-wide queue.
+ *
+ * Position and total come from `claimWaiters`, which the Gateway derives across
+ * every slot. They are deliberately not counted from `leases`: that list is
+ * slot-filtered, so counting it would report "position 1 of 1" to every waiter
+ * in a three-deep queue.
+ */
+export function runtimeCapabilityQueueView(input: {
+  lease: RuntimeCapabilityLease | undefined;
+  claimWaiters: readonly RuntimeCapabilityClaimWaiter[] | undefined;
+}): RuntimeCapabilityQueueView | undefined {
+  const state = input.lease?.state;
+  // Both states that carry a wait record. `acquiring` with one is the
+  // RESERVATION the drain made: the claim is this slot's, and a reservation that
+  // never turns into a running provider is a fleet device nobody can use — so
+  // it has to appear here rather than disappear from the queue view entirely.
+  const wait = state === 'queued' || state === 'acquiring' ? input.lease?.wait : undefined;
+  if (!wait || wait.kind !== 'scoped-claim') return undefined;
+  if (state === 'acquiring') {
+    return {
+      claimId: wait.claimId,
+      scope: wait.scope,
+      blockingRunId: wait.blockingOwner.runId,
+      phase: 'granted',
+      summary: `granted '${wait.claimId}' at ${wait.scope} scope · waiting for its provider to start`,
+    };
+  }
+  const forClaim = (input.claimWaiters ?? []).filter((waiter) => waiter.claimId === wait.claimId);
+  const mine = forClaim.find((waiter) => waiter.leaseId === input.lease!.id);
+  const place = mine ? `position ${mine.position} of ${forClaim.length}` : 'queued';
+  return {
+    claimId: wait.claimId,
+    scope: wait.scope,
+    blockingRunId: wait.blockingOwner.runId,
+    phase: 'queued',
+    ...(mine ? { position: mine.position, total: forClaim.length } : {}),
+    summary: `${place} for '${wait.claimId}' at ${wait.scope} scope · held by ${wait.blockingOwner.runId}`,
   };
 }

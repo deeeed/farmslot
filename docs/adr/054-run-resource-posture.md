@@ -179,8 +179,31 @@ item and depends on this one.
 - **Re-target validation to another device or platform.** Device-identity parameters on device
   capability providers; a rerun accepts a target override and reacquires.
   `.backlog/specs/farmslot-farm/2026-09-04-validation-device-retarget.md`
-- **Fleet-scoped device claims with a wait queue.** Today leases are slot-scoped and exclusive
-  conflicts fail fast. Add claim scope, queue on conflict, drain on release, signal availability.
+- **Fleet-scoped device claims with a wait queue.** _Implemented; the live contention proof is
+  still owed._ The mechanism is covered by unit and restart tests, but the two-slot scenario that
+  proves it through the production gateway has only been run on a thrashing host, where admission
+  refuses every medium-cost acquire, and it is recorded as blocked rather than passed. It has to be
+  re-run on a quiet host before this is claimed as proven. A resource claim declares a
+  `scope` (`slot`, the unchanged default, `machine`, or `fleet`); conflict checks span every slot
+  the scope reaches, judged from the claims and machine each lease persists at acquire time. An
+  acquire that passes `queueOnConflict` takes a durable FIFO place in line and is refused with a
+  typed `scoped-wait`; releasing the holder drains the head waiter and signals it with the existing
+  lifecycle event. The device-identity guard is unrelated and unchanged: it refuses a second boot of
+  one physical device whatever the catalog says, and yields only to an acquire that asked to queue,
+  which is the same contention serialized rather than denied. The drain reserves the claim and stops
+  there; the run engine completes the reservation by re-running the waiter's own preparation, so no
+  provider is ever booted for a run the engine has moved on from. A reservation is never left
+  holding a claim: a completion refused by host pressure returns to the head of its own queue, any
+  other refusal or throw releases it and drains to the next waiter, and one nothing settled at all —
+  a Gateway that went down between the grant and the completion — is reclaimed by the keep-warm
+  sweep. Preparation completes the reserved capability before any other in the plan. A queued run is
+  reported two ways, both as `waitingOn.kind: 'resource'`: queued behind a holder, and granted, which
+  is the claim reserved with no provider started yet, so a reservation that stalls is visible rather
+  than reading as ordinary running work. A `recipe.rerun` that queues owns its wait in-process — it
+  re-drives its own preparation until the capabilities are held and only then runs the recipe, and
+  gives up if the run is cancelled or the wait passes its bound. A Gateway restart loses that wait
+  like any other in-flight rerun, though the queue place itself is durable. A re-target takes its
+  place in line before it releases the device it holds, so it never ends up with neither.
   `.backlog/specs/farmslot-farm/2026-09-04-fleet-scoped-device-claims.md`
 
 ## Consequences

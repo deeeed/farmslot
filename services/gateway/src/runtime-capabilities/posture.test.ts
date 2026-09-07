@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import { MachinePausePreviewStaleError } from '../machine-parking/preview-errors.js';
+import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 
 import {
   type PostureWarmSweepResult,
@@ -195,6 +196,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
       return status;
     },
     acquireCapability: (params) => registry.acquire(params),
+    enqueueScopedClaimWaiter: (params) => registry.enqueueScopedClaimWaiter(params),
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
     stopWarmProviders: async (slotId, capabilityIds) => {
@@ -1801,4 +1803,390 @@ test('a re-target reaches a device held as another capability dependency', async
     ),
     true,
   );
+});
+
+test('a fleet-scoped claim held elsewhere blocks with a typed wait the run keeps', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry, runs } = await harness(t, { capabilities: [recording] });
+  // The holder is on ANOTHER slot, which slot-scoped arbitration would ignore.
+  const holder = await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  assert.equal(holder.ok, true);
+
+  const blocked = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.transition.outcome, 'rejected');
+  const rejection = blocked.transition.rejection;
+  assert.equal(rejection?.kind, 'capability-unavailable');
+  if (rejection?.kind !== 'capability-unavailable') return;
+  assert.equal(rejection.conflict.kind, 'scoped-wait');
+  if (rejection.conflict.kind !== 'scoped-wait') return;
+  assert.equal(rejection.conflict.claimId, 'capture-helper');
+  assert.equal(rejection.conflict.owner.runId, 'other-run');
+  assert.equal(rejection.conflict.position, 1);
+
+  const wait = blocked.status.resourceWait;
+  assert.equal(wait?.capabilityId, 'recording');
+  assert.equal(wait?.claimId, 'capture-helper');
+  assert.equal(wait?.scope, 'fleet');
+  assert.equal(wait?.blockingOwner.runId, 'other-run');
+  assert.equal(wait?.position, 1);
+  assert.equal(wait?.queuedLeaseId, rejection.conflict.queuedLeaseId);
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait?.claimId, 'capture-helper');
+
+  // Once the holder is done the wait must not linger: a node reading this field
+  // would otherwise report a running run as blocked forever.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const served = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(served.ok, true);
+  assert.equal(served.status.resourceWait, undefined);
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait, undefined);
+});
+
+test('a granted claim clears the run record the work-graph reads, with no second apply', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry, runs } = await harness(t, { capabilities: [recording] });
+  const holder = await registry.acquire({
+    slotId: 'slot-elsewhere',
+    capabilityId: 'recording',
+    ownerRunId: 'other-run',
+    proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+  });
+  assert.equal(holder.ok, true);
+  const requirements = [
+    { capabilityId: 'recording', reason: 'validation', mode: 'state' as const },
+  ];
+  const blocked = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: requirements,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait?.claimId, 'capture-helper');
+
+  // The holder releases. The drain reserves the claim, and the ONLY thing that
+  // runs after it is the grant re-driving this run's own preparation — exactly
+  // what the Gateway wires `onClaimGranted` to. No hand-written second apply.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const granted = await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(granted.ok, true);
+
+  // The run record is what the work-graph projection reads. A stale wait here
+  // is what pinned a granted node to `waiting` and stopped it dispatching.
+  const persisted = runs.get('run-a')?.resourcePosture;
+  assert.equal(persisted?.resourceWait, undefined);
+  assert.equal(
+    (await reconciler.status('run-a')).state.resourceWait,
+    undefined,
+    'the posture read re-derives the wait from the lease, not from an old transition',
+  );
+});
+
+test('a scoped wait is reported as waiting, never as a preparation failure', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry } = await harness(t, { capabilities: [recording] });
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-elsewhere',
+        capabilityId: 'recording',
+        ownerRunId: 'other-run',
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  const outcome = await prepareRunPostureForValidation(
+    'run-a',
+    [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+    reconciler,
+  );
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  // The third answer: not success, not failure. A rerun that treated this as an
+  // error ended for good and left its queue place with nothing to complete it.
+  assert.equal(outcome.waiting, true);
+  assert.match(outcome.reason, /queued behind 'capture-helper' at fleet scope/);
+  assert.match(outcome.reason, /position 1/);
+});
+
+test('posture status stops reporting a wait as soon as the lease stops waiting', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry } = await harness(t, { capabilities: [recording] });
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-elsewhere',
+        capabilityId: 'recording',
+        ownerRunId: 'other-run',
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  const blocked = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(blocked.status.resourceWait?.claimId, 'capture-helper');
+
+  // The holder releases and the drain reserves the claim. A client polling
+  // status in the window before the grant's preparation finishes must not be
+  // told the run is still in line — nothing writes a transition when a queue
+  // drains, so a status that trusted the persisted copy would say it forever.
+  // It is told the claim is GRANTED instead: still a wait, because no provider
+  // has started, but nobody is ahead of it any more. Reporting nothing at all
+  // is what made a reservation that never completed invisible on every surface.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const reserved = (await reconciler.status('run-a')).state.resourceWait;
+  assert.equal(reserved?.phase, 'granted');
+  assert.equal(reserved?.position, 0, 'a reservation is out of the queue, not at the front of it');
+  assert.equal(reserved?.claimId, 'capture-helper');
+  assert.match(reserved?.reason ?? '', /reserved for this run/);
+
+  // And it clears the moment the completing acquire takes the lease over.
+  assert.equal(
+    (
+      await prepareRunPostureForValidation(
+        'run-a',
+        [{ capabilityId: 'recording', reason: 'validation', mode: 'state' }],
+        reconciler,
+      )
+    ).ok,
+    true,
+  );
+  assert.equal((await reconciler.status('run-a')).state.resourceWait, undefined);
+});
+
+test('a reserved claim is completed before any other capability in the plan', async (t) => {
+  // Sorts FIRST, so the plan's own order reaches it before the reservation.
+  const device = entry('a-device', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'a-claim', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const recording = entry('z-recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'z-claim', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  let deviceBroken = false;
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [device, recording],
+    runAction: (_slotId, action) => {
+      const name = action.kind === 'slot-action' ? action.actionId : '';
+      if (deviceBroken && (name === 'a-device.health' || name === 'a-device.acquire')) {
+        return { ok: false, detail: 'the device fell over' };
+      }
+      return { ok: true };
+    },
+  });
+  const requirements = [
+    { capabilityId: 'a-device', reason: 'device', mode: 'visual' as const },
+    { capabilityId: 'z-recording', reason: 'record', mode: 'state' as const },
+  ];
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-elsewhere',
+        capabilityId: 'z-recording',
+        ownerRunId: 'other-run',
+        proofRequirement: { capabilityId: 'z-recording', reason: 'hold', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  assert.equal(
+    (await reconciler.apply({ runId: 'run-a', posture: 'active', proofRequirements: requirements }))
+      .ok,
+    false,
+    'the run holds a-device and queues on z-claim',
+  );
+
+  // The holder releases, so the drain reserves z-claim for this run.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const reserved = (await registry.status({ slotId: SLOT })).leases.find(
+    (lease) => lease.capabilityId === 'z-recording',
+  );
+  assert.equal(reserved?.state, 'acquiring');
+  assert.equal(reserved?.wait?.kind, 'scoped-claim');
+
+  // Now the OTHER capability in the same plan fails. Walking the plan in its own
+  // order reached it first and returned, leaving the reservation `acquiring` —
+  // a fleet claim held for a run with no provider behind it and nothing left to
+  // complete it. The reservation goes first precisely so that cannot happen.
+  deviceBroken = true;
+  const completion = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: requirements,
+  });
+  assert.equal(completion.ok, false, 'a-device is genuinely broken');
+  const after = (await registry.status({ slotId: SLOT })).leases.find(
+    (lease) => lease.capabilityId === 'z-recording' && lease.state !== 'released',
+  );
+  assert.equal(after?.state, 'acquired', 'the reservation was completed before the failure');
+  assert.equal(after?.wait, undefined, 'a completed reservation is no longer waiting');
+});
+
+test('a re-target queues before it releases, so the run never loses both devices', async (t) => {
+  const simulator = entry('simulator', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'sim-device', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+    parameters: {
+      type: 'object',
+      properties: { simulator: { type: 'string' } },
+    },
+  });
+  const helper = entry('helper', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  const { reconciler, registry, runs, actions } = await harness(t, {
+    capabilities: [helper, simulator],
+  });
+  // The run holds SIM-1 for its own capability.
+  assert.equal(
+    (
+      await reconciler.apply({
+        runId: 'run-a',
+        posture: 'active',
+        proofRequirements: [
+          {
+            capabilityId: 'simulator',
+            reason: 'device',
+            mode: 'visual',
+            parameters: { simulator: 'SIM-1' },
+          },
+        ],
+      })
+    ).ok,
+    true,
+  );
+  // Another slot takes the fleet claim the re-targeted plan also needs.
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-elsewhere',
+        capabilityId: 'helper',
+        ownerRunId: 'other-run',
+        proofRequirement: { capabilityId: 'helper', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  actions.length = 0;
+
+  const retarget = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'simulator',
+        reason: 'device',
+        mode: 'visual',
+        parameters: { simulator: 'SIM-2' },
+      },
+      { capabilityId: 'helper', reason: 'record', mode: 'state' },
+    ],
+  });
+  assert.equal(retarget.ok, false);
+  const rejection = retarget.transition.rejection;
+  assert.equal(rejection?.kind, 'capability-unavailable');
+  if (rejection?.kind !== 'capability-unavailable') return;
+  assert.equal(rejection.conflict.kind, 'scoped-wait');
+
+  // The old device is untouched. Releasing it first left the run with neither
+  // the device it had nor the one it asked for, and the recipe ran anyway.
+  const held = (await registry.status({ slotId: SLOT })).leases.find(
+    (lease) => lease.capabilityId === 'simulator',
+  );
+  assert.equal(held?.state, 'acquired');
+  assert.deepEqual(held?.parameters, { simulator: 'SIM-1' });
+  assert.deepEqual(actions, [], 'nothing was released or booted for a re-target that must wait');
+  assert.equal(runs.get('run-a')?.resourcePosture?.resourceWait?.claimId, 'capture-helper');
+
+  // Once the claim is free, the same request re-targets for real.
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const completed = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'simulator',
+        reason: 'device',
+        mode: 'visual',
+        parameters: { simulator: 'SIM-2' },
+      },
+      { capabilityId: 'helper', reason: 'record', mode: 'state' },
+    ],
+  });
+  assert.equal(completed.ok, true);
+  const retargeted = (await registry.status({ slotId: SLOT })).leases.filter(
+    (lease) => lease.capabilityId === 'simulator' && lease.state === 'acquired',
+  );
+  assert.deepEqual(retargeted[0]?.parameters, { simulator: 'SIM-2' });
+});
+
+test("validation preparation keeps the operator's recorded gate choice", async (t) => {
+  const browser = entry('browser');
+  const { reconciler, runs } = await harness(t, { capabilities: [browser] });
+  const gated = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'operator-wait',
+    gateChoice: 'keep-for-validation',
+  });
+  assert.equal(gated.status.gateChoice, 'keep-for-validation');
+
+  // Validation preparation carries no gate choice — only a wait boundary
+  // resolves one — and persisting without it erased the answer the operator had
+  // already given. The Gateway completing a granted claim is the first path that
+  // fires this with no operator in the loop at all.
+  const prepared = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [{ capabilityId: 'browser', reason: 'validation', mode: 'state' }],
+  });
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.status.gateChoice, 'keep-for-validation');
+  assert.equal(runs.get('run-a')?.resourcePosture?.gateChoice, 'keep-for-validation');
 });

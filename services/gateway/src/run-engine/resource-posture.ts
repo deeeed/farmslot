@@ -11,6 +11,7 @@ import {
   isResourcePostureGateChoice,
   type ResourcePosture,
   type ResourcePostureGateChoice,
+  type RuntimeCapabilityAcquireConflict,
   type RuntimeCapabilityProofRequirement,
   type RuntimePostureApplyResult,
 } from '@farmslot/protocol';
@@ -229,6 +230,37 @@ export function resolveGateChoiceOutcome(outcome: RunPostureReconcileOutcome): G
 }
 
 /**
+ * What preparation decided.
+ *
+ * `waiting` is the third answer, distinct from success and from failure: the
+ * run is queued behind a scoped claim and the Gateway will re-drive this
+ * preparation itself when the claim is reserved for it. A caller must not treat
+ * it as an error — there is nothing for an operator to fix — and must not treat
+ * it as success either, because no provider is up yet.
+ */
+export type PrepareRunPostureOutcome =
+  | { ok: true; conflict?: undefined }
+  | {
+      ok: false;
+      waiting?: false;
+      reason: string;
+      /**
+       * The acquire conflict behind the refusal, when there was one.
+       *
+       * Carried so a caller can tell a refusal about the HOST from a refusal
+       * about the run. Host pressure clears by itself and a reserved claim is
+       * worth keeping in line for; anything else has to give the claim back.
+       */
+      conflict?: RuntimeCapabilityAcquireConflict;
+    }
+  | {
+      ok: false;
+      waiting: true;
+      reason: string;
+      conflict?: RuntimeCapabilityAcquireConflict;
+    };
+
+/**
  * Validation preparation is `active` with the action's proof plan re-applied.
  * Returns the blocking reason when a required capability cannot be acquired, so
  * the caller can refuse the action before it touches the slot.
@@ -237,7 +269,7 @@ export async function prepareRunPostureForValidation(
   runId: string,
   proofRequirements?: RuntimeCapabilityProofRequirement[],
   reconciler?: RunResourcePostureReconciler,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<PrepareRunPostureOutcome> {
   const outcome = await reconcileRunPosture(
     {
       runId,
@@ -249,12 +281,32 @@ export async function prepareRunPostureForValidation(
   if (outcome.error !== undefined) return { ok: false, reason: outcome.error };
   const rejection = outcome.result.transition.rejection;
   if (rejection) {
+    // A scoped wait is not a refusal. The run holds a durable place in a claim
+    // queue, and when the holder releases, the drain reserves the claim and the
+    // Gateway re-drives this same preparation. Reporting it as a failure sent
+    // callers down an error path for a run that is simply next in line, and a
+    // rerun that threw here could never be resumed.
+    const wait =
+      rejection.kind === 'capability-unavailable' && rejection.conflict.kind === 'scoped-wait'
+        ? rejection.conflict
+        : undefined;
+    if (wait) {
+      return {
+        ok: false,
+        waiting: true,
+        reason:
+          `runtime capability '${wait.capabilityId}' is queued behind '${wait.claimId}' at ` +
+          `${wait.scope} scope, held by ${wait.owner.runId}; this run is position ${wait.position}`,
+        conflict: wait,
+      };
+    }
     return {
       ok: false,
       reason:
         rejection.kind === 'capability-unavailable'
           ? `runtime capability '${rejection.capabilityId}' is unavailable: ${rejection.reason}`
           : rejection.reason,
+      ...(rejection.kind === 'capability-unavailable' ? { conflict: rejection.conflict } : {}),
     };
   }
   const failures = outcome.result.transition.failures;

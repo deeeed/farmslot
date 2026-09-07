@@ -31,6 +31,7 @@ import {
   type ResourcePostureTransitionOutcome,
   type ResourcePostureWaitPolicy,
   type RunResourcePostureState,
+  type RunResourceWait,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -68,6 +69,29 @@ export function transitionOutcomeLabel(outcome: ResourcePostureTransitionOutcome
   if (outcome === 'idempotent') return 'no change needed';
   if (outcome === 'partial') return 'partially applied';
   return outcome;
+}
+
+/**
+ * One line for a run that is queued behind a scoped resource claim.
+ *
+ * Names the blocking run explicitly: the holder is usually on ANOTHER slot, so
+ * a Slot View reader would otherwise have nothing to go and look at.
+ */
+export function resourceWaitLine(wait: RunResourceWait): string {
+  // A granted wait has no position and no blocker left to name: the claim is
+  // this run's, and what it is waiting on is its own provider starting. Saying
+  // "position 0 behind <the run that already released>" would read as a queue
+  // that is stuck rather than a device that is on its way.
+  if (wait.phase === 'granted') {
+    return (
+      `Granted ${wait.capabilityId}: '${wait.claimId}' is reserved at ${wait.scope} scope ` +
+      `since ${wait.since}, waiting for its provider to start`
+    );
+  }
+  return (
+    `Waiting for ${wait.capabilityId}: position ${wait.position} in the queue for ` +
+    `'${wait.claimId}' at ${wait.scope} scope, held by ${wait.blockingOwner.runId} since ${wait.since}`
+  );
 }
 
 export function rejectionMessage(rejection: ResourcePostureRejection): string {
@@ -128,6 +152,8 @@ export interface RunPostureSummary {
   counts: ResourcePostureCounts;
   rows: RunPostureCapabilityRow[];
   lastTransition?: ResourcePostureTransition;
+  /** Set while the run holds a place in a scoped claim's queue. */
+  resourceWait?: RunResourceWait;
   updatedAt: string;
 }
 
@@ -145,6 +171,7 @@ export function summarizeRunPosture(state: RunResourcePostureState): RunPostureS
     counts,
     rows,
     ...(state.lastTransition ? { lastTransition: state.lastTransition } : {}),
+    ...(state.resourceWait ? { resourceWait: state.resourceWait } : {}),
     updatedAt: state.updatedAt,
   };
 }
@@ -455,6 +482,9 @@ export function renderRunPostureSummary(
       data-stopped-count=${String(summary.counts.stopped)}
       data-failed-count=${String(summary.counts.failed)}
       data-unresolved-count=${String(summary.counts.unresolved)}
+      data-resource-wait-position=${summary.resourceWait
+        ? String(summary.resourceWait.position)
+        : ''}
     >
       <div class="posture-title">Resource posture</div>
       <div class="posture-headline">
@@ -476,6 +506,17 @@ export function renderRunPostureSummary(
           >worker ${summary.workerRetained ? 'retained' : 'stopped'}</span
         >
       </div>
+      ${summary.resourceWait
+        ? html`<div
+            class="posture-transition"
+            data-testid="run-posture-resource-wait"
+            data-resource-wait-claim=${summary.resourceWait.claimId}
+            data-resource-wait-phase=${summary.resourceWait.phase}
+            data-resource-wait-blocking-run=${summary.resourceWait.blockingOwner.runId}
+          >
+            ${resourceWaitLine(summary.resourceWait)}
+          </div>`
+        : nothing}
       ${renderRunPostureResolution(resolution)} ${renderRunGatePark(gatePark)}
       ${transition
         ? html`

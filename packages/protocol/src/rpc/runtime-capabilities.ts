@@ -5,6 +5,7 @@ import type {
 import type {
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityCatalogEntry,
+  RuntimeCapabilityClaimWaiter,
   RuntimeCapabilityLease,
   RuntimeCapabilityLifecycleEvent,
   RuntimeCapabilityPressureConflict,
@@ -40,6 +41,16 @@ export interface RuntimeCapabilityAcquireParams {
   proofRequirement: RuntimeCapabilityProofRequirement;
   parameters?: Record<string, unknown>;
   queueOnPressure?: boolean;
+  /**
+   * Queue behind a scoped resource claim another slot holds, instead of being
+   * refused outright.
+   *
+   * Deliberately separate from `queueOnPressure`. Host pressure drains when the
+   * machine calms down and is re-evaluated on every retry; a claim queue drains
+   * only when the holder releases, and its order is durable. A caller that
+   * wants one almost never wants the other.
+   */
+  queueOnConflict?: boolean;
   /**
    * Re-run the provider health check before reusing a lease this owner already
    * holds, and clean up the provider when it fails (ADR-054). Validation and
@@ -104,6 +115,15 @@ export interface RuntimeCapabilityStatusResult {
   leases: RuntimeCapabilityLease[];
   proofPlans: Record<string, RuntimeCapabilityProofPlan>;
   pressure?: RuntimeCapabilityPressureConflict;
+  /**
+   * Waiters on every scoped claim this slot's queued leases are in line for,
+   * across all slots in scope, ordered.
+   *
+   * `leases` is slot-filtered, so it cannot answer "how many runs are ahead of
+   * mine" when the queue spans the fleet. This is derived on read from the
+   * queued leases themselves; nothing stores a position.
+   */
+  claimWaiters?: RuntimeCapabilityClaimWaiter[];
   events: RuntimeCapabilityLifecycleEvent[];
   /** Project posture defaults for this slot's project (ADR-054). */
   posture?: ProjectResourcePostureConfig;

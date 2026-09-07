@@ -2,20 +2,28 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020.js';
 
-import type {
-  ProjectResourcePostureConfig,
-  RuntimeCapabilityAcquireConflict,
-  RuntimeCapabilityAcquireParams,
-  RuntimeCapabilityAcquireResult,
-  RuntimeCapabilityCatalogEntry,
-  RuntimeCapabilityLease,
-  RuntimeCapabilityLifecycleEvent,
-  RuntimeCapabilityListResult,
-  RuntimeCapabilityProviderActionRef,
-  RuntimeCapabilityReleaseParams,
-  RuntimeCapabilityReleaseResult,
-  RuntimeCapabilityStatusParams,
-  RuntimeCapabilityStatusResult,
+import {
+  type ProjectResourcePostureConfig,
+  type RuntimeCapabilityAcquireConflict,
+  type RuntimeCapabilityAcquireParams,
+  type RuntimeCapabilityAcquireResult,
+  type RuntimeCapabilityCatalogEntry,
+  type RuntimeCapabilityClaimScope,
+  runtimeCapabilityClaimScope,
+  type RuntimeCapabilityClaimWaiter,
+  type RuntimeCapabilityLease,
+  type RuntimeCapabilityLeaseClaim,
+  type RuntimeCapabilityLeaseOwner,
+  type RuntimeCapabilityLifecycleEvent,
+  type RuntimeCapabilityListResult,
+  type RuntimeCapabilityProviderActionRef,
+  type RuntimeCapabilityReleaseParams,
+  type RuntimeCapabilityReleaseResult,
+  type RuntimeCapabilityScopedClaimWait,
+  type RuntimeCapabilityScopedWaitConflict,
+  type RuntimeCapabilityStatusParams,
+  type RuntimeCapabilityStatusResult,
+  widerRuntimeCapabilityClaimScope,
 } from '@farmslot/protocol';
 
 import { claimsDevice } from './device-target.js';
@@ -32,6 +40,13 @@ import {
 export interface RuntimeCapabilityCatalogContext {
   slotId: string;
   project: string;
+  /**
+   * The machine this slot runs on, stamped onto every lease it takes so a
+   * `machine`-scoped claim can be arbitrated from the snapshot alone. Absent
+   * when the caller has no fleet (tests, validation gateways): those leases can
+   * only arbitrate at `slot` and `fleet` scope.
+   */
+  machine?: string;
   capabilities: RuntimeCapabilityCatalogEntry[];
   /** Project posture defaults (ADR-054); provider `retention` wins over these. */
   posture?: ProjectResourcePostureConfig;
@@ -54,6 +69,24 @@ export interface WarmSweepSummary {
 export interface RuntimeCapabilityActionResult {
   ok: boolean;
   detail?: string;
+}
+
+/**
+ * A scoped claim handed to the run that was next in line.
+ *
+ * The registry reserves the claim and stops there: it holds no opinion about
+ * how a run prepares, and booting a provider for a run the engine has moved on
+ * from is exactly the lie ADR-054 forbids. The engine takes it from here by
+ * re-running the run's own preparation, which completes the reservation through
+ * the ordinary acquire path.
+ */
+export interface RuntimeCapabilityClaimGrant {
+  owner: RuntimeCapabilityLeaseOwner;
+  slotId: string;
+  capabilityId: string;
+  /** The reserved lease, `acquiring` with no provider behind it yet. */
+  leaseId: string;
+  claimId: string;
 }
 
 export interface RuntimeCapabilityRegistryOptions {
@@ -116,9 +149,31 @@ export interface RuntimeCapabilityRegistryOptions {
   isTerminalOwner?: (ownerRunId: string) => boolean;
 
   onEvent?: (event: RuntimeCapabilityLifecycleEvent) => void;
+  /**
+   * A scoped claim has been reserved for this owner and the run engine should
+   * complete it.
+   *
+   * Fired only AFTER the reservation is durable, so a crash between the two
+   * leaves a reservation the restart re-announces rather than a completion for
+   * a claim nobody holds. Left unwired by tests and validation gateways with no
+   * run engine: the reservation still stands and the owner's own next
+   * preparation completes it.
+   */
+  onClaimGranted?: (grant: RuntimeCapabilityClaimGrant) => void;
   now?: () => Date;
   leaseId?: () => string;
 }
+
+/**
+ * How long a reserved claim may sit with no provider before it is reclaimed.
+ *
+ * Only ever measures a claim held with nothing running: the completing acquire
+ * clears the wait record before it boots anything, so a provider start is never
+ * inside this window. Ten minutes clears the registry mutation lock a foreign
+ * provider boot can hold, and is short enough that a device stranded by a lost
+ * completer comes back on its own.
+ */
+export const STALE_RESERVATION_MS = 10 * 60_000;
 
 const ACTIVE_STATES = new Set<RuntimeCapabilityLease['state']>([
   'queued',
@@ -160,6 +215,138 @@ function runsProvider(lease: RuntimeCapabilityLease): boolean {
   return holdsProvider(lease) || (lease.state === 'released' && lease.keepWarmUntil !== undefined);
 }
 
+/**
+ * Whether this lease HOLDS its resource claims.
+ *
+ * Two states decide it, and both are load-bearing:
+ *
+ * A queued lease holds nothing. It has no provider and never ran an acquire
+ * action, so counting it would make two waiters block each other and stall the
+ * drain that exists to serve them.
+ *
+ * A KEEP-WARM lease still holds everything. It reads `released` with a deadline
+ * and its provider is deliberately still up — the one state where a device runs
+ * under no active lease. Arbitrating on `blocksAcquisition` alone made a warm
+ * fleet claim invisible: a second slot was handed the device, and the warm
+ * sweeper then stopped it under the run that had just been given it. The
+ * sweeper drains the queue itself once the provider is really gone.
+ */
+function holdsClaim(lease: RuntimeCapabilityLease): boolean {
+  return runsProvider(lease) || (lease.state === 'error' && Boolean(lease.cleanupFailure));
+}
+
+/**
+ * Whether this lease holds its claims AGAINST an acquire on `sameSlot`.
+ *
+ * Cross-slot, keep-warm counts, for the reason above: the provider is still up
+ * and a second slot handed the device would have it stopped underneath it.
+ *
+ * Same-slot, it does NOT, and that is deliberate. `blocksAcquisition` is the
+ * exact rule every project had before scopes existed — a queued lease counts, a
+ * warm one does not — and the spec is explicit that a default `slot` claim
+ * changes nothing. Counting warm leases here too would have made a warm
+ * provider of capability X start refusing capability Y on the same slot for a
+ * claim they share, in projects that never opted into anything. A same-slot warm
+ * provider is adopted by the next acquire rather than fought over.
+ */
+function holdsClaimAgainst(lease: RuntimeCapabilityLease, sameSlot: boolean): boolean {
+  return sameSlot ? blocksAcquisition(lease) : holdsClaim(lease);
+}
+
+/**
+ * Whether this lease is a RESERVATION: the drain gave it a claim, but no
+ * provider has booted for it yet.
+ *
+ * The state that makes the queue survive a restart. A reservation is durable —
+ * it is `acquiring` with its wait record still attached — so a Gateway that
+ * comes back up can tell it apart from a lease that was mid-boot, keep the
+ * claim held for its owner, and ask the run engine to complete it. Nothing
+ * in-memory is needed to find it again.
+ */
+function isClaimReservation(lease: RuntimeCapabilityLease): boolean {
+  return lease.state === 'acquiring' && lease.wait?.kind === 'scoped-claim';
+}
+
+/**
+ * Whether a holder's claim reaches the acquiring slot.
+ *
+ * `slot` never reaches past its own slot, which is exactly how every claim
+ * behaved before scopes existed. `machine` needs both sides to know their
+ * machine — an unknown machine is not a match, so a Gateway with no fleet
+ * arbitrates machine claims as slot claims rather than as fleet claims.
+ */
+function claimReachesSlot(
+  holder: RuntimeCapabilityLease,
+  scope: RuntimeCapabilityClaimScope,
+  acquiringSlotId: string,
+  acquiringMachine: string | undefined,
+): boolean {
+  if (holder.slotId === acquiringSlotId) return true;
+  if (scope === 'fleet') return true;
+  if (scope === 'machine') {
+    return (
+      holder.machine !== undefined &&
+      acquiringMachine !== undefined &&
+      holder.machine === acquiringMachine
+    );
+  }
+  return false;
+}
+
+/** The claims a catalog entry declares, with the `slot` default applied. */
+function claimsOfEntry(
+  entry: Pick<RuntimeCapabilityCatalogEntry, 'cost'>,
+): RuntimeCapabilityLeaseClaim[] {
+  return entry.cost.resources.map((claim) => ({
+    id: claim.id,
+    access: claim.access,
+    scope: runtimeCapabilityClaimScope(claim),
+  }));
+}
+
+/** The wait record of a queued lease, or undefined when it is not a claim waiter. */
+function scopedWaitOf(lease: RuntimeCapabilityLease): RuntimeCapabilityScopedClaimWait | undefined {
+  return lease.state === 'queued' && lease.wait?.kind === 'scoped-claim' ? lease.wait : undefined;
+}
+
+/**
+ * Queue order for one claim: enqueue time, then lease id as the tiebreak.
+ *
+ * Derived on every read and never stored. A restart therefore preserves the
+ * order for free, and nothing ever has to renumber a queue.
+ */
+function claimQueueOrder(
+  leases: readonly RuntimeCapabilityLease[],
+  claimId: string,
+): RuntimeCapabilityLease[] {
+  return leases
+    .filter((lease) => scopedWaitOf(lease)?.claimId === claimId)
+    .sort(
+      (left, right) =>
+        scopedWaitOf(left)!.enqueuedAt.localeCompare(scopedWaitOf(right)!.enqueuedAt) ||
+        left.id.localeCompare(right.id),
+    );
+}
+
+/** One resource claim a live lease holds that a pending acquire also wants. */
+interface ClaimConflict {
+  holder: RuntimeCapabilityLease;
+  claimId: string;
+  /** The effective (widest) scope of the two declarations. */
+  scope: RuntimeCapabilityClaimScope;
+  /** Whether the holder is on a different slot than the acquirer. */
+  crossSlot: boolean;
+}
+
+function claimConflictReason(conflict: ClaimConflict): string {
+  return conflict.crossSlot
+    ? `Resource '${conflict.claimId}' is claimed at ${conflict.scope} scope by capability ` +
+        `'${conflict.holder.capabilityId}' on slot '${conflict.holder.slotId}' for ` +
+        `${conflict.holder.owner.runId}`
+    : `Resource '${conflict.claimId}' is already claimed by capability ` +
+        `'${conflict.holder.capabilityId}' for ${conflict.holder.owner.runId}`;
+}
+
 /** Parameter names a provider's own schema declares, or none when it has no schema. */
 function declaredParameterNames(
   entry: Pick<RuntimeCapabilityCatalogEntry, 'parameters'>,
@@ -197,6 +384,15 @@ export class RuntimeCapabilityRegistry {
   private loaded = false;
   private loadPromise: Promise<void> | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
+  /**
+   * Claims reserved for a waiter, announced once the reservation is durable.
+   *
+   * Flushed by `persist` beside the lifecycle events, for the same reason: a
+   * grant announced before the write would tell the run engine to complete a
+   * reservation a crash could erase. Nothing here is the durable record — the
+   * `acquiring` lease with its wait attached is, and `recover` re-announces it.
+   */
+  private pendingGrants: RuntimeCapabilityClaimGrant[] = [];
 
   constructor(private readonly options: RuntimeCapabilityRegistryOptions) {
     this.now = options.now ?? (() => new Date());
@@ -296,8 +492,14 @@ export class RuntimeCapabilityRegistry {
     // rewriting them would resurrect the bound the entries replaced.
     snapshot.terminalOwners = undefined;
     snapshot.terminalFamilies = undefined;
+    const grants = this.pendingGrants;
+    this.pendingGrants = [];
     await this.options.store.replace(snapshot);
     for (const event of events) this.options.onEvent?.(event);
+    // After the write, always. A grant is an instruction to go boot a provider;
+    // issuing it for a reservation that never reached disk would have the run
+    // engine complete a claim no restart could account for.
+    for (const grant of grants) this.options.onClaimGranted?.(grant);
   }
 
   /**
@@ -365,11 +567,36 @@ export class RuntimeCapabilityRegistry {
     const pressure = [...leases]
       .reverse()
       .find((lease) => lease.state === 'queued' && lease.pressure)?.pressure;
+    // Derived across EVERY slot, not just this one. `leases` is slot-filtered,
+    // so on its own it cannot say how many runs are ahead of this slot's waiter
+    // when the claim is machine- or fleet-scoped.
+    const claimWaiters: RuntimeCapabilityClaimWaiter[] = [];
+    const claimIds = new Set(
+      leases.map((lease) => scopedWaitOf(lease)?.claimId).filter((id): id is string => Boolean(id)),
+    );
+    for (const claimId of [...claimIds].sort()) {
+      claimQueueOrder(snapshot.leases, claimId).forEach((waiter, index) => {
+        const wait = scopedWaitOf(waiter)!;
+        claimWaiters.push({
+          claimId,
+          scope: wait.scope,
+          position: index + 1,
+          leaseId: waiter.id,
+          slotId: waiter.slotId,
+          capabilityId: waiter.capabilityId,
+          owner: structuredClone(waiter.owner),
+          enqueuedAt: wait.enqueuedAt,
+          blockingOwner: structuredClone(wait.blockingOwner),
+          blockingLeaseId: wait.blockingLeaseId,
+        });
+      });
+    }
     return {
       slotId: params.slotId,
       project: catalog.project,
       catalog: structuredClone(catalog.capabilities),
       leases,
+      ...(claimWaiters.length > 0 ? { claimWaiters } : {}),
       proofPlans: Object.fromEntries(
         Object.entries(snapshot.proofPlans).filter(
           ([runId, plan]) =>
@@ -506,6 +733,30 @@ export class RuntimeCapabilityRegistry {
         };
       }
     }
+    // Whether this acquire is heading for the claim queue below.
+    //
+    // The device guard refuses a second boot of one physical device outright,
+    // which is the right answer when nobody is arbitrating. A scoped claim IS
+    // that arbitration: the two acquires are contending for one declared
+    // resource, and this caller has said it wants to wait its turn rather than
+    // be told no. Running the guard first would refuse the exact contention the
+    // queue exists to serialize, before the queue was ever consulted. With no
+    // `queueOnConflict` the guard runs first and still refuses, unchanged — the
+    // two rules never both answer for the same acquire.
+    const queueableConflict =
+      params.queueOnConflict === true
+        ? this.findClaimConflict(snapshot, catalog, entry, params.slotId)
+        : null;
+    const willQueueOnClaim =
+      queueableConflict !== null &&
+      this.canQueueBehind(queueableConflict, params.ownerRunId, acquiringFamilyId) &&
+      !snapshot.leases.some(
+        (lease) =>
+          lease.slotId === params.slotId &&
+          lease.capabilityId === entry.id &&
+          lease.owner.runId === params.ownerRunId &&
+          holdsClaim(lease),
+      );
     // Asked for EVERY device-claiming acquire, not only one that names a
     // device. An ordinary acquire with no parameters resolves to the slot's own
     // configured device, and another slot may have re-targeted onto exactly
@@ -513,6 +764,7 @@ export class RuntimeCapabilityRegistry {
     // check for `{}` left the common case unguarded.
     if (
       this.options.assertTargetAvailable &&
+      !willQueueOnClaim &&
       (Object.keys(parameters).length > 0 || claimsDevice(entry))
     ) {
       const refusal = await this.options.assertTargetAvailable({
@@ -615,6 +867,11 @@ export class RuntimeCapabilityRegistry {
                 },
                 parameters: revalidateDependencyParameters,
                 queueOnPressure: false,
+                // A dependency never queues on its own. A parent that cannot
+                // finish rolls its dependencies back, and a queued lease left
+                // behind by that rollback would hold a place in line for an
+                // acquire nobody is waiting on.
+                queueOnConflict: false,
                 revalidateHealth: true,
               },
               false,
@@ -826,34 +1083,36 @@ export class RuntimeCapabilityRegistry {
         },
       };
     }
-    const requestedClaims = new Map(entry.cost.resources.map((claim) => [claim.id, claim]));
-    for (const lease of snapshot.leases) {
+    const claimConflict = this.findClaimConflict(snapshot, catalog, entry, params.slotId);
+    if (claimConflict) {
+      // The proof plan is already recorded above, so a queued run's plan is
+      // replayable by the pre-validation retry exactly like an acquired one's.
+      // An owner that already HOLDS the provider never queues; one that is
+      // already queued re-enters `enqueueClaimWaiter`, which keeps its place.
       if (
-        lease.slotId !== params.slotId ||
-        lease.capabilityId === entry.id ||
-        !blocksAcquisition(lease)
+        params.queueOnConflict === true &&
+        this.canQueueBehind(claimConflict, params.ownerRunId, acquiringFamilyId) &&
+        (sameOwner === undefined || sameOwner.state === 'queued')
       ) {
-        continue;
+        return this.enqueueClaimWaiter(
+          snapshot,
+          catalog,
+          entry,
+          ownedParams,
+          parameters,
+          claimConflict,
+        );
       }
-      const holder = catalog.capabilities.find(
-        (capability) => capability.id === lease.capabilityId,
-      );
-      const conflict = holder?.cost.resources.find((claim) => {
-        const requested = requestedClaims.get(claim.id);
-        return requested && (requested.access === 'exclusive' || claim.access === 'exclusive');
-      });
-      if (conflict) {
-        return {
-          ok: false,
-          conflict: {
-            kind: 'lease-conflict',
-            capabilityId: entry.id,
-            owner: lease.owner,
-            leaseId: lease.id,
-            reason: `Resource '${conflict.id}' is already claimed by capability '${lease.capabilityId}' for ${lease.owner.runId}`,
-          },
-        };
-      }
+      return {
+        ok: false,
+        conflict: {
+          kind: 'lease-conflict',
+          capabilityId: entry.id,
+          owner: claimConflict.holder.owner,
+          leaseId: claimConflict.holder.id,
+          reason: claimConflictReason(claimConflict),
+        },
+      };
     }
 
     const existingLeaseIds = new Set(snapshot.leases.map((lease) => lease.id));
@@ -881,6 +1140,9 @@ export class RuntimeCapabilityRegistry {
           proofRequirement: requirement,
           parameters: dependencyParameters,
           queueOnPressure: false,
+          // See the revalidation path: a dependency's queue place would outlive
+          // the parent acquire that asked for it.
+          queueOnConflict: false,
         },
         false,
       );
@@ -1037,6 +1299,8 @@ export class RuntimeCapabilityRegistry {
     }
     lease.state = 'acquiring';
     lease.pressure = undefined;
+    // A lease that is acquiring is no longer in line for anything.
+    lease.wait = undefined;
     lease.updatedAt = now;
     this.recordEvent(snapshot, {
       kind: 'acquiring',
@@ -1165,7 +1429,513 @@ export class RuntimeCapabilityRegistry {
       health: { state: 'unknown' },
       dependencyLeaseIds,
       updatedAt: now,
+      // Resolved from the catalog HERE, once, and persisted. Judging this
+      // lease's claims from another slot later would otherwise need that
+      // slot's catalog — possibly from another project, possibly mid-write.
+      ...(catalog.machine ? { machine: catalog.machine } : {}),
+      claims: claimsOfEntry(entry),
     };
+  }
+
+  /**
+   * The claims a lease holds, as it holds them.
+   *
+   * `lease.claims` is the authority: it is what the catalog said when the lease
+   * was taken, so a catalog edit since then cannot rewrite what is already
+   * running. A lease with no `claims` was written before scopes existed; it is
+   * read from the catalog only when it is on the acquiring slot, which is
+   * exactly the arbitration it had then, and contributes nothing across slots.
+   */
+  private claimsHeldByLease(
+    lease: RuntimeCapabilityLease,
+    catalog: RuntimeCapabilityCatalogContext | undefined,
+    sameSlot: boolean,
+  ): RuntimeCapabilityLeaseClaim[] {
+    if (lease.claims) return lease.claims;
+    if (!sameSlot || !catalog) return [];
+    const holder = catalog.capabilities.find((capability) => capability.id === lease.capabilityId);
+    return holder ? claimsOfEntry(holder) : [];
+  }
+
+  /**
+   * Whether this conflict is one a caller may take a place in line behind.
+   *
+   * Two conditions, and both are about not changing what already worked:
+   *
+   * CROSS-SLOT only. A same-slot conflict is the behaviour every project had
+   * before scopes existed, and the spec is explicit that a default `slot` claim
+   * changes nothing — so it still returns `lease-conflict` immediately and the
+   * device guard still runs for it. Queueing there also had nowhere to go: the
+   * blocker is on the same slot, and the run has no second slot to wait on.
+   *
+   * NEVER behind yourself. A run holding capability X can need capability Y
+   * that claims the same resource; queueing made it wait for a lease only it
+   * could release, which is a deadlock with a durable record. A family sibling
+   * is refused for the same reason — family cleanup releases the whole family
+   * together, so a sibling cannot be relied on to free anything first.
+   */
+  private canQueueBehind(
+    conflict: ClaimConflict,
+    ownerRunId: string,
+    ownerFamilyId: string | undefined,
+  ): boolean {
+    if (!conflict.crossSlot) return false;
+    if (conflict.holder.owner.runId === ownerRunId) return false;
+    return !(ownerFamilyId !== undefined && conflict.holder.owner.familyId === ownerFamilyId);
+  }
+
+  /**
+   * The first live lease whose claims collide with what this entry wants.
+   *
+   * The same provider on the same slot is deliberately skipped: that is share
+   * policy, decided by the exclusive/shared checks above, and counting it here
+   * would make every second reference of a shared provider a resource conflict.
+   * The same provider on ANOTHER slot is not skipped — two slots each running
+   * `recording` against one fleet-scoped helper is precisely the contention
+   * this exists to catch.
+   */
+  private findClaimConflict(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    catalog: RuntimeCapabilityCatalogContext,
+    entry: RuntimeCapabilityCatalogEntry,
+    slotId: string,
+  ): ClaimConflict | null {
+    const requested = new Map(entry.cost.resources.map((claim) => [claim.id, claim]));
+    if (requested.size === 0) return null;
+    for (const lease of snapshot.leases) {
+      const sameSlot = lease.slotId === slotId;
+      if (sameSlot && lease.capabilityId === entry.id) continue;
+      if (!holdsClaimAgainst(lease, sameSlot)) continue;
+      for (const held of this.claimsHeldByLease(lease, catalog, sameSlot)) {
+        const wanted = requested.get(held.id);
+        if (!wanted) continue;
+        if (wanted.access !== 'exclusive' && held.access !== 'exclusive') continue;
+        const scope = widerRuntimeCapabilityClaimScope(
+          runtimeCapabilityClaimScope(wanted),
+          held.scope,
+        );
+        if (!claimReachesSlot(lease, scope, slotId, catalog.machine)) continue;
+        return { holder: lease, claimId: held.id, scope, crossSlot: !sameSlot };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Take a place in line behind a scoped claim, and say where that place is.
+   *
+   * An owner that is already queued for this claim keeps its ORIGINAL
+   * `enqueuedAt`: preparation retries, and a retry that re-enqueued would send
+   * the run to the back of the queue every time it asked how it was doing.
+   */
+  private enqueueClaimWaiter(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    catalog: RuntimeCapabilityCatalogContext,
+    entry: RuntimeCapabilityCatalogEntry,
+    params: RuntimeCapabilityAcquireParams,
+    parameters: Record<string, unknown>,
+    conflict: ClaimConflict,
+  ): RuntimeCapabilityAcquireResult {
+    const now = this.timestamp();
+    // Keyed on slot+capability+OWNER, deliberately not on the claim id. A
+    // provider can declare several exclusive claims, and keying on the claim
+    // let one run collect a second queued lease when a retry blocked on a
+    // different claim of the same provider — the first was then orphaned with
+    // its claim already free, and since a queued lease blocks acquisition it
+    // shut every other run out of that capability for good.
+    const existing = snapshot.leases.find(
+      (lease) =>
+        lease.slotId === params.slotId &&
+        lease.capabilityId === entry.id &&
+        lease.owner.runId === params.ownerRunId &&
+        scopedWaitOf(lease) !== undefined,
+    );
+    const reason = claimConflictReason(conflict);
+    const wait: RuntimeCapabilityScopedClaimWait = {
+      kind: 'scoped-claim',
+      claimId: conflict.claimId,
+      scope: conflict.scope,
+      blockingOwner: structuredClone(conflict.holder.owner),
+      blockingLeaseId: conflict.holder.id,
+      // The queue place survives a re-point onto another claim: the run has
+      // been waiting since it first asked, and sending it to the back for
+      // asking again is what FIFO exists to prevent.
+      enqueuedAt: existing ? (scopedWaitOf(existing)?.enqueuedAt ?? now) : now,
+    };
+    let lease = existing;
+    if (lease) {
+      // Only who is blocking is refreshed; the queue place is not.
+      lease.wait = wait;
+      lease.updatedAt = now;
+    } else {
+      lease = this.createLease(catalog, entry, params, parameters, [], now, 'queued');
+      lease.wait = wait;
+      snapshot.leases.push(lease);
+      this.recordEvent(snapshot, {
+        kind: 'queued',
+        slotId: params.slotId,
+        capabilityId: entry.id,
+        leaseId: lease.id,
+        owner: lease.owner,
+        detail: reason,
+      });
+    }
+    const position =
+      claimQueueOrder(snapshot.leases, conflict.claimId).findIndex(
+        (candidate) => candidate.id === lease!.id,
+      ) + 1;
+    return {
+      ok: false,
+      conflict: {
+        kind: 'scoped-wait',
+        capabilityId: entry.id,
+        claimId: conflict.claimId,
+        scope: conflict.scope,
+        owner: structuredClone(conflict.holder.owner),
+        leaseId: conflict.holder.id,
+        queuedLeaseId: lease.id,
+        position,
+        reason,
+      },
+    };
+  }
+
+  /**
+   * Take a place in line for an acquire that has not run yet, and say whether
+   * one was needed.
+   *
+   * For the caller that has to give something up before it can acquire: a
+   * re-target releases the device it holds, and only then discovers the device
+   * it was asked for is claimed by another slot. Asking here first means it
+   * refuses before releasing and waits with what it has.
+   *
+   * Records nothing but the queue place. No provider action, no release, no
+   * proof plan — the acquire that follows the grant records all of that through
+   * the ordinary path. Returns null whenever the acquire would NOT queue, so an
+   * uncontended re-target behaves exactly as it did.
+   */
+  async enqueueScopedClaimWaiter(
+    params: RuntimeCapabilityAcquireParams,
+  ): Promise<RuntimeCapabilityScopedWaitConflict | null> {
+    return this.mutate(async () => {
+      const snapshot = this.options.store.snapshot();
+      const catalog = await this.options.catalogForSlot(params.slotId);
+      const entry = catalog.capabilities.find(
+        (capability) => capability.id === params.capabilityId,
+      );
+      // Every refusal that is not a queue is left to the acquire itself, which
+      // is the one place that reports them. Saying nothing here means "no queue
+      // place was needed", never "this acquire will succeed".
+      if (!entry || entry.availability.state !== 'available') return null;
+      const familyId = params.ownerFamilyId ?? this.options.familyForRun?.(params.ownerRunId);
+      if (this.fenceVerdict(params.ownerRunId, familyId)) return null;
+      // A run that already holds this capability on this slot holds its claims
+      // too, so there is nothing to queue behind — and a second lease for the
+      // same slot, capability and owner would collide with the idempotent reuse
+      // the completing acquire depends on. This is the same exclusion
+      // `acquireInternal` applies before its own queue decision.
+      if (
+        snapshot.leases.some(
+          (lease) =>
+            lease.slotId === params.slotId &&
+            lease.capabilityId === entry.id &&
+            lease.owner.runId === params.ownerRunId &&
+            holdsClaim(lease),
+        )
+      ) {
+        return null;
+      }
+      const conflict = this.findClaimConflict(snapshot, catalog, entry, params.slotId);
+      if (!conflict || !this.canQueueBehind(conflict, params.ownerRunId, familyId)) return null;
+      const ownedParams: RuntimeCapabilityAcquireParams = {
+        ...params,
+        ...(familyId ? { ownerFamilyId: familyId } : {}),
+      };
+      const parameters = params.parameters ?? params.proofRequirement.parameters ?? {};
+      const result = this.enqueueClaimWaiter(
+        snapshot,
+        catalog,
+        entry,
+        ownedParams,
+        parameters,
+        conflict,
+      );
+      await this.persist(snapshot);
+      return result.ok || result.conflict.kind !== 'scoped-wait' ? null : result.conflict;
+    });
+  }
+
+  /**
+   * Settle a reservation whose completion did not happen.
+   *
+   * The drain reserves a claim and hands it to the run engine to finish. If that
+   * completion is refused or throws, the claim is held by a lease with no
+   * provider and no one left to complete it — every other slot queued behind a
+   * device nothing is using. This is the only way back out.
+   *
+   * `requeue` puts the reservation back at the HEAD of its own queue with its
+   * original `enqueuedAt`, for a refusal that is about the host rather than the
+   * run: host pressure clears on its own, and the owner keeps the place it
+   * earned. It is re-driven by whichever comes first — the owner's next
+   * preparation, or the next release that drains this claim.
+   *
+   * Anything else rolls the lease back: released, claim freed, queue drained, so
+   * the next waiter is served instead of stranded. Returns what it did, so the
+   * caller can report it rather than guess.
+   */
+  async settleReservation(
+    leaseId: string,
+    outcome: { requeue: boolean; detail: string },
+  ): Promise<'requeued' | 'released' | 'not-reserved'> {
+    return this.mutate(async () => {
+      const snapshot = this.options.store.snapshot();
+      const lease = snapshot.leases.find((candidate) => candidate.id === leaseId);
+      // Completed, released, or already settled. Not an error: the ordinary
+      // outcome is that the completion took the lease over.
+      if (!lease || !isClaimReservation(lease)) return 'not-reserved';
+      if (outcome.requeue) {
+        lease.state = 'queued';
+        lease.updatedAt = this.timestamp();
+        this.recordEvent(snapshot, {
+          kind: 'queued',
+          slotId: lease.slotId,
+          capabilityId: lease.capabilityId,
+          leaseId: lease.id,
+          owner: lease.owner,
+          detail: outcome.detail,
+        });
+        await this.persist(snapshot);
+        return 'requeued';
+      }
+      const catalog = await this.options.catalogForSlot(lease.slotId);
+      this.recordEvent(snapshot, {
+        kind: 'recovery-rejected',
+        slotId: lease.slotId,
+        capabilityId: lease.capabilityId,
+        leaseId: lease.id,
+        owner: lease.owner,
+        detail: outcome.detail,
+      });
+      // Releases the lease, frees its claims and drains the queue in one pass.
+      await this.rollbackLeases(snapshot, catalog, [lease.id]);
+      await this.persist(snapshot);
+      return 'released';
+    });
+  }
+
+  /**
+   * Reclaim reservations nobody is completing any more.
+   *
+   * The backstop for the one failure `settleReservation` cannot catch: the
+   * Gateway went down between the grant and the completion's own error
+   * handling, or the completer died. A reservation is `acquiring` WITH its wait
+   * record, and the completing acquire clears that record the moment it takes
+   * the lease over — so age here measures only the time a claim has been held
+   * with nothing running and nothing started. A provider boot never appears in
+   * this window.
+   *
+   * The bound is deliberately generous: the completion waits on the registry's
+   * own mutation lock, which another slot's provider boot can hold for minutes.
+   * Ten minutes is far past that and far short of a shift, so a stranded fleet
+   * device frees itself long before anyone files a ticket about it.
+   */
+  async reclaimStaleReservations(
+    maxAgeMs: number = STALE_RESERVATION_MS,
+  ): Promise<RuntimeCapabilityLease[]> {
+    return this.mutate(async () => {
+      const snapshot = this.options.store.snapshot();
+      const cutoff = this.now().getTime() - maxAgeMs;
+      const stale = snapshot.leases.filter(
+        (lease) => isClaimReservation(lease) && Date.parse(lease.updatedAt) <= cutoff,
+      );
+      if (stale.length === 0) return [];
+      for (const lease of stale) {
+        this.recordEvent(snapshot, {
+          kind: 'recovery-rejected',
+          slotId: lease.slotId,
+          capabilityId: lease.capabilityId,
+          leaseId: lease.id,
+          owner: lease.owner,
+          detail:
+            `reserved claim '${lease.wait!.claimId}' was never completed within ` +
+            `${Math.round(maxAgeMs / 60_000)}m; releasing it to the next waiter`,
+        });
+        const catalog = await this.options.catalogForSlot(lease.slotId);
+        await this.rollbackLeases(snapshot, catalog, [lease.id]);
+      }
+      await this.persist(snapshot);
+      return stale.map((lease) => structuredClone(lease));
+    });
+  }
+
+  /**
+   * THE chokepoint. Every path that frees a claim ends here.
+   *
+   * A freed claim that never reaches this stalls its queue forever: nothing
+   * else re-examines a `queued` lease, and no release will fire for a claim
+   * that is already free. So a release, a failed acquire's rollback, restart
+   * recovery, and the keep-warm sweeper all call this after their own pass has
+   * finished — after, never during, so a teardown cannot hand a device to a
+   * waiter while the slot it lives on is still being taken apart.
+   *
+   * Exactly one waiter is promoted per freed claim, to `acquiring` WITH its
+   * wait record kept. That pair is the reservation: the claim is now held for
+   * that owner, no provider action has run, and the record is durable enough
+   * for a restart to find it and re-announce it. Saying `acquired` here would
+   * report a live device that does not exist.
+   */
+  private drainFreedClaims(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    /**
+     * Leases whose claims this pass actually freed. A released QUEUE PLACE does
+     * not belong here: it never held a claim — `holdsClaim` excludes `queued` —
+     * so counting it would drain a claim that is still held and hand the head
+     * waiter a reservation it could not complete. Callers know which of their
+     * releases held a provider; only they can tell the two apart once the lease
+     * has already been rewritten to `released`.
+     */
+    releasedLeases: readonly RuntimeCapabilityLease[],
+    /** Only needed to read claims off a lease written before scopes existed. */
+    catalog?: RuntimeCapabilityCatalogContext,
+  ): void {
+    const freed = new Set<string>();
+    for (const lease of releasedLeases) {
+      // A keep-warm release frees nothing: the provider is deliberately still
+      // running and `holdsClaim` still counts it. The sweeper that finally
+      // stops it drains from here itself.
+      if (lease.keepWarmUntil !== undefined) continue;
+      // Same-slot is the lease's own question, not the caller's. A catalog is
+      // only the right fallback for a lease that predates `claims` AND lives on
+      // the slot the catalog describes; trusting `catalog !== undefined` read a
+      // foreign slot's lease through this slot's project.
+      for (const claim of this.claimsHeldByLease(
+        lease,
+        catalog,
+        catalog?.slotId === lease.slotId,
+      )) {
+        freed.add(claim.id);
+      }
+    }
+    for (const claimId of [...freed].sort()) {
+      for (const waiter of claimQueueOrder(snapshot.leases, claimId)) {
+        // A queue place handed to a run that is already gone is a leak: nothing
+        // would ever release the provider it is about to be given. Dropped
+        // outright, with no provider action, because a queued lease has none.
+        if (this.isFencedOwner(waiter.owner.runId, waiter.owner.familyId)) {
+          this.dropQueuedWaiter(
+            snapshot,
+            waiter,
+            `queue slot for '${claimId}' dropped: owner run '${waiter.owner.runId}' already had its terminal capability cleanup`,
+          );
+          continue;
+        }
+        // EVERY claim this waiter needs must be free, not just the one that was
+        // released. A provider can declare several exclusive claims, and
+        // reserving on one of them handed a run a lease it could never complete:
+        // the acquire that finishes it re-checks them all, found the other still
+        // held, and left the lease `acquiring` with nothing able to move it.
+        //
+        // A holder that is still there stops the queue at its HEAD rather than
+        // being skipped past: the queue is FIFO, and serving someone further
+        // back because the head is still blocked is not.
+        //
+        // A waiter carrying NO claims is never reserved. `claims` is written on
+        // every lease taken since scopes existed, so a queued lease without them
+        // predates the queue itself and cannot be a scoped waiter — `?? []` read
+        // that as "nothing blocks it" and reserved it unconditionally, on a claim
+        // it had never asked for.
+        if (waiter.claims === undefined) break;
+        const blocked = waiter.claims.some((claim) =>
+          this.claimStillHeld(snapshot, waiter, claim.id),
+        );
+        if (blocked) break;
+        waiter.state = 'acquiring';
+        waiter.updatedAt = this.timestamp();
+        this.recordEvent(snapshot, {
+          kind: 'acquiring',
+          slotId: waiter.slotId,
+          capabilityId: waiter.capabilityId,
+          leaseId: waiter.id,
+          owner: waiter.owner,
+          detail: `resource '${claimId}' was released; reserved for the next run in the queue`,
+        });
+        this.announceGrant(waiter, claimId);
+        break;
+      }
+    }
+  }
+
+  /** Queue the grant this reservation owes the run engine, flushed by `persist`. */
+  private announceGrant(lease: RuntimeCapabilityLease, claimId: string): void {
+    this.pendingGrants.push({
+      owner: structuredClone(lease.owner),
+      slotId: lease.slotId,
+      capabilityId: lease.capabilityId,
+      leaseId: lease.id,
+      claimId,
+    });
+  }
+
+  /**
+   * Release a queue place nothing should ever be handed to, with the reason.
+   *
+   * The event kind is the caller's, because the two callers are saying
+   * different things: a drain that skips a dead owner `released` the place, and
+   * restart recovery `recovery-rejected` it. Only the lease bookkeeping — and
+   * clearing `wait`, which a released lease must never keep — is shared.
+   */
+  private dropQueuedWaiter(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    waiter: RuntimeCapabilityLease,
+    detail: string,
+    kind: 'released' | 'recovery-rejected' = 'released',
+  ): void {
+    waiter.state = 'released';
+    waiter.updatedAt = this.timestamp();
+    waiter.releasedAt = waiter.updatedAt;
+    waiter.referenceCount = 0;
+    waiter.wait = undefined;
+    this.recordEvent(snapshot, {
+      kind,
+      slotId: waiter.slotId,
+      capabilityId: waiter.capabilityId,
+      leaseId: waiter.id,
+      owner: waiter.owner,
+      detail,
+    });
+  }
+
+  /**
+   * Whether anything still holds `claimId` in a way that reaches this waiter.
+   *
+   * Reads only persisted `claims`, never a catalog: the waiter can be on any
+   * slot, and loading a foreign project's config here would put a file read
+   * inside the release lock. Every lease taken since scoped claims landed
+   * carries its claims, so the only blind spot is a lease that predates them
+   * and is still live — and those arbitrate at slot scope, where the acquire
+   * that completes the reservation re-checks them against the real catalog.
+   */
+  private claimStillHeld(
+    snapshot: RuntimeCapabilityStoreSnapshot,
+    waiter: RuntimeCapabilityLease,
+    claimId: string,
+  ): boolean {
+    const wanted = waiter.claims?.find((claim) => claim.id === claimId);
+    if (!wanted) return false;
+    return snapshot.leases.some((lease) => {
+      if (lease.id === waiter.id) return false;
+      const sameSlot = lease.slotId === waiter.slotId;
+      if (sameSlot && lease.capabilityId === waiter.capabilityId) return false;
+      // The same rule the completing acquire will apply. Reserving a claim this
+      // waiter's own acquire would then be refused for hands it a lease it
+      // cannot finish, which is the strand the reservation exists to avoid.
+      if (!holdsClaimAgainst(lease, sameSlot)) return false;
+      const held = lease.claims?.find((claim) => claim.id === claimId);
+      if (!held) return false;
+      if (wanted.access !== 'exclusive' && held.access !== 'exclusive') return false;
+      const scope = widerRuntimeCapabilityClaimScope(wanted.scope, held.scope);
+      return claimReachesSlot(lease, scope, waiter.slotId, waiter.machine);
+    });
   }
 
   private updateReferenceCounts(
@@ -1187,6 +1957,11 @@ export class RuntimeCapabilityRegistry {
     catalog: RuntimeCapabilityCatalogContext,
     leaseIds: string[],
   ): Promise<void> {
+    // A rollback frees claims exactly like a release does. Without the drain at
+    // the end, a reservation whose provider acquire failed released its claim
+    // and left the next waiter queued behind nothing, with no future release to
+    // wake it.
+    const rolledBack: RuntimeCapabilityLease[] = [];
     const selectedIds = new Set(leaseIds);
     const roots = snapshot.leases.filter(
       (lease) => selectedIds.has(lease.id) && ACTIVE_STATES.has(lease.state),
@@ -1226,6 +2001,10 @@ export class RuntimeCapabilityRegistry {
           holdsProvider(candidate),
       );
       const previousState = lease.state;
+      // See `releaseSelected`: a reservation has no provider, so rolling it back
+      // must not run a stop action against one. A failed stop here would park the
+      // claim on an `error` lease that nothing reclaims.
+      const providerless = previousState === 'queued' || isClaimReservation(lease);
       lease.state = 'releasing';
       lease.updatedAt = this.timestamp();
       this.recordEvent(snapshot, {
@@ -1239,7 +2018,7 @@ export class RuntimeCapabilityRegistry {
       await this.persist(snapshot);
 
       const cleanup =
-        otherHolders || previousState === 'queued'
+        otherHolders || providerless
           ? { ok: true }
           : await this.runAction(lease.slotId, entry.actions.release, lease.parameters, entry);
       lease.updatedAt = this.timestamp();
@@ -1259,6 +2038,10 @@ export class RuntimeCapabilityRegistry {
       lease.state = 'released';
       lease.releasedAt = lease.updatedAt;
       lease.referenceCount = 0;
+      lease.wait = undefined;
+      // A rolled-back QUEUE PLACE frees nothing: it never held the claim it was
+      // waiting for. Only leases that were holding one are handed to the drain.
+      if (previousState !== 'queued') rolledBack.push(lease);
       this.recordEvent(snapshot, {
         kind: 'released',
         slotId: lease.slotId,
@@ -1269,6 +2052,7 @@ export class RuntimeCapabilityRegistry {
       });
       this.updateReferenceCounts(snapshot, lease.slotId, lease.capabilityId);
     }
+    this.drainFreedClaims(snapshot, rolledBack, catalog);
   }
 
   async release(params: RuntimeCapabilityReleaseParams): Promise<RuntimeCapabilityReleaseResult> {
@@ -1467,6 +2251,8 @@ export class RuntimeCapabilityRegistry {
       const ordered = this.releaseOrder(snapshot, roots);
       const order = expandDependencies ? ordered : ordered.filter((lease) => rootIds.has(lease.id));
       const released: RuntimeCapabilityLease[] = [];
+      /** The subset of `released` that was actually holding its claims. */
+      const freedClaims: RuntimeCapabilityLease[] = [];
       const retained: RuntimeCapabilityLease[] = [];
       const effects = new Set<string>();
       const failures: RuntimeCapabilityReleaseResult['failures'] = [];
@@ -1546,6 +2332,13 @@ export class RuntimeCapabilityRegistry {
             holdsProvider(candidate),
         );
         const previousState = lease.state;
+        // A RESERVATION has no provider behind it: the drain handed it the claim
+        // and nothing ever ran the acquire action. It must be released like a
+        // queue place, not like a lease mid-boot. Stopping a provider that never
+        // started can fail, and a failed cleanup is durable — it would leave the
+        // claim held by an `error` lease forever. Keeping it warm is the same
+        // lie in the other direction: a warm window over nothing.
+        const wasReservation = isClaimReservation(lease);
         lease.state = 'releasing';
         lease.updatedAt = this.timestamp();
         this.recordEvent(snapshot, {
@@ -1559,15 +2352,16 @@ export class RuntimeCapabilityRegistry {
 
         let actionResult: RuntimeCapabilityActionResult = { ok: true };
         let releaseActionRan = false;
+        const providerless = previousState === 'queued' || wasReservation;
         if (
           otherHolders.length === 0 &&
           previousState !== 'error' &&
-          previousState !== 'queued' &&
+          !providerless &&
           entry.keepWarmMs &&
           keepWarmFor(lease)
         ) {
           lease.keepWarmUntil = new Date(this.now().getTime() + entry.keepWarmMs).toISOString();
-        } else if (otherHolders.length === 0 && previousState !== 'queued') {
+        } else if (otherHolders.length === 0 && !providerless) {
           releaseActionRan = true;
           // The provider is going away, so any earlier warm deadline is void.
           lease.keepWarmUntil = undefined;
@@ -1603,8 +2397,16 @@ export class RuntimeCapabilityRegistry {
         lease.releasedAt = this.timestamp();
         lease.updatedAt = lease.releasedAt;
         lease.referenceCount = 0;
+        // A released lease is not waiting for anything. Leaving the record on
+        // it made a torn-down slot's queue place still read as a live waiter.
+        lease.wait = undefined;
         lease.health = { state: 'unknown', checkedAt: lease.releasedAt };
-        released.push(structuredClone(lease));
+        const record = structuredClone(lease);
+        released.push(record);
+        // A queue place held no claim, so releasing it frees none. Everything
+        // else did: a reservation, an acquired lease, a lease with a failed
+        // cleanup that has now been cleaned up.
+        if (previousState !== 'queued') freedClaims.push(record);
         if (releaseActionRan) {
           for (const effect of entry.releaseEffects) effects.add(effect);
         }
@@ -1620,6 +2422,12 @@ export class RuntimeCapabilityRegistry {
             : 'provider released',
         });
       }
+      // AFTER the whole release pass, inside the same mutation and before the
+      // write. After, so a slot teardown finishes taking itself apart before
+      // anything is handed on; inside, so the reservation lands in the identical
+      // snapshot as the release that freed the claim and no acquire can slip
+      // between the two.
+      this.drainFreedClaims(snapshot, freedClaims, catalog);
       await this.persist(snapshot);
       return { ok: failures.length === 0, released, retained, effects: [...effects], failures };
     });
@@ -1694,6 +2502,8 @@ export class RuntimeCapabilityRegistry {
       // provider that failed to stop is still up, so whatever it depends on is
       // still in use and must not be stopped beneath it.
       const stillHolding = new Set<string>();
+      /** Leases whose provider this sweep actually stopped, so their claims freed. */
+      const sweptFree: RuntimeCapabilityLease[] = [];
       const eligible = selected.filter((lease) => {
         if (!heldByWarmDependent(lease)) return true;
         stillHolding.add(lease.id);
@@ -1808,7 +2618,11 @@ export class RuntimeCapabilityRegistry {
           });
           continue;
         }
+        // The provider is now genuinely gone, so the claim this warm lease was
+        // still holding is finally free. `keepWarmUntil` was cleared above, so
+        // the drain treats it as freed rather than skipping it as warm.
         summary.released.push(structuredClone(lease));
+        sweptFree.push(lease);
         for (const effect of entry.releaseEffects) {
           if (!summary.effects.includes(effect)) summary.effects.push(effect);
         }
@@ -1821,6 +2635,10 @@ export class RuntimeCapabilityRegistry {
           detail: 'keep-warm window ended; provider released',
         });
       }
+      // After the sweep, not during: a warm provider still holds its claim, and
+      // only stopping it frees one. This is the drain that finally serves a
+      // waiter which has been blocked by a keep-warm window all along.
+      this.drainFreedClaims(snapshot, sweptFree);
       await this.persist(snapshot);
       return summary;
     });
@@ -1885,6 +2703,13 @@ export class RuntimeCapabilityRegistry {
         leases.push(lease);
         bySlot.set(lease.slotId, leases);
       }
+      /**
+       * Leases recovery itself released — an unhealthy holder it cleaned up, a
+       * fenced owner's lease, a dropped queue place. Each frees a claim, and
+       * without the drain below the waiter behind it would sit queued forever:
+       * the release that would have woken it already happened, here.
+       */
+      const reclaimed: RuntimeCapabilityLease[] = [];
       for (const [slotId, leases] of bySlot) {
         let catalog: RuntimeCapabilityCatalogContext;
         try {
@@ -1927,6 +2752,36 @@ export class RuntimeCapabilityRegistry {
           const ambiguous =
             entry?.sharePolicy === 'exclusive' &&
             (initialProviderHolderCounts.get(lease.capabilityId) ?? 0) > 1;
+          // A RESERVATION, not a lease mid-boot. It is `acquiring` with its wait
+          // record still attached, which is exactly what the drain writes and
+          // nothing else does. The claim stays held for its owner and the grant
+          // is re-announced, so a restart between the reservation and the boot
+          // resumes instead of stranding the whole queue behind a lease that
+          // holds a claim no provider is behind. No health probe: there is
+          // nothing running to probe, and adopting it as `acquired` would report
+          // a device that was never booted.
+          if (isClaimReservation(lease)) {
+            if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
+              this.dropQueuedWaiter(
+                snapshot,
+                lease,
+                `reservation dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
+                'recovery-rejected',
+              );
+              reclaimed.push(lease);
+              continue;
+            }
+            this.announceGrant(lease, lease.wait!.claimId);
+            this.recordEvent(snapshot, {
+              kind: 'acquiring',
+              slotId,
+              capabilityId: lease.capabilityId,
+              leaseId: lease.id,
+              owner: lease.owner,
+              detail: `reserved claim '${lease.wait!.claimId}' restored after restart; the run engine completes it`,
+            });
+            continue;
+          }
           if (lease.state === 'queued') {
             // The fence applies to a queue slot too. A queued lease holds no
             // provider, but `blocksAcquisition` counts it, so a fenced owner's
@@ -1935,18 +2790,15 @@ export class RuntimeCapabilityRegistry {
             // gone and will never retry admission. Released without any
             // provider action, because there is nothing running to stop.
             if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
-              lease.state = 'released';
-              lease.updatedAt = this.timestamp();
-              lease.releasedAt = lease.updatedAt;
-              lease.referenceCount = 0;
-              this.recordEvent(snapshot, {
-                kind: 'recovery-rejected',
-                slotId,
-                capabilityId: lease.capabilityId,
-                leaseId: lease.id,
-                owner: lease.owner,
-                detail: `queue slot dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
-              });
+              // `wait` is cleared here exactly as the drain clears it: a
+              // released lease that still reads as a waiter is a contradiction,
+              // whichever path released it.
+              this.dropQueuedWaiter(
+                snapshot,
+                lease,
+                `queue slot dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
+                'recovery-rejected',
+              );
               continue;
             }
             this.recordEvent(snapshot, {
@@ -1990,6 +2842,7 @@ export class RuntimeCapabilityRegistry {
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              reclaimed.push(lease);
               this.recordEvent(snapshot, {
                 kind: 'released',
                 slotId,
@@ -2048,6 +2901,7 @@ export class RuntimeCapabilityRegistry {
               lease.releasedAt = lease.updatedAt;
               lease.referenceCount = 0;
               lease.cleanupFailure = undefined;
+              reclaimed.push(lease);
               outcome = stopped
                 ? 'provider stopped'
                 : 'provider left running for a live sibling holder';
@@ -2097,6 +2951,7 @@ export class RuntimeCapabilityRegistry {
           if (cleanup.ok) {
             lease.state = 'released';
             lease.releasedAt = lease.updatedAt;
+            reclaimed.push(lease);
             this.recordEvent(snapshot, {
               kind: 'released',
               slotId,
@@ -2121,6 +2976,9 @@ export class RuntimeCapabilityRegistry {
       }
       for (const lease of active)
         this.updateReferenceCounts(snapshot, lease.slotId, lease.capabilityId);
+      // After the whole recovery pass, so nothing is handed on while the fleet
+      // is still being reconciled.
+      this.drainFreedClaims(snapshot, reclaimed);
       await this.persist(snapshot);
     });
   }
