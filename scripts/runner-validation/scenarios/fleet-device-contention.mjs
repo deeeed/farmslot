@@ -14,10 +14,11 @@ export const RUNNER_AGNOSTIC = true;
  *
  * Two real scripted runs on two different slots contend for ONE fleet-scoped
  * claim. The first acquires it; the second asks to queue and is told where it
- * stands; the first releases; the second is drained to `acquired` without ever
- * re-asking. Every assertion is a gateway RPC read — lease records, lifecycle
- * events, the derived claim queue, and the run's own persisted posture — never
- * pane text.
+ * stands; the first releases, which RESERVES the claim for the waiter; the
+ * Gateway's own grant hook then re-runs the waiter's preparation and the lease
+ * reaches `acquired` without the scenario asking a second time. Every assertion
+ * is a gateway RPC read — lease records, lifecycle events, the derived claim
+ * queue, and the run's own persisted posture — never pane text.
  *
  * Capability choice: `recording` on `farmslot-farm`, whose `capture-helper`
  * claim is declared `fleet`. No slot in this pool configures an `android-device`
@@ -347,7 +348,7 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     if (!released.ok)
       throw new Error(`holder release failed: ${JSON.stringify(released.failures)}`);
     const drainedLease = await poll(
-      'the queued lease to reach acquired without a second acquire call',
+      'the reserved lease to be completed by the Gateway without a second acquire call',
       () => leaseFor(second.slot, waiter.id, CAPABILITY_ID),
       (lease) => lease?.state === 'acquired' || lease?.state === 'error',
       DRAIN_TIMEOUT_MS,

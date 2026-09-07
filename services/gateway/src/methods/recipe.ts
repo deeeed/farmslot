@@ -1184,9 +1184,14 @@ export async function assertRecipeRerunProofCapabilities(
     ? await retargetedProofRequirements(runId, target, capabilityStatus)
     : undefined;
   const posture = await prepareRunPostureForValidation(runId, proofRequirements, reconciler);
-  if (!posture.ok) {
-    throw new Error(`Recipe rerun blocked by runtime capability posture: ${posture.reason}`);
-  }
+  if (posture.ok) return;
+  // A scoped wait is not an error to raise at the operator. The run now holds a
+  // durable place in the claim's queue, the posture surfaces say who it is
+  // waiting on and where it stands, and the grant that follows the holder's
+  // release re-drives this preparation. Throwing here ended the rerun for good
+  // and left the queue place behind with nothing to complete it.
+  if (posture.waiting) return;
+  throw new Error(`Recipe rerun blocked by runtime capability posture: ${posture.reason}`);
 }
 
 async function executeRecipeRerunJob(args: {

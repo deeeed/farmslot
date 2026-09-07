@@ -1871,6 +1871,20 @@ test('a run queued behind a scoped resource claim reports the node as waiting on
     'a node waiting on a resource is not re-enqueued',
   );
 
+  // A gate outranks the queue place, and both reconciliation passes must agree:
+  // reading them in different orders made the node flip between `gated` and
+  // `waiting` on alternating ticks.
+  runs.updateRun(run.id, { status: 'human-gating' });
+  const gated = await workGraph.schedulerTick({ graphId });
+  const gatedNode = gated.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(gatedNode?.status, 'gated');
+  assert.deepEqual(
+    gatedNode?.waitingOn.filter((reason) => reason.kind === 'resource'),
+    [],
+    'a gate needs a person; a queue place does not, so it must not mask the gate',
+  );
+  runs.updateRun(run.id, { status: 'monitoring' });
+
   // Granted: the wait must not survive on the node.
   runs.updateRun(run.id, {
     resourcePosture: {

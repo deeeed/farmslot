@@ -770,6 +770,13 @@ function nodeHasOperatorCancelledRun(node: WorkNode, runs: readonly Run[]): bool
  */
 function resourceWaitReason(run: Run | undefined): WaitingReason | undefined {
   if (!run || isTerminalRunStatus(run.status)) return undefined;
+  // ONE precedence, applied here so both reconciliation passes cannot disagree.
+  // A gate and an operator cancellation each need a person and each outrank a
+  // queue place; reporting `waiting` over either would hide the thing somebody
+  // actually has to answer. Reading them in different orders in the two passes
+  // made a node flip between `gated` and `waiting` on alternating ticks.
+  if (run.status === 'blocked' || run.status === 'human-gating') return undefined;
+  if (isOperatorCancelledRun(run)) return undefined;
   const wait = run.resourcePosture?.resourceWait;
   if (!wait) return undefined;
   return {
@@ -1338,17 +1345,6 @@ export async function schedulerTick(
           node.updatedAt = now;
           continue;
         }
-        // Held ahead of the edge pass, exactly like an operator cancellation.
-        // `computeWaiting` rewrites `waitingOn` from inbound edges alone, so
-        // without this the resource reason set above is erased on the same tick
-        // that wrote it and the node reads as an ordinary running node.
-        const resourceWait = resourceWaitReason(latestRun);
-        if (resourceWait) {
-          node.status = 'waiting';
-          node.waitingOn = [resourceWait];
-          node.updatedAt = now;
-          continue;
-        }
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
         const startInbound = startEdges(inbound);
         const failedRequired = failedRequiredEdges(inbound);
@@ -1363,6 +1359,17 @@ export async function schedulerTick(
           node.updatedAt = now;
           snapshot.graph.status = 'needs-attention';
           graphNeedsAttention = true;
+          continue;
+        }
+        // Below a failed required upstream, above the edge pass. `computeWaiting`
+        // rewrites `waitingOn` from inbound edges alone, so without this the
+        // resource reason is erased on the same tick that wrote it and the node
+        // reads as an ordinary running node that never gets dispatched.
+        const resourceWait = resourceWaitReason(latestRun);
+        if (resourceWait) {
+          node.status = 'waiting';
+          node.waitingOn = [resourceWait];
+          node.updatedAt = now;
           continue;
         }
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);

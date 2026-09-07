@@ -281,28 +281,45 @@ export function resolveEffectivePosturePolicy(
 
 /** Transitions a run has retained, newest first, including the latest. */
 /**
- * The run's resource wait, read off the transition that caused it.
+ * The run's resource wait, derived from its own LEASE state.
  *
- * The queue place lives on the rejection the reconciler already records, so
- * there is one source of truth for "this run is waiting on a claim" and it
- * cannot drift from the transition an operator is reading.
+ * Read from the live capability status on every posture read and every write,
+ * never carried over from the transition that first reported it. A transition
+ * records a moment; the lease records the truth. Deriving from the transition
+ * left a granted run still advertising a wait — nothing writes a transition
+ * when the queue drains, so the work-graph kept the node pinned to `waiting`
+ * and never dispatched it.
+ *
+ * The rule is the whole rule: a `queued` lease for this run means waiting;
+ * anything else, including the `acquiring` reservation the drain just handed
+ * it, means the wait is over.
  */
-function resourceWaitFromTransition(
-  transition: ResourcePostureTransition,
+function resourceWaitFromStatus(
+  status: RuntimeCapabilityStatusResult,
+  runId: string,
 ): RunResourceWait | undefined {
-  const rejection = transition.rejection;
-  if (rejection?.kind !== 'capability-unavailable') return undefined;
-  const conflict = rejection.conflict;
-  if (conflict.kind !== 'scoped-wait') return undefined;
+  const queued = status.leases.find(
+    (lease) =>
+      lease.owner.runId === runId &&
+      lease.state === 'queued' &&
+      lease.wait?.kind === 'scoped-claim',
+  );
+  const wait = queued?.wait;
+  if (!queued || wait?.kind !== 'scoped-claim') return undefined;
+  const waiters = status.claimWaiters ?? [];
+  const mine = waiters.find((waiter) => waiter.leaseId === queued.id);
   return {
-    capabilityId: conflict.capabilityId,
-    claimId: conflict.claimId,
-    scope: conflict.scope,
-    blockingOwner: structuredClone(conflict.owner),
-    queuedLeaseId: conflict.queuedLeaseId,
-    position: conflict.position,
-    since: transition.completedAt ?? transition.requestedAt,
-    reason: conflict.reason,
+    capabilityId: queued.capabilityId,
+    claimId: wait.claimId,
+    scope: wait.scope,
+    blockingOwner: structuredClone(wait.blockingOwner),
+    queuedLeaseId: queued.id,
+    // The Gateway's own derived queue is the authority on position. If this
+    // lease is somehow absent from it, report the back of the line rather than
+    // the front: telling a run it is next when it is not is the worse error.
+    position: mine?.position ?? waiters.filter((w) => w.claimId === wait.claimId).length + 1,
+    since: wait.enqueuedAt,
+    reason: `Resource '${wait.claimId}' is held at ${wait.scope} scope by ${wait.blockingOwner.runId}`,
   };
 }
 
@@ -486,14 +503,17 @@ export class RunResourcePostureReconciler {
       );
     }
     capabilities.sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
-    return {
-      runId,
-      slotId: run.slotId,
-      state: {
-        ...(persisted ?? this.emptyState(run)),
-        capabilities,
-      },
+    // Re-derived on every read, and explicitly deleted when the lease says the
+    // wait is over: a persisted state written before the queue drained would
+    // otherwise keep reporting a place in line the run no longer holds.
+    const resourceWait = resourceWaitFromStatus(status, runId);
+    const state: RunResourcePostureState = {
+      ...(persisted ?? this.emptyState(run)),
+      capabilities,
+      ...(resourceWait ? { resourceWait } : {}),
     };
+    if (!resourceWait) delete state.resourceWait;
+    return { runId, slotId: run.slotId, state };
   }
 
   async preview(request: ResourcePostureRequest): Promise<ResourcePosturePlan> {
@@ -1174,17 +1194,17 @@ export class RunResourcePostureReconciler {
      */
     posture: ResourcePosture = context.policy.posture,
   ): RunResourcePostureState {
-    const resourceWait = resourceWaitFromTransition(transition);
+    const resourceWait = resourceWaitFromStatus(context.status, context.run.id);
     const state: RunResourcePostureState = {
       posture,
       policySource: context.policy.policySource,
       ...(context.policy.gateChoice ? { gateChoice: context.policy.gateChoice } : {}),
       ...(context.run.waitPolicy ? { waitPolicy: context.run.waitPolicy } : {}),
       capabilities: context.states,
-      // Derived from THIS transition, never carried forward. A wait that is
-      // over must not survive on the run: the work-graph reads this field to
-      // decide the node is blocked on a resource, and a stale copy would keep
-      // a running node reported as waiting forever.
+      // Derived from the lease, never carried forward. A wait that is over must
+      // not survive on the run: the work-graph reads this field to decide the
+      // node is blocked on a resource, and a stale copy would keep a granted
+      // run reported as waiting forever.
       ...(resourceWait ? { resourceWait } : {}),
       // Nothing in this module can stop a worker; `parked` delegates that to
       // machine parking, which refuses gate-held runs.
@@ -1193,6 +1213,7 @@ export class RunResourcePostureReconciler {
       recentTransitions: withTransition(context.run.resourcePosture, transition),
       updatedAt: this.now().toISOString(),
     };
+    if (!resourceWait) delete state.resourceWait;
     const updated = this.deps.updateRun(context.run.id, { resourcePosture: state });
     this.deps.onRunUpdated?.(updated);
     return state;

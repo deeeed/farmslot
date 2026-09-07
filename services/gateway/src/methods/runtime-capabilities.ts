@@ -30,6 +30,7 @@ import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
@@ -46,6 +47,7 @@ import {
 import {
   type RuntimeCapabilityActionResult,
   type RuntimeCapabilityCatalogContext,
+  type RuntimeCapabilityClaimGrant,
   runtimeCapabilityProviderDigest,
   RuntimeCapabilityRegistry,
   type WarmSweepSummary,
@@ -419,7 +421,46 @@ const registry = new RuntimeCapabilityRegistry({
   onEvent(event) {
     broadcastFn?.(Events.RUNTIME_CAPABILITY_LIFECYCLE, { event });
   },
+  /**
+   * A claim was reserved for a run that was waiting; go finish it.
+   *
+   * The registry stops at the reservation on purpose — it knows nothing about
+   * how a run prepares — so completion runs the run's OWN preparation, the same
+   * `validation-prepare` boundary the run would have hit anyway. That path
+   * reuses the reserved lease, boots the provider, and clears the run's
+   * resource wait; if it fails, its rollback releases the claim and drains the
+   * queue again, so the next waiter is served rather than stranded.
+   */
+  onClaimGranted(grant) {
+    void completeGrantedClaim(grant);
+  },
 });
+
+/**
+ * Complete one granted reservation, off the registry's mutation lock.
+ *
+ * Detached because a provider boot takes minutes and the release that produced
+ * the grant must not wait on it. Errors are handled, not swallowed: preparation
+ * already records its own failure on the run's posture and rolls the lease back
+ * through the registry, so the only thing left to report here is a throw the
+ * run record could not absorb.
+ */
+async function completeGrantedClaim(grant: RuntimeCapabilityClaimGrant): Promise<void> {
+  try {
+    const outcome = await prepareRunPostureForValidation(grant.owner.runId);
+    if (!outcome.ok && !outcome.waiting) {
+      console.warn(
+        `[runtime-capabilities] granted '${grant.claimId}' to run ${grant.owner.runId} but preparation did not complete: ${outcome.reason}`,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[runtime-capabilities] completing granted claim '${grant.claimId}' for run ${grant.owner.runId} threw: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
 
 export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<void> {
   broadcastFn = broadcast;

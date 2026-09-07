@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-06T22:48:20.009Z",
+  "recordedAt": "2026-09-07T00:09:43.130Z",
   "host": "macwork",
   "scenario": "fleet-device-contention",
   "runner": "scripted",
@@ -8,14 +8,14 @@
   "claimId": "capture-helper",
   "hostLoad": {
     "cores": 16,
-    "load1": 176.63671875,
-    "perCore": 11.04
+    "load1": 163.1708984375,
+    "perCore": 10.2
   },
   "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario fleet-device-contention --slot macwork-ff-1",
   "holderSlotId": "macwork-ff-1",
   "waiterSlotId": "macwork-ff-3",
-  "holderRunId": "65db3cf5-cddf-4249-a848-24613ebc017d",
-  "waiterRunId": "7eb92d08-2e30-474d-92ae-fa00a07c4827",
+  "holderRunId": "73da0f8b-fc82-4d76-8ce0-b4aa26d166b8",
+  "waiterRunId": "5906709c-26ea-497b-973e-1e9a945ba4c6",
   "nodes": {
     "holderAcquired": null,
     "waiterQueued": null,
@@ -31,7 +31,7 @@
     "android-device at fleet scope (no pool slot configures an android-device resource, so the provider is unavailable fleet-wide)"
   ],
   "pass": false,
-  "error": "holder acquire refused (host-pressure): Load average 172.86 is above 1.5x 16 cores.",
+  "error": "holder acquire refused (host-pressure): Load average 163.56 is above 1.5x 16 cores.",
   "declaredClaim": {
     "id": "capture-helper",
     "access": "exclusive",
@@ -40,7 +40,7 @@
   },
   "hostLoadAtFailure": {
     "cores": 16,
-    "load1": 180.33056640625,
-    "perCore": 11.27
+    "load1": 158.451171875,
+    "perCore": 9.9
   }
 }
