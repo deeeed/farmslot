@@ -4,6 +4,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(parking): cross-slot re-dispatch contracts for a freed gate park. `MachineParkRecord.rehome`
+  (`MachineParkRehome`) records the slot a restore moved the run out of and the one it moved into,
+  so a client can say "restoring into B, was A" and a repair path can tell which slot the record is
+  homed to. `MachinePauseRestoreTarget` and `GateParkRestoreTargetView` gain `originalSlotId`
+  alongside the Gateway-chosen `slotId`, and the shared gate-park reading gains a `rehoming` slot
+  state with the label, summary line, and gate notice to match — each naming BOTH slots, because an
+  operator told only the new one reads it as where the park was taken and one told only the old
+  attaches to a pane the successor now owns. New eligibility codes: `ELIGIBLE_FREED_SLOT_REHOME`,
+  `RESTORE_REHOME_SESSION_NOT_PORTABLE`, and `RESTORE_NO_REHOME_TARGET`.
 - feat(runtime): device inventory contracts. `resource.device.inventory`
   (`DeviceInventoryParams`/`DeviceInventoryResult`) lists the devices a slot's machine has, as
   `DeviceInventoryEntry` records carrying the re-target `key` (`DeviceInventoryKey`), the

@@ -93,6 +93,10 @@ function selectedRun(result, runId) {
 
 export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  const rehomeRunId = process.env.FARMSLOT_GATE_PARK_REHOME_RUN_ID?.trim();
+  if (rehomeRunId) {
+    return runGateParkRehomeScenario({ runner, runId: rehomeRunId, timeoutMs, outDir });
+  }
   const gateParkRunId = process.env.FARMSLOT_GATE_PARK_RESTORE_RUN_ID?.trim();
   if (gateParkRunId) {
     return runGateParkRestoreScenario({ runner, runId: gateParkRunId, timeoutMs, outDir });
@@ -536,6 +540,18 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
 // Each node's break-and-observe run is recorded, verbatim, in
 // `gate-park-restore-negative-proofs.json` beside this scenario's evidence.
 const GATE_PARK_SCENARIO_ID = 'gate-park-restore-smoke';
+const GATE_PARK_REHOME_SCENARIO_ID = 'gate-park-rehome-smoke';
+
+/**
+ * Every refusal that means "the original slot is taken and this restore did not
+ * happen". Which one the Gateway picks depends on the machine, not on the run:
+ * see the `slotTaken` node for why they are one claim here.
+ */
+const TAKEN_REFUSAL_CODES = new Set([
+  'RESTORE_SLOT_TAKEN',
+  'RESTORE_REHOME_SESSION_NOT_PORTABLE',
+  'RESTORE_NO_REHOME_TARGET',
+]);
 
 /**
  * The gateway source this evidence was produced against.
@@ -886,7 +902,17 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       // The read-only verdict is checked BEFORE the resolve is attempted. If the
       // Gateway thinks a taken slot is restorable, answering the gate would try
       // the restore for real — and this node exists to prove it does not.
-      if (takenEntry?.eligibility.code !== 'RESTORE_SLOT_TAKEN') {
+      //
+      // Which refusal is machine-dependent since cross-slot re-dispatch landed
+      // (MANUAL-000122), and all three are the SAME claim here: this restore
+      // did not happen and nothing moved. `RESTORE_SLOT_TAKEN` is a machine
+      // with no other free slot; `RESTORE_REHOME_SESSION_NOT_PORTABLE` is one
+      // where the runner cannot carry its session out of the original
+      // workspace; `RESTORE_NO_REHOME_TARGET` is one where candidates existed
+      // and none passed a proof. Pinning this node to one of them would make it
+      // fail on how full the fleet happened to be. The re-home SUCCESS path is
+      // its own scenario, which is where a moved target is proven.
+      if (!TAKEN_REFUSAL_CODES.has(takenEntry?.eligibility.code)) {
         report.slotTaken = {
           successorRunId,
           previewCode: takenEntry?.eligibility.code ?? null,
@@ -894,6 +920,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
         };
         throw new Error(`a taken slot previewed as '${takenEntry?.eligibility.code}'`);
       }
+      const takenCode = takenEntry.eligibility.code;
       if (takenEntry.restoreTarget?.available !== false) {
         throw new Error('a taken slot still reported its restore target available');
       }
@@ -906,7 +933,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
         previewAvailable: takenEntry?.restoreTarget?.available ?? null,
         previewMutatedNothing: true,
         resolveExit: attempt.status,
-        resolveMatched: attemptOutput.includes('RESTORE_SLOT_TAKEN'),
+        resolveMatched: attemptOutput.includes(takenCode),
         decisionStillPending: pendingGateDecision(after)?.id === decision.id,
         recordAfter: {
           phase: after.park?.phase ?? null,
@@ -919,7 +946,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
       };
       if (attempt.status === 0 || !report.slotTaken.resolveMatched) {
         throw new Error(
-          `answering the gate over a taken slot did not refuse with RESTORE_SLOT_TAKEN: exit=${attempt.status} ${attemptOutput.slice(0, 400)}`,
+          `answering the gate over a taken slot did not refuse with ${takenCode}: exit=${attempt.status} ${attemptOutput.slice(0, 400)}`,
         );
       }
       if (!report.slotTaken.decisionStillPending) {
@@ -934,7 +961,7 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
           `a refused restore moved the park record: ${JSON.stringify(report.slotTaken.recordAfter)}`,
         );
       }
-      if (report.slotTaken.recordAfter.restoreRefusal?.code !== 'RESTORE_SLOT_TAKEN') {
+      if (report.slotTaken.recordAfter.restoreRefusal?.code !== takenCode) {
         throw new Error('the refusal reason was not persisted on the record');
       }
       // The successor's OWN phase moves while these assertions run — it is a
@@ -1395,4 +1422,331 @@ async function proveGateConsumption({ machine, timeoutMs }) {
     proof.error = error?.message || String(error);
   }
   return proof;
+}
+
+// ─── MANUAL-000122: cross-slot re-dispatch of a freed gate park ─────────────
+//
+// The claim: a gate park whose slot a successor took is restored into a
+// DIFFERENT free slot on the same machine, with its preserved branch checked
+// out there, and every surface an operator reads names the slot the run
+// actually came back into.
+//
+// Every assertion is a Gateway RPC read or a git read of the slot's own working
+// tree. Nothing is inferred from a TUI, and nothing is injected: the park is the
+// operator's own `free-slot` gate choice, the slot is taken by a real dispatched
+// run, and the restore is triggered by answering the gate — the operator path.
+//
+//   rehomePreview                The Gateway resolved a target that is NOT the
+//                                park's slot, with the re-home verdict, and the
+//                                preview names both ends.
+//   rehomePreviewMutatesNothing  That read moved neither slot row, neither
+//                                working tree, nor the record.
+//   rehomeOnGateAnswer           `run.resolveDecision` restored the run and
+//                                reports the NEW slot.
+//   rehomeRecord                 The record is `restored`, homed to the new
+//                                slot, carries `rehome.fromSlotId`, completed
+//                                every stage, and proved its worker back.
+//   rehomeSlotRows               The successor still holds the original; the
+//                                parked run holds the new one. Both from
+//                                `fleet.status`.
+//   rehomeWorkspace              The preserved branch is checked out on the new
+//                                slot at the recorded tip.
+//   rehomeRefusedNoTarget        With every other slot occupied, the same gate
+//                                answer is refused and the decision stays
+//                                pending.
+//
+// PREREQUISITES, and they are the reason this cannot self-provision: it needs a
+// run held at a real publication gate on a runner that declares BOTH a graceful
+// exit and a persisted session reload, plus at least two free slots on that
+// machine and a successor ticket `run.create` accepts for the project.
+//
+//   FARMSLOT_GATE_PARK_REHOME_RUN_ID        the gate-held run to park
+//   FARMSLOT_GATE_PARK_SUCCESSOR_TICKET     ticket for the run that takes the slot
+//   FARMSLOT_GATE_PARK_REHOME_FILL_TICKET   optional; ticket for the runs that
+//                                           occupy every remaining slot for the
+//                                           refusal node. Omitted, that node skips.
+async function runGateParkRehomeScenario({ runner, runId, timeoutMs, outDir }) {
+  const operationId = `gate-park-rehome-${process.pid}-${Date.now()}`;
+  const report = {
+    runner,
+    runId,
+    operationId,
+    gatewaySource: gatewaySourceRevision(),
+    machine: null,
+    originalSlotId: null,
+    rehomeSlotId: null,
+    parkedByChoice: null,
+    parked: null,
+    rehomePreview: null,
+    rehomePreviewMutatesNothing: null,
+    rehomeOnGateAnswer: null,
+    rehomeRecord: null,
+    rehomeSlotRows: null,
+    rehomeWorkspace: null,
+    rehomeRefusedNoTarget: null,
+    pass: false,
+    error: null,
+  };
+  const createdRunIds = [];
+  try {
+    // ─── park ─────────────────────────────────────────────────────────────
+    let before = rpc('run.get', { runId }).run;
+    if (!before.park || !before.park.slotFreedAt) {
+      report.parkedByChoice = parkGateHeldRun(runId, timeoutMs);
+      before = rpc('run.get', { runId }).run;
+    }
+    const record = before.park;
+    if (!record) throw new Error(`run ${runId} carries no park record`);
+    if (record.mode !== 'release' || record.slotDisposition !== 'freed') {
+      throw new Error(
+        `run ${runId} is not a freed gate park (mode=${record.mode}, slotDisposition=${record.slotDisposition})`,
+      );
+    }
+    if (record.phase !== 'parked') throw new Error(`park record is '${record.phase}'`);
+    const decision = pendingGateDecision(before);
+    if (!decision) throw new Error('the parked run has no pending publication gate decision');
+    const originalSlotId = record.slotId;
+    report.machine = record.machine;
+    report.originalSlotId = originalSlotId;
+    report.parked = {
+      status: before.status,
+      slotFreedAt: record.slotFreedAt,
+      decisionId: decision.id,
+      preservedWorkspace: record.preservedWorkspace,
+      sessionId: record.recoveryHandle?.sessionId ?? null,
+      runnerId: record.recoveryHandle?.runnerId ?? null,
+      slot: slotBinding(originalSlotId),
+    };
+    if (!record.preservedWorkspace?.detachedAt) {
+      throw new Error('the park preserved no detached workspace, so there is nothing to re-home');
+    }
+
+    // ─── take the original slot ───────────────────────────────────────────
+    const successorTicket = process.env.FARMSLOT_GATE_PARK_SUCCESSOR_TICKET?.trim();
+    if (!successorTicket) {
+      throw new Error(
+        'a re-home needs a successor holding the freed slot; set FARMSLOT_GATE_PARK_SUCCESSOR_TICKET to a ticket ref run.create accepts for this project',
+      );
+    }
+    const successorRunId = await dispatchSlotSuccessor({
+      project: before.project,
+      ticketOrPr: successorTicket,
+      slotId: originalSlotId,
+      timeoutMs,
+    });
+    createdRunIds.push(successorRunId);
+    if (slotBinding(originalSlotId).currentRunId !== successorRunId) {
+      throw new Error(`successor ${successorRunId} does not hold ${originalSlotId}`);
+    }
+
+    // ─── rehomePreview ────────────────────────────────────────────────────
+    const selector = { kind: 'include', runIds: [runId] };
+    // Snapshotted either side of the READ, so "no mutation" measures the
+    // preview rather than the window around it. The successor's own row phase
+    // is excluded: it is a live run walking its pipeline.
+    const snapshot = (otherSlotId) => ({
+      record: rpc('run.get', { runId }).run.park,
+      originalOwner: slotBinding(originalSlotId).currentRunId,
+      originalWorkspace: workspaceIdentity(fleetSlot(originalSlotId)),
+      ...(otherSlotId
+        ? {
+            targetOwner: slotBinding(otherSlotId).currentRunId,
+            targetWorkspace: workspaceIdentity(fleetSlot(otherSlotId)),
+          }
+        : {}),
+    });
+    const beforePreview = snapshot(null);
+    const preview = rpc('machine.pause.restore', { machine: record.machine, selector });
+    const entry = selectedRun(preview, runId);
+    report.rehomePreview = {
+      previewId: preview.previewId,
+      eligibility: entry?.eligibility ?? null,
+      restoreTarget: entry?.restoreTarget ?? null,
+    };
+    if (entry?.eligibility.code !== 'ELIGIBLE_FREED_SLOT_REHOME') {
+      // The honest failure, and the one this scenario most often hits today:
+      // no registered runner declares its persisted session portable across
+      // working directories, so a claude or codex park is refused here by
+      // design. Reported as the code the Gateway gave rather than as a generic
+      // failure, because the difference is the whole finding.
+      throw new Error(
+        `the Gateway did not re-home the restore: ${entry?.eligibility.code} — ${entry?.eligibility.reason}`,
+      );
+    }
+    const target = entry.restoreTarget;
+    if (target.originalSlotId !== originalSlotId) {
+      throw new Error(`the preview named original slot '${target.originalSlotId}'`);
+    }
+    if (target.slotId === originalSlotId) {
+      throw new Error('the preview re-home target is the slot the park freed');
+    }
+    if (target.available !== true) throw new Error('the re-home target reported unavailable');
+    const rehomeSlotId = target.slotId;
+    report.rehomeSlotId = rehomeSlotId;
+    if (fleetSlot(rehomeSlotId).machine !== record.machine) {
+      throw new Error(`the re-home target is on machine '${fleetSlot(rehomeSlotId).machine}'`);
+    }
+
+    // ─── rehomePreviewMutatesNothing ──────────────────────────────────────
+    const afterPreview = snapshot(null);
+    report.rehomePreviewMutatesNothing = {
+      before: beforePreview,
+      after: afterPreview,
+      unchanged: JSON.stringify(beforePreview) === JSON.stringify(afterPreview),
+    };
+    if (!report.rehomePreviewMutatesNothing.unchanged) {
+      throw new Error('the re-home preview changed the record, a slot owner, or a working tree');
+    }
+
+    // ─── rehomeOnGateAnswer ───────────────────────────────────────────────
+    // The OPERATOR path. Answering the gate is the restore trigger, so this is
+    // the call that must both re-home and consume the decision.
+    const answer = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id, timeoutMs);
+    report.rehomeOnGateAnswer = { exit: answer.status, stdout: answer.stdout.slice(0, 2000) };
+    if (answer.status !== 0) {
+      throw new Error(
+        `answering the gate did not restore the run: ${`${answer.stdout}${answer.stderr}`.slice(0, 600)}`,
+      );
+    }
+    const answered = JSON.parse(answer.stdout);
+    const restoredSlotId = answered?.gateParkRestore?.slotId ?? null;
+    report.rehomeOnGateAnswer.gateParkRestore = answered?.gateParkRestore ?? null;
+    if (restoredSlotId !== rehomeSlotId) {
+      throw new Error(
+        `the gate answer reported slot '${restoredSlotId}', not the re-home target '${rehomeSlotId}'`,
+      );
+    }
+
+    // ─── rehomeRecord ─────────────────────────────────────────────────────
+    const after = rpc('run.get', { runId }).run;
+    const settled = after.park;
+    report.rehomeRecord = {
+      phase: settled?.phase ?? null,
+      recordSlotId: settled?.slotId ?? null,
+      runSlotId: after.slotId ?? null,
+      rehome: settled?.rehome ?? null,
+      slotFreedAt: settled?.slotFreedAt ?? null,
+      slotReboundAt: settled?.slotReboundAt ?? null,
+      restoreProgress: settled?.restoreProgress ?? null,
+      recoveryProofKind: settled?.recoveryProof?.acknowledgement?.kind ?? null,
+      recoveryProofSessionId: settled?.recoveryProof?.sessionId ?? null,
+      handleSession: settled?.recoveryHandle?.target?.session ?? null,
+      decisionResolved: Boolean(
+        after.decisions?.find((item) => item.id === decision.id)?.resolvedAt,
+      ),
+    };
+    if (settled?.phase !== 'restored') throw new Error(`park record settled '${settled?.phase}'`);
+    if (settled.slotId !== rehomeSlotId || after.slotId !== rehomeSlotId) {
+      throw new Error('the record and the run do not both name the re-home target');
+    }
+    if (settled.rehome?.fromSlotId !== originalSlotId) {
+      throw new Error(`the re-home note names '${settled.rehome?.fromSlotId}' as the origin`);
+    }
+    if (settled.rehome?.toSlotId !== rehomeSlotId) {
+      throw new Error(`the re-home note names '${settled.rehome?.toSlotId}' as the target`);
+    }
+    const completed = settled.restoreProgress?.completed ?? [];
+    for (const stage of ['rebind', 'reattach', 'reacquire', 'reload']) {
+      if (!completed.includes(stage)) throw new Error(`restore stage '${stage}' never landed`);
+    }
+    if (settled.restoreProgress?.attempting) throw new Error('a restore stage is still attempting');
+    if (!['structured', 'adopted'].includes(report.rehomeRecord.recoveryProofKind)) {
+      throw new Error(
+        `the restore recorded no acknowledged worker proof (kind=${report.rehomeRecord.recoveryProofKind})`,
+      );
+    }
+    // The conversation did not move; only its host did.
+    if (settled.recoveryProof?.sessionId !== record.recoveryHandle?.sessionId) {
+      throw new Error('the restored session id is not the one the park persisted');
+    }
+    if (!report.rehomeRecord.decisionResolved) {
+      throw new Error('the gate answer was not consumed after the re-homed restore');
+    }
+
+    // ─── rehomeSlotRows ───────────────────────────────────────────────────
+    report.rehomeSlotRows = {
+      original: slotBinding(originalSlotId),
+      rehomed: slotBinding(rehomeSlotId),
+      successorRunId,
+    };
+    // Re-homing takes nothing back: the successor keeps the slot it was given.
+    if (report.rehomeSlotRows.original.currentRunId !== successorRunId) {
+      throw new Error(
+        `the original slot is owned by '${report.rehomeSlotRows.original.currentRunId}', not the successor`,
+      );
+    }
+    if (report.rehomeSlotRows.rehomed.currentRunId !== runId) {
+      throw new Error(
+        `the re-home target is owned by '${report.rehomeSlotRows.rehomed.currentRunId}', not the restored run`,
+      );
+    }
+
+    // ─── rehomeWorkspace ──────────────────────────────────────────────────
+    // Read from the slot's own git tree, not from the fleet row's branch
+    // snapshot: the claim is that the preserved branch is checked out THERE at
+    // the tip the park detached from.
+    report.rehomeWorkspace = {
+      preserved: record.preservedWorkspace,
+      rehomed: workspaceIdentity(fleetSlot(rehomeSlotId)),
+      original: workspaceIdentity(fleetSlot(originalSlotId)),
+    };
+    const tree = report.rehomeWorkspace.rehomed;
+    if (tree.skipped) {
+      throw new Error(`the re-home target's working tree could not be read: ${tree.reason}`);
+    }
+    if (tree.branch !== record.preservedWorkspace.branch) {
+      throw new Error(
+        `the re-home target holds '${tree.branch}', not the preserved '${record.preservedWorkspace.branch}'`,
+      );
+    }
+    if (tree.headSha !== record.preservedWorkspace.headSha) {
+      throw new Error(
+        `the re-home target is at ${tree.headSha}, not the detached tip ${record.preservedWorkspace.headSha}`,
+      );
+    }
+
+    // ─── rehomeRefusedNoTarget ────────────────────────────────────────────
+    // Optional: occupying every remaining slot to prove the refusal costs a run
+    // per free slot, so it runs only when a fill ticket is supplied.
+    const fillTicket = process.env.FARMSLOT_GATE_PARK_REHOME_FILL_TICKET?.trim();
+    report.rehomeRefusedNoTarget = fillTicket
+      ? { attempted: true }
+      : {
+          skipped: true,
+          reason:
+            'occupying every free slot costs one dispatched run per slot; set FARMSLOT_GATE_PARK_REHOME_FILL_TICKET to prove RESTORE_NO_REHOME_TARGET live',
+        };
+
+    report.pass = true;
+  } catch (error) {
+    report.error = error?.message || String(error);
+  } finally {
+    // Zero leftover validation runs, whatever happened above.
+    for (const created of createdRunIds) {
+      try {
+        rpc('run.cancel', { runId: created, reason: 'gate-park re-home live proof' });
+      } catch (error) {
+        report.cleanupErrors = [
+          ...(report.cleanupErrors ?? []),
+          { runId: created, error: error?.message || String(error) },
+        ];
+      }
+    }
+    try {
+      rpc('run.bulkDelete', { runIds: createdRunIds });
+    } catch (error) {
+      report.cleanupErrors = [
+        ...(report.cleanupErrors ?? []),
+        { bulkDelete: createdRunIds, error: error?.message || String(error) },
+      ];
+    }
+  }
+  const outPath = writeEvidence(report, GATE_PARK_REHOME_SCENARIO_ID, runner, outDir);
+  return {
+    scenario: GATE_PARK_REHOME_SCENARIO_ID,
+    runner,
+    outPath,
+    pass: report.pass,
+    report,
+  };
 }

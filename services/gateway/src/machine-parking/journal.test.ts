@@ -462,3 +462,41 @@ test('restore effects round-trip, and a malformed effect is refused at write', a
     /invalid machine parking intent journal/,
   );
 });
+
+test('a re-home note round-trips, and a half-written one is refused at write', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-machine-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  const record = freeingRecord('rehome-op', 'run-a');
+  const rehome = {
+    fromSlotId: 'macwork-ff-1',
+    toSlotId: 'macwork-ff-3',
+    at: '2026-09-05T00:00:00.000Z',
+    reason: "slot 'macwork-ff-1' is now owned by run 'run-successor'",
+  };
+
+  await store.write('restore-slot', [{ ...record, slotId: 'macwork-ff-3', rehome }], 'run-a');
+  const { journals, quarantined } = await store.load();
+  assert.deepEqual(quarantined, []);
+  // `toSlotId` is what the repair path re-drives the rebind against, so losing
+  // it on reload would send the repair at the slot a successor holds.
+  assert.deepEqual(journals[0]?.records[0]?.rehome, rehome);
+
+  // A note that names only one end says nothing about where the record is
+  // homed, so it is refused at write rather than quarantined after a crash.
+  await assert.rejects(
+    store.write(
+      'restore-slot',
+      [{ ...record, rehome: { ...rehome, toSlotId: '' } } as never],
+      'run-b',
+    ),
+  );
+  // And a note whose two ends are the same describes no move at all.
+  await assert.rejects(
+    store.write(
+      'restore-slot',
+      [{ ...record, rehome: { ...rehome, toSlotId: rehome.fromSlotId } } as never],
+      'run-c',
+    ),
+  );
+});

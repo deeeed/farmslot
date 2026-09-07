@@ -390,6 +390,8 @@ export function renderRunGatePark(view: GateParkView | null): unknown {
       data-restore-first=${String(view.restoreBeforeGateAnswer)}
       data-restore-available=${target.available === null ? 'unknown' : String(target.available)}
       data-restore-stage=${view.restoreStage.state}
+      data-restore-slot=${target.slotId}
+      data-restore-original-slot=${target.originalSlotId}
     >
       <div class="posture-park-headline" data-testid="run-posture-gate-park-state">
         ${gateParkStateLabel(view)}
@@ -402,6 +404,12 @@ export function renderRunGatePark(view: GateParkView | null): unknown {
             This run released ${view.freedSlotId} to dispatch.
           </div>`
         : nothing}
+      ${target.slotId === target.originalSlotId
+        ? nothing
+        : html`<div class="posture-park-line" data-testid="run-posture-gate-park-rehome">
+            ${target.originalSlotId} was taken, so this run is being restored into ${target.slotId}
+            instead — attach there, not to ${target.originalSlotId}.
+          </div>`}
       <div class="posture-park-line" data-testid="run-posture-gate-park-target">
         Restore target ${target.slotId} —
         ${target.available === null

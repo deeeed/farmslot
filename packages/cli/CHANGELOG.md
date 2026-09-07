@@ -4,6 +4,9 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(machine): `farmslot machine status` and `machine restore` print `restore=<slot> (was
+<original>)` when the Gateway re-homed a freed gate park onto a different slot, so an operator
+  attaches to the slot the run actually came back into rather than the one it was parked from.
 - fix(dispatch): `farmslot dispatch pressure-admission status` reports the EFFECTIVE state. With
   `FARMSLOT_DISPATCH_PRESSURE_ADMISSION` set on the gateway, it printed the stored flag — telling an
   operator `DISABLED` while dispatches were being refused. It now names the source, shows the stored

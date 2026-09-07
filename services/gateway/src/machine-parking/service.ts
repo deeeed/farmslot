@@ -10,6 +10,7 @@ import {
   type MachineParkError,
   type MachineParkPhase,
   type MachineParkRecord,
+  type MachineParkRehome,
   type MachineParkResource,
   type MachineParkResourceManifest,
   type MachineParkResourceReleaseEffect,
@@ -69,8 +70,14 @@ import {
   pollSlotResources,
   resolveSlotResources,
 } from '../fleet/resource-manager.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
+import {
+  activeRunSlotIds,
+  findBestSlot,
+  projectConfigsFromProjects,
+  type SlotScoringProjectConfig,
+} from '../methods/dispatch/slot-scoring.js';
 import { slotOwnershipFieldsForRun } from '../methods/fleet.js';
 import {
   runPauseTransitionLocked,
@@ -87,10 +94,15 @@ import {
   withMachineRunTransition,
   withRunTransitionWhileMachineHeld,
 } from '../run-lifecycle/transition-coordinator.js';
-import { normalizeRunner } from '../runners/registry.js';
+import {
+  normalizeRunner,
+  runnerSessionPortability,
+  type SessionPortability,
+} from '../runners/registry.js';
 import {
   inspectRunnerParkHost,
   inspectRunnerRecovery,
+  rehomeParkHandleSession,
   rehostRunnerParkTarget,
   reloadRunnerForPark,
   type RunnerParkHostOwnership,
@@ -116,6 +128,22 @@ import { MachinePausePreviewStaleError } from './preview-errors.js';
 type Fleet = Awaited<ReturnType<typeof loadFleetStatus>>;
 type MachineParkingRecoveryProof = NonNullable<MachineParkRecord['recoveryProof']>;
 
+/**
+ * The slot a restore will re-bind, and what it takes to get there.
+ *
+ * `slotId` equals the record's own slot for the ordinary case. When a successor
+ * took that slot it names the re-home target instead, and `handle` carries the
+ * recovery handle re-bound to the target's tmux session — the conversation is
+ * unchanged, only its host moved.
+ */
+interface RestoreSlotTarget {
+  slotId: string;
+  /** Why the original could not take the run back. Absent when it could. */
+  reason?: string;
+  /** Present only for a re-home; the handle re-bound to the target's session. */
+  handle?: MachinePauseRecoveryHandle;
+}
+
 export interface MachineParkingDependencies {
   now(): string;
   operationId(): string;
@@ -123,6 +151,23 @@ export interface MachineParkingDependencies {
   getRun(runId: string): Run | undefined;
   loadFleet(): Promise<Fleet>;
   updatePark(runId: string, park: MachineParkRecord | null): Run;
+  /**
+   * Move the run's slot binding when a restore re-homes it into a different
+   * slot. Written in the same stage as the record's own `slotId`, because
+   * every later step — the workspace checkout, the resource observation, the
+   * runner reload — resolves its target through one or the other.
+   */
+  setRunSlot(runId: string, slotId: string): Run;
+  /** Runner-declared: does a persisted session resolve outside its recorded workspace. */
+  sessionPortability(runnerId: string): SessionPortability;
+  /**
+   * Per-project branch-tracking config, so a re-home target is scored by the
+   * same rules dispatch scores a new run's slot with rather than by a second
+   * copy of them.
+   */
+  projectConfigs(): Promise<Readonly<Record<string, SlotScoringProjectConfig>>>;
+  /** The tmux session that owns a slot, so a re-homed handle can be bound to it. */
+  resolveSlotSession(slotId: string): Promise<string>;
   persistRun(run: Run, reason: string): Promise<void>;
   writeIntentJournal(
     kind: MachineParkingIntentKind,
@@ -570,6 +615,11 @@ const defaultDependencies: MachineParkingDependencies = {
   getRun,
   loadFleet: loadFleetStatus,
   updatePark: (runId, park) => updateRun(runId, { park }),
+  setRunSlot: (runId, slotId) => updateRun(runId, { slotId }),
+  sessionPortability: runnerSessionPortability,
+  projectConfigs: async () => projectConfigsFromProjects(await loadProjectConfigs()),
+  resolveSlotSession: async (slotId) =>
+    resolveTmuxSession(slotId, await loadSlotVars(slotId), { strict: true }),
   persistRun: persistRunNow,
   writeIntentJournal: (kind, records, scopeId) => intentJournalStore.write(kind, records, scopeId),
   deleteIntentJournal: (machine, kind, operationId, scopeId) =>
@@ -1034,6 +1084,9 @@ export class MachineParkingService {
               },
         restoreTarget: {
           slotId: record.slotId,
+          // The park's ORIGINAL slot, which `slotId` no longer names once a
+          // re-home moved it. `rehome.fromSlotId` is the only surviving record.
+          originalSlotId: record.rehome?.fromSlotId ?? record.slotId,
           disposition: record.slotDisposition ?? 'retained',
           available: (await this.slotAcceptsRestore(record.slotId, record.runId)).ok,
         },
@@ -2163,6 +2216,183 @@ export class MachineParkingService {
   }
 
   /**
+   * The slot this restore will re-bind, resolved the same way at every point
+   * that asks: the preview, the in-transition preflight, and the restore
+   * itself. One resolver rather than three readings of the same question, so a
+   * client can never be shown a target the execution then disagrees with.
+   *
+   * The original slot wins whenever it can still take the run. Only when it
+   * cannot is a re-home considered, so an idle original is never abandoned for
+   * a better-scoring neighbour.
+   */
+  private async resolveRestoreSlotTarget(
+    run: Run,
+    record: MachineParkRecord,
+    fleet: Fleet,
+  ): Promise<
+    { ok: true; target: RestoreSlotTarget } | { ok: false; code: string; reason: string }
+  > {
+    const availability = await this.slotAcceptsRestore(record.slotId, run.id);
+    if (availability.ok) return { ok: true, target: { slotId: record.slotId } };
+    const rehome = await this.resolveRehomeTarget(run, record, fleet, availability.reason);
+    if (!rehome.ok) return rehome;
+    return {
+      ok: true,
+      target: { slotId: rehome.slotId, reason: availability.reason, handle: rehome.handle },
+    };
+  }
+
+  /**
+   * Which slot may take this run back when a successor holds the one its park
+   * freed.
+   *
+   * Selection is DISPATCH'S, not parking's: `findBestSlot` scores the machine's
+   * free slots exactly as it would for a new run, with the preserved branch as
+   * the target branch so a slot already on it wins on warm affinity and a
+   * linked worktree that has the branch checked out elsewhere is refused. A
+   * second scoring rule here would drift from the one dispatch actually applies.
+   *
+   * Every proof below is READ-ONLY and runs before anything mutates, so a
+   * refusal leaves the record exactly as parked as it was:
+   *
+   *   1. the candidate row can be claimed at all;
+   *   2. the preserved branch ref is reachable from the candidate's repo AND its
+   *      tree is clean — the same inspection a same-slot restore does, which is
+   *      what distinguishes a sibling worktree sharing the park's object store
+   *      from an independent clone that has never seen the branch;
+   *   3. the candidate declares every resource the park's manifest names, or the
+   *      restore would settle `restored` having booted less than it released;
+   *   4. the persisted runner session can be hosted there.
+   *
+   * Fails closed on runner capability before any of that: a runner whose
+   * session is scoped to the workspace it was recorded in cannot be resumed
+   * from another slot, and reloading it anyway would start a FRESH conversation
+   * while reporting a successful restore.
+   */
+  private async resolveRehomeTarget(
+    run: Run,
+    record: MachineParkRecord,
+    fleet: Fleet,
+    takenReason: string,
+  ): Promise<
+    | { ok: true; slotId: string; handle: MachinePauseRecoveryHandle }
+    | { ok: false; code: string; reason: string }
+  > {
+    const taken = (code: string, reason: string) => ({ ok: false as const, code, reason });
+    const workspace = record.preservedWorkspace;
+    // Nothing to re-home INTO. Without a preserved branch the run's work exists
+    // only in the original slot's working tree, so moving the record would
+    // leave it behind — the original slot really is the only answer.
+    if (!workspace?.detachedAt) {
+      return taken(MachineParkEligibilityCodes.restoreSlotTaken, takenReason);
+    }
+    const handle = record.recoveryHandle;
+    if (!handle) {
+      return taken(MachineParkEligibilityCodes.restoreSlotTaken, takenReason);
+    }
+    const occupied = activeRunSlotIds(this.deps.allRuns(), run.id);
+    // Same machine only. A run's workspace, its tmux session, and its resources
+    // are all host-local, so a cross-machine move is a different feature.
+    const remaining = new Set(
+      fleet.slots
+        .filter(
+          (slot) =>
+            slot.machine === record.machine &&
+            slot.slot !== record.slotId &&
+            !occupied.has(slot.slot),
+        )
+        .map((slot) => slot.slot),
+    );
+    // Asked BEFORE the runner's capability, and the order is the point: with
+    // nowhere to move to, the original slot really is this run's only home and
+    // `RESTORE_SLOT_TAKEN` — wait for it — is exactly the right answer.
+    // Reporting a runner limitation first would blame the runner for a machine
+    // that simply has no free slot, and send the operator looking for the wrong
+    // fix.
+    if (remaining.size === 0) {
+      return taken(MachineParkEligibilityCodes.restoreSlotTaken, takenReason);
+    }
+    if (this.deps.sessionPortability(handle.runnerId) !== 'machine') {
+      return taken(
+        MachineParkEligibilityCodes.restoreRehomeSessionNotPortable,
+        `${takenReason}; runner '${handle.runnerId}' scopes its persisted session to the workspace it was recorded in, so it cannot be reloaded from another slot`,
+      );
+    }
+    const projectConfigs = await this.deps.projectConfigs();
+    const rejected: string[] = [];
+    // Ask dispatch for its best remaining candidate, prove it, and on a failed
+    // proof drop just that one and ask again. Scoring stays dispatch's and the
+    // proofs stay ours, without this code reimplementing either.
+    while (remaining.size > 0) {
+      const candidate = findBestSlot(fleet.slots, run.project, {
+        allowedSlots: [...remaining],
+        targetBranch: workspace.branch,
+        familyId: run.familyId,
+        ...(run.lane ? { lane: run.lane } : {}),
+        ...(run.prepareProfile ? { requiredPrepareProfile: run.prepareProfile } : {}),
+        projectConfigs,
+      });
+      if (!candidate) break;
+      remaining.delete(candidate.slot);
+      const refuse = (reason: string): void => {
+        rejected.push(`${candidate.slot}: ${reason}`);
+      };
+      const availability = await this.slotAcceptsRestore(candidate.slot, run.id);
+      if (!availability.ok) {
+        refuse(availability.reason);
+        continue;
+      }
+      // The run as it WOULD be at the candidate. Every workspace and host probe
+      // resolves its slot vars from `run.slotId`, so this is what asks them the
+      // question about the target rather than about the slot being left.
+      const runAtCandidate: Run = { ...run, slotId: candidate.slot };
+      const inspection = await this.inspectRestoreWorkspace(runAtCandidate, workspace);
+      if (!inspection.ok) {
+        refuse(inspection.reason);
+        continue;
+      }
+      const missing = record.resourceManifest.resources
+        .map((resource) => resource.resourceId)
+        .filter((resourceId) => !candidate.resources?.[resourceId]);
+      if (missing.length > 0) {
+        refuse(`declares no ${missing.join(', ')}`);
+        continue;
+      }
+      // The handle names the ORIGINAL slot's tmux session, which the candidate
+      // does not own. Re-binding it is what makes the host question answerable
+      // at all; the runner session id and its on-disk path are carried through
+      // untouched, because the conversation is not what moves.
+      let session: string;
+      try {
+        session = await this.deps.resolveSlotSession(candidate.slot);
+      } catch (error) {
+        refuse(`tmux session is unresolvable: ${messageOf(error)}`);
+        continue;
+      }
+      const rehomedHandle = rehomeParkHandleSession(handle, session);
+      if (!rehomedHandle) {
+        refuse('the recovery handle names no exact tmux window to re-host into');
+        continue;
+      }
+      // No ownership evidence, deliberately: the candidate's rows have never
+      // named this run, so nothing there is this restore's to adopt. Any live
+      // occupant is someone else's and the plan refuses it.
+      const host = await this.deps.inspectParkHost(runAtCandidate, rehomedHandle);
+      if (!host.ok) {
+        refuse(host.reason);
+        continue;
+      }
+      return { ok: true, slotId: candidate.slot, handle: rehomedHandle };
+    }
+    return taken(
+      MachineParkEligibilityCodes.restoreNoRehomeTarget,
+      `${takenReason}, and no other slot on '${record.machine}' could take the run${
+        rejected.length ? ` (${rejected.join('; ')})` : ''
+      }`,
+    );
+  }
+
+  /**
    * Take the freed slot back for its parked run: re-bind ownership, then put
    * the preserved branch back in the working tree.
    *
@@ -2181,8 +2411,9 @@ export class MachineParkingService {
     runId: string,
     record: MachineParkRecord,
     operationId: string,
+    target: RestoreSlotTarget,
   ): Promise<void> {
-    const availability = await this.slotAcceptsRestore(record.slotId, runId);
+    const availability = await this.slotAcceptsRestore(target.slotId, runId);
     if (!availability.ok) throw new Error(availability.reason);
     // Scoped to THIS run, like the free it undoes: a batch shares one
     // operationId, and an unscoped marker would be overwritten by the next
@@ -2208,7 +2439,7 @@ export class MachineParkingService {
         });
     }
     await this.deps.writeIntentJournal('restore-slot', [structuredClone(record)], runId);
-    await this.rebindSlotStage(runId, record, operationId);
+    await this.rebindSlotStage(runId, record, operationId, target);
     await this.reattachWorkspaceStage(runId, operationId);
   }
 
@@ -2226,16 +2457,46 @@ export class MachineParkingService {
     runId: string,
     record: MachineParkRecord,
     operationId: string,
+    target: RestoreSlotTarget,
   ): Promise<void> {
     await this.beginRestoreStage(runId, operationId, 'rebind');
-    const row = await this.deps.slotRow(record.slotId);
+    const rehoming = target.slotId !== record.slotId;
+    if (rehoming) {
+      // WRITE-AHEAD, before the claim, and it is the whole re-home mechanism.
+      // Every later step resolves its target through the record's `slotId` or
+      // the run's — the workspace checkout, the resource observation, the host
+      // re-bind, the reload — so moving both here is what makes the rest of the
+      // restore act on the new slot without a second code path.
+      //
+      // Before the claim rather than after, for the same reason `slotFreedAt`
+      // is: a crash between the two writes must leave the repair path a marker
+      // saying which slot this record is now homed to, or it would re-drive the
+      // rebind against the slot a successor holds.
+      await this.patchRecord(runId, (current) => ({
+        ...current,
+        slotId: target.slotId,
+        rehome: {
+          fromSlotId: record.slotId,
+          toSlotId: target.slotId,
+          at: this.deps.now(),
+          reason: target.reason ?? 'the original slot was taken',
+        } satisfies MachineParkRehome,
+        // The handle names the target slot's tmux session now. Persisted here
+        // because `restoreOne` reads the record's handle for the reload, and a
+        // handle still naming the old session would refuse every host check.
+        ...(target.handle ? { recoveryHandle: structuredClone(target.handle) } : {}),
+      }));
+      this.deps.setRunSlot(runId, target.slotId);
+      await this.deps.persistRun(this.requireRun(runId), 'machine-park-restore-rehome');
+    }
+    const row = await this.deps.slotRow(target.slotId);
     const owner =
       row && typeof row.current_run_id === 'string' && row.current_run_id
         ? row.current_run_id
         : null;
     if (owner !== runId) {
-      if (!(await this.deps.claimSlotOwnership(this.requireRun(runId), record.slotId))) {
-        throw new Error(`slot '${record.slotId}' could not be re-bound to run '${runId}'`);
+      if (!(await this.deps.claimSlotOwnership(this.requireRun(runId), target.slotId))) {
+        throw new Error(`slot '${target.slotId}' could not be re-bound to run '${runId}'`);
       }
     }
     await this.patchRecord(runId, (current) => ({
@@ -2468,16 +2729,22 @@ export class MachineParkingService {
         const selected = selectedBySelector(run.id, selector);
         const slot = fleet.slots.find((candidate) => candidate.slot === record.slotId);
         const freed = owesFreedSlotStages(record);
-        // Read once and shared by the verdict and the target, so a client never
-        // sees a rejection that disagrees with the availability beside it.
-        const availability = freed
-          ? await this.slotAcceptsRestore(record.slotId, run.id)
-          : { ok: true as const };
+        // Resolved once and shared by the verdict and the target, so a client
+        // never sees a rejection that disagrees with the target beside it. This
+        // is also where a re-home becomes visible: the resolver answers with a
+        // different slot, and the preview reports it before the operator
+        // commits to answering the gate.
+        const resolved:
+          | { ok: true; target: RestoreSlotTarget }
+          | { ok: false; code: string; reason: string } = freed
+          ? await this.resolveRestoreSlotTarget(run, record, fleet)
+          : { ok: true, target: { slotId: record.slotId } };
         const restoreTarget: MachinePauseRestoreTarget = {
-          slotId: record.slotId,
+          slotId: resolved.ok ? resolved.target.slotId : record.slotId,
+          originalSlotId: record.slotId,
           disposition: record.slotDisposition ?? 'retained',
           available: freed
-            ? availability.ok
+            ? resolved.ok
             : Boolean(slot) && (record.mode !== 'release' || slot!.currentRunId === run.id),
         };
         const reject = (code: string, reason: string): MachinePauseRestorePreviewRun => ({
@@ -2528,16 +2795,22 @@ export class MachineParkingService {
           return reject('RECOVERY_HANDLE_MISSING', 'release park has no runner recovery handle');
         }
         if (freed) {
-          // ADR-054 restores a freed slot into the ORIGINAL slot only. Every
-          // check below is READ-ONLY on purpose: a refusal here has changed
-          // nothing, so the record stays parked and its gate stays answerable
-          // once the slot comes back. Cross-slot re-dispatch is a separate
-          // decision and deliberately absent.
-          if (!availability.ok) {
-            return reject(MachineParkEligibilityCodes.restoreSlotTaken, availability.reason);
-          }
+          // Every check below is READ-ONLY on purpose: a refusal here has
+          // changed nothing, so the record stays parked and its gate stays
+          // answerable once a slot comes back. The resolver above already
+          // proved the target — including, for a re-home, that its workspace
+          // and host can take the run — so its refusal is the verdict.
+          if (!resolved.ok) return reject(resolved.code, resolved.reason);
+          const rehoming = resolved.target.slotId !== record.slotId;
+          // The run as it would be at the target. For the ordinary restore this
+          // IS the run; for a re-home it is what asks the checks below about the
+          // slot the restore is going to rather than the one it is leaving.
+          const runAtTarget: Run = rehoming ? { ...run, slotId: resolved.target.slotId } : run;
           if (record.preservedWorkspace?.detachedAt) {
-            const workspace = await this.inspectRestoreWorkspace(run, record.preservedWorkspace);
+            const workspace = await this.inspectRestoreWorkspace(
+              runAtTarget,
+              record.preservedWorkspace,
+            );
             if (!workspace.ok) {
               return reject(
                 MachineParkEligibilityCodes.restoreWorkspaceUnavailable,
@@ -2550,9 +2823,11 @@ export class MachineParkingService {
           // persisted session and the runner's declared reload — the pane is a
           // host the restore re-creates.
           const host = await this.deps.inspectParkHost(
-            run,
-            record.recoveryHandle!,
-            await this.parkHostOwnership(run, record),
+            runAtTarget,
+            resolved.target.handle ?? record.recoveryHandle!,
+            // No ownership evidence for a re-home: the target's rows have never
+            // named this run, so nothing there is this restore's to adopt.
+            rehoming ? undefined : await this.parkHostOwnership(run, record),
           );
           if (!host.ok) {
             return reject(MachineParkEligibilityCodes.restoreRunnerReloadFailed, host.reason);
@@ -2563,9 +2838,12 @@ export class MachineParkingService {
             selected,
             eligibility: {
               eligible: true,
-              code: 'ELIGIBLE_FREED_SLOT_RESTORE',
-              reason:
-                host.disposition === 'exact'
+              code: rehoming
+                ? MachineParkEligibilityCodes.restoreRehomed
+                : 'ELIGIBLE_FREED_SLOT_RESTORE',
+              reason: rehoming
+                ? `${resolved.target.reason ?? 'The original slot is taken'}; the run will be restored into '${resolved.target.slotId}' with its preserved branch checked out there.`
+                : host.disposition === 'exact'
                   ? 'The freed slot is still free and the persisted runner session is reloadable in place.'
                   : 'The freed slot is still free and the persisted runner session will be re-hosted on a new pane.',
             },
@@ -2622,6 +2900,21 @@ export class MachineParkingService {
     previewId: string,
   ): Promise<{ records: MachineParkRecord[]; durable: boolean }> {
     const fleet = await this.deps.loadFleet();
+    // Re-resolved INSIDE the machine transition, because the preview's read
+    // happened outside it: a dispatch that took the target in between must stop
+    // this restore before it writes an intent, and a re-home whose candidate
+    // has since gone must be re-picked rather than executed from a stale read.
+    const restoreTargets = new Map<string, RestoreSlotTarget>();
+    for (const item of items) {
+      if (!owesFreedSlotStages(item.record)) continue;
+      const resolved = await this.resolveRestoreSlotTarget(
+        this.requireRun(item.runId),
+        item.record,
+        fleet,
+      );
+      if (!resolved.ok) throw new Error(resolved.reason);
+      restoreTargets.set(item.runId, resolved.target);
+    }
     await Promise.all(
       items.map(async (item) => {
         if (item.eligibility.code === 'ELIGIBLE_ZERO_EFFECT_REPAIR') return;
@@ -2634,10 +2927,17 @@ export class MachineParkingService {
           // slot to, so probing it would refuse every restore this slice
           // exists to allow. The persisted session and the runner's declared
           // reload are what must still hold.
+          //
+          // Asked about the TARGET, which a re-home has moved: probing the
+          // original's session here would refuse the very restore the preview
+          // just approved, and approving on the original's host would prove
+          // nothing about the slot the reload will actually run in.
+          const target = restoreTargets.get(item.runId);
+          const rehoming = Boolean(target && target.slotId !== item.record.slotId);
           const host = await this.deps.inspectParkHost(
-            run,
-            item.record.recoveryHandle,
-            await this.parkHostOwnership(run, item.record),
+            rehoming ? { ...run, slotId: target!.slotId } : run,
+            target?.handle ?? item.record.recoveryHandle,
+            rehoming ? undefined : await this.parkHostOwnership(run, item.record),
           );
           if (!host.ok) throw new Error(host.reason);
           return;
@@ -2657,7 +2957,9 @@ export class MachineParkingService {
       // happened outside it: a dispatch that claimed the slot in between must
       // stop this restore before it writes an intent, not after.
       if (owesFreedSlotStages(item.record)) {
-        const availability = await this.slotAcceptsRestore(item.record.slotId, item.runId);
+        const target = restoreTargets.get(item.runId);
+        if (!target) throw new Error(`run ${item.runId} has no resolvable restore slot`);
+        const availability = await this.slotAcceptsRestore(target.slotId, item.runId);
         if (!availability.ok) throw new Error(availability.reason);
       }
       if (
@@ -2748,7 +3050,9 @@ export class MachineParkingService {
     expectedRunnerState: 'stopped' | 'stopped-or-live',
   ): Promise<void> {
     const initial = this.requireRun(runId);
-    const record = initial.park!;
+    // Re-read after the rebind, which may re-home the record onto a different
+    // slot. Everything below resolves its target through this snapshot.
+    let record = initial.park!;
     let failed = false;
     let resumeAcknowledgement: RunResumeAcknowledgement | null = null;
     // The handle the reload will use. A freed park's recorded pane is routinely
@@ -2767,7 +3071,20 @@ export class MachineParkingService {
         // acts on the slot, and acting on a slot this run does not own would
         // reach into whatever dispatch handed it to. A refusal here throws with
         // the slot untouched.
-        await this.reclaimFreedSlot(runId, record, restoreOperationId);
+        const resolved = await this.resolveRestoreSlotTarget(
+          initial,
+          record,
+          await this.deps.loadFleet(),
+        );
+        if (!resolved.ok) throw new Error(resolved.reason);
+        await this.reclaimFreedSlot(runId, record, restoreOperationId, resolved.target);
+        // The rebind may have moved this record's slot and its recovery handle.
+        // Every line below reads `record` for the slot it acts on — the resource
+        // observations, the capability acquires, the host re-bind — so a stale
+        // snapshot here would boot the ORIGINAL slot's resources and reload the
+        // worker into a pane a successor owns.
+        record = this.requireRun(runId).park!;
+        handle = record.recoveryHandle!;
       } else {
         await this.deps.inspectRecoveryHandle(initial, record.recoveryHandle!, expectedRunnerState);
       }
@@ -3622,7 +3939,13 @@ export class MachineParkingService {
     // the obligation rather than the stage list: every stage can be complete and
     // the record still `partial`, because the resume after them failed.
     if (!needsGateParkRestore(run)) return true;
-    const availability = await this.slotAcceptsRestore(record.slotId, record.runId);
+    // The slot this record is homed to NOW, which a re-home moved before the
+    // claim it crashed inside. Reading the journalled snapshot's `slotId` would
+    // re-drive the rebind against the slot a successor holds — and then record
+    // a `RESTORE_SLOT_TAKEN` refusal for a restore that had already picked a
+    // different home.
+    const homedSlotId = run.park.rehome?.toSlotId ?? run.park.slotId;
+    const availability = await this.slotAcceptsRestore(homedSlotId, record.runId);
     if (!availability.ok) {
       await this.recordRestoreRefusal(
         record.runId,
@@ -3650,7 +3973,10 @@ export class MachineParkingService {
       // capabilities and relaunching a worker are the operator's restore to
       // ask for, so those stages are left for it — and the marker stays until
       // they land, so nothing reads the restore as finished.
-      await this.rebindSlotStage(record.runId, run.park, operationId);
+      // The record already names its home, so this is a plain re-drive rather
+      // than a fresh selection: repair finishes the transition that was chosen,
+      // it does not choose again.
+      await this.rebindSlotStage(record.runId, run.park, operationId, { slotId: homedSlotId });
       await this.reattachWorkspaceStage(record.runId, operationId);
     } catch (error) {
       await this.appendError(record.runId, 'resources-restoring', 'slot.rebind', error);

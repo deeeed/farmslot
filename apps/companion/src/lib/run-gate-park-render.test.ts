@@ -44,6 +44,7 @@ import {
   CAPTURED_RESTORED,
   PARTIAL_ANSWERABLE,
   PARTIAL_NEEDS_RESTORE,
+  REHOMED_VERDICT,
   TAKEN_VERDICT,
 } from './run-gate-park.fixtures';
 
@@ -198,5 +199,30 @@ test('a restored run renders no gate notice', async () => {
   assert.equal(
     gateParkView({ id: CAPTURED_RESTORED.runId, park: CAPTURED_RESTORED })?.slotState,
     'settled',
+  );
+});
+
+test('a re-homed restore names the slot the operator must attach to', async () => {
+  const html = await renderPanel(CAPTURED_FREED, REHOMED_VERDICT);
+  // The whole point of the line: an operator reading only the new slot would
+  // think the park had been taken there, and one reading only the old would
+  // attach to a pane the successor owns.
+  assert.match(html, /data-testid="companion-run-posture-gate-park-rehome"/u);
+  assert.match(html, /macwork-ff-2 was taken, so this run is being restored into macwork-ff-4/u);
+  assert.match(html, /attach there, not to macwork-ff-2/u);
+  assert.match(html, /Restore target macwork-ff-4 — available/u);
+
+  // And it is absent when nothing moved, so the extra line never appears on an
+  // ordinary same-slot restore.
+  const same = await renderPanel(CAPTURED_FREED, AVAILABLE_VERDICT);
+  assert.doesNotMatch(same, /companion-run-posture-gate-park-rehome/u);
+});
+
+test('the gate notice for a re-home says the slot moved and does not block', async () => {
+  const html = await renderNotice(CAPTURED_FREED, REHOMED_VERDICT);
+  assert.match(html, /data-testid="companion-run-gate-park-restore-first"/u);
+  assert.match(
+    html,
+    /Answering this gate restores the run into macwork-ff-4 first — macwork-ff-2 was taken — then resolves the decision\./u,
   );
 });

@@ -335,6 +335,7 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
         },
         restoreTarget: {
           slotId: parkedRecord.slotId,
+          originalSlotId: parkedRecord.slotId,
           disposition: parkedRecord.slotDisposition ?? 'retained',
           available: true,
         },
@@ -351,6 +352,7 @@ function restorePreview(selector: MachinePauseSelector): MachinePauseRestoreResu
         },
         restoreTarget: {
           slotId: partialRecord.slotId,
+          originalSlotId: partialRecord.slotId,
           disposition: partialRecord.slotDisposition ?? 'retained',
           available: true,
         },

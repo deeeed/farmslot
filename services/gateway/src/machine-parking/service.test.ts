@@ -5,6 +5,7 @@ import {
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
   type MachineParkRecord,
+  machineParkRestoreComplete,
   type MachinePauseRecoveryHandle,
   needsGateParkRestore,
   type Run,
@@ -24,6 +25,7 @@ import {
 } from '../methods/run/lifecycle-control.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { withMachineRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import type { SessionPortability } from '../runners/registry.js';
 import type { RunnerParkHostPlan } from '../runners/session-lifecycle.js';
 import { RunnerLivenessProbeTimeoutError } from '../runners/session-process.js';
 
@@ -188,12 +190,29 @@ interface Harness {
   workspaces: Map<string, ParkWorkspaceInspection>;
   /** `slotId:branch` -> where the preserved branch ref points; absent means the recorded tip. */
   branchTips: Map<string, string | null>;
-  /** Per-run override for where a parked runner session can be re-hosted. */
+  /** Per-run (or `run:slot`) override for the read-only park host inspection. */
   parkHosts: Map<string, RunnerParkHostPlan>;
+  /**
+   * Per-run (or `run:slot`) override for the MUTATING re-host, kept separate
+   * from the inspection so a test can fail the restore AFTER the slot claim —
+   * failing the inspection instead makes the record ineligible at preview and
+   * never reaches the claim at all.
+   */
+  rehostPlans: Map<string, RunnerParkHostPlan>;
   /** Durable free-slot journals the harness wrote, keyed machine:operationId. */
   freeSlotJournals: Set<string>;
   /** Durable restore-slot journals the harness wrote, keyed machine:operationId:runId. */
   restoreSlotJournals: Set<string>;
+  /**
+   * Free slots on the machine that no run occupies — the re-home candidates.
+   * Run-derived rows are always `busy`, so without these `findBestSlot` has
+   * nothing to score and every re-home test would pass for the wrong reason.
+   */
+  spareSlots: Map<string, { project: string; resources: Record<string, unknown> }>;
+  /** Runner id -> declared session portability; anything unset fails closed. */
+  sessionPortability: Map<string, SessionPortability>;
+  /** Slot ids whose tmux session cannot be resolved, so a re-home must refuse. */
+  unresolvableSessions: Set<string>;
 }
 
 function harness(initialRuns: Run[]): Harness {
@@ -217,8 +236,12 @@ function harness(initialRuns: Run[]): Harness {
   const slotLifecycles = new Map<string, string>();
   const branchTips = new Map<string, string | null>();
   const parkHosts = new Map<string, RunnerParkHostPlan>();
+  const rehostPlans = new Map<string, RunnerParkHostPlan>();
   const freeSlotJournals = new Set<string>();
   const restoreSlotJournals = new Set<string>();
+  const spareSlots = new Map<string, { project: string; resources: Record<string, unknown> }>();
+  const sessionPortability = new Map<string, SessionPortability>();
+  const unresolvableSessions = new Set<string>();
   const journals = new Map<string, MachineParkingIntentJournal>();
   let tick = 0;
   const status: RuntimeCapabilityStatusResult = {
@@ -238,22 +261,53 @@ function harness(initialRuns: Run[]): Harness {
       ({
         checkedAt: '2026-08-21T00:00:00.000Z',
         machines: [{ machine: 'machine-a', online: true }],
-        slots: [...runs.values()]
-          .filter((run) => run.slotId)
-          .map((run) => ({
-            slot: run.slotId!,
+        slots: [
+          ...[...runs.values()]
+            .filter((run) => run.slotId)
+            .map((run) => ({
+              slot: run.slotId!,
+              machine: 'machine-a',
+              project: run.project,
+              lifecycle: 'busy',
+              phase: 'working',
+              enabled: true,
+              currentRunId: slotOwners.get(run.slotId!) ?? null,
+            })),
+          ...[...spareSlots].map(([slot, spare]) => ({
+            slot,
             machine: 'machine-a',
-            project: run.project,
-            lifecycle: 'busy',
-            phase: 'working',
+            project: spare.project,
+            lifecycle: 'ready',
+            phase: 'idle',
+            agent: 'idle',
             enabled: true,
-            currentRunId: slotOwners.get(run.slotId!) ?? null,
+            currentRunId: slotOwners.get(slot) ?? null,
+            branch: 'main',
+            linkedWorktree: false,
+            resources: spare.resources,
+            health: { cdp: '' },
           })),
+        ],
       }) as never,
     updatePark: (runId, park) => {
       const run = runs.get(runId)!;
       run.park = park ? structuredClone(park) : null;
       return run;
+    },
+    setRunSlot: (runId, slotId) => {
+      const run = runs.get(runId)!;
+      calls.push(`set-run-slot:${runId}:${slotId}`);
+      run.slotId = slotId;
+      return run;
+    },
+    // Fails closed exactly like the registry reader: a runner nothing declared
+    // is `workspace`, so a test that forgets to declare portability gets the
+    // refusal rather than an accidental re-home.
+    sessionPortability: (runnerId) => sessionPortability.get(runnerId) ?? 'workspace',
+    projectConfigs: async () => ({}),
+    resolveSlotSession: async (slotId) => {
+      if (unresolvableSessions.has(slotId)) throw new Error(`no tmux session for ${slotId}`);
+      return `session-${slotId}`;
     },
     persistRun: async (run, reason) => {
       calls.push(`persist:${run.id}:${reason}`);
@@ -405,15 +459,25 @@ function harness(initialRuns: Run[]): Harness {
     },
     inspectParkHost: async (run, handle, ownership) => {
       calls.push(
-        `inspect-park-host:${run.id}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
+        `inspect-park-host:${run.id}:${run.slotId}:${handle.target.session}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
       );
-      return parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle };
+      // Slot-scoped fixture first, so a test can refuse ONE candidate without
+      // refusing the run's host everywhere and proving nothing about which slot
+      // the check was asked about.
+      return (
+        parkHosts.get(`${run.id}:${run.slotId}`) ??
+        parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle }
+      );
     },
     rehostParkTarget: async (run, handle, ownership) => {
       calls.push(
         `rehost-park-target:${run.id}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
       );
-      return parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle };
+      return (
+        rehostPlans.get(`${run.id}:${run.slotId}`) ??
+        rehostPlans.get(run.id) ??
+        parkHosts.get(run.id) ?? { ok: true, disposition: 'exact', recoveryHandle: handle }
+      );
     },
     rebindAgentContextTarget: async (run, handle) => {
       calls.push(`rebind-context:${run.id}:${handle.target.paneId}`);
@@ -569,8 +633,12 @@ function harness(initialRuns: Run[]): Harness {
     workspaces,
     branchTips,
     parkHosts,
+    rehostPlans,
     freeSlotJournals,
     restoreSlotJournals,
+    spareSlots,
+    sessionPortability,
+    unresolvableSessions,
   };
 }
 
@@ -2367,6 +2435,7 @@ test('restore brings a freed gate park back into its original slot', async () =>
   assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
   assert.deepEqual(entry.restoreTarget, {
     slotId: 'slot-a',
+    originalSlotId: 'slot-a',
     disposition: 'freed',
     available: true,
   });
@@ -2430,6 +2499,252 @@ test('the slot is re-bound before anything touches the runner or its resources',
   assert.ok(claim < reload, 'the slot is claimed before the worker is reloaded');
   // And the write-ahead marker is dropped once the transition finished.
   assert.equal(ctx.restoreSlotJournals.size, 0);
+});
+
+// ─── MANUAL-000122: cross-slot re-dispatch of a freed gate park ─────────────
+//
+// The original slot is gone — a successor took it, which is what freeing it was
+// FOR — so the restore puts the run into another free slot on the same machine
+// instead of stranding it until the successor happens to finish.
+
+/**
+ * A freed gate park whose original slot a successor holds, with one eligible
+ * re-home candidate standing by.
+ *
+ * The candidate is a sibling worktree: it shares the park's object store, so
+ * the preserved branch ref resolves there at the recorded tip. That is exactly
+ * what distinguishes it from an independent clone, and every refusal test below
+ * takes this fixture and breaks ONE of its proofs.
+ */
+async function rehomeHarness(): Promise<Harness> {
+  const ctx = await freedGateParkHarness();
+  ctx.slotOwners.set('slot-a', 'run-successor');
+  ctx.slotLifecycles.set('slot-a', 'busy');
+  ctx.spareSlots.set('slot-b', {
+    project: 'example-mobile-farm',
+    resources: { 'browser-cdp': { status: 'running' } },
+  });
+  ctx.workspaces.set('slot-b', { branch: 'main', headSha: 'sha-main', dirtyPaths: [] });
+  ctx.branchTips.set('slot-b:work/run-gate', 'sha-run-gate');
+  ctx.sessionPortability.set('claude', 'machine');
+  return ctx;
+}
+
+test('a taken original slot re-homes the restore onto another free slot', async () => {
+  const ctx = await rehomeHarness();
+
+  const { preview, entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.eligible, true, JSON.stringify(entry.eligibility));
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_REHOME');
+  // The alternative target is VISIBLE before the operator commits, and it names
+  // both ends of the move — a preview that showed only the new slot would read
+  // as if the park had been taken there.
+  assert.deepEqual(entry.restoreTarget, {
+    slotId: 'slot-b',
+    originalSlotId: 'slot-a',
+    disposition: 'freed',
+    available: true,
+  });
+  // Read-only: the preview has changed nothing on either slot.
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(ctx.slotOwners.get('slot-b'), undefined);
+  assert.equal(ctx.runs.get('run-gate')!.park!.rehome, undefined);
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('claim-slot:')),
+    false,
+    ctx.calls.join('\n'),
+  );
+
+  const restored = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome',
+  });
+
+  assert.equal(restored.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'restored');
+  // The record and the run BOTH moved, which is the whole mechanism: every
+  // later step resolves its target through one or the other.
+  assert.equal(after.park!.slotId, 'slot-b');
+  assert.equal(after.slotId, 'slot-b');
+  assert.deepEqual(
+    { from: after.park!.rehome?.fromSlotId, to: after.park!.rehome?.toSlotId },
+    { from: 'slot-a', to: 'slot-b' },
+  );
+  // The successor keeps the slot it was given. Re-homing takes nothing back.
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(ctx.slotOwners.get('slot-b'), 'run-gate');
+  // The preserved branch is checked out on the NEW slot at its recorded tip,
+  // and the old slot is left exactly as the successor has it.
+  assert.equal(ctx.workspaces.get('slot-b')?.branch, 'work/run-gate');
+  assert.equal(ctx.workspaces.get('slot-a')?.branch, null);
+  assert.equal(after.park!.preservedWorkspace?.detachedAt, undefined);
+  // The conversation did not move: same session, reloaded on the new slot's
+  // tmux session, with a structured acknowledgement.
+  assert.equal(after.park!.recoveryProof?.sessionId, 'session-run-gate');
+  assert.equal(after.park!.recoveryProof?.acknowledgement.kind, 'structured');
+  assert.equal(after.park!.recoveryHandle?.target.session, 'session-slot-b');
+  // Every restore stage landed, and the freed-slot obligation is discharged.
+  assert.equal(machineParkRestoreComplete(after.park!.restoreProgress), true);
+  assert.equal(after.park!.slotFreedAt, undefined);
+  assert.equal(isGateParkInFlightOrFreed(after), false);
+});
+
+test('the re-home is written before the slot it names is claimed', async () => {
+  const ctx = await rehomeHarness();
+  const { preview } = await previewFreedRestore(ctx);
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-order',
+  });
+
+  const moved = ctx.calls.indexOf('set-run-slot:run-gate:slot-b');
+  const claim = ctx.calls.indexOf('claim-slot:slot-b:run-gate');
+  assert.ok(moved >= 0 && claim >= 0, ctx.calls.join('\n'));
+  // Write-ahead, for the same reason `slotFreedAt` is: a crash between the two
+  // writes has to leave the repair path a marker saying which slot this record
+  // is homed to, or it re-drives the rebind against the slot a successor holds.
+  assert.ok(moved < claim, 'the re-home is recorded before the claim');
+});
+
+test('a crash after the re-home claim repairs into the new slot', async () => {
+  const ctx = await rehomeHarness();
+  const { preview } = await previewFreedRestore(ctx);
+  // Die inside the restore, after the slot has been claimed and the record
+  // re-homed. That is the window the write-ahead marker exists for.
+  ctx.rehostPlans.set('run-gate:slot-b', { ok: false, reason: 'pane vanished mid-restore' });
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-crash',
+  });
+  const mid = ctx.runs.get('run-gate')!;
+  assert.equal(mid.park!.slotId, 'slot-b', 'the record is homed to the new slot');
+  assert.ok(ctx.restoreSlotJournals.size > 0, 'the write-ahead marker survives the failure');
+
+  // The repair re-drives the fleet-visible stages against the RE-HOMED slot.
+  // Reading the journalled snapshot's slot would send it at slot-a, which the
+  // successor holds — and record a slot-taken refusal for a restore that had
+  // already chosen a different home.
+  ctx.calls.length = 0;
+  await ctx.service.reconcile();
+  assert.equal(ctx.slotOwners.get('slot-b'), 'run-gate');
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(
+    ctx.calls.some((call) => call === 'claim-slot:slot-a:run-gate'),
+    false,
+    ctx.calls.join('\n'),
+  );
+  assert.equal(ctx.runs.get('run-gate')!.park!.restoreRefusal?.code, undefined);
+});
+
+test('a runner whose session is workspace-scoped is refused rather than re-homed', async () => {
+  const ctx = await rehomeHarness();
+  // The registry's real default. Claude and Codex key their session stores by
+  // working directory, so a reload in another slot would start a FRESH
+  // conversation and report a successful restore over a run that lost its
+  // context — the one outcome worse than refusing.
+  ctx.sessionPortability.set('claude', 'workspace');
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.eligible, false);
+  assert.equal(entry.eligibility.code, 'RESTORE_REHOME_SESSION_NOT_PORTABLE');
+  assert.match(entry.eligibility.reason, /claude/);
+  assert.equal(entry.restoreTarget.slotId, 'slot-a', 'the target stays the original');
+
+  const refused = await ctx.service.restoreForGateResolution('run-gate');
+  assert.equal(refused.ok === false && refused.code, 'RESTORE_REHOME_SESSION_NOT_PORTABLE');
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.phase, 'parked');
+  assert.equal(after.park!.slotId, 'slot-a');
+  assert.equal(after.park!.rehome, undefined);
+  assert.equal(ctx.slotOwners.get('slot-b'), undefined, 'the candidate is untouched');
+});
+
+test('re-home refuses a candidate that cannot reach the preserved branch tip', async () => {
+  const ctx = await rehomeHarness();
+  // An independent clone rather than a sibling worktree: the branch name may
+  // exist there, but not at the commit the park detached from.
+  ctx.branchTips.set('slot-b:work/run-gate', 'sha-somewhere-else');
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_NO_REHOME_TARGET');
+  assert.match(entry.eligibility.reason, /slot-b/);
+  assert.match(entry.eligibility.reason, /sha-somewhere-else/);
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotId, 'slot-a');
+});
+
+test('re-home refuses a candidate whose working tree is dirty', async () => {
+  const ctx = await rehomeHarness();
+  ctx.workspaces.set('slot-b', {
+    branch: 'main',
+    headSha: 'sha-main',
+    dirtyPaths: [' M src/leftover.ts'],
+  });
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_NO_REHOME_TARGET');
+  assert.match(entry.eligibility.reason, /leftover/);
+});
+
+test('re-home refuses a candidate that declares less than the park released', async () => {
+  const ctx = await rehomeHarness();
+  // No `browser-cdp`. Restoring here would settle `restored` having booted less
+  // than the park stopped, and the run would come back without its resource.
+  ctx.spareSlots.set('slot-b', { project: 'example-mobile-farm', resources: {} });
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_NO_REHOME_TARGET');
+  assert.match(entry.eligibility.reason, /browser-cdp/);
+});
+
+test('re-home refuses a candidate whose host cannot take the persisted session', async () => {
+  const ctx = await rehomeHarness();
+  ctx.parkHosts.set('run-gate:slot-b', { ok: false, reason: 'a foreign worker holds that pane' });
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_NO_REHOME_TARGET');
+  assert.match(entry.eligibility.reason, /foreign worker/);
+});
+
+test('a machine with no free slot keeps the plain RESTORE_SLOT_TAKEN refusal', async () => {
+  const ctx = await rehomeHarness();
+  ctx.spareSlots.clear();
+
+  // Nowhere to move to, so the original really is this run's only home and
+  // "wait for it" is the right instruction. Reporting a re-home failure here
+  // would blame the feature for a machine that is simply full.
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_SLOT_TAKEN');
+  assert.match(entry.eligibility.reason, /run-successor/);
+  assert.equal(entry.restoreTarget.slotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.park!.rehome, undefined);
+});
+
+test('a free original slot is never abandoned for a better-scoring neighbour', async () => {
+  const ctx = await freedGateParkHarness();
+  ctx.spareSlots.set('slot-b', {
+    project: 'example-mobile-farm',
+    resources: { 'browser-cdp': { status: 'running' } },
+  });
+  ctx.sessionPortability.set('claude', 'machine');
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_RESTORE');
+  assert.equal(entry.restoreTarget.slotId, 'slot-a');
+  assert.equal(entry.restoreTarget.originalSlotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.park!.rehome, undefined);
 });
 
 test('restore refuses RESTORE_SLOT_TAKEN without touching anything', async () => {
@@ -2988,7 +3303,7 @@ test('adoption evidence is the CURRENT slot binding, never a historical pane', a
   // nobody owns is an orphan — not this run's to adopt however well its session
   // id matches. So the read-only inspection is given no evidence at all.
   assert.ok(
-    ctx.calls.includes('inspect-park-host:run-gate:no-ownership'),
+    ctx.calls.includes('inspect-park-host:run-gate:slot-a:slot-a:no-ownership'),
     ctx.calls.filter((call) => call.startsWith('inspect-park-host:')).join('\n'),
   );
   // After the rebind the row names this run, which is what makes its recorded

@@ -115,7 +115,8 @@ operator never has to know the run was parked. `machine.pause.restore` drives th
 - The slot must be free — no owner, not mid-release, no foreign warm-handoff reservation, and
   `ready`. Otherwise the restore is refused with `RESTORE_SLOT_TAKEN`, the record stays `parked`,
   the decision stays pending and answerable later, and nothing is touched. Cross-slot re-dispatch is
-  a separate decision and is deliberately not attempted here.
+  a separate decision and is deliberately not attempted here. **Amended 2026-09-08 — see the
+  cross-slot re-dispatch amendment below.**
 - The restore claims the slot before anything else, journals that claim as a `restore-slot` intent,
   and finishes it on restart. Acting on a slot the run does not own would reach into whatever
   dispatch handed it to.
@@ -161,3 +162,50 @@ it.
 - [ADR-030](030-replay-provenance-and-reference-evals.md) — local-first publication packages
 - [ADR-033](033-mobile-tmux-worker-control.md) — Companion tmux attach
 - PR #62 — initial implementation
+
+## Amendment: cross-slot re-dispatch of a freed park (2026-09-08)
+
+MANUAL-000122. The rule above — the original slot and nothing else — stranded a run for as long as
+its successor ran, which on a long worker is hours, for no reason other than that the restore never
+looked anywhere else. Freeing the slot was the point; being unable to come back to any other one was
+not.
+
+A restore now considers the original FIRST and only re-homes when it cannot take the run back. What
+changes and what deliberately does not:
+
+- **Selection is dispatch's, never parking's.** `findBestSlot` scores the machine's free slots
+  exactly as it would for a new run, with the park's preserved branch as the target branch — so a
+  slot already on that branch wins on warm affinity for free, and a linked worktree holding the
+  branch elsewhere is refused by the checkout blocker dispatch already applies. A second scoring
+  rule here would drift from the one dispatch actually uses.
+- **Four read-only proofs, before anything mutates.** The row can be claimed; the candidate's tree
+  is clean and the preserved branch ref resolves there at the recorded tip (which is what separates
+  a sibling worktree sharing the park's object store from an independent clone); the candidate
+  declares every resource the park's manifest names; and the persisted runner session can be hosted
+  on it. A refusal has changed nothing, so the record stays exactly as parked as it was.
+- **Same machine only.** The workspace, the tmux session, and the resources are all host-local.
+- **One write, inside the existing `rebind` stage.** No fifth stage. The record's `slotId`, the
+  run's `slotId`, and the recovery handle's tmux session move together, ahead of the claim, and the
+  workspace checkout, resource boot, host re-bind and reload all follow to the new slot with no
+  second code path. `MachineParkRecord.rehome` records both ends; the repair path reads
+  `rehome.toSlotId`, so a crash between the record write and the claim re-drives against the slot
+  the record names rather than the one a successor holds.
+- **Gated on a runner-declared capability, failing closed.** `RunnerDefinition.sessionPortability`
+  says whether a persisted session resolves outside the working directory it was recorded in.
+  Claude keys its session store by a cwd slug and Codex indexes rollouts by cwd, so both declare
+  `workspace` and are refused with `RESTORE_REHOME_SESSION_NOT_PORTABLE`. Reloading them in another
+  slot would start a FRESH conversation and report a successful restore over a run that lost its
+  entire context — worse than refusing. **Consequence worth stating plainly: no runner registered
+  today declares `machine`, so the re-home path is built and proven but not yet reachable in
+  production.** Relocating a claude/codex session is its own item; until it lands, this amendment
+  buys the mechanism and the honest refusal, not the outcome.
+- **No operator prompt.** The gate answer is already the restore trigger, and a second prompt in
+  front of the first strands the run exactly as the refusal does. The alternative target is visible
+  in the restore preview instead, as `restoreTarget.slotId` differing from `originalSlotId` with the
+  verdict `ELIGIBLE_FREED_SLOT_REHOME`.
+- **`RESTORE_SLOT_TAKEN` survives**, and is still the answer when the machine has no other free slot
+  at all — there the original really is the run's only home and "wait for it" is right.
+  `RESTORE_NO_REHOME_TARGET` is the different answer for a machine that had candidates and none
+  passed a proof.
+- **Not attempted here:** re-homing across machines, creating a worktree or branch, re-running the
+  run's prepare hooks on the target, or copying a runner session file.

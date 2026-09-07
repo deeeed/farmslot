@@ -178,11 +178,18 @@ export function parkPreservedSlotIds(
   const preserved = new Map<string, ParkPreservedWorkspace[]>();
   for (const run of runs) {
     const workspace = run.park?.preservedWorkspace;
-    if (!run.slotId || !workspace?.detachedAt) continue;
-    const claims = preserved.get(run.slotId);
+    if (!workspace?.detachedAt) continue;
+    // The slot the detach physically HAPPENED on, which is not the run's slot
+    // once a restore has re-homed it: the re-home moves `run.slotId` and the
+    // record's `slotId` to the new home while the detached HEAD stays behind in
+    // the old slot's working tree. Keying on the run would move the exemption
+    // to a slot that is not detached and strip it from the one that is.
+    const slotId = run.park?.rehome?.fromSlotId ?? run.park?.slotId ?? run.slotId;
+    if (!slotId) continue;
+    const claims = preserved.get(slotId);
     const claim = { runId: run.id, headSha: workspace.headSha };
     if (claims) claims.push(claim);
-    else preserved.set(run.slotId, [claim]);
+    else preserved.set(slotId, [claim]);
   }
   return preserved;
 }

@@ -170,12 +170,16 @@ item and depends on this one.
   [ADR-038's `free-slot` amendment](038-gate-held-worker-session.md#amendment-free-slot-at-the-publication-gate-2026-09-05):
   `free-slot` at a gate is no longer a typed rejection when the run's runner declares a graceful
   exit and a persisted session reload, and a freed park is restored into the slot it was freed from
-  — the ORIGINAL slot only, triggered by the operator answering the gate. A slot another run has
-  since taken is refused with `RESTORE_SLOT_TAKEN` and the record stays parked and answerable.
-  Re-dispatching a parked run into a DIFFERENT slot through the warm-replacement or
-  recently-released affinity path is still outstanding and is its own item; until it lands, an
-  operation that needs the run back before that happens is refused with
-  `FREED_SLOT_RESTORE_REQUIRED`.
+  — triggered by the operator answering the gate. Cross-slot re-dispatch has since landed
+  (MANUAL-000122, [ADR-038's cross-slot amendment](038-gate-held-worker-session.md#amendment-cross-slot-re-dispatch-of-a-freed-park-2026-09-08)):
+  when a successor holds the original, the restore re-homes the run into another free slot on the
+  same machine, chosen by dispatch's own scoring and proved read-only before anything mutates, and
+  the alternative target is visible in the restore preview. It is gated on a runner-declared
+  session portability and fails closed — no runner registered today declares its session portable
+  across working directories, so claude and codex parks are still refused, now with
+  `RESTORE_REHOME_SESSION_NOT_PORTABLE` naming the actual reason. `RESTORE_SLOT_TAKEN` remains the
+  answer for a machine with no other free slot; an operation that needs the run back before a
+  restore is still refused with `FREED_SLOT_RESTORE_REQUIRED`.
 - **Re-target validation to another device or platform.** Device-identity parameters on device
   capability providers; a rerun accepts a target override and reacquires.
   `.backlog/specs/farmslot-farm/2026-09-04-validation-device-retarget.md`

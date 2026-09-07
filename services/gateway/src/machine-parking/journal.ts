@@ -283,6 +283,7 @@ function validRecord(record: MachineParkRecord): boolean {
     optionalIso(record.slotReboundAt) &&
     validRestoreProgress(record.restoreProgress) &&
     validRestoreRefusal(record.restoreRefusal) &&
+    validRehome(record.rehome) &&
     validPreservedWorkspace(record.preservedWorkspace) &&
     Array.isArray(record.errors) &&
     record.errors.every(validParkError) &&
@@ -306,6 +307,26 @@ function validRestoreProgress(value: unknown): boolean {
     Array.isArray(value.completed) &&
     value.completed.every((stage) => RESTORE_STAGES.has(stage as string)) &&
     iso(value.updatedAt)
+  );
+}
+
+/**
+ * A re-home note replays only when it names BOTH ends of the move.
+ *
+ * `toSlotId` is what the repair path re-drives the rebind against, so a record
+ * carrying a half-written note would send the repair at the record's own slot —
+ * the one a successor holds — and refuse a restore that had already chosen a
+ * different home. Quarantining is the safe answer to that, not tolerating it.
+ */
+function validRehome(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    nonEmpty(value.fromSlotId) &&
+    nonEmpty(value.toSlotId) &&
+    value.fromSlotId !== value.toSlotId &&
+    nonEmpty(value.reason) &&
+    iso(value.at)
   );
 }
 

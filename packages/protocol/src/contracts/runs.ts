@@ -1689,11 +1689,40 @@ export const MachineParkEligibilityCodes = {
    */
   freedSlotRestoreRequired: 'FREED_SLOT_RESTORE_REQUIRED',
   /**
-   * Restore refused: the original slot is no longer free. The record stays
-   * parked and its decision stays pending, so the run can be restored later or
-   * cancelled. Cross-slot re-dispatch is a separate decision.
+   * Restore refused: the original slot is no longer free AND no other slot on
+   * the machine could take the run instead. The record stays parked and its
+   * decision stays pending, so the run can be restored later or cancelled.
+   *
+   * Kept as the refusal for the case where re-homing was not even attempted —
+   * the runner cannot carry its session across working directories, or the
+   * record has no preserved workspace to re-home. When a re-home WAS attempted
+   * and every candidate failed a proof, `RESTORE_NO_REHOME_TARGET` says so.
    */
   restoreSlotTaken: 'RESTORE_SLOT_TAKEN',
+  /**
+   * The original slot was taken, so the restore will put the run into a
+   * DIFFERENT free slot on the same machine. An eligible verdict, not a
+   * refusal: the Gateway picked the target through the same dispatch scoring
+   * that picks a slot for a new run, and the preview names it so the operator
+   * sees where the run is going before answering the gate.
+   */
+  restoreRehomed: 'ELIGIBLE_FREED_SLOT_REHOME',
+  /**
+   * Re-home refused: the run's runner scopes its persisted session by working
+   * directory, so the session recorded under the original slot's workspace
+   * could not be resumed from another slot's. Fails closed — a reload that
+   * silently started a FRESH conversation would lose the run's whole context
+   * while reporting a successful restore.
+   */
+  restoreRehomeSessionNotPortable: 'RESTORE_REHOME_SESSION_NOT_PORTABLE',
+  /**
+   * Re-home refused: the original slot is taken and no other slot on the
+   * machine passed every read-only eligibility proof. Distinct from
+   * `RESTORE_SLOT_TAKEN`: a re-home WAS attempted, so the operator knows the
+   * machine has no home for this run rather than that the feature declined to
+   * look.
+   */
+  restoreNoRehomeTarget: 'RESTORE_NO_REHOME_TARGET',
   /**
    * Restore refused: the preserved branch cannot be checked back out — the
    * successor left uncommitted work in the tree, or the branch no longer sits
@@ -1766,6 +1795,30 @@ export interface MachineParkWorkspace {
    * effect yet. Same fact-versus-intent split as `slotFreedAt`.
    */
   detachedAt?: string;
+}
+
+/**
+ * A restore that put the run back into a DIFFERENT slot than the park freed.
+ *
+ * Written write-ahead, before the slot claim, for the same reason every other
+ * park transition is: the re-home is two writes — the record's slot binding and
+ * the slot row's owner — and a crash between them must leave the repair path a
+ * marker saying which slot this record is now homed to. `repairRestoreSlotIntent`
+ * reads `toSlotId`, never the journalled snapshot's `slotId`.
+ *
+ * `fromSlotId` is the slot the park freed, and it stays meaningful after the
+ * re-home: the preserved workspace's detached HEAD is still sitting THERE, so
+ * dispatch's detached-HEAD exemption keys on it rather than on the record's
+ * current slot.
+ */
+export interface MachineParkRehome {
+  /** The slot the park freed, whose successor made a same-slot restore impossible. */
+  fromSlotId: string;
+  /** The slot the restore re-bound the run into instead. */
+  toSlotId: string;
+  at: string;
+  /** Why the original could not take the run back — the availability refusal, verbatim. */
+  reason: string;
 }
 
 /**
@@ -1876,6 +1929,12 @@ export interface MachineParkRecord {
    * the restore as the note that this record's slot came back.
    */
   slotReboundAt?: string;
+  /**
+   * Set when a restore re-bound a DIFFERENT slot than the park freed, because
+   * the original had been taken. `slotId` above already names the new slot —
+   * this is the note that says it moved, and from where.
+   */
+  rehome?: MachineParkRehome;
   /**
    * How far the current restore attempt got. Absent until a freed-slot restore
    * starts, and the authority for what a retry still owes — never inferred from

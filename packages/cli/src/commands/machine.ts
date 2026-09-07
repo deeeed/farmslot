@@ -244,7 +244,12 @@ export function formatGateParkLine(view: GateParkView): string {
     `  ${bold(view.runId)}`,
     gateParkStateLabel(view),
     `freed=${view.freedSlotId ?? '-'}`,
-    `restore=${target.slotId} (${availability})`,
+    // Names BOTH slots when the Gateway re-homed the run. `restore=<slot>`
+    // alone reads as the slot the park was taken in, which after a re-home is
+    // the one a successor holds — and that is where an operator would attach.
+    target.slotId === target.originalSlotId
+      ? `restore=${target.slotId} (${availability})`
+      : `restore=${target.slotId} (was ${target.originalSlotId}) (${availability})`,
   ];
   if (view.refusal) {
     parts.push(red(`refused ${view.refusal.code}: ${view.refusal.reason}`));
