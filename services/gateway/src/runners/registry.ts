@@ -98,6 +98,26 @@ export type RetainedSessionHandoff =
   | 'unsupported';
 export type SessionReloadCapability = 'with-prompt' | 'none';
 
+/**
+ * How far a persisted runner session can be carried before it stops resolving.
+ *
+ * `workspace` — the runner finds a session only from the working directory it
+ * was recorded in. Claude keys its session store by a slug of the cwd and Codex
+ * filters its session index by cwd, so resuming from a different slot's
+ * worktree either fails or silently starts a FRESH conversation. Either way the
+ * run's context is gone while the reload reports success.
+ *
+ * `machine` — the session resolves from anywhere on the host, so a restore may
+ * reload it in a different slot's workspace.
+ *
+ * Read only through {@link runnerSessionPortability}, which fails closed to
+ * `workspace` for anything unregistered. Cross-slot re-dispatch of a freed gate
+ * park is gated on `machine`: a runner that cannot carry its session is refused
+ * with `RESTORE_REHOME_SESSION_NOT_PORTABLE` rather than reloaded into a
+ * workspace where its conversation does not exist.
+ */
+export type SessionPortability = 'machine' | 'workspace';
+
 export interface RunnerGracefulExitCapability {
   /** Literal text delivered through tmux before any resource shutdown. */
   command: string;
@@ -125,6 +145,13 @@ export interface RunnerDefinition {
   persistsSessionFiles: boolean;
   /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
   sessionReload: SessionReloadCapability;
+  /**
+   * Whether a persisted session resolves from a working directory other than
+   * the one it was recorded in. Declared per runner rather than inferred, and
+   * every runner must state it — including the ones that persist no session at
+   * all, so a new runner cannot silently inherit a portability nobody checked.
+   */
+  sessionPortability: SessionPortability;
   /** Static, runner-owned graceful process exit contract. Null means fail closed. */
   gracefulExit: RunnerGracefulExitCapability | null;
   /** How a completed worker session receives a chained task without TUI parsing. */
@@ -224,6 +251,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    // Sessions live under a cwd-slug directory, so `--resume <id>` from another
+    // slot's worktree does not see this conversation.
+    sessionPortability: 'workspace',
     gracefulExit: { command: '/exit' },
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
@@ -262,6 +292,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    // `codex resume` indexes sessions by cwd; a rollout recorded in another
+    // slot's worktree is not offered there.
+    sessionPortability: 'workspace',
     gracefulExit: { command: '/exit', submitDelayMs: 50 },
     retainedSessionHandoff: 'resume-with-prompt',
     supportsExactSessionDelivery: true,
@@ -305,6 +338,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    // No persisted session reload at all; declared closed rather than left to a
+    // default nobody checked.
+    sessionPortability: 'workspace',
     gracefulExit: null,
     // Cursor collapses injected multiline prompts into opaque composer entries,
     // so pane inspection cannot prove that the submit key started this task.
@@ -341,6 +377,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
+    // Reload resumes by id from the slot's repo directory; nothing declares that
+    // id resolves from a different one.
+    sessionPortability: 'workspace',
     gracefulExit: { command: '/exit' },
     retainedSessionHandoff: 'in-place',
     supportsExactSessionDelivery: true,
@@ -370,6 +409,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    // No persisted session reload at all.
+    sessionPortability: 'workspace',
     gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
@@ -395,6 +436,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    // No runner process, so nothing to carry.
+    sessionPortability: 'workspace',
     gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
@@ -420,6 +463,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     contextResetCommand: null,
     persistsSessionFiles: false,
     sessionReload: 'none',
+    // The scripted harness persists no session files.
+    sessionPortability: 'workspace',
     gracefulExit: null,
     retainedSessionHandoff: 'unsupported',
     supportsExactSessionDelivery: false,
@@ -741,6 +786,16 @@ export function runnerRetainedSessionHandoff(runnerId?: string | null): Retained
 export function runnerSessionReloadCapability(runnerId?: string | null): SessionReloadCapability {
   if (!isKnownRunner(runnerId)) return 'none';
   return getRunnerDefinition(runnerId).sessionReload;
+}
+
+/**
+ * Whether this runner's persisted session resolves outside the working
+ * directory it was recorded in. Fails closed: an unregistered runner is
+ * `workspace`, so nothing carries a session on a capability nobody declared.
+ */
+export function runnerSessionPortability(runnerId?: string | null): SessionPortability {
+  if (!isKnownRunner(runnerId)) return 'workspace';
+  return getRunnerDefinition(runnerId).sessionPortability;
 }
 
 export function runnerProcessPattern(runnerId?: string | null): RegExp {

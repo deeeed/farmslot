@@ -79,6 +79,7 @@ import {
   runnerProcessPattern,
   runnerProcessPatternSource,
   runnerResolvesPreTaskLaunchBlockers,
+  runnerSessionPortability,
   runnerSignalShowsCompletion,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
@@ -2210,5 +2211,34 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
 
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
+  });
+});
+
+describe('session portability', () => {
+  it('every registered runner declares it, so nothing inherits an unchecked default', () => {
+    // Declared per runner rather than defaulted, because the consequence of
+    // guessing is a restore that reloads a worker into a workspace where its
+    // conversation does not exist and reports success over a run that lost its
+    // whole context.
+    for (const [id, definition] of Object.entries(KNOWN_RUNNERS)) {
+      assert.ok(
+        definition.sessionPortability === 'machine' ||
+          definition.sessionPortability === 'workspace',
+        `runner '${id}' declares no session portability`,
+      );
+    }
+  });
+
+  it('claude and codex scope their sessions to the workspace they were recorded in', () => {
+    // Claude keys its session store by a slug of the cwd; codex indexes its
+    // rollouts by cwd. Neither resolves a session from another slot's worktree.
+    assert.equal(runnerSessionPortability('claude'), 'workspace');
+    assert.equal(runnerSessionPortability('codex'), 'workspace');
+  });
+
+  it('fails closed for a runner nothing registered', () => {
+    assert.equal(runnerSessionPortability('aider'), 'workspace');
+    assert.equal(runnerSessionPortability(null), 'workspace');
+    assert.equal(runnerSessionPortability(''), 'workspace');
   });
 });

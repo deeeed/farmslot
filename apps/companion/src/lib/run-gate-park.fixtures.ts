@@ -155,3 +155,23 @@ export const TAKEN_VERDICT = {
   target: { slotId: 'macwork-ff-2', disposition: 'freed' as const, available: false },
   eligibility: { code: 'RESTORE_SLOT_TAKEN', reason: 'macwork-ff-2 is now running run-9' },
 };
+
+/**
+ * A Gateway verdict that re-homed the run: the original slot was taken, so the
+ * restore is going somewhere else on the same machine. Both ends are named,
+ * because an operator told only the new slot would think the park had been
+ * taken there, and one told only the old would attach to a successor's pane.
+ */
+export const REHOMED_VERDICT = {
+  target: {
+    slotId: 'macwork-ff-4',
+    originalSlotId: 'macwork-ff-2',
+    disposition: 'freed' as const,
+    available: true,
+  },
+  eligibility: {
+    code: 'ELIGIBLE_FREED_SLOT_REHOME',
+    reason:
+      "slot 'macwork-ff-2' is now owned by run 'run-9'; the run will be restored into 'macwork-ff-4' with its preserved branch checked out there.",
+  },
+};

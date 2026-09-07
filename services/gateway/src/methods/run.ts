@@ -1233,6 +1233,28 @@ function assertNotGateParked(runId: string, run: Run): void {
  * the decision stays pending with the typed reason durable on the record, and
  * the operator can answer again once the slot comes back — or cancel.
  */
+/**
+ * What the operator can actually DO about a refused gate-park restore.
+ *
+ * Each refusal has a different answer, and a single generic sentence sent every
+ * operator down the same dead end. "Wait for the slot" is wrong advice when the
+ * gateway already looked at every other slot on the machine and found none, and
+ * it is wrong again when the runner simply cannot carry its session across
+ * workspaces — no amount of waiting changes either.
+ */
+function gateParkRestoreUserAction(code: string, slotId: string): string {
+  if (code === MachineParkEligibilityCodes.restoreSlotTaken) {
+    return `Wait for ${slotId} to free up and answer the gate again, or cancel the run.`;
+  }
+  if (code === MachineParkEligibilityCodes.restoreNoRehomeTarget) {
+    return `Free a slot on this machine — ${slotId} or any other in the same project — and answer the gate again, or cancel the run.`;
+  }
+  if (code === MachineParkEligibilityCodes.restoreRehomeSessionNotPortable) {
+    return `This run's runner can only resume its session in ${slotId}, so wait for that slot to free up and answer the gate again, or cancel the run.`;
+  }
+  return 'Resolve the reported problem and answer the gate again, or cancel the run.';
+}
+
 async function restoreGateParkForResolution(
   runId: string,
   run: Run,
@@ -1249,12 +1271,7 @@ async function restoreGateParkForResolution(
     throw new GatewayMethodError(
       restore.code,
       `Run ${runId} could not be restored into slot ${restore.slotId}: ${restore.reason}`,
-      {
-        userAction:
-          restore.code === MachineParkEligibilityCodes.restoreSlotTaken
-            ? `Wait for ${restore.slotId} to free up and answer the gate again, or cancel the run.`
-            : 'Resolve the reported problem and answer the gate again, or cancel the run.',
-      },
+      { userAction: gateParkRestoreUserAction(restore.code, restore.slotId) },
     );
   }
   if (restore.gateReplayed) {

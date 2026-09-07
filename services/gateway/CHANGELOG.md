@@ -4,6 +4,32 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(parking): a freed gate park whose slot a successor took is restored into a DIFFERENT free slot
+  on the same machine instead of being stranded until that successor finishes. The target is picked
+  by the same dispatch scoring a new run gets, with the park's preserved branch as the target
+  branch, and every candidate must first pass four read-only proofs — the row can be claimed, its
+  tree is clean and the preserved branch ref resolves there at the recorded tip, it declares every
+  resource the park's manifest names, and the persisted runner session can be hosted on it. The
+  re-home lands inside the existing `rebind` stage, written ahead of the claim, so the workspace
+  checkout, the resource boot, the host re-bind and the reload all follow to the new slot with no
+  second code path. The record's move and the run's are two durable writes, and the run's is keyed
+  on the run rather than on the record, so a crash or a failed write between them is closed by the
+  next repair instead of leaving the run driving the old slot's worktree while the claim points at
+  the new one. Re-home targets take the same sustained-pressure admission gate and the same
+  detached-HEAD scoring exemption a new dispatch does, and only a slot another run HOLDS is left —
+  a preparing or mid-release row is waited for, not abandoned. A lost claim rolls the record, the
+  run and the handle back together when this attempt moved them (a repair re-drive of an earlier
+  move is left to converge), `rehome.fromSlotId` is written once so a chained re-home still
+  names the slot the park originally freed, and every surface derives that original the same way so
+  a preview taken after a re-home cannot report both ends as the same slot. Gated on a new runner-declared session
+  portability: a
+  runner that scopes its persisted session to the working directory it was recorded in — Claude and
+  Codex both do — is refused with `RESTORE_REHOME_SESSION_NOT_PORTABLE` rather than reloaded into a
+  workspace where its conversation does not exist, so no run is ever silently restarted on a fresh
+  session. `RESTORE_SLOT_TAKEN` still answers a machine with no other free slot;
+  `RESTORE_NO_REHOME_TARGET` answers one where every candidate failed a proof, and each refusal now
+  says what would actually clear it. Dispatch's detached-HEAD exemption keys on the slot the park
+  physically detached, so a re-home cannot move it to a slot nobody detached.
 - feat(runtime): a re-target is checked against the machine's real device list before anything is
   released. `resource.device.inventory` enumerates a slot's machine through `xcrun simctl list
 devices -j`, `adb devices -l`, and `emulator -list-avds`, routed over the node exec path so a
@@ -23,9 +49,18 @@ state` out of the tool's stderr, which let a device caught mid-transition pass a
   reads the state back from `simctl list devices -j` or `adb get-state`, and an unanswerable state
   keeps the failure. Only a settled state answers: `Booting`, `Creating` and an `offline` or
   `unauthorized` Android transport are transitional, so they confirm neither a boot nor a shutdown.
+  Android reads the transport list rather than `adb get-state`, because a non-zero exit cannot tell a
+  powered-off emulator from a missing adb; an emulator transport absent from a list adb successfully
+  produced is a confirmed shutdown, while an absent physical serial is only unplugged and confirms
+  nothing. The device list is also dropped whenever pool config changes, so the slots each device is
+  configured for never lag the pool file.
 - fix(runs): `complete`, `fail`, and `block` write the backlog repair marker in the same durable
   write as the terminal status, as cancel has since ADR-053. Recording it only after a failed settle
   left a crash between the terminal publish and the settle with no way to rebuild the projection.
+  The marker is written only for a run linked to a backlog item, and any marker no item claims is
+  cleared on load — including when there is no backlog file at all. Every repair walks from a backlog
+  item, so a marker on an ad-hoc run was unreachable: it stood forever and `archiveRun`/`deleteRun`
+  refused the run permanently.
 
 - feat(runtime)!: host-pressure admission is opt-in and OFF by default, on both gates. A medium- or
   high-cost capability acquire on a machine at critical pressure now proceeds; the pressure snapshot

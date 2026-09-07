@@ -120,13 +120,25 @@ export type MachinePauseRestoreParams =
     };
 
 /**
- * Where a restore would put the run back. ADR-054 restores a freed slot into
- * the ORIGINAL slot only: `available` is false when another run holds it, and
- * the verdict is then `RESTORE_SLOT_TAKEN`. Cross-slot re-dispatch is a
- * separate decision, so there is deliberately no alternative target here.
+ * Where a restore would put the run back.
+ *
+ * `slotId` is the Gateway's chosen target and is NOT always the slot the park
+ * freed: when a successor took the original, the Gateway re-homes the run to
+ * another free slot on the same machine, picked through the same dispatch
+ * scoring a new run gets. `originalSlotId` is what the park record names, so a
+ * client can say "restoring into B, was A" without a second read.
+ *
+ * The Gateway alone picks. A client must render `slotId` and never substitute a
+ * slot of its own — that is the one thing ADR-054 forbids.
+ *
+ * `available` answers "can THAT slot take the run back right now", so it is
+ * about `slotId`, not about the original. A re-home whose target passed every
+ * proof reports `available: true` with the two ids differing.
  */
 export interface MachinePauseRestoreTarget {
   slotId: string;
+  /** The slot the park record names. Equal to `slotId` unless the restore re-homes. */
+  originalSlotId: string;
   /** `freed` means the slot must be re-bound first; `retained` means it never left. */
   disposition: MachineParkSlotDisposition;
   /** Whether that exact slot can take the run back right now. */

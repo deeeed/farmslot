@@ -1189,6 +1189,46 @@ function parkHostWindowName(handle: MachinePauseRecoveryHandle): string | null {
   return derived && !/^\d+$/.test(derived) ? derived : null;
 }
 
+/**
+ * Bind a park recovery handle to a DIFFERENT slot's tmux session.
+ *
+ * Cross-slot re-dispatch moves the run's HOST, never its conversation: the
+ * runner session id and the on-disk session path are carried through unchanged,
+ * and only the tmux coordinates change. Without this every host check refuses a
+ * re-homed restore, because each slot owns its own tmux session and the handle
+ * still names the one the park was taken in.
+ *
+ * The window NAME survives — it is the runner's role window, not a slot
+ * coordinate — while the pane id and index are dropped: they name a layout
+ * inside a session this handle is leaving. `resolveRunnerParkHost` then finds
+ * or creates that window in the new session and binds the pane.
+ */
+export function rehomeParkHandleSession(
+  handle: MachinePauseRecoveryHandle,
+  session: string,
+  capturedAt = new Date().toISOString(),
+): MachinePauseRecoveryHandle | null {
+  const windowName = parkHostWindowName(handle);
+  if (!windowName) return null;
+  return {
+    ...handle,
+    target: {
+      ...handle.target,
+      session,
+      window: windowName,
+      // The recorded pane INDEX belonged to a layout in the session this handle
+      // is leaving; keeping it would name a different pane in the new one.
+      pane: null,
+      // `paneId` is deliberately KEPT rather than emptied: it is typed
+      // non-optional on the handle, and the host resolution matches the
+      // RECORDED pane against the new session's windows and finds nothing —
+      // which is exactly the `rehost` verdict a moved handle should get.
+      target: `${session}:${windowName}`,
+    },
+    capturedAt,
+  };
+}
+
 function reboundParkHandle(
   handle: MachinePauseRecoveryHandle,
   windowName: string,

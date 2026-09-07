@@ -1890,6 +1890,104 @@ test('runResolveDecision validates the request before it buys a restore', async 
   assert.equal(getRun(run.id)!.decisions[0]?.resolvedAt, undefined);
 });
 
+test('runResolveDecision reports the slot a re-homed restore actually used', async (t) => {
+  const { run, decision } = gateParkedRun(
+    t,
+    'restore-rehomed',
+    gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+  );
+
+  const result = await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+    () => {},
+    {
+      restoreGatePark: async (runId) => {
+        const parked = getRun(runId)!.park!;
+        // A successor held the original, so the restore re-homed the run. The
+        // record's own slot moved with it, which is what the gate answer must
+        // report — telling the operator the old slot would send them to a pane
+        // that belongs to someone else.
+        updateRun(runId, {
+          slotId: 'macwork-ff-3',
+          park: {
+            ...parked,
+            slotId: 'macwork-ff-3',
+            phase: 'restored',
+            slotFreedAt: undefined,
+            rehome: {
+              fromSlotId: parked.slotId,
+              toSlotId: 'macwork-ff-3',
+              at: '2026-09-05T00:00:20.000Z',
+              reason: 'taken by run-successor',
+            },
+          },
+        });
+        return {
+          ok: true,
+          runId,
+          slotId: 'macwork-ff-3',
+          restoredGeneration: 1,
+          reloadedSessionId: 'session-restored',
+          gateReplayed: false,
+          record: getRun(runId)!.park!,
+        };
+      },
+    },
+  );
+
+  assert.equal(result.gateParkRestore?.slotId, 'macwork-ff-3');
+  assert.ok(
+    getRun(run.id)!.decisions[0]?.resolvedAt,
+    'the decision was consumed after the restore',
+  );
+});
+
+test('a refused re-home tells the operator what will actually clear it', async (t) => {
+  const refusals = [
+    {
+      code: 'RESTORE_NO_REHOME_TARGET',
+      // "Wait for the slot" is wrong advice here: the gateway already looked at
+      // every other slot on the machine and found none it could use.
+      action: /Free a slot on this machine/,
+    },
+    {
+      code: 'RESTORE_REHOME_SESSION_NOT_PORTABLE',
+      // And wrong differently here: no other slot will ever do, because the
+      // runner cannot carry its session out of the workspace it recorded it in.
+      action: /can only resume its session in macwork-ff-1/,
+    },
+  ];
+  for (const refusal of refusals) {
+    const { run, decision } = gateParkedRun(
+      t,
+      `rehome-refused-${refusal.code}`,
+      gateParkRecord('x', 's', { slotFreedAt: '2026-09-05T00:00:10.000Z' }),
+    );
+    await assert.rejects(
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'approve-publish' },
+        () => {},
+        {
+          restoreGatePark: async (runId) => ({
+            ok: false,
+            runId,
+            slotId: 'macwork-ff-1',
+            code: refusal.code,
+            reason: 'no eligible slot',
+            record: getRun(runId)!.park!,
+          }),
+        },
+      ),
+      (error: unknown) => {
+        assert.equal((error as GatewayMethodError).code, refusal.code);
+        assert.match(String((error as GatewayMethodError).userAction ?? ''), refusal.action);
+        return true;
+      },
+    );
+    assert.equal(getRun(run.id)!.decisions[0]?.resolvedAt, undefined);
+  }
+});
+
 test('runResolveDecision leaves the gate pending when the restore is refused', async (t) => {
   const { run, decision } = gateParkedRun(
     t,

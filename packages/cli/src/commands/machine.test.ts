@@ -668,6 +668,7 @@ function restorePreviewResult(record: MachineParkRecord, available: boolean) {
             },
         restoreTarget: {
           slotId: record.slotId,
+          originalSlotId: record.slotId,
           disposition: 'freed' as const,
           available,
         },
@@ -727,4 +728,33 @@ test('every machine envelope carries the derived gate parks beside the raw paylo
   assert.equal(preview.gateParks.length, 1);
   assert.equal(preview.gateParks[0].restoreTarget.available, true, 'a preview has a verdict');
   assert.equal(preview.runs.length, 1, 'the raw runs survive for existing readers');
+});
+
+test('a re-homed park prints both the target and the slot it left', () => {
+  const parks = gateParkedRuns([
+    gateParkRecord({
+      // The record's own slot has moved to the re-home target; the note is the
+      // only surviving record of where the park was originally taken.
+      slotId: 'macwork-ff-3',
+      slotReboundAt: '2026-09-05T10:09:00.000Z',
+      rehome: {
+        fromSlotId: 'macwork-ff-1',
+        toSlotId: 'macwork-ff-3',
+        at: '2026-09-05T10:09:00.000Z',
+        reason: "slot 'macwork-ff-1' is now owned by run 'run-9'",
+      },
+    }),
+  ]);
+  const line = formatGateParkLine(parks[0]);
+  // `restore=<slot>` alone reads as the slot the park was taken in, which after
+  // a re-home is the one a successor holds — and that is where an operator
+  // would go to attach.
+  assert.match(line, /restore=macwork-ff-3 \(was macwork-ff-1\)/u);
+  assert.match(line, /slot macwork-ff-3 \(was macwork-ff-1\)/u);
+});
+
+test('an ordinary park prints one slot, with no re-home noise', () => {
+  const line = formatGateParkLine(gateParkedRuns([gateParkRecord()])[0]);
+  assert.match(line, /restore=macwork-ff-1 \(availability not read\)/u);
+  assert.doesNotMatch(line, /\(was /u);
 });

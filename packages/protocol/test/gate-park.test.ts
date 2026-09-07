@@ -63,6 +63,7 @@ test('a retained park reports its slot as held and needs no restore before the g
   // Nothing told this client whether the slot could take the run back.
   assert.deepEqual(view.restoreTarget, {
     slotId: 'macwork-ff-1',
+    originalSlotId: 'macwork-ff-1',
     disposition: 'retained',
     available: null,
   });
@@ -122,6 +123,7 @@ test('a Gateway restore verdict is carried through instead of being derived', ()
   assert.ok(view);
   assert.deepEqual(view.restoreTarget, {
     slotId: 'macwork-ff-1',
+    originalSlotId: 'macwork-ff-1',
     disposition: 'freed',
     available: true,
     code: 'ELIGIBLE_FREED_SLOT_RESTORE',
@@ -501,4 +503,118 @@ test('an unread availability leaves a recorded refusal standing', () => {
   assert.equal(notice?.blocking, true);
   assert.equal(notice?.refusalSuperseded, undefined);
   assert.match(notice.message, /Nothing has re-checked that slot since/u);
+});
+
+// ─── MANUAL-000122: a restore that re-homes onto a different slot ───────────
+
+function rehomedRecord(): MachineParkRecord {
+  return parkRecord({
+    // The record's own slot has MOVED. That is the whole mechanism: everything
+    // downstream resolves its target through it, so the view has to read the
+    // re-home note to recover where the park was originally taken.
+    slotId: 'macwork-ff-3',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-05T10:05:00.000Z',
+    slotReboundAt: '2026-09-05T10:09:00.000Z',
+    preservedWorkspace: { branch: 'feat/work', headSha: 'abc123' },
+    rehome: {
+      fromSlotId: 'macwork-ff-1',
+      toSlotId: 'macwork-ff-3',
+      at: '2026-09-05T10:09:00.000Z',
+      reason: "slot 'macwork-ff-1' is now owned by run 'run-successor'",
+    },
+    restoreProgress: {
+      operationId: 'restore-1',
+      completed: ['rebind', 'reattach'],
+      updatedAt: '2026-09-05T10:09:00.000Z',
+    },
+  });
+}
+
+test('a re-homed restore reads as rehoming and names both slots', () => {
+  const view = gateParkView(runWith(rehomedRecord()));
+  assert.ok(view);
+  // Split from `restoring` because the operator's attach target moved with it.
+  assert.equal(view.slotState, 'rehoming');
+  assert.equal(view.restoreTarget.slotId, 'macwork-ff-3');
+  assert.equal(view.restoreTarget.originalSlotId, 'macwork-ff-1');
+  assert.match(gateParkStateLabel(view), /macwork-ff-3.*was macwork-ff-1/);
+  assert.match(gateParkSummaryLine(view), /slot macwork-ff-3 \(was macwork-ff-1\)/);
+  // Still owes its remaining stages, so the gate is not answerable yet.
+  assert.equal(view.restoreBeforeGateAnswer, true);
+  assert.deepEqual(view.restoreStage.remaining, ['reacquire', 'reload']);
+});
+
+test('a Gateway verdict for a re-home carries the alternative target through', () => {
+  const view = gateParkView(
+    runWith(
+      parkRecord({
+        slotDisposition: 'freed',
+        slotFreedAt: '2026-09-05T10:05:00.000Z',
+        preservedWorkspace: { branch: 'feat/work', headSha: 'abc123' },
+      }),
+    ),
+    {
+      target: {
+        slotId: 'macwork-ff-3',
+        originalSlotId: 'macwork-ff-1',
+        disposition: 'freed',
+        available: true,
+      },
+      eligibility: {
+        code: MachineParkEligibilityCodes.restoreRehomed,
+        reason: "slot 'macwork-ff-1' is now owned by run 'run-successor'",
+      },
+    },
+  );
+  assert.ok(view);
+  // The record still names the ORIGINAL slot — the re-home has not happened —
+  // and the verdict is what says where the restore is going.
+  assert.equal(view.slotId, 'macwork-ff-1');
+  assert.equal(view.restoreTarget.slotId, 'macwork-ff-3');
+  assert.equal(view.restoreTarget.code, 'ELIGIBLE_FREED_SLOT_REHOME');
+  const notice = gateParkGateNotice(view);
+  assert.equal(notice?.kind, 'restore-first');
+  assert.equal(notice?.blocking, false, 'a re-home is a plan, not a block');
+  // Says the slot moved, because an operator reading only the new slot would
+  // think the park had been taken there, and only the old would attach to a
+  // pane a successor owns.
+  assert.match(notice!.message, /macwork-ff-3/);
+  assert.match(notice!.message, /macwork-ff-1 was taken/);
+});
+
+test('a refused re-home still points the operator at the original slot', () => {
+  const view = gateParkView(
+    runWith(
+      parkRecord({
+        slotDisposition: 'freed',
+        slotFreedAt: '2026-09-05T10:05:00.000Z',
+        preservedWorkspace: { branch: 'feat/work', headSha: 'abc123' },
+        restoreRefusal: {
+          code: MachineParkEligibilityCodes.restoreRehomeSessionNotPortable,
+          reason: "runner 'claude' scopes its persisted session to its workspace",
+          at: '2026-09-05T10:08:00.000Z',
+        },
+      }),
+    ),
+    {
+      target: {
+        slotId: 'macwork-ff-1',
+        originalSlotId: 'macwork-ff-1',
+        disposition: 'freed',
+        available: false,
+      },
+      eligibility: {
+        code: MachineParkEligibilityCodes.restoreRehomeSessionNotPortable,
+        reason: "runner 'claude' scopes its persisted session to its workspace",
+      },
+    },
+  );
+  assert.ok(view);
+  assert.equal(view.slotState, 'freed', 'nothing was re-bound');
+  assert.equal(view.restoreTarget.slotId, view.restoreTarget.originalSlotId);
+  const notice = gateParkGateNotice(view);
+  assert.equal(notice?.kind, 'restore-blocked');
+  assert.equal(notice?.blocking, true);
+  assert.match(notice!.message, /macwork-ff-1/);
 });

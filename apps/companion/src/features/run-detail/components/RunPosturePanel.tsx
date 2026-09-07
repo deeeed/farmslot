@@ -65,6 +65,12 @@ function GateParkLines({ view }: { view: GateParkView | null }) {
           This run released {view.freedSlotId} to dispatch.
         </Text>
       ) : null}
+      {target.slotId === target.originalSlotId ? null : (
+        <Text style={styles.muted} testID="companion-run-posture-gate-park-rehome">
+          {target.originalSlotId} was taken, so this run is being restored into {target.slotId}{' '}
+          instead — attach there, not to {target.originalSlotId}.
+        </Text>
+      )}
       <Text style={styles.mono} testID="companion-run-posture-gate-park-target">
         Restore target {target.slotId} —{' '}
         {target.available === null

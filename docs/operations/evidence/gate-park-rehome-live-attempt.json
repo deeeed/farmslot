@@ -1,0 +1,70 @@
+{
+  "item": "MANUAL-000122",
+  "claim": "A freed gate park whose slot a successor took is restored into a different free slot on the same machine.",
+  "scenario": "scripts/runner-validation/scenarios/machine-pause-restore-smoke.mjs (FARMSLOT_GATE_PARK_REHOME_RUN_ID mode, scenario id gate-park-rehome-smoke)",
+  "gateway": "ws://localhost:7801 (dev operator gateway, tsx watch on feat/cross-slot-redispatch-of-freed-park)",
+  "recordedAt": "2026-09-08T02:10:00.000Z",
+  "result": "not-run",
+  "pass": false,
+  "blocked": {
+    "reason": "No gate-held or gate-parked run exists anywhere on the fleet, and no registered runner declares machine-scoped session portability, so the re-home success path is unreachable from this session.",
+    "detail": [
+      "The re-home scenario, like the gate-park restore scenario it sits beside, cannot self-provision its subject: it needs a run held at a real publication gate on a runner that declares BOTH a graceful exit and a persisted session reload. The scripted runner declares neither (sessionReload 'none', gracefulExit null), so a scripted run can never be release-parked and can only ever play the successor that takes the slot.",
+      "Reaching a publication gate means dispatching a real claude or codex worker and letting it complete work — hours, not minutes — so it was not attempted inside this task.",
+      "Independently of that: every runner in the registry declares sessionPortability 'workspace'. Claude keys its session store by a slug of the working directory and Codex indexes its rollouts by cwd, so a session recorded in one slot's worktree does not resolve from another's. The re-home is gated on 'machine' and fails closed, so a claude or codex park is refused with RESTORE_REHOME_SESSION_NOT_PORTABLE by design. The success path is built, unit-proven, and unreachable in production until session relocation lands as its own item."
+    ]
+  },
+  "liveReadsPerformed": [
+    {
+      "call": "machine.pause.status {\"machine\":\"macwork\"}",
+      "result": "one park record, run 98c3657b-caae-41d6-91eb-1b96447f2480 on macwork-ff-2, phase 'restored' — a settled record from an earlier item, not a live gate park",
+      "mutated": "nothing; read-only"
+    },
+    {
+      "call": "machine.pause.restore {\"machine\":\"macwork\",\"selector\":{\"kind\":\"all\"},\"execute\":false}",
+      "result": "outcome 'preview', zero entries — settled records are not restore candidates",
+      "mutated": "nothing; execute was false"
+    },
+    {
+      "call": "yarn farmslot --url ws://localhost:7801 machine status macwork --json",
+      "result": "gateParks: [] — the fleet holds no live gate park to re-home",
+      "mutated": "nothing; read-only"
+    },
+    {
+      "call": "fleet.status {}",
+      "result": "macwork-ff-1, macwork-ff-3 and macwork-ff-4 ready and idle; macwork-ff-2 held by a real blocked run and left alone. Two free linked worktrees on one machine is exactly the shape the re-home needs, so the fleet precondition is satisfied — only the parked subject is missing.",
+      "mutated": "nothing; read-only"
+    }
+  ],
+  "runsCreated": [],
+  "leasesTaken": [],
+  "provenInstead": {
+    "where": "gateway, protocol, cli, command-center and companion unit suites",
+    "note": "Each assertion below was proven able to fail by breaking the code path it covers and watching that test alone fail, then restoring.",
+    "cases": [
+      "a taken original slot re-homes the restore onto another free slot — record and run both move, the successor keeps its slot, the preserved branch is checked out on the new slot at its recorded tip, the same session is reloaded on the new slot's tmux session with a structured acknowledgement, every stage completes",
+      "the re-home is written before the slot it names is claimed",
+      "a crash after the re-home claim repairs into the new slot, never into the one the successor holds",
+      "a runner whose session is workspace-scoped is refused with RESTORE_REHOME_SESSION_NOT_PORTABLE and nothing is touched",
+      "re-home refuses a candidate that cannot reach the preserved branch tip",
+      "re-home refuses a candidate whose working tree is dirty",
+      "re-home refuses a candidate that declares less than the park released",
+      "re-home refuses a candidate whose host cannot take the persisted session",
+      "a machine with no free slot keeps the plain RESTORE_SLOT_TAKEN refusal",
+      "a free original slot is never abandoned for a better-scoring neighbour",
+      "a re-homed park keeps its detached-HEAD exemption on the slot it left",
+      "a re-home note round-trips through the intent journal; a half-written one is refused at write",
+      "the shared gate-park view reports 'rehoming' and names both slots in its label, summary line and gate notice",
+      "the CLI, Command Center and Companion each name both slots and tell the operator to attach to the new one",
+      "run.resolveDecision reports the slot a re-homed restore actually used, and each refusal carries the user action that would clear it"
+    ]
+  },
+  "toRunThis": {
+    "prerequisites": [
+      "a run held at a publication gate on claude, codex or grok",
+      "at least two free slots on that run's machine",
+      "a runner declaring sessionPortability 'machine' (none today)"
+    ],
+    "command": "FARMSLOT_GATE_PARK_REHOME_RUN_ID=<gate-held run id> FARMSLOT_GATE_PARK_SUCCESSOR_TICKET=<ticket run.create accepts> node scripts/runner-validation/run.mjs --scenario machine-pause-restore-smoke --runner claude"
+  }
+}

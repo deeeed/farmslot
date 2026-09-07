@@ -703,3 +703,52 @@ test('every park claim on a slot is kept, so creation order cannot hide the matc
     true,
   );
 });
+
+test('a re-homed park keeps its detached-HEAD exemption on the slot it left', () => {
+  const detachedAt = '2026-09-05T00:00:00.000Z';
+  // A restore moved this run to `new-home`, so both `run.slotId` and the
+  // record's `slotId` name it now. The detached HEAD did NOT move: it is still
+  // sitting in `old-home`, whose branch ref the park preserved.
+  const claims = parkPreservedSlotIds([
+    {
+      id: 'run-rehomed',
+      slotId: 'new-home',
+      park: {
+        version: 1,
+        operationId: 'op',
+        previewId: 'preview',
+        runId: 'run-rehomed',
+        generation: 1,
+        machine: 'macwork',
+        slotId: 'new-home',
+        mode: 'release',
+        phase: 'resources-restoring',
+        slotDisposition: 'freed',
+        prePauseStatus: 'blocked',
+        prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+        resourceManifest: { capturedAt: detachedAt, resources: [], capabilityLeases: [] },
+        recoveryHandle: null,
+        preservedWorkspace: { branch: 'w/rehomed', headSha: 'sha-rehomed', detachedAt },
+        rehome: {
+          fromSlotId: 'old-home',
+          toSlotId: 'new-home',
+          at: detachedAt,
+          reason: 'taken',
+        },
+        errors: [],
+        residuals: { runner: 'stopped', resources: [] },
+        createdAt: detachedAt,
+        updatedAt: detachedAt,
+      },
+    },
+  ] as never);
+  // Keying on the run would move the exemption to a slot that is not detached
+  // and strip it from the one that is — so dispatch would carry the stale
+  // penalty on `old-home` and suppress it on a `new-home` nobody detached.
+  assert.deepEqual(
+    [...claims.keys()],
+    ['old-home'],
+    'the exemption stays where the detach physically happened',
+  );
+  assert.deepEqual(claims.get('old-home'), [{ runId: 'run-rehomed', headSha: 'sha-rehomed' }]);
+});

@@ -329,3 +329,60 @@ test('a fresh available verdict demotes an earlier refusal instead of blocking o
   assert.match(text, /the Gateway now reports that slot available/u);
   assert.doesNotMatch(text, /role=alert/u);
 });
+
+const REHOME_VERDICT = {
+  target: {
+    slotId: 'macwork-ff-3',
+    originalSlotId: 'macwork-ff-1',
+    disposition: 'freed' as const,
+    available: true,
+  },
+  eligibility: {
+    code: MachineParkEligibilityCodes.restoreRehomed,
+    reason: "slot 'macwork-ff-1' is now owned by run 'run-9'",
+  },
+};
+
+test('a re-home verdict renders both slots and points the operator at the new one', () => {
+  const view = gateParkView(runWith(FREED_PARK), REHOME_VERDICT);
+  const text = templateText(renderRunGatePark(view));
+  // Both ends, always. Only the new slot reads as if the park had been taken
+  // there; only the old sends the operator to a pane the successor now owns.
+  assert.match(text, /macwork-ff-1 was taken, so this run is being restored into macwork-ff-3/u);
+  assert.match(text, /attach there, not to macwork-ff-1/u);
+  assert.match(text, /Restore target macwork-ff-3/u);
+  assert.match(text, /data-restore-slot=macwork-ff-3/u);
+  assert.match(text, /data-restore-original-slot=macwork-ff-1/u);
+  // Historical, and about the slot the park actually released.
+  assert.match(text, /This run released macwork-ff-1 to dispatch\./u);
+});
+
+test('an ordinary same-slot restore renders no re-home line', () => {
+  const text = templateText(
+    renderRunGatePark(
+      gateParkView(runWith(FREED_PARK), {
+        target: {
+          slotId: 'macwork-ff-1',
+          originalSlotId: 'macwork-ff-1',
+          disposition: 'freed',
+          available: true,
+        },
+        eligibility: { code: 'ELIGIBLE_FREED_SLOT_RESTORE', reason: 'still free' },
+      }),
+    ),
+  );
+  assert.doesNotMatch(text, /was taken, so this run is being restored/u);
+  assert.match(text, /data-restore-slot=macwork-ff-1/u);
+  assert.match(text, /data-restore-original-slot=macwork-ff-1/u);
+});
+
+test('the gate notice for a re-home names the move and stays non-blocking', () => {
+  const text = templateText(
+    renderRunGateParkNotice(gateParkView(runWith(FREED_PARK), REHOME_VERDICT)),
+  );
+  assert.match(
+    text,
+    /Answering this gate restores the run into macwork-ff-3 first — macwork-ff-1 was taken — then resolves the decision\./u,
+  );
+  assert.match(text, /data-kind=restore-first/u);
+});

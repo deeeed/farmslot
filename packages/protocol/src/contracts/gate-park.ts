@@ -206,6 +206,14 @@ export type GateParkSlotState =
   | 'freed'
   /** A restore re-bound the slot but still owes stages before the gate is answerable. */
   | 'restoring'
+  /**
+   * A restore re-bound a DIFFERENT slot than the park freed, because a
+   * successor took the original, and still owes stages. Split from `restoring`
+   * because the operator's attach target moved: telling them the run is coming
+   * back into the slot they parked it from would send them to a pane that
+   * belongs to someone else.
+   */
+  | 'rehoming'
   /** The record is `restored` or `cancelled`; nothing is outstanding. */
   | 'settled';
 
@@ -225,11 +233,17 @@ export interface GateParkRestoreStageView {
  * `available` is `null` when nothing has told this client whether that slot can
  * take the run back. Only the Gateway answers that question — through
  * `machine.pause.restore` — so a surface without one reports "not known" rather
- * than guessing from the record. ADR-054 restores into the ORIGINAL slot only,
- * which is why there is deliberately no alternative target here.
+ * than guessing from the record.
+ *
+ * `slotId` is the target the Gateway picked and may differ from
+ * `originalSlotId`: when a successor took the slot the park freed, the Gateway
+ * re-homes the run to another free slot on the same machine. A client renders
+ * what it is given and never picks a slot itself.
  */
 export interface GateParkRestoreTargetView {
   slotId: string;
+  /** The slot the park record names. Equal to `slotId` unless the restore re-homes. */
+  originalSlotId: string;
   disposition: MachineParkSlotDisposition;
   available: boolean | null;
   /** The Gateway's verdict code for that availability, when one was supplied. */
@@ -280,7 +294,12 @@ export interface GateParkView {
  * `MachinePauseRestoreTarget` and `MachinePauseEligibility` satisfy it.
  */
 export interface GateParkRestoreVerdict {
-  target: { slotId: string; disposition: MachineParkSlotDisposition; available: boolean };
+  target: {
+    slotId: string;
+    originalSlotId?: string;
+    disposition: MachineParkSlotDisposition;
+    available: boolean;
+  };
   eligibility?: { code: string; reason: string };
 }
 
@@ -288,7 +307,10 @@ function slotStateOf(park: MachineParkRecord): GateParkSlotState {
   if (park.phase === 'restored' || park.phase === 'cancelled') return 'settled';
   if (park.mode !== 'release' || park.slotDisposition !== 'freed') return 'retained';
   if (park.slotFreedAt && !park.slotReboundAt) return 'freed';
-  if (park.slotReboundAt) return 'restoring';
+  // The re-home note is written write-ahead, before the claim, so it can be
+  // present while the slot is still freed — which is why occupancy is read
+  // FIRST above. Here the slot is bound, and `rehome` says which one.
+  if (park.slotReboundAt) return park.rehome ? 'rehoming' : 'restoring';
   // A `partial` never reached the slot AND has stopped trying, so it is not
   // "still landing". Whether its gate is answerable is not a second opinion
   // formed here — it is `isGateParkInFlightOrFreed`, the same predicate
@@ -369,7 +391,11 @@ export function gateParkView(
     restoreBeforeGateAnswer: needsGateParkRestore({ park }),
     restoreStage: restoreStageView(park),
     restoreTarget: {
-      slotId: verdict?.target.slotId ?? park.slotId,
+      slotId: verdict?.target.slotId ?? park.rehome?.toSlotId ?? park.slotId,
+      // The park's ORIGINAL slot, which the record no longer names once a
+      // re-home has moved `slotId`. `rehome.fromSlotId` is the only surviving
+      // record of it, so it wins over the record's current binding.
+      originalSlotId: verdict?.target.originalSlotId ?? park.rehome?.fromSlotId ?? park.slotId,
       disposition: verdict?.target.disposition ?? disposition,
       available: verdict ? verdict.target.available : null,
       ...(verdict?.eligibility ? { code: verdict.eligibility.code } : {}),
@@ -424,12 +450,23 @@ export function gateParkStateLabel(view: GateParkView): string {
   if (view.slotState === 'partial-needs-restore') return 'Park failed partway; needs a restore';
   if (view.slotState === 'freed') return 'Parked, slot freed for dispatch';
   if (view.slotState === 'restoring') return 'Restoring into its slot';
+  if (view.slotState === 'rehoming') {
+    return `Restoring into ${view.restoreTarget.slotId} (was ${view.restoreTarget.originalSlotId})`;
+  }
   return 'Park settled';
 }
 
 /** One compact line: what the park did with the slot, the branch it preserved, what it still owes. */
 export function gateParkSummaryLine(view: GateParkView): string {
-  const parts = [gateParkStateLabel(view), `slot ${view.slotId}`];
+  const target = view.restoreTarget;
+  const rehomed = target.slotId !== target.originalSlotId;
+  const parts = [
+    gateParkStateLabel(view),
+    // The slot the run is going to, and where it came from. A single `slot X`
+    // after a re-home named the NEW slot with no hint it had moved, which reads
+    // as if the park had always been there.
+    rehomed ? `slot ${target.slotId} (was ${target.originalSlotId})` : `slot ${view.slotId}`,
+  ];
   if (view.preservedWorkspace) {
     const workspace = view.preservedWorkspace;
     parts.push(
@@ -530,6 +567,18 @@ export function gateParkGateNotice(view: GateParkView | null): GateParkGateNotic
       blocking: true,
       message: `Answering this gate restores the run into ${target.slotId} first, and the last restore attempt refused. Nothing has re-checked that slot since.`,
       refusal: view.refusal,
+    };
+  }
+  if (target.slotId !== target.originalSlotId) {
+    return {
+      kind: 'restore-first',
+      blocking: false,
+      // Says the slot MOVED, because the operator's attach target moves with
+      // it. A message naming only the new slot reads as if the park had been
+      // there all along, and one naming only the old sends them to a pane a
+      // successor owns.
+      message: `Answering this gate restores the run into ${target.slotId} first — ${target.originalSlotId} was taken — then resolves the decision.`,
+      ...(view.refusal ? { refusal: view.refusal, refusalSuperseded: true } : {}),
     };
   }
   return {
