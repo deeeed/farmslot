@@ -25,6 +25,7 @@ import { prepareRunPostureForValidation } from '../run-engine/resource-posture.j
 import {
   type PostureWarmSweepResult,
   resolveEffectivePosturePolicy,
+  type RunResourcePostureDeps,
   RunResourcePostureReconciler,
 } from './posture.js';
 import { RuntimeCapabilityRegistry } from './registry.js';
@@ -97,6 +98,8 @@ interface HarnessOptions {
   retainOnRelease?: string[];
   /** Replace the warm-sweep result the reconciler sees. */
   warmSweepResult?: PostureWarmSweepResult;
+  /** The machine's device inventory, as the re-target guard reads it. */
+  assertTargetInInventory?: RunResourcePostureDeps['assertTargetInInventory'];
   now?: () => Date;
   storePath?: string;
 }
@@ -200,6 +203,9 @@ async function harness(t: TestContext, options: HarnessOptions) {
     },
     acquireCapability: (params) => registry.acquire(params),
     enqueueScopedClaimWaiter: (params) => registry.enqueueScopedClaimWaiter(params),
+    ...(options.assertTargetInInventory
+      ? { assertTargetInInventory: options.assertTargetInInventory }
+      : {}),
     releaseForPosture: async (slotId, dispositions) =>
       withForcedRetention(await registry.releaseForPosture(slotId, dispositions)),
     stopWarmProviders: async (slotId, capabilityIds) => {
@@ -1598,6 +1604,83 @@ test('validation preparation on a new device releases the old lease then acquire
     reported.state?.capabilities.find((capability) => capability.capabilityId === 'device')?.target,
     { simulator: 'SIM-2' },
   );
+});
+
+test('a re-target to a device the machine does not have is refused before the old lease is released', async (t) => {
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+    assertTargetInInventory: async (slotId, parameters) => {
+      const identity = parameters.simulator;
+      if (identity === 'SIM-2') return null;
+      return {
+        code: 'device-not-in-inventory',
+        machine: MACHINE,
+        key: 'simulator',
+        identity: String(identity),
+        nearest: ['SIM-1', 'SIM-2'],
+        reason: `machine '${MACHINE}' has no simulator '${String(identity)}' for ${slotId}; it does have SIM-1, SIM-2`,
+      };
+    },
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-9' },
+      },
+    ],
+  });
+  assert.equal(result.ok, false);
+  const rejection = result.transition.rejection;
+  assert.equal(rejection?.kind, 'device-unknown');
+  assert.equal(rejection?.kind === 'device-unknown' && rejection.machine, MACHINE);
+  assert.equal(rejection?.kind === 'device-unknown' && rejection.identity, 'SIM-9');
+  assert.deepEqual(rejection?.kind === 'device-unknown' ? rejection.nearest : null, [
+    'SIM-1',
+    'SIM-2',
+  ]);
+  assert.deepEqual(actionCalls, [], 'nothing was released or booted for an unknown device');
+  const leases = (await registry.status({ slotId: SLOT, ownerRunId: 'run-a' })).leases;
+  assert.deepEqual(
+    leases.filter((lease) => lease.state === 'acquired').map((lease) => lease.parameters),
+    [{ simulator: 'SIM-1' }],
+    'the run still holds the device it had',
+  );
+});
+
+test('a re-target the inventory confirms proceeds exactly as it did before the guard existed', async (t) => {
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE],
+    assertTargetInInventory: async () => null,
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(actionCalls, [
+    { action: 'device.release', parameters: { simulator: 'SIM-1' } },
+    { action: 'device.acquire', parameters: { simulator: 'SIM-2' } },
+    { action: 'device.health', parameters: { simulator: 'SIM-2' } },
+  ]);
 });
 
 test('a re-target honours keep-warm: the warm provider is cleaned up before the new device boots', async (t) => {

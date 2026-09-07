@@ -3,6 +3,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  type DeviceInventoryRefusal,
   digestRecipeDocument,
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityStatusResult,
@@ -1053,6 +1054,7 @@ test('a rerun target rewrites the stored proof plan the reconciler is given', as
         ],
         run.id,
       ),
+      inventoryHas('SIM-2'),
     );
     assert.equal(calls.length, 1);
     assert.equal(calls[0].posture, 'active');
@@ -1082,6 +1084,117 @@ test('a rerun with no target leaves the registry stored proof plan alone', async
     const { reconciler, calls } = postureReconciler();
     await assertRecipeRerunProofCapabilities(run.id, reconciler);
     assert.equal(calls[0].proofRequirements, undefined);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+/**
+ * The inventory guard, stubbed (MANUAL-000124). Production reads the slot's
+ * machine with `xcrun simctl` / `adb`; these tests state the answer directly so
+ * the RULE is what is under test, not this host's device list.
+ */
+function inventoryHas(...identities: string[]) {
+  return {
+    assertTargetInInventory: async (
+      _slotId: string,
+      target: Record<string, unknown>,
+    ): Promise<DeviceInventoryRefusal | null> => {
+      const identity = Object.entries(target).find(([key]) => key !== 'platform')?.[1];
+      if (typeof identity !== 'string' || identities.includes(identity)) return null;
+      return {
+        code: 'device-not-in-inventory',
+        machine: 'macwork',
+        key: 'simulator',
+        identity,
+        nearest: identities,
+        reason: `machine 'macwork' has no simulator '${identity}'; it does have ${identities.join(', ')}`,
+      };
+    },
+  };
+}
+
+/** The unreadable case: the guard answers null and records why. */
+function inventoryUnreadable(record: string[]) {
+  return {
+    assertTargetInInventory: async (
+      slotId: string,
+      _target: Record<string, unknown>,
+      opts?: { onUnreadable?: (reason: string) => void },
+    ): Promise<DeviceInventoryRefusal | null> => {
+      opts?.onUnreadable?.(`no inventory for ${slotId}`);
+      record.push(slotId);
+      return null;
+    },
+  };
+}
+
+test('a rerun target the machine does not have is refused before the device is released', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000124',
+  });
+  updateRun(run.id, { slotId: 'macwork-ff-1' });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    await assert.rejects(
+      assertRecipeRerunProofCapabilities(
+        run.id,
+        reconciler,
+        { simulator: 'SIM-9' },
+        capabilityStatusFor(
+          'macwork-ff-1',
+          [{ capabilityId: 'ios-simulator', reason: 'device', mode: 'visual' }],
+          run.id,
+        ),
+        inventoryHas('SIM-2', 'SIM-3'),
+      ),
+      /machine 'macwork' has no simulator 'SIM-9'; it does have SIM-2, SIM-3/,
+    );
+    assert.equal(
+      calls.length,
+      0,
+      'the reconciler is what releases the held device, so it must not have run',
+    );
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('an unreadable inventory does not refuse — the provider boot is still the closed door', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000124',
+  });
+  updateRun(run.id, { slotId: 'macwork-ff-1' });
+  try {
+    const { reconciler, calls } = postureReconciler();
+    const consulted: string[] = [];
+    await assertRecipeRerunProofCapabilities(
+      run.id,
+      reconciler,
+      { simulator: 'SIM-9' },
+      capabilityStatusFor(
+        'macwork-ff-1',
+        [{ capabilityId: 'ios-simulator', reason: 'device', mode: 'visual' }],
+        run.id,
+      ),
+      inventoryUnreadable(consulted),
+    );
+    assert.deepEqual(consulted, ['macwork-ff-1']);
+    assert.equal(calls.length, 1, 'preparation proceeds when the inventory cannot answer');
+    assert.deepEqual(calls[0].proofRequirements, [
+      {
+        capabilityId: 'ios-simulator',
+        reason: 'device',
+        mode: 'visual',
+        parameters: { simulator: 'SIM-9' },
+      },
+    ]);
   } finally {
     await cleanupPostureRun(run.id);
   }

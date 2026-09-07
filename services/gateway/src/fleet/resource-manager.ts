@@ -30,8 +30,10 @@ import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
+import { deviceControlVerdict } from './device-inventory.js';
 import { getAllNodes, getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
+import { execResourceCommand, type ResourceCommandExec } from './resource-exec.js';
 import { getCachedFleet, loadFleetStatus } from './state.js';
 
 export function findUnresolvedPlaceholders(expanded: string): string[] {
@@ -495,32 +497,6 @@ export async function executeResourceHealth(
   }
 
   return { ok: false, detail: result.stderr?.trim() || `exit ${result.exitCode}` };
-}
-
-async function execResourceCommand(
-  slotId: string,
-  cwd: string,
-  cmd: string,
-  timeout: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const { isLocal, machine } = await getSlotLocality(slotId);
-  if (!isLocal) {
-    const node = getNode(machine);
-    if (node) {
-      try {
-        return (await sendNodeRequest(node, 'exec', { cmd, cwd, timeout })) as {
-          stdout: string;
-          stderr: string;
-          exitCode: number;
-        };
-      } catch (err) {
-        return { stdout: '', stderr: (err as Error).message, exitCode: 1 };
-      }
-    }
-    // No node — fall through to local exec, matching the legacy health path.
-  }
-
-  return execLocal(cmd, { cwd, timeout });
 }
 
 async function verifyBrowserPidFileCapturable(
@@ -1224,6 +1200,70 @@ export async function clearMachineResourceStatus(machine: string): Promise<void>
 }
 
 /**
+ * The device identity a control hook was expanded with: the lease's own
+ * parameters first, then the slot's configured resources — the same precedence
+ * `expandTemplate` gives `extraVars`, so the state we read back belongs to the
+ * device the hook actually touched.
+ */
+export function deviceIdentityForControl(
+  resourceVars: Record<string, string> | undefined,
+  extraVars: Record<string, string> | undefined,
+): { simulator?: string; udid?: string; adb_serial?: string } {
+  const pick = (key: 'simulator' | 'udid' | 'adb_serial') =>
+    extraVars?.[key] ?? resourceVars?.[key];
+  const identity: { simulator?: string; udid?: string; adb_serial?: string } = {};
+  for (const key of ['simulator', 'udid', 'adb_serial'] as const) {
+    const value = pick(key);
+    if (value) identity[key] = value;
+  }
+  return identity;
+}
+
+/**
+ * What a boot or shutdown hook that exited non-zero really did.
+ *
+ * This used to be a regex over the tool's stderr: a message matching
+ * `Unable to (shutdown|boot) device in current state` was reported as success.
+ * That is the tool's prose, it changes between releases, and a device caught
+ * mid-transition took the same path — after which the provider's health check
+ * was the only thing between it and an acquire over a device that never booted.
+ *
+ * Now the device itself is asked. Success is reported ONLY when the tool says
+ * the device reached the state the action wanted. No verdict — an unsupported
+ * platform, no identity to ask about, a tool that did not answer — keeps the
+ * failure, because a boot we cannot confirm is not a boot.
+ */
+export async function reconcileFailedDeviceControl(input: {
+  slotId: string;
+  cwd: string;
+  platform: string | undefined;
+  action: ResourceControlAction;
+  identity: { simulator?: string; udid?: string; adb_serial?: string };
+  failure: string;
+  /** Injectable so the rule is testable without a machine. */
+  exec?: ResourceCommandExec;
+}): Promise<{ ok: boolean; detail?: string }> {
+  // A relaunch is asked the same question as a boot: it ends with the device up,
+  // and the old regex covered it because the shutdown half is what printed the
+  // matching message.
+  const wanted = input.action === 'shutdown' ? 'shutdown' : 'boot';
+  const verdict = await deviceControlVerdict({
+    slotId: input.slotId,
+    cwd: input.cwd,
+    platform: input.platform,
+    action: wanted,
+    identity: input.identity,
+    ...(input.exec ? { exec: input.exec } : {}),
+  });
+  if (!verdict) return { ok: false, detail: input.failure };
+  if (!verdict.ok) return { ok: false, detail: `${input.failure} (${verdict.detail})` };
+  return {
+    ok: true,
+    detail: `${wanted === 'shutdown' ? 'already stopped' : 'already running'}: ${verdict.detail}`,
+  };
+}
+
+/**
  * Execute a resource control hook (boot, shutdown, relaunch).
  * After control, immediately re-polls the slot's resources.
  */
@@ -1292,15 +1332,14 @@ export async function executeResourceControl(
       if (execResult.exitCode === 0) {
         result = { ok: true, detail: execResult.stdout?.trim() || undefined };
       } else {
-        const msg = execResult.stderr?.trim() || `exit ${execResult.exitCode}`;
-        if (/Unable to (shutdown|boot) device in current state/i.test(msg)) {
-          result = {
-            ok: true,
-            detail: action === 'shutdown' ? 'already stopped' : 'already running',
-          };
-        } else {
-          result = { ok: false, detail: msg };
-        }
+        result = await reconcileFailedDeviceControl({
+          slotId,
+          cwd: slotVars.repo,
+          platform: resourceDef.platform,
+          action,
+          identity: deviceIdentityForControl(slotVars.resourceVars, extraVars),
+          failure: execResult.stderr?.trim() || `exit ${execResult.exitCode}`,
+        });
       }
     } catch (err) {
       result = { ok: false, detail: (err as Error).message };
@@ -1310,15 +1349,14 @@ export async function executeResourceControl(
     if (execResult.exitCode === 0) {
       result = { ok: true, detail: execResult.stdout.trim() || undefined };
     } else {
-      const msg = execResult.stderr || `exit ${execResult.exitCode}`;
-      if (/Unable to (shutdown|boot) device in current state/i.test(msg)) {
-        result = {
-          ok: true,
-          detail: action === 'shutdown' ? 'already stopped' : 'already running',
-        };
-      } else {
-        result = { ok: false, detail: msg };
-      }
+      result = await reconcileFailedDeviceControl({
+        slotId,
+        cwd: slotVars.repo,
+        platform: resourceDef.platform,
+        action,
+        identity: deviceIdentityForControl(slotVars.resourceVars, extraVars),
+        failure: execResult.stderr || `exit ${execResult.exitCode}`,
+      });
     }
   }
 

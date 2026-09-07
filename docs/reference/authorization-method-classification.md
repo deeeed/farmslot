@@ -162,6 +162,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `recipe.rerun`                          | admin          |                                                          |
 | `resource.cleanup`                      | admin          |                                                          |
 | `resource.control`                      | admin          |                                                          |
+| `resource.device.inventory`             | admin          |                                                          |
 | `resource.health`                       | admin          |                                                          |
 | `resource.list`                         | admin          |                                                          |
 | `resource.pressure.history`             | admin          |                                                          |

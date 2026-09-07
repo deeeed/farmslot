@@ -4,6 +4,24 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(runtime): a re-target is checked against the machine's real device list before anything is
+  released. `resource.device.inventory` enumerates a slot's machine through `xcrun simctl list
+devices -j`, `adb devices -l`, and `emulator -list-avds`, routed over the node exec path so a
+  remote machine answers for itself, cached briefly per machine, and labelled with every slot that
+  configures each device, so a device two slots share names both. A `recipe.rerun` target or a posture re-target naming a device that
+  machine does not have is now refused up front, naming the machine and the nearest known
+  identities, instead of costing the run the device it was holding and failing at the provider's
+  boot. When the tool that answers for a key did not run, nothing is refused and the provider's own
+  boot remains the closed door.
+- fix(runtime): a boot or shutdown hook that exits non-zero is reported as success only when the
+  device itself says so. The verdict was matching `Unable to (shutdown|boot) device in current
+state` out of the tool's stderr, which let a device caught mid-transition pass as running; it now
+  reads the state back from `simctl list devices -j` or `adb get-state`, and an unanswerable state
+  keeps the failure.
+- fix(runs): `complete`, `fail`, and `block` write the backlog repair marker in the same durable
+  write as the terminal status, as cancel has since ADR-053. Recording it only after a failed settle
+  left a crash between the terminal publish and the settle with no way to rebuild the projection.
+
 - feat(runtime)!: host-pressure admission is opt-in and OFF by default, on both gates. A medium- or
   high-cost capability acquire on a machine at critical pressure now proceeds; the pressure snapshot
   is carried on the granted lease with `enforced: false` and reported by `runtime.capability.status`,

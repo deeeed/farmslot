@@ -114,6 +114,51 @@ for (const kind of ['complete', 'fail', 'block'] as const) {
   });
 }
 
+// ── ADR-053 parity: the backlog repair marker is write-ahead (MANUAL-000124) ──
+
+for (const kind of ['complete', 'fail', 'block'] as const) {
+  test(`${kind} writes the backlog repair marker in the same write as the terminal status`, async () => {
+    const seen: Array<{ status: Run['status']; marker: boolean | undefined }> = [];
+    const harness = drive(
+      run({ backlogItemId: 'MANUAL-000124' }),
+      { runId: 'run_1', kind, actor: 'engine', patch: TERMINAL_PATCHES[kind] },
+      {
+        // The published run is what every client renders and what archive and
+        // delete read. Cancel has carried the marker at this exact moment since
+        // ADR-053; the other three recorded it only after a settle that FAILED,
+        // which a crash between the publish and the settle never reaches.
+        emit: (current) =>
+          void seen.push({ status: current.status, marker: current.backlogReconcilePending }),
+      },
+    );
+    const result = await harness.result;
+
+    assert.deepEqual(seen, [{ status: TERMINAL_PATCHES[kind].status, marker: true }]);
+    assert.equal(result.run.backlogReconcilePending, true);
+    assert.equal(harness.stored().backlogReconcilePending, true);
+    assert.equal(harness.stored().status, TERMINAL_PATCHES[kind].status);
+  });
+}
+
+test('the marker survives a settle that failed, which is what it is repair for', async () => {
+  const harness = drive(
+    run({ backlogItemId: 'MANUAL-000124' }),
+    { runId: 'run_1', kind: 'complete', actor: 'engine', patch: TERMINAL_PATCHES.complete },
+    {
+      settleBacklog: async () => {
+        throw new Error('backlog write failed');
+      },
+    },
+  );
+  const result = await harness.result;
+
+  assert.equal(result.effects.find((effect) => effect.name === 'backlog-settle')?.status, 'failed');
+  // Nothing clears it here: `markBacklogRunObserved` clears it only after its own
+  // durable write, so a failed settle simply leaves it standing for restart
+  // reconciliation to rebuild the projection from.
+  assert.equal(harness.stored().backlogReconcilePending, true);
+});
+
 test('a failing slot teardown leaves the run terminal and records an advisory failure', async () => {
   const harness = drive(
     run(),

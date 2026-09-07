@@ -178,6 +178,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'recipe.rerun': { classification: 'admin' },
   'resource.cleanup': { classification: 'admin' },
   'resource.control': { classification: 'admin' },
+  'resource.device.inventory': { classification: 'admin' },
   'resource.health': { classification: 'admin' },
   'resource.list': { classification: 'admin' },
   'resource.pressure.history': { classification: 'admin' },

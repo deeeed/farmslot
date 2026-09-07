@@ -23,6 +23,7 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { assertTargetInInventory } from '../fleet/device-inventory.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { machineParkingService } from '../machine-parking/service.js';
 import { getRun, updateRun } from '../runs/store.js';
@@ -45,6 +46,11 @@ const reconciler = new RunResourcePostureReconciler({
   acquireCapability: (params) => getRuntimeCapabilityRegistry().acquire(params),
   enqueueScopedClaimWaiter: (params) =>
     getRuntimeCapabilityRegistry().enqueueScopedClaimWaiter(params),
+  assertTargetInInventory: (slotId, parameters) =>
+    assertTargetInInventory(slotId, parameters, {
+      onUnreadable: (reason) =>
+        console.warn(`[runtime-posture] re-target for ${slotId} not pre-checked: ${reason}`),
+    }),
   releaseForPosture: (slotId, dispositions) =>
     getRuntimeCapabilityRegistry().releaseForPosture(slotId, dispositions),
   stopWarmProviders: (slotId, capabilityIds) =>

@@ -142,7 +142,15 @@ export function terminalPlan(
 ): (transitionRequest: RunTransitionRequest, run: Run) => RunTransitionPlan {
   return () => ({
     before: [],
-    mutate: () => request.patch,
+    // Write-ahead repair marker, in the SAME durable write as the terminal
+    // status — ADR-053 parity with cancel, which has done this since it was
+    // written. The router publishes the terminal run before the awaited backlog
+    // settle, so archive and delete must see the marker synchronously and
+    // refuse eviction until `markBacklogRunObserved` clears it after its own
+    // durable write. Recording it only after a FAILED settle left a window
+    // where a crash between the publish and the settle lost the projection with
+    // nothing to rebuild it from.
+    mutate: () => ({ ...request.patch, backlogReconcilePending: true }),
     after: terminalEffects(request.collaborators),
   });
 }

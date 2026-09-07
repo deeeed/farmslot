@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type DeviceInventoryRefusal,
   hasLiveParkRecord,
   MachineParkEligibilityCodes,
   type MachinePauseExecuteParams,
@@ -416,6 +417,20 @@ export interface RunResourcePostureDeps {
   enqueueScopedClaimWaiter?: (
     params: RuntimeCapabilityAcquireParams,
   ) => Promise<RuntimeCapabilityScopedWaitConflict | null>;
+  /**
+   * Whether the slot's machine actually has the device a re-target names
+   * (MANUAL-000124).
+   *
+   * Consulted BEFORE the release below, for the same reason the queue place is
+   * taken there: a re-target must not give up the device it holds until it
+   * knows the new one can be had. Fails OPEN — it returns null both when the
+   * device is there and when the inventory could not be read — so the provider's
+   * own boot remains the closed door. Left unwired by callers with no machine.
+   */
+  assertTargetInInventory?: (
+    slotId: string,
+    parameters: Record<string, unknown>,
+  ) => Promise<DeviceInventoryRefusal | null>;
   /** Owner-scoped terminal cleanup, resolved inside the registry's own lock. */
   releaseRunTerminal: (
     slotId: string,
@@ -828,6 +843,37 @@ export class RunResourcePostureReconciler {
     // pass before anything is released. The drain's later reservation brings
     // preparation back through here, and by then the check passes — the claim is
     // held for this run, so there is nothing to queue behind.
+    // Before the queue place and before the release: a device the machine does
+    // not have can never be acquired, so taking a place in its queue or giving
+    // up the held device for it are both wasted (MANUAL-000124).
+    if (staleTargets.length > 0 && this.deps.assertTargetInInventory) {
+      for (const state of context.states) {
+        if (state.desiredDisposition !== 'acquired') continue;
+        const requirement = context.proofRequirements.find(
+          (candidate) => candidate.capabilityId === state.capabilityId,
+        );
+        if (!requirement?.parameters) continue;
+        const refusal = await this.deps.assertTargetInInventory(
+          context.slotId,
+          requirement.parameters,
+        );
+        if (!refusal) continue;
+        return this.rejectedTransition(context, inProgress, {
+          effects,
+          failures,
+          completed,
+          rejection: {
+            kind: 'device-unknown',
+            capabilityId: state.capabilityId,
+            machine: refusal.machine,
+            key: refusal.key,
+            identity: refusal.identity,
+            nearest: refusal.nearest,
+            reason: refusal.reason,
+          },
+        });
+      }
+    }
     if (staleTargets.length > 0 && this.deps.enqueueScopedClaimWaiter) {
       for (const state of context.states) {
         if (state.desiredDisposition !== 'acquired') continue;

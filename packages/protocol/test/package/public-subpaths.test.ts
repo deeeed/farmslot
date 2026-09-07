@@ -229,6 +229,7 @@ for (const [name, actual, expected] of [
       watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
       pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
       pressureHistory: Methods.RESOURCE_PRESSURE_HISTORY,
+      deviceInventory: Methods.RESOURCE_DEVICE_INVENTORY,
       streamSubscribe: Methods.STREAM_SUBSCRIBE,
       streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
       streamSnapshot: Methods.STREAM_SNAPSHOT,

@@ -10,6 +10,7 @@ export const ResourceMethods = {
   watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
   pressureSnapshot: Methods.RESOURCE_PRESSURE_SNAPSHOT,
   pressureHistory: Methods.RESOURCE_PRESSURE_HISTORY,
+  deviceInventory: Methods.RESOURCE_DEVICE_INVENTORY,
   streamSubscribe: Methods.STREAM_SUBSCRIBE,
   streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
   streamSnapshot: Methods.STREAM_SNAPSHOT,
@@ -17,6 +18,22 @@ export const ResourceMethods = {
   screenUnsubscribe: Methods.SCREEN_UNSUBSCRIBE,
   screenThumbnail: Methods.SCREEN_THUMBNAIL,
 } as const;
+
+// ─── Device inventory param/result types ───
+
+/**
+ * The devices available to a slot's machine (MANUAL-000124).
+ *
+ * Slot-scoped rather than machine-scoped on purpose: a client holding a slot
+ * never has to learn which machine it sits on, and the Gateway resolves that
+ * itself — the same resolution the re-target guard uses, so the two can never
+ * read different machines for one slot.
+ */
+export interface DeviceInventoryParams {
+  slotId: string;
+  /** Bypass the short per-machine cache and re-run the tools. */
+  refresh?: boolean;
+}
 
 // ─── Node Health param/result types ───
 

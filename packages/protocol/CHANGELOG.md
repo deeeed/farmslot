@@ -4,6 +4,17 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat(runtime): device inventory contracts. `resource.device.inventory`
+  (`DeviceInventoryParams`/`DeviceInventoryResult`) lists the devices a slot's machine has, as
+  `DeviceInventoryEntry` records carrying the re-target `key` (`DeviceInventoryKey`), the
+  `identity`, the device name, the tool's own `state`, and `configuredForSlots` — every slot that
+  configures it, a list because two slots legitimately share one physical device.
+  `DeviceInventorySource` says per tool (`DEVICE_INVENTORY_TOOLS`) whether it answered, and
+  `DEVICE_INVENTORY_KEY_TOOL` / `deviceInventoryCovers` say which tool answers for which key — so a
+  partial read is usable and silence is never read as absence. `DeviceInventoryRefusal` is the
+  typed refusal for a target the machine does not have, naming the machine and the nearest known
+  identities, and `ResourcePostureRejection` gains a matching `device-unknown` member.
+
 - feat(runtime): contracts for opt-in host-pressure admission. `ProjectRuntimeCapabilitiesConfig`
   gains `hostPressureAdmission` (`ProjectHostPressureAdmissionConfig`: a `HostPressureAdmissionMode`
   from `HOST_PRESSURE_ADMISSION_MODES` — `off` | `refuse` | `queue` — plus optional
