@@ -29,6 +29,7 @@ import {
   normalizeRawProjectBacklog,
   normalizeRawProjectPrepare,
   normalizeRawProjectRoadmap,
+  normalizeRawRuntimeCapabilities,
 } from '../core/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -771,6 +772,10 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const publicationReview = normalizePublicationReview(raw);
         const recipeRunSupportsPlaybackSlow = raw.recipe_run_supports_playback_slow === true;
         const recipeRunSupportsVideoRecording = raw.recipe_run_supports_video_recording === true;
+        // Declared on ProjectConfig and read by consumers (host-pressure
+        // admission among them); without this the field is a type that nothing
+        // ever produces, and every reader silently sees `undefined`.
+        const runtimeCapabilities = normalizeRawRuntimeCapabilities(raw.runtime_capabilities);
         projects.push({
           name: raw.name || dir,
           repoUrl: raw.repo_url || '',
@@ -882,14 +887,26 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(publicationReview ? { publicationReview } : {}),
           ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
+          ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
           ...(raw.execution_templates &&
           typeof raw.execution_templates === 'object' &&
           !Array.isArray(raw.execution_templates)
             ? { executionTemplates: raw.execution_templates }
             : {}),
         });
-      } catch {
-        /* skip invalid projects */
+      } catch (error) {
+        // Still skipped — one bad project must not take the fleet down — but no
+        // longer silently: a project.json that fails to parse would otherwise
+        // drop its entire config, including its host_pressure_admission block,
+        // with no way to tell it apart from a project that never declared one.
+        // An entry with no project.json at all — a bare directory, or a plain
+        // file like README.md — is not a project and is not worth reporting.
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+          console.error(
+            `[state] project ${dir}: skipped, its project.json could not be loaded: ${(error as Error).message}`,
+          );
+        }
       }
     }
   } catch {

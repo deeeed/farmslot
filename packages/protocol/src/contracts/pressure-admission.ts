@@ -7,6 +7,20 @@
 
 import type { ProcessAttributionConfidence, ProcessOwnershipClass } from '../rpc/resources.js';
 
+import type { HostPressureAdmissionMode } from './runtime-capabilities.js';
+
+/**
+ * Dispatch admission has no queue: a machine under sustained pressure either
+ * accepts new dispatches or refuses them. Same vocabulary as the capability
+ * side so one word means one thing across both gates.
+ */
+export type DispatchPressureAdmissionMode = Exclude<HostPressureAdmissionMode, 'queue'>;
+
+export const DISPATCH_PRESSURE_ADMISSION_MODES: readonly DispatchPressureAdmissionMode[] = [
+  'off',
+  'refuse',
+];
+
 /** Machine-level admission state derived from the bounded pressure sample
  * ring. `disabled` means the gateway-owned switch is off — the DEFAULT: the
  * dispatch is admitted whatever the evidence says, while the evidence itself
@@ -193,7 +207,7 @@ export interface PressureAdmissionControlState {
    * process. The env value WINS over the durable state above, which is still
    * reported verbatim so an operator can see both.
    */
-  envOverride?: 'off' | 'refuse';
+  envOverride?: DispatchPressureAdmissionMode;
 }
 
 export interface PressureAdmissionSetEnabledParams {

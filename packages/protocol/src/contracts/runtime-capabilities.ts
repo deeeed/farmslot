@@ -259,7 +259,7 @@ export interface RuntimeCapabilityLease {
   keepWarmUntil?: string;
   cleanupFailure?: string;
   /** Admission pressure retained while this lease is queued. */
-  pressure?: RuntimeCapabilityPressureConflict;
+  pressure?: RuntimeCapabilityLeasePressure;
   /**
    * The machine the slot ran on when the lease was taken.
    *
@@ -336,6 +336,16 @@ export interface RuntimeCapabilityLeaseConflict {
   reason: string;
 }
 
+/**
+ * The acquire was REFUSED because the host is under critical pressure and the
+ * project opted in to enforcement.
+ *
+ * This type only ever describes a refusal. Pressure that was observed but NOT
+ * enforced is a `RuntimeCapabilityPressureAdvisory`, which is deliberately a
+ * different `kind` and is not a member of `RuntimeCapabilityAcquireConflict`:
+ * a client matching `kind === 'host-pressure'` must never be able to paint an
+ * admitted acquire as a block, and an absent boolean was too easy to miss.
+ */
 export interface RuntimeCapabilityPressureConflict {
   kind: 'host-pressure';
   reason: string;
@@ -343,16 +353,34 @@ export interface RuntimeCapabilityPressureConflict {
   machine?: string;
   queued: boolean;
   retryAfterMs?: number;
-  /**
-   * Present ONLY when the host-pressure gate was not enforced: the project (or
-   * the gateway env override) has `host_pressure_admission.mode: 'off'`, which
-   * is the default. The acquire PROCEEDED; this is the advisory pressure the
-   * gate would have refused on, carried on the granted lease so operators can
-   * still see the machine is loaded. Absent means the conflict was enforced
-   * and the acquire was refused or queued.
-   */
-  enforced?: false;
 }
+
+/**
+ * Pressure that was observed and NOT enforced: the project (or the gateway env
+ * override) has `host_pressure_admission.mode: 'off'`, which is the default.
+ * The acquire PROCEEDED. This rides along on the granted lease so operators can
+ * still see the machine was loaded, and it is never a refusal.
+ *
+ * It is a reading taken AT ACQUIRE TIME and never refreshed — hence the
+ * required `observedAt`. A live view of the machine is
+ * `resource.pressure.snapshot`.
+ */
+export interface RuntimeCapabilityPressureAdvisory {
+  kind: 'host-pressure-advisory';
+  reason: string;
+  severity: 'warn' | 'critical';
+  machine?: string;
+  observedAt: string;
+}
+
+/**
+ * What a lease's `pressure` field may hold: why a QUEUED lease is waiting
+ * (a conflict), or the unenforced reading an ACQUIRED lease was taken under
+ * (an advisory). The `kind` tells them apart; nothing else has to.
+ */
+export type RuntimeCapabilityLeasePressure =
+  | RuntimeCapabilityPressureConflict
+  | RuntimeCapabilityPressureAdvisory;
 
 /**
  * The acquire was refused AND enqueued: a scoped claim is held elsewhere and

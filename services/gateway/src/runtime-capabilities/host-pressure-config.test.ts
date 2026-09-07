@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertHostPressureAdmissionEnvValid,
   DEFAULT_HOST_PRESSURE_THRESHOLDS,
   hostPressureAdmissionEnvOverride,
   resolveHostPressureAdmission,
@@ -58,11 +59,30 @@ test('the env override does not take the project thresholds with it', () => {
   assert.equal(resolved.thresholds.cpuCriticalPercent, 99);
 });
 
-test('an unrecognized env value throws rather than resolving to some other mode', () => {
-  assert.throws(
-    () => hostPressureAdmissionEnvOverride({ FARMSLOT_HOST_PRESSURE_ADMISSION: 'enabled' }),
-    /must be off, refuse, queue/,
+test('an unrecognized env value is ignored on reads and refused at startup', () => {
+  // Reads run inside every capability acquire: throwing there would turn a
+  // shell typo into a total acquire outage. The value is ignored...
+  assert.equal(
+    hostPressureAdmissionEnvOverride({ FARMSLOT_HOST_PRESSURE_ADMISSION: 'enabled' }),
+    null,
   );
+  const resolved = resolveHostPressureAdmission(
+    { mode: 'refuse' },
+    { FARMSLOT_HOST_PRESSURE_ADMISSION: 'enabled' },
+  );
+  assert.equal(resolved.mode, 'refuse', 'the project config still decides');
+  assert.equal(resolved.source, 'project');
+
+  // ...and the gateway refuses to boot instead, where an operator sees it.
+  assert.throws(
+    () => assertHostPressureAdmissionEnvValid({ FARMSLOT_HOST_PRESSURE_ADMISSION: 'enabled' }),
+    /must be off, refuse, queue, got 'enabled'/,
+  );
+  assert.doesNotThrow(() =>
+    assertHostPressureAdmissionEnvValid({ FARMSLOT_HOST_PRESSURE_ADMISSION: 'queue' }),
+  );
+  assert.doesNotThrow(() => assertHostPressureAdmissionEnvValid({}));
+
   assert.equal(hostPressureAdmissionEnvOverride({ FARMSLOT_HOST_PRESSURE_ADMISSION: '  ' }), null);
   assert.equal(hostPressureAdmissionEnvOverride({}), null);
 });

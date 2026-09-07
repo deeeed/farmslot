@@ -14,17 +14,25 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type {
-  PressureAdmissionControlState,
-  PressureAdmissionGetResult,
-  PressureAdmissionSetEnabledParams,
-  PressureAdmissionSetEnabledResult,
+import {
+  DISPATCH_PRESSURE_ADMISSION_MODES,
+  type DispatchPressureAdmissionMode,
+  type PressureAdmissionControlState,
+  type PressureAdmissionGetResult,
+  type PressureAdmissionSetEnabledParams,
+  type PressureAdmissionSetEnabledResult,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { currentSessionOriginator } from '../../security/work-originator.js';
 
-const CONTROL_VERSION = 1;
+// 2: the meaning of `enabled` inverted — dispatch pressure prevention became
+// opt-in and off by default. A v1 file recorded "enabled" under the old
+// semantics, where enabling meant returning to the shipped default; carrying it
+// forward would leave an install that ran disable-then-enable silently
+// enforcing after the upgrade. v1 files fall through to the unsupported-shape
+// branch and land on the new default instead.
+const CONTROL_VERSION = 2;
 
 interface ControlFile extends PressureAdmissionControlState {
   version: typeof CONTROL_VERSION;
@@ -45,13 +53,47 @@ export const DISPATCH_PRESSURE_ADMISSION_ENV = 'FARMSLOT_DISPATCH_PRESSURE_ADMIS
  */
 export function dispatchPressureAdmissionEnvOverride(
   env: NodeJS.ProcessEnv = process.env,
-): 'off' | 'refuse' | null {
+): DispatchPressureAdmissionMode | null {
   const raw = env[DISPATCH_PRESSURE_ADMISSION_ENV]?.trim();
   if (!raw) return null;
-  if (raw !== 'off' && raw !== 'refuse') {
-    throw new Error(`${DISPATCH_PRESSURE_ADMISSION_ENV} must be off or refuse, got '${raw}'`);
+  if (!DISPATCH_PRESSURE_ADMISSION_MODES.includes(raw as DispatchPressureAdmissionMode)) {
+    // Reads happen on the queue tick and behind dispatch.pressureAdmission.get.
+    // Throwing here would leave an operator unable to even READ the control
+    // state to find their typo, so the value is ignored (falling back to the
+    // durable state) and the gateway refuses to start instead — see
+    // assertPressureAdmissionEnvValid.
+    warnOnceAboutInvalidEnv(raw);
+    return null;
   }
-  return raw;
+  return raw as DispatchPressureAdmissionMode;
+}
+
+const warnedEnvValues = new Set<string>();
+
+function warnOnceAboutInvalidEnv(raw: string): void {
+  if (warnedEnvValues.has(raw)) return;
+  warnedEnvValues.add(raw);
+  console.error(
+    `[pressure-admission] ignoring ${DISPATCH_PRESSURE_ADMISSION_ENV}='${raw}': must be ${DISPATCH_PRESSURE_ADMISSION_MODES.join(' or ')}`,
+  );
+}
+
+/**
+ * Fail-loud gate, called once at gateway startup. A typo in an operator's shell
+ * must stop the process rather than silently resolve to a different enforcement
+ * posture than the one they meant to set — but it must do so at boot, not from
+ * inside every admission read.
+ */
+export function assertDispatchPressureAdmissionEnvValid(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const raw = env[DISPATCH_PRESSURE_ADMISSION_ENV]?.trim();
+  if (!raw) return;
+  if (!DISPATCH_PRESSURE_ADMISSION_MODES.includes(raw as DispatchPressureAdmissionMode)) {
+    throw new Error(
+      `${DISPATCH_PRESSURE_ADMISSION_ENV} must be ${DISPATCH_PRESSURE_ADMISSION_MODES.join(' or ')}, got '${raw}'`,
+    );
+  }
 }
 
 let cached: PressureAdmissionControlState | null = null;
@@ -75,14 +117,21 @@ function loadControlState(): PressureAdmissionControlState {
     return { ...DEFAULT_STATE };
   }
   const file = parsed as Partial<ControlFile> | null;
-  if (
-    typeof file !== 'object' ||
-    file === null ||
-    file.version !== CONTROL_VERSION ||
-    typeof file.enabled !== 'boolean'
-  ) {
+  if (typeof file !== 'object' || file === null || typeof file.enabled !== 'boolean') {
     console.error(
       '[pressure-admission] control file has an unsupported shape, using the default (disabled)',
+    );
+    return { ...DEFAULT_STATE };
+  }
+  if (file.version !== CONTROL_VERSION) {
+    // A pre-v2 file recorded `enabled` when enabling meant "back to the shipped
+    // default", which was ON. Carrying that value forward would leave this
+    // install enforcing after an upgrade that made the gate opt-in, so the
+    // stored value is dropped and the operator re-opts in deliberately.
+    console.error(
+      `[pressure-admission] control file is version ${String(file.version)}, not ${CONTROL_VERSION}; ` +
+        'dispatch pressure prevention is now opt-in, so the stored setting is reset to disabled — ' +
+        're-enable it with `farmslot dispatch pressure-admission enable` if you want it enforcing',
     );
     return { ...DEFAULT_STATE };
   }

@@ -92,7 +92,7 @@ test('low-cost capabilities remain admissible and warning pressure does not bloc
   );
 });
 
-test('the default off mode admits under critical pressure and reports it as advisory', () => {
+test('the default off mode admits under critical pressure and reports a distinct advisory', () => {
   const advisory = evaluateRuntimeCapabilityAdmission(
     capability('high'),
     {
@@ -102,14 +102,36 @@ test('the default off mode admits under critical pressure and reports it as advi
     },
     { mode: 'off', queueOnPressure: false },
   );
-  assert.deepEqual(advisory, {
-    kind: 'host-pressure',
+  // A DIFFERENT kind, not a conflict carrying a flag: a client matching
+  // 'host-pressure' cannot paint this admitted acquire as a block.
+  assert.equal(advisory?.kind, 'host-pressure-advisory');
+  if (advisory?.kind !== 'host-pressure-advisory') return;
+  const { observedAt, ...rest } = advisory;
+  assert.deepEqual(rest, {
+    kind: 'host-pressure-advisory',
     severity: 'critical',
     reason: 'Load average 118 is above 1.5x 12 cores.',
     machine: 'macwork',
-    queued: false,
-    enforced: false,
   });
+  // It never carries the fields a refusal is acted on by.
+  assert.equal('queued' in advisory, false, 'an advisory has nothing to queue behind');
+  assert.equal('retryAfterMs' in advisory, false);
+  // The advisory is pinned to a lease and never refreshed, so it must say when
+  // it was read.
+  assert.ok(
+    Date.parse(observedAt ?? '') > 0,
+    'an unenforced advisory carries the time it was observed',
+  );
+});
+
+test('an enforced refusal stays a host-pressure conflict with no advisory fields', () => {
+  const refused = evaluateRuntimeCapabilityAdmission(
+    capability('high'),
+    { severity: 'critical', machine: 'macwork' },
+    refuse(),
+  );
+  assert.equal(refused?.kind, 'host-pressure');
+  assert.equal('observedAt' in (refused ?? {}), false);
 });
 
 test('an unenforced conflict never queues, even when the caller asked to queue', () => {
@@ -118,8 +140,9 @@ test('an unenforced conflict never queues, even when the caller asked to queue',
     { severity: 'critical', machine: 'macwork' },
     { mode: 'off', queueOnPressure: true },
   );
-  assert.equal(advisory?.kind === 'host-pressure' && advisory.queued, false);
-  assert.equal(advisory?.kind === 'host-pressure' && advisory.enforced, false);
+  // Nothing to queue behind: an advisory refuses nothing in the first place.
+  assert.equal(advisory?.kind, 'host-pressure-advisory');
+  assert.equal('queued' in (advisory ?? {}), false);
 });
 
 test('queue mode queues a medium-cost acquire the caller did not ask to queue', () => {
@@ -129,7 +152,6 @@ test('queue mode queues a medium-cost acquire the caller did not ask to queue', 
     { mode: 'queue', queueOnPressure: false },
   );
   assert.equal(queued?.kind === 'host-pressure' && queued.queued, true);
-  assert.equal(queued?.kind === 'host-pressure' && queued.enforced, undefined);
 });
 
 test('machine unavailability is refused in every mode, including off', () => {

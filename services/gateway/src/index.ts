@@ -71,6 +71,8 @@ import { initPrLinkage } from './integrations/pr-linkage.js';
 import { initImprovementEngine } from './intelligence/improvement-engine.js';
 import { reconcileMachineParking } from './machine-parking/recovery.js';
 import { refreshBranches } from './methods/dispatch.js';
+import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-admission.js';
+import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pressure-admission-control.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
@@ -94,6 +96,7 @@ import {
 import { initRunMonitor } from './run-engine/run-monitor.js';
 import { withRunSettlementLane } from './run-lifecycle/broadcast-lanes.js';
 import { loadAllRuns } from './runs/store.js';
+import { assertHostPressureAdmissionEnvValid } from './runtime-capabilities/host-pressure-config.js';
 import { reconcileRuntimeCapabilityLeases } from './runtime-capabilities/recovery.js';
 import {
   assertGatewayBindAllowed,
@@ -189,6 +192,11 @@ const STARTUP_BRANCH_PREWARM =
 const ENABLE_ORCHESTRATION = process.env.FARMSLOT_DISABLE_ORCHESTRATION !== '1';
 
 async function main(): Promise<void> {
+  // Fail loud, once, before anything binds: a typo'd admission mode must stop
+  // the gateway here rather than be ignored on every later read.
+  assertHostPressureAdmissionEnvValid();
+  assertDispatchPressureAdmissionEnvValid();
+  assertPressureAdmissionConfigValid();
   const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
   let releaseGatewayPresence = (): void => {};
   let stopCredentialFreshnessPolling = (): void => {};

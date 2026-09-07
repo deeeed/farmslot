@@ -8,7 +8,7 @@ import type { PressureAdmissionDecision, PressureAdmissionEvidence } from '@farm
 
 import { stripAnsi } from '../colors.js';
 
-import { renderPressureAdmission } from './dispatch.js';
+import { renderAdmissionControl, renderPressureAdmission } from './dispatch.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const ARTIFACT_DIR = path.join(REPO_ROOT, 'artifacts');
@@ -133,6 +133,46 @@ test('CLI never renders threshold logic of its own for admitted machines', () =>
   const text = renderPressureAdmission(green).map(stripAnsi).join('\n');
   assert.match(text, /green on mini/);
   assert.doesNotMatch(text, /Override:/);
+});
+
+test('CLI status reports the EFFECTIVE state, not just the stored flag', () => {
+  // The exact trap this renderer used to fall into: env override on, durable
+  // state at its off default. Dispatches ARE being refused.
+  const overridden = renderAdmissionControl({
+    enabled: false,
+    updatedAt: null,
+    updatedBy: null,
+    envOverride: 'refuse',
+  })
+    .map(stripAnsi)
+    .join('\n');
+  assert.match(overridden, /Pressure admission: enforcing/);
+  assert.match(overridden, /FARMSLOT_DISPATCH_PRESSURE_ADMISSION=refuse/);
+  assert.match(overridden, /Stored setting: disabled \(not in effect\)/);
+  assert.doesNotMatch(overridden, /NOT pressure-gated/);
+
+  // And the mirror image: stored setting enabled, env override turning it off.
+  const suppressed = renderAdmissionControl({
+    enabled: true,
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    updatedBy: 'principal-arthur',
+    envOverride: 'off',
+  })
+    .map(stripAnsi)
+    .join('\n');
+  assert.match(suppressed, /Pressure admission: DISABLED/);
+  assert.match(suppressed, /Stored setting: enabled \(not in effect\)/);
+  assert.match(suppressed, /NOT pressure-gated/);
+});
+
+test('CLI status with no env override reports the stored setting as the source', () => {
+  const stored = renderAdmissionControl({ enabled: false, updatedAt: null, updatedBy: null })
+    .map(stripAnsi)
+    .join('\n');
+  assert.match(stored, /Pressure admission: DISABLED/);
+  assert.match(stored, /Source: stored gateway setting/);
+  assert.match(stored, /gateway default: off/);
+  assert.doesNotMatch(stored, /Stored setting:/);
 });
 
 after(() => {

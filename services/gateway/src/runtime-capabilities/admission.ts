@@ -2,6 +2,7 @@ import type {
   HostPressureAdmissionMode,
   RuntimeCapabilityAcquireConflict,
   RuntimeCapabilityCatalogEntry,
+  RuntimeCapabilityPressureAdvisory,
 } from '@farmslot/protocol';
 
 export interface RuntimeCapabilityPressureSnapshot {
@@ -37,7 +38,7 @@ export function evaluateRuntimeCapabilityAdmission(
   entry: RuntimeCapabilityCatalogEntry,
   pressure: RuntimeCapabilityPressureSnapshot,
   options: RuntimeCapabilityAdmissionOptions,
-): RuntimeCapabilityAcquireConflict | null {
+): RuntimeCapabilityAcquireConflict | RuntimeCapabilityPressureAdvisory | null {
   if (pressure.unavailableReason) {
     return {
       kind: 'unavailable',
@@ -46,20 +47,28 @@ export function evaluateRuntimeCapabilityAdmission(
     };
   }
   if (pressure.severity !== 'critical' || entry.cost.class === 'low') return null;
-  const enforced = options.mode !== 'off';
+  if (options.mode === 'off') {
+    // A DIFFERENT type, not a conflict with a flag: nothing downstream that
+    // handles refusals can be handed this by accident, because it is not a
+    // member of RuntimeCapabilityAcquireConflict at all. It also carries when
+    // it was read, since it outlives that read pinned to the lease.
+    return {
+      kind: 'host-pressure-advisory',
+      severity: 'critical',
+      reason:
+        pressure.reason ??
+        `${entry.cost.class}-cost capability acquired under critical host pressure`,
+      ...(pressure.machine ? { machine: pressure.machine } : {}),
+      observedAt: new Date().toISOString(),
+    };
+  }
   return {
     kind: 'host-pressure',
     severity: 'critical',
     reason:
-      pressure.reason ??
-      (enforced
-        ? `${entry.cost.class}-cost capability blocked by critical host pressure`
-        : `${entry.cost.class}-cost capability acquired under critical host pressure`),
+      pressure.reason ?? `${entry.cost.class}-cost capability blocked by critical host pressure`,
     ...(pressure.machine ? { machine: pressure.machine } : {}),
-    // An unenforced conflict never queues: nothing is refused, so there is
-    // nothing to wait behind.
-    queued: enforced && (options.mode === 'queue' || options.queueOnPressure),
+    queued: options.mode === 'queue' || options.queueOnPressure,
     ...(pressure.retryAfterMs ? { retryAfterMs: pressure.retryAfterMs } : {}),
-    ...(enforced ? {} : { enforced: false as const }),
   };
 }

@@ -9,6 +9,7 @@ import { runWithSessionOriginator } from '../../security/work-originator.js';
 import { resolveExecutePressureOutcome } from './execute.js';
 import { capturePressureAdmissionDecisions } from './pressure-admission.js';
 import {
+  assertDispatchPressureAdmissionEnvValid,
   getPressureAdmissionControl,
   isPressureAdmissionEnabled,
   resetPressureAdmissionControlCacheForTest,
@@ -55,7 +56,7 @@ test('opt-in switch: default DISABLED, authenticated enable persists and survive
     assert.ok(enabledState.updatedAt);
 
     const onDisk = JSON.parse(readFileSync(controlFile(), 'utf-8'));
-    assert.equal(onDisk.version, 1);
+    assert.equal(onDisk.version, 2);
     assert.equal(onDisk.enabled, true);
     assert.equal(onDisk.updatedBy, 'principal-arthur');
 
@@ -81,7 +82,62 @@ test('opt-in switch: corrupt or wrong-shape control file falls back to the disab
     resetPressureAdmissionControlCacheForTest();
     writeFileSync(controlFile(), JSON.stringify({ version: 99, enabled: true }));
     assert.equal(isPressureAdmissionEnabled(), false);
+    resetPressureAdmissionControlCacheForTest();
+    writeFileSync(controlFile(), JSON.stringify({ version: 2, enabled: 'yes' }));
+    assert.equal(isPressureAdmissionEnabled(), false);
   });
+});
+
+test('a v1 control file that says enabled is reset to the new opt-in default', () => {
+  withTempHome(() => {
+    mkdirSync(path.dirname(controlFile()), { recursive: true });
+    // Exactly what an install that ran `disable` then `enable` left behind,
+    // when enabling meant "back to the shipped default" and that default was ON.
+    writeFileSync(
+      controlFile(),
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        updatedAt: '2026-08-01T00:00:00.000Z',
+        updatedBy: 'principal-arthur',
+      }),
+    );
+    assert.equal(
+      isPressureAdmissionEnabled(),
+      false,
+      'a v1 file must not carry its inverted meaning across the upgrade',
+    );
+    assert.deepEqual(getPressureAdmissionControl(), {
+      enabled: false,
+      updatedAt: null,
+      updatedBy: null,
+    });
+  });
+});
+
+test("a typo'd env value is ignored on reads and refused at startup", () => {
+  const previous = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+  try {
+    withTempHome(() => {
+      runWithSessionOriginator(PRINCIPAL, () => setPressureAdmissionEnabled({ enabled: true }));
+      process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'enabled';
+      // Reads must stay answerable: an operator has to be able to read the
+      // control state to find their typo.
+      assert.equal(isPressureAdmissionEnabled(), true, 'falls back to the durable state');
+      assert.equal(getPressureAdmissionControl().envOverride, undefined);
+      // The gateway refuses to boot instead.
+      assert.throws(
+        () => assertDispatchPressureAdmissionEnvValid(),
+        /must be off or refuse, got 'enabled'/,
+      );
+      assert.doesNotThrow(() =>
+        assertDispatchPressureAdmissionEnvValid({ FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'refuse' }),
+      );
+    });
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+    else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previous;
+  }
 });
 
 test('env override wins over the durable state in both directions', () => {
@@ -100,8 +156,9 @@ test('env override wins over the durable state in both directions', () => {
       assert.equal(isPressureAdmissionEnabled(), false);
       assert.equal(getPressureAdmissionControl().enabled, true);
 
+      // An unusable value never poisons a read; startup is the fail-loud gate.
       process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'maybe';
-      assert.throws(() => isPressureAdmissionEnabled(), /must be off or refuse/);
+      assert.equal(isPressureAdmissionEnabled(), true, 'falls back to the durable enabled state');
     });
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;

@@ -29,7 +29,7 @@ import {
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
-import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { loadFleetStatus } from '../fleet/state.js';
 import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
@@ -368,8 +368,16 @@ async function pressureFor(
   const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
   const machineName = slot?.machine ?? slotVars.machine;
   // Opt-in per project, overridable per gateway process, off by default.
+  //
+  // Read through `loadProjectVars` — the same cached, validating seam
+  // `catalogForSlot` uses for this project's providers. `loadProjectConfig`
+  // would readdir and parse EVERY project.json on every acquire, and it does
+  // not run the project validators, so a typo'd mode would be dropped to `off`
+  // here instead of failing loud.
+  const projectVars = await loadProjectVars(entry.project);
   const admission = resolveHostPressureAdmission(
-    (await loadProjectConfig(entry.project))?.runtimeCapabilities?.hostPressureAdmission,
+    normalizeRawRuntimeCapabilities(projectVars.projectJson.runtime_capabilities)
+      ?.hostPressureAdmission,
   );
   const machine = await resourceHostPressure(machineName, entry.project, admission.thresholds);
   const localSlot = isLocal(slotVars.host, slotVars.machine);

@@ -3375,12 +3375,11 @@ test('an unenforced host-pressure conflict admits the acquire and rides along as
     // What the gate returns with `host_pressure_admission` off, which is the
     // default: a critical snapshot marked as not enforced.
     pressureFor: async () => ({
-      kind: 'host-pressure',
+      kind: 'host-pressure-advisory',
       severity: 'critical',
       reason: 'Load average 118 is above 1.5x 12 cores.',
       machine: 'macwork',
-      queued: false,
-      enforced: false,
+      observedAt: '2026-09-07T10:00:00.000Z',
     }),
   });
   const granted = await acquire(registry, 'browser', 'run-a');
@@ -3389,15 +3388,14 @@ test('an unenforced host-pressure conflict admits the acquire and rides along as
 
   const status = await registry.status({ slotId: SLOT });
   assert.equal(status.leases[0]?.state, 'acquired');
-  assert.equal(status.leases[0]?.pressure?.enforced, false);
+  assert.equal(status.leases[0]?.pressure?.kind, 'host-pressure-advisory');
   // Still reported: an operator reading the slot sees the machine is loaded.
   assert.deepEqual(status.pressure, {
-    kind: 'host-pressure',
+    kind: 'host-pressure-advisory',
     severity: 'critical',
     reason: 'Load average 118 is above 1.5x 12 cores.',
     machine: 'macwork',
-    queued: false,
-    enforced: false,
+    observedAt: '2026-09-07T10:00:00.000Z',
   });
 
   // ...and stops being reported once the lease it described is gone. A stale

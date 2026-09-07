@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-07T11:50:49.075Z",
+  "host": "macwork",
+  "scenario": "host-pressure-admission-optin-refuse-project",
+  "runner": "scripted",
+  "capabilityId": "recording",
+  "expectedMode": "refuse",
+  "optInPath": "project",
+  "gatewayConfiguration": "projects/<project>/project.json runtime_capabilities.host_pressure_admission.mode = refuse, with NO env override set",
+  "hostLoad": {
+    "cores": 16,
+    "load1": 123.69189453125,
+    "perCore": 7.73
+  },
+  "loadNote": "Host load raised deliberately by 20 operator-started busy-loop shells so the machine crossed the real critical threshold (>1.5x 16 cores). Real machine load read by the gateway from node metrics, not injected state. Burners killed right after this run.",
+  "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario host-pressure-admission-optin --slot macwork-ff-3 --expect refuse --via project",
+  "slotId": "macwork-ff-3",
+  "runId": "63d51c20-c640-458d-b052-4df9bd8a2a0c",
+  "nodes": {
+    "machinePressure": {
+      "machine": "macwork",
+      "severity": "critical",
+      "concerns": [
+        "Load average 126.21 is above 1.5x 16 cores.",
+        "2 idle cleanup candidate(s) available."
+      ]
+    },
+    "acquire": {
+      "ok": false,
+      "leaseState": null,
+      "leasePressure": null,
+      "conflict": {
+        "kind": "host-pressure",
+        "severity": "critical",
+        "reason": "Load average 134.06 is above 1.5x 16 cores.",
+        "machine": "macwork",
+        "queued": false,
+        "retryAfterMs": 15000
+      }
+    },
+    "statusPressure": null,
+    "released": null,
+    "advisoryClearedAfterRelease": null,
+    "noLeftoverLeases": []
+  },
+  "pass": true,
+  "attempts": 1
+}

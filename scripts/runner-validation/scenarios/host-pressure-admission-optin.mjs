@@ -16,8 +16,9 @@ export const RUNNER_AGNOSTIC = true;
  * genuinely over the critical load threshold. With no
  * `runtime_capabilities.host_pressure_admission` block — the default — the
  * acquire must SUCCEED, and the pressure must still be reported: the granted
- * lease carries the snapshot with `enforced: false`, and
- * `runtime.capability.status` surfaces it as `pressure`.
+ * lease carries a `host-pressure-advisory`, a type distinct from the
+ * `host-pressure` conflict a refusal uses, and `runtime.capability.status`
+ * surfaces it as `pressure`.
  *
  * Every assertion is a gateway RPC read — the acquire result, the lease record,
  * the derived status pressure, and the machine's own pressure snapshot — never
@@ -27,11 +28,18 @@ export const RUNNER_AGNOSTIC = true;
  * gate applies to it, and its acquire/release are cheap slot actions rather
  * than a device or browser boot.
  *
- * What this scenario cannot cover on its own: the `refuse`/`queue` modes and
- * the `FARMSLOT_HOST_PRESSURE_ADMISSION` override, because changing either
- * needs a gateway restart with different project config or environment. Set the
- * env var on the gateway process and pass `--expect refuse` to prove that half
- * against the same slot.
+ * The enforcing modes need the gateway configured for them before the run, so
+ * the operator declares which opt-in path they set up with `--via`:
+ *
+ *   --expect off    --via default   no project block, no env override
+ *   --expect refuse --via project   the project's own host_pressure_admission
+ *                                   block, with NO env override set
+ *   --expect refuse --via env       FARMSLOT_HOST_PRESSURE_ADMISSION on the
+ *                                   gateway process
+ *
+ * `--via project` is the one that proves the project config actually reaches
+ * the admission decision; an env-override proof cannot stand in for it, because
+ * the env path bypasses project config entirely.
  */
 const CAPABILITY_ID = 'recording';
 
@@ -75,11 +83,21 @@ function loadPerCore() {
   return { cores, load1, perCore: Number((load1 / cores).toFixed(2)) };
 }
 
-export async function runScenario({ outDir, slotId, explicit = false, expect = 'off' }) {
+export async function runScenario({
+  outDir,
+  slotId,
+  explicit = false,
+  expect = 'off',
+  via = expect === 'off' ? 'default' : 'project',
+}) {
   const reportRunner = 'scripted';
-  // One evidence file per mode: the two halves are proven against differently
-  // configured gateways and must not overwrite each other.
-  const evidenceId = `${SCENARIO_ID}-${expect}`;
+  if (!['default', 'project', 'env'].includes(via)) {
+    throw new Error(`--via must be default, project or env, got '${via}'`);
+  }
+  // One evidence file per mode AND opt-in path: `refuse` proven through project
+  // config and `refuse` proven through the env override are different claims
+  // and must not overwrite each other.
+  const evidenceId = `${SCENARIO_ID}-${expect}-${via}`;
   if (!slotId || process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS !== '1') {
     const requirement =
       'host-pressure-admission-optin needs --slot <farmslot-farm slotId> and FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1; it dispatches a real scripted validation run';
@@ -101,20 +119,21 @@ export async function runScenario({ outDir, slotId, explicit = false, expect = '
     runner: reportRunner,
     capabilityId: CAPABILITY_ID,
     expectedMode: expect,
-    // How the gateway under test was configured for this run. `off` is the
-    // shipped default (no project block, no env override); `refuse`/`queue`
-    // require FARMSLOT_HOST_PRESSURE_ADMISSION on the gateway process or a
-    // project `runtime_capabilities.host_pressure_admission` block, and a
-    // gateway restart.
-    gatewayConfiguration:
-      expect === 'off'
-        ? 'default: no project host_pressure_admission block, no FARMSLOT_HOST_PRESSURE_ADMISSION'
-        : `FARMSLOT_HOST_PRESSURE_ADMISSION=${expect} on the gateway process`,
+    // WHICH opt-in path this run exercised, declared by the operator who
+    // configured the gateway. `project` is the one that proves the project
+    // config path actually reaches the admission decision; `env` proves only
+    // the override. They are not interchangeable evidence.
+    optInPath: via,
+    gatewayConfiguration: {
+      default: 'no project host_pressure_admission block and no FARMSLOT_HOST_PRESSURE_ADMISSION',
+      project: `projects/<project>/project.json runtime_capabilities.host_pressure_admission.mode = ${expect}, with NO env override set`,
+      env: `FARMSLOT_HOST_PRESSURE_ADMISSION=${expect} on the gateway process`,
+    }[via],
     hostLoad: loadPerCore(),
     // Set when an operator deliberately loaded the host to reach the critical
     // threshold, so the evidence never implies the spike was organic.
     loadNote: process.env.FARMSLOT_VALIDATION_LOAD_NOTE ?? null,
-    rerunCommand: `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario ${SCENARIO_ID} --slot ${slotId} --expect ${expect}`,
+    rerunCommand: `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario ${SCENARIO_ID} --slot ${slotId} --expect ${expect} --via ${via}`,
     slotId,
     runId: null,
     nodes: {
@@ -192,7 +211,7 @@ export async function runScenario({ outDir, slotId, explicit = false, expect = '
     while (
       expect === 'off' &&
       acquire.ok &&
-      acquire.lease.pressure?.enforced !== false &&
+      acquire.lease.pressure?.kind !== 'host-pressure-advisory' &&
       report.attempts < MAX_ACQUIRE_ATTEMPTS
     ) {
       rpc('runtime.capability.release', {
@@ -219,14 +238,21 @@ export async function runScenario({ outDir, slotId, explicit = false, expect = '
           `the gate is off but the acquire was refused: ${JSON.stringify(acquire.conflict)}`,
         );
       }
-      if (acquire.lease.pressure?.enforced !== false) {
+      if (acquire.lease.pressure?.kind !== 'host-pressure-advisory') {
         throw new Error(
-          `after ${report.attempts} attempt(s) the granted lease still carries no unenforced pressure advisory (${JSON.stringify(acquire.lease.pressure ?? null)}); the host calmed below the critical threshold between the snapshot and the acquire — re-run while the machine is loaded`,
+          `after ${report.attempts} attempt(s) the granted lease still carries no host-pressure-advisory (${JSON.stringify(acquire.lease.pressure ?? null)}); the host calmed below the critical threshold between the snapshot and the acquire — re-run while the machine is loaded`,
+        );
+      }
+      // The advisory must NOT be shaped like a refusal: a client matching the
+      // conflict kind has to miss it, and it must say when it was read.
+      if (!acquire.lease.pressure.observedAt || 'queued' in acquire.lease.pressure) {
+        throw new Error(
+          `the advisory is shaped like a refusal: ${JSON.stringify(acquire.lease.pressure)}`,
         );
       }
       const status = rpc('runtime.capability.status', { slotId, ownerRunId: created.run.id });
       report.nodes.statusPressure = status.pressure ?? null;
-      if (status.pressure?.enforced !== false) {
+      if (status.pressure?.kind !== 'host-pressure-advisory') {
         throw new Error(
           `runtime.capability.status does not report the pressure as advisory: ${JSON.stringify(status.pressure ?? null)}`,
         );
@@ -261,8 +287,8 @@ export async function runScenario({ outDir, slotId, explicit = false, expect = '
           `expected a host-pressure refusal, got ${JSON.stringify(acquire.conflict)}`,
         );
       }
-      if (acquire.conflict.enforced === false) {
-        throw new Error('the refusal is marked unenforced, which contradicts the refusal itself');
+      if (acquire.conflict.kind === 'host-pressure-advisory') {
+        throw new Error('an advisory reached the refusal path, which it must never be able to do');
       }
       if (expect === 'queue' && acquire.conflict.queued !== true) {
         throw new Error('queue mode refused without queueing the caller');

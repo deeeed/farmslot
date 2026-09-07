@@ -37,10 +37,15 @@ export interface ResolvedHostPressureAdmission {
   thresholds: HostPressureThresholds;
 }
 
+const warnedEnvValues = new Set<string>();
+
 /**
- * The gateway-wide override, or null when unset. An unrecognized value throws:
- * a typo in an operator's shell must not silently fall back to a different
- * enforcement posture than the one they meant to set.
+ * The gateway-wide override, or null when unset.
+ *
+ * An unrecognized value is IGNORED here, not thrown: this runs inside every
+ * capability acquire, and failing each acquire on a shell typo would be a
+ * worse outage than the misconfiguration. The gateway refuses to start on a bad
+ * value instead — see `assertHostPressureAdmissionEnvValid`.
  */
 export function hostPressureAdmissionEnvOverride(
   env: NodeJS.ProcessEnv = process.env,
@@ -48,11 +53,30 @@ export function hostPressureAdmissionEnvOverride(
   const raw = env[HOST_PRESSURE_ADMISSION_ENV]?.trim();
   if (!raw) return null;
   if (!HOST_PRESSURE_ADMISSION_MODES.includes(raw as HostPressureAdmissionMode)) {
+    if (!warnedEnvValues.has(raw)) {
+      warnedEnvValues.add(raw);
+      console.error(
+        `[host-pressure] ignoring ${HOST_PRESSURE_ADMISSION_ENV}='${raw}': must be ${HOST_PRESSURE_ADMISSION_MODES.join(', ')}`,
+      );
+    }
+    return null;
+  }
+  return raw as HostPressureAdmissionMode;
+}
+
+/**
+ * Fail-loud gate, called once at gateway startup. A typo must stop the process
+ * rather than quietly resolve to a posture nobody chose — but at boot, where an
+ * operator sees it, not from inside every acquire.
+ */
+export function assertHostPressureAdmissionEnvValid(env: NodeJS.ProcessEnv = process.env): void {
+  const raw = env[HOST_PRESSURE_ADMISSION_ENV]?.trim();
+  if (!raw) return;
+  if (!HOST_PRESSURE_ADMISSION_MODES.includes(raw as HostPressureAdmissionMode)) {
     throw new Error(
       `${HOST_PRESSURE_ADMISSION_ENV} must be ${HOST_PRESSURE_ADMISSION_MODES.join(', ')}, got '${raw}'`,
     );
   }
-  return raw as HostPressureAdmissionMode;
 }
 
 export function resolveHostPressureAdmission(

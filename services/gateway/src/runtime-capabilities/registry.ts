@@ -16,6 +16,7 @@ import {
   type RuntimeCapabilityLeaseOwner,
   type RuntimeCapabilityLifecycleEvent,
   type RuntimeCapabilityListResult,
+  type RuntimeCapabilityPressureAdvisory,
   type RuntimeCapabilityProviderActionRef,
   type RuntimeCapabilityReleaseParams,
   type RuntimeCapabilityReleaseResult,
@@ -130,11 +131,15 @@ export interface RuntimeCapabilityRegistryOptions {
     /** Leases that currently hold a provider, across every slot. */
     activeLeases: readonly RuntimeCapabilityLease[];
   }) => Promise<string | null>;
+  /**
+   * The host-pressure verdict for one acquire: a refusal, an unenforced
+   * ADVISORY (its own type — it can never be mistaken for a refusal), or null.
+   */
   pressureFor?: (
     slotId: string,
     capability: RuntimeCapabilityCatalogEntry,
     queueOnPressure: boolean,
-  ) => Promise<RuntimeCapabilityAcquireConflict | null>;
+  ) => Promise<RuntimeCapabilityAcquireConflict | RuntimeCapabilityPressureAdvisory | null>;
   /** Family of a run, used when a caller omits the optional `ownerFamilyId`. */
   familyForRun?: (ownerRunId: string) => string | undefined;
   /**
@@ -623,7 +628,7 @@ export class RuntimeCapabilityRegistry {
         .reverse()
         .find(
           (lease) =>
-            lease.pressure?.enforced === false &&
+            lease.pressure?.kind === 'host-pressure-advisory' &&
             lease.state !== 'released' &&
             lease.state !== 'error',
         )?.pressure;
@@ -1069,14 +1074,18 @@ export class RuntimeCapabilityRegistry {
       entry,
       params.queueOnPressure === true,
     );
-    // An UNENFORCED host-pressure conflict refuses nothing: the project (or the
-    // gateway env override) keeps `host_pressure_admission` off, which is the
-    // default. The acquire proceeds and the snapshot rides along on the granted
-    // lease so `runtime.capability.status` can still show the machine is loaded.
-    const pressureAdvisory =
-      pressure?.kind === 'host-pressure' && pressure.enforced === false ? pressure : undefined;
-    if (pressure && !pressureAdvisory) {
-      if (pressure.kind === 'host-pressure' && pressure.queued && !sameOwner) {
+    // An advisory refuses nothing: the project (or the gateway env override)
+    // keeps `host_pressure_admission` off, which is the default. The acquire
+    // proceeds and the reading rides along on the granted lease so
+    // `runtime.capability.status` can still show the machine was loaded. It is
+    // its own type, so the refusal branch below cannot be reached with one.
+    const pressureAdvisory = pressure?.kind === 'host-pressure-advisory' ? pressure : undefined;
+    // Narrowed by the type, not by a flag: `pressureRefusal` cannot hold an
+    // advisory, so no later edit can return one as a refusal.
+    const pressureRefusal =
+      pressure && pressure.kind !== 'host-pressure-advisory' ? pressure : undefined;
+    if (pressureRefusal) {
+      if (pressureRefusal.kind === 'host-pressure' && pressureRefusal.queued && !sameOwner) {
         const now = this.timestamp();
         const queuedLease = this.createLease(
           catalog,
@@ -1087,7 +1096,7 @@ export class RuntimeCapabilityRegistry {
           now,
           'queued',
         );
-        queuedLease.pressure = structuredClone(pressure);
+        queuedLease.pressure = structuredClone(pressureRefusal);
         snapshot.leases.push(queuedLease);
         this.recordEvent(snapshot, {
           kind: 'queued',
@@ -1095,10 +1104,10 @@ export class RuntimeCapabilityRegistry {
           capabilityId: entry.id,
           leaseId: queuedLease.id,
           owner: queuedLease.owner,
-          detail: pressure.reason,
+          detail: pressureRefusal.reason,
         });
       }
-      return { ok: false, conflict: pressure };
+      return { ok: false, conflict: pressureRefusal };
     }
 
     const active = snapshot.leases.filter(
