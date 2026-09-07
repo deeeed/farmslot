@@ -1,0 +1,203 @@
+{
+  "_note": "Result of apps/command-center/probes/recipe-rerun-device-target.js run against the live dev stack (gateway ws://localhost:7801, UI http://localhost:5175, CDP 9323) for MANUAL-000124. Real DOM events on the shipped element; nothing is written into component state. Device serials and udids are truncated to their last 8 characters, and slot ids reflect THIS machine pool wiring, which the probe reads back from the Gateway rather than hard-coding.",
+  "steps": [
+    {
+      "step": "device-keys-offered",
+      "ok": true,
+      "evidence": {
+        "options": ["udid", "simulator", "avd", "adb_serial"],
+        "note": "platform is a provider selector, not a device, so it is not offered here"
+      }
+    },
+    {
+      "step": "empty-by-default",
+      "ok": true,
+      "evidence": {
+        "value": "",
+        "placeholder": "slot default",
+        "inventoryDevices": 29,
+        "inventoryError": null
+      }
+    },
+    {
+      "step": "charset-refused-before-the-wire",
+      "ok": true,
+      "evidence": {
+        "framesSent": 0,
+        "rendered": "Live output\n          \n        \n        \n          \n          Error: Device identity must match ^[A-Za-z0-9._:][A-Za-z0-9._:-]*$\n          \n                \n                  Device identity must matc"
+      }
+    },
+    {
+      "step": "target-reaches-the-gateway",
+      "ok": true,
+      "evidence": {
+        "method": "recipe.rerun",
+        "target": {
+          "simulator": "playground-1"
+        },
+        "slotId": "macwork-ff-4"
+      }
+    },
+    {
+      "step": "key-switch-sends-only-the-new-key",
+      "ok": true,
+      "evidence": {
+        "target": {
+          "adb_serial": "emulator-5554"
+        }
+      }
+    },
+    {
+      "step": "empty-field-sends-no-target",
+      "ok": true,
+      "evidence": {
+        "params": ["runId", "slotId"]
+      }
+    },
+    {
+      "step": "inventory-feeds-the-picker",
+      "ok": true,
+      "evidence": {
+        "offered": [
+          "",
+          "echodev-1",
+          "fs-4",
+          "mmdev-1",
+          "mmdev-2",
+          "mmdev-3",
+          "mmdev-4",
+          "mmdev-5",
+          "mmdev-6",
+          "playground-1",
+          "sherpa-voice-1",
+          "__other__"
+        ],
+        "note": "first option is the slot default; the last is the free-text escape hatch"
+      }
+    },
+    {
+      "step": "picker-keeps-a-free-text-escape-hatch",
+      "ok": true,
+      "evidence": {
+        "offered": [
+          "",
+          "echodev-1",
+          "fs-4",
+          "mmdev-1",
+          "mmdev-2",
+          "mmdev-3",
+          "mmdev-4",
+          "mmdev-5",
+          "mmdev-6",
+          "playground-1",
+          "sherpa-voice-1",
+          "__other__"
+        ]
+      }
+    },
+    {
+      "step": "picked-device-reaches-the-gateway",
+      "ok": true,
+      "evidence": {
+        "target": {
+          "simulator": "echodev-1"
+        },
+        "firstDevice": "echodev-1"
+      }
+    },
+    {
+      "step": "platform-is-reachable-in-the-ui",
+      "ok": true,
+      "evidence": {
+        "options": ["", "ios", "android"]
+      }
+    },
+    {
+      "step": "platform-rides-along-with-the-device",
+      "ok": true,
+      "evidence": {
+        "target": {
+          "simulator": "echodev-1",
+          "platform": "ios"
+        }
+      }
+    },
+    {
+      "step": "platform-without-a-device-is-refused-before-the-wire",
+      "ok": true,
+      "evidence": {
+        "framesSent": 0,
+        "rendered": "Live output\n          \n        \n        \n          \n          Error: Platform 'ios' selects which provider a device belongs to; choose a device too\n          \n                \n                  Platfo"
+      }
+    },
+    {
+      "step": "other-restores-the-free-text-field",
+      "ok": true,
+      "evidence": {
+        "value": "",
+        "control": "recipe-target-value"
+      }
+    },
+    {
+      "step": "android-serials-come-from-adb",
+      "ok": true,
+      "evidence": {
+        "offeredSerials": ["", "\u2026DF6001SP", "__other__"],
+        "fromGateway": ["\u2026DF6001SP"]
+      }
+    },
+    {
+      "step": "every-configured-slot-is-named",
+      "ok": true,
+      "evidence": {
+        "labels": [
+          "slot default",
+          "\u2026DF6001SP (Pixel_6) \u00b7 device \u00b7 macwork-ff-1, macwork-ff-3, macwork-ff-4",
+          "Other\u2026"
+        ],
+        "expected": [["\u2026DF6001SP", ["macwork-ff-1", "macwork-ff-3", "macwork-ff-4"]]]
+      }
+    },
+    {
+      "step": "first-paint-is-the-free-text-field",
+      "ok": true,
+      "evidence": {
+        "control": "recipe-target-value",
+        "inventory": "not answered yet"
+      }
+    },
+    {
+      "step": "an-unlisted-identity-keeps-the-free-text-field",
+      "ok": true,
+      "evidence": {
+        "control": "recipe-target-value",
+        "shown": "not-a-real-simulator",
+        "offered": [
+          "echodev-1",
+          "fs-4",
+          "mmdev-1",
+          "mmdev-2",
+          "mmdev-3",
+          "mmdev-4",
+          "mmdev-5",
+          "mmdev-6",
+          "playground-1",
+          "sherpa-voice-1"
+        ]
+      }
+    },
+    {
+      "step": "what-is-shown-is-what-is-sent",
+      "ok": true,
+      "evidence": {
+        "shown": "not-a-real-simulator",
+        "sent": {
+          "simulator": "not-a-real-simulator"
+        }
+      }
+    }
+  ],
+  "runId": "cdp-device-target-probe-run",
+  "slotId": "macwork-ff-4",
+  "ok": true
+}

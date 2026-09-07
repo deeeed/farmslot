@@ -165,8 +165,11 @@ export function parseAdbDevices(stdout: string): DeviceInventoryEntry[] {
     const line = rawLine.trim();
     if (!line || line.startsWith('List of devices')) continue;
     if (line.startsWith('*')) continue; // adb's own daemon chatter
+    // adb's own diagnostics ("error: no devices/emulators found") share stdout
+    // with device rows; a serial never carries a colon-terminated word.
+    if (line.startsWith('error:') || line.startsWith('adb:')) continue;
     const [serial, state, ...rest] = line.split(/\s+/);
-    if (!serial || !state) continue;
+    if (!serial || !state || serial.endsWith(':')) continue;
     if (!ADB_DEVICE_STATES.has(state)) continue;
     if (!isRuntimeCapabilityTargetValue(serial)) continue;
     const tokens = new Map<string, string>();

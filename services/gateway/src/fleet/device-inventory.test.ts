@@ -79,6 +79,8 @@ test('adb device lines are read as serial, state, and its own key:value tokens',
       'List of devices attached',
       'emulator-5554         device product:sdk_gphone64 model:Pixel_7 device:emu64a',
       'R5CT30ABCDE           offline',
+      'error: no devices/emulators found',
+      'adb: no permissions (user in plugdev group; are your udev rules wrong?)',
       '',
     ].join('\n'),
   );
