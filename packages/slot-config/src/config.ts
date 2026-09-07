@@ -9,6 +9,8 @@ import {
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type FlowType,
+  HOST_PRESSURE_ADMISSION_MODES,
+  type HostPressureAdmissionMode,
   isRuntimeCapabilityClaimScope,
   isValidDomainName,
   type PoolSlotMode,
@@ -18,6 +20,7 @@ import {
   type PrepareRequirement,
   type ProjectConfig,
   type ProjectExecutionTemplatesConfig,
+  type ProjectHostPressureAdmissionConfig,
   type ReviewSessionPolicy,
   RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS,
   RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS,
@@ -388,6 +391,13 @@ export interface RawProjectJson {
     >;
     posture?: {
       defaults?: Record<string, string>;
+    };
+    host_pressure_admission?: {
+      mode?: string;
+      load1_critical_multiplier?: number;
+      cpu_critical_percent?: number;
+      memory_critical_percent?: number;
+      disk_critical_percent?: number;
     };
   };
   recipe_timeout?: number;
@@ -1368,6 +1378,60 @@ function validatePostureRetentionMap(
   }
 }
 
+/** Percent thresholds are 1..100; the load multiplier is load average over
+ * cores, so it is only bounded below. */
+function validatePressurePercent(
+  value: unknown,
+  field: string,
+  projectConfig: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 100) {
+    throw new Error(`${projectConfig}: ${field} must be a number greater than 0 and at most 100`);
+  }
+  return value;
+}
+
+function validateHostPressureAdmission(
+  raw: NonNullable<RawProjectJson['runtime_capabilities']>['host_pressure_admission'],
+  projectConfig: string,
+): void {
+  if (raw === undefined) return;
+  const field = 'runtime_capabilities.host_pressure_admission';
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${projectConfig}: ${field} must be an object`);
+  }
+  if (raw.mode === undefined) {
+    throw new Error(
+      `${projectConfig}: ${field}.mode is required (${HOST_PRESSURE_ADMISSION_MODES.join(', ')})`,
+    );
+  }
+  if (!HOST_PRESSURE_ADMISSION_MODES.includes(raw.mode as HostPressureAdmissionMode)) {
+    throw new Error(
+      `${projectConfig}: ${field}.mode must be ${HOST_PRESSURE_ADMISSION_MODES.join(', ')}`,
+    );
+  }
+  if (raw.load1_critical_multiplier !== undefined) {
+    const value = raw.load1_critical_multiplier;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new Error(
+        `${projectConfig}: ${field}.load1_critical_multiplier must be a positive number`,
+      );
+    }
+  }
+  validatePressurePercent(raw.cpu_critical_percent, `${field}.cpu_critical_percent`, projectConfig);
+  validatePressurePercent(
+    raw.memory_critical_percent,
+    `${field}.memory_critical_percent`,
+    projectConfig,
+  );
+  validatePressurePercent(
+    raw.disk_critical_percent,
+    `${field}.disk_critical_percent`,
+    projectConfig,
+  );
+}
+
 export function validateRuntimeCapabilitiesConfig(
   projectJson: RawProjectJson,
   projectConfig: string,
@@ -1387,6 +1451,7 @@ export function validateRuntimeCapabilitiesConfig(
     projectConfig,
     cfg.posture !== undefined,
   );
+  validateHostPressureAdmission(cfg.host_pressure_admission, projectConfig);
   const ids = Object.keys(providers);
   if (ids.length === 0) {
     throw new Error(`${projectConfig}: runtime_capabilities.providers must not be empty`);
@@ -1801,7 +1866,43 @@ export function normalizeRawRuntimeCapabilities(
   }
   if (Object.keys(providers).length === 0) return undefined;
   const defaults = normalizePostureRetentionMap(raw?.posture?.defaults);
-  return { providers, ...(defaults ? { posture: { defaults } } : {}) };
+  const hostPressureAdmission = normalizeRawHostPressureAdmission(raw?.host_pressure_admission);
+  return {
+    providers,
+    ...(defaults ? { posture: { defaults } } : {}),
+    ...(hostPressureAdmission ? { hostPressureAdmission } : {}),
+  };
+}
+
+/**
+ * Absent stays absent: the gateway applies the `off` default itself, so a
+ * project that never declared the block is distinguishable from one that
+ * opted out explicitly. An unrecognized mode is dropped rather than passed
+ * through — `validateHostPressureAdmission` already rejects it, and a mode
+ * nobody understands must never fall through as an enforcing one.
+ */
+export function normalizeRawHostPressureAdmission(
+  raw: NonNullable<RawProjectJson['runtime_capabilities']>['host_pressure_admission'],
+): ProjectHostPressureAdmissionConfig | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  if (!HOST_PRESSURE_ADMISSION_MODES.includes(raw.mode as HostPressureAdmissionMode)) {
+    return undefined;
+  }
+  const positive = (value: number | undefined, max?: number): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 && (!max || value <= max)
+      ? value
+      : undefined;
+  const load1 = positive(raw.load1_critical_multiplier);
+  const cpu = positive(raw.cpu_critical_percent, 100);
+  const memory = positive(raw.memory_critical_percent, 100);
+  const disk = positive(raw.disk_critical_percent, 100);
+  return {
+    mode: raw.mode as HostPressureAdmissionMode,
+    ...(load1 !== undefined ? { load1CriticalMultiplier: load1 } : {}),
+    ...(cpu !== undefined ? { cpuCriticalPercent: cpu } : {}),
+    ...(memory !== undefined ? { memoryCriticalPercent: memory } : {}),
+    ...(disk !== undefined ? { diskCriticalPercent: disk } : {}),
+  };
 }
 
 export function normalizeRawProjectAutoRecovery(

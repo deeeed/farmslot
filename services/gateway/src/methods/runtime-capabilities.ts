@@ -29,7 +29,7 @@ import {
 import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   prepareRunPostureForValidation,
   type PrepareRunPostureOutcome,
@@ -47,6 +47,7 @@ import {
   deviceTargetExtraVars,
   displaceIdentity,
 } from '../runtime-capabilities/device-target.js';
+import { resolveHostPressureAdmission } from '../runtime-capabilities/host-pressure-config.js';
 import {
   type RuntimeCapabilityActionResult,
   type RuntimeCapabilityCatalogContext,
@@ -366,7 +367,11 @@ async function pressureFor(
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
   const machineName = slot?.machine ?? slotVars.machine;
-  const machine = await resourceHostPressure(machineName, entry.project);
+  // Opt-in per project, overridable per gateway process, off by default.
+  const admission = resolveHostPressureAdmission(
+    (await loadProjectConfig(entry.project))?.runtimeCapabilities?.hostPressureAdmission,
+  );
+  const machine = await resourceHostPressure(machineName, entry.project, admission.thresholds);
   const localSlot = isLocal(slotVars.host, slotVars.machine);
   const unavailableReason = !localSlot
     ? machine?.online === false
@@ -385,7 +390,10 @@ async function pressureFor(
     retryAfterMs: 15_000,
     ...(unavailableReason ? { unavailableReason } : {}),
   };
-  return evaluateRuntimeCapabilityAdmission(entry, pressure, queueOnPressure);
+  return evaluateRuntimeCapabilityAdmission(entry, pressure, {
+    mode: admission.mode,
+    queueOnPressure,
+  });
 }
 
 /**

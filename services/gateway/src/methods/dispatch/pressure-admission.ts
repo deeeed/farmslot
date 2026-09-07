@@ -425,31 +425,34 @@ export function evaluatePressureAdmission(
 
 // ─── Capture adapters ───
 
-function disabledDecisions(
-  machines: string[],
+/**
+ * The gate is off: every machine is admitted, whatever the ring says.
+ *
+ * The policy still RUNS — the reads are pure and in-memory — so the decision
+ * carries real evidence and, when the policy would have rejected, an advisory
+ * describing what an enabled gate would have done. Enforcement is what the
+ * switch removes, not visibility. Every consumer keys refusal off
+ * `outcome === 'rejected'` and skips the override/preview guards on
+ * `state === 'disabled'`, so nothing downstream can turn this back into a
+ * refusal.
+ */
+function unenforcedDecision(
+  machine: string,
+  config: PressureAdmissionConfig,
   now: number,
-): Map<string, PressureAdmissionDecision> {
-  const disabledAt = new Date(now).toISOString();
-  return new Map(
-    machines.map((machine) => [
-      machine,
-      {
-        outcome: 'admitted' as const,
-        machine,
-        state: 'disabled' as const,
-        evidence: {
-          machine,
-          generation: null,
-          evaluatedAt: disabledAt,
-          samples: [],
-          consecutiveCriticalSamples: 0,
-          requiredConsecutiveCriticalSamples: 0,
-          staleAfterMs: 0,
-          latestSampleAt: null,
-        },
-      },
-    ]),
-  );
+): PressureAdmissionDecision {
+  const decision = evaluateForMachine(machine, historyOnlyCapture(machine), config, now);
+  if (decision.outcome === 'admitted') {
+    return { ...decision, state: 'disabled', enforced: false };
+  }
+  return {
+    outcome: 'admitted',
+    machine,
+    state: 'disabled',
+    evidence: decision.evidence,
+    enforced: false,
+    advisory: { code: decision.code, reason: decision.reason, causes: decision.causes },
+  };
 }
 
 /** In-memory capture: pure reads of the ring, machine health, and freshness. */
@@ -598,11 +601,15 @@ function captureInMemoryPressureAdmissionDecisions(
   const uniqueMachines = [...new Set(machines)];
   if (uniqueMachines.length === 0) return new Map();
   const now = Date.now();
-  // Durable kill switch: when off, every machine is admitted with
-  // state='disabled' and no pressure read happens. Sampling, history, and
-  // charts continue elsewhere; only dispatch prevention pauses.
-  if (!isPressureAdmissionEnabled()) return disabledDecisions(uniqueMachines, now);
   const config = options?.config ?? resolvePressureAdmissionConfig();
+  // Opt-in switch, off by default: every machine is admitted with
+  // state='disabled', carrying the evidence as an advisory. Sampling, history,
+  // and charts are unaffected either way; only dispatch prevention pauses.
+  if (!isPressureAdmissionEnabled()) {
+    return new Map(
+      uniqueMachines.map((machine) => [machine, unenforcedDecision(machine, config, now)]),
+    );
+  }
   return new Map(
     uniqueMachines.map((machine) => [
       machine,

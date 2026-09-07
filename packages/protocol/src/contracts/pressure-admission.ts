@@ -8,8 +8,10 @@
 import type { ProcessAttributionConfidence, ProcessOwnershipClass } from '../rpc/resources.js';
 
 /** Machine-level admission state derived from the bounded pressure sample
- * ring. `disabled` means the gateway-owned kill switch is off: dispatch is
- * admitted without pressure evaluation while sampling/history/charts continue. */
+ * ring. `disabled` means the gateway-owned switch is off — the DEFAULT: the
+ * dispatch is admitted whatever the evidence says, while the evidence itself
+ * is still evaluated and carried as an advisory, and sampling/history/charts
+ * continue. */
 export type PressureAdmissionState =
   | 'green'
   | 'transient'
@@ -130,6 +132,18 @@ export interface PressureOverrideAudit extends PressureDispatchOverride {
   };
 }
 
+/**
+ * What the policy WOULD have rejected with, on a dispatch that was admitted
+ * anyway because the gate is switched off. Advisory only: nothing downstream
+ * may turn this into a refusal.
+ */
+export interface PressureAdmissionAdvisory {
+  code: PressureAdmissionRejectionCode;
+  /** Operator-facing reason. Backend-owned; clients render it verbatim. */
+  reason: string;
+  causes: PressureAdmissionCause[];
+}
+
 export interface PressureAdmissionAdmitted {
   outcome: 'admitted';
   machine: string;
@@ -137,6 +151,14 @@ export interface PressureAdmissionAdmitted {
   evidence: PressureAdmissionEvidence;
   /** Present only when state='override': the accepted one-shot override. */
   override?: PressureOverrideAudit;
+  /**
+   * Present ONLY on state='disabled': the gate is switched off, so this
+   * dispatch was admitted without enforcement. Distinguishes "evaluated and
+   * green" from "not enforced at all".
+   */
+  enforced?: false;
+  /** Present when an unenforced decision would otherwise have been rejected. */
+  advisory?: PressureAdmissionAdvisory;
 }
 
 export interface PressureAdmissionRejected {
@@ -155,16 +177,23 @@ export interface PressureAdmissionRejected {
 
 export type PressureAdmissionDecision = PressureAdmissionAdmitted | PressureAdmissionRejected;
 
-/** Gateway-owned durable kill switch for pressure-based dispatch prevention.
- * Default enabled. Disabling stops only pressure rejection/override prompts;
- * sampling, history, and charts continue. Never affects slot ownership,
- * capability, runner, branch, or other safety checks. */
+/** Gateway-owned durable switch for pressure-based dispatch prevention.
+ * Default DISABLED — sustained-pressure dispatch prevention is opt-in. Enabling
+ * turns on pressure rejection/override prompts; sampling, history, and charts
+ * run either way. Never affects slot ownership, capability, runner, branch, or
+ * other safety checks. */
 export interface PressureAdmissionControlState {
   enabled: boolean;
   /** ISO timestamp of the last change; null when still at the default. */
   updatedAt: string | null;
   /** Authenticated principal that made the last change; null at the default. */
   updatedBy: string | null;
+  /**
+   * Set when FARMSLOT_DISPATCH_PRESSURE_ADMISSION is exported on the gateway
+   * process. The env value WINS over the durable state above, which is still
+   * reported verbatim so an operator can see both.
+   */
+  envOverride?: 'off' | 'refuse';
 }
 
 export interface PressureAdmissionSetEnabledParams {

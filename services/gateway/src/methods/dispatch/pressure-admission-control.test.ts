@@ -38,52 +38,78 @@ function controlFile(): string {
   return path.join(process.env.FARMSLOT_HOME!, 'state', 'pressure-admission-control.json');
 }
 
-test('kill switch: default enabled, authenticated disable persists and survives restart', () => {
+test('opt-in switch: default DISABLED, authenticated enable persists and survives restart', () => {
   withTempHome(() => {
     assert.deepEqual(getPressureAdmissionControl(), {
-      enabled: true,
+      enabled: false,
       updatedAt: null,
       updatedBy: null,
     });
+    assert.equal(isPressureAdmissionEnabled(), false);
+
+    const enabledState = runWithSessionOriginator(PRINCIPAL, () =>
+      setPressureAdmissionEnabled({ enabled: true }),
+    );
+    assert.equal(enabledState.enabled, true);
+    assert.equal(enabledState.updatedBy, 'principal-arthur');
+    assert.ok(enabledState.updatedAt);
+
+    const onDisk = JSON.parse(readFileSync(controlFile(), 'utf-8'));
+    assert.equal(onDisk.version, 1);
+    assert.equal(onDisk.enabled, true);
+    assert.equal(onDisk.updatedBy, 'principal-arthur');
+
+    // Simulated gateway restart: drop the cache, re-read from disk.
+    resetPressureAdmissionControlCacheForTest();
+    assert.equal(isPressureAdmissionEnabled(), true);
+    assert.equal(getPressureAdmissionControl().updatedBy, 'principal-arthur');
 
     const disabled = runWithSessionOriginator(PRINCIPAL, () =>
       setPressureAdmissionEnabled({ enabled: false }),
     );
     assert.equal(disabled.enabled, false);
-    assert.equal(disabled.updatedBy, 'principal-arthur');
-    assert.ok(disabled.updatedAt);
-
-    const onDisk = JSON.parse(readFileSync(controlFile(), 'utf-8'));
-    assert.equal(onDisk.version, 1);
-    assert.equal(onDisk.enabled, false);
-    assert.equal(onDisk.updatedBy, 'principal-arthur');
-
-    // Simulated gateway restart: drop the cache, re-read from disk.
     resetPressureAdmissionControlCacheForTest();
     assert.equal(isPressureAdmissionEnabled(), false);
-    assert.equal(getPressureAdmissionControl().updatedBy, 'principal-arthur');
-
-    const enabled = runWithSessionOriginator(PRINCIPAL, () =>
-      setPressureAdmissionEnabled({ enabled: true }),
-    );
-    assert.equal(enabled.enabled, true);
-    resetPressureAdmissionControlCacheForTest();
-    assert.equal(isPressureAdmissionEnabled(), true);
   });
 });
 
-test('kill switch: corrupt or wrong-shape control file fails SAFE to enabled', () => {
+test('opt-in switch: corrupt or wrong-shape control file falls back to the disabled default', () => {
   withTempHome(() => {
     mkdirSync(path.dirname(controlFile()), { recursive: true });
     writeFileSync(controlFile(), '{ nope');
-    assert.equal(isPressureAdmissionEnabled(), true);
+    assert.equal(isPressureAdmissionEnabled(), false);
     resetPressureAdmissionControlCacheForTest();
-    writeFileSync(controlFile(), JSON.stringify({ version: 99, enabled: false }));
-    assert.equal(isPressureAdmissionEnabled(), true);
+    writeFileSync(controlFile(), JSON.stringify({ version: 99, enabled: true }));
+    assert.equal(isPressureAdmissionEnabled(), false);
   });
 });
 
-test('kill switch: malformed setEnabled params are rejected loudly', () => {
+test('env override wins over the durable state in both directions', () => {
+  const previous = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+  try {
+    withTempHome(() => {
+      runWithSessionOriginator(PRINCIPAL, () => setPressureAdmissionEnabled({ enabled: false }));
+      process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'refuse';
+      assert.equal(isPressureAdmissionEnabled(), true);
+      // The durable state is still reported verbatim next to the override.
+      assert.equal(getPressureAdmissionControl().enabled, false);
+      assert.equal(getPressureAdmissionControl().envOverride, 'refuse');
+
+      runWithSessionOriginator(PRINCIPAL, () => setPressureAdmissionEnabled({ enabled: true }));
+      process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
+      assert.equal(isPressureAdmissionEnabled(), false);
+      assert.equal(getPressureAdmissionControl().enabled, true);
+
+      process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'maybe';
+      assert.throws(() => isPressureAdmissionEnabled(), /must be off or refuse/);
+    });
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+    else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previous;
+  }
+});
+
+test('opt-in switch: malformed setEnabled params are rejected loudly', () => {
   withTempHome(() => {
     assert.throws(
       () =>
@@ -95,17 +121,24 @@ test('kill switch: malformed setEnabled params are rejected loudly', () => {
   });
 });
 
-test('disabled switch admits every machine with state=disabled and no pressure read', async () => {
+test('the off switch admits every machine with state=disabled and enforced=false', async () => {
   await withTempHome(async () => {
     runWithSessionOriginator(PRINCIPAL, () => setPressureAdmissionEnabled({ enabled: false }));
     // No fleet/pressure infrastructure exists in this test process — the
-    // capture must short-circuit before any snapshot read or it would throw.
+    // unenforced path reads only in-memory rings, never a snapshot.
     const decisions = await capturePressureAdmissionDecisions(['macwork', 'mini']);
     for (const machine of ['macwork', 'mini']) {
       const decision = decisions.get(machine);
       assert.equal(decision?.outcome, 'admitted');
       assert.equal(decision?.outcome === 'admitted' && decision.state, 'disabled');
+      assert.equal(decision?.outcome === 'admitted' && decision.enforced, false);
+      // No ring in this process: the machine has no evidence, and the
+      // advisory says what an enabled gate would have refused with.
       assert.equal(decision?.evidence.generation, null);
+      assert.equal(
+        decision?.outcome === 'admitted' && decision.advisory?.code,
+        'PRESSURE_EVIDENCE_UNAVAILABLE',
+      );
     }
     // A preview identity recorded while admission was enabled must not turn
     // into a stale rejection while the switch is off.

@@ -1066,3 +1066,99 @@ test('resource claim scope defaults to slot and rejects an unknown value', () =>
     /cost\.resources\.0\.scope must be slot, machine, or fleet/,
   );
 });
+
+test('host-pressure admission is opt-in, validated, and normalized', () => {
+  const slotActions = {
+    'browser-start': { command: 'start' },
+    'browser-health': { command: 'health' },
+    'browser-stop': { command: 'stop' },
+  };
+  const provider = {
+    label: 'Browser CDP',
+    version: '1.0.0',
+    share_policy: 'exclusive' as const,
+    cost: { class: 'medium' as const, resources: [] },
+    actions: {
+      acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+      health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+      release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+    },
+    release_effects: ['stop browser'],
+  };
+  const project = (runtime: NonNullable<RawProjectJson['runtime_capabilities']>) =>
+    ({ slot_actions: slotActions, runtime_capabilities: runtime }) as RawProjectJson;
+  const providers = { 'browser-cdp': provider };
+
+  // Absent block: nothing normalized, so the gateway applies its own `off`.
+  const absent = project({ providers });
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(absent, 'project.json'));
+  assert.equal(
+    normalizeRawRuntimeCapabilities(absent.runtime_capabilities)?.hostPressureAdmission,
+    undefined,
+  );
+
+  const opted = project({
+    providers,
+    host_pressure_admission: {
+      mode: 'queue',
+      load1_critical_multiplier: 2.5,
+      cpu_critical_percent: 95,
+    },
+  });
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(opted, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(opted.runtime_capabilities)?.hostPressureAdmission,
+    { mode: 'queue', load1CriticalMultiplier: 2.5, cpuCriticalPercent: 95 },
+  );
+
+  // An unknown mode is rejected rather than silently treated as enforcing.
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({ providers, host_pressure_admission: { mode: 'enabled' } }),
+        'project.json',
+      ),
+    /host_pressure_admission\.mode must be off, refuse, queue/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({ providers, host_pressure_admission: {} }),
+        'project.json',
+      ),
+    /host_pressure_admission\.mode is required/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers,
+          host_pressure_admission: { mode: 'refuse', cpu_critical_percent: 0 },
+        }),
+        'project.json',
+      ),
+    /cpu_critical_percent must be a number greater than 0 and at most 100/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers,
+          host_pressure_admission: { mode: 'refuse', disk_critical_percent: 101 },
+        }),
+        'project.json',
+      ),
+    /disk_critical_percent must be a number greater than 0 and at most 100/,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeCapabilitiesConfig(
+        project({
+          providers,
+          host_pressure_admission: { mode: 'refuse', load1_critical_multiplier: -1 },
+        }),
+        'project.json',
+      ),
+    /load1_critical_multiplier must be a positive number/,
+  );
+});

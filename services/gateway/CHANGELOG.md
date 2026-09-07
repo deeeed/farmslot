@@ -4,6 +4,22 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(runtime)!: host-pressure admission is opt-in and OFF by default, on both gates. A medium- or
+  high-cost capability acquire on a machine at critical pressure now proceeds; the pressure snapshot
+  is carried on the granted lease with `enforced: false` and reported by `runtime.capability.status`,
+  so the machine's state is still visible without refusing anyone. A project opts back in with
+  `runtime_capabilities.host_pressure_admission.mode` (`off` | `refuse` | `queue`, plus optional
+  critical thresholds that only the admission path sees), and
+  `FARMSLOT_HOST_PRESSURE_ADMISSION=off|refuse|queue` on the gateway process overrides every project
+  on that stack. The sustained-pressure DISPATCH gate flips the same way: the durable
+  `dispatch.pressureAdmission` switch now defaults to disabled, with
+  `FARMSLOT_DISPATCH_PRESSURE_ADMISSION=off|refuse` winning over the persisted state and reported
+  back on the control state as `envOverride`. An unenforced dispatch decision still evaluates the
+  ring and carries what an enabled gate would have refused with as `advisory`, rather than the empty
+  evidence the old kill switch produced. Machine unavailability (offline, no health metrics) is
+  refused in every mode — that is an availability check, not a pressure gate. `projects/farmslot-farm`
+  ships with no block, so the operator machine, which runs at load 100+ from Arthur's own apps, no
+  longer has its own validation runs blocked.
 - feat(runtime): fleet-scoped resource claims with a FIFO wait queue. Proven live: two runs on two
   slots contended for one fleet-scoped claim through the production gateway — the second queued, was
   reserved when the first released, completed on its own, and released — at a host load of 0.93 per

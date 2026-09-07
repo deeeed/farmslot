@@ -161,6 +161,39 @@ export interface ProjectRuntimeCapabilitiesConfig {
   providers: Record<string, RuntimeCapabilityProviderConfig>;
   /** Project-wide posture defaults (ADR-054); provider `retention` wins over these. */
   posture?: ProjectResourcePostureConfig;
+  /** Opt-in host-pressure admission for this project's capability acquires. */
+  hostPressureAdmission?: ProjectHostPressureAdmissionConfig;
+}
+
+/**
+ * How this project's medium/high-cost capability acquires react to critical
+ * host pressure.
+ *
+ * `off` (the DEFAULT when the block is absent) never refuses: pressure is still
+ * evaluated and carried on the granted lease as an advisory. `refuse` blocks the
+ * acquire. `queue` blocks it and parks the caller in the pressure queue whether
+ * or not the caller passed `queueOnPressure`.
+ */
+export type HostPressureAdmissionMode = 'off' | 'refuse' | 'queue';
+
+export const HOST_PRESSURE_ADMISSION_MODES: readonly HostPressureAdmissionMode[] = [
+  'off',
+  'refuse',
+  'queue',
+];
+
+/**
+ * Project overrides for the critical thresholds that decide the pressure
+ * severity an enforcing mode acts on. Every field is optional and falls back to
+ * the gateway defaults (1.5x cores, 90% CPU, 90% memory, 95% disk); the warn
+ * band and thermal pressure are not project-tunable.
+ */
+export interface ProjectHostPressureAdmissionConfig {
+  mode: HostPressureAdmissionMode;
+  load1CriticalMultiplier?: number;
+  cpuCriticalPercent?: number;
+  memoryCriticalPercent?: number;
+  diskCriticalPercent?: number;
 }
 
 export interface RuntimeCapabilityProviderProvenance {
@@ -310,6 +343,15 @@ export interface RuntimeCapabilityPressureConflict {
   machine?: string;
   queued: boolean;
   retryAfterMs?: number;
+  /**
+   * Present ONLY when the host-pressure gate was not enforced: the project (or
+   * the gateway env override) has `host_pressure_admission.mode: 'off'`, which
+   * is the default. The acquire PROCEEDED; this is the advisory pressure the
+   * gate would have refused on, carried on the granted lease so operators can
+   * still see the machine is loaded. Absent means the conflict was enforced
+   * and the acquire was refused or queued.
+   */
+  enforced?: false;
 }
 
 /**

@@ -5,6 +5,9 @@ import type { RuntimeCapabilityCatalogEntry } from '@farmslot/protocol';
 
 import { evaluateRuntimeCapabilityAdmission } from './admission.js';
 
+/** Today's enforcing behaviour is now opt-in; every enforcing case says so. */
+const refuse = (queueOnPressure = false) => ({ mode: 'refuse' as const, queueOnPressure });
+
 function capability(
   cost: RuntimeCapabilityCatalogEntry['cost']['class'],
 ): RuntimeCapabilityCatalogEntry {
@@ -26,14 +29,14 @@ function capability(
   };
 }
 
-test('critical pressure rejects or queues expensive acquisition with a typed reason', () => {
+test('critical pressure rejects or queues expensive acquisition when the project opts in', () => {
   const pressure = {
     severity: 'critical' as const,
     reason: 'memory headroom critical',
     machine: 'macwork',
     retryAfterMs: 15000,
   };
-  const rejected = evaluateRuntimeCapabilityAdmission(capability('high'), pressure, false);
+  const rejected = evaluateRuntimeCapabilityAdmission(capability('high'), pressure, refuse());
   assert.deepEqual(rejected, {
     kind: 'host-pressure',
     severity: 'critical',
@@ -42,7 +45,7 @@ test('critical pressure rejects or queues expensive acquisition with a typed rea
     queued: false,
     retryAfterMs: 15000,
   });
-  const queued = evaluateRuntimeCapabilityAdmission(capability('medium'), pressure, true);
+  const queued = evaluateRuntimeCapabilityAdmission(capability('medium'), pressure, refuse(true));
   assert.equal(queued?.kind, 'host-pressure');
   assert.equal(queued?.kind === 'host-pressure' && queued.queued, true);
 });
@@ -52,7 +55,7 @@ test('admission is policy-only and never receives or returns another run to canc
   const result = evaluateRuntimeCapabilityAdmission(
     capability('high'),
     { severity: 'critical', reason: 'cpu pressure' },
-    true,
+    refuse(true),
   );
   assert.deepEqual(existingRun, { id: 'run-a', status: 'working' });
   assert.equal('cancelledRunId' in (result ?? {}), false);
@@ -68,7 +71,7 @@ test('unavailable machine health fails without creating retryable pressure', () 
         machine: 'runner-a',
         unavailableReason: 'Machine is offline.',
       },
-      true,
+      refuse(true),
     ),
     {
       kind: 'unavailable',
@@ -80,11 +83,62 @@ test('unavailable machine health fails without creating retryable pressure', () 
 
 test('low-cost capabilities remain admissible and warning pressure does not block', () => {
   assert.equal(
-    evaluateRuntimeCapabilityAdmission(capability('low'), { severity: 'critical' }, false),
+    evaluateRuntimeCapabilityAdmission(capability('low'), { severity: 'critical' }, refuse()),
     null,
   );
   assert.equal(
-    evaluateRuntimeCapabilityAdmission(capability('high'), { severity: 'warn' }, false),
+    evaluateRuntimeCapabilityAdmission(capability('high'), { severity: 'warn' }, refuse()),
     null,
+  );
+});
+
+test('the default off mode admits under critical pressure and reports it as advisory', () => {
+  const advisory = evaluateRuntimeCapabilityAdmission(
+    capability('high'),
+    {
+      severity: 'critical',
+      reason: 'Load average 118 is above 1.5x 12 cores.',
+      machine: 'macwork',
+    },
+    { mode: 'off', queueOnPressure: false },
+  );
+  assert.deepEqual(advisory, {
+    kind: 'host-pressure',
+    severity: 'critical',
+    reason: 'Load average 118 is above 1.5x 12 cores.',
+    machine: 'macwork',
+    queued: false,
+    enforced: false,
+  });
+});
+
+test('an unenforced conflict never queues, even when the caller asked to queue', () => {
+  const advisory = evaluateRuntimeCapabilityAdmission(
+    capability('medium'),
+    { severity: 'critical', machine: 'macwork' },
+    { mode: 'off', queueOnPressure: true },
+  );
+  assert.equal(advisory?.kind === 'host-pressure' && advisory.queued, false);
+  assert.equal(advisory?.kind === 'host-pressure' && advisory.enforced, false);
+});
+
+test('queue mode queues a medium-cost acquire the caller did not ask to queue', () => {
+  const queued = evaluateRuntimeCapabilityAdmission(
+    capability('medium'),
+    { severity: 'critical', machine: 'macwork' },
+    { mode: 'queue', queueOnPressure: false },
+  );
+  assert.equal(queued?.kind === 'host-pressure' && queued.queued, true);
+  assert.equal(queued?.kind === 'host-pressure' && queued.enforced, undefined);
+});
+
+test('machine unavailability is refused in every mode, including off', () => {
+  assert.deepEqual(
+    evaluateRuntimeCapabilityAdmission(
+      capability('medium'),
+      { severity: 'ok', machine: 'runner-a', unavailableReason: 'Machine is offline.' },
+      { mode: 'off', queueOnPressure: false },
+    ),
+    { kind: 'unavailable', capabilityId: 'medium-capability', reason: 'Machine is offline.' },
   );
 });

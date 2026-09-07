@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-07T08:53:06.545Z",
+  "host": "macwork",
+  "scenario": "host-pressure-admission-optin-refuse",
+  "runner": "scripted",
+  "capabilityId": "recording",
+  "expectedMode": "refuse",
+  "gatewayConfiguration": "FARMSLOT_HOST_PRESSURE_ADMISSION=refuse on the gateway process",
+  "hostLoad": {
+    "cores": 16,
+    "load1": 36.1728515625,
+    "perCore": 2.26
+  },
+  "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario host-pressure-admission-optin --slot macwork-ff-3 --expect refuse",
+  "slotId": "macwork-ff-3",
+  "runId": "676ac7e4-75e5-4437-a016-73ab0e446971",
+  "nodes": {
+    "machinePressure": {
+      "machine": "macwork",
+      "severity": "critical",
+      "concerns": [
+        "Load average 46.6 is above 1.5x 16 cores.",
+        "2 idle cleanup candidate(s) available."
+      ]
+    },
+    "acquire": {
+      "ok": false,
+      "leaseState": null,
+      "leasePressure": null,
+      "conflict": {
+        "kind": "host-pressure",
+        "severity": "critical",
+        "reason": "Load average 36.17 is above 1.5x 16 cores.",
+        "machine": "macwork",
+        "queued": false,
+        "retryAfterMs": 15000
+      }
+    },
+    "statusPressure": null,
+    "released": null,
+    "noLeftoverLeases": []
+  },
+  "pass": true
+}

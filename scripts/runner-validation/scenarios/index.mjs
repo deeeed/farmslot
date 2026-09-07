@@ -8,6 +8,7 @@ import * as dispatchPromptSmoke from './dispatch-prompt-smoke.mjs';
 import * as dispatchPromptTrust from './dispatch-prompt-trust.mjs';
 import * as fleetDeviceContention from './fleet-device-contention.mjs';
 import * as hookSmoke from './hook-smoke.mjs';
+import * as hostPressureAdmissionOptin from './host-pressure-admission-optin.mjs';
 import * as interactionSmoke from './interaction-smoke.mjs';
 import * as machinePauseRestoreSmoke from './machine-pause-restore-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
@@ -46,6 +47,7 @@ export const SCENARIOS = {
   'retained-safe-send-smoke': retainedSafeSendSmoke,
   'resource-posture-smoke': resourcePostureSmoke,
   'fleet-device-contention': fleetDeviceContention,
+  'host-pressure-admission-optin': hostPressureAdmissionOptin,
   'turn-boundary': turnBoundary,
   'busy-composer': busyComposer,
   'copilot-runtime-smoke': copilotRuntimeSmoke,

@@ -28,7 +28,7 @@ import {
   setPressureAdmissionEnabled,
 } from './pressure-admission-control.js';
 
-/** Lightweight capture reads the kill switch from FARMSLOT_HOME — isolate it. */
+/** Lightweight capture reads the opt-in switch from FARMSLOT_HOME — isolate it. */
 function withTempControlHome<T>(run: () => T): T {
   const previous = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = mkdtempSync(path.join(tmpdir(), 'farmslot-pressure-policy-'));
@@ -40,6 +40,18 @@ function withTempControlHome<T>(run: () => T): T {
     if (previous === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previous;
   }
+}
+
+/** Opt into dispatch pressure prevention inside an isolated FARMSLOT_HOME. */
+function enableAdmissionForTest(): void {
+  runWithSessionOriginator(
+    {
+      id: 'principal-arthur',
+      subject: { type: 'person', displayName: 'Arthur' },
+      roles: [{ role: 'admin', scope: { kind: 'global' } }],
+    },
+    () => setPressureAdmissionEnabled({ enabled: true }),
+  );
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
@@ -445,6 +457,9 @@ test('malformed samples are excluded: future-dated and out-of-range never decide
 
 test('validation fixture adapter forces a self-consistent sustained rejection', () => {
   withTempControlHome(() => {
+    // Dispatch pressure prevention is opt-in and off by default; enforcement
+    // cases turn it on explicitly.
+    enableAdmissionForTest();
     const config: PressureAdmissionConfig = { ...CONFIG, validationFixtureMachine: 'macwork' };
     const decisions = capturePressureAdmissionDecisionsLightweight(['macwork', 'mini'], {
       config,
@@ -529,6 +544,7 @@ test('contract completeness: disabled, preview-stale, and override-consumed vari
     const disabled = capturePressureAdmissionDecisionsLightweight(['macwork']).get('macwork');
     assert.equal(disabled?.outcome, 'admitted');
     assert.equal(disabled?.outcome === 'admitted' && disabled.state, 'disabled');
+    assert.equal(disabled?.outcome === 'admitted' && disabled.enforced, false);
     contractVariants['admitted-disabled'] = disabled;
   });
 

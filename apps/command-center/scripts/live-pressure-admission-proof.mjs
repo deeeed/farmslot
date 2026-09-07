@@ -11,6 +11,13 @@
 // and a free slot on that machine (the dedicated validation target). The
 // fixture cannot be enabled from any RPC input.
 //
+// It also requires dispatch pressure prevention to be ON, which is now OPT-IN
+// and off by default. Enable it for the run with either:
+//   FARMSLOT_DISPATCH_PRESSURE_ADMISSION=refuse   (gateway process; wins)
+//   dispatch.pressureAdmission.setEnabled { "enabled": true }   (durable)
+// Without it every machine is admitted with state='disabled' and this script's
+// first assertion — that the slot row is pressure-rejected — fails.
+//
 // Usage:
 //   node scripts/live-pressure-admission-proof.mjs [--machine farmslot-demo] [--slot demo-ff-1] [--project farmslot-farm]
 

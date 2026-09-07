@@ -52,6 +52,7 @@ import {
   setResourceWatchesEnabled,
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { DEFAULT_HOST_PRESSURE_THRESHOLDS } from '../runtime-capabilities/host-pressure-config.js';
 
 const RESOURCE_STATUSES: ResourceStatus[] = ['unknown', 'running', 'stopped', 'error', 'stale'];
 const PRESSURE_RESOURCE_RESOLUTION_CONCURRENCY = 4;
@@ -91,8 +92,17 @@ export async function resourceHealth(params: ResourceHealthParams): Promise<Reso
   return { slotId: params.slotId, resources: results };
 }
 
-/** Host-only pressure read for admission paths; never loads resources, tmux, runs, or census data. */
-export async function resourceHostPressure(machine: string, project?: string) {
+/** Host-only pressure read for admission paths; never loads resources, tmux, runs, or census data.
+ *
+ * `thresholds` is the ADMISSION path's project-tunable critical band. Fleet
+ * charts and the pressure snapshot deliberately do not take it: those describe
+ * the machine for every project on it, and one project's opinion of critical
+ * must not rewrite what another project's operator sees. */
+export async function resourceHostPressure(
+  machine: string,
+  project?: string,
+  thresholds?: PressureCriticalThresholds,
+) {
   const fleet = await loadFleetStatus();
   const health = fleet.machines?.find((candidate) => candidate.machine === machine);
   const slots = fleet.slots.filter(
@@ -104,6 +114,7 @@ export async function resourceHostPressure(machine: string, project?: string) {
     emptyStatusCounts(),
     0,
     getResourceWatchRuntimeState().enabled,
+    thresholds,
   );
   return {
     machine,
@@ -880,12 +891,22 @@ function emptyStatusCounts(): Record<ResourceStatus, number> {
   };
 }
 
+/** The critical band. Warn thresholds are fixed; only the critical edge that
+ * an enforcing admission mode acts on is project-tunable. */
+export interface PressureCriticalThresholds {
+  load1CriticalMultiplier: number;
+  cpuCriticalPercent: number;
+  memoryCriticalPercent: number;
+  diskCriticalPercent: number;
+}
+
 function buildPressureConcerns(
   health: MachineHealth | undefined,
   slots: SlotStatus[],
   byStatus: Record<ResourceStatus, number>,
   cleanupCandidates: number,
   resourceWatchesEnabled: boolean,
+  thresholds: PressureCriticalThresholds = DEFAULT_HOST_PRESSURE_THRESHOLDS,
 ): ResourcePressureConcern[] {
   const concerns: ResourcePressureConcern[] = [];
   if (!resourceWatchesEnabled) {
@@ -908,14 +929,20 @@ function buildPressureConcerns(
     if (!system) {
       concerns.push({ severity: 'warn', reason: 'No system metrics available yet.' });
     } else {
-      addMetricConcern(concerns, 'CPU', system.cpuPercent, 90, 70);
-      addMetricConcern(concerns, 'memory', system.memoryPercent, 90, 80);
-      addMetricConcern(concerns, 'disk', system.diskPercent, 95, 85);
+      addMetricConcern(concerns, 'CPU', system.cpuPercent, thresholds.cpuCriticalPercent, 70);
+      addMetricConcern(
+        concerns,
+        'memory',
+        system.memoryPercent,
+        thresholds.memoryCriticalPercent,
+        80,
+      );
+      addMetricConcern(concerns, 'disk', system.diskPercent, thresholds.diskCriticalPercent, 85);
       const cores = health.capacity?.cpuCores;
-      if (cores && system.loadAvg1 > cores * 1.5) {
+      if (cores && system.loadAvg1 > cores * thresholds.load1CriticalMultiplier) {
         concerns.push({
           severity: 'critical',
-          reason: `Load average ${system.loadAvg1} is above 1.5x ${cores} cores.`,
+          reason: `Load average ${system.loadAvg1} is above ${thresholds.load1CriticalMultiplier}x ${cores} cores.`,
         });
       } else if (cores && system.loadAvg1 > cores) {
         concerns.push({

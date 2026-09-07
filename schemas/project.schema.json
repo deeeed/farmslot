@@ -113,6 +113,41 @@
           "properties": {
             "defaults": { "$ref": "#/$defs/resource_posture_retention_map" }
           }
+        },
+        "host_pressure_admission": {
+          "type": "object",
+          "description": "Opt-in host-pressure admission for this project's capability acquires. Absent means off: critical host pressure is reported as an advisory on the granted lease and never refuses an acquire.",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": {
+              "enum": ["off", "refuse", "queue"],
+              "description": "off (default) reports pressure without enforcing it; refuse blocks medium/high-cost acquires at critical pressure; queue blocks and parks them in the pressure queue."
+            },
+            "load1_critical_multiplier": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Load average over CPU cores counted as critical. Gateway default 1.5."
+            },
+            "cpu_critical_percent": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "description": "CPU percent counted as critical. Gateway default 90."
+            },
+            "memory_critical_percent": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "description": "Memory percent counted as critical. Gateway default 90."
+            },
+            "disk_critical_percent": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "description": "Disk percent counted as critical. Gateway default 95."
+            }
+          }
         }
       }
     },

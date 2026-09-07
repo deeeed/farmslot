@@ -230,6 +230,53 @@ derived from the proof plan and `parked` delegates to machine parking, and
 }
 ```
 
+### Host-pressure admission
+
+Refusing an acquire because the host is loaded is **opt-in per project and off by
+default**. With no `host_pressure_admission` block, a medium- or high-cost acquire
+on a machine at critical pressure goes through, and the pressure snapshot is
+carried on the granted lease with `enforced: false` — visible on
+`runtime.capability.status` as `pressure`, and never a refusal. That keeps a busy
+operator machine usable while still telling anyone reading the lease why the
+machine is slow.
+
+- **`mode: "off"`** (the default) — report, never enforce.
+- **`mode: "refuse"`** — refuse a medium/high-cost acquire at critical pressure.
+- **`mode: "queue"`** — refuse and park the caller in the pressure queue, whether
+  or not the acquire passed `queueOnPressure`.
+
+Low-cost capabilities are admissible in every mode, and machine unavailability
+(offline, no health metrics) is refused in every mode — that is an availability
+check, not a pressure gate.
+
+The critical band a project enforces on is tunable; the warn band and thermal
+pressure are not. Defaults: 1.5x cores, 90% CPU, 90% memory, 95% disk. Only the
+admission path sees these overrides — fleet charts and
+`resource.pressure.snapshot` keep the shared defaults, because they describe the
+machine for every project on it.
+
+```json
+{
+  "runtime_capabilities": {
+    "host_pressure_admission": {
+      "mode": "refuse",
+      "load1_critical_multiplier": 2.5,
+      "cpu_critical_percent": 95
+    },
+    "providers": {}
+  }
+}
+```
+
+`FARMSLOT_HOST_PRESSURE_ADMISSION=off|refuse|queue` on the gateway process
+overrides the project mode for every project on that stack, for operators who
+want one behaviour on one machine without editing project config. Thresholds stay
+project-owned. An unrecognized value fails the acquire loudly rather than falling
+back to a mode nobody chose. The dispatch-side sustained-pressure gate is a
+separate, also-default-off switch: `dispatch.pressureAdmission.setEnabled`, with
+`FARMSLOT_DISPATCH_PRESSURE_ADMISSION=off|refuse` overriding it per gateway
+process.
+
 ### Affected resources
 
 `retention` is policy: it says what the framework should _want_ at a boundary, and

@@ -1,11 +1,15 @@
-// pressure-admission-control.ts — durable kill switch for pressure-based
+// pressure-admission-control.ts — durable opt-in switch for pressure-based
 // dispatch prevention (MANUAL-000109).
 //
-// Gateway-owned, default ENABLED. Disabling stops only pressure
-// rejection/override prompts — sampling, history persistence, and charts
-// continue untouched, and no other safety check (slot ownership, capability,
-// runner, branch) is affected. The state persists under the resolved
-// FARMSLOT_HOME with an atomic temp+rename write and records who changed it.
+// Gateway-owned, default DISABLED: sustained-pressure dispatch prevention was
+// never meant to be always-on, and a loaded operator machine must not have its
+// own dispatches refused by default. Enabling turns on pressure
+// rejection/override prompts — sampling, history persistence, charts, and the
+// advisory evidence on every decision run either way, and no other safety check
+// (slot ownership, capability, runner, branch) is affected. The state persists
+// under the resolved FARMSLOT_HOME with an atomic temp+rename write and records
+// who changed it. FARMSLOT_DISPATCH_PRESSURE_ADMISSION on the gateway process
+// wins over the persisted state.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -27,10 +31,28 @@ interface ControlFile extends PressureAdmissionControlState {
 }
 
 const DEFAULT_STATE: PressureAdmissionControlState = {
-  enabled: true,
+  enabled: false,
   updatedAt: null,
   updatedBy: null,
 };
+
+export const DISPATCH_PRESSURE_ADMISSION_ENV = 'FARMSLOT_DISPATCH_PRESSURE_ADMISSION';
+
+/**
+ * Gateway-process override, or null when unset. An unrecognized value throws:
+ * a typo in an operator's shell must not silently resolve to the opposite
+ * enforcement posture from the one they meant to set.
+ */
+export function dispatchPressureAdmissionEnvOverride(
+  env: NodeJS.ProcessEnv = process.env,
+): 'off' | 'refuse' | null {
+  const raw = env[DISPATCH_PRESSURE_ADMISSION_ENV]?.trim();
+  if (!raw) return null;
+  if (raw !== 'off' && raw !== 'refuse') {
+    throw new Error(`${DISPATCH_PRESSURE_ADMISSION_ENV} must be off or refuse, got '${raw}'`);
+  }
+  return raw;
+}
 
 let cached: PressureAdmissionControlState | null = null;
 
@@ -45,10 +67,10 @@ function loadControlState(): PressureAdmissionControlState {
   try {
     parsed = JSON.parse(readFileSync(target, 'utf-8'));
   } catch (error) {
-    // Fail SAFE for a safety control: a corrupt file falls back to the
-    // enabled default rather than silently disabling admission.
+    // A corrupt file falls back to the shipped default rather than to a
+    // guessed posture; the operator's real setting is unknowable here.
     console.error(
-      `[pressure-admission] control file unreadable, using enabled default: ${(error as Error).message}`,
+      `[pressure-admission] control file unreadable, using the default (disabled): ${(error as Error).message}`,
     );
     return { ...DEFAULT_STATE };
   }
@@ -60,7 +82,7 @@ function loadControlState(): PressureAdmissionControlState {
     typeof file.enabled !== 'boolean'
   ) {
     console.error(
-      '[pressure-admission] control file has an unsupported shape, using enabled default',
+      '[pressure-admission] control file has an unsupported shape, using the default (disabled)',
     );
     return { ...DEFAULT_STATE };
   }
@@ -73,11 +95,16 @@ function loadControlState(): PressureAdmissionControlState {
 
 export function getPressureAdmissionControl(): PressureAdmissionGetResult {
   if (!cached) cached = loadControlState();
-  return { ...cached };
+  const envOverride = dispatchPressureAdmissionEnvOverride();
+  // The persisted `enabled` is reported verbatim even when the env wins, so an
+  // operator can see both what this stack is doing and what the durable state
+  // says. `isPressureAdmissionEnabled` is the one place that resolves them.
+  return { ...cached, ...(envOverride ? { envOverride } : {}) };
 }
 
 export function isPressureAdmissionEnabled(): boolean {
-  return getPressureAdmissionControl().enabled;
+  const state = getPressureAdmissionControl();
+  return state.envOverride ? state.envOverride === 'refuse' : state.enabled;
 }
 
 export function setPressureAdmissionEnabled(
@@ -102,7 +129,9 @@ export function setPressureAdmissionEnabled(
   console.log(
     `[pressure-admission] dispatch pressure prevention ${next.enabled ? 'enabled' : 'DISABLED'} by ${next.updatedBy}`,
   );
-  return { ...cached };
+  // Report through the same resolver as a read, so a caller that toggles the
+  // durable state while an env override is pinned sees that it does not win.
+  return getPressureAdmissionControl();
 }
 
 /** Test hook: drop the in-memory cache so the next read hits disk. */

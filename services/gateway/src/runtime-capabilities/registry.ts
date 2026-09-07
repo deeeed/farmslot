@@ -610,9 +610,23 @@ export class RuntimeCapabilityRegistry {
         lease.slotId === params.slotId &&
         (!params.ownerRunId || lease.owner.runId === params.ownerRunId),
     );
-    const pressure = [...leases]
-      .reverse()
-      .find((lease) => lease.state === 'queued' && lease.pressure)?.pressure;
+    // A queued lease's pressure is why it is waiting; an ACTIVE lease only
+    // carries pressure when the gate was off and the acquire went through
+    // anyway. Both are worth surfacing, and a queued one wins because it
+    // describes a lease that is still blocked.
+    // An advisory only describes a lease that still exists: a released one's
+    // snapshot is a record of what the machine looked like at an acquire that
+    // is over, and reporting it would keep a dead reading on the slot forever.
+    const pressure =
+      [...leases].reverse().find((lease) => lease.state === 'queued' && lease.pressure)?.pressure ??
+      [...leases]
+        .reverse()
+        .find(
+          (lease) =>
+            lease.pressure?.enforced === false &&
+            lease.state !== 'released' &&
+            lease.state !== 'error',
+        )?.pressure;
     // Derived across EVERY slot, not just this one. `leases` is slot-filtered,
     // so on its own it cannot say how many runs are ahead of this slot's waiter
     // when the claim is machine- or fleet-scoped.
@@ -1055,7 +1069,13 @@ export class RuntimeCapabilityRegistry {
       entry,
       params.queueOnPressure === true,
     );
-    if (pressure) {
+    // An UNENFORCED host-pressure conflict refuses nothing: the project (or the
+    // gateway env override) keeps `host_pressure_admission` off, which is the
+    // default. The acquire proceeds and the snapshot rides along on the granted
+    // lease so `runtime.capability.status` can still show the machine is loaded.
+    const pressureAdvisory =
+      pressure?.kind === 'host-pressure' && pressure.enforced === false ? pressure : undefined;
+    if (pressure && !pressureAdvisory) {
       if (pressure.kind === 'host-pressure' && pressure.queued && !sameOwner) {
         const now = this.timestamp();
         const queuedLease = this.createLease(
@@ -1350,7 +1370,7 @@ export class RuntimeCapabilityRegistry {
       ];
     }
     lease.state = 'acquiring';
-    lease.pressure = undefined;
+    lease.pressure = pressureAdvisory ? structuredClone(pressureAdvisory) : undefined;
     // A lease that is acquiring is no longer in line for anything.
     lease.wait = undefined;
     lease.updatedAt = now;
