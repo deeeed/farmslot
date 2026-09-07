@@ -1999,10 +1999,12 @@ export class RuntimeCapabilityRegistry {
     }
     for (const claimId of [...freed].sort()) {
       for (const waiter of claimQueueOrder(snapshot.leases, claimId)) {
+        // The run walking away from its waits is skipped, never served, and the
+        // foreign waiters behind it still are.
+        if (options.skipOwnerRunId === waiter.owner.runId) continue;
         // A queue place handed to a run that is already gone is a leak: nothing
         // would ever release the provider it is about to be given. Dropped
         // outright, with no provider action, because a queued lease has none.
-        if (options.skipOwnerRunId === waiter.owner.runId) break;
         if (this.isFencedOwner(waiter.owner.runId, waiter.owner.familyId)) {
           // 'defer': a queue place frees nothing, and this is already inside the
           // drain — re-entering it here would be a loop over an empty set.
@@ -2062,14 +2064,6 @@ export class RuntimeCapabilityRegistry {
     });
   }
 
-  /**
-   * Release a queue place nothing should ever be handed to, with the reason.
-   *
-   * The event kind is the caller's, because the two callers are saying
-   * different things: a drain that skips a dead owner `released` the place, and
-   * restart recovery `recovery-rejected` it. Only the lease bookkeeping — and
-   * clearing `wait`, which a released lease must never keep — is shared.
-   */
   /**
    * Whether anything still holds `claimId` in a way that reaches this waiter.
    *
@@ -2928,11 +2922,15 @@ export class RuntimeCapabilityRegistry {
           // a device that was never booted.
           if (isClaimReservation(lease)) {
             if (this.isFencedOwner(lease.owner.runId, lease.owner.familyId)) {
+              // 'defer': recovery drains once after the whole pass. Draining
+              // here would promote a waiter the loop has not reached yet and
+              // then announce the same grant a second time when it does.
               this.releaseWaitingLease(
                 snapshot,
                 lease,
                 `reservation dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
                 'recovery-rejected',
+                'defer',
               );
               reclaimed.push(lease);
               continue;
@@ -2964,6 +2962,7 @@ export class RuntimeCapabilityRegistry {
                 lease,
                 `queue slot dropped: owner run '${lease.owner.runId}' already had its terminal capability cleanup`,
                 'recovery-rejected',
+                'defer',
               );
               continue;
             }

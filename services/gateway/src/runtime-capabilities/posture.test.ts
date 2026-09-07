@@ -2294,7 +2294,7 @@ test('host pressure on a claim this run already holds is a wait, not a lost rese
   if (pressured.ok) return;
   assert.equal(pressured.waiting, true, 'a run that holds its place is waiting, not failing');
   assert.match(pressured.reason, /granted/);
-  assert.match(pressured.reason, /host is under pressure/);
+  assert.match(pressured.reason, /host pressure refused 'recording'/);
   assert.equal(
     (await registry.status({ slotId: SLOT })).leases[0]?.state,
     'acquiring',

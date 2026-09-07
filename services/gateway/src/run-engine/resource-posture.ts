@@ -308,7 +308,7 @@ export async function prepareRunPostureForValidation(
         waiting: true,
         reason:
           `runtime capability '${held.capabilityId}' is ${held.phase} on '${held.claimId}' at ` +
-          `${held.scope} scope and the host is under pressure: ${rejection.conflict.reason}`,
+          `${held.scope} scope while host pressure refused '${rejection.capabilityId}': ${rejection.conflict.reason}`,
         conflict: rejection.conflict,
       };
     }

@@ -544,11 +544,14 @@ export function reservationSettlement(
       detail: `preparation reported success but reserved claim '${grant.claimId}' was never completed`,
     };
   }
+  const pressure = outcome.conflict?.kind === 'host-pressure';
   return {
-    retain: outcome.conflict?.kind === 'host-pressure',
-    detail: outcome.waiting
-      ? `run ${grant.owner.runId} queued on another capability while '${grant.claimId}' was reserved for it: ${outcome.reason}`
-      : `preparation for reserved claim '${grant.claimId}' did not complete: ${outcome.reason}`,
+    retain: pressure,
+    detail: pressure
+      ? `host pressure refused completing reserved claim '${grant.claimId}' for run ${grant.owner.runId}; the reservation is kept: ${outcome.reason}`
+      : outcome.waiting
+        ? `run ${grant.owner.runId} queued on another capability while '${grant.claimId}' was reserved for it: ${outcome.reason}`
+        : `preparation for reserved claim '${grant.claimId}' did not complete: ${outcome.reason}`,
   };
 }
 

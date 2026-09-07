@@ -562,6 +562,67 @@ test('a reservation that outlives a restart is re-announced, not adopted as acqu
   assert.deepEqual(grants, ['run-b'], 'the grant is re-announced so the engine completes it');
 });
 
+test('recovery dropping a fenced reservation grants the next waiter exactly once', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-recover-fenced-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const storePath = path.join(directory, 'leases.json');
+  const before = scopedRegistry(new RuntimeCapabilityStore(storePath));
+  const requirement = { capabilityId: 'recording', reason: 'record', mode: 'state' as const };
+  assert.equal(
+    (
+      await before.acquire({
+        slotId: 'slot-a',
+        capabilityId: 'recording',
+        ownerRunId: 'run-a',
+        proofRequirement: requirement,
+      })
+    ).ok,
+    true,
+  );
+  for (const [slotId, ownerRunId] of [
+    ['slot-b', 'run-b'],
+    ['slot-c', 'run-c'],
+  ] as const) {
+    assert.equal(
+      (
+        await before.acquire({
+          slotId,
+          capabilityId: 'recording',
+          ownerRunId,
+          proofRequirement: requirement,
+          queueOnConflict: true,
+        })
+      ).ok,
+      false,
+    );
+  }
+  // run-b is reserved, then the gateway restarts after run-b's terminal cleanup
+  // fenced it. Recovery drops the dead reservation; the waiter behind it must
+  // be granted once, not once by an inline drain and again by the pass itself.
+  await before.release({ slotId: 'slot-a', ownerRunId: 'run-a', keepWarm: false });
+
+  const grants: string[] = [];
+  const after = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(storePath),
+    catalogForSlot: async (slotId) => ({
+      slotId,
+      project: 'test-project',
+      machine: 'macwork',
+      capabilities: [recorder()],
+    }),
+    runAction: async () => ({ ok: true }),
+    isTerminalOwner: (ownerRunId) => ownerRunId === 'run-b',
+    onClaimGranted: (grant) => grants.push(grant.owner.runId),
+  });
+  await after.recover(['slot-a', 'slot-b', 'slot-c']);
+
+  const dropped = (await after.status({ slotId: 'slot-b' })).leases[0];
+  assert.equal(dropped?.state, 'released', 'the fenced reservation is dropped');
+  const next = (await after.status({ slotId: 'slot-c' })).leases[0];
+  assert.equal(next?.state, 'acquiring', 'the waiter behind it is reserved');
+  assert.deepEqual(grants, ['run-c'], 'granted exactly once, after the pass');
+});
+
 test('recovery releasing an unhealthy holder drains the waiter behind it', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-recover-drain-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
