@@ -16,6 +16,7 @@ import {
   type RuntimeCapabilityLeaseOwner,
   type RuntimeCapabilityLifecycleEvent,
   type RuntimeCapabilityListResult,
+  type RuntimeCapabilityPressureAdvisory,
   type RuntimeCapabilityProviderActionRef,
   type RuntimeCapabilityReleaseParams,
   type RuntimeCapabilityReleaseResult,
@@ -130,11 +131,15 @@ export interface RuntimeCapabilityRegistryOptions {
     /** Leases that currently hold a provider, across every slot. */
     activeLeases: readonly RuntimeCapabilityLease[];
   }) => Promise<string | null>;
+  /**
+   * The host-pressure verdict for one acquire: a refusal, an unenforced
+   * ADVISORY (its own type — it can never be mistaken for a refusal), or null.
+   */
   pressureFor?: (
     slotId: string,
     capability: RuntimeCapabilityCatalogEntry,
     queueOnPressure: boolean,
-  ) => Promise<RuntimeCapabilityAcquireConflict | null>;
+  ) => Promise<RuntimeCapabilityAcquireConflict | RuntimeCapabilityPressureAdvisory | null>;
   /** Family of a run, used when a caller omits the optional `ownerFamilyId`. */
   familyForRun?: (ownerRunId: string) => string | undefined;
   /**
@@ -610,9 +615,23 @@ export class RuntimeCapabilityRegistry {
         lease.slotId === params.slotId &&
         (!params.ownerRunId || lease.owner.runId === params.ownerRunId),
     );
-    const pressure = [...leases]
-      .reverse()
-      .find((lease) => lease.state === 'queued' && lease.pressure)?.pressure;
+    // A queued lease's pressure is why it is waiting; an ACTIVE lease only
+    // carries pressure when the gate was off and the acquire went through
+    // anyway. Both are worth surfacing, and a queued one wins because it
+    // describes a lease that is still blocked.
+    // An advisory only describes a lease that still exists: a released one's
+    // snapshot is a record of what the machine looked like at an acquire that
+    // is over, and reporting it would keep a dead reading on the slot forever.
+    const pressure =
+      [...leases].reverse().find((lease) => lease.state === 'queued' && lease.pressure)?.pressure ??
+      [...leases]
+        .reverse()
+        .find(
+          (lease) =>
+            lease.pressure?.kind === 'host-pressure-advisory' &&
+            lease.state !== 'released' &&
+            lease.state !== 'error',
+        )?.pressure;
     // Derived across EVERY slot, not just this one. `leases` is slot-filtered,
     // so on its own it cannot say how many runs are ahead of this slot's waiter
     // when the claim is machine- or fleet-scoped.
@@ -1055,8 +1074,18 @@ export class RuntimeCapabilityRegistry {
       entry,
       params.queueOnPressure === true,
     );
-    if (pressure) {
-      if (pressure.kind === 'host-pressure' && pressure.queued && !sameOwner) {
+    // An advisory refuses nothing: the project (or the gateway env override)
+    // keeps `host_pressure_admission` off, which is the default. The acquire
+    // proceeds and the reading rides along on the granted lease so
+    // `runtime.capability.status` can still show the machine was loaded. It is
+    // its own type, so the refusal branch below cannot be reached with one.
+    const pressureAdvisory = pressure?.kind === 'host-pressure-advisory' ? pressure : undefined;
+    // Narrowed by the type, not by a flag: `pressureRefusal` cannot hold an
+    // advisory, so no later edit can return one as a refusal.
+    const pressureRefusal =
+      pressure && pressure.kind !== 'host-pressure-advisory' ? pressure : undefined;
+    if (pressureRefusal) {
+      if (pressureRefusal.kind === 'host-pressure' && pressureRefusal.queued && !sameOwner) {
         const now = this.timestamp();
         const queuedLease = this.createLease(
           catalog,
@@ -1067,7 +1096,7 @@ export class RuntimeCapabilityRegistry {
           now,
           'queued',
         );
-        queuedLease.pressure = structuredClone(pressure);
+        queuedLease.pressure = structuredClone(pressureRefusal);
         snapshot.leases.push(queuedLease);
         this.recordEvent(snapshot, {
           kind: 'queued',
@@ -1075,10 +1104,10 @@ export class RuntimeCapabilityRegistry {
           capabilityId: entry.id,
           leaseId: queuedLease.id,
           owner: queuedLease.owner,
-          detail: pressure.reason,
+          detail: pressureRefusal.reason,
         });
       }
-      return { ok: false, conflict: pressure };
+      return { ok: false, conflict: pressureRefusal };
     }
 
     const active = snapshot.leases.filter(
@@ -1350,7 +1379,7 @@ export class RuntimeCapabilityRegistry {
       ];
     }
     lease.state = 'acquiring';
-    lease.pressure = undefined;
+    lease.pressure = pressureAdvisory ? structuredClone(pressureAdvisory) : undefined;
     // A lease that is acquiring is no longer in line for anything.
     lease.wait = undefined;
     lease.updatedAt = now;

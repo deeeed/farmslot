@@ -25,6 +25,12 @@ function parseArgs(argv) {
     slotId: null,
     model: null,
     taskFile: null,
+    // Which admission posture the gateway under test is configured for, for
+    // scenarios whose expected outcome depends on it.
+    expect: null,
+    // Which opt-in path the operator configured, for scenarios whose evidence
+    // must say which one it proved.
+    via: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -36,9 +42,11 @@ function parseArgs(argv) {
     else if (token === '--slot') args.slotId = argv[++i];
     else if (token === '--model') args.model = argv[++i];
     else if (token === '--task') args.taskFile = argv[++i];
+    else if (token === '--expect') args.expect = argv[++i];
+    else if (token === '--via') args.via = argv[++i];
     else if (token === '--help' || token === '-h') {
       console.log(
-        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session] [--slot slotId] [--model model] [--task TASK.md]`,
+        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session] [--slot slotId] [--model model] [--task TASK.md] [--expect off|refuse|queue] [--via default|project|env]`,
       );
       process.exit(0);
     } else {
@@ -83,6 +91,8 @@ async function main() {
         slotId: args.slotId,
         model: args.model,
         taskFile: args.taskFile,
+        ...(args.expect ? { expect: args.expect } : {}),
+        ...(args.via ? { via: args.via } : {}),
         // Named on the command line: missing required arguments are a failure,
         // not a skip. Only the full matrix has no arguments to supply.
         explicit: args.scenario !== 'all',

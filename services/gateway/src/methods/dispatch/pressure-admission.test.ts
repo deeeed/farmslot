@@ -5,17 +5,19 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import type {
-  NodePressureHistorySample,
-  PressureAdmissionDecision,
-  ProcessAttributionGroup,
-  ResourcePressureMachine,
+import {
+  DEFAULT_PRESSURE_STALE_AFTER_MS,
+  type NodePressureHistorySample,
+  type PressureAdmissionDecision,
+  type ProcessAttributionGroup,
+  type ResourcePressureMachine,
 } from '@farmslot/protocol';
 
 import { runWithSessionOriginator } from '../../security/work-originator.js';
 
 import { resolveExecutePressureOutcome } from './execute.js';
 import {
+  assertPressureAdmissionConfigValid,
   capturePressureAdmissionDecisionsLightweight,
   evaluatePressureAdmission,
   isPressureSampleCritical,
@@ -28,7 +30,7 @@ import {
   setPressureAdmissionEnabled,
 } from './pressure-admission-control.js';
 
-/** Lightweight capture reads the kill switch from FARMSLOT_HOME — isolate it. */
+/** Lightweight capture reads the opt-in switch from FARMSLOT_HOME — isolate it. */
 function withTempControlHome<T>(run: () => T): T {
   const previous = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = mkdtempSync(path.join(tmpdir(), 'farmslot-pressure-policy-'));
@@ -40,6 +42,18 @@ function withTempControlHome<T>(run: () => T): T {
     if (previous === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previous;
   }
+}
+
+/** Opt into dispatch pressure prevention inside an isolated FARMSLOT_HOME. */
+function enableAdmissionForTest(): void {
+  runWithSessionOriginator(
+    {
+      id: 'principal-arthur',
+      subject: { type: 'person', displayName: 'Arthur' },
+      roles: [{ role: 'admin', scope: { kind: 'global' } }],
+    },
+    () => setPressureAdmissionEnabled({ enabled: true }),
+  );
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
@@ -445,6 +459,9 @@ test('malformed samples are excluded: future-dated and out-of-range never decide
 
 test('validation fixture adapter forces a self-consistent sustained rejection', () => {
   withTempControlHome(() => {
+    // Dispatch pressure prevention is opt-in and off by default; enforcement
+    // cases turn it on explicitly.
+    enableAdmissionForTest();
     const config: PressureAdmissionConfig = { ...CONFIG, validationFixtureMachine: 'macwork' };
     const decisions = capturePressureAdmissionDecisionsLightweight(['macwork', 'mini'], {
       config,
@@ -529,6 +546,7 @@ test('contract completeness: disabled, preview-stale, and override-consumed vari
     const disabled = capturePressureAdmissionDecisionsLightweight(['macwork']).get('macwork');
     assert.equal(disabled?.outcome, 'admitted');
     assert.equal(disabled?.outcome === 'admitted' && disabled.state, 'disabled');
+    assert.equal(disabled?.outcome === 'admitted' && disabled.enforced, false);
     contractVariants['admitted-disabled'] = disabled;
   });
 
@@ -573,7 +591,7 @@ test('contract completeness: disabled, preview-stale, and override-consumed vari
   contractVariants['rejected-override-consumed'] = consumed;
 });
 
-test('config resolution rejects malformed env overrides and applies valid ones', () => {
+test('config resolution applies valid env overrides and survives malformed ones', () => {
   const resolved = resolvePressureAdmissionConfig({
     FARMSLOT_PRESSURE_MIN_CONSECUTIVE_CRITICAL: '5',
     FARMSLOT_PRESSURE_CPU_CRITICAL: '0.8',
@@ -581,12 +599,20 @@ test('config resolution rejects malformed env overrides and applies valid ones',
   assert.equal(resolved.minConsecutiveCriticalSamples, 5);
   assert.equal(resolved.cpuCritical, 0.8);
   assert.equal(resolved.validationFixtureMachine, null);
+  // A malformed value is refused at STARTUP; a read falls back to the default
+  // rather than failing, so the disabled path can still describe its evidence.
   assert.throws(
     () =>
-      resolvePressureAdmissionConfig({
+      assertPressureAdmissionConfigValid({
         FARMSLOT_PRESSURE_STALE_AFTER_MS: 'not-a-number',
       } as NodeJS.ProcessEnv),
     /FARMSLOT_PRESSURE_STALE_AFTER_MS/,
+  );
+  assert.equal(
+    resolvePressureAdmissionConfig({
+      FARMSLOT_PRESSURE_STALE_AFTER_MS: 'not-a-number',
+    } as NodeJS.ProcessEnv).staleAfterMs,
+    DEFAULT_PRESSURE_STALE_AFTER_MS,
   );
 });
 
@@ -629,34 +655,45 @@ after(() => {
 });
 
 test('config validation: ratio thresholds are capped at 1 and counts must be whole', () => {
+  // Startup is the fail-loud gate for every threshold override.
   assert.throws(
     () =>
-      resolvePressureAdmissionConfig({
+      assertPressureAdmissionConfigValid({
         FARMSLOT_PRESSURE_CPU_CRITICAL: '1.2',
       } as NodeJS.ProcessEnv),
     /FARMSLOT_PRESSURE_CPU_CRITICAL.*no greater than 1/,
   );
   assert.throws(
     () =>
-      resolvePressureAdmissionConfig({
+      assertPressureAdmissionConfigValid({
         FARMSLOT_PRESSURE_MEMORY_CRITICAL: '2',
       } as NodeJS.ProcessEnv),
     /FARMSLOT_PRESSURE_MEMORY_CRITICAL.*no greater than 1/,
   );
   assert.throws(
     () =>
-      resolvePressureAdmissionConfig({
+      assertPressureAdmissionConfigValid({
         FARMSLOT_PRESSURE_DISK_CRITICAL: '1.01',
       } as NodeJS.ProcessEnv),
     /FARMSLOT_PRESSURE_DISK_CRITICAL.*no greater than 1/,
   );
   assert.throws(
     () =>
-      resolvePressureAdmissionConfig({
+      assertPressureAdmissionConfigValid({
         FARMSLOT_PRESSURE_MIN_CONSECUTIVE_CRITICAL: '2.5',
       } as NodeJS.ProcessEnv),
     /FARMSLOT_PRESSURE_MIN_CONSECUTIVE_CRITICAL.*positive integer/,
   );
+  // Every bad value is reported at once, so one boot fixes the whole shell.
+  assert.throws(
+    () =>
+      assertPressureAdmissionConfigValid({
+        FARMSLOT_PRESSURE_CPU_CRITICAL: '5',
+        FARMSLOT_PRESSURE_STALE_AFTER_MS: '-1',
+      } as NodeJS.ProcessEnv),
+    /FARMSLOT_PRESSURE_CPU_CRITICAL.*;.*FARMSLOT_PRESSURE_STALE_AFTER_MS/s,
+  );
+  assert.doesNotThrow(() => assertPressureAdmissionConfigValid({} as NodeJS.ProcessEnv));
   // load1 stays unbounded positive (>1 is a meaningful over-subscription).
   assert.equal(
     resolvePressureAdmissionConfig({

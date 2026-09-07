@@ -3369,3 +3369,38 @@ test('giving up on one slot never hands the claim to the same run waiting on ano
     'that place is left alone for the caller that owns it to give up in its turn',
   );
 });
+
+test('an unenforced host-pressure conflict admits the acquire and rides along as an advisory', async (t) => {
+  const { registry, actions } = await fixture(t, [entry('browser')], {
+    // What the gate returns with `host_pressure_admission` off, which is the
+    // default: a critical snapshot marked as not enforced.
+    pressureFor: async () => ({
+      kind: 'host-pressure-advisory',
+      severity: 'critical',
+      reason: 'Load average 118 is above 1.5x 12 cores.',
+      machine: 'macwork',
+      observedAt: '2026-09-07T10:00:00.000Z',
+    }),
+  });
+  const granted = await acquire(registry, 'browser', 'run-a');
+  assert.equal(granted.ok, true, 'the acquire proceeds; nothing was refused');
+  assert.ok(actions.length > 0, 'the provider really ran');
+
+  const status = await registry.status({ slotId: SLOT });
+  assert.equal(status.leases[0]?.state, 'acquired');
+  assert.equal(status.leases[0]?.pressure?.kind, 'host-pressure-advisory');
+  // Still reported: an operator reading the slot sees the machine is loaded.
+  assert.deepEqual(status.pressure, {
+    kind: 'host-pressure-advisory',
+    severity: 'critical',
+    reason: 'Load average 118 is above 1.5x 12 cores.',
+    machine: 'macwork',
+    observedAt: '2026-09-07T10:00:00.000Z',
+  });
+
+  // ...and stops being reported once the lease it described is gone. A stale
+  // reading left on the slot would outlive the acquire it belonged to.
+  const released = await registry.release({ slotId: SLOT, ownerRunId: 'run-a', keepWarm: false });
+  assert.equal(released.ok, true);
+  assert.equal((await registry.status({ slotId: SLOT })).pressure, undefined);
+});

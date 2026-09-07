@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-07T11:48:08.420Z",
+  "host": "macwork",
+  "scenario": "host-pressure-admission-optin-off-default",
+  "runner": "scripted",
+  "capabilityId": "recording",
+  "expectedMode": "off",
+  "optInPath": "default",
+  "gatewayConfiguration": "no project host_pressure_admission block and no FARMSLOT_HOST_PRESSURE_ADMISSION",
+  "hostLoad": {
+    "cores": 16,
+    "load1": 145.57177734375,
+    "perCore": 9.1
+  },
+  "loadNote": "Host load raised deliberately by 20 operator-started busy-loop shells so the machine crossed the real critical threshold (>1.5x 16 cores). Real machine load read by the gateway from node metrics, not injected state. Burners killed right after this run.",
+  "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario host-pressure-admission-optin --slot macwork-ff-3 --expect off --via default",
+  "slotId": "macwork-ff-3",
+  "runId": "97d61c8a-12df-4bb2-ace9-ee75ddd0516b",
+  "nodes": {
+    "machinePressure": {
+      "machine": "macwork",
+      "severity": "critical",
+      "concerns": [
+        "Load average 140.33 is above 1.5x 16 cores.",
+        "2 idle cleanup candidate(s) available."
+      ]
+    },
+    "acquire": {
+      "ok": true,
+      "leaseState": "acquired",
+      "leasePressure": {
+        "kind": "host-pressure-advisory",
+        "severity": "critical",
+        "reason": "Load average 145.27 is above 1.5x 16 cores.",
+        "machine": "macwork",
+        "observedAt": "2026-09-07T11:47:17.739Z"
+      },
+      "conflict": null
+    },
+    "statusPressure": {
+      "kind": "host-pressure-advisory",
+      "severity": "critical",
+      "reason": "Load average 145.27 is above 1.5x 16 cores.",
+      "machine": "macwork",
+      "observedAt": "2026-09-07T11:47:17.739Z"
+    },
+    "released": {
+      "ok": true,
+      "failures": []
+    },
+    "advisoryClearedAfterRelease": null,
+    "noLeftoverLeases": []
+  },
+  "pass": true,
+  "attempts": 1
+}

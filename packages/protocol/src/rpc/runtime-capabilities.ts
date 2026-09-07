@@ -7,8 +7,8 @@ import type {
   RuntimeCapabilityCatalogEntry,
   RuntimeCapabilityClaimWaiter,
   RuntimeCapabilityLease,
+  RuntimeCapabilityLeasePressure,
   RuntimeCapabilityLifecycleEvent,
-  RuntimeCapabilityPressureConflict,
   RuntimeCapabilityProofPlan,
   RuntimeCapabilityProofRequirement,
 } from '../contracts/runtime-capabilities.js';
@@ -114,7 +114,7 @@ export interface RuntimeCapabilityStatusResult {
   catalog: RuntimeCapabilityCatalogEntry[];
   leases: RuntimeCapabilityLease[];
   proofPlans: Record<string, RuntimeCapabilityProofPlan>;
-  pressure?: RuntimeCapabilityPressureConflict;
+  pressure?: RuntimeCapabilityLeasePressure;
   /**
    * Waiters on every scoped claim this slot's queued leases are in line for,
    * across all slots in scope, ordered.

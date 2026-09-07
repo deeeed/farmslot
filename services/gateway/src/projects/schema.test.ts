@@ -117,3 +117,40 @@ test('project schema restricts the iOS inventory provider to compatible fallback
     false,
   );
 });
+
+test('project schema accepts an opt-in host-pressure mode and rejects anything else', async () => {
+  const schema = await readProjectSchema();
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const providers = {
+    'browser-cdp': {
+      label: 'Browser CDP',
+      version: '1.0.0',
+      share_policy: 'exclusive',
+      cost: { class: 'medium', resources: [] },
+      actions: {
+        acquire: { kind: 'slot-action', action_id: 'browser-start' },
+        health: { kind: 'slot-action', action_id: 'browser-health' },
+        release: { kind: 'slot-action', action_id: 'browser-stop' },
+      },
+      release_effects: ['stop browser'],
+    },
+  };
+  const project = (admission: unknown) => ({
+    name: 'schema-test',
+    runtime_capabilities: { providers, host_pressure_admission: admission },
+  });
+
+  for (const mode of ['off', 'refuse', 'queue']) {
+    assert.equal(validate(project({ mode })), true, JSON.stringify(validate.errors));
+  }
+  assert.equal(
+    validate({ name: 'schema-test', runtime_capabilities: { providers } }),
+    true,
+    'the block is optional — absent means off',
+  );
+  assert.equal(validate(project({ mode: 'enabled' })), false);
+  assert.equal(validate(project({})), false, 'mode is required once the block exists');
+  assert.equal(validate(project({ mode: 'refuse', cpu_critical_percent: 101 })), false);
+  assert.equal(validate(project({ mode: 'refuse', load1_critical_multiplier: 0 })), false);
+  assert.equal(validate(project({ mode: 'refuse', unknown_knob: 1 })), false);
+});

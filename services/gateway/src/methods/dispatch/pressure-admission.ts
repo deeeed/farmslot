@@ -76,14 +76,16 @@ const DEFAULT_CONFIG: PressureAdmissionConfig = {
  * not skew, and is excluded from evaluation. */
 const FUTURE_SAMPLE_SKEW_MS = 30_000;
 
-function envNumber(
+type EnvNumberOptions = { integer?: boolean; max?: number };
+
+/** Why a value is unusable, or null when it is fine. Pure: no throw, no log. */
+function envNumberProblem(
   env: NodeJS.ProcessEnv,
   key: string,
-  fallback: number,
-  options?: { integer?: boolean; max?: number },
-): number {
+  options?: EnvNumberOptions,
+): string | null {
   const raw = env[key]?.trim();
-  if (!raw) return fallback;
+  if (!raw) return null;
   const parsed = Number(raw);
   if (
     !Number.isFinite(parsed) ||
@@ -92,11 +94,56 @@ function envNumber(
     (options?.max !== undefined && parsed > options.max)
   ) {
     const bound = options?.max !== undefined ? ` no greater than ${options.max}` : '';
-    throw new Error(
-      `${key} must be a positive ${options?.integer ? 'integer' : 'number'}${bound}, got '${raw}'`,
-    );
+    return `${key} must be a positive ${options?.integer ? 'integer' : 'number'}${bound}, got '${raw}'`;
   }
-  return parsed;
+  return null;
+}
+
+const warnedEnvNumbers = new Set<string>();
+
+/**
+ * Read one threshold override, falling back to the default when the value is
+ * unusable.
+ *
+ * Deliberately does NOT throw: config is resolved on every admission read,
+ * including the unenforced path that only needs it to describe evidence.
+ * Throwing here turned a typo in one threshold into a failure of every read,
+ * including the ones an operator would use to diagnose it. The gateway refuses
+ * to start on a bad value instead — see assertPressureAdmissionConfigValid.
+ */
+function envNumber(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+  options?: EnvNumberOptions,
+): number {
+  const problem = envNumberProblem(env, key, options);
+  if (problem) {
+    if (!warnedEnvNumbers.has(problem)) {
+      warnedEnvNumbers.add(problem);
+      console.error(`[pressure-admission] ignoring ${problem}`);
+    }
+    return fallback;
+  }
+  const raw = env[key]?.trim();
+  return raw ? Number(raw) : fallback;
+}
+
+/**
+ * Fail-loud gate, called once at gateway startup, for every FARMSLOT_PRESSURE_*
+ * threshold override. Reports all of them at once so an operator fixes their
+ * environment in one pass.
+ */
+export function assertPressureAdmissionConfigValid(env: NodeJS.ProcessEnv = process.env): void {
+  const problems = [
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_CPU_CRITICAL', { max: 1 }),
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_MEMORY_CRITICAL', { max: 1 }),
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_DISK_CRITICAL', { max: 1 }),
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_LOAD1_CRITICAL'),
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_MIN_CONSECUTIVE_CRITICAL', { integer: true }),
+    envNumberProblem(env, 'FARMSLOT_PRESSURE_STALE_AFTER_MS'),
+  ].filter((problem): problem is string => problem !== null);
+  if (problems.length > 0) throw new Error(problems.join('; '));
 }
 
 /** Centralized, env-overridable thresholds. Resolved per evaluation batch. */
@@ -425,31 +472,34 @@ export function evaluatePressureAdmission(
 
 // ─── Capture adapters ───
 
-function disabledDecisions(
-  machines: string[],
+/**
+ * The gate is off: every machine is admitted, whatever the ring says.
+ *
+ * The policy still RUNS — the reads are pure and in-memory — so the decision
+ * carries real evidence and, when the policy would have rejected, an advisory
+ * describing what an enabled gate would have done. Enforcement is what the
+ * switch removes, not visibility. Every consumer keys refusal off
+ * `outcome === 'rejected'` and skips the override/preview guards on
+ * `state === 'disabled'`, so nothing downstream can turn this back into a
+ * refusal.
+ */
+function unenforcedDecision(
+  machine: string,
+  config: PressureAdmissionConfig,
   now: number,
-): Map<string, PressureAdmissionDecision> {
-  const disabledAt = new Date(now).toISOString();
-  return new Map(
-    machines.map((machine) => [
-      machine,
-      {
-        outcome: 'admitted' as const,
-        machine,
-        state: 'disabled' as const,
-        evidence: {
-          machine,
-          generation: null,
-          evaluatedAt: disabledAt,
-          samples: [],
-          consecutiveCriticalSamples: 0,
-          requiredConsecutiveCriticalSamples: 0,
-          staleAfterMs: 0,
-          latestSampleAt: null,
-        },
-      },
-    ]),
-  );
+): PressureAdmissionDecision {
+  const decision = evaluateForMachine(machine, historyOnlyCapture(machine), config, now);
+  if (decision.outcome === 'admitted') {
+    return { ...decision, state: 'disabled', enforced: false };
+  }
+  return {
+    outcome: 'admitted',
+    machine,
+    state: 'disabled',
+    evidence: decision.evidence,
+    enforced: false,
+    advisory: { code: decision.code, reason: decision.reason, causes: decision.causes },
+  };
 }
 
 /** In-memory capture: pure reads of the ring, machine health, and freshness. */
@@ -598,11 +648,15 @@ function captureInMemoryPressureAdmissionDecisions(
   const uniqueMachines = [...new Set(machines)];
   if (uniqueMachines.length === 0) return new Map();
   const now = Date.now();
-  // Durable kill switch: when off, every machine is admitted with
-  // state='disabled' and no pressure read happens. Sampling, history, and
-  // charts continue elsewhere; only dispatch prevention pauses.
-  if (!isPressureAdmissionEnabled()) return disabledDecisions(uniqueMachines, now);
   const config = options?.config ?? resolvePressureAdmissionConfig();
+  // Opt-in switch, off by default: every machine is admitted with
+  // state='disabled', carrying the evidence as an advisory. Sampling, history,
+  // and charts are unaffected either way; only dispatch prevention pauses.
+  if (!isPressureAdmissionEnabled()) {
+    return new Map(
+      uniqueMachines.map((machine) => [machine, unenforcedDecision(machine, config, now)]),
+    );
+  }
   return new Map(
     uniqueMachines.map((machine) => [
       machine,

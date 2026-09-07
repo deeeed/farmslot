@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 
 import type {
+  DispatchPressureAdmissionMode,
   DispatchPreviewResult,
   DispatchQueueListResult,
   PressureAdmissionDecision,
@@ -23,6 +24,37 @@ const DISPATCH_MODES = new Set(['interactive', 'autonomous', 'validation']);
  * reason, refresh state, and the exact override syntax. It never re-derives
  * thresholds client-side.
  */
+/**
+ * Operator-facing view of the dispatch pressure switch.
+ *
+ * The env override WINS over the durable state, so it is what decides whether
+ * dispatches are gated. Rendering only the stored flag told an operator
+ * "DISABLED" while their dispatches were in fact being refused.
+ */
+export function renderAdmissionControl(state: {
+  enabled: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  envOverride?: DispatchPressureAdmissionMode;
+}): string[] {
+  const effective = state.envOverride ? state.envOverride === 'refuse' : state.enabled;
+  return [
+    `${bold('Pressure admission')}: ${effective ? green('enforcing') : red('DISABLED')}`,
+    state.envOverride
+      ? `  Source: FARMSLOT_DISPATCH_PRESSURE_ADMISSION=${state.envOverride} on the gateway process (overrides the stored setting)`
+      : `  Source: stored gateway setting`,
+    state.envOverride
+      ? `  Stored setting: ${state.enabled ? 'enabled' : 'disabled'} (not in effect)`
+      : '',
+    state.updatedAt
+      ? `  Last change: ${state.updatedAt} by ${state.updatedBy ?? 'unknown'}`
+      : `  Last change: never (gateway default: off)`,
+    effective
+      ? ''
+      : `  ${yellow('Dispatches are NOT pressure-gated. Sampling, history, and charts continue.')}`,
+  ].filter(Boolean);
+}
+
 export function renderPressureAdmission(decision: PressureAdmissionDecision): string[] {
   const lines: string[] = [];
   const evidence = decision.evidence;
@@ -176,27 +208,7 @@ export function registerDispatchCommand(program: Command): void {
 
   const admission = dispatch
     .command('pressure-admission')
-    .description('Durable kill switch for sustained-pressure dispatch prevention');
-
-  const renderAdmissionControl = (
-    output: { write: (text: string) => void },
-    state: { enabled: boolean; updatedAt: string | null; updatedBy: string | null },
-  ) => {
-    output.write(
-      [
-        `${bold('Pressure admission')}: ${state.enabled ? green('enabled') : red('DISABLED')}`,
-        state.updatedAt
-          ? `  Last change: ${state.updatedAt} by ${state.updatedBy ?? 'unknown'}`
-          : `  Last change: never (gateway default)`,
-        state.enabled
-          ? ''
-          : `  ${yellow('Dispatches are NOT pressure-gated. Sampling, history, and charts continue.')}`,
-        '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
-  };
+    .description('Opt-in switch for sustained-pressure dispatch prevention (off by default)');
 
   admission
     .command('status')
@@ -210,7 +222,7 @@ export function registerDispatchCommand(program: Command): void {
           {},
         );
         if (emit.machine) emit.ok(state);
-        else renderAdmissionControl(output, state);
+        else output.write(`${renderAdmissionControl(state).join('\n')}\n`);
       } catch (err) {
         emit.fail(err);
       }
@@ -224,8 +236,8 @@ export function registerDispatchCommand(program: Command): void {
       .command(verb)
       .description(
         enabled
-          ? 'Re-enable pressure-based dispatch prevention'
-          : 'Disable pressure rejection/override prompts (sampling and charts continue)',
+          ? 'Opt in to pressure-based dispatch prevention (off by default)'
+          : 'Turn off pressure rejection/override prompts (sampling and charts continue)',
       )
       .action(async (_opts: unknown, cmd: Command) => {
         const { client, output } = resolveContext(cmd);
@@ -236,7 +248,7 @@ export function registerDispatchCommand(program: Command): void {
             { enabled },
           );
           if (emit.machine) emit.ok(state);
-          else renderAdmissionControl(output, state);
+          else output.write(`${renderAdmissionControl(state).join('\n')}\n`);
         } catch (err) {
           emit.fail(err);
         }

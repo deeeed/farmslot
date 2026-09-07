@@ -4,6 +4,33 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(runtime)!: host-pressure admission is opt-in and OFF by default, on both gates. A medium- or
+  high-cost capability acquire on a machine at critical pressure now proceeds; the pressure snapshot
+  is carried on the granted lease with `enforced: false` and reported by `runtime.capability.status`,
+  so the machine's state is still visible without refusing anyone. A project opts back in with
+  `runtime_capabilities.host_pressure_admission.mode` (`off` | `refuse` | `queue`, plus optional
+  critical thresholds that only the admission path sees), and
+  `FARMSLOT_HOST_PRESSURE_ADMISSION=off|refuse|queue` on the gateway process overrides every project
+  on that stack. The sustained-pressure DISPATCH gate flips the same way: the durable
+  `dispatch.pressureAdmission` switch now defaults to disabled, with
+  `FARMSLOT_DISPATCH_PRESSURE_ADMISSION=off|refuse` winning over the persisted state and reported
+  back on the control state as `envOverride`. An unenforced dispatch decision still evaluates the
+  ring and carries what an enabled gate would have refused with as `advisory`, rather than the empty
+  evidence the old kill switch produced. Machine unavailability (offline, no health metrics) is
+  refused in every mode — that is an availability check, not a pressure gate. `projects/farmslot-farm`
+  ships with no block, so the operator machine, which runs at load 100+ from Arthur's own apps, no
+  longer has its own validation runs blocked. **Migration:** the dispatch control file is now
+  version 2, and a version-1 file is reset to the new disabled default rather than carried forward —
+  an install that ran `disable` then `enable` under the old semantics would otherwise come up
+  enforcing. Re-opt in with `farmslot dispatch pressure-admission enable`. `loadProjectConfigs` now
+  populates `runtimeCapabilities`, which the contract declared but nothing produced, so a project's
+  block is actually reachable; capability admission reads it through the cached, validating
+  `loadProjectVars` seam rather than re-reading every project.json per acquire. A bad value in
+  either admission env var, or in any `FARMSLOT_PRESSURE_*` threshold override, stops the gateway at
+  startup instead of throwing from inside every admission read — the unenforced path resolves that
+  config too, so a throw there would have taken out the very reads an operator needs to diagnose the
+  typo, where the old early return had skipped it entirely; and a project.json the loader cannot read is now logged with its name instead of
+  being dropped silently.
 - feat(runtime): fleet-scoped resource claims with a FIFO wait queue. Proven live: two runs on two
   slots contended for one fleet-scoped claim through the production gateway — the second queued, was
   reserved when the first released, completed on its own, and released — at a host load of 0.93 per

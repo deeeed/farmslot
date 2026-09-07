@@ -161,6 +161,39 @@ export interface ProjectRuntimeCapabilitiesConfig {
   providers: Record<string, RuntimeCapabilityProviderConfig>;
   /** Project-wide posture defaults (ADR-054); provider `retention` wins over these. */
   posture?: ProjectResourcePostureConfig;
+  /** Opt-in host-pressure admission for this project's capability acquires. */
+  hostPressureAdmission?: ProjectHostPressureAdmissionConfig;
+}
+
+/**
+ * How this project's medium/high-cost capability acquires react to critical
+ * host pressure.
+ *
+ * `off` (the DEFAULT when the block is absent) never refuses: pressure is still
+ * evaluated and carried on the granted lease as an advisory. `refuse` blocks the
+ * acquire. `queue` blocks it and parks the caller in the pressure queue whether
+ * or not the caller passed `queueOnPressure`.
+ */
+export type HostPressureAdmissionMode = 'off' | 'refuse' | 'queue';
+
+export const HOST_PRESSURE_ADMISSION_MODES: readonly HostPressureAdmissionMode[] = [
+  'off',
+  'refuse',
+  'queue',
+];
+
+/**
+ * Project overrides for the critical thresholds that decide the pressure
+ * severity an enforcing mode acts on. Every field is optional and falls back to
+ * the gateway defaults (1.5x cores, 90% CPU, 90% memory, 95% disk); the warn
+ * band and thermal pressure are not project-tunable.
+ */
+export interface ProjectHostPressureAdmissionConfig {
+  mode: HostPressureAdmissionMode;
+  load1CriticalMultiplier?: number;
+  cpuCriticalPercent?: number;
+  memoryCriticalPercent?: number;
+  diskCriticalPercent?: number;
 }
 
 export interface RuntimeCapabilityProviderProvenance {
@@ -226,7 +259,7 @@ export interface RuntimeCapabilityLease {
   keepWarmUntil?: string;
   cleanupFailure?: string;
   /** Admission pressure retained while this lease is queued. */
-  pressure?: RuntimeCapabilityPressureConflict;
+  pressure?: RuntimeCapabilityLeasePressure;
   /**
    * The machine the slot ran on when the lease was taken.
    *
@@ -303,6 +336,16 @@ export interface RuntimeCapabilityLeaseConflict {
   reason: string;
 }
 
+/**
+ * The acquire was REFUSED because the host is under critical pressure and the
+ * project opted in to enforcement.
+ *
+ * This type only ever describes a refusal. Pressure that was observed but NOT
+ * enforced is a `RuntimeCapabilityPressureAdvisory`, which is deliberately a
+ * different `kind` and is not a member of `RuntimeCapabilityAcquireConflict`:
+ * a client matching `kind === 'host-pressure'` must never be able to paint an
+ * admitted acquire as a block, and an absent boolean was too easy to miss.
+ */
 export interface RuntimeCapabilityPressureConflict {
   kind: 'host-pressure';
   reason: string;
@@ -311,6 +354,33 @@ export interface RuntimeCapabilityPressureConflict {
   queued: boolean;
   retryAfterMs?: number;
 }
+
+/**
+ * Pressure that was observed and NOT enforced: the project (or the gateway env
+ * override) has `host_pressure_admission.mode: 'off'`, which is the default.
+ * The acquire PROCEEDED. This rides along on the granted lease so operators can
+ * still see the machine was loaded, and it is never a refusal.
+ *
+ * It is a reading taken AT ACQUIRE TIME and never refreshed — hence the
+ * required `observedAt`. A live view of the machine is
+ * `resource.pressure.snapshot`.
+ */
+export interface RuntimeCapabilityPressureAdvisory {
+  kind: 'host-pressure-advisory';
+  reason: string;
+  severity: 'warn' | 'critical';
+  machine?: string;
+  observedAt: string;
+}
+
+/**
+ * What a lease's `pressure` field may hold: why a QUEUED lease is waiting
+ * (a conflict), or the unenforced reading an ACQUIRED lease was taken under
+ * (an advisory). The `kind` tells them apart; nothing else has to.
+ */
+export type RuntimeCapabilityLeasePressure =
+  | RuntimeCapabilityPressureConflict
+  | RuntimeCapabilityPressureAdvisory;
 
 /**
  * The acquire was refused AND enqueued: a scoped claim is held elsewhere and

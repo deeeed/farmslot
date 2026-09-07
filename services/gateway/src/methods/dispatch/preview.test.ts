@@ -8,9 +8,13 @@ import { fileURLToPath } from 'node:url';
 import type { PressureAdmissionDecision, SlotStatus } from '@farmslot/protocol';
 
 import { queueItemHeldByPressure, selectQueueDispatchSlot } from '../../backlog/dispatch-queue.js';
+import { runWithSessionOriginator } from '../../security/work-originator.js';
 
 import { evaluatePressureAdmission, type PressureAdmissionConfig } from './pressure-admission.js';
-import { resetPressureAdmissionControlCacheForTest } from './pressure-admission-control.js';
+import {
+  resetPressureAdmissionControlCacheForTest,
+  setPressureAdmissionEnabled,
+} from './pressure-admission-control.js';
 import { resolveDispatchPreviewFromFleet } from './preview.js';
 import { findBestSlot } from './slot-scoring.js';
 
@@ -310,8 +314,10 @@ test('queue: default capture is the lightweight in-memory path, never the heavy 
     'dispatch-queue.ts must not reference the heavy capture',
   );
   // Behavioral: with no stub installed, selection over an empty in-memory
-  // pressure state resolves fast (all machines unavailable → held → null)
-  // without touching snapshot infrastructure that does not exist in tests.
+  // pressure state resolves fast, without touching snapshot infrastructure
+  // that does not exist in tests. With dispatch prevention opted IN, every
+  // machine is unavailable → held → null; at the default (off) the same empty
+  // state admits and a slot is selected.
   const item = {
     id: 'q2',
     flowType: 'fix-bug',
@@ -322,7 +328,18 @@ test('queue: default capture is the lightweight in-memory path, never the heavy 
     status: 'queued',
   } as Parameters<typeof selectQueueDispatchSlot>[1];
   await withTempControlHome(async () => {
+    runWithSessionOriginator(
+      {
+        id: 'principal-arthur',
+        subject: { type: 'person', displayName: 'Arthur' },
+        roles: [{ role: 'admin', scope: { kind: 'global' } }],
+      },
+      () => setPressureAdmissionEnabled({ enabled: true }),
+    );
     assert.equal(await selectQueueDispatchSlot(fleet, item), null);
+  });
+  await withTempControlHome(async () => {
+    assert.equal(await selectQueueDispatchSlot(fleet, item), 'macwork-ff-1');
   });
 });
 
