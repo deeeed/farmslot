@@ -117,6 +117,25 @@ for (const kind of ['complete', 'fail', 'block'] as const) {
 // ── ADR-053 parity: the backlog repair marker is write-ahead (MANUAL-000124) ──
 
 for (const kind of ['complete', 'fail', 'block'] as const) {
+  test(`${kind} leaves an unlinked run unmarked, because nothing could ever clear it`, async () => {
+    // The marker exists to repair a BACKLOG projection, and the only repair that
+    // rebuilds one walks backlog items. A run with no item is never walked, so a
+    // marker on it would stand forever and `archiveRun`/`deleteRun` would refuse
+    // the run for good.
+    const seen: Array<boolean | undefined> = [];
+    const harness = drive(
+      run(),
+      { runId: 'run_1', kind, actor: 'engine', patch: TERMINAL_PATCHES[kind] },
+      { emit: (current) => void seen.push(current.backlogReconcilePending) },
+    );
+    const result = await harness.result;
+
+    assert.deepEqual(seen, [undefined]);
+    assert.equal(result.run.backlogReconcilePending, undefined);
+    assert.equal(harness.stored().backlogReconcilePending, undefined);
+    assert.equal(harness.stored().status, TERMINAL_PATCHES[kind].status);
+  });
+
   test(`${kind} writes the backlog repair marker in the same write as the terminal status`, async () => {
     const seen: Array<{ status: Run['status']; marker: boolean | undefined }> = [];
     const harness = drive(

@@ -42,6 +42,28 @@ export const DEVICE_INVENTORY_KEY_TOOL: Record<DeviceInventoryKey, DeviceInvento
   adb_serial: 'adb',
 };
 
+/**
+ * Whether a tool's silence about an identity is evidence that it does not
+ * EXIST, as opposed to evidence that it is not running right now.
+ *
+ * `simctl list devices` and `emulator -list-avds` enumerate what is installed,
+ * whatever state it is in, so an identity they omit does not exist. `adb
+ * devices -l` enumerates currently CONNECTED transports: an unplugged phone and
+ * an unbooted emulator are both absent from it, and booting them is exactly
+ * what the provider acquire would do. Treating that absence as nonexistence
+ * refused every legitimate re-target to a device that was not already up.
+ *
+ * So `adb_serial` is never refused on absence. The provider's own `adb
+ * get-state` remains the closed door behind it, as it was before this inventory
+ * existed.
+ */
+export const DEVICE_INVENTORY_KEY_LISTS_EXISTENCE: Record<DeviceInventoryKey, boolean> = {
+  simulator: true,
+  udid: true,
+  avd: true,
+  adb_serial: false,
+};
+
 export interface DeviceInventoryEntry {
   platform: DeviceInventoryPlatform;
   /** The re-target key this identity may be sent as. */
@@ -104,11 +126,19 @@ export interface DeviceInventoryRefusal {
   reason: string;
 }
 
-/** Whether a source covers the key, i.e. whether its silence is evidence. */
+/**
+ * Whether this inventory can say an identity of `key` does not exist.
+ *
+ * Two conditions, and both are load-bearing: the tool that answers for the key
+ * actually answered, AND that tool enumerates existence rather than current
+ * connectivity. Either one missing means silence proves nothing, and the caller
+ * must not refuse.
+ */
 export function deviceInventoryCovers(
   sources: readonly DeviceInventorySource[],
   key: DeviceInventoryKey,
 ): boolean {
+  if (!DEVICE_INVENTORY_KEY_LISTS_EXISTENCE[key]) return false;
   const tool = DEVICE_INVENTORY_KEY_TOOL[key];
   return sources.some((source) => source.tool === tool && source.ok);
 }

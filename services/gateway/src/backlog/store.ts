@@ -988,7 +988,41 @@ async function reconcileBacklogLinks(): Promise<boolean> {
       changed = true;
     }
   }
+
   return changed;
+}
+
+/**
+ * Clear the ADR-053 repair marker on any run NO backlog item claims.
+ *
+ * Every branch of `reconcileBacklogLinks` walks from a backlog ITEM, so a marked
+ * run whose item is gone — deleted, or never linked at all — is reached by none
+ * of them. Its marker would stand forever, and `archiveRun`/`deleteRun` refuse a
+ * marked run, so the run could never be evicted and the cleanup sweep would skip
+ * it on every pass. There is nothing left to reconcile against either: no item
+ * means no projection to rebuild, which is exactly why the marker is meaningless
+ * here and safe to drop.
+ *
+ * Runs whose item WAS found are already settled by those branches, so this only
+ * ever sees orphans. It runs on EVERY load path, including the one where the
+ * backlog file does not exist — a fleet with no backlog at all is precisely
+ * where an orphan marker would otherwise be immortal.
+ */
+async function clearUnclaimedReconcileMarkers(): Promise<void> {
+  const claimedRunIds = new Set<string>();
+  for (const item of items) {
+    if (item.runId) claimedRunIds.add(item.runId);
+    for (const projection of item.launchPlanState?.candidates ?? []) {
+      if (projection.runId) claimedRunIds.add(projection.runId);
+    }
+  }
+  for (const run of getAllRuns()) {
+    if (!run.backlogReconcilePending) continue;
+    if (claimedRunIds.has(run.id)) continue;
+    if (run.backlogItemId && items.some((item) => item.id === run.backlogItemId)) continue;
+    const settledRun = updateRun(run.id, { backlogReconcilePending: undefined });
+    await persistRunNow(settledRun, 'backlog-reconcile-unclaimed-marker-cleared');
+  }
 }
 
 export async function loadBacklog(
@@ -1018,6 +1052,7 @@ export async function loadBacklog(
       console.log(`[provenance] backlog migrated ${migrated} item(s)`);
     }
     if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
+    await clearUnclaimedReconcileMarkers();
     const orphans = listOrphanedBacklogQueueItems();
     if (orphans.length > 0) {
       console.warn(
@@ -1032,6 +1067,9 @@ export async function loadBacklog(
         await writeFile(BACKLOG_PROVENANCE_MARKER, 'provenance-v1\n', 'utf8');
         console.log('[provenance] backlog migrated 0 item(s)');
       }
+      // No backlog file is the strongest form of "no item claims this run", so
+      // the sweep matters MORE here, not less.
+      await clearUnclaimedReconcileMarkers();
       const orphans = listOrphanedBacklogQueueItems();
       if (orphans.length > 0) {
         console.warn(

@@ -690,3 +690,78 @@ test('reconcileBacklogRun makes the selected run authoritative over a stale term
     await runStore.deleteRun(run.id);
   }
 });
+
+test('loadBacklog clears a repair marker on a run no backlog item claims', async () => {
+  const { backlog, runStore } = await freshStores();
+  // Nothing links this run to anything. Every reconcile branch walks from a
+  // backlog item, so before the sweep a marker here was unreachable: it stood
+  // forever and `archiveRun`/`deleteRun` refused the run for good.
+  const orphan = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_ORPHAN,
+    mode: 'autonomous',
+    initialContext: 'Ad-hoc run with no backlog item',
+  });
+  const marked = runStore.updateRun(orphan.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+    backlogReconcilePending: true,
+  });
+  await runStore.persistRunNow(marked, 'test-unclaimed-marker');
+
+  try {
+    await backlog.loadBacklog();
+    assert.equal(runStore.getRun(orphan.id)?.backlogReconcilePending, undefined);
+    const onDisk = JSON.parse(await readFile(runStore.runRecordPath(orphan.id), 'utf8')) as {
+      backlogReconcilePending?: boolean;
+    };
+    assert.equal(onDisk.backlogReconcilePending, undefined, 'the clear is durable');
+    // The whole point: eviction works again.
+    assert.equal(await runStore.deleteRun(orphan.id), true);
+  } finally {
+    if (runStore.getRun(orphan.id)) {
+      runStore.updateRun(orphan.id, { backlogReconcilePending: undefined });
+      await runStore.deleteRun(orphan.id);
+    }
+  }
+});
+
+test('loadBacklog clears a repair marker whose backlog item was deleted', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Item that goes away',
+      sourceKind: 'manual',
+      flowType: 'dev',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_ORPHAN,
+    mode: 'autonomous',
+    initialContext: 'Run whose item is deleted under it',
+  });
+  const marked = runStore.updateRun(run.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+    backlogItemId: created.item.id,
+    backlogReconcilePending: true,
+  });
+  await runStore.persistRunNow(marked, 'test-deleted-item-marker');
+  await backlog.deleteBacklogItem(created.item.id);
+
+  try {
+    await backlog.loadBacklog();
+    assert.equal(runStore.getRun(run.id)?.backlogReconcilePending, undefined);
+  } finally {
+    if (runStore.getRun(run.id)) {
+      runStore.updateRun(run.id, { backlogReconcilePending: undefined });
+      await runStore.deleteRun(run.id);
+    }
+  }
+});

@@ -1,14 +1,15 @@
 {
+  "_note": "Live `resource.device.inventory` response from the dev gateway on this machine (MANUAL-000124). udid and adb_serial values are truncated to their last 8 characters. `configuredForSlots` is THIS machine pool wiring, not a fleet-wide fact: it is what pool/macwork.json happens to assign, and it changes whenever a slot is reconfigured.",
   "machine": "macwork",
   "slotId": "macwork-ff-4",
   "devices": [
     {
       "platform": "android",
       "key": "adb_serial",
-      "identity": "21261FDF6001SP",
+      "identity": "\u2026DF6001SP",
       "name": "Pixel_6",
       "state": "device",
-      "configuredForSlots": ["macwork-ff-3", "macwork-ff-4"]
+      "configuredForSlots": ["macwork-ff-1", "macwork-ff-3", "macwork-ff-4"]
     },
     {
       "platform": "android",
@@ -82,7 +83,7 @@
       "key": "simulator",
       "identity": "mmdev-2",
       "name": "mmdev-2",
-      "state": "Booted",
+      "state": "Shutdown",
       "configuredForSlots": ["macwork-mmdev-2"]
     },
     {
@@ -135,84 +136,84 @@
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "18FE8A70-ED8B-4796-BB42-AA27EB1EFC6A",
+      "identity": "\u2026EB1EFC6A",
       "name": "mmdev-1",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "1BB96956-9B40-4EB5-AF87-DEE0E7498588",
+      "identity": "\u2026E7498588",
       "name": "mmdev-6",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "2A32366E-A171-4229-8152-E74AE78767D3",
+      "identity": "\u2026E78767D3",
       "name": "temp/recipe/runtime",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "2DF4C5EA-1A0A-4B8A-8B72-9A445FBE49E1",
+      "identity": "\u20265FBE49E1",
       "name": "mmdev-2",
-      "state": "Booted"
+      "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "3904A400-D340-4B04-9408-E18062B231DC",
+      "identity": "\u202662B231DC",
       "name": "echodev-1",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "4DE58F8A-ED09-470C-B61D-6B1D2089803C",
+      "identity": "\u20262089803C",
       "name": "iPhone 16",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "88E7B7DE-CBC3-42A3-A23B-0F38D3D5BB17",
+      "identity": "\u2026D3D5BB17",
       "name": "mmdev-3",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "BC3ED993-D422-4A12-8C08-DF2B32DC13AB",
+      "identity": "\u202632DC13AB",
       "name": "mmdev-4",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "C071D870-531C-4968-B34C-DF9151704C9B",
+      "identity": "\u202651704C9B",
       "name": "mmdev-5",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "CAE47594-7920-4021-B145-D8E3A73F5C72",
+      "identity": "\u2026A73F5C72",
       "name": "playground-1",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "E2CE5801-0A5F-458C-88A0-CDCA12A240E4",
+      "identity": "\u202612A240E4",
       "name": "fs-4",
       "state": "Shutdown"
     },
     {
       "platform": "ios",
       "key": "udid",
-      "identity": "E4C630D3-3FF6-48E1-BD1A-C263A2E65809",
+      "identity": "\u2026A2E65809",
       "name": "sherpa-voice-1",
       "state": "Shutdown"
     }
@@ -231,6 +232,6 @@
       "ok": true
     }
   ],
-  "collectedAt": "2026-09-07T15:14:03.946Z",
+  "collectedAt": "2026-09-07T16:13:33.176Z",
   "cached": false
 }

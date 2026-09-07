@@ -11,13 +11,18 @@ devices -j`, `adb devices -l`, and `emulator -list-avds`, routed over the node e
   configures each device, so a device two slots share names both. A `recipe.rerun` target or a posture re-target naming a device that
   machine does not have is now refused up front, naming the machine and the nearest known
   identities, instead of costing the run the device it was holding and failing at the provider's
-  boot. When the tool that answers for a key did not run, nothing is refused and the provider's own
-  boot remains the closed door.
+  boot. Only the capability the plan actually re-targets is checked, so a sibling whose device is
+  momentarily absent cannot kill a re-target that never touched it. Nothing is refused when the tool
+  that answers for a key did not run, nor ever for an `adb_serial` — `adb devices` lists connected
+  transports, so an unbooted emulator is absent from it and booting one is what the acquire does
+  next. A refusal is never issued off a cached snapshot: the inventory is re-read fresh first, so a
+  device created or plugged in inside the cache window is not denied.
 - fix(runtime): a boot or shutdown hook that exits non-zero is reported as success only when the
   device itself says so. The verdict was matching `Unable to (shutdown|boot) device in current
 state` out of the tool's stderr, which let a device caught mid-transition pass as running; it now
   reads the state back from `simctl list devices -j` or `adb get-state`, and an unanswerable state
-  keeps the failure.
+  keeps the failure. Only a settled state answers: `Booting`, `Creating` and an `offline` or
+  `unauthorized` Android transport are transitional, so they confirm neither a boot nor a shutdown.
 - fix(runs): `complete`, `fail`, and `block` write the backlog repair marker in the same durable
   write as the terminal status, as cancel has since ADR-053. Recording it only after a failed settle
   left a crash between the terminal publish and the settle with no way to rebuild the projection.

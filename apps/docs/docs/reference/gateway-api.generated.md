@@ -205,6 +205,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `recipe.rerun`                          | recipe           | bounded-write | —      | —      | Recipe Rerun gateway method.                          |
 | `resource.cleanup`                      | resource         | bounded-write | —      | —      | Resource Cleanup gateway method.                      |
 | `resource.control`                      | resource         | bounded-write | —      | —      | Resource Control gateway method.                      |
+| `resource.device.inventory`             | resource         | read-only     | —      | —      | Resource Device Inventory gateway method.             |
 | `resource.health`                       | resource         | bounded-write | —      | —      | Resource Health gateway method.                       |
 | `resource.list`                         | resource         | read-only     | —      | —      | Resource List gateway method.                         |
 | `resource.pressure.history`             | resource         | read-only     | —      | —      | Resource Pressure History gateway method.             |

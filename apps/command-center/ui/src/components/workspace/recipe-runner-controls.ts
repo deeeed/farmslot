@@ -81,6 +81,10 @@ export class RecipeRunnerControls extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    // Read immediately as well as on the interval. Riding on `updated()` seeing
+    // `slotId` meant a disconnect and reconnect with an unchanged slot waited a
+    // full poll period with no device list.
+    void this._loadInventory();
     this._inventoryTimer = setInterval(() => void this._loadInventory(), INVENTORY_POLL_MS);
   }
 
@@ -180,6 +184,15 @@ export class RecipeRunnerControls extends LitElement {
     const canRun = Boolean(this.runId && this.slotId && !this.disabled && !this._running);
     const canCopy = Boolean(this.runId && this.slotId && !this.disabled);
     const choices = deviceTargetChoices(this._inventory?.devices ?? [], this.targetKey);
+    // The picker may only render a value it can DISPLAY. An identity typed
+    // before the inventory answered — or one the machine stopped listing — has
+    // no matching option, so the browser would show the first option, "slot
+    // default", while Replay still sent what was typed. The control whose whole
+    // job is preventing a mis-target would then be the thing hiding one, so the
+    // free-text field stays until the value is one the picker can show.
+    const identityIsOffered =
+      this.targetValue === '' || choices.some((choice) => choice.identity === this.targetValue);
+    const showPicker = choices.length > 0 && !this._typingIdentity && identityIsOffered;
     // Says which of the three the operator is looking at: a picker, a fallback
     // because the machine listed nothing for this key, or a fallback because the
     // inventory itself could not be read. Silence would make the last two look
@@ -188,7 +201,9 @@ export class RecipeRunnerControls extends LitElement {
       ? `Device list unavailable (${this._inventoryError}); type the identity.`
       : this._inventory && choices.length === 0
         ? `${this._inventory.machine} lists no ${this.targetKey}; type the identity.`
-        : '';
+        : !identityIsOffered && this._inventory
+          ? `${this._inventory.machine} does not list '${this.targetValue}'; it will be sent as typed.`
+          : '';
     return html`
       <div
         style="display:flex; align-items:center; justify-content:space-between; gap:${spacing.sm}; flex-wrap:wrap; padding:${spacing.sm}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.md}; background:${colors.bgSurface};"
@@ -259,7 +274,7 @@ export class RecipeRunnerControls extends LitElement {
                   html`<option value=${key} ?selected=${this.targetKey === key}>${key}</option>`,
               )}
             </select>
-            ${choices.length > 0 && !this._typingIdentity
+            ${showPicker
               ? html`
                   <select
                     data-testid="recipe-target-identity"

@@ -846,11 +846,22 @@ export class RunResourcePostureReconciler {
     // Before the queue place and before the release: a device the machine does
     // not have can never be acquired, so taking a place in its queue or giving
     // up the held device for it are both wasted (MANUAL-000124).
-    if (staleTargets.length > 0 && this.deps.assertTargetInInventory) {
-      for (const state of context.states) {
-        if (state.desiredDisposition !== 'acquired') continue;
+    //
+    // Scoped to the capabilities whose parameters this plan actually CHANGES —
+    // `staleByParameters`, not every acquired state. A plan holding an iOS
+    // simulator and an Android device, re-targeted only on the simulator, was
+    // otherwise rejected outright naming the ANDROID capability whenever its
+    // configured serial happened to be absent. The run's re-target died on a
+    // device nobody touched. A capability the plan is not moving keeps whatever
+    // it already holds, and its device is the acquire's problem, not this
+    // guard's. (The sibling wait loop below is deliberately left broad:
+    // enqueueing a claim the run already holds is a no-op, while a rejection is
+    // not.)
+    const retargetedCapabilities = new Set(staleByParameters.map((lease) => lease.capabilityId));
+    if (retargetedCapabilities.size > 0 && this.deps.assertTargetInInventory) {
+      for (const capabilityId of retargetedCapabilities) {
         const requirement = context.proofRequirements.find(
-          (candidate) => candidate.capabilityId === state.capabilityId,
+          (candidate) => candidate.capabilityId === capabilityId,
         );
         if (!requirement?.parameters) continue;
         const refusal = await this.deps.assertTargetInInventory(
@@ -864,7 +875,7 @@ export class RunResourcePostureReconciler {
           completed,
           rejection: {
             kind: 'device-unknown',
-            capabilityId: state.capabilityId,
+            capabilityId,
             machine: refusal.machine,
             key: refusal.key,
             identity: refusal.identity,

@@ -287,26 +287,117 @@ try {
     control: identityControl(host)?.dataset?.testid,
   });
 
-  // 10. The Android half of the same inventory, on a machine with a physical
-  //     device attached: the picker offers the serial, and its label names EVERY
-  //     slot configured for it — this Pixel is wired to two.
+  // 10. The Android half of the same inventory: the picker offers the serials
+  //     adb reported, and each label names EVERY slot the pool configures for
+  //     that device. The expectation is derived from the Gateway's own response,
+  //     never from this machine's pool wiring — a probe that hard-codes slot ids
+  //     fails on every other host for reasons unrelated to the code.
   choose(select, 'adb_serial');
   await controls.updateComplete;
+  const serialsFromGateway = (controls._inventory?.devices ?? []).filter(
+    (device) => device.key === 'adb_serial',
+  );
   const androidPicker = deep('[data-testid="recipe-target-identity"]', host);
-  if (androidPicker) {
-    const labels = [...androidPicker.options].map((option) => option.textContent.trim());
-    const serials = [...androidPicker.options].map((option) => option.value);
-    step('android-serials-come-from-adb', serials.length > 2, { serials });
+  if (serialsFromGateway.length === 0) {
+    step('android-serials-come-from-adb', true, {
+      skipped: 'adb listed no connected device on this machine, so there is nothing to offer',
+      sources: controls._inventory?.sources ?? null,
+    });
+  } else if (androidPicker) {
+    const offeredSerials = [...androidPicker.options].map((option) => option.value);
     step(
-      'a-device-two-slots-configure-names-both',
-      labels.some((label) => /macwork-ff-3, macwork-ff-4/.test(label)),
-      { labels },
+      'android-serials-come-from-adb',
+      serialsFromGateway.every((device) => offeredSerials.includes(device.identity)),
+      { offeredSerials, fromGateway: serialsFromGateway.map((device) => device.identity) },
     );
+    // Every device the Gateway says more than one slot configures must show all
+    // of them; a device with one slot shows that one.
+    const labels = [...androidPicker.options].map((option) => option.textContent.trim());
+    const mismatched = serialsFromGateway
+      .filter((device) => device.configuredForSlots?.length)
+      .filter(
+        (device) =>
+          !labels.some(
+            (label) =>
+              label.startsWith(device.identity) &&
+              device.configuredForSlots.every((slot) => label.includes(slot)),
+          ),
+      );
+    step('every-configured-slot-is-named', mismatched.length === 0, {
+      labels,
+      expected: serialsFromGateway.map((device) => [device.identity, device.configuredForSlots]),
+    });
   } else {
     step('android-serials-come-from-adb', false, {
-      note: 'no adb_serial picker; adb listed nothing for this machine',
+      note: 'the Gateway listed adb serials but the picker did not offer them',
       inventoryError: controls._inventoryError || null,
     });
+  }
+
+  // 11. The blocker Cursor found, driven as the real race rather than a
+  //     simulation of it: a FRESH control paints the free-text field because no
+  //     inventory has answered yet, the operator types an identity the machine
+  //     does not list, and then the inventory lands. The control must not swap
+  //     to a picker that cannot display what Replay is about to send.
+  const raceHost = document.createElement('div');
+  raceHost.style.cssText = 'position:fixed;left:0;bottom:0;width:900px;z-index:2147483646;';
+  document.body.appendChild(raceHost);
+  try {
+    raceHost.innerHTML = `<recipe-runner-controls id="cdp-race-controls"></recipe-runner-controls>`;
+    const race = raceHost.querySelector('#cdp-race-controls');
+    race.runId = runId;
+    race.slotId = slotId;
+    await race.updateComplete;
+
+    // First paint, before any inventory: the free-text field, and `_typingIdentity`
+    // untouched — which is what made the later swap silent.
+    const firstPaint = deep('[data-testid="recipe-target-value"]', raceHost);
+    step('first-paint-is-the-free-text-field', Boolean(firstPaint), {
+      control: identityControl(raceHost)?.dataset?.testid,
+      inventory: race._inventory === null ? 'not answered yet' : 'already answered',
+    });
+    typeInto(firstPaint, 'not-a-real-simulator');
+    await race.updateComplete;
+
+    // Now let the inventory arrive, the way the poll does.
+    await waitFor(
+      () => race._inventory !== null || race._inventoryError,
+      'the inventory to answer for the race control',
+      20000,
+    );
+    await race.updateComplete;
+
+    const shownAfterPoll = identityControl(raceHost);
+    step(
+      'an-unlisted-identity-keeps-the-free-text-field',
+      shownAfterPoll?.dataset?.testid === 'recipe-target-value' &&
+        shownAfterPoll.value === 'not-a-real-simulator',
+      {
+        control: shownAfterPoll?.dataset?.testid,
+        shown: shownAfterPoll?.value ?? shownAfterPoll?.selectedOptions?.[0]?.textContent?.trim(),
+        offered: (race._inventory?.devices ?? [])
+          .filter((device) => device.key === 'simulator')
+          .map((device) => device.identity),
+      },
+    );
+
+    sentFrames.length = 0;
+    await clickReplay(race);
+    const unlisted = await waitFor(() => sentFrames[0], 'unlisted-identity recipe.rerun frame');
+    const displayed =
+      shownAfterPoll?.dataset?.testid === 'recipe-target-value'
+        ? shownAfterPoll.value
+        : (shownAfterPoll?.selectedOptions?.[0]?.value ?? '');
+    step(
+      'what-is-shown-is-what-is-sent',
+      displayed === (unlisted?.params?.target?.simulator ?? ''),
+      {
+        shown: displayed,
+        sent: unlisted?.params?.target ?? null,
+      },
+    );
+  } finally {
+    raceHost.remove();
   }
 
   result.runId = runId;

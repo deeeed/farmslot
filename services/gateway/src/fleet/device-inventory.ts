@@ -18,9 +18,19 @@
  * narrow exception the "never match tool text" rule leaves open for tools with
  * no machine-readable output, and it is confined to this file. Nothing here
  * derives runner, worker, or run state from text; it only enumerates hardware.
+ *
+ * WHAT EACH TOOL CAN PROVE. `simctl` and `emulator -list-avds` enumerate what
+ * EXISTS, so an identity they omit does not exist and a re-target naming it is
+ * refused. `adb devices -l` enumerates currently CONNECTED transports, so an
+ * unplugged phone and an unbooted emulator are both absent from it — and
+ * booting one is exactly what the provider acquire does next. An `adb_serial`
+ * this inventory does not list is therefore NEVER refused; the provider's own
+ * `adb get-state` stays the closed door. `DEVICE_INVENTORY_KEY_LISTS_EXISTENCE`
+ * in the protocol is where that distinction lives, and `deviceInventoryCovers`
+ * is the one predicate that reads it.
  */
 import {
-  DEVICE_INVENTORY_KEY_TOOL,
+  deviceInventoryCovers,
   type DeviceInventoryEntry,
   type DeviceInventoryKey,
   type DeviceInventoryRefusal,
@@ -39,7 +49,13 @@ import { loadFleetStatus } from './state.js';
 /** How long one machine's inventory is reused. Short: devices come and go. */
 export const DEVICE_INVENTORY_TTL_MS = 30_000;
 
-const TOOL_TIMEOUT_MS = 15_000;
+/**
+ * Per-tool budget. The three tools run in PARALLEL, so this is the whole read's
+ * bound rather than a third of it: sequentially at 15s each, one unresponsive
+ * node stalled a posture reconcile — and the `recipe.rerun` preflight behind
+ * it — for 45 seconds on a path that previously executed nothing.
+ */
+const TOOL_TIMEOUT_MS = 10_000;
 
 interface CacheEntry {
   collectedAt: string;
@@ -48,9 +64,22 @@ interface CacheEntry {
   sources: DeviceInventorySource[];
 }
 
+/**
+ * Keyed by machine AND the working directory the tools ran in.
+ *
+ * The machine is what the tools answer for, but they are executed with a slot's
+ * repo as cwd, and two slots on one machine can have different environments —
+ * a checkout whose PATH finds `adb` and one whose does not. Sharing on machine
+ * alone let the first slot to ask poison the picker for its sibling for the
+ * whole TTL.
+ */
 const cache = new Map<string, CacheEntry>();
 
-/** Drop every cached machine. Exported for tests and for a config reload. */
+function cacheKey(machine: string, cwd: string): string {
+  return `${machine}\u0000${cwd}`;
+}
+
+/** Drop every cached machine. Used by the tests, and by a pool/config reload. */
 export function clearDeviceInventoryCache(): void {
   cache.clear();
 }
@@ -106,6 +135,30 @@ export function parseSimctlDevices(stdout: string): DeviceInventoryEntry[] {
  * `key:value` pairs, so `model:` is read as a token rather than matched out of
  * a sentence.
  */
+/**
+ * The states `adb devices` prints in its second column.
+ *
+ * A row is only a device row when its second token is one of these. adb also
+ * writes ordinary prose to stdout — `adb server version (41) doesn't match this
+ * client` parsed as serial `adb`, state `server`, and that phantom showed up in
+ * the operator's picker. Requiring a known state token is the structural test
+ * for "this line is a device row", not a match against the prose.
+ */
+const ADB_DEVICE_STATES = new Set([
+  'device',
+  'offline',
+  'unauthorized',
+  'authorizing',
+  'connecting',
+  'bootloader',
+  'recovery',
+  'sideload',
+  'rescue',
+  'host',
+  'no',
+  'unknown',
+]);
+
 export function parseAdbDevices(stdout: string): DeviceInventoryEntry[] {
   const entries: DeviceInventoryEntry[] = [];
   for (const rawLine of stdout.split('\n')) {
@@ -114,6 +167,7 @@ export function parseAdbDevices(stdout: string): DeviceInventoryEntry[] {
     if (line.startsWith('*')) continue; // adb's own daemon chatter
     const [serial, state, ...rest] = line.split(/\s+/);
     if (!serial || !state) continue;
+    if (!ADB_DEVICE_STATES.has(state)) continue;
     if (!isRuntimeCapabilityTargetValue(serial)) continue;
     const tokens = new Map<string, string>();
     for (const token of rest) {
@@ -201,11 +255,12 @@ export function nearestIdentities(
  *
  * FAILS OPEN, deliberately, and this is the whole design of the check: the
  * inventory is an optimisation over the provider's own boot, which already
- * fails closed. When the tool that answers for a key did not run — no Xcode, no
- * adb on the PATH, a node that did not reply — its silence is not evidence, so
- * nothing is refused and the acquire proceeds to the provider exactly as it did
- * before this existed. Only a tool that ANSWERED and did not list the identity
- * produces a refusal.
+ * fails closed. Silence is evidence only when `deviceInventoryCovers` says it
+ * is — the tool that answers for the key ran, AND that tool enumerates what
+ * exists rather than what is currently connected. A tool that did not run (no
+ * Xcode, no adb on the PATH, a node that did not reply) and every `adb_serial`,
+ * whose tool lists only live transports, fall through to the provider exactly
+ * as they did before this existed.
  *
  * Returns null when there is nothing to refuse.
  */
@@ -217,9 +272,7 @@ export function deviceInventoryRefusal(
     if (key === 'platform') continue;
     const identity = (target as Record<string, unknown>)[key];
     if (!isRuntimeCapabilityTargetValue(identity)) continue;
-    const tool = DEVICE_INVENTORY_KEY_TOOL[key];
-    const source = inventory.sources.find((candidate) => candidate.tool === tool);
-    if (!source?.ok) continue;
+    if (!deviceInventoryCovers(inventory.sources, key)) continue;
     const known = inventory.devices.some(
       (device) => device.key === key && device.identity === identity,
     );
@@ -280,14 +333,37 @@ export function groupConfiguredIdentities(
   return owners;
 }
 
-async function configuredSlots(machine: string): Promise<Map<string, string[]>> {
+/**
+ * The reads this module makes, injectable so the cache, the TTL, the `refresh`
+ * bypass and the configured-slot labelling are all testable without a machine.
+ */
+export interface DeviceInventoryDeps {
+  exec: ResourceCommandExec;
+  loadSlotVars: (
+    slotId: string,
+  ) => Promise<{ machine: string; repo: string; resourceVars: Record<string, string> }>;
+  loadFleetStatus: () => Promise<{ slots: Array<{ slot: string; machine: string }> }>;
+  now: () => number;
+}
+
+const productionDeps: DeviceInventoryDeps = {
+  exec: execResourceCommand,
+  loadSlotVars,
+  loadFleetStatus,
+  now: Date.now,
+};
+
+async function configuredSlots(
+  machine: string,
+  deps: DeviceInventoryDeps,
+): Promise<Map<string, string[]>> {
   const resolved: Array<{ slot: string; resourceVars: Record<string, string> }> = [];
-  const fleet = await loadFleetStatus();
+  const fleet = await deps.loadFleetStatus();
   for (const slot of fleet.slots) {
     if (slot.machine !== machine) continue;
     let vars;
     try {
-      vars = await loadSlotVars(slot.slot);
+      vars = await deps.loadSlotVars(slot.slot);
     } catch (error) {
       console.warn(
         `[device-inventory] skipping ${slot.slot} while labelling configured devices: ${
@@ -309,13 +385,14 @@ async function configuredSlots(machine: string): Promise<Map<string, string[]>> 
  */
 export async function readDeviceInventory(
   slotId: string,
-  opts?: { refresh?: boolean; now?: () => number },
+  opts?: { refresh?: boolean; deps?: Partial<DeviceInventoryDeps> },
 ): Promise<DeviceInventoryResult> {
-  const now = opts?.now ?? Date.now;
-  const slotVars = await loadSlotVars(slotId);
+  const deps: DeviceInventoryDeps = { ...productionDeps, ...opts?.deps };
+  const slotVars = await deps.loadSlotVars(slotId);
   const machine = slotVars.machine;
-  const cached = cache.get(machine);
-  if (!opts?.refresh && cached && cached.expiresAt > now()) {
+  const key = cacheKey(machine, slotVars.repo);
+  const cached = cache.get(key);
+  if (!opts?.refresh && cached && cached.expiresAt > deps.now()) {
     return {
       machine,
       slotId,
@@ -326,49 +403,60 @@ export async function readDeviceInventory(
     };
   }
 
-  const sources: DeviceInventorySource[] = [];
-  const devices: DeviceInventoryEntry[] = [];
-  for (const run of TOOL_RUNS) {
-    // Routed through the resource exec path, so a slot on another machine has
-    // its own node answer. A missing tool exits non-zero here rather than
-    // throwing, which is exactly the "did not answer" case the rule fails open on.
-    const result = await execResourceCommand(slotId, slotVars.repo, run.cmd, TOOL_TIMEOUT_MS);
-    if (result.exitCode !== 0) {
-      sources.push({
-        tool: run.tool,
-        ok: false,
-        detail: result.stderr?.trim() || `exit ${result.exitCode}`,
-      });
-      continue;
-    }
-    try {
-      devices.push(...run.parse(result.stdout));
-      sources.push({ tool: run.tool, ok: true });
-    } catch (error) {
-      // Handled, not swallowed: output we cannot parse is output we cannot
-      // treat as evidence, so the source is marked unread and the rule above
-      // fails open for the keys it covers.
-      sources.push({
-        tool: run.tool,
-        ok: false,
-        detail: `unparseable ${run.tool} output: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      });
-    }
-  }
+  // In parallel, so the whole read is bounded by one tool's timeout rather than
+  // the sum of three. Routed through the resource exec path, so a slot on
+  // another machine has its own node answer. A missing tool exits non-zero here
+  // rather than throwing, which is exactly the "did not answer" case the rule
+  // fails open on.
+  const answers = await Promise.all(
+    TOOL_RUNS.map(async (run) => {
+      const result = await deps.exec(slotId, slotVars.repo, run.cmd, TOOL_TIMEOUT_MS);
+      if (result.exitCode !== 0) {
+        return {
+          source: {
+            tool: run.tool,
+            ok: false,
+            detail: result.stderr?.trim() || `exit ${result.exitCode}`,
+          } satisfies DeviceInventorySource,
+          devices: [] as DeviceInventoryEntry[],
+        };
+      }
+      try {
+        return {
+          source: { tool: run.tool, ok: true } satisfies DeviceInventorySource,
+          devices: run.parse(result.stdout),
+        };
+      } catch (error) {
+        // Handled, not swallowed: output we cannot parse is output we cannot
+        // treat as evidence, so the source is marked unread and the rule above
+        // fails open for the keys it covers.
+        return {
+          source: {
+            tool: run.tool,
+            ok: false,
+            detail: `unparseable ${run.tool} output: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          } satisfies DeviceInventorySource,
+          devices: [] as DeviceInventoryEntry[],
+        };
+      }
+    }),
+  );
+  const sources = answers.map((answer) => answer.source);
+  const devices = answers.flatMap((answer) => answer.devices);
 
-  const owners = await configuredSlots(machine);
+  const owners = await configuredSlots(machine, deps);
   const labelled = devices.map((device) => {
     const owning = owners.get(`${device.key}:${device.identity}`);
     return owning?.length ? { ...device, configuredForSlots: [...owning].sort() } : device;
   });
   labelled.sort((a, b) => a.key.localeCompare(b.key) || a.identity.localeCompare(b.identity));
 
-  const collectedAt = new Date(now()).toISOString();
-  cache.set(machine, {
+  const collectedAt = new Date(deps.now()).toISOString();
+  cache.set(key, {
     collectedAt,
-    expiresAt: now() + DEVICE_INVENTORY_TTL_MS,
+    expiresAt: deps.now() + DEVICE_INVENTORY_TTL_MS,
     devices: labelled,
     sources,
   });
@@ -378,6 +466,13 @@ export async function readDeviceInventory(
 /**
  * The re-target guard: refuse an identity this slot's machine does not have.
  *
+ * NEVER refuses on a cached read. The cache exists so a polling picker does not
+ * re-run `simctl` every second, but a simulator created — or a device plugged
+ * in — inside the TTL would otherwise be called nonexistent by a snapshot taken
+ * before it appeared. So a cached answer that WOULD refuse is re-read fresh
+ * first, and only the fresh answer can refuse. That costs one tool sweep on the
+ * rare path that is about to say no, and nothing at all on the common path.
+ *
  * Reading the inventory can itself fail — an unresolvable slot, a node that
  * threw. That is the unreadable case, and it is NOT a refusal: it returns null
  * and the reason is reported to the caller through `onUnreadable` so the
@@ -386,19 +481,34 @@ export async function readDeviceInventory(
 export async function assertTargetInInventory(
   slotId: string,
   target: RuntimeCapabilityTarget | Record<string, unknown>,
-  opts?: { onUnreadable?: (reason: string) => void },
+  opts?: { onUnreadable?: (reason: string) => void; deps?: Partial<DeviceInventoryDeps> },
 ): Promise<DeviceInventoryRefusal | null> {
-  let inventory: DeviceInventoryResult;
-  try {
-    inventory = await readDeviceInventory(slotId);
-  } catch (error) {
-    opts?.onUnreadable?.(
-      `device inventory for slot '${slotId}' is unreadable, so the target was not checked against it: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return null;
+  const read = async (refresh: boolean): Promise<DeviceInventoryResult | null> => {
+    try {
+      return await readDeviceInventory(slotId, {
+        refresh,
+        ...(opts?.deps ? { deps: opts.deps } : {}),
+      });
+    } catch (error) {
+      opts?.onUnreadable?.(
+        `device inventory for slot '${slotId}' is unreadable, so the target was not checked against it: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  };
+
+  let inventory = await read(false);
+  if (!inventory) return null;
+  let refusal = deviceInventoryRefusal(target, inventory);
+  if (refusal && inventory.cached) {
+    const fresh = await read(true);
+    if (!fresh) return null;
+    inventory = fresh;
+    refusal = deviceInventoryRefusal(target, fresh);
   }
+
   const unreadable = inventory.sources.filter((source) => !source.ok);
   if (unreadable.length > 0) {
     opts?.onUnreadable?.(
@@ -407,7 +517,7 @@ export async function assertTargetInInventory(
         .join('; ')}`,
     );
   }
-  return deviceInventoryRefusal(target, inventory);
+  return refusal;
 }
 
 // ─── Post-control device state ───
@@ -437,22 +547,32 @@ export async function readSimulatorState(
   return devices.find((device) => device.identity === identity)?.state ?? null;
 }
 
-/** `adb -s <serial> get-state` — the tool's own one-word answer, or null. */
-export async function readAdbState(
-  slotId: string,
-  cwd: string,
-  serial: string,
-  exec: ResourceCommandExec = execResourceCommand,
-): Promise<string | null> {
-  // Refused rather than escaped, like every other device identity that reaches a
-  // command here: the charset has no shell metacharacters, so a serial that
-  // matches needs no quoting and one that does not has no business being asked
-  // about.
-  if (!isRuntimeCapabilityTargetValue(serial)) return null;
-  const result = await exec(slotId, cwd, `adb -s ${serial} get-state`, TOOL_TIMEOUT_MS);
-  if (result.exitCode !== 0) return null;
-  const state = result.stdout.trim();
-  return state || null;
+/**
+ * The states each tool reports for a device that has SETTLED, up and down.
+ *
+ * Everything else is transitional and gets no verdict. `Booting`, `Creating`
+ * and `Shutting Down` are not a running device and not a stopped one, and
+ * reading `!Booted` as stopped is exactly the mid-transition pass the removed
+ * regex used to give. On Android, `offline` and `unauthorized` mean the
+ * transport is still attached and the device is still there — not stopped —
+ * while a genuinely stopped emulator makes `adb get-state` fail, which is
+ * already the no-verdict path.
+ */
+const SIMCTL_UP = new Set(['Booted']);
+const SIMCTL_DOWN = new Set(['Shutdown']);
+const ADB_UP = new Set(['device']);
+const ADB_DOWN = new Set<string>();
+
+/** True/false when the state settles the question, null while it is in motion. */
+function settledVerdict(
+  up: ReadonlySet<string>,
+  down: ReadonlySet<string>,
+  state: string,
+  action: 'boot' | 'shutdown',
+): boolean | null {
+  if (up.has(state)) return action === 'boot';
+  if (down.has(state)) return action === 'shutdown';
+  return null;
 }
 
 /**
@@ -485,21 +605,58 @@ export async function deviceControlVerdict(input: {
     if (!identity) return null;
     const state = await readSimulatorState(input.slotId, input.cwd, identity, exec);
     if (state === null) return null;
-    const booted = state === 'Booted';
-    const wanted = input.action === 'boot' ? booted : !booted;
-    return {
-      ok: wanted,
-      detail: `simctl reports ${identity} is ${state}`,
-    };
+    const verdict = settledVerdict(SIMCTL_UP, SIMCTL_DOWN, state, input.action);
+    if (verdict === null) return null;
+    return { ok: verdict, detail: `simctl reports ${identity} is ${state}` };
   }
   if (input.platform === 'android') {
     const serial = input.identity.adb_serial;
     if (!serial) return null;
-    const state = await readAdbState(input.slotId, input.cwd, serial, exec);
-    if (state === null) return null;
-    const online = state === 'device';
-    const wanted = input.action === 'boot' ? online : !online;
-    return { ok: wanted, detail: `adb reports ${serial} is ${state}` };
+    // The transport list, not `get-state`. `get-state` for a serial that is gone
+    // exits non-zero, and an exit code cannot tell "the emulator powered off" —
+    // which is a successful shutdown — from "adb is missing" or "the daemon
+    // died", which are no verdict at all. A successful `adb devices` answers
+    // both questions from one positive signal: the tool ran, and the serial is
+    // either in the list or it is not.
+    const connected = await readAdbTransports(input.slotId, input.cwd, exec);
+    if (connected === null) return null;
+    const state = connected.get(serial);
+    if (state !== undefined) {
+      const verdict = settledVerdict(ADB_UP, ADB_DOWN, state, input.action);
+      if (verdict === null) return null;
+      return { ok: verdict, detail: `adb reports ${serial} is ${state}` };
+    }
+    // Absent from a list adb successfully produced. For an EMULATOR that is a
+    // settled shutdown: adb names local emulator transports `emulator-<port>`
+    // itself, and an emulator that is not a transport is not running. For a
+    // physical serial, absence means unplugged, which is not the same as
+    // powered off — no verdict.
+    if (input.action === 'shutdown' && isEmulatorTransport(serial)) {
+      return { ok: true, detail: `adb no longer lists the emulator transport ${serial}` };
+    }
+    return null;
   }
   return null;
+}
+
+/**
+ * Whether adb's own transport naming says this serial is a local emulator.
+ *
+ * `emulator-<port>` is adb's convention for an emulator transport, not a
+ * message it prints — the same structural fact `parseAdbDevices` reads the
+ * serial column for.
+ */
+export function isEmulatorTransport(serial: string): boolean {
+  return /^emulator-\d+$/.test(serial);
+}
+
+/** Serial to state, from one successful `adb devices -l`, or null if it failed. */
+async function readAdbTransports(
+  slotId: string,
+  cwd: string,
+  exec: ResourceCommandExec,
+): Promise<Map<string, string> | null> {
+  const result = await exec(slotId, cwd, 'adb devices -l', TOOL_TIMEOUT_MS);
+  if (result.exitCode !== 0) return null;
+  return new Map(parseAdbDevices(result.stdout).map((device) => [device.identity, device.state]));
 }

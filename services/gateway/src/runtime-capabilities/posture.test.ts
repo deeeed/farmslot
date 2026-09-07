@@ -1655,6 +1655,104 @@ test('a re-target to a device the machine does not have is refused before the ol
   );
 });
 
+test('re-targeting one device is not refused because ANOTHER capability device is absent', async (t) => {
+  // The mixed plan Cursor found: an iOS simulator and an Android device, with
+  // only the simulator re-targeted. The Android serial is momentarily absent
+  // from the inventory — phone unplugged, emulator not booted — and the run's
+  // re-target used to die naming a device nobody touched.
+  const androidDevice = {
+    ...entry('android', {
+      cost: {
+        class: 'high',
+        resources: [{ id: 'the-phone', access: 'exclusive', kind: 'device' }],
+      },
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { adb_serial: { type: 'string', pattern: '^[A-Za-z0-9._:-]+$' } },
+      },
+    }),
+  };
+  const consulted: Array<Record<string, unknown>> = [];
+  const { reconciler, registry, actionCalls } = await harness(t, {
+    capabilities: [CATALOG_DEVICE, androidDevice],
+    assertTargetInInventory: async (_slotId, parameters) => {
+      consulted.push(parameters);
+      if (parameters.adb_serial !== undefined) {
+        return {
+          code: 'device-not-in-inventory',
+          machine: MACHINE,
+          key: 'adb_serial',
+          identity: String(parameters.adb_serial),
+          nearest: [],
+          reason: `machine '${MACHINE}' has no adb_serial '${String(parameters.adb_serial)}'`,
+        };
+      }
+      return null;
+    },
+  });
+  assert.equal((await acquireDevice(registry, 'SIM-1')).ok, true);
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: SLOT,
+        capabilityId: 'android',
+        ownerRunId: 'run-a',
+        ownerFamilyId: 'fam-a',
+        parameters: { adb_serial: 'PHONE-1' },
+        proofRequirement: {
+          capabilityId: 'android',
+          reason: 'prove phone',
+          mode: 'state',
+          parameters: { adb_serial: 'PHONE-1' },
+        },
+      })
+    ).ok,
+    true,
+  );
+  actionCalls.length = 0;
+
+  const result = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: [
+      {
+        capabilityId: 'device',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { simulator: 'SIM-2' },
+      },
+      {
+        // Unchanged: this run keeps the phone it already holds.
+        capabilityId: 'android',
+        reason: 'validation',
+        mode: 'state',
+        parameters: { adb_serial: 'PHONE-1' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.transition.rejection));
+  assert.deepEqual(
+    consulted,
+    [{ simulator: 'SIM-2' }],
+    'only the re-targeted capability is checked against the inventory',
+  );
+  assert.deepEqual(
+    actionCalls.filter((call) => call.action.startsWith('device.')),
+    [
+      { action: 'device.release', parameters: { simulator: 'SIM-1' } },
+      { action: 'device.acquire', parameters: { simulator: 'SIM-2' } },
+      { action: 'device.health', parameters: { simulator: 'SIM-2' } },
+    ],
+  );
+  // The phone is revalidated, as every acquired capability in the plan is, but
+  // it is never released or reacquired: this re-target did not move it.
+  assert.deepEqual(
+    actionCalls.filter((call) => call.action.startsWith('android.')),
+    [{ action: 'android.health', parameters: { adb_serial: 'PHONE-1' } }],
+  );
+});
+
 test('a re-target the inventory confirms proceeds exactly as it did before the guard existed', async (t) => {
   const { reconciler, registry, actionCalls } = await harness(t, {
     capabilities: [CATALOG_DEVICE],

@@ -16,24 +16,6 @@ import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-/**
- * Teardown eviction for a run these fixtures force-settle themselves.
- *
- * A terminal transition writes the ADR-053 backlog repair marker write-ahead
- * and `markBacklogRunObserved` clears it after its own durable write. A fixture
- * that skips both and stamps a terminal status by hand must clear the marker
- * too, because `deleteRun` refuses a marked run by design.
- */
-async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Promise<void> {
-  if (!getRun(runId)) return;
-  updateRun(runId, {
-    status,
-    completedAt: new Date().toISOString(),
-    backlogReconcilePending: undefined,
-  });
-  await deleteRun(runId);
-}
-
 import { runForceComplete } from './lifecycle-control.js';
 import {
   canAdoptTaskSignalAfterUncertainDispatch,
@@ -46,6 +28,20 @@ import {
   runReplayStep,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
+
+/**
+ * Teardown eviction for a run these fixtures force-settle themselves.
+ *
+ * Deliberately does NOT clear `backlogReconcilePending`. These runs carry no
+ * backlog item, and a terminal transition only marks a run that has one, so
+ * there is nothing here for `deleteRun` to refuse. Clearing it anyway would
+ * paper over exactly the regression this fixture is positioned to catch.
+ */
+async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Promise<void> {
+  if (!getRun(runId)) return;
+  updateRun(runId, { status, completedAt: new Date().toISOString() });
+  await deleteRun(runId);
+}
 
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
