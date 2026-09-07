@@ -4,6 +4,12 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.16.0 - 2026-09-07
+
+- Wait for stable CDP click targets, refresh contexts invalidated by navigation before dispatch, and run app restart preparation only once.
+- Reserve `recipes/shared/` for cross-adapter recipes while preserving their domain names, duplicate checks, and adapter-specific override precedence.
+- Preserve completed action output and a single trace entry when HUD completion fails; retain the failed run verdict and execute teardown.
+
 ## 0.15.1 - 2026-08-28
 
 - Classify unresolved relative or absolute bundle imports as source errors instead of missing package dependencies, while retaining missing-package precedence for mixed failures.
