@@ -1009,3 +1009,60 @@ test('a release_effect claim must match the hooks its resource actually has', ()
     validateRuntimeCapabilitiesConfig(project(full, [{ resource_id: 'device' }]), 'project.json'),
   );
 });
+
+test('resource claim scope defaults to slot and rejects an unknown value', () => {
+  const project = (scope?: unknown) =>
+    ({
+      slot_actions: {
+        'browser-start': { label: 'Start', command: 'start' },
+        'browser-health': { label: 'Health', command: 'health' },
+        'browser-stop': { label: 'Stop', command: 'stop' },
+      },
+      runtime_capabilities: {
+        providers: {
+          'browser-cdp': {
+            label: 'Browser',
+            version: '1',
+            share_policy: 'exclusive' as const,
+            cost: {
+              class: 'high',
+              resources: [
+                {
+                  id: 'cdp-port',
+                  access: 'exclusive' as const,
+                  ...(scope === undefined ? {} : { scope }),
+                },
+              ],
+            },
+            actions: {
+              acquire: { kind: 'slot-action' as const, action_id: 'browser-start' },
+              health: { kind: 'slot-action' as const, action_id: 'browser-health' },
+              release: { kind: 'slot-action' as const, action_id: 'browser-stop' },
+            },
+            release_effects: ['stop browser'],
+          },
+        },
+      },
+    }) as RawProjectJson;
+
+  const implicit = project();
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(implicit, 'project.json'));
+  assert.deepEqual(
+    normalizeRawRuntimeCapabilities(implicit.runtime_capabilities)?.providers['browser-cdp']?.cost
+      .resources,
+    [{ id: 'cdp-port', access: 'exclusive', scope: 'slot' }],
+  );
+
+  const fleet = project('fleet');
+  assert.doesNotThrow(() => validateRuntimeCapabilitiesConfig(fleet, 'project.json'));
+  assert.equal(
+    normalizeRawRuntimeCapabilities(fleet.runtime_capabilities)?.providers['browser-cdp']?.cost
+      .resources[0]?.scope,
+    'fleet',
+  );
+
+  assert.throws(
+    () => validateRuntimeCapabilitiesConfig(project('cluster'), 'project.json'),
+    /cost\.resources\.0\.scope must be slot, machine, or fleet/,
+  );
+});

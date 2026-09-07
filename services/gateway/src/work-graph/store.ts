@@ -10,6 +10,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
+  type WaitingReason,
   type WorkEdge,
   type WorkGraph,
   type WorkGraphActionLedgerEntry,
@@ -760,6 +761,37 @@ function nodeHasOperatorCancelledRun(node: WorkNode, runs: readonly Run[]): bool
  * without any work having started, which is not the same thing as a node whose
  * dependency regressed mid-flight.
  */
+/**
+ * The waiting reason for a run queued behind a scoped resource claim, if any.
+ *
+ * One derivation, used by both reconciliation passes. A terminal run's wait is
+ * over whatever the last posture transition recorded, so it never produces a
+ * reason: a finished node must not read as blocked.
+ */
+function resourceWaitReason(run: Run | undefined): WaitingReason | undefined {
+  if (!run || isTerminalRunStatus(run.status)) return undefined;
+  // ONE precedence, applied here so both reconciliation passes cannot disagree.
+  // A gate and an operator cancellation each need a person and each outrank a
+  // queue place; reporting `waiting` over either would hide the thing somebody
+  // actually has to answer. Reading them in different orders in the two passes
+  // made a node flip between `gated` and `waiting` on alternating ticks.
+  if (run.status === 'blocked' || run.status === 'human-gating') return undefined;
+  if (isOperatorCancelledRun(run)) return undefined;
+  const wait = run.resourcePosture?.resourceWait;
+  if (!wait) return undefined;
+  // A GRANTED wait is still a wait, and it is the one worth reading twice: the
+  // claim is held for this run with no provider behind it, so a node that stays
+  // here is a device nothing is using and nothing else can take. Reporting only
+  // the queued half left exactly that node looking like ordinary work.
+  return {
+    kind: 'resource',
+    detail:
+      wait.phase === 'granted'
+        ? `${wait.capabilityId} was granted '${wait.claimId}' and is waiting for its provider to start`
+        : `${wait.capabilityId} is queued behind '${wait.claimId}' held by ${wait.blockingOwner.runId} (position ${wait.position})`,
+  };
+}
+
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boolean {
   if (!isBacklogNode(node)) return false;
   const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
@@ -792,6 +824,12 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
     node.latestRunId = latestRun.id;
     node.currentFamilyId = latestRun.familyId;
     if (!latestRun.parentRunId) node.currentRootRunId = latestRun.id;
+    // Re-derived from the run on every sync rather than accumulated. A resource
+    // wait that has been served must not linger on the node, and no other
+    // branch below clears `waitingOn`, so it is dropped here first and only put
+    // back while the run really is queued behind a claim.
+    node.waitingOn = node.waitingOn.filter((reason) => reason.kind !== 'resource');
+    const resourceWait = resourceWaitReason(latestRun);
     if (isOperatorCancelledRun(latestRun)) {
       node.status = 'needs-attention';
       node.waitingOn = [
@@ -804,7 +842,14 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
       node.status = 'gated';
     else if (latestRun.status === 'done') node.status = 'succeeded';
     else if (latestRun.status === 'failed') node.status = 'failed';
-    else node.status = 'running';
+    else if (resourceWait) {
+      // The run holds a durable place in a scoped claim's queue. Reported as
+      // `waiting` with a non-empty reason on purpose: an empty `waitingOn` is
+      // the stuck shape the reclaim below resets to `ready`, and this node is
+      // not stuck — it is in line.
+      node.status = 'waiting';
+      node.waitingOn = [resourceWait];
+    } else node.status = 'running';
     node.updatedAt = new Date().toISOString();
     return false;
   }
@@ -1321,6 +1366,17 @@ export async function schedulerTick(
           node.updatedAt = now;
           snapshot.graph.status = 'needs-attention';
           graphNeedsAttention = true;
+          continue;
+        }
+        // Below a failed required upstream, above the edge pass. `computeWaiting`
+        // rewrites `waitingOn` from inbound edges alone, so without this the
+        // resource reason is erased on the same tick that wrote it and the node
+        // reads as an ordinary running node that never gets dispatched.
+        const resourceWait = resourceWaitReason(latestRun);
+        if (resourceWait) {
+          node.status = 'waiting';
+          node.waitingOn = [resourceWait];
+          node.updatedAt = now;
           continue;
         }
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);

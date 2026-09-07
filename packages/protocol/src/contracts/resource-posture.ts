@@ -9,6 +9,7 @@
 import type { MachinePauseEligibilityDetails } from './runs.js';
 import type {
   RuntimeCapabilityAcquireConflict,
+  RuntimeCapabilityClaimScope,
   RuntimeCapabilityHealthState,
   RuntimeCapabilityLeaseOwner,
   RuntimeCapabilityLeaseState,
@@ -212,6 +213,15 @@ export interface RunResourcePostureState {
   gateChoiceSuppressedForGeneration?: number;
   waitPolicy?: ResourcePostureWaitPolicy;
   capabilities: ResourcePostureCapabilityState[];
+  /**
+   * The scoped resource claim this run is queued behind, while it is queued.
+   *
+   * Derived from the last transition's rejection rather than written
+   * separately, so it cannot outlive the wait it describes. A later transition
+   * that is not a scoped wait clears it. The work-graph reads this to report
+   * the node as `waitingOn.kind: 'resource'`.
+   */
+  resourceWait?: RunResourceWait;
   /** ADR-038: no posture resolved here stops a gate-held worker. */
   workerRetained: boolean;
   lastTransition?: ResourcePostureTransition;
@@ -223,6 +233,42 @@ export interface RunResourcePostureState {
    */
   recentTransitions?: ResourcePostureTransition[];
   updatedAt: string;
+}
+
+/**
+ * How far along a run's place in a scoped claim's queue is.
+ *
+ * `queued` is waiting its turn behind a holder. `granted` is the reservation
+ * the drain hands the head waiter: the claim is now held for this run and no
+ * provider has booted for it yet, so the run is not waiting on anyone else —
+ * it is waiting on its own completion. The two are reported separately because
+ * a `granted` wait that never clears is a stranded claim nobody else can take,
+ * and reporting nothing at all is how that used to stay invisible.
+ */
+export const RUN_RESOURCE_WAIT_PHASES = ['queued', 'granted'] as const;
+export type RunResourceWaitPhase = (typeof RUN_RESOURCE_WAIT_PHASES)[number];
+
+/**
+ * A run's durable place in a scoped claim's queue.
+ *
+ * `position` is a snapshot from the moment the acquire was refused, not a live
+ * counter: nothing renumbers a queue, and re-deriving it here would need the
+ * whole fleet's leases on every read of a run. A `granted` wait is past the
+ * queue entirely and reports position 0.
+ */
+export interface RunResourceWait {
+  capabilityId: string;
+  claimId: string;
+  scope: RuntimeCapabilityClaimScope;
+  phase: RunResourceWaitPhase;
+  /** The run holding the claim, which is usually on another slot. */
+  blockingOwner: RuntimeCapabilityLeaseOwner;
+  /** The queued lease that holds this run's place in line. */
+  queuedLeaseId: string;
+  /** 1-based place in line, or 0 once the claim is reserved for this run. */
+  position: number;
+  since: string;
+  reason: string;
 }
 
 /** How many transitions a run keeps for operation-id replay. */

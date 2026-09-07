@@ -457,7 +457,9 @@
         "share_policy": "exclusive",
         "cost": {
           "class": "high",
-          "resources": [{ "id": "android-device", "access": "exclusive", "kind": "device" }]
+          "resources": [
+            { "id": "android-device", "access": "exclusive", "kind": "device", "scope": "fleet" }
+          ]
         },
         "parameters": {
           "type": "object",
@@ -532,7 +534,14 @@
         },
         "cost": {
           "class": "medium",
-          "resources": [{ "id": "capture-helper", "access": "exclusive", "kind": "process" }]
+          "resources": [
+            {
+              "id": "capture-helper",
+              "access": "exclusive",
+              "kind": "process",
+              "scope": "fleet"
+            }
+          ]
         },
         "actions": {
           "acquire": { "kind": "slot-action", "action_id": "recording-ready" },

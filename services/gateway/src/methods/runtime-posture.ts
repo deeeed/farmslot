@@ -43,6 +43,8 @@ const reconciler = new RunResourcePostureReconciler({
   updateRun,
   capabilityStatus: (slotId) => getRuntimeCapabilityRegistry().status({ slotId }),
   acquireCapability: (params) => getRuntimeCapabilityRegistry().acquire(params),
+  enqueueScopedClaimWaiter: (params) =>
+    getRuntimeCapabilityRegistry().enqueueScopedClaimWaiter(params),
   releaseForPosture: (slotId, dispositions) =>
     getRuntimeCapabilityRegistry().releaseForPosture(slotId, dispositions),
   stopWarmProviders: (slotId, capabilityIds) =>

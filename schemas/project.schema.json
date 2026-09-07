@@ -1481,6 +1481,11 @@
                   "kind": {
                     "type": "string",
                     "enum": ["port", "device", "process", "service", "other"]
+                  },
+                  "scope": {
+                    "type": "string",
+                    "description": "How far this claim's exclusivity reaches. Omit for 'slot' (arbitrates only against leases on the same slot, the behaviour of every claim before scopes existed). 'machine' reaches every slot on the same host; 'fleet' reaches every slot the Gateway knows about, which is how one physical device shared by several slots is expressed.",
+                    "enum": ["slot", "machine", "fleet"]
                   }
                 }
               }

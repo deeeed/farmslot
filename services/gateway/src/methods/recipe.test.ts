@@ -19,10 +19,12 @@ import {
   appendRecipePlaybackOptions,
   assertRecipeRerunProofCapabilities,
   assertSlotProjectMatchesRequestedProject,
+  awaitRecipeRerunProofCapabilities,
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
   recipeReplayHealthReady,
+  type RecipeRerunPreflightOutcome,
   recipeRunOptionsForProject,
   recipeRunUnsupportedOptionWarnings,
   resolveRecipeArtifactRootForSlot,
@@ -1109,6 +1111,307 @@ test('a rerun target no proof capability accepts is refused before any posture i
       /Recipe rerun target rejected/,
     );
     assert.equal(calls.length, 0, 'a refused target must not reconcile anything');
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+// ── MANUAL-000114: a rerun queued behind a fleet-scoped claim ─────────────────
+
+/**
+ * A reconciler whose preparation is refused with a scoped wait: another slot
+ * holds the claim, and this run now has a durable place in its queue.
+ */
+function queuedPostureReconciler(): {
+  reconciler: RunResourcePostureReconciler;
+  calls: ResourcePostureRequest[];
+} {
+  const calls: ResourcePostureRequest[] = [];
+  const reconciler = {
+    apply: async (request: ResourcePostureRequest) => {
+      calls.push(request);
+      return {
+        ok: false,
+        status: {
+          posture: 'active',
+          policySource: 'framework-default',
+          capabilities: [],
+          workerRetained: true,
+          updatedAt: '2026-09-04T00:00:00.000Z',
+        },
+        transition: {
+          id: 'op-queued',
+          posture: 'active',
+          policySource: 'framework-default',
+          requestedAt: '2026-09-04T00:00:00.000Z',
+          completedAt: '2026-09-04T00:00:00.000Z',
+          outcome: 'rejected',
+          effects: [],
+          progress: { total: 1, completed: 0 },
+          failures: [],
+          rejection: {
+            kind: 'capability-unavailable',
+            capabilityId: 'recording',
+            reason: "Resource 'capture-helper' is claimed at fleet scope by run-holder",
+            conflict: {
+              kind: 'scoped-wait',
+              capabilityId: 'recording',
+              claimId: 'capture-helper',
+              scope: 'fleet',
+              owner: { runId: 'run-holder' },
+              leaseId: 'lease-holder',
+              queuedLeaseId: 'lease-queued',
+              position: 2,
+              reason: "Resource 'capture-helper' is claimed at fleet scope by run-holder",
+            },
+          },
+        },
+      };
+    },
+  } as unknown as RunResourcePostureReconciler;
+  return { reconciler, calls };
+}
+
+test('a rerun queued behind a scoped claim reports waiting, never readiness', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const { reconciler } = queuedPostureReconciler();
+    const outcome = await assertRecipeRerunProofCapabilities(run.id, reconciler);
+    // Neither a throw nor readiness. Returning nothing here is what let the job
+    // print "proof capabilities ready" and run the recipe without the device.
+    assert.equal(outcome.ready, false);
+    assert.match(outcome.reason ?? '', /capture-helper/);
+    assert.match(outcome.reason ?? '', /position 2/);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a waiting rerun does not run until its capabilities are actually granted', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const reasons = [
+      "queued behind 'capture-helper', position 2",
+      "queued behind 'capture-helper', position 1",
+    ];
+    let attempts = 0;
+    const prepare = async (): Promise<RecipeRerunPreflightOutcome> => {
+      const reason = reasons[attempts++];
+      return reason === undefined ? { ready: true } : { ready: false, reason };
+    };
+    const progress: string[] = [];
+    let slept = 0;
+    let abandoned = 0;
+    await awaitRecipeRerunProofCapabilities({
+      runId: run.id,
+      signal: new AbortController().signal,
+      prepare,
+      onProgress: (line) => progress.push(line),
+      abandonWait: async () => {
+        abandoned += 1;
+      },
+      sleep: async (ms) => {
+        slept += ms;
+      },
+      pollMs: 10,
+      timeoutMs: 60_000,
+    });
+    assert.equal(attempts, 3, 'preparation is re-driven until it is actually ready');
+    assert.ok(slept > 0, 'the wait is paced, not a busy loop');
+    assert.equal(abandoned, 0, 'a wait that got its grant keeps the lease it just earned');
+    // One line per change, not one per poll: the position is what an operator
+    // watches, and repeating it every few seconds buries the preflight.
+    assert.deepEqual(progress, reasons);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a cancelled run never has its queued recipe rerun executed', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    let attempts = 0;
+    const prepare = async (): Promise<RecipeRerunPreflightOutcome> => {
+      attempts += 1;
+      return { ready: false, reason: 'still queued' };
+    };
+    updateRun(run.id, { status: 'cancelled' });
+    let abandoned = 0;
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: new AbortController().signal,
+        prepare,
+        onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /reached 'cancelled'/,
+    );
+    assert.equal(attempts, 0, 'a cancelled run must not be handed a device');
+    // The place in line goes back. Left behind, the next release would reserve
+    // it, grant it, and boot a device for a run that is already over.
+    assert.equal(abandoned, 1, 'a cancelled run gives up its place in line');
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a cancelled rerun request stops waiting instead of holding its place forever', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    let abandoned = 0;
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: controller.signal,
+        prepare: async () => ({ ready: false, reason: 'still queued' }),
+        onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /cancelled while waiting/,
+    );
+    assert.equal(abandoned, 1, 'an operator cancel gives the queue place back');
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a rerun that waits past its bound gives up rather than living on in the Gateway', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    let clock = 0;
+    let abandoned = 0;
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: new AbortController().signal,
+        prepare: async () => ({ ready: false, reason: "queued behind 'capture-helper'" }),
+        onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+        pollMs: 1_000,
+        timeoutMs: 5_000,
+      }),
+      /waited 0m for a runtime capability and gave up.*capture-helper/,
+    );
+    assert.equal(abandoned, 1, 'a wait that ran out gives its place back');
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a cancel during the poll interval re-drives nothing before it gives up', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const controller = new AbortController();
+    let attempts = 0;
+    let abandoned = 0;
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: controller.signal,
+        prepare: async () => {
+          attempts += 1;
+          return { ready: false, reason: 'still queued' };
+        },
+        onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
+        // The real sleep RESOLVES on abort rather than rejecting, so a cancel
+        // lands here. Without a second signal check the loop ran one more
+        // preparation, which re-enqueues the very place the cancel is about to
+        // give up — the run would end cancelled and still hold a queue place.
+        sleep: async () => {
+          controller.abort();
+        },
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /cancelled while waiting/,
+    );
+    assert.equal(attempts, 0, 'nothing is re-driven after the cancel lands');
+    assert.equal(abandoned, 1);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a queue place that cannot be given up still reports why the wait ended', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    // The reason the wait ended is what the operator has to see. A failure to
+    // tidy up must not replace it — and the stale-reservation sweep still
+    // reclaims a place that was already granted.
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: controller.signal,
+        prepare: async () => ({ ready: false, reason: 'still queued' }),
+        onProgress: () => {},
+        abandonWait: async () => {
+          throw new Error('the capability store is unwritable');
+        },
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /cancelled while waiting/,
+    );
   } finally {
     await cleanupPostureRun(run.id);
   }

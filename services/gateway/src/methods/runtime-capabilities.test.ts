@@ -7,7 +7,9 @@ import type { WarmSweepSummary } from '../runtime-capabilities/registry.js';
 
 import {
   assertDeviceTargetAvailable,
+  completeGrantedClaim,
   type DeviceTargetGuardDeps,
+  reservationSettlement,
   runtimeCapabilityStopWarm,
   stopWarmResultFromSummary,
 } from './runtime-capabilities.js';
@@ -300,4 +302,131 @@ test('an unreadable project config on another machine does not refuse', async ()
   );
   assert.equal(refusal, null);
   assert.equal(catalogReads, 0, "another machine's project config is never read");
+});
+
+// ── MANUAL-000114: what a finished completion owes its reservation ────────────
+
+const GRANT = {
+  owner: { runId: 'run-b' },
+  slotId: 'slot-b',
+  capabilityId: 'recording',
+  leaseId: 'lease-queued',
+  claimId: 'capture-helper',
+};
+
+test('a completion refused by host pressure keeps the claim it was given', () => {
+  const settlement = reservationSettlement(GRANT, {
+    ok: false,
+    reason: 'host is under critical pressure',
+    conflict: {
+      kind: 'host-pressure',
+      capabilityId: 'recording',
+      reason: 'host is under critical pressure',
+      severity: 'critical',
+    },
+  });
+  // The refusal is about the HOST, not this run: it clears by itself, and the
+  // next waiter would be refused for exactly the same reason.
+  assert.equal(settlement.retain, true);
+  assert.match(settlement.detail, /capture-helper/);
+});
+
+test('a completion refused for any other reason gives the claim back', () => {
+  for (const conflict of [
+    { kind: 'invalid-request' as const, capabilityId: 'recording', reason: 'run archived' },
+    { kind: 'unavailable' as const, capabilityId: 'recording', reason: 'provider is gone' },
+  ]) {
+    const settlement = reservationSettlement(GRANT, {
+      ok: false,
+      reason: conflict.reason,
+      conflict,
+    });
+    // Nothing is going to complete this, and a claim held with no provider locks
+    // every other slot out of the device for good.
+    assert.equal(settlement.retain, false, conflict.kind);
+    assert.match(settlement.detail, /did not complete/);
+  }
+});
+
+test('a completion that queued on a DIFFERENT capability is not a silent success', () => {
+  const settlement = reservationSettlement(GRANT, {
+    ok: false,
+    waiting: true,
+    reason: "runtime capability 'android-device' is queued behind 'android-device'",
+    conflict: {
+      kind: 'scoped-wait',
+      capabilityId: 'android-device',
+      claimId: 'android-device',
+      scope: 'fleet',
+      owner: { runId: 'run-c' },
+      leaseId: 'lease-holder',
+      queuedLeaseId: 'lease-other',
+      position: 1,
+      reason: 'held elsewhere',
+    },
+  });
+  assert.equal(settlement.retain, false);
+  assert.match(settlement.detail, /queued on another capability/);
+  assert.match(settlement.detail, /capture-helper/);
+});
+
+test('a completion that threw settles the reservation rather than leaving it held', () => {
+  const settlement = reservationSettlement(GRANT, new Error('the catalog read blew up'));
+  assert.equal(settlement.retain, false);
+  assert.match(settlement.detail, /threw: the catalog read blew up/);
+});
+
+test('a completion that reported success still names a reservation it left behind', () => {
+  const settlement = reservationSettlement(GRANT, { ok: true });
+  assert.equal(settlement.retain, false);
+  assert.match(settlement.detail, /never completed/);
+});
+
+test('a completion whose settle throws never rejects, and says what is left holding the claim', async () => {
+  const warned: string[] = [];
+  const error = console.error;
+  console.error = (...parts: unknown[]) => void warned.push(parts.join(' '));
+  try {
+    // The grant hook fires this WITHOUT awaiting it, and the Gateway installs no
+    // `unhandledRejection` handler: a rejection here exits the process, taking
+    // every run with it. Settling can still fail on a write, so it must be
+    // reported rather than thrown.
+    await completeGrantedClaim(GRANT, {
+      prepare: async () => ({ ok: false, reason: 'the run was archived' }),
+      settle: async () => {
+        throw new Error('the capability store is unwritable');
+      },
+    });
+  } finally {
+    console.error = error;
+  }
+  const message = warned.join('\n');
+  // Enough to find the lease by hand, and the honest state it is in.
+  assert.match(message, /lease-queued/);
+  assert.match(message, /capture-helper/);
+  assert.match(message, /run-b/);
+  assert.match(message, /slot-b/);
+  assert.match(message, /still 'acquiring'/);
+  assert.match(message, /stale-reservation sweep/);
+  assert.match(message, /the capability store is unwritable/);
+});
+
+test('a completion whose preparation throws still settles the reservation', async () => {
+  const settled: Array<{ leaseId: string; retain: boolean }> = [];
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await completeGrantedClaim(GRANT, {
+      prepare: async () => {
+        throw new Error('the project catalog will not parse');
+      },
+      settle: async (leaseId, settlement) => {
+        settled.push({ leaseId, retain: settlement.retain });
+        return 'released';
+      },
+    });
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(settled, [{ leaseId: 'lease-queued', retain: false }]);
 });

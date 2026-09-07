@@ -134,6 +134,28 @@ The scripted worker writes into the worker task directory:
 
 Use these artifacts when proving success/failure in PR validation notes.
 
+## Fleet-scoped claim contention live proof
+
+Two scripted runs on two slots of the same project contend for one fleet-scoped resource claim:
+
+```sh
+FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 \
+  node scripts/runner-validation/run.mjs \
+  --scenario fleet-device-contention \
+  --slot <farmslot-farm slotId>
+```
+
+Every assertion is a gateway RPC read — the persisted claims and machine on the holder's lease, the
+typed `scoped-wait` refusal, the derived claim queue from `runtime.capability.status`, the run's own
+`resourceWait`, the drain to `acquired` without a second acquire call, and no leftover leases after
+cancellation. The scenario picks the second slot from `fleet.status` and refuses to run without an
+idle sibling on the same machine.
+
+Gateway admission sheds medium- and high-cost acquires above 1.5x cores, and `farmslot-farm`
+declares no low-cost provider. On a loaded host the scenario therefore records `pass: false` with
+`blockedByAdmission: true`, the load that blocked it, and the rerun command. That is a blocked run,
+not a failure of the queue — and never a pass.
+
 ## Machine pause/restore live proof
 
 Release-park proof requires a runner with validated persisted-session reload; the `scripted`
