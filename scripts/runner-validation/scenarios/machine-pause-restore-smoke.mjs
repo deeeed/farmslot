@@ -933,7 +933,8 @@ async function runGateParkRestoreScenario({ runner, runId, timeoutMs, outDir }) 
         previewAvailable: takenEntry?.restoreTarget?.available ?? null,
         previewMutatedNothing: true,
         resolveExit: attempt.status,
-        resolveMatched: attemptOutput.includes(takenCode),
+        // The refusal is read from the park record, not from CLI text.
+        resolveMatched: after.park?.restoreRefusal?.code === takenCode,
         decisionStillPending: pendingGateDecision(after)?.id === decision.id,
         recordAfter: {
           phase: after.park?.phase ?? null,

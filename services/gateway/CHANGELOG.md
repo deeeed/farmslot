@@ -18,7 +18,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
   the new one. Re-home targets take the same sustained-pressure admission gate and the same
   detached-HEAD scoring exemption a new dispatch does, and only a slot another run HOLDS is left —
   a preparing or mid-release row is waited for, not abandoned. A lost claim rolls the record, the
-  run and the handle back together, `rehome.fromSlotId` is written once so a chained re-home still
+  run and the handle back together when this attempt moved them (a repair re-drive of an earlier
+  move is left to converge), `rehome.fromSlotId` is written once so a chained re-home still
   names the slot the park originally freed, and every surface derives that original the same way so
   a preview taken after a re-home cannot report both ends as the same slot. Gated on a new runner-declared session
   portability: a
