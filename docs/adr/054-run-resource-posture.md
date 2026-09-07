@@ -184,7 +184,7 @@ item and depends on this one.
   the second queued, was reserved when the first released, completed without being asked again, and
   released, leaving no lease behind. Recorded in
   `docs/operations/evidence/runner-validate-macwork-scripted-fleet-device-contention.json` with all
-  seven assertion nodes populated, at a host load of 0.99 per core on 16 cores — a working machine,
+  seven assertion nodes populated, at a host load of 0.93 per core on 16 cores — a working machine,
   not an idle one, which matters because admission refuses every medium-cost acquire above 1.5x
   cores and an earlier attempt was correctly recorded as blocked rather than passed. Still not
   covered live: `android-device` at `fleet` scope, which stays a config-only example in

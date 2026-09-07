@@ -290,6 +290,28 @@ export async function prepareRunPostureForValidation(
       rejection.kind === 'capability-unavailable' && rejection.conflict.kind === 'scoped-wait'
         ? rejection.conflict
         : undefined;
+    // A refusal about the HOST, while this run already holds a place in line, is
+    // also a wait rather than a failure. Host pressure clears on its own and the
+    // run keeps whatever it has earned — a queue place, or a reservation the
+    // drain already granted it. Reporting it as a plain failure made the rerun's
+    // poll throw, and the throw handler then gave up the very reservation the
+    // run had just won: pressure alone could lose a device the run already held.
+    const held = outcome.result.status.resourceWait;
+    if (
+      !wait &&
+      held &&
+      rejection.kind === 'capability-unavailable' &&
+      rejection.conflict.kind === 'host-pressure'
+    ) {
+      return {
+        ok: false,
+        waiting: true,
+        reason:
+          `runtime capability '${held.capabilityId}' is ${held.phase} on '${held.claimId}' at ` +
+          `${held.scope} scope and the host is under pressure: ${rejection.conflict.reason}`,
+        conflict: rejection.conflict,
+      };
+    }
     if (wait) {
       return {
         ok: false,

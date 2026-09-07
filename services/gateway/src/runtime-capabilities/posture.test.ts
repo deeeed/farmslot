@@ -91,6 +91,8 @@ interface HarnessOptions {
   parkExecute?: (params: MachinePauseExecuteParams) => Promise<MachinePauseExecuteResult>;
   /** Simulate a status read taken while an acquire is still in flight. */
   hideLeasesOnFirstStatus?: boolean;
+  /** Host admission, so a refusal about the machine can be exercised. */
+  pressureFor?: ConstructorParameters<typeof RuntimeCapabilityRegistry>[0]['pressureFor'];
   /** Force the registry to report a lease it refused to release. */
   retainOnRelease?: string[];
   /** Replace the warm-sweep result the reconciler sees. */
@@ -125,6 +127,7 @@ async function harness(t: TestContext, options: HarnessOptions) {
       actionCalls.push({ action: name, parameters });
       return options.runAction?.(slotId, action, parameters, declaredParameters) ?? { ok: true };
     },
+    ...(options.pressureFor ? { pressureFor: options.pressureFor } : {}),
     leaseId: () => `lease-${++nextLease}`,
     now,
   });
@@ -2235,4 +2238,72 @@ test('re-targeting the capability that HOLDS the claim takes no queue place', as
   assert.deepEqual(leases.find((lease) => lease.state === 'acquired')?.parameters, {
     simulator: 'SIM-2',
   });
+});
+
+test('host pressure on a claim this run already holds is a wait, not a lost reservation', async (t) => {
+  const recording = entry('recording', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'capture-helper', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+  });
+  let underPressure = false;
+  const { reconciler, registry } = await harness(t, {
+    capabilities: [recording],
+    pressureFor: async () =>
+      underPressure
+        ? {
+            kind: 'host-pressure' as const,
+            capabilityId: 'recording',
+            reason: 'Load average 40 is above 1.5x 16 cores.',
+            severity: 'critical' as const,
+            queued: false,
+          }
+        : null,
+  });
+  const requirements = [
+    { capabilityId: 'recording', reason: 'validation', mode: 'state' as const },
+  ];
+  assert.equal(
+    (
+      await registry.acquire({
+        slotId: 'slot-elsewhere',
+        capabilityId: 'recording',
+        ownerRunId: 'other-run',
+        proofRequirement: { capabilityId: 'recording', reason: 'record', mode: 'state' },
+      })
+    ).ok,
+    true,
+  );
+  assert.equal(
+    (await reconciler.apply({ runId: 'run-a', posture: 'active', proofRequirements: requirements }))
+      .ok,
+    false,
+  );
+  await registry.release({ slotId: 'slot-elsewhere', ownerRunId: 'other-run', keepWarm: false });
+  const reserved = (await registry.status({ slotId: SLOT })).leases[0];
+  assert.equal(reserved?.state, 'acquiring', 'the drain reserved the claim for run-a');
+
+  // The host is now too loaded to boot anything. Only a scoped wait used to
+  // report `waiting`, so this came back as a plain failure — the rerun poll
+  // threw, and its give-up handler released the reservation the run had just
+  // won. Pressure alone could cost a run the device it already held.
+  underPressure = true;
+  const pressured = await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(pressured.ok, false);
+  if (pressured.ok) return;
+  assert.equal(pressured.waiting, true, 'a run that holds its place is waiting, not failing');
+  assert.match(pressured.reason, /granted/);
+  assert.match(pressured.reason, /host is under pressure/);
+  assert.equal(
+    (await registry.status({ slotId: SLOT })).leases[0]?.state,
+    'acquiring',
+    'and the reservation is still the run own',
+  );
+
+  // Pressure clears and the same poll completes it.
+  underPressure = false;
+  const completed = await prepareRunPostureForValidation('run-a', requirements, reconciler);
+  assert.equal(completed.ok, true);
+  assert.equal((await registry.status({ slotId: SLOT })).leases[0]?.state, 'acquired');
 });

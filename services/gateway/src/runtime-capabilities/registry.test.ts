@@ -3277,3 +3277,95 @@ test('a run queued for one capability can still acquire another sharing the clai
   const completed = await acquireOn(registry, SLOT_B, reserved.capabilityId, 'run-b');
   assert.equal(completed.ok, true, 'a run is never blocked by the claim being handed to it');
 });
+
+test('a run giving up two queue places is never granted one of them on the way out', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const grants: string[] = [];
+  const { registry, actions } = await fixture(
+    t,
+    [
+      // TWO capabilities sharing ONE claim, which is what makes this reachable:
+      // freeing the claim for the first lease puts the same run's second place
+      // at the head of that same claim's queue.
+      claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+      claimEntry('camera', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+    ],
+    {
+      now: () => new Date((clock += 1000)),
+      onClaimGranted: (grant) => grants.push(grant.owner.runId),
+    },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  // run-b queues twice on the same claim, once per capability, and run-c is
+  // behind it.
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'camera', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.deepEqual(grants, ['run-b'], 'run-b is reserved on its first place');
+  grants.length = 0;
+  const bootsBefore = actions.filter((action) => action.endsWith('.acquire')).length;
+
+  // run-b walks away from both. Draining between the two releases freed the
+  // claim, found run-b ITSELF at the head of that same queue on its second
+  // capability, announced a grant, and the completion booted a provider for the
+  // rerun that had just given up.
+  await registry.abandonClaimWaits(SLOT_B, 'run-b');
+  assert.deepEqual(grants, ['run-c'], 'the next foreign waiter is served, never the leaver');
+  assert.equal(
+    actions.filter((action) => action.endsWith('.acquire')).length,
+    bootsBefore,
+    'and nothing was booted on the way out',
+  );
+  assert.equal(
+    (await registry.status({ slotId: SLOT_B })).leases.every((lease) => lease.state === 'released'),
+    true,
+  );
+});
+
+test('giving up on one slot never hands the claim to the same run waiting on another', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const grants: Array<{ runId: string; slotId: string }> = [];
+  const { registry } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    {
+      now: () => new Date((clock += 1000)),
+      onClaimGranted: (grant) => grants.push({ runId: grant.owner.runId, slotId: grant.slotId }),
+    },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  // The same run holds a place on two slots, and `abandonClaimWaits` is scoped
+  // to one of them: releasing there frees the claim, and without the exclusion
+  // the drain hands it straight back to the run that just said it had stopped
+  // waiting — on the slot the caller could not see.
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.deepEqual(grants, [{ runId: 'run-b', slotId: SLOT_B }]);
+  grants.length = 0;
+
+  await registry.abandonClaimWaits(SLOT_B, 'run-b');
+  assert.deepEqual(grants, [], 'the leaver is not served on its other slot either');
+  assert.equal(
+    (await registry.status({ slotId: SLOT_C })).leases[0]?.state,
+    'queued',
+    'that place is left alone for the caller that owns it to give up in its turn',
+  );
+});

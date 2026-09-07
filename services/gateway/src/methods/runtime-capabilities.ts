@@ -431,8 +431,10 @@ const registry = new RuntimeCapabilityRegistry({
    * how a run prepares — so completion runs the run's OWN preparation, the same
    * `validation-prepare` boundary the run would have hit anyway. That path
    * reuses the reserved lease, boots the provider, and clears the run's
-   * resource wait; if it fails, its rollback releases the claim and drains the
-   * queue again, so the next waiter is served rather than stranded.
+   * resource wait. If it does not complete, `completeGrantedClaim` settles the
+   * reservation either way — kept under host pressure, released and drained to
+   * the next waiter otherwise — so the claim is never left held by a lease with
+   * no provider behind it.
    */
   onClaimGranted(grant) {
     void completeGrantedClaim(grant);
@@ -451,9 +453,9 @@ const registry = new RuntimeCapabilityRegistry({
  * those used to leave the lease `acquiring` with the fleet claim held and
  * nothing left to complete it, which locks every other slot out of that device
  * for good. So the reservation is re-read afterwards: if it survived, the
- * completion did not happen, and it is either put back at the head of its own
- * queue (host pressure, which clears on its own) or rolled back so the next
- * waiter is served.
+ * completion did not happen, and it is either KEPT for this run (host pressure,
+ * which clears on its own and would refuse the next waiter too) or released so
+ * the next waiter is served.
  */
 export async function completeGrantedClaim(
   grant: RuntimeCapabilityClaimGrant,
