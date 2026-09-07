@@ -78,6 +78,16 @@ export function transitionOutcomeLabel(outcome: ResourcePostureTransitionOutcome
  * a Slot View reader would otherwise have nothing to go and look at.
  */
 export function resourceWaitLine(wait: RunResourceWait): string {
+  // A granted wait has no position and no blocker left to name: the claim is
+  // this run's, and what it is waiting on is its own provider starting. Saying
+  // "position 0 behind <the run that already released>" would read as a queue
+  // that is stuck rather than a device that is on its way.
+  if (wait.phase === 'granted') {
+    return (
+      `Granted ${wait.capabilityId}: '${wait.claimId}' is reserved at ${wait.scope} scope ` +
+      `since ${wait.since}, waiting for its provider to start`
+    );
+  }
   return (
     `Waiting for ${wait.capabilityId}: position ${wait.position} in the queue for ` +
     `'${wait.claimId}' at ${wait.scope} scope, held by ${wait.blockingOwner.runId} since ${wait.since}`
@@ -501,6 +511,7 @@ export function renderRunPostureSummary(
             class="posture-transition"
             data-testid="run-posture-resource-wait"
             data-resource-wait-claim=${summary.resourceWait.claimId}
+            data-resource-wait-phase=${summary.resourceWait.phase}
             data-resource-wait-blocking-run=${summary.resourceWait.blockingOwner.runId}
           >
             ${resourceWaitLine(summary.resourceWait)}

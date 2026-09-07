@@ -516,3 +516,30 @@ test('queue position comes from the fleet-wide waiter list, not this slot leases
     undefined,
   );
 });
+
+test('a reserved claim reads as a reservation, not as a boot in flight', () => {
+  const reserved = lease('reserved', 'acquiring', 'run-b', { wait: SCOPED_WAIT });
+  const view = runtimeCapabilityRetentionView({
+    entry,
+    lease: reserved,
+    planned: false,
+    nowMs: NOW_MS,
+  });
+  // The drain handed this run the claim and no provider action has run for it.
+  // "An acquiring action is in flight" described a device that is starting,
+  // which is the one thing a reservation is not — and it is the state a strand
+  // sits in, so it has to be legible.
+  assert.match(view.retentionReason, /'capture-helper' is reserved for this run at fleet scope/);
+  assert.match(view.retentionReason, /provider has not started/);
+
+  const queue = runtimeCapabilityQueueView({ lease: reserved, claimWaiters: [] });
+  assert.equal(queue?.phase, 'granted');
+  assert.equal(queue?.position, undefined, 'a reservation is out of the queue, not at its front');
+  assert.match(queue!.summary, /granted 'capture-helper'/);
+
+  const stillQueued = runtimeCapabilityQueueView({
+    lease: lease('queued', 'queued', 'run-c', { wait: SCOPED_WAIT }),
+    claimWaiters: [],
+  });
+  assert.equal(stillQueued?.phase, 'queued');
+});

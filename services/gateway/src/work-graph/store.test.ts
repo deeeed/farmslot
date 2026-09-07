@@ -1844,6 +1844,7 @@ test('a run queued behind a scoped resource claim reports the node as waiting on
         capabilityId: 'recording',
         claimId: 'capture-helper',
         scope: 'fleet',
+        phase: 'queued',
         blockingOwner: { runId: 'run-holder' },
         queuedLeaseId: 'cap-queued',
         position: 2,
@@ -1885,7 +1886,37 @@ test('a run queued behind a scoped resource claim reports the node as waiting on
   );
   runs.updateRun(run.id, { status: 'monitoring' });
 
-  // Granted: the wait must not survive on the node.
+  // A RESERVATION is still a wait, and the one that matters most: the claim is
+  // held for this run with no provider behind it, so a node that stops here is
+  // a fleet device nobody can use. Reporting nothing would make it read as
+  // ordinary running work.
+  runs.updateRun(run.id, {
+    resourcePosture: {
+      posture: 'active',
+      policySource: 'framework-default',
+      capabilities: [],
+      workerRetained: true,
+      resourceWait: {
+        capabilityId: 'recording',
+        claimId: 'capture-helper',
+        scope: 'fleet',
+        phase: 'granted',
+        blockingOwner: { runId: 'run-holder' },
+        queuedLeaseId: 'cap-queued',
+        position: 0,
+        since: new Date().toISOString(),
+        reason: "Resource 'capture-helper' is reserved for this run",
+      },
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  const granted = await workGraph.schedulerTick({ graphId });
+  const grantedNode = granted.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(grantedNode?.status, 'waiting');
+  assert.equal(grantedNode?.waitingOn[0]?.kind, 'resource');
+  assert.match(grantedNode?.waitingOn[0]?.detail ?? '', /granted 'capture-helper'/);
+
+  // Granted and completed: the wait must not survive on the node.
   runs.updateRun(run.id, {
     resourcePosture: {
       posture: 'active',

@@ -198,6 +198,11 @@ export function posturePolicyLine(summary: RunPostureSummary): string {
  * an operator can act on.
  */
 export function resourceWaitLine(wait: RunResourceWait): string {
+  // Granted is its own line: the claim is this run's already and nobody is
+  // ahead of it, so a position and a blocking run would both be wrong.
+  if (wait.phase === 'granted') {
+    return `Granted ${wait.capabilityId} · '${wait.claimId}' (${wait.scope}) reserved · waiting for its provider to start`;
+  }
   return `Waiting for ${wait.capabilityId} · position ${wait.position} for '${wait.claimId}' (${wait.scope}) · held by ${wait.blockingOwner.runId}`;
 }
 

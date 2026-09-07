@@ -140,6 +140,12 @@ function transitionLines(transition: ResourcePostureTransition): string[] {
 
 /** The run's own place in a scoped claim's queue. */
 export function resourceWaitLine(wait: RunResourceWait): string {
+  // Granted, not queued: the claim is held for this run and no provider has
+  // started behind it. A reservation that stays here is a device nothing is
+  // using, so it is labelled as its own state rather than as position 0.
+  if (wait.phase === 'granted') {
+    return `granted  ${wait.capabilityId} holds a reservation on '${wait.claimId}' at ${wait.scope} scope since ${wait.since}; its provider has not started`;
+  }
   return `waiting  ${wait.capabilityId} is position ${wait.position} for '${wait.claimId}' at ${wait.scope} scope, held by ${wait.blockingOwner.runId} since ${wait.since}`;
 }
 

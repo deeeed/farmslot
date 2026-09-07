@@ -11,6 +11,7 @@ import {
   isResourcePostureGateChoice,
   type ResourcePosture,
   type ResourcePostureGateChoice,
+  type RuntimeCapabilityAcquireConflict,
   type RuntimeCapabilityProofRequirement,
   type RuntimePostureApplyResult,
 } from '@farmslot/protocol';
@@ -238,9 +239,26 @@ export function resolveGateChoiceOutcome(outcome: RunPostureReconcileOutcome): G
  * it as success either, because no provider is up yet.
  */
 export type PrepareRunPostureOutcome =
-  | { ok: true }
-  | { ok: false; waiting?: false; reason: string }
-  | { ok: false; waiting: true; reason: string };
+  | { ok: true; conflict?: undefined }
+  | {
+      ok: false;
+      waiting?: false;
+      reason: string;
+      /**
+       * The acquire conflict behind the refusal, when there was one.
+       *
+       * Carried so a caller can tell a refusal about the HOST from a refusal
+       * about the run. Host pressure clears by itself and a reserved claim is
+       * worth keeping in line for; anything else has to give the claim back.
+       */
+      conflict?: RuntimeCapabilityAcquireConflict;
+    }
+  | {
+      ok: false;
+      waiting: true;
+      reason: string;
+      conflict?: RuntimeCapabilityAcquireConflict;
+    };
 
 /**
  * Validation preparation is `active` with the action's proof plan re-applied.
@@ -279,6 +297,7 @@ export async function prepareRunPostureForValidation(
         reason:
           `runtime capability '${wait.capabilityId}' is queued behind '${wait.claimId}' at ` +
           `${wait.scope} scope, held by ${wait.owner.runId}; this run is position ${wait.position}`,
+        conflict: wait,
       };
     }
     return {
@@ -287,6 +306,7 @@ export async function prepareRunPostureForValidation(
         rejection.kind === 'capability-unavailable'
           ? `runtime capability '${rejection.capabilityId}' is unavailable: ${rejection.reason}`
           : rejection.reason,
+      ...(rejection.kind === 'capability-unavailable' ? { conflict: rejection.conflict } : {}),
     };
   }
   const failures = outcome.result.transition.failures;

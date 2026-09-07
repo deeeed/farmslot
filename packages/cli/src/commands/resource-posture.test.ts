@@ -558,6 +558,7 @@ test('posture status names the claim a run is queued behind', () => {
           capabilityId: 'recording',
           claimId: 'capture-helper',
           scope: 'fleet',
+          phase: 'queued',
           blockingOwner: { runId: 'run-holder' },
           queuedLeaseId: 'cap-queued',
           position: 2,
@@ -569,6 +570,30 @@ test('posture status names the claim a run is queued behind', () => {
   );
   assert.match(output, /waiting {2}recording is position 2 for 'capture-helper' at fleet scope/);
   assert.match(output, /held by run-holder/);
+});
+
+test('posture status calls a reserved claim granted, not a queue place', () => {
+  const output = formatPostureStatus(
+    statusResult(
+      postureState({
+        resourceWait: {
+          capabilityId: 'recording',
+          claimId: 'capture-helper',
+          scope: 'fleet',
+          phase: 'granted',
+          blockingOwner: { runId: 'run-holder' },
+          queuedLeaseId: 'cap-queued',
+          position: 0,
+          since: '2026-09-05T00:01:00.000Z',
+          reason: "Resource 'capture-helper' is reserved for this run",
+        },
+      }),
+    ),
+  );
+  // A reservation that never completes is a fleet device nobody can use. It has
+  // to say so on its own line rather than disappear from the output.
+  assert.match(output, /granted {2}recording holds a reservation on 'capture-helper'/);
+  assert.match(output, /provider has not started/);
 });
 
 test('capability status lists every waiter in a fleet-wide claim queue', () => {

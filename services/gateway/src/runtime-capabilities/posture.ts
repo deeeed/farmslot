@@ -42,6 +42,7 @@ import {
   type RuntimeCapabilityLease,
   type RuntimeCapabilityProofRequirement,
   type RuntimeCapabilityReleaseResult,
+  type RuntimeCapabilityScopedWaitConflict,
   type RuntimeCapabilityStatusResult,
   runtimeCapabilityTargetFromParameters,
   type RuntimePostureApplyResult,
@@ -290,36 +291,49 @@ export function resolveEffectivePosturePolicy(
  * when the queue drains, so the work-graph kept the node pinned to `waiting`
  * and never dispatched it.
  *
- * The rule is the whole rule: a `queued` lease for this run means waiting;
- * anything else, including the `acquiring` reservation the drain just handed
- * it, means the wait is over.
+ * TWO lease states carry a wait, and both have to be reported. A `queued` lease
+ * is waiting its turn. An `acquiring` lease that still has its wait record is
+ * the RESERVATION the drain handed the head waiter: the claim is held for this
+ * run and no provider is behind it yet. Reporting only the first left a
+ * reservation whose completion never arrived showing no wait at all — an
+ * ordinary-looking run silently holding a fleet claim every other slot is
+ * queued behind. The wait ends when the lease stops carrying the record, which
+ * is what the completing acquire does the moment it takes the lease over.
  */
 function resourceWaitFromStatus(
   status: RuntimeCapabilityStatusResult,
   runId: string,
 ): RunResourceWait | undefined {
-  const queued = status.leases.find(
+  const waiting = status.leases.find(
     (lease) =>
       lease.owner.runId === runId &&
-      lease.state === 'queued' &&
+      (lease.state === 'queued' || lease.state === 'acquiring') &&
       lease.wait?.kind === 'scoped-claim',
   );
-  const wait = queued?.wait;
-  if (!queued || wait?.kind !== 'scoped-claim') return undefined;
+  const wait = waiting?.wait;
+  if (!waiting || wait?.kind !== 'scoped-claim') return undefined;
+  const granted = waiting.state === 'acquiring';
   const waiters = status.claimWaiters ?? [];
-  const mine = waiters.find((waiter) => waiter.leaseId === queued.id);
+  const mine = waiters.find((waiter) => waiter.leaseId === waiting.id);
   return {
-    capabilityId: queued.capabilityId,
+    capabilityId: waiting.capabilityId,
     claimId: wait.claimId,
     scope: wait.scope,
+    phase: granted ? 'granted' : 'queued',
     blockingOwner: structuredClone(wait.blockingOwner),
-    queuedLeaseId: queued.id,
-    // The Gateway's own derived queue is the authority on position. If this
-    // lease is somehow absent from it, report the back of the line rather than
-    // the front: telling a run it is next when it is not is the worse error.
-    position: mine?.position ?? waiters.filter((w) => w.claimId === wait.claimId).length + 1,
+    queuedLeaseId: waiting.id,
+    // A reservation is out of the queue: it holds the claim, so no position
+    // describes it. Otherwise the Gateway's own derived queue is the authority.
+    // If a queued lease is somehow absent from it, report the back of the line
+    // rather than the front: telling a run it is next when it is not is the
+    // worse error.
+    position: granted
+      ? 0
+      : (mine?.position ?? waiters.filter((w) => w.claimId === wait.claimId).length + 1),
     since: wait.enqueuedAt,
-    reason: `Resource '${wait.claimId}' is held at ${wait.scope} scope by ${wait.blockingOwner.runId}`,
+    reason: granted
+      ? `Resource '${wait.claimId}' is reserved for this run at ${wait.scope} scope; its provider has not started yet`
+      : `Resource '${wait.claimId}' is held at ${wait.scope} scope by ${wait.blockingOwner.runId}`,
   };
 }
 
@@ -389,6 +403,19 @@ export interface RunResourcePostureDeps {
     slotId: string,
     dispositions: Array<{ leaseId: string; keepWarm: boolean }>,
   ) => Promise<RuntimeCapabilityReleaseResult>;
+  /**
+   * Take a place in a scoped claim's queue WITHOUT acquiring anything, and say
+   * whether one was needed.
+   *
+   * Exists for the one ordering a re-target cannot get right on its own: the
+   * release of the device it holds happens before the acquire that discovers
+   * the new device is claimed elsewhere. Asking first means the run keeps what
+   * it has and simply waits. Returns null when the acquire would not queue, so
+   * the ordinary path runs unchanged. Left unwired by callers with no registry.
+   */
+  enqueueScopedClaimWaiter?: (
+    params: RuntimeCapabilityAcquireParams,
+  ) => Promise<RuntimeCapabilityScopedWaitConflict | null>;
   /** Owner-scoped terminal cleanup, resolved inside the registry's own lock. */
   releaseRunTerminal: (
     slotId: string,
@@ -790,6 +817,46 @@ export class RunResourcePostureReconciler {
         staleTargets.push(lease);
       }
     }
+    // A re-target must not give up the device it holds until it knows it can
+    // have the new one.
+    //
+    // The release below is unconditional and the acquire that follows it can be
+    // refused with a scoped wait, because another slot holds the claim the plan
+    // now names. That left the run with NEITHER device: it had released the one
+    // it had in order to take a place in a queue. So the queue place is taken
+    // here instead, off the registry's own conflict check, and a wait stops this
+    // pass before anything is released. The drain's later reservation brings
+    // preparation back through here, and by then the check passes — the claim is
+    // held for this run, so there is nothing to queue behind.
+    if (staleTargets.length > 0 && this.deps.enqueueScopedClaimWaiter) {
+      for (const state of context.states) {
+        if (state.desiredDisposition !== 'acquired') continue;
+        const requirement = context.proofRequirements.find(
+          (candidate) => candidate.capabilityId === state.capabilityId,
+        );
+        if (!requirement) continue;
+        const wait = await this.deps.enqueueScopedClaimWaiter({
+          slotId: context.slotId,
+          capabilityId: state.capabilityId,
+          ownerRunId: context.run.id,
+          ...(context.run.familyId ? { ownerFamilyId: context.run.familyId } : {}),
+          proofRequirement: requirement,
+          ...(requirement.parameters ? { parameters: requirement.parameters } : {}),
+        });
+        if (!wait) continue;
+        return this.rejectedTransition(context, inProgress, {
+          effects,
+          failures,
+          completed,
+          rejection: {
+            kind: 'capability-unavailable',
+            capabilityId: state.capabilityId,
+            reason: wait.reason,
+            conflict: wait,
+          },
+        });
+      }
+    }
     if (staleTargets.length > 0) {
       const retargeted = await this.deps.releaseForPosture(
         context.slotId,
@@ -823,7 +890,33 @@ export class RunResourcePostureReconciler {
       return next;
     }, undefined);
 
-    for (const state of context.states) {
+    // A reserved claim is completed FIRST, before any other capability.
+    //
+    // The drain reserves one claim and hands the run back here to finish it. If
+    // some other capability in the same plan hit its own scoped wait on the way,
+    // this pass returned before ever reaching the reservation — which then sat
+    // `acquiring`, holding a fleet claim for a run that was queued on something
+    // else entirely, with nothing left to complete it. The reservation is this
+    // pass's whole reason for existing, so it goes first and the rest of the
+    // plan follows.
+    const reservedCapabilityIds = new Set(
+      context.status.leases
+        .filter(
+          (lease) =>
+            lease.owner.runId === context.run.id &&
+            lease.state === 'acquiring' &&
+            lease.wait?.kind === 'scoped-claim',
+        )
+        .map((lease) => lease.capabilityId),
+    );
+    const acquireOrder =
+      reservedCapabilityIds.size > 0
+        ? [
+            ...context.states.filter((state) => reservedCapabilityIds.has(state.capabilityId)),
+            ...context.states.filter((state) => !reservedCapabilityIds.has(state.capabilityId)),
+          ]
+        : context.states;
+    for (const state of acquireOrder) {
       if (state.desiredDisposition !== 'acquired') continue;
       const requirement = context.proofRequirements.find(
         (candidate) => candidate.capabilityId === state.capabilityId,
@@ -856,24 +949,17 @@ export class RunResourcePostureReconciler {
       if (!result.ok) {
         // Blocking, not partial: the caller's action cannot run, and no other
         // owner's resource was touched.
-        const rejection: ResourcePostureRejection = {
-          kind: 'capability-unavailable',
-          capabilityId: state.capabilityId,
-          reason: result.conflict.reason,
-          conflict: result.conflict,
-        };
-        const transition: ResourcePostureTransition = {
-          ...inProgress,
-          completedAt: this.now().toISOString(),
-          outcome: 'rejected',
-          effects: [...effects],
-          progress: { total: context.states.length, completed },
+        return this.rejectedTransition(context, inProgress, {
+          effects,
           failures,
-          rejection,
-        };
-        const refreshed = await this.refresh(context);
-        const persisted = this.persist(refreshed, transition);
-        return { ok: false, status: persisted, transition };
+          completed,
+          rejection: {
+            kind: 'capability-unavailable',
+            capabilityId: state.capabilityId,
+            reason: result.conflict.reason,
+            conflict: result.conflict,
+          },
+        });
       }
       completed += 1;
     }
@@ -1183,6 +1269,38 @@ export class RunResourcePostureReconciler {
     };
   }
 
+  /**
+   * End this pass with a rejection, from the live lease state.
+   *
+   * Always re-reads the status before persisting: a rejection is exactly when
+   * the run's resource wait changed, and persisting the stale context would
+   * report the queue place the pass started with rather than the one it now
+   * holds.
+   */
+  private async rejectedTransition(
+    context: ResolvedContext,
+    inProgress: ResourcePostureTransition,
+    detail: {
+      effects: ReadonlySet<string>;
+      failures: ResourcePostureTransitionFailure[];
+      completed: number;
+      rejection: ResourcePostureRejection;
+    },
+  ): Promise<RuntimePostureApplyResult> {
+    const transition: ResourcePostureTransition = {
+      ...inProgress,
+      completedAt: this.now().toISOString(),
+      outcome: 'rejected',
+      effects: [...detail.effects],
+      progress: { total: context.states.length, completed: detail.completed },
+      failures: detail.failures,
+      rejection: detail.rejection,
+    };
+    const refreshed = await this.refresh(context);
+    const persisted = this.persist(refreshed, transition);
+    return { ok: false, status: persisted, transition };
+  }
+
   private persist(
     context: ResolvedContext,
     transition: ResourcePostureTransition,
@@ -1195,10 +1313,17 @@ export class RunResourcePostureReconciler {
     posture: ResourcePosture = context.policy.posture,
   ): RunResourcePostureState {
     const resourceWait = resourceWaitFromStatus(context.status, context.run.id);
+    // The operator's recorded choice survives a boundary that does not carry
+    // one. Only a wait boundary resolves a gate choice, so every other pass —
+    // validation preparation, and now the Gateway's own completion of a granted
+    // claim — arrived with `policy.gateChoice` unset and erased the answer the
+    // operator had already given. Nothing else re-derives it, so the next wait
+    // that would have inherited it fell back to the framework default.
+    const gateChoice = context.policy.gateChoice ?? context.run.resourcePosture?.gateChoice;
     const state: RunResourcePostureState = {
       posture,
       policySource: context.policy.policySource,
-      ...(context.policy.gateChoice ? { gateChoice: context.policy.gateChoice } : {}),
+      ...(gateChoice ? { gateChoice } : {}),
       ...(context.run.waitPolicy ? { waitPolicy: context.run.waitPolicy } : {}),
       capabilities: context.states,
       // Derived from the lease, never carried forward. A wait that is over must

@@ -298,6 +298,7 @@ test('a scoped resource wait reaches the Companion summary in one compact line',
     capabilityId: 'recording',
     claimId: 'capture-helper',
     scope: 'fleet' as const,
+    phase: 'queued' as const,
     blockingOwner: { runId: 'run-holder' },
     queuedLeaseId: 'cap-queued',
     position: 2,
@@ -311,4 +312,20 @@ test('a scoped resource wait reaches the Companion summary in one compact line',
     /Waiting for recording · position 2 for 'capture-helper' \(fleet\) · held by run-holder/,
   );
   assert.equal(summarizeRunPosture(postureState()).resourceWait, undefined);
+});
+
+test('Companion says granted rather than reporting a queue place that is over', () => {
+  const granted = {
+    capabilityId: 'recording',
+    claimId: 'capture-helper',
+    scope: 'fleet' as const,
+    phase: 'granted' as const,
+    blockingOwner: { runId: 'run-holder' },
+    queuedLeaseId: 'cap-queued',
+    position: 0,
+    since: '2026-09-05T10:01:00.000Z',
+    reason: "Resource 'capture-helper' is reserved for this run",
+  };
+  assert.match(resourceWaitLine(granted), /Granted recording/);
+  assert.doesNotMatch(resourceWaitLine(granted), /position/);
 });

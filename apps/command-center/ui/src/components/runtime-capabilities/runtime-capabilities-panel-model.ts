@@ -1,6 +1,7 @@
 import {
   observedStateForLease,
   type ResourcePostureObservedState,
+  type RunResourceWaitPhase,
   type RuntimeCapabilityCatalogEntry,
   type RuntimeCapabilityClaimScope,
   type RuntimeCapabilityClaimWaiter,
@@ -92,6 +93,12 @@ function retentionReasonFor(input: {
   if (lease.cleanupFailure) return lease.cleanupFailure;
   if (lease.state === 'error') {
     return 'the last lifecycle action failed; the provider state is not proven';
+  }
+  if (lease.state === 'acquiring' && lease.wait?.kind === 'scoped-claim') {
+    // A RESERVATION, not a boot. The queue drain handed this run the claim and
+    // no provider action has run for it — "an acquiring action is in flight"
+    // described a device that is starting, which is the one thing this is not.
+    return `'${lease.wait.claimId}' is reserved for this run at ${lease.wait.scope} scope; its provider has not started yet`;
   }
   if (lease.state === 'acquiring' || lease.state === 'releasing') {
     return `a ${lease.state} action is in flight`;
@@ -272,7 +279,9 @@ export interface RuntimeCapabilityQueueView {
   claimId: string;
   scope: RuntimeCapabilityClaimScope;
   blockingRunId: string;
-  /** 1-based place, absent when the Gateway did not send the derived queue. */
+  /** `granted` once the claim is reserved for this slot's run. */
+  phase: RunResourceWaitPhase;
+  /** 1-based place, absent when granted or when the Gateway sent no queue. */
   position?: number;
   /** Waiters on this claim across every slot in scope. */
   total?: number;
@@ -291,8 +300,22 @@ export function runtimeCapabilityQueueView(input: {
   lease: RuntimeCapabilityLease | undefined;
   claimWaiters: readonly RuntimeCapabilityClaimWaiter[] | undefined;
 }): RuntimeCapabilityQueueView | undefined {
-  const wait = input.lease?.state === 'queued' ? input.lease.wait : undefined;
+  const state = input.lease?.state;
+  // Both states that carry a wait record. `acquiring` with one is the
+  // RESERVATION the drain made: the claim is this slot's, and a reservation that
+  // never turns into a running provider is a fleet device nobody can use — so
+  // it has to appear here rather than disappear from the queue view entirely.
+  const wait = state === 'queued' || state === 'acquiring' ? input.lease?.wait : undefined;
   if (!wait || wait.kind !== 'scoped-claim') return undefined;
+  if (state === 'acquiring') {
+    return {
+      claimId: wait.claimId,
+      scope: wait.scope,
+      blockingRunId: wait.blockingOwner.runId,
+      phase: 'granted',
+      summary: `granted '${wait.claimId}' at ${wait.scope} scope · waiting for its provider to start`,
+    };
+  }
   const forClaim = (input.claimWaiters ?? []).filter((waiter) => waiter.claimId === wait.claimId);
   const mine = forClaim.find((waiter) => waiter.leaseId === input.lease!.id);
   const place = mine ? `position ${mine.position} of ${forClaim.length}` : 'queued';
@@ -300,6 +323,7 @@ export function runtimeCapabilityQueueView(input: {
     claimId: wait.claimId,
     scope: wait.scope,
     blockingRunId: wait.blockingOwner.runId,
+    phase: 'queued',
     ...(mine ? { position: mine.position, total: forClaim.length } : {}),
     summary: `${place} for '${wait.claimId}' at ${wait.scope} scope · held by ${wait.blockingOwner.runId}`,
   };

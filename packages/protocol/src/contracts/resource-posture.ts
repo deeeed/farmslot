@@ -236,20 +236,36 @@ export interface RunResourcePostureState {
 }
 
 /**
+ * How far along a run's place in a scoped claim's queue is.
+ *
+ * `queued` is waiting its turn behind a holder. `granted` is the reservation
+ * the drain hands the head waiter: the claim is now held for this run and no
+ * provider has booted for it yet, so the run is not waiting on anyone else —
+ * it is waiting on its own completion. The two are reported separately because
+ * a `granted` wait that never clears is a stranded claim nobody else can take,
+ * and reporting nothing at all is how that used to stay invisible.
+ */
+export const RUN_RESOURCE_WAIT_PHASES = ['queued', 'granted'] as const;
+export type RunResourceWaitPhase = (typeof RUN_RESOURCE_WAIT_PHASES)[number];
+
+/**
  * A run's durable place in a scoped claim's queue.
  *
  * `position` is a snapshot from the moment the acquire was refused, not a live
  * counter: nothing renumbers a queue, and re-deriving it here would need the
- * whole fleet's leases on every read of a run.
+ * whole fleet's leases on every read of a run. A `granted` wait is past the
+ * queue entirely and reports position 0.
  */
 export interface RunResourceWait {
   capabilityId: string;
   claimId: string;
   scope: RuntimeCapabilityClaimScope;
+  phase: RunResourceWaitPhase;
   /** The run holding the claim, which is usually on another slot. */
   blockingOwner: RuntimeCapabilityLeaseOwner;
   /** The queued lease that holds this run's place in line. */
   queuedLeaseId: string;
+  /** 1-based place in line, or 0 once the claim is reserved for this run. */
   position: number;
   since: string;
   reason: string;

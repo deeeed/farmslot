@@ -779,9 +779,16 @@ function resourceWaitReason(run: Run | undefined): WaitingReason | undefined {
   if (isOperatorCancelledRun(run)) return undefined;
   const wait = run.resourcePosture?.resourceWait;
   if (!wait) return undefined;
+  // A GRANTED wait is still a wait, and it is the one worth reading twice: the
+  // claim is held for this run with no provider behind it, so a node that stays
+  // here is a device nothing is using and nothing else can take. Reporting only
+  // the queued half left exactly that node looking like ordinary work.
   return {
     kind: 'resource',
-    detail: `${wait.capabilityId} is queued behind '${wait.claimId}' held by ${wait.blockingOwner.runId} (position ${wait.position})`,
+    detail:
+      wait.phase === 'granted'
+        ? `${wait.capabilityId} was granted '${wait.claimId}' and is waiting for its provider to start`
+        : `${wait.capabilityId} is queued behind '${wait.claimId}' held by ${wait.blockingOwner.runId} (position ${wait.position})`,
   };
 }
 

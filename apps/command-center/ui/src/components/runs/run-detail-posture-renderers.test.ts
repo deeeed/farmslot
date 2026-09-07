@@ -439,6 +439,7 @@ test('a run queued behind a scoped claim carries the wait onto the posture summa
     capabilityId: 'recording',
     claimId: 'capture-helper',
     scope: 'fleet' as const,
+    phase: 'queued' as const,
     blockingOwner: { runId: 'run-holder' },
     queuedLeaseId: 'cap-queued',
     position: 2,
@@ -454,4 +455,25 @@ test('a run queued behind a scoped claim carries the wait onto the posture summa
 
   // A run that is not waiting must not carry a stale place in line.
   assert.equal(summarizeRunPosture(postureState()).resourceWait, undefined);
+});
+
+test('a granted claim reads as granted, never as position 0 behind a run that let go', () => {
+  const granted = {
+    capabilityId: 'recording',
+    claimId: 'capture-helper',
+    scope: 'fleet' as const,
+    phase: 'granted' as const,
+    blockingOwner: { runId: 'run-holder' },
+    queuedLeaseId: 'cap-queued',
+    position: 0,
+    since: '2026-09-05T10:01:00.000Z',
+    reason: "Resource 'capture-helper' is reserved for this run",
+  };
+  // The reservation is the state a strand gets stuck in: the claim is held for
+  // this run with no provider behind it. Rendering it as a queue position would
+  // point an operator at a holder that has already released.
+  const line = resourceWaitLine(granted);
+  assert.match(line, /Granted recording/);
+  assert.match(line, /waiting for its provider to start/);
+  assert.doesNotMatch(line, /position/);
 });

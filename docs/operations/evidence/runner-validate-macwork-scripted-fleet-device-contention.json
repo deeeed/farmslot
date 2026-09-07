@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-07T00:09:43.130Z",
+  "recordedAt": "2026-09-07T02:15:21.088Z",
   "host": "macwork",
   "scenario": "fleet-device-contention",
   "runner": "scripted",
@@ -8,39 +8,133 @@
   "claimId": "capture-helper",
   "hostLoad": {
     "cores": 16,
-    "load1": 163.1708984375,
-    "perCore": 10.2
+    "load1": 15.77685546875,
+    "perCore": 0.99
   },
   "rerunCommand": "FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 FARMSLOT_GATEWAY=ws://localhost:7801 node scripts/runner-validation/run.mjs --scenario fleet-device-contention --slot macwork-ff-1",
   "holderSlotId": "macwork-ff-1",
   "waiterSlotId": "macwork-ff-3",
-  "holderRunId": "73da0f8b-fc82-4d76-8ce0-b4aa26d166b8",
-  "waiterRunId": "5906709c-26ea-497b-973e-1e9a945ba4c6",
+  "holderRunId": "36b16c07-7afe-48c6-a710-1d07785141cd",
+  "waiterRunId": "7d7f407a-e8b5-4a55-8824-7ebce44cb646",
   "nodes": {
-    "holderAcquired": null,
-    "waiterQueued": null,
-    "queueVisible": null,
-    "runResourceWait": null,
-    "drained": null,
-    "waiterReleased": null,
-    "noLeftoverLeases": null
+    "holderAcquired": {
+      "leaseId": "cap-734265b4-b150-44b7-9fb3-b3d921b0cdbd",
+      "state": "acquired",
+      "machine": "macwork",
+      "claims": [
+        {
+          "id": "capture-helper",
+          "access": "exclusive",
+          "scope": "fleet"
+        }
+      ]
+    },
+    "waiterQueued": {
+      "kind": "scoped-wait",
+      "capabilityId": "recording",
+      "claimId": "capture-helper",
+      "scope": "fleet",
+      "owner": {
+        "runId": "36b16c07-7afe-48c6-a710-1d07785141cd",
+        "familyId": "36b16c07-7afe-48c6-a710-1d07785141cd"
+      },
+      "leaseId": "cap-734265b4-b150-44b7-9fb3-b3d921b0cdbd",
+      "queuedLeaseId": "cap-3ef08664-d691-4bf6-bda3-aec33d746e57",
+      "position": 1,
+      "reason": "Resource 'capture-helper' is claimed at fleet scope by capability 'recording' on slot 'macwork-ff-1' for 36b16c07-7afe-48c6-a710-1d07785141cd"
+    },
+    "queueVisible": {
+      "leaseState": "queued",
+      "wait": {
+        "kind": "scoped-claim",
+        "claimId": "capture-helper",
+        "scope": "fleet",
+        "blockingOwner": {
+          "runId": "36b16c07-7afe-48c6-a710-1d07785141cd",
+          "familyId": "36b16c07-7afe-48c6-a710-1d07785141cd"
+        },
+        "blockingLeaseId": "cap-734265b4-b150-44b7-9fb3-b3d921b0cdbd",
+        "enqueuedAt": "2026-09-07T02:15:07.749Z"
+      },
+      "claimWaiters": [
+        {
+          "claimId": "capture-helper",
+          "scope": "fleet",
+          "position": 1,
+          "leaseId": "cap-3ef08664-d691-4bf6-bda3-aec33d746e57",
+          "slotId": "macwork-ff-3",
+          "capabilityId": "recording",
+          "owner": {
+            "runId": "7d7f407a-e8b5-4a55-8824-7ebce44cb646",
+            "familyId": "7d7f407a-e8b5-4a55-8824-7ebce44cb646"
+          },
+          "enqueuedAt": "2026-09-07T02:15:07.749Z",
+          "blockingOwner": {
+            "runId": "36b16c07-7afe-48c6-a710-1d07785141cd",
+            "familyId": "36b16c07-7afe-48c6-a710-1d07785141cd"
+          },
+          "blockingLeaseId": "cap-734265b4-b150-44b7-9fb3-b3d921b0cdbd"
+        }
+      ]
+    },
+    "runResourceWait": {
+      "applyOk": false,
+      "outcome": "rejected",
+      "rejectionKind": "capability-unavailable",
+      "conflictKind": "scoped-wait",
+      "resourceWait": {
+        "capabilityId": "recording",
+        "claimId": "capture-helper",
+        "scope": "fleet",
+        "phase": "queued",
+        "blockingOwner": {
+          "runId": "36b16c07-7afe-48c6-a710-1d07785141cd",
+          "familyId": "36b16c07-7afe-48c6-a710-1d07785141cd"
+        },
+        "queuedLeaseId": "cap-3ef08664-d691-4bf6-bda3-aec33d746e57",
+        "position": 1,
+        "since": "2026-09-07T02:15:07.749Z",
+        "reason": "Resource 'capture-helper' is held at fleet scope by 36b16c07-7afe-48c6-a710-1d07785141cd"
+      }
+    },
+    "drained": {
+      "leaseId": "cap-3ef08664-d691-4bf6-bda3-aec33d746e57",
+      "state": "acquired",
+      "wait": null,
+      "promotionEvent": {
+        "kind": "acquiring",
+        "slotId": "macwork-ff-3",
+        "capabilityId": "recording",
+        "leaseId": "cap-3ef08664-d691-4bf6-bda3-aec33d746e57",
+        "owner": {
+          "runId": "7d7f407a-e8b5-4a55-8824-7ebce44cb646",
+          "familyId": "7d7f407a-e8b5-4a55-8824-7ebce44cb646"
+        },
+        "detail": "resource 'capture-helper' was released; reserved for the next run in the queue",
+        "at": "2026-09-07T02:15:10.353Z"
+      },
+      "holderReleaseEffects": ["The owner releases the exclusive recording-helper reservation"]
+    },
+    "waiterReleased": {
+      "ok": true,
+      "released": ["recording"]
+    },
+    "noLeftoverLeases": {
+      "macwork-ff-1": [],
+      "macwork-ff-3": []
+    }
   },
-  "blockedByAdmission": true,
+  "blockedByAdmission": false,
   "notCoveredLive": [
     "work-graph waitingOn.kind=resource projection (needs a graph-node run; unit-covered in services/gateway/src/work-graph/store.test.ts)",
     "android-device at fleet scope (no pool slot configures an android-device resource, so the provider is unavailable fleet-wide)"
   ],
-  "pass": false,
-  "error": "holder acquire refused (host-pressure): Load average 163.56 is above 1.5x 16 cores.",
+  "pass": true,
+  "error": null,
   "declaredClaim": {
     "id": "capture-helper",
     "access": "exclusive",
     "kind": "process",
     "scope": "fleet"
-  },
-  "hostLoadAtFailure": {
-    "cores": 16,
-    "load1": 158.451171875,
-    "perCore": 9.9
   }
 }

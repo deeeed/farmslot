@@ -30,7 +30,10 @@ import { isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { executeResourceControl, probeResourceStatus } from '../fleet/resource-manager.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { prepareRunPostureForValidation } from '../run-engine/resource-posture.js';
+import {
+  prepareRunPostureForValidation,
+  type PrepareRunPostureOutcome,
+} from '../run-engine/resource-posture.js';
 import { getRun } from '../runs/store.js';
 import {
   evaluateRuntimeCapabilityAdmission,
@@ -440,26 +443,85 @@ const registry = new RuntimeCapabilityRegistry({
  * Complete one granted reservation, off the registry's mutation lock.
  *
  * Detached because a provider boot takes minutes and the release that produced
- * the grant must not wait on it. Errors are handled, not swallowed: preparation
- * already records its own failure on the run's posture and rolls the lease back
- * through the registry, so the only thing left to report here is a throw the
- * run record could not absorb.
+ * the grant must not wait on it.
+ *
+ * Whatever happens, the reservation is settled. Preparation can be refused
+ * before it ever reaches the provider — host pressure, an archived run, a slot
+ * that no longer resolves, a park, a catalog read that throws — and every one of
+ * those used to leave the lease `acquiring` with the fleet claim held and
+ * nothing left to complete it, which locks every other slot out of that device
+ * for good. So the reservation is re-read afterwards: if it survived, the
+ * completion did not happen, and it is either put back at the head of its own
+ * queue (host pressure, which clears on its own) or rolled back so the next
+ * waiter is served.
  */
-async function completeGrantedClaim(grant: RuntimeCapabilityClaimGrant): Promise<void> {
+export async function completeGrantedClaim(grant: RuntimeCapabilityClaimGrant): Promise<void> {
+  let settlement: ReservationSettlement;
   try {
-    const outcome = await prepareRunPostureForValidation(grant.owner.runId);
-    if (!outcome.ok && !outcome.waiting) {
-      console.warn(
-        `[runtime-capabilities] granted '${grant.claimId}' to run ${grant.owner.runId} but preparation did not complete: ${outcome.reason}`,
-      );
-    }
-  } catch (error) {
-    console.warn(
-      `[runtime-capabilities] completing granted claim '${grant.claimId}' for run ${grant.owner.runId} threw: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+    settlement = reservationSettlement(
+      grant,
+      await prepareRunPostureForValidation(grant.owner.runId),
     );
+  } catch (error) {
+    settlement = reservationSettlement(grant, error);
   }
+  const settled = await registry.settleReservation(grant.leaseId, settlement);
+  // `not-reserved` is the ordinary outcome: the completing acquire took the
+  // lease over, so there is no reservation left and nothing to report.
+  if (settled === 'not-reserved') return;
+  console.warn(
+    `[runtime-capabilities] ${settled} the reservation of '${grant.claimId}' for run ${grant.owner.runId}: ${settlement.detail}`,
+  );
+}
+
+/** What to do with a reservation whose completion is over. */
+export interface ReservationSettlement {
+  requeue: boolean;
+  detail: string;
+}
+
+/**
+ * Decide what a finished completion attempt owes its reservation.
+ *
+ * Only the HOST-pressure refusal keeps the place in line: it is not about this
+ * run, it clears on its own, and the owner earned that place. Every other
+ * ending — a refusal about the run, a wait on some other capability, a throw —
+ * gives the claim back, because there is nothing left that will complete it and
+ * a held claim with no provider locks out every other slot.
+ *
+ * A successful outcome still asks: preparation walks the reserved requirement
+ * first, so `ok` normally means the lease was taken over and there is no
+ * reservation left to settle. If one IS still there, the claim was not the one
+ * that succeeded, and it must not be left behind.
+ */
+export function reservationSettlement(
+  grant: RuntimeCapabilityClaimGrant,
+  outcome: PrepareRunPostureOutcome | unknown,
+): ReservationSettlement {
+  if (outcome instanceof Error || !isPrepareOutcome(outcome)) {
+    return {
+      requeue: false,
+      detail: `completing reserved claim '${grant.claimId}' threw: ${
+        outcome instanceof Error ? outcome.message : String(outcome)
+      }`,
+    };
+  }
+  if (outcome.ok) {
+    return {
+      requeue: false,
+      detail: `preparation reported success but reserved claim '${grant.claimId}' was never completed`,
+    };
+  }
+  return {
+    requeue: outcome.conflict?.kind === 'host-pressure',
+    detail: outcome.waiting
+      ? `run ${grant.owner.runId} queued on another capability while '${grant.claimId}' was reserved for it: ${outcome.reason}`
+      : `preparation for reserved claim '${grant.claimId}' did not complete: ${outcome.reason}`,
+  };
+}
+
+function isPrepareOutcome(value: unknown): value is PrepareRunPostureOutcome {
+  return typeof value === 'object' && value !== null && 'ok' in value;
 }
 
 export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<void> {
@@ -472,6 +534,24 @@ export async function initRuntimeCapabilities(broadcast: BroadcastFn): Promise<v
           `[runtime-capabilities] keep-warm cleanup failed: ${(error as Error).message}`,
         );
       });
+      // The backstop for a completion that never got to settle its own
+      // reservation — the Gateway went down between the grant and the acquire,
+      // or the completer died. Without it that claim is held by a lease with no
+      // provider until someone notices by hand.
+      void registry.reclaimStaleReservations().then(
+        (reclaimed) => {
+          for (const lease of reclaimed) {
+            console.warn(
+              `[runtime-capabilities] reclaimed a stale reservation of '${lease.wait?.kind === 'scoped-claim' ? lease.wait.claimId : lease.capabilityId}' held for run ${lease.owner.runId} on slot ${lease.slotId}`,
+            );
+          }
+        },
+        (error: unknown) => {
+          console.warn(
+            `[runtime-capabilities] stale reservation sweep failed: ${(error as Error).message}`,
+          );
+        },
+      );
     }, 30_000);
     keepWarmCleanupTimer.unref();
   }
