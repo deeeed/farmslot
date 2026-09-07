@@ -51,6 +51,7 @@ import {
   type CredentialListParams,
   type CredentialRevokeParams,
   type DecisionResolveParams,
+  type DeviceInventoryParams,
   type DiagnosticsRunParams,
   type DispatchCandidatesParams,
   type DispatchMatchProjectParams,
@@ -383,6 +384,7 @@ import {
 import {
   resourceCleanup,
   resourceControl,
+  resourceDeviceInventory,
   resourceHealth,
   resourceList,
   resourcePressureHistory,
@@ -1241,6 +1243,8 @@ async function routeAuthorizedMethod(
       return machinePauseStatus((p as MachinePauseStatusParams).machine);
     case Methods.MACHINE_PAUSE_RESTORE:
       return machinePauseRestore(p as MachinePauseRestoreParams);
+    case Methods.RESOURCE_DEVICE_INVENTORY:
+      return resourceDeviceInventory(p as DeviceInventoryParams);
     case Methods.RUNTIME_CAPABILITY_LIST:
       return runtimeCapabilityList(p as RuntimeCapabilityListParams);
     case Methods.RUNTIME_CAPABILITY_ACQUIRE:

@@ -639,6 +639,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "resource.device.inventory": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center recipe replay device picker."
+    },
     "resource.health": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

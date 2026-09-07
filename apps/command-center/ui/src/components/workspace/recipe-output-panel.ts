@@ -46,6 +46,8 @@ export class RecipeOutputPanel extends LitElement {
   @property() targetKey = 'simulator';
   /** Device identity to re-target this rerun at; empty means the slot's own. */
   @property() targetValue = '';
+  /** Provider platform for the re-target; empty leaves the choice to the Gateway. */
+  @property() targetPlatform = '';
   @property({ type: Number }) playbackSlowMs = 0;
   @property({ type: Boolean }) recordVideo = false;
   @property({ type: Boolean }) showArtifactAction = false;
@@ -140,7 +142,7 @@ export class RecipeOutputPanel extends LitElement {
 
     try {
       const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
-      const retarget = recipeRerunTarget(this.targetKey, this.targetValue);
+      const retarget = recipeRerunTarget(this.targetKey, this.targetValue, this.targetPlatform);
       if (retarget.error) throw new Error(retarget.error);
       if (retarget.target) params.target = retarget.target;
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;

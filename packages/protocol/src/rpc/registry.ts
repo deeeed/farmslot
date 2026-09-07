@@ -233,6 +233,7 @@ export const Methods = {
   RESOURCE_WATCH_SET_ENABLED: 'resource.watch.setEnabled',
   RESOURCE_PRESSURE_SNAPSHOT: 'resource.pressure.snapshot',
   RESOURCE_PRESSURE_HISTORY: 'resource.pressure.history',
+  RESOURCE_DEVICE_INVENTORY: 'resource.device.inventory',
   SLOT_ACTION_LIST: 'slot.action.list',
   SLOT_ACTION_RUN: 'slot.action.run',
 

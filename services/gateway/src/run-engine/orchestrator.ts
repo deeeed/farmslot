@@ -372,22 +372,20 @@ function takePendingTerminalSlotRelease(runId: string): SlotReleaseParams | unde
 }
 
 /**
- * Record a failed advisory effect the way cancel does (ADR-053 parity).
+ * Report the advisory effects a terminal transition could not complete.
  *
- * The router publishes the terminal run before the awaited settle, so a settle
- * that failed leaves the backlog projection behind the run. `backlogReconcilePending`
- * is the durable repair marker: archive and delete refuse a marked run, and
- * restart reconciliation rebuilds the projection from it. Without this the
- * terminal paths published and then lost the settle silently, while cancel
- * repaired itself.
+ * It does NOT write `backlogReconcilePending` any more: `terminalPlan` writes
+ * that marker write-ahead, inside the same mutation as the terminal status, the
+ * way cancel always has (ADR-053 parity). Writing it here as well was both
+ * redundant and too late — a crash between the publish and the settle never
+ * reached this line, which is the exact case the marker exists for.
+ * `markBacklogRunObserved` clears it only after its own durable write, so a
+ * failed settle simply leaves it standing.
  */
 function recordTerminalTransitionEffects(runId: string, result: RunTransitionResult | null): void {
   if (!result) return;
   const failed = result.effects.filter((effect) => effect.status === 'failed');
   if (failed.length === 0) return;
-  if (failed.some((effect) => effect.name === 'backlog-settle') && getRun(runId)) {
-    updateRun(runId, { backlogReconcilePending: true });
-  }
   console.warn(
     `[run-engine] terminal transition for ${runId.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
       .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)

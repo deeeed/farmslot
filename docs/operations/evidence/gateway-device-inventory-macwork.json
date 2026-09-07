@@ -1,0 +1,237 @@
+{
+  "_note": "Live `resource.device.inventory` response from the dev gateway on this machine (MANUAL-000124). udid and adb_serial values are truncated to their last 8 characters. `configuredForSlots` is THIS machine pool wiring, not a fleet-wide fact: it is what pool/macwork.json happens to assign, and it changes whenever a slot is reconfigured.",
+  "machine": "macwork",
+  "slotId": "macwork-ff-4",
+  "devices": [
+    {
+      "platform": "android",
+      "key": "adb_serial",
+      "identity": "\u2026DF6001SP",
+      "name": "Pixel_6",
+      "state": "device",
+      "configuredForSlots": ["macwork-ff-1", "macwork-ff-3", "macwork-ff-4"]
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "audiolab",
+      "name": "audiolab",
+      "state": "available",
+      "configuredForSlots": ["macwork-audiolab-2"]
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "echobridge",
+      "name": "echobridge",
+      "state": "available"
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "mm-1",
+      "name": "mm-1",
+      "state": "available"
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "mm-2",
+      "name": "mm-2",
+      "state": "available"
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "playground-2",
+      "name": "playground-2",
+      "state": "available"
+    },
+    {
+      "platform": "android",
+      "key": "avd",
+      "identity": "sherpa-voice-2",
+      "name": "sherpa-voice-2",
+      "state": "available"
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "echodev-1",
+      "name": "echodev-1",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-echobridge-1"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "fs-4",
+      "name": "fs-4",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-ff-4"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-1",
+      "name": "mmdev-1",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-1"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-2",
+      "name": "mmdev-2",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-2"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-3",
+      "name": "mmdev-3",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-3"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-4",
+      "name": "mmdev-4",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-4"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-5",
+      "name": "mmdev-5",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-5"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "mmdev-6",
+      "name": "mmdev-6",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-mmdev-6"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "playground-1",
+      "name": "playground-1",
+      "state": "Shutdown",
+      "configuredForSlots": ["macwork-audiolab-1"]
+    },
+    {
+      "platform": "ios",
+      "key": "simulator",
+      "identity": "sherpa-voice-1",
+      "name": "sherpa-voice-1",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026EB1EFC6A",
+      "name": "mmdev-1",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026E7498588",
+      "name": "mmdev-6",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026E78767D3",
+      "name": "temp/recipe/runtime",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u20265FBE49E1",
+      "name": "mmdev-2",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u202662B231DC",
+      "name": "echodev-1",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u20262089803C",
+      "name": "iPhone 16",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026D3D5BB17",
+      "name": "mmdev-3",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u202632DC13AB",
+      "name": "mmdev-4",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u202651704C9B",
+      "name": "mmdev-5",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026A73F5C72",
+      "name": "playground-1",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u202612A240E4",
+      "name": "fs-4",
+      "state": "Shutdown"
+    },
+    {
+      "platform": "ios",
+      "key": "udid",
+      "identity": "\u2026A2E65809",
+      "name": "sherpa-voice-1",
+      "state": "Shutdown"
+    }
+  ],
+  "sources": [
+    {
+      "tool": "simctl",
+      "ok": true
+    },
+    {
+      "tool": "adb",
+      "ok": true
+    },
+    {
+      "tool": "emulator",
+      "ok": true
+    }
+  ],
+  "collectedAt": "2026-09-07T16:13:33.176Z",
+  "cached": false
+}

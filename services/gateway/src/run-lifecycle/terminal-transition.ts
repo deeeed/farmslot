@@ -142,7 +142,27 @@ export function terminalPlan(
 ): (transitionRequest: RunTransitionRequest, run: Run) => RunTransitionPlan {
   return () => ({
     before: [],
-    mutate: () => request.patch,
+    // Write-ahead repair marker, in the SAME durable write as the terminal
+    // status — ADR-053 parity with cancel, which has done this since it was
+    // written. The router publishes the terminal run before the awaited backlog
+    // settle, so archive and delete must see the marker synchronously and
+    // refuse eviction until `markBacklogRunObserved` clears it after its own
+    // durable write. Recording it only after a FAILED settle left a window
+    // where a crash between the publish and the settle lost the projection with
+    // nothing to rebuild it from.
+    //
+    // ONLY for a run linked to a backlog item. The marker's whole purpose is a
+    // backlog projection that can fall behind the run, and the only repair that
+    // rebuilds one — `reconcileBacklogLinks` — walks backlog ITEMS. An ad-hoc
+    // run has no item to walk from, so a marker on it could never be cleared by
+    // repair: a crash between the terminal persist and the settle left it
+    // standing forever, and `archiveRun`/`deleteRun` refuse a marked run. The
+    // load-time sweep clears any that predate this rule or arrive by another
+    // path.
+    mutate: (run) =>
+      (run.backlogItemId ?? request.patch.backlogItemId)
+        ? { ...request.patch, backlogReconcilePending: true }
+        : request.patch,
     after: terminalEffects(request.collaborators),
   });
 }

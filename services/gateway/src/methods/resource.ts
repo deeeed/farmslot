@@ -1,6 +1,8 @@
 // methods/resource.ts — resource.list + resource.control + resource.health handlers
 
 import {
+  type DeviceInventoryParams,
+  type DeviceInventoryResult,
   MachineHealth,
   ProcessOwnershipClass,
   ResourceCleanupParams,
@@ -27,6 +29,7 @@ import {
 } from '@farmslot/protocol';
 
 import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
+import { readDeviceInventory } from '../fleet/device-inventory.js';
 import { getNode } from '../fleet/machine-registry.js';
 import {
   getMachineHealth,
@@ -90,6 +93,21 @@ export async function resourceControl(
 export async function resourceHealth(params: ResourceHealthParams): Promise<ResourceHealthResult> {
   const results = await pollSlotResources(params.slotId, { probeInactiveSimulators: true });
   return { slotId: params.slotId, resources: results };
+}
+
+/**
+ * The devices available to a slot's machine (MANUAL-000124).
+ *
+ * Read-only, and it deliberately does NOT fail when a tool is missing: a host
+ * with no Xcode still has its Android devices enumerated, and each source says
+ * for itself whether it answered. Clients poll this, so it is served from a
+ * short per-machine cache unless `refresh` is set.
+ */
+export async function resourceDeviceInventory(
+  params: DeviceInventoryParams,
+): Promise<DeviceInventoryResult> {
+  if (!params.slotId) throw new Error('slotId is required');
+  return readDeviceInventory(params.slotId, { ...(params.refresh ? { refresh: true } : {}) });
 }
 
 /** Host-only pressure read for admission paths; never loads resources, tmux, runs, or census data.

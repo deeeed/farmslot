@@ -315,15 +315,16 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## resource.\*
 
-| Method                       | Surface       | CLI command                  | TUI | Note                                                                                                                                                 |
-| ---------------------------- | ------------- | ---------------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
-| `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
-| `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
-| `resource.cleanup`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
-| `resource.watch.setEnabled`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                       |
-| `resource.pressure.snapshot` | typed-command | `farmslot resource pressure` |     |                                                                                                                                                      |
-| `resource.pressure.history`  | rpc-only      |                              |     | Lightweight history-only read for fast Command Center first paint; the typed `farmslot resource pressure` command already renders the full snapshot. |
+| Method                       | Surface       | CLI command                  | TUI | Note                                                                                                                                                        |
+| ---------------------------- | ------------- | ---------------------------- | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resource.list`              | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
+| `resource.control`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
+| `resource.health`            | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
+| `resource.cleanup`           | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
+| `resource.watch.setEnabled`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                              |
+| `resource.pressure.snapshot` | typed-command | `farmslot resource pressure` |     |                                                                                                                                                             |
+| `resource.pressure.history`  | rpc-only      |                              |     | Lightweight history-only read for fast Command Center first paint; the typed `farmslot resource pressure` command already renders the full snapshot.        |
+| `resource.device.inventory`  | rpc-only      |                              |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center recipe replay device picker. |
 
 ## roadmap.\*
 

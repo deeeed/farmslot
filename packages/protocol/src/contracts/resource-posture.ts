@@ -6,6 +6,7 @@
  * the Gateway's decision — desired disposition, observed provider state, the
  * winning policy source — and never resolve policy themselves.
  */
+import type { DeviceInventoryKey } from './device-inventory.js';
 import type { MachinePauseEligibilityDetails } from './runs.js';
 import type {
   RuntimeCapabilityAcquireConflict,
@@ -132,6 +133,23 @@ export type ResourcePostureRejection =
       capabilityId: string;
       reason: string;
       conflict: RuntimeCapabilityAcquireConflict;
+    }
+  | {
+      /**
+       * A re-target named a device the slot's machine does not have
+       * (MANUAL-000124). Refused BEFORE the run's current device is released,
+       * so a typo costs the run nothing.
+       */
+      kind: 'device-unknown';
+      capabilityId: string;
+      /** The machine whose inventory was read. Device names are machine-scoped. */
+      machine: string;
+      /** The device-identity key the target named. */
+      key: DeviceInventoryKey;
+      identity: string;
+      /** Identities of the same key the machine does have, nearest first. */
+      nearest: string[];
+      reason: string;
     }
   | { kind: 'invalid-request'; reason: string };
 

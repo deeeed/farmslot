@@ -37,8 +37,11 @@ export const RUNNER_AGNOSTIC = true;
  * - `android-device` at fleet scope, for the reason above. It stays a
  *   config-only example in `projects/farmslot-farm/project.json`.
  */
-const CAPABILITY_ID = 'recording';
-const CLAIM_ID = 'capture-helper';
+// Defaults to the provider every farmslot-farm slot can drive. Set both env
+// values to prove a different fleet-scoped claim, e.g. CONTENTION_CAPABILITY=android-device
+// CONTENTION_CLAIM=android-device on two slots that share one physical device.
+const CAPABILITY_ID = process.env.CONTENTION_CAPABILITY ?? 'recording';
+const CLAIM_ID = process.env.CONTENTION_CLAIM ?? 'capture-helper';
 
 /** The queue drain hands the provider boot to a background resume; give it room. */
 const DRAIN_TIMEOUT_MS = 120_000;
@@ -140,7 +143,9 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     const report = explicit
       ? { runner: reportRunner, pass: false, error: requirement }
       : { runner: reportRunner, skipped: true, skipReason: requirement, pass: true };
-    const outPath = writeEvidence(report, SCENARIO_ID, reportRunner, outDir);
+    const evidenceId =
+      CAPABILITY_ID === 'recording' ? SCENARIO_ID : `${SCENARIO_ID}-${CAPABILITY_ID}`;
+    const outPath = writeEvidence(report, evidenceId, reportRunner, outDir);
     return {
       scenario: SCENARIO_ID,
       runner: reportRunner,

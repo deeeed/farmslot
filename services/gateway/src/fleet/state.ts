@@ -671,6 +671,14 @@ export function startFileWatcher(): void {
     poolDebounce = setTimeout(async () => {
       try {
         console.log('[state] pool config changed — triggering fleet refresh');
+        // The device inventory labels each device with the slots that configure
+        // it, which is read straight from pool JSON. Keeping a snapshot taken
+        // before this edit would show an operator the OLD wiring for up to the
+        // whole TTL, on the one surface whose job is telling them which slot
+        // owns a device. Imported lazily to keep the fleet module out of the
+        // inventory's import graph.
+        const { clearDeviceInventoryCache } = await import('./device-inventory.js');
+        clearDeviceInventoryCache();
         const { fleetRefresh } = await import('../methods/fleet.js');
         await fleetRefresh();
       } catch (err) {

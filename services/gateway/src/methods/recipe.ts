@@ -57,6 +57,7 @@ import {
 } from '../core/remote-paths.js';
 import { slotRealpath } from '../core/slot-io.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
+import { assertTargetInInventory } from '../fleet/device-inventory.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
   attachLiveRecipeContext,
@@ -1138,6 +1139,11 @@ function emitRecipeRerunStream(
 
 type CapabilityStatusReader = (slotId: string) => Promise<RuntimeCapabilityStatusResult>;
 
+/** The inventory read, injectable so the rule is testable without a machine. */
+export interface RecipeRerunTargetDeps {
+  assertTargetInInventory: typeof assertTargetInInventory;
+}
+
 /**
  * Rewrite the run's stored proof plan so this rerun acquires the named device
  * (ADR-054 item 3). The plan is the registry's, not the client's: the target
@@ -1149,6 +1155,7 @@ async function retargetedProofRequirements(
   runId: string,
   target: RuntimeCapabilityTarget,
   capabilityStatus: CapabilityStatusReader,
+  deps: RecipeRerunTargetDeps,
 ): Promise<RuntimeCapabilityProofRequirement[]> {
   const run = getRun(runId);
   if (!run?.slotId) {
@@ -1161,6 +1168,20 @@ async function retargetedProofRequirements(
     target,
   );
   if (!outcome.ok) throw new Error(`Recipe rerun target rejected: ${outcome.reason}`);
+  // The inventory check, BEFORE `prepareRunPostureForValidation` releases the
+  // device this run is holding (MANUAL-000124). A typo previously cost the run
+  // its device and gave it nothing back, because the only validator was the
+  // provider's own boot — which runs after the release.
+  //
+  // Fails open by construction: `assertTargetInInventory` returns null when the
+  // tool that answers for the key did not run, and the provider's boot is still
+  // the closed door behind it. `onUnreadable` is where that is recorded rather
+  // than passed over in silence.
+  const refusal = await deps.assertTargetInInventory(run.slotId, target, {
+    onUnreadable: (reason) =>
+      console.warn(`[recipe] rerun ${runId.slice(0, 8)} target not pre-checked: ${reason}`),
+  });
+  if (refusal) throw new Error(`Recipe rerun target rejected: ${refusal.reason}`);
   return outcome.value;
 }
 
@@ -1180,9 +1201,10 @@ export async function assertRecipeRerunProofCapabilities(
   /** The registry read that supplies the stored proof plan and the catalog. */
   capabilityStatus: CapabilityStatusReader = (slotId) =>
     getRuntimeCapabilityRegistry().status({ slotId }),
+  deps: RecipeRerunTargetDeps = { assertTargetInInventory },
 ): Promise<RecipeRerunPreflightOutcome> {
   const proofRequirements = target
-    ? await retargetedProofRequirements(runId, target, capabilityStatus)
+    ? await retargetedProofRequirements(runId, target, capabilityStatus, deps)
     : undefined;
   const posture = await prepareRunPostureForValidation(runId, proofRequirements, reconciler);
   if (posture.ok) return { ready: true };

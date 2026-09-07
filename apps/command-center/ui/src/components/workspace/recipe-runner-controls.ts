@@ -1,8 +1,17 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { RecipeCommandParams, RecipeCommandResult } from '@farmslot/protocol';
-import { Methods, RUNTIME_CAPABILITY_TARGET_KEYS } from '@farmslot/protocol';
+import type {
+  DeviceInventoryParams,
+  DeviceInventoryResult,
+  RecipeCommandParams,
+  RecipeCommandResult,
+} from '@farmslot/protocol';
+import {
+  DEVICE_INVENTORY_PLATFORMS,
+  Methods,
+  RUNTIME_CAPABILITY_TARGET_KEYS,
+} from '@farmslot/protocol';
 
 import './recipe-output-panel.js';
 
@@ -11,8 +20,12 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 
 import type { RecipeOutputPanel } from './recipe-output-panel.js';
+import { deviceTargetChoices, RECIPE_TARGET_OTHER } from './recipe-rerun-target.js';
 
 const COPY_COMMAND = 'copied';
+
+/** How often the device list is refreshed while the controls are on screen. */
+const INVENTORY_POLL_MS = 30_000;
 
 @customElement('recipe-runner-controls')
 export class RecipeRunnerControls extends LitElement {
@@ -35,10 +48,24 @@ export class RecipeRunnerControls extends LitElement {
   @property() targetKey = 'simulator';
   /** Device identity for this replay; empty replays on the slot's own device. */
   @property() targetValue = '';
+  /**
+   * Provider platform for this replay; empty leaves the choice to the Gateway.
+   *
+   * Offered because `recipe.rerun` has always accepted it and a fleet can hold
+   * both an iOS and an Android provider in one proof plan — the Gateway refuses
+   * an ambiguous target, and this is what lets an operator resolve it.
+   */
+  @property() targetPlatform = '';
   @property({ type: Boolean }) showArtifactAction = false;
   @property({ type: Boolean }) disabled = false;
 
   @state() private _running = false;
+  /** The machine's devices, or null until the first read answers. */
+  @state() private _inventory: DeviceInventoryResult | null = null;
+  @state() private _inventoryError = '';
+  /** True while the operator is typing an identity the picker did not offer. */
+  @state() private _typingIdentity = false;
+  private _inventoryTimer: ReturnType<typeof setInterval> | null = null;
   @state() private _copyFeedback = '';
   @state() private _copyError = '';
   private readonly _copyFeedbackTimer = new CopyFeedbackTimer({
@@ -52,9 +79,55 @@ export class RecipeRunnerControls extends LitElement {
     return this._running;
   }
 
+  override connectedCallback() {
+    super.connectedCallback();
+    // Read immediately as well as on the interval. Riding on `updated()` seeing
+    // `slotId` meant a disconnect and reconnect with an unchanged slot waited a
+    // full poll period with no device list.
+    void this._loadInventory();
+    this._inventoryTimer = setInterval(() => void this._loadInventory(), INVENTORY_POLL_MS);
+  }
+
   override disconnectedCallback() {
     super.disconnectedCallback();
     this._copyFeedbackTimer.clear();
+    if (this._inventoryTimer) clearInterval(this._inventoryTimer);
+    this._inventoryTimer = null;
+  }
+
+  override updated(changed: Map<string, unknown>) {
+    // The inventory is machine-scoped and the slot is what names the machine, so
+    // it is re-read when the slot changes and never before one is set.
+    if (changed.has('slotId')) {
+      this._inventory = null;
+      void this._loadInventory();
+    }
+  }
+
+  /**
+   * Read the devices this slot's machine has (MANUAL-000124).
+   *
+   * A failure is recorded and shown, not thrown: the free-text field is the
+   * documented fallback for a machine whose inventory cannot be read, and the
+   * Gateway still refuses an identity its own inventory contradicts.
+   */
+  private async _loadInventory() {
+    if (!this.slotId) return;
+    const slotId = this.slotId;
+    try {
+      const params: DeviceInventoryParams = { slotId };
+      const result = await gateway.request<DeviceInventoryResult>(
+        Methods.RESOURCE_DEVICE_INVENTORY,
+        params,
+      );
+      if (this.slotId !== slotId) return;
+      this._inventory = result;
+      this._inventoryError = '';
+    } catch (error) {
+      if (this.slotId !== slotId) return;
+      this._inventory = null;
+      this._inventoryError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   private _setRunning(running: boolean) {
@@ -110,6 +183,27 @@ export class RecipeRunnerControls extends LitElement {
   override render() {
     const canRun = Boolean(this.runId && this.slotId && !this.disabled && !this._running);
     const canCopy = Boolean(this.runId && this.slotId && !this.disabled);
+    const choices = deviceTargetChoices(this._inventory?.devices ?? [], this.targetKey);
+    // The picker may only render a value it can DISPLAY. An identity typed
+    // before the inventory answered — or one the machine stopped listing — has
+    // no matching option, so the browser would show the first option, "slot
+    // default", while Replay still sent what was typed. The control whose whole
+    // job is preventing a mis-target would then be the thing hiding one, so the
+    // free-text field stays until the value is one the picker can show.
+    const identityIsOffered =
+      this.targetValue === '' || choices.some((choice) => choice.identity === this.targetValue);
+    const showPicker = choices.length > 0 && !this._typingIdentity && identityIsOffered;
+    // Says which of the three the operator is looking at: a picker, a fallback
+    // because the machine listed nothing for this key, or a fallback because the
+    // inventory itself could not be read. Silence would make the last two look
+    // like "this machine has no devices".
+    const inventoryNote = this._inventoryError
+      ? `Device list unavailable (${this._inventoryError}); type the identity.`
+      : this._inventory && choices.length === 0
+        ? `${this._inventory.machine} lists no ${this.targetKey}; type the identity.`
+        : !identityIsOffered && this._inventory
+          ? `${this._inventory.machine} does not list '${this.targetValue}'; it will be sent as typed.`
+          : '';
     return html`
       <div
         style="display:flex; align-items:center; justify-content:space-between; gap:${spacing.sm}; flex-wrap:wrap; padding:${spacing.sm}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.md}; background:${colors.bgSurface};"
@@ -168,6 +262,11 @@ export class RecipeRunnerControls extends LitElement {
               style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono};"
               @change=${(event: Event) => {
                 this.targetKey = (event.target as HTMLSelectElement).value;
+                // An identity belongs to its key. Carrying `fs-4` from
+                // `simulator` over to `adb_serial` would send a serial that
+                // names nothing, and the inventory would refuse it.
+                this.targetValue = '';
+                this._typingIdentity = false;
               }}
             >
               ${RUNTIME_CAPABILITY_TARGET_KEYS.filter((key) => key !== 'platform').map(
@@ -175,19 +274,85 @@ export class RecipeRunnerControls extends LitElement {
                   html`<option value=${key} ?selected=${this.targetKey === key}>${key}</option>`,
               )}
             </select>
-            <input
-              data-testid="recipe-target-value"
-              type="text"
-              placeholder="slot default"
-              size="18"
-              .value=${this.targetValue}
+            ${showPicker
+              ? html`
+                  <select
+                    data-testid="recipe-target-identity"
+                    ?disabled=${this._running || this.disabled}
+                    style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono}; max-width:260px;"
+                    @change=${(event: Event) => {
+                      const picked = (event.target as HTMLSelectElement).value;
+                      if (picked === RECIPE_TARGET_OTHER) {
+                        this._typingIdentity = true;
+                        this.targetValue = '';
+                        return;
+                      }
+                      this.targetValue = picked;
+                    }}
+                  >
+                    <option value="" ?selected=${this.targetValue === ''}>slot default</option>
+                    ${choices.map(
+                      (choice) =>
+                        html`<option
+                          value=${choice.identity}
+                          ?selected=${this.targetValue === choice.identity}
+                        >
+                          ${choice.label}
+                        </option>`,
+                    )}
+                    <option value=${RECIPE_TARGET_OTHER}>Other…</option>
+                  </select>
+                `
+              : html`
+                  <input
+                    data-testid="recipe-target-value"
+                    type="text"
+                    placeholder="slot default"
+                    size="18"
+                    .value=${this.targetValue}
+                    ?disabled=${this._running || this.disabled}
+                    style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono};"
+                    @input=${(event: Event) => {
+                      this.targetValue = (event.target as HTMLInputElement).value;
+                    }}
+                  />
+                  ${choices.length > 0
+                    ? html`<button
+                        data-testid="recipe-target-pick"
+                        style="border:none; background:none; color:${colors.textMuted}; font-family:${fonts.mono}; font-size:${fonts.sizeXs}; cursor:pointer; text-decoration:underline;"
+                        @click=${() => {
+                          this._typingIdentity = false;
+                          this.targetValue = '';
+                        }}
+                      >
+                        pick
+                      </button>`
+                    : nothing}
+                `}
+            <select
+              data-testid="recipe-target-platform"
               ?disabled=${this._running || this.disabled}
               style="background:${colors.bgCard}; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; padding:4px 6px; font-family:${fonts.mono};"
-              @input=${(event: Event) => {
-                this.targetValue = (event.target as HTMLInputElement).value;
+              @change=${(event: Event) => {
+                this.targetPlatform = (event.target as HTMLSelectElement).value;
               }}
-            />
+            >
+              <option value="" ?selected=${this.targetPlatform === ''}>any platform</option>
+              ${DEVICE_INVENTORY_PLATFORMS.map(
+                (platform) =>
+                  html`<option value=${platform} ?selected=${this.targetPlatform === platform}>
+                    ${platform}
+                  </option>`,
+              )}
+            </select>
           </label>
+          ${inventoryNote
+            ? html`<span
+                data-testid="recipe-target-inventory-note"
+                style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"
+                >${inventoryNote}</span
+              >`
+            : nothing}
           ${this.showArtifactAction
             ? html`
                 <label
@@ -244,6 +409,7 @@ export class RecipeRunnerControls extends LitElement {
             recipeRunId=${this.recipeRunId}
             .targetKey=${this.targetKey}
             .targetValue=${this.targetValue}
+            .targetPlatform=${this.targetPlatform}
             .playbackSlowMs=${this.playbackSlowMs}
             .recordVideo=${this.recordVideo}
             .showArtifactAction=${this.showArtifactAction}

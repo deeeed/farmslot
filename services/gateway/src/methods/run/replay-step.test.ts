@@ -29,6 +29,20 @@ import {
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
 
+/**
+ * Teardown eviction for a run these fixtures force-settle themselves.
+ *
+ * Deliberately does NOT clear `backlogReconcilePending`. These runs carry no
+ * backlog item, and a terminal transition only marks a run that has one, so
+ * there is nothing here for `deleteRun` to refuse. Clearing it anyway would
+ * paper over exactly the regression this fixture is positioned to catch.
+ */
+async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Promise<void> {
+  if (!getRun(runId)) return;
+  updateRun(runId, { status, completedAt: new Date().toISOString() });
+  await deleteRun(runId);
+}
+
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
     freshDispatchEngineStateForReplay(
@@ -112,8 +126,7 @@ test('an unreadable adoption probe fails the replay closed', async (t) => {
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
   updateRun(run.id, {
@@ -158,8 +171,7 @@ test('a requested fresh dispatch skips adoption instead of failing on the probe'
     if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
   updateRun(run.id, {
@@ -204,8 +216,7 @@ test('an adopted dispatch stays failed until the replay claims its slot', async 
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
   updateRun(run.id, {
@@ -258,8 +269,7 @@ test('a requested fresh dispatch never adopts a signal, readable or not', async 
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
   updateRun(run.id, {
@@ -371,8 +381,7 @@ test('runReplayStep abandons a retained handoff and re-enters normal dispatch', 
     if (priorStatus == null) await rm(statusFile, { force: true });
     else await writeFile(statusFile, priorStatus);
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -651,8 +660,7 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -689,8 +697,7 @@ test('a replay that fails validation leaves the re-queued node intact', async (t
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -754,8 +761,7 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -930,8 +936,7 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -996,8 +1001,7 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -1029,8 +1033,7 @@ test('runReplayStep rejects monitor replay when dispatch is still running', asyn
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
   await assert.rejects(
@@ -1047,8 +1050,7 @@ test('runReplayStep rejects non-authorized triggeredBy actor before replay', asy
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
   await assert.rejects(
@@ -1072,8 +1074,7 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
   const events: any[] = [];
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
     if (getRun(badTicketRun.id)) {
       updateRun(badTicketRun.id, { status: 'failed', completedAt: new Date().toISOString() });
@@ -1138,8 +1139,7 @@ test('runReplayStep allows prepare replay for backlog-dispatched MANUAL-* runs',
     if (priorStatus == null) await rm(statusFile, { force: true });
     else await writeFile(statusFile, priorStatus);
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1157,8 +1157,7 @@ test('runReplayStep still rejects MANUAL-* replay without backlogItemId', async 
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1176,8 +1175,7 @@ test('runReplayStep still rejects PR-bound replays without a linked prNumber', a
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1196,8 +1194,7 @@ test('runReplayStep still rejects write-task replay for chained PR-bound runs wi
   });
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1238,8 +1235,7 @@ test('runReplayStep allows chained PR-bound replays when prNumber is already lin
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'cancelled');
     }
   });
 
@@ -1273,8 +1269,7 @@ test('runReplayStep restores taskFile from completed write-task output for downs
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1306,8 +1301,7 @@ test('runReplayStep moves terminal runs back to the active replay phase immediat
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1352,8 +1346,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1536,8 +1529,7 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1611,8 +1603,7 @@ test('runReplayStep clears stale publish approval when replaying human gate', as
   t.after(async () => {
     cancelRunEngine(run.id);
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1672,8 +1663,7 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   t.after(async () => {
     cancelRunEngine(run.id);
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1807,8 +1797,7 @@ test('runReplayStep drops a stale monitor decision when replaying from prepare',
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -1857,8 +1846,7 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -2080,8 +2068,7 @@ test('runReplayStep preserves resolved publish approvals for post-gate publish r
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -2127,8 +2114,7 @@ test('runReplayStep keeps unresolved decisions for no-human-gate finalize retrie
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -2163,8 +2149,7 @@ test('runReplayStep rejects monitor replay when dispatch is still pending', asyn
 
   t.after(async () => {
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
@@ -2277,8 +2262,7 @@ test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', 
     if (priorStatus == null) await rm(statusFile, { force: true });
     else await writeFile(statusFile, priorStatus);
     if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
+      await evictTestRun(run.id, 'failed');
     }
   });
 
