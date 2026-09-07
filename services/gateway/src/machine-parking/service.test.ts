@@ -2862,6 +2862,61 @@ test('a slot that is merely preparing is waited for, never re-homed off', async 
   assert.equal(ctx.slotOwners.get('slot-b'), undefined, 'no candidate was touched');
 });
 
+test('a repair whose claim races does not drag the run back off its home', async () => {
+  const ctx = await rehomeHarness();
+  const { preview } = await previewFreedRestore(ctx);
+  // The torn state: the record's move is durable, the run's is not.
+  ctx.failRunSlotPersist.value = true;
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-before-repair',
+  });
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotId, 'slot-b');
+  assert.equal(ctx.runs.get('run-gate')!.slotId, 'slot-a', 'the run is behind the record');
+
+  // The repair re-enters the rebind with the record ALREADY at slot-b, lands
+  // the run write, and then loses the claim. Rolling back there would put the
+  // run back on slot-a and re-create the torn state the repair exists to
+  // close — on every retry, forever.
+  ctx.failRunSlotPersist.value = false;
+  ctx.failClaims.add('slot-b');
+  await ctx.service.reconcile();
+
+  const after = ctx.runs.get('run-gate')!;
+  assert.equal(after.park!.slotId, 'slot-b', 'the record stayed on its home');
+  assert.equal(after.slotId, 'slot-b', 'and the run converged onto it');
+  assert.equal(after.park!.rehome?.fromSlotId, 'slot-a');
+  assert.equal(after.park!.rehome?.toSlotId, 'slot-b');
+
+  // With the claim race gone, the repair finishes the rest.
+  ctx.failClaims.delete('slot-b');
+  await ctx.service.reconcile();
+  assert.equal(ctx.slotOwners.get('slot-b'), 'run-gate');
+  assert.equal(ctx.workspaces.get('slot-b')?.branch, 'work/run-gate');
+});
+
+test('a partial after a re-home names the slot the transition reached', async () => {
+  const ctx = await rehomeHarness();
+  // The rebind lands on slot-b and the checkout then fails, so the call
+  // settles `partial` with the record homed somewhere other than where it
+  // started.
+  ctx.failReattach.add('slot-b');
+
+  const refused = await ctx.service.restoreForGateResolution('run-gate');
+
+  assert.equal(refused.ok, false);
+  assert.equal(refused.ok === false && refused.code, 'RESTORE_PARTIAL');
+  // The POST-transition slot. Reporting the snapshot taken before the call
+  // would name slot-a — the one a successor holds — which is exactly where an
+  // operator reading this refusal would go looking for their run.
+  assert.equal(refused.slotId, 'slot-b');
+  assert.equal(ctx.runs.get('run-gate')!.park!.slotId, 'slot-b');
+});
+
 test('a machine refusing dispatches under pressure is not re-homed onto', async () => {
   const ctx = await rehomeHarness();
   // A re-home IS a dispatch onto a slot, so it takes the same admission gate a

@@ -1576,18 +1576,22 @@ async function runGateParkRehomeScenario({ runner, runId, timeoutMs, outDir }) {
       const blockedPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
       const blockedEntry = selectedRun(blockedPreview, runId);
       const attempt = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id, timeoutMs);
-      const attemptOutput = `${attempt.stdout}${attempt.stderr}`;
-      const stillPending = pendingGateDecision(rpc('run.get', { runId }).run);
+      // ONE read after the attempt, and the record is what the assertions use.
+      // The CLI's stdout is prose around the same verdict; matching it would
+      // pass on a message that happened to quote a code and tell us nothing
+      // about what the Gateway durably decided.
+      const afterAttempt = rpc('run.get', { runId }).run;
+      const refusal = afterAttempt.park?.restoreRefusal ?? null;
       report.rehomeRefusedNoTarget = {
         filledSlots: fillRunIds,
         previewCode: blockedEntry?.eligibility.code ?? null,
         previewTarget: blockedEntry?.restoreTarget ?? null,
         resolveExit: attempt.status,
-        decisionStillPending: stillPending?.id === decision.id,
+        decisionStillPending: pendingGateDecision(afterAttempt)?.id === decision.id,
         recordAfter: {
-          phase: rpc('run.get', { runId }).run.park?.phase ?? null,
-          slotId: rpc('run.get', { runId }).run.park?.slotId ?? null,
-          restoreRefusal: rpc('run.get', { runId }).run.park?.restoreRefusal ?? null,
+          phase: afterAttempt.park?.phase ?? null,
+          slotId: afterAttempt.park?.slotId ?? null,
+          restoreRefusal: refusal,
         },
       };
       if (!TAKEN_REFUSAL_CODES.has(blockedEntry?.eligibility.code)) {
@@ -1598,9 +1602,9 @@ async function runGateParkRehomeScenario({ runner, runId, timeoutMs, outDir }) {
       if (attempt.status === 0) {
         throw new Error('answering the gate with nowhere to re-home to did not refuse');
       }
-      if (!attemptOutput.includes(blockedEntry.eligibility.code)) {
+      if (refusal?.code !== blockedEntry.eligibility.code) {
         throw new Error(
-          `the gate answer refused with something other than the previewed code: ${attemptOutput.slice(0, 400)}`,
+          `the record recorded '${refusal?.code ?? 'no refusal'}', not the previewed '${blockedEntry.eligibility.code}'`,
         );
       }
       if (!report.rehomeRefusedNoTarget.decisionStillPending) {

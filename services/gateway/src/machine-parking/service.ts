@@ -72,7 +72,7 @@ import {
   resolveSlotResources,
 } from '../fleet/resource-manager.js';
 import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
-import { capturePressureAdmissionDecisionsLightweight } from '../methods/dispatch.js';
+import { capturePressureAdmissionDecisionsLightweight } from '../methods/dispatch/pressure-admission.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import {
   activeRunSlotIds,
@@ -174,17 +174,18 @@ interface RehomeRollback {
   recoveryHandle: MachinePauseRecoveryHandle | null;
 }
 
-interface RestoreSlotTarget {
-  slotId: string;
-  /** Why the original could not take the run back. Absent when it could. */
-  reason?: string;
-  /** Present only for a re-home; the handle re-bound to the target's session. */
-  handle?: MachinePauseRecoveryHandle;
-  /** The host plan the resolver already proved on this target, if it proved one. */
-  host?: RunnerParkHostPlan;
-  /** Whether the resolver already proved the preserved workspace at this target. */
-  workspaceProved?: boolean;
-}
+type RestoreSlotTarget =
+  | { kind: 'original'; slotId: string }
+  | {
+      kind: 'rehome';
+      slotId: string;
+      /** Why the original could not take the run back. */
+      reason: string;
+      /** The handle re-bound to the target's tmux session. */
+      handle: MachinePauseRecoveryHandle;
+      /** The host plan the resolver proved on this target, so the preview reuses it. */
+      host: RunnerParkHostPlan;
+    };
 
 export interface MachineParkingDependencies {
   now(): string;
@@ -199,7 +200,7 @@ export interface MachineParkingDependencies {
    * every later step — the workspace checkout, the resource observation, the
    * runner reload — resolves its target through one or the other.
    */
-  setRunSlot(runId: string, slotId: string): Run;
+  setRunSlot(runId: string, slotId: string | null): Run;
   /** Runner-declared: does a persisted session resolve outside its recorded workspace. */
   sessionPortability(runnerId: string): SessionPortability;
   /**
@@ -2309,7 +2310,9 @@ export class MachineParkingService {
     { ok: true; target: RestoreSlotTarget } | { ok: false; code: string; reason: string }
   > {
     const availability = await this.slotAcceptsRestore(record.slotId, run.id);
-    if (availability.ok) return { ok: true, target: { slotId: record.slotId } };
+    if (availability.ok) {
+      return { ok: true, target: { kind: 'original', slotId: record.slotId } };
+    }
     // Only a slot another run HOLDS is worth leaving. A preparing or
     // mid-release row is still this run's, and re-homing off it would give up a
     // slot that is about to come back while telling the operator a successor
@@ -2323,19 +2326,20 @@ export class MachineParkingService {
     }
     const rehome = await this.resolveRehomeTarget(run, record, fleet, availability.reason);
     if (!rehome.ok) return rehome;
+    // A re-home carries its handle AND the proofs the resolver just ran, as one
+    // shape: repeating them in the preview costs a second round of git and tmux
+    // reads per candidate AND asks the same question twice, which can answer
+    // differently and leave a preview refusing a target its own resolver
+    // approved. The union is what makes "a handle without its host plan"
+    // unrepresentable rather than merely unlikely.
     return {
       ok: true,
       target: {
+        kind: 'rehome',
         slotId: rehome.slotId,
         reason: availability.reason,
         handle: rehome.handle,
-        // The proofs the resolver just ran on this candidate, carried rather
-        // than re-run. Repeating them in the preview costs a second round of
-        // git and tmux reads per candidate AND asks the same question twice —
-        // which can answer differently, leaving a preview that reports a target
-        // its own resolver refused.
         host: rehome.host,
-        workspaceProved: true,
       },
     };
   }
@@ -2605,12 +2609,12 @@ export class MachineParkingService {
           fromSlotId: current.rehome?.fromSlotId ?? record.slotId,
           toSlotId: target.slotId,
           at: this.deps.now(),
-          reason: target.reason ?? 'the original slot was taken',
+          reason: target.kind === 'rehome' ? target.reason : 'the original slot was taken',
         } satisfies MachineParkRehome,
         // The handle names the target slot's tmux session now. Persisted here
         // because `restoreOne` reads the record's handle for the reload, and a
         // handle still naming the old session would refuse every host check.
-        ...(target.handle ? { recoveryHandle: structuredClone(target.handle) } : {}),
+        ...(target.kind === 'rehome' ? { recoveryHandle: structuredClone(target.handle) } : {}),
       }));
     }
     // Keyed on the RUN, and deliberately outside the branch above.
@@ -2638,13 +2642,18 @@ export class MachineParkingService {
         : null;
     if (owner !== runId) {
       if (!(await this.deps.claimSlotOwnership(this.requireRun(runId), target.slotId))) {
+        // Only when THIS stage moved the record. A repair re-enters with the
+        // record already at the target and the run possibly behind it, and
+        // rolling back there would drag the record back to a slot the run does
+        // not hold — re-creating the torn state the repair exists to close, on
+        // every retry. Nothing to undo means nothing to undo.
         // The CAS lost. Everything the write-ahead moved is rolled back inside
         // this same stage, because leaving it is worse than never having tried:
         // the record, the run and the handle would all name a slot this run
         // does not own, and the next attempt would re-home FROM that slot —
         // discarding the true original, which is the sole key for dispatch's
         // detached-HEAD exemption on the tree that actually holds the commit.
-        await this.rollBackRehome(runId, before);
+        if (target.slotId !== before.slotId) await this.rollBackRehome(runId, before);
         throw new Error(`slot '${target.slotId}' could not be re-bound to run '${runId}'`);
       }
     }
@@ -2673,7 +2682,7 @@ export class MachineParkingService {
       recoveryHandle: before.recoveryHandle ? structuredClone(before.recoveryHandle) : null,
     }));
     if (this.requireRun(runId).slotId !== before.runSlotId) {
-      this.deps.setRunSlot(runId, before.runSlotId!);
+      this.deps.setRunSlot(runId, before.runSlotId);
       await this.deps.persistRun(this.requireRun(runId), 'machine-park-restore-rehome-rollback');
     }
   }
@@ -2909,7 +2918,7 @@ export class MachineParkingService {
           | { ok: true; target: RestoreSlotTarget }
           | { ok: false; code: string; reason: string } = freed
           ? await this.resolveRestoreSlotTarget(run, record, fleet)
-          : { ok: true, target: { slotId: record.slotId } };
+          : { ok: true, target: { kind: 'original', slotId: record.slotId } };
         const restoreTarget: MachinePauseRestoreTarget = {
           slotId: resolved.ok ? resolved.target.slotId : record.slotId,
           originalSlotId: parkOriginalSlotId(record),
@@ -2972,7 +2981,7 @@ export class MachineParkingService {
           // proved the target — including, for a re-home, that its workspace
           // and host can take the run — so its refusal is the verdict.
           if (!resolved.ok) return reject(resolved.code, resolved.reason);
-          const rehoming = resolved.target.slotId !== record.slotId;
+          const rehoming = resolved.target.kind === 'rehome';
           // The run as it would be at the target. For the ordinary restore this
           // IS the run; for a re-home it is what asks the checks below about the
           // slot the restore is going to rather than the one it is leaving.
@@ -2982,7 +2991,7 @@ export class MachineParkingService {
           // again costs a second round of git and tmux reads per candidate and
           // can answer differently, which would leave the preview refusing a
           // target its own resolver just approved.
-          if (!resolved.target.workspaceProved && record.preservedWorkspace?.detachedAt) {
+          if (resolved.target.kind === 'original' && record.preservedWorkspace?.detachedAt) {
             const workspace = await this.inspectRestoreWorkspace(
               runAtTarget,
               record.preservedWorkspace,
@@ -2999,12 +3008,13 @@ export class MachineParkingService {
           // persisted session and the runner's declared reload — the pane is a
           // host the restore re-creates.
           const host =
-            resolved.target.host ??
-            (await this.deps.inspectParkHost(
-              runAtTarget,
-              record.recoveryHandle!,
-              await this.parkHostOwnership(run, record),
-            ));
+            resolved.target.kind === 'rehome'
+              ? resolved.target.host
+              : await this.deps.inspectParkHost(
+                  runAtTarget,
+                  record.recoveryHandle!,
+                  await this.parkHostOwnership(run, record),
+                );
           if (!host.ok) {
             return reject(MachineParkEligibilityCodes.restoreRunnerReloadFailed, host.reason);
           }
@@ -3017,11 +3027,12 @@ export class MachineParkingService {
               code: rehoming
                 ? MachineParkEligibilityCodes.restoreRehomed
                 : 'ELIGIBLE_FREED_SLOT_RESTORE',
-              reason: rehoming
-                ? `${resolved.target.reason ?? 'The original slot is taken'}; the run will be restored into '${resolved.target.slotId}' with its preserved branch checked out there.`
-                : host.disposition === 'exact'
-                  ? 'The freed slot is still free and the persisted runner session is reloadable in place.'
-                  : 'The freed slot is still free and the persisted runner session will be re-hosted on a new pane.',
+              reason:
+                resolved.target.kind === 'rehome'
+                  ? `${resolved.target.reason}; the run will be restored into '${resolved.target.slotId}' with its preserved branch checked out there.`
+                  : host.disposition === 'exact'
+                    ? 'The freed slot is still free and the persisted runner session is reloadable in place.'
+                    : 'The freed slot is still free and the persisted runner session will be re-hosted on a new pane.',
             },
             restoreTarget,
             record,
@@ -3109,10 +3120,10 @@ export class MachineParkingService {
           // just approved, and approving on the original's host would prove
           // nothing about the slot the reload will actually run in.
           const target = restoreTargets.get(item.runId);
-          const rehoming = Boolean(target && target.slotId !== item.record.slotId);
+          const rehoming = target?.kind === 'rehome';
           const host = await this.deps.inspectParkHost(
-            rehoming ? { ...run, slotId: target!.slotId } : run,
-            target?.handle ?? item.record.recoveryHandle,
+            rehoming ? { ...run, slotId: target.slotId } : run,
+            rehoming ? target.handle : item.record.recoveryHandle,
             rehoming ? undefined : await this.parkHostOwnership(run, item.record),
           );
           if (!host.ok) throw new Error(host.reason);
@@ -4152,7 +4163,14 @@ export class MachineParkingService {
       // The record already names its home, so this is a plain re-drive rather
       // than a fresh selection: repair finishes the transition that was chosen,
       // it does not choose again.
-      await this.rebindSlotStage(record.runId, run.park, operationId, { slotId: homedSlotId });
+      await this.rebindSlotStage(record.runId, run.park, operationId, {
+        // `original` because the record already NAMES its home: repair finishes
+        // the transition that was chosen, it never chooses again — and it must
+        // not look like a fresh move, or the rollback would fire on a claim
+        // race and drag the record back off the slot it is homed to.
+        kind: 'original',
+        slotId: homedSlotId,
+      });
       await this.reattachWorkspaceStage(record.runId, operationId);
     } catch (error) {
       await this.appendError(record.runId, 'resources-restoring', 'slot.rebind', error);
