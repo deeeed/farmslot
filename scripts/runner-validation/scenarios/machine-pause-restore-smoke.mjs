@@ -1451,9 +1451,10 @@ async function proveGateConsumption({ machine, timeoutMs }) {
 //                                `fleet.status`.
 //   rehomeWorkspace              The preserved branch is checked out on the new
 //                                slot at the recorded tip.
-//   rehomeRefusedNoTarget        With every other slot occupied, the same gate
-//                                answer is refused and the decision stays
-//                                pending.
+//   rehomeRefusedNoTarget        Run FIRST, while the gate is still pending:
+//                                with every other slot occupied, answering the
+//                                gate is refused with a typed code and the
+//                                decision is still there to answer afterwards.
 //
 // PREREQUISITES, and they are the reason this cannot self-provision: it needs a
 // run held at a real publication gate on a runner that declares BOTH a graceful
@@ -1539,8 +1540,88 @@ async function runGateParkRehomeScenario({ runner, runId, timeoutMs, outDir }) {
       throw new Error(`successor ${successorRunId} does not hold ${originalSlotId}`);
     }
 
-    // ─── rehomePreview ────────────────────────────────────────────────────
+    // ─── rehomeRefusedNoTarget ────────────────────────────────────────────
+    // FIRST, because it needs the gate unanswered and the successful re-home
+    // below consumes it. Occupying every remaining slot costs one dispatched
+    // run per slot, so it runs only when a fill ticket says that is wanted.
     const selector = { kind: 'include', runIds: [runId] };
+    const fillTicket = process.env.FARMSLOT_GATE_PARK_REHOME_FILL_TICKET?.trim();
+    if (!fillTicket) {
+      report.rehomeRefusedNoTarget = {
+        skipped: true,
+        reason:
+          'occupying every free slot costs one dispatched run per slot; set FARMSLOT_GATE_PARK_REHOME_FILL_TICKET to prove the no-target refusal live',
+      };
+    } else {
+      const freeSlots = (rpc('fleet.status', {}).fleet?.slots ?? []).filter(
+        (candidate) =>
+          candidate.machine === record.machine &&
+          candidate.project === before.project &&
+          candidate.slot !== originalSlotId &&
+          candidate.lifecycle === 'ready' &&
+          candidate.agent !== 'working' &&
+          !candidate.currentRunId,
+      );
+      const fillRunIds = [];
+      for (const slot of freeSlots) {
+        const filler = await dispatchSlotSuccessor({
+          project: before.project,
+          ticketOrPr: fillTicket,
+          slotId: slot.slot,
+          timeoutMs,
+        });
+        createdRunIds.push(filler);
+        fillRunIds.push({ runId: filler, slotId: slot.slot });
+      }
+      const blockedPreview = rpc('machine.pause.restore', { machine: record.machine, selector });
+      const blockedEntry = selectedRun(blockedPreview, runId);
+      const attempt = resolveDecisionAttempt(runId, decision.id, decision.actions[0].id, timeoutMs);
+      const attemptOutput = `${attempt.stdout}${attempt.stderr}`;
+      const stillPending = pendingGateDecision(rpc('run.get', { runId }).run);
+      report.rehomeRefusedNoTarget = {
+        filledSlots: fillRunIds,
+        previewCode: blockedEntry?.eligibility.code ?? null,
+        previewTarget: blockedEntry?.restoreTarget ?? null,
+        resolveExit: attempt.status,
+        decisionStillPending: stillPending?.id === decision.id,
+        recordAfter: {
+          phase: rpc('run.get', { runId }).run.park?.phase ?? null,
+          slotId: rpc('run.get', { runId }).run.park?.slotId ?? null,
+          restoreRefusal: rpc('run.get', { runId }).run.park?.restoreRefusal ?? null,
+        },
+      };
+      if (!TAKEN_REFUSAL_CODES.has(blockedEntry?.eligibility.code)) {
+        throw new Error(
+          `a machine with no free slot previewed as '${blockedEntry?.eligibility.code}'`,
+        );
+      }
+      if (attempt.status === 0) {
+        throw new Error('answering the gate with nowhere to re-home to did not refuse');
+      }
+      if (!attemptOutput.includes(blockedEntry.eligibility.code)) {
+        throw new Error(
+          `the gate answer refused with something other than the previewed code: ${attemptOutput.slice(0, 400)}`,
+        );
+      }
+      if (!report.rehomeRefusedNoTarget.decisionStillPending) {
+        throw new Error('a refused re-home consumed the operator decision');
+      }
+      if (report.rehomeRefusedNoTarget.recordAfter.slotId !== originalSlotId) {
+        throw new Error('a refused re-home moved the record off the slot the park freed');
+      }
+      // Hand the slots back before the success half.
+      for (const filler of fillRunIds) {
+        rpc('run.cancel', { runId: filler.runId, reason: 'gate-park re-home live proof' });
+        await poll(
+          `${filler.slotId} to be released by ${filler.runId}`,
+          () => slotBinding(filler.slotId),
+          (slot) => slot.currentRunId === null && slot.lifecycle === 'ready',
+          timeoutMs,
+        );
+      }
+    }
+
+    // ─── rehomePreview ────────────────────────────────────────────────────
     // Snapshotted either side of the READ, so "no mutation" measures the
     // preview rather than the window around it. The successor's own row phase
     // is excluded: it is a live run walking its pipeline.
@@ -1704,18 +1785,6 @@ async function runGateParkRehomeScenario({ runner, runId, timeoutMs, outDir }) {
         `the re-home target is at ${tree.headSha}, not the detached tip ${record.preservedWorkspace.headSha}`,
       );
     }
-
-    // ─── rehomeRefusedNoTarget ────────────────────────────────────────────
-    // Optional: occupying every remaining slot to prove the refusal costs a run
-    // per free slot, so it runs only when a fill ticket is supplied.
-    const fillTicket = process.env.FARMSLOT_GATE_PARK_REHOME_FILL_TICKET?.trim();
-    report.rehomeRefusedNoTarget = fillTicket
-      ? { attempted: true }
-      : {
-          skipped: true,
-          reason:
-            'occupying every free slot costs one dispatched run per slot; set FARMSLOT_GATE_PARK_REHOME_FILL_TICKET to prove RESTORE_NO_REHOME_TARGET live',
-        };
 
     report.pass = true;
   } catch (error) {

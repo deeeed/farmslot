@@ -19,6 +19,7 @@ import {
   reportSlotResourceLifecycle,
   runWithResourceLifecycleContext,
 } from '../core/resource-lifecycle-log.js';
+import { parkPreservedSlotIds } from '../methods/dispatch/slot-scoring.js';
 import {
   gateParkRestorePlan,
   gateParkResumeAcknowledgement,
@@ -208,11 +209,28 @@ interface Harness {
    * Run-derived rows are always `busy`, so without these `findBestSlot` has
    * nothing to score and every re-home test would pass for the wrong reason.
    */
-  spareSlots: Map<string, { project: string; resources: Record<string, unknown> }>;
+  spareSlots: Map<
+    string,
+    {
+      project: string;
+      resources: Record<string, unknown>;
+      branch?: string;
+      headSha?: string;
+      linkedWorktree?: boolean;
+    }
+  >;
   /** Runner id -> declared session portability; anything unset fails closed. */
   sessionPortability: Map<string, SessionPortability>;
   /** Slot ids whose tmux session cannot be resolved, so a re-home must refuse. */
   unresolvableSessions: Set<string>;
+  /** Machines refusing dispatch under sustained pressure; a re-home must respect it. */
+  pressureRejectedMachines: Set<string>;
+  /** Fails the durable run-slot write, to open the window between the two writes. */
+  failRunSlotPersist: { value: boolean };
+  /** Slots whose ownership claim fails even though the row reads free. */
+  failClaims: Set<string>;
+  /** Slots whose branch checkout fails, so a restore stops after the rebind. */
+  failReattach: Set<string>;
 }
 
 function harness(initialRuns: Run[]): Harness {
@@ -239,9 +257,24 @@ function harness(initialRuns: Run[]): Harness {
   const rehostPlans = new Map<string, RunnerParkHostPlan>();
   const freeSlotJournals = new Set<string>();
   const restoreSlotJournals = new Set<string>();
-  const spareSlots = new Map<string, { project: string; resources: Record<string, unknown> }>();
+  const spareSlots = new Map<
+    string,
+    {
+      project: string;
+      resources: Record<string, unknown>;
+      branch?: string;
+      headSha?: string;
+      linkedWorktree?: boolean;
+    }
+  >();
   const sessionPortability = new Map<string, SessionPortability>();
   const unresolvableSessions = new Set<string>();
+  const pressureRejectedMachines = new Set<string>();
+  const failRunSlotPersist = { value: false };
+  const failClaims = new Set<string>();
+  const failReattach = new Set<string>();
+  /** Run slot as it stands on DISK, so a failed durable write can be replayed. */
+  const persistedRunSlots = new Map<string, string | null>();
   const journals = new Map<string, MachineParkingIntentJournal>();
   let tick = 0;
   const status: RuntimeCapabilityStatusResult = {
@@ -282,10 +315,11 @@ function harness(initialRuns: Run[]): Harness {
             agent: 'idle',
             enabled: true,
             currentRunId: slotOwners.get(slot) ?? null,
-            branch: 'main',
-            linkedWorktree: false,
+            branch: spare.branch ?? 'main',
+            ...(spare.headSha ? { headSha: spare.headSha } : {}),
+            linkedWorktree: spare.linkedWorktree ?? false,
             resources: spare.resources,
-            health: { cdp: '' },
+            health: { cdp: '', device: 'device:OK', fixtures: 'OK' },
           })),
         ],
       }) as never,
@@ -297,6 +331,10 @@ function harness(initialRuns: Run[]): Harness {
     setRunSlot: (runId, slotId) => {
       const run = runs.get(runId)!;
       calls.push(`set-run-slot:${runId}:${slotId}`);
+      // What the last durable write left on disk, so a persist that throws can
+      // be replayed as the restart it stands for: the in-memory move is lost
+      // and the record's own move — already durable — is not.
+      if (!persistedRunSlots.has(runId)) persistedRunSlots.set(runId, run.slotId);
       run.slotId = slotId;
       return run;
     },
@@ -309,8 +347,20 @@ function harness(initialRuns: Run[]): Harness {
       if (unresolvableSessions.has(slotId)) throw new Error(`no tmux session for ${slotId}`);
       return `session-${slotId}`;
     },
+    pressureRejectedMachines: async (machines) =>
+      new Set(machines.filter((machine) => pressureRejectedMachines.has(machine))),
     persistRun: async (run, reason) => {
       calls.push(`persist:${run.id}:${reason}`);
+      // The crash window the re-home's two durable writes leave open: the
+      // record has moved and this is the write that has not landed yet.
+      if (failRunSlotPersist.value && reason === 'machine-park-restore-rehome') {
+        // The restart: the in-memory move never reached disk, so the run comes
+        // back naming the slot it was on while the record stays where its own
+        // durable write already put it.
+        run.slotId = persistedRunSlots.get(run.id) ?? run.slotId;
+        throw new Error('durable run write failed mid-re-home');
+      }
+      persistedRunSlots.set(run.id, run.slotId);
     },
     writeIntentJournal: async (kind, records, scopeId) => {
       calls.push(`journal-write:${records[0]!.operationId}`);
@@ -424,6 +474,9 @@ function harness(initialRuns: Run[]): Harness {
     }),
     reattachParkedWorkspace: async (run, workspace) => {
       calls.push(`reattach-workspace:${run.slotId}:${workspace.branch}`);
+      if (failReattach.has(run.slotId!)) {
+        throw new Error(`checkout refused in ${run.slotId}`);
+      }
       const current = workspaces.get(run.slotId!);
       if (!current) throw new Error(`no workspace fixture for slot ${run.slotId}`);
       workspaces.set(run.slotId!, { ...current, branch: workspace.branch });
@@ -446,6 +499,7 @@ function harness(initialRuns: Run[]): Harness {
     },
     claimSlotOwnership: async (run, slotId) => {
       calls.push(`claim-slot:${slotId}:${run.id}`);
+      if (failClaims.has(slotId)) return false;
       const owner = slotOwners.get(slotId);
       if (owner && owner !== run.id) return false;
       slotOwners.set(slotId, run.id);
@@ -639,6 +693,10 @@ function harness(initialRuns: Run[]): Harness {
     spareSlots,
     sessionPortability,
     unresolvableSessions,
+    pressureRejectedMachines,
+    failRunSlotPersist,
+    failClaims,
+    failReattach,
   };
 }
 
@@ -2647,6 +2705,258 @@ test('a crash after the re-home claim repairs into the new slot', async () => {
     ctx.calls.join('\n'),
   );
   assert.equal(ctx.runs.get('run-gate')!.park!.restoreRefusal?.code, undefined);
+});
+
+test('a crash between the re-home record write and the run write repairs the run onto the new slot', async () => {
+  const ctx = await rehomeHarness();
+  const { preview } = await previewFreedRestore(ctx);
+  // The window the two durable writes leave open: the record's move is on
+  // disk, the run's is not. Every restore dependency that resolves through
+  // `run.slotId` — the workspace inspection, the checkout, the park host
+  // options, the reload — would drive the OLD slot's worktree while the claim
+  // and the reload point at the new one.
+  ctx.failRunSlotPersist.value = true;
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-torn-write',
+  });
+  const mid = ctx.runs.get('run-gate')!;
+  assert.equal(mid.park!.slotId, 'slot-b', 'the record moved');
+  assert.equal(mid.slotId, 'slot-a', 'the run write never landed');
+  assert.ok(ctx.restoreSlotJournals.size > 0, 'the write-ahead marker survives');
+
+  // The repair re-enters the rebind with the record ALREADY on slot-b, so a
+  // run write conditioned on "did this call move the record" would never fire
+  // and the divergence would outlive every retry.
+  ctx.failRunSlotPersist.value = false;
+  ctx.calls.length = 0;
+  await ctx.service.reconcile();
+  const repaired = ctx.runs.get('run-gate')!;
+  assert.equal(repaired.slotId, 'slot-b', 'the repair moved the run onto the re-home target');
+  assert.equal(repaired.park!.slotId, 'slot-b');
+  assert.equal(ctx.slotOwners.get('slot-b'), 'run-gate');
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  // And the branch went back into the TARGET's tree, not the one the run was
+  // still nominally on.
+  assert.equal(ctx.workspaces.get('slot-b')?.branch, 'work/run-gate');
+});
+
+test('a lost claim rolls the whole re-home back rather than leaving it half moved', async () => {
+  const ctx = await rehomeHarness();
+  // The row reads free, so the write-ahead lands, and the CAS then loses.
+  ctx.failClaims.add('slot-b');
+  const before = ctx.runs.get('run-gate')!;
+  const originalHandleSession = before.park!.recoveryHandle!.target.session;
+
+  const { preview } = await previewFreedRestore(ctx);
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-claim-lost',
+  });
+
+  const after = ctx.runs.get('run-gate')!;
+  // Record, run and handle all go back together. A partial rollback leaves the
+  // exact inconsistency the write-ahead exists to avoid: a record naming a slot
+  // this run does not own.
+  assert.equal(after.park!.slotId, 'slot-a');
+  assert.equal(after.slotId, 'slot-a');
+  assert.equal(after.park!.recoveryHandle?.target.session, originalHandleSession);
+  // And no move is claimed. A record that never took a slot must not say it
+  // moved — the next attempt would then re-home FROM the slot it lost, throwing
+  // away the true original.
+  assert.equal(after.park!.rehome, undefined);
+  assert.equal(ctx.slotOwners.get('slot-b'), undefined, 'the candidate is untouched');
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.deepEqual(
+    [...parkPreservedSlotIds([after]).keys()],
+    ['slot-a'],
+    'the exemption stays on the slot that holds the detached HEAD',
+  );
+});
+
+test('a re-home chained after a failed restore still names the slot the park freed', async () => {
+  const ctx = await rehomeHarness();
+  ctx.spareSlots.set('slot-c', {
+    project: 'example-mobile-farm',
+    resources: { 'browser-cdp': { status: 'running' } },
+  });
+  ctx.workspaces.set('slot-c', { branch: 'main', headSha: 'sha-main', dirtyPaths: [] });
+  ctx.branchTips.set('slot-c:work/run-gate', 'sha-run-gate');
+  // The first re-home CLAIMS slot-b and then fails at the CHECKOUT, so the move
+  // is real and durable while the branch stays detached in slot-a — which is
+  // what leaves a second re-home something to carry.
+  ctx.failReattach.add('slot-b');
+
+  const first = await previewFreedRestore(ctx);
+  assert.equal(first.entry.restoreTarget.slotId, 'slot-b');
+  const firstResult = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: first.preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-first-hop',
+  });
+  const midway = ctx.runs.get('run-gate')!;
+  assert.equal(midway.park!.slotId, 'slot-b');
+  assert.equal(midway.park!.rehome?.fromSlotId, 'slot-a');
+  // The EXECUTE result reports the same two ends the preview does. Both readers
+  // must derive the origin the same way, or a client sees the move collapse
+  // depending on which call it happened to make.
+  assert.equal(
+    firstResult.runs.find((entry) => entry.runId === 'run-gate')?.restoreTarget.originalSlotId,
+    'slot-a',
+  );
+  // A preview taken NOW must still distinguish the two ends. Reading the origin
+  // off `record.slotId` here reports slot-b as both, and every client collapses
+  // the move to "restoring into slot-b (was slot-b)".
+  const midPreview = await previewFreedRestore(ctx);
+  assert.equal(midPreview.entry.restoreTarget.originalSlotId, 'slot-a');
+
+  // A rival takes slot-b, so the retry has to re-home a second time.
+  ctx.slotOwners.set('slot-b', 'run-rival');
+  ctx.slotLifecycles.set('slot-b', 'busy');
+  ctx.failReattach.delete('slot-b');
+  const second = await previewFreedRestore(ctx);
+  assert.equal(second.entry.restoreTarget.slotId, 'slot-c');
+  assert.equal(second.entry.restoreTarget.originalSlotId, 'slot-a');
+  await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: ['run-gate'] },
+    execute: true,
+    previewId: second.preview.previewId,
+    reviewedTargets: [{ runId: 'run-gate', generation: 3 }],
+    operationId: 'freed-slot-rehome-second-hop',
+  });
+  const chained = ctx.runs.get('run-gate')!;
+  assert.equal(chained.park!.slotId, 'slot-c');
+  assert.equal(chained.slotId, 'slot-c');
+  // The ORIGIN, not the previous hop. slot-b never held the detached commit;
+  // naming it would move dispatch's exemption off slot-a, whose working tree is
+  // the one actually sitting on it.
+  assert.equal(chained.park!.rehome?.fromSlotId, 'slot-a');
+  assert.equal(chained.park!.rehome?.toSlotId, 'slot-c');
+  assert.equal(ctx.workspaces.get('slot-c')?.branch, 'work/run-gate');
+});
+
+test('a slot that is merely preparing is waited for, never re-homed off', async () => {
+  const ctx = await rehomeHarness();
+  // Not taken: still this run's, just not ready yet. Re-homing here would give
+  // up a slot about to come back AND tell the operator a successor took it.
+  ctx.slotOwners.set('slot-a', null);
+  ctx.slotLifecycles.set('slot-a', 'preparing');
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_SLOT_TAKEN');
+  assert.match(entry.eligibility.reason, /'preparing', not ready/);
+  assert.equal(entry.restoreTarget.slotId, 'slot-a');
+  assert.equal(entry.restoreTarget.originalSlotId, 'slot-a');
+  assert.equal(ctx.slotOwners.get('slot-b'), undefined, 'no candidate was touched');
+});
+
+test('a machine refusing dispatches under pressure is not re-homed onto', async () => {
+  const ctx = await rehomeHarness();
+  // A re-home IS a dispatch onto a slot, so it takes the same admission gate a
+  // new run does. Landing a restored worker on a machine dispatch is refusing
+  // to use would be the one path around it.
+  ctx.pressureRejectedMachines.add('machine-a');
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'RESTORE_NO_REHOME_TARGET');
+  assert.match(entry.eligibility.reason, /sustained pressure/);
+  assert.equal(entry.restoreTarget.slotId, 'slot-a');
+  assert.equal(ctx.runs.get('run-gate')!.park!.rehome, undefined);
+});
+
+test('a candidate whose detached HEAD another park preserves outscores a stale sibling', async () => {
+  const ctx = await rehomeHarness();
+  // Registered FIRST, so it wins a tie. Without dispatch's detached-HEAD
+  // exemption both candidates carry the stale-branch penalty and this one is
+  // picked; with it, the preserved sibling scores clean and wins.
+  ctx.spareSlots.clear();
+  ctx.spareSlots.set('slot-stale', {
+    project: 'example-mobile-farm',
+    resources: { 'browser-cdp': { status: 'running' } },
+    branch: 'feat/abandoned',
+    linkedWorktree: true,
+  });
+  ctx.spareSlots.set('slot-preserved', {
+    project: 'example-mobile-farm',
+    resources: { 'browser-cdp': { status: 'running' } },
+    branch: 'HEAD',
+    headSha: 'sha-other-park',
+    linkedWorktree: true,
+  });
+  for (const slot of ['slot-stale', 'slot-preserved']) {
+    ctx.workspaces.set(slot, { branch: 'main', headSha: 'sha-main', dirtyPaths: [] });
+    ctx.branchTips.set(`${slot}:work/run-gate`, 'sha-run-gate');
+  }
+  // Another run's park detached slot-preserved's HEAD and its branch ref
+  // survives, which is exactly what makes the slot safe to dispatch over.
+  const neighbour = gateHeldRun('run-neighbour', 'slot-preserved');
+  neighbour.park = {
+    ...gateHeldRun('run-neighbour', 'slot-preserved').park!,
+  } as never;
+  ctx.runs.set('run-neighbour', {
+    ...neighbour,
+    status: 'human-gating',
+    park: {
+      version: 1,
+      operationId: 'neighbour-op',
+      previewId: 'neighbour-preview',
+      runId: 'run-neighbour',
+      generation: 1,
+      machine: 'machine-a',
+      slotId: 'slot-preserved',
+      mode: 'release',
+      phase: 'parked',
+      slotDisposition: 'freed',
+      slotFreedAt: '2026-08-21T00:00:00.000Z',
+      prePauseStatus: 'human-gating',
+      prePauseCurrentStep: { index: 0, name: 'human-gate', status: 'running' },
+      resourceManifest: {
+        capturedAt: '2026-08-21T00:00:00.000Z',
+        resources: [],
+        capabilityLeases: [],
+      },
+      recoveryHandle: null,
+      preservedWorkspace: {
+        branch: 'work/run-neighbour',
+        headSha: 'sha-other-park',
+        detachedAt: '2026-08-21T00:00:00.000Z',
+      },
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: '2026-08-21T00:00:00.000Z',
+      updatedAt: '2026-08-21T00:00:00.000Z',
+    },
+  } as never);
+
+  const { entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.code, 'ELIGIBLE_FREED_SLOT_REHOME');
+  assert.equal(entry.restoreTarget.slotId, 'slot-preserved');
+});
+
+test('the preview does not re-run the proofs the re-home resolver already made', async () => {
+  const ctx = await rehomeHarness();
+  await previewFreedRestore(ctx);
+  // Asking twice costs a second round of git and tmux reads per candidate AND
+  // can answer differently, which would leave the preview refusing a target its
+  // own resolver had just approved.
+  const hostChecks = ctx.calls.filter((call) =>
+    call.startsWith('inspect-park-host:run-gate:slot-b:'),
+  );
+  assert.equal(hostChecks.length, 1, ctx.calls.join('\n'));
+  const tipChecks = ctx.calls.filter((call) => call === 'branch-tip:slot-b:work/run-gate');
+  assert.equal(tipChecks.length, 1, ctx.calls.join('\n'));
 });
 
 test('a runner whose session is workspace-scoped is refused rather than re-homed', async () => {

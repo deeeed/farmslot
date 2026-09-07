@@ -10,10 +10,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
   branch, and every candidate must first pass four read-only proofs — the row can be claimed, its
   tree is clean and the preserved branch ref resolves there at the recorded tip, it declares every
   resource the park's manifest names, and the persisted runner session can be hosted on it. The
-  re-home is one write inside the existing `rebind` stage, written ahead of the claim, so the
-  workspace checkout, the resource boot, the host re-bind and the reload all follow to the new slot
-  with no second code path, and a crash between the two writes repairs to the slot the record names
-  rather than to the one a successor holds. Gated on a new runner-declared session portability: a
+  re-home lands inside the existing `rebind` stage, written ahead of the claim, so the workspace
+  checkout, the resource boot, the host re-bind and the reload all follow to the new slot with no
+  second code path. The record's move and the run's are two durable writes, and the run's is keyed
+  on the run rather than on the record, so a crash or a failed write between them is closed by the
+  next repair instead of leaving the run driving the old slot's worktree while the claim points at
+  the new one. Re-home targets take the same sustained-pressure admission gate and the same
+  detached-HEAD scoring exemption a new dispatch does, and only a slot another run HOLDS is left —
+  a preparing or mid-release row is waited for, not abandoned. A lost claim rolls the record, the
+  run and the handle back together, `rehome.fromSlotId` is written once so a chained re-home still
+  names the slot the park originally freed, and every surface derives that original the same way so
+  a preview taken after a re-home cannot report both ends as the same slot. Gated on a new runner-declared session
+  portability: a
   runner that scopes its persisted session to the working directory it was recorded in — Claude and
   Codex both do — is refused with `RESTORE_REHOME_SESSION_NOT_PORTABLE` rather than reloaded into a
   workspace where its conversation does not exist, so no run is ever silently restarted on a fresh

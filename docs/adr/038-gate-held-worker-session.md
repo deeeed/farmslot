@@ -184,12 +184,21 @@ changes and what deliberately does not:
   declares every resource the park's manifest names; and the persisted runner session can be hosted
   on it. A refusal has changed nothing, so the record stays exactly as parked as it was.
 - **Same machine only.** The workspace, the tmux session, and the resources are all host-local.
+- **Only a slot another run HOLDS is left.** A row that is preparing, mid-release, or has no status
+  yet is still this run's to wait for, and re-homing off it would abandon a slot about to come back
+  while telling the operator a successor took it. Those keep `RESTORE_SLOT_TAKEN`.
 - **One write, inside the existing `rebind` stage.** No fifth stage. The record's `slotId`, the
   run's `slotId`, and the recovery handle's tmux session move together, ahead of the claim, and the
   workspace checkout, resource boot, host re-bind and reload all follow to the new slot with no
-  second code path. `MachineParkRecord.rehome` records both ends; the repair path reads
-  `rehome.toSlotId`, so a crash between the record write and the claim re-drives against the slot
-  the record names rather than the one a successor holds.
+  second code path. The record's move and the run's are two durable writes, and the run's is keyed
+  on the RUN rather than on whether this call moved the record — repair re-enters with the record
+  already moved, so any other condition is false in exactly the case the divergence needs closing.
+  `MachineParkRecord.rehome` records both ends and its `fromSlotId` is written once and never
+  overwritten, so a chained re-home still names the slot the park actually freed — which is the sole
+  key for dispatch's detached-HEAD exemption on the tree that holds the commit. A lost claim rolls
+  the record, the run and the handle back together inside the same stage, so a record never survives
+  naming a slot the run does not own. Every reader derives the original through one helper, or a
+  preview taken after a re-home would report both ends as the new slot and collapse the move.
 - **Gated on a runner-declared capability, failing closed.** `RunnerDefinition.sessionPortability`
   says whether a persisted session resolves outside the working directory it was recorded in.
   Claude keys its session store by a cwd slug and Codex indexes rollouts by cwd, so both declare

@@ -1206,6 +1206,7 @@ function parkHostWindowName(handle: MachinePauseRecoveryHandle): string | null {
 export function rehomeParkHandleSession(
   handle: MachinePauseRecoveryHandle,
   session: string,
+  capturedAt = new Date().toISOString(),
 ): MachinePauseRecoveryHandle | null {
   const windowName = parkHostWindowName(handle);
   if (!windowName) return null;
@@ -1215,14 +1216,16 @@ export function rehomeParkHandleSession(
       ...handle.target,
       session,
       window: windowName,
+      // The recorded pane INDEX belonged to a layout in the session this handle
+      // is leaving; keeping it would name a different pane in the new one.
       pane: null,
-      // Deliberately kept rather than emptied: `paneId` is typed non-optional
-      // on the handle, and the host resolution below matches the RECORDED pane
-      // against the new session's windows and finds nothing — which is exactly
-      // the `rehost` verdict a moved handle should get.
+      // `paneId` is deliberately KEPT rather than emptied: it is typed
+      // non-optional on the handle, and the host resolution matches the
+      // RECORDED pane against the new session's windows and finds nothing —
+      // which is exactly the `rehost` verdict a moved handle should get.
       target: `${session}:${windowName}`,
     },
-    capturedAt: new Date().toISOString(),
+    capturedAt,
   };
 }
 
