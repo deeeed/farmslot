@@ -2190,3 +2190,49 @@ test("validation preparation keeps the operator's recorded gate choice", async (
   assert.equal(prepared.status.gateChoice, 'keep-for-validation');
   assert.equal(runs.get('run-a')?.resourcePosture?.gateChoice, 'keep-for-validation');
 });
+
+test('re-targeting the capability that HOLDS the claim takes no queue place', async (t) => {
+  const simulator = entry('simulator', {
+    cost: {
+      class: 'low',
+      resources: [{ id: 'sim-device', access: 'exclusive', kind: 'device', scope: 'fleet' }],
+    },
+    parameters: { type: 'object', properties: { simulator: { type: 'string' } } },
+  });
+  const { reconciler, registry } = await harness(t, { capabilities: [simulator] });
+  const on = (device: string) => [
+    {
+      capabilityId: 'simulator',
+      reason: 'device',
+      mode: 'visual' as const,
+      parameters: { simulator: device },
+    },
+  ];
+  assert.equal(
+    (await reconciler.apply({ runId: 'run-a', posture: 'active', proofRequirements: on('SIM-1') }))
+      .ok,
+    true,
+  );
+
+  // The pre-check is deliberately inert for the capability being re-targeted:
+  // this run already holds that capability's claim, so there is nothing to
+  // queue behind and a second lease for the same slot, capability and owner
+  // would collide with the idempotent reuse the completion depends on. The
+  // ordinary re-target must therefore still release and reacquire.
+  const retarget = await reconciler.apply({
+    runId: 'run-a',
+    posture: 'active',
+    proofRequirements: on('SIM-2'),
+  });
+  assert.equal(retarget.ok, true);
+  assert.equal(retarget.status.resourceWait, undefined, 'no place in line was taken');
+  const leases = (await registry.status({ slotId: SLOT })).leases;
+  assert.equal(
+    leases.some((lease) => lease.state === 'queued'),
+    false,
+    'a run never queues behind the claim it is holding itself',
+  );
+  assert.deepEqual(leases.find((lease) => lease.state === 'acquired')?.parameters, {
+    simulator: 'SIM-2',
+  });
+});

@@ -1211,11 +1211,15 @@ test('a waiting rerun does not run until its capabilities are actually granted',
     };
     const progress: string[] = [];
     let slept = 0;
+    let abandoned = 0;
     await awaitRecipeRerunProofCapabilities({
       runId: run.id,
       signal: new AbortController().signal,
       prepare,
       onProgress: (line) => progress.push(line),
+      abandonWait: async () => {
+        abandoned += 1;
+      },
       sleep: async (ms) => {
         slept += ms;
       },
@@ -1224,6 +1228,7 @@ test('a waiting rerun does not run until its capabilities are actually granted',
     });
     assert.equal(attempts, 3, 'preparation is re-driven until it is actually ready');
     assert.ok(slept > 0, 'the wait is paced, not a busy loop');
+    assert.equal(abandoned, 0, 'a wait that got its grant keeps the lease it just earned');
     // One line per change, not one per poll: the position is what an operator
     // watches, and repeating it every few seconds buries the preflight.
     assert.deepEqual(progress, reasons);
@@ -1246,12 +1251,16 @@ test('a cancelled run never has its queued recipe rerun executed', async () => {
       return { ready: false, reason: 'still queued' };
     };
     updateRun(run.id, { status: 'cancelled' });
+    let abandoned = 0;
     await assert.rejects(
       awaitRecipeRerunProofCapabilities({
         runId: run.id,
         signal: new AbortController().signal,
         prepare,
         onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
         sleep: async () => {},
         pollMs: 1,
         timeoutMs: 60_000,
@@ -1259,6 +1268,9 @@ test('a cancelled run never has its queued recipe rerun executed', async () => {
       /reached 'cancelled'/,
     );
     assert.equal(attempts, 0, 'a cancelled run must not be handed a device');
+    // The place in line goes back. Left behind, the next release would reserve
+    // it, grant it, and boot a device for a run that is already over.
+    assert.equal(abandoned, 1, 'a cancelled run gives up its place in line');
   } finally {
     await cleanupPostureRun(run.id);
   }
@@ -1274,18 +1286,23 @@ test('a cancelled rerun request stops waiting instead of holding its place forev
   try {
     const controller = new AbortController();
     controller.abort();
+    let abandoned = 0;
     await assert.rejects(
       awaitRecipeRerunProofCapabilities({
         runId: run.id,
         signal: controller.signal,
         prepare: async () => ({ ready: false, reason: 'still queued' }),
         onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
         sleep: async () => {},
         pollMs: 1,
         timeoutMs: 60_000,
       }),
       /cancelled while waiting/,
     );
+    assert.equal(abandoned, 1, 'an operator cancel gives the queue place back');
   } finally {
     await cleanupPostureRun(run.id);
   }
@@ -1300,12 +1317,16 @@ test('a rerun that waits past its bound gives up rather than living on in the Ga
   });
   try {
     let clock = 0;
+    let abandoned = 0;
     await assert.rejects(
       awaitRecipeRerunProofCapabilities({
         runId: run.id,
         signal: new AbortController().signal,
         prepare: async () => ({ ready: false, reason: "queued behind 'capture-helper'" }),
         onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
         sleep: async (ms) => {
           clock += ms;
         },
@@ -1314,6 +1335,82 @@ test('a rerun that waits past its bound gives up rather than living on in the Ga
         timeoutMs: 5_000,
       }),
       /waited 0m for a runtime capability and gave up.*capture-helper/,
+    );
+    assert.equal(abandoned, 1, 'a wait that ran out gives its place back');
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a cancel during the poll interval re-drives nothing before it gives up', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const controller = new AbortController();
+    let attempts = 0;
+    let abandoned = 0;
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: controller.signal,
+        prepare: async () => {
+          attempts += 1;
+          return { ready: false, reason: 'still queued' };
+        },
+        onProgress: () => {},
+        abandonWait: async () => {
+          abandoned += 1;
+        },
+        // The real sleep RESOLVES on abort rather than rejecting, so a cancel
+        // lands here. Without a second signal check the loop ran one more
+        // preparation, which re-enqueues the very place the cancel is about to
+        // give up — the run would end cancelled and still hold a queue place.
+        sleep: async () => {
+          controller.abort();
+        },
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /cancelled while waiting/,
+    );
+    assert.equal(attempts, 0, 'nothing is re-driven after the cancel lands');
+    assert.equal(abandoned, 1);
+  } finally {
+    await cleanupPostureRun(run.id);
+  }
+});
+
+test('a queue place that cannot be given up still reports why the wait ended', async () => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000114',
+  });
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    // The reason the wait ended is what the operator has to see. A failure to
+    // tidy up must not replace it — and the stale-reservation sweep still
+    // reclaims a place that was already granted.
+    await assert.rejects(
+      awaitRecipeRerunProofCapabilities({
+        runId: run.id,
+        signal: controller.signal,
+        prepare: async () => ({ ready: false, reason: 'still queued' }),
+        onProgress: () => {},
+        abandonWait: async () => {
+          throw new Error('the capability store is unwritable');
+        },
+        sleep: async () => {},
+        pollMs: 1,
+        timeoutMs: 60_000,
+      }),
+      /cancelled while waiting/,
     );
   } finally {
     await cleanupPostureRun(run.id);

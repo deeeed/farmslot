@@ -179,11 +179,19 @@ item and depends on this one.
 - **Re-target validation to another device or platform.** Device-identity parameters on device
   capability providers; a rerun accepts a target override and reacquires.
   `.backlog/specs/farmslot-farm/2026-09-04-validation-device-retarget.md`
-- **Fleet-scoped device claims with a wait queue.** _Implemented; the live contention proof is
-  still owed._ The mechanism is covered by unit and restart tests, but the two-slot scenario that
-  proves it through the production gateway has only been run on a thrashing host, where admission
-  refuses every medium-cost acquire, and it is recorded as blocked rather than passed. It has to be
-  re-run on a quiet host before this is claimed as proven. A resource claim declares a
+- **Fleet-scoped device claims with a wait queue.** _Implemented and proven live._ Two real runs on
+  two slots contended for one `fleet`-scoped `capture-helper` claim through the production gateway:
+  the second queued, was reserved when the first released, completed without being asked again, and
+  released, leaving no lease behind. Recorded in
+  `docs/operations/evidence/runner-validate-macwork-scripted-fleet-device-contention.json` with all
+  seven assertion nodes populated, at a host load of 0.99 per core on 16 cores — a working machine,
+  not an idle one, which matters because admission refuses every medium-cost acquire above 1.5x
+  cores and an earlier attempt was correctly recorded as blocked rather than passed. Still not
+  covered live: `android-device` at `fleet` scope, which stays a config-only example in
+  `projects/farmslot-farm/project.json` because no slot in the pool configures an `android-device`
+  resource, so that provider is unavailable fleet-wide and there is no device to contend for; and
+  the work-graph `waitingOn` projection, which needs a run that is a graph node and is unit-covered
+  instead. A resource claim declares a
   `scope` (`slot`, the unchanged default, `machine`, or `fleet`); conflict checks span every slot
   the scope reaches, judged from the claims and machine each lease persists at acquire time. An
   acquire that passes `queueOnConflict` takes a durable FIFO place in line and is refused with a
@@ -193,10 +201,12 @@ item and depends on this one.
   which is the same contention serialized rather than denied. The drain reserves the claim and stops
   there; the run engine completes the reservation by re-running the waiter's own preparation, so no
   provider is ever booted for a run the engine has moved on from. A reservation is never left
-  holding a claim: a completion refused by host pressure returns to the head of its own queue, any
-  other refusal or throw releases it and drains to the next waiter, and one nothing settled at all —
-  a Gateway that went down between the grant and the completion — is reclaimed by the keep-warm
-  sweep. Preparation completes the reserved capability before any other in the plan. A queued run is
+  stranded: a completion refused by host pressure keeps it, since that pressure would refuse the next
+  waiter too and the stale-reservation clock keeps running from the grant; any other refusal or throw
+  releases it and drains to the next waiter; and one nothing settled at all — a Gateway that went
+  down between the grant and the completion — is reclaimed by the keep-warm sweep. Giving the claim
+  back to the queue instead would free it with nothing able to pick it up again, because a grant only
+  ever comes from a drain and every drain comes from a release. Preparation completes the reserved capability before any other in the plan. A queued run is
   reported two ways, both as `waitingOn.kind: 'resource'`: queued behind a holder, and granted, which
   is the claim reserved with no provider started yet, so a reservation that stalls is visible rather
   than reading as ordinary running work. A `recipe.rerun` that queues owns its wait in-process — it

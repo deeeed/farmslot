@@ -174,6 +174,15 @@ export async function runScenario({ timeoutMs, outDir, slotId, explicit = false 
     notCoveredLive: [
       'work-graph waitingOn.kind=resource projection (needs a graph-node run; unit-covered in services/gateway/src/work-graph/store.test.ts)',
       'android-device at fleet scope (no pool slot configures an android-device resource, so the provider is unavailable fleet-wide)',
+      // These are internal recovery paths with no entry point on the gateway RPC
+      // surface: they are driven by the grant hook and the keep-warm interval,
+      // not by any method a client can call. Naming them here rather than
+      // adding an RPC purely to exercise them, which would be shipping product
+      // surface to satisfy a test.
+      'settleReservation, both arms (reached only from the grant hook after a refused completion; unit-covered in services/gateway/src/runtime-capabilities/registry.test.ts)',
+      'reclaimStaleReservations (reached only from the keep-warm interval, on a 10-minute bound; unit-covered in the same file)',
+      'awaitRecipeRerunProofCapabilities and its abandon-on-exit (needs a recipe rerun blocked behind a live claim; unit-covered in services/gateway/src/methods/recipe.test.ts)',
+      "resourceWait phase 'granted' (the grant hook completes the reservation asynchronously, so the window is a race; asserting it live would be a flaky node, and it is unit-covered in posture.test.ts and store.test.ts)",
     ],
     pass: false,
     error: null,

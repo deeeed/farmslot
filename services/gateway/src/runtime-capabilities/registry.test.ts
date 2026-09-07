@@ -2694,15 +2694,15 @@ test('a queued lease with no claims is never handed a reservation', async (t) =>
   assert.equal(after[0]?.state, 'queued', 'a claimless waiter is not reserved');
 });
 
-test('a reservation the run engine could not complete is requeued at the head under host pressure', async (t) => {
+test('a reservation refused by host pressure is kept, not handed back into a dead queue', async (t) => {
   let clock = Date.parse('2026-08-11T00:00:00.000Z');
-  const grants: Array<{ leaseId: string; claimId: string }> = [];
+  const grants: string[] = [];
   const { registry } = await fixture(
     t,
     [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
     {
       now: () => new Date((clock += 1000)),
-      onClaimGranted: (grant) => grants.push({ leaseId: grant.leaseId, claimId: grant.claimId }),
+      onClaimGranted: (grant) => grants.push(grant.owner.runId),
     },
   );
   assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
@@ -2711,35 +2711,91 @@ test('a reservation the run engine could not complete is requeued at the head un
   });
   assert.equal(queuedB.ok, false);
   if (queuedB.ok || queuedB.conflict.kind !== 'scoped-wait') return;
-  const enqueuedAt = (await registry.status({ slotId: SLOT_B })).leases[0]?.wait?.enqueuedAt;
   assert.equal(
     (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
     false,
   );
 
   await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
-  assert.deepEqual(grants, [
-    { leaseId: queuedB.conflict.queuedLeaseId, claimId: 'capture-helper' },
-  ]);
+  const reservedAt = (await registry.status({ slotId: SLOT_B })).leases[0]?.updatedAt;
+  assert.deepEqual(grants, ['run-b']);
 
-  // Host pressure refused the completion. The claim is not this run's fault and
-  // clears on its own, so the place it earned is kept.
-  const settled = await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
-    requeue: true,
-    detail: 'host pressure refused the completion',
-  });
-  assert.equal(settled, 'requeued');
-  const requeued = (await registry.status({ slotId: SLOT_B })).leases[0];
-  assert.equal(requeued?.state, 'queued');
-  assert.equal(requeued?.wait?.enqueuedAt, enqueuedAt, 'the place in line is not renumbered');
-  const waiters = (await registry.status({ slotId: SLOT_B })).claimWaiters;
-  assert.equal(waiters?.[0]?.owner.runId, 'run-b', 'still at the head, ahead of run-c');
+  // Host pressure refused the completion. Handing the claim back — flipping the
+  // lease to `queued` — would free it with nobody able to pick it up again: a
+  // grant only ever comes from the drain, every drain comes from a release, and
+  // no release can happen for a claim nobody holds. The head waiter would lose
+  // its only completer and take everyone behind it with it.
+  assert.equal(
+    await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
+      retain: true,
+      detail: 'host pressure refused the completion',
+    }),
+    'retained',
+  );
+  const kept = (await registry.status({ slotId: SLOT_B })).leases[0];
+  assert.equal(kept?.state, 'acquiring', 'the claim stays held for the run that earned it');
+  assert.equal(kept?.wait?.claimId, 'capture-helper');
+  assert.equal(
+    kept?.updatedAt,
+    reservedAt,
+    'and the stale window keeps running from the grant, so pressure that never clears still ends',
+  );
 
-  // And the claim is free again, so the owner completes it on its next attempt.
+  // Nobody behind it is served in the meantime, which is right: the next waiter
+  // would be refused by the same pressure.
+  assert.equal((await registry.status({ slotId: SLOT_C })).leases[0]?.state, 'queued');
+  assert.deepEqual(grants, ['run-b'], 'no second grant is invented while the claim is held');
+
+  // Pressure clears and the owner's own next attempt completes it.
   const completed = await acquireOn(registry, SLOT_B, 'recording', 'run-b');
   assert.equal(completed.ok, true);
   if (!completed.ok) return;
   assert.equal(completed.lease.id, queuedB.conflict.queuedLeaseId);
+  assert.equal(completed.lease.state, 'acquired');
+});
+
+test('a reservation kept through pressure that never clears is still reclaimed for the next waiter', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    { now: () => new Date((clock += 1000)) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  const queuedB = await acquireOn(registry, SLOT_B, 'recording', 'run-b', {
+    queueOnConflict: true,
+  });
+  assert.equal(queuedB.ok, false);
+  if (queuedB.ok || queuedB.conflict.kind !== 'scoped-wait') return;
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+
+  // Most of the window is already spent by the time pressure refuses the
+  // completion, which is the realistic shape: the completion had to wait its
+  // turn on the lock before it could be refused at all.
+  clock += 50_000;
+  await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
+    retain: true,
+    detail: 'host pressure refused the completion',
+  });
+
+  // Only 20s more — well inside the bound if retaining had restarted the clock,
+  // and past it measured from the grant, which is the one that counts. A run
+  // whose completer never comes back cannot hold a fleet claim indefinitely
+  // just because the host was busy each time it tried.
+  clock += 20_000;
+  assert.deepEqual(
+    (await registry.reclaimStaleReservations(60_000)).map((lease) => lease.owner.runId),
+    ['run-b'],
+  );
+  assert.equal(
+    (await registry.status({ slotId: SLOT_C })).leases[0]?.state,
+    'acquiring',
+    'the queue is alive again behind it',
+  );
 });
 
 test('a reservation nothing can complete is rolled back and drained to the next waiter', async (t) => {
@@ -2763,7 +2819,7 @@ test('a reservation nothing can complete is rolled back and drained to the next 
   const releasesBefore = actions.filter((action) => action === 'recording.release').length;
 
   const settled = await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
-    requeue: false,
+    retain: false,
     detail: 'the run was archived while its claim was reserved',
   });
   assert.equal(settled, 'released');
@@ -2796,7 +2852,7 @@ test('settling a reservation the completion already took over does nothing', asy
 
   assert.equal(
     await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
-      requeue: false,
+      retain: false,
       detail: 'should not fire',
     }),
     'not-reserved',
@@ -2841,7 +2897,11 @@ test('a reservation nobody completed is reclaimed once it is stale', async (t) =
   );
 });
 
-test('a re-target takes its place in line before it releases the device it holds', async (t) => {
+// The re-target ORDERING itself — that the old device survives a plan whose new
+// one is claimed elsewhere — is proven end to end in `posture.test.ts`, which is
+// the layer that owns the release. This covers the registry primitive that makes
+// it possible: recording a queue place while acquiring and releasing nothing.
+test('a queue place can be taken without acquiring or releasing anything', async (t) => {
   let clock = Date.parse('2026-08-11T00:00:00.000Z');
   const { registry } = await fixture(
     t,
@@ -2955,4 +3015,265 @@ test('the waiter lifecycle events run planned, queued, acquiring, acquired in or
     events.filter((event) => event.owner?.runId === 'run-b').map((event) => event.kind),
     ['planned', 'queued', 'acquiring', 'planned', 'acquiring', 'acquired'],
   );
+});
+
+test('a run that stops waiting gives up its queue place and unblocks its own slot', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const grants: string[] = [];
+  const { registry } = await fixture(
+    t,
+    [
+      claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+      entry('metro'),
+    ],
+    {
+      now: () => new Date((clock += 1000)),
+      onClaimGranted: (grant) => grants.push(grant.owner.runId),
+    },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+
+  // A queued lease is counted by `blocksAcquisition`, so while it sits there
+  // nothing else on that slot can take the capability either.
+  const blockedSibling = await acquireOn(registry, SLOT_B, 'recording', 'run-sibling');
+  assert.equal(blockedSibling.ok, false);
+
+  const given = await registry.abandonClaimWaits(SLOT_B, 'run-b');
+  assert.deepEqual(
+    given.map((lease) => lease.capabilityId),
+    ['recording'],
+  );
+  assert.equal(
+    (await registry.status({ slotId: SLOT_B })).leases.every((lease) => lease.state === 'released'),
+    true,
+  );
+
+  // The holder is untouched — a queue place held nothing — and the slot is free
+  // for whatever wants the capability next.
+  assert.equal((await registry.status({ slotId: SLOT })).leases[0]?.state, 'acquired');
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.deepEqual(grants, [], 'an abandoned place is never granted');
+  assert.equal(
+    (await registry.status({ slotId: SLOT_B })).leases.every((lease) => lease.state === 'released'),
+    true,
+    'the release drains to nobody, because nobody is waiting any more',
+  );
+});
+
+test('a reservation the waiter walked away from is released, not left holding the claim', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry, actions } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    { now: () => new Date((clock += 1000)) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal((await registry.status({ slotId: SLOT_B })).leases[0]?.state, 'acquiring');
+  const releasesBefore = actions.filter((action) => action === 'recording.release').length;
+
+  // The grant landed while the rerun was already giving up. A reservation holds
+  // the claim outright, so leaving it is the same strand with a shorter fuse.
+  await registry.abandonClaimWaits(SLOT_B, 'run-b');
+  assert.equal(
+    actions.filter((action) => action === 'recording.release').length,
+    releasesBefore,
+    'a reservation has no provider, so nothing is stopped for it',
+  );
+  assert.equal((await registry.status({ slotId: SLOT_B })).leases[0]?.state, 'released');
+  assert.equal(
+    (await registry.status({ slotId: SLOT_C })).leases[0]?.state,
+    'acquiring',
+    'the claim goes straight to the next waiter',
+  );
+});
+
+test('settling a reservation needs no project catalog, so a broken slot cannot strand it', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const broken = new Set<string>();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let nextLease = 0;
+  const capabilities = [
+    claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+  ];
+  const registry = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
+    catalogForSlot: async (slotId) => {
+      // What `catalogForSlot` really does: read the slot from the pool and the
+      // project config from disk. It throws for a slot that has been removed or
+      // a config that will not parse.
+      if (broken.has(slotId)) throw new Error(`Slot '${slotId}' is not in any pool config`);
+      return { slotId, project: 'test-project', capabilities };
+    },
+    runAction: async () => ({ ok: true }),
+    leaseId: () => `lease-${++nextLease}`,
+    now: () => new Date((clock += 1000)),
+  });
+
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  const queuedB = await acquireOn(registry, SLOT_B, 'recording', 'run-b', {
+    queueOnConflict: true,
+  });
+  assert.equal(queuedB.ok, false);
+  if (queuedB.ok || queuedB.conflict.kind !== 'scoped-wait') return;
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal((await registry.status({ slotId: SLOT_B })).leases[0]?.state, 'acquiring');
+
+  // The waiter's slot is pulled out of the pool while its claim is reserved.
+  // Reading a catalog to give the claim back turned that into a rejection, on a
+  // path nothing awaits — and made one broken slot poison the sweep for every
+  // other stranded claim too.
+  broken.add(SLOT_B);
+  assert.equal(
+    await registry.settleReservation(queuedB.conflict.queuedLeaseId, {
+      retain: false,
+      detail: 'the run was archived while its claim was reserved',
+    }),
+    'released',
+  );
+  assert.equal(
+    (await registry.status({ slotId: SLOT_C })).leases[0]?.state,
+    'acquiring',
+    'the next waiter is served even though the previous holder slot is unreadable',
+  );
+});
+
+test('the stale sweep reclaims a reservation whose slot no longer reads', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const broken = new Set<string>();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'runtime-capability-registry-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let nextLease = 0;
+  const capabilities = [
+    claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+  ];
+  const registry = new RuntimeCapabilityRegistry({
+    store: new RuntimeCapabilityStore(path.join(directory, 'leases.json')),
+    catalogForSlot: async (slotId) => {
+      if (broken.has(slotId)) throw new Error(`Slot '${slotId}' is not in any pool config`);
+      return { slotId, project: 'test-project', capabilities };
+    },
+    runAction: async () => ({ ok: true }),
+    leaseId: () => `lease-${++nextLease}`,
+    now: () => new Date((clock += 1000)),
+  });
+
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  broken.add(SLOT_B);
+  clock += 120_000;
+
+  // The backstop has to work in exactly the conditions that defeated the
+  // completion: nothing settled the reservation AND its slot is unreadable.
+  const reclaimed = await registry.reclaimStaleReservations(60_000);
+  assert.deepEqual(
+    reclaimed.map((lease) => lease.owner.runId),
+    ['run-b'],
+  );
+  assert.equal((await registry.status({ slotId: SLOT_C })).leases[0]?.state, 'acquiring');
+});
+
+test('tearing down a slot that holds a reservation stops no provider and passes the claim on', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry, actions } = await fixture(
+    t,
+    [claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' })],
+    { now: () => new Date((clock += 1000)) },
+  );
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-a')).ok, true);
+  assert.equal(
+    (await acquireOn(registry, SLOT_B, 'recording', 'run-b', { queueOnConflict: true })).ok,
+    false,
+  );
+  assert.equal(
+    (await acquireOn(registry, SLOT_C, 'recording', 'run-c', { queueOnConflict: true })).ok,
+    false,
+  );
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  assert.equal((await registry.status({ slotId: SLOT_B })).leases[0]?.state, 'acquiring');
+  const releasesBefore = actions.filter((action) => action === 'recording.release').length;
+
+  // The ordinary teardown path, not the reservation-aware one: a slot being
+  // taken apart releases whatever it holds. A reservation is `acquiring`, which
+  // every other release treats as a lease mid-boot — but no acquire action ever
+  // ran for it, so stopping a provider that never started can fail, and a failed
+  // cleanup is durable: the claim would be parked on an `error` lease forever.
+  await registry.releaseSlot(SLOT_B);
+  assert.equal(
+    actions.filter((action) => action === 'recording.release').length,
+    releasesBefore,
+    'nothing is stopped for a provider that never started',
+  );
+  assert.equal(
+    (await registry.status({ slotId: SLOT_C })).leases[0]?.state,
+    'acquiring',
+    'and the claim reaches the next waiter instead of being stranded',
+  );
+});
+
+test('a run queued for one capability can still acquire another sharing the claim on its slot', async (t) => {
+  let clock = Date.parse('2026-08-11T00:00:00.000Z');
+  const { registry } = await fixture(
+    t,
+    [
+      claimEntry('recording', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+      claimEntry('camera', { id: 'capture-helper', access: 'exclusive', scope: 'fleet' }),
+    ],
+    { now: () => new Date((clock += 1000)) },
+  );
+  // Another slot holds the claim, so this run's `recording` takes a queue place.
+  assert.equal((await acquireOn(registry, SLOT, 'recording', 'run-holder')).ok, true);
+  const queued = await acquireOn(registry, SLOT_B, 'recording', 'run-b', {
+    queueOnConflict: true,
+  });
+  assert.equal(queued.ok, false);
+
+  // The same run now reaches `camera`, which shares the claim, on its own slot.
+  // A queue place holds nothing — but `blocksAcquisition` counts `queued`, so
+  // counting it made this a SAME-SLOT conflict, which never queues: the acquire
+  // was refused outright, preparation reported a hard failure rather than a
+  // wait, and the rerun died with the first queue place still in the line. It
+  // fires on a re-drive pass whenever the second capability is walked first.
+  const sibling = await acquireOn(registry, SLOT_B, 'camera', 'run-b', { queueOnConflict: true });
+  assert.equal(sibling.ok, false);
+  if (sibling.ok) return;
+  assert.equal(
+    sibling.conflict.kind,
+    'scoped-wait',
+    'it queues behind the real holder on the other slot, not behind its own queue place',
+  );
+
+  // And the same run's reservation does not block its own completion either.
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-holder' });
+  const reserved = (await registry.status({ slotId: SLOT_B })).leases.find(
+    (lease) => lease.state === 'acquiring',
+  );
+  assert.ok(reserved, 'the drain reserved one of this run leases');
+  const completed = await acquireOn(registry, SLOT_B, reserved.capabilityId, 'run-b');
+  assert.equal(completed.ok, true, 'a run is never blocked by the claim being handed to it');
 });

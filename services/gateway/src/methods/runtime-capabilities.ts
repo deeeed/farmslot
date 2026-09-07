@@ -455,36 +455,66 @@ const registry = new RuntimeCapabilityRegistry({
  * queue (host pressure, which clears on its own) or rolled back so the next
  * waiter is served.
  */
-export async function completeGrantedClaim(grant: RuntimeCapabilityClaimGrant): Promise<void> {
+export async function completeGrantedClaim(
+  grant: RuntimeCapabilityClaimGrant,
+  /** Seams for the tests; production always uses the module registry. */
+  deps: {
+    prepare?: (runId: string) => Promise<PrepareRunPostureOutcome>;
+    settle?: (
+      leaseId: string,
+      settlement: ReservationSettlement,
+    ) => Promise<'retained' | 'released' | 'not-reserved'>;
+  } = {},
+): Promise<void> {
+  const prepare = deps.prepare ?? prepareRunPostureForValidation;
+  const settle =
+    deps.settle ?? ((leaseId, settlement) => registry.settleReservation(leaseId, settlement));
   let settlement: ReservationSettlement;
   try {
-    settlement = reservationSettlement(
-      grant,
-      await prepareRunPostureForValidation(grant.owner.runId),
-    );
+    settlement = reservationSettlement(grant, await prepare(grant.owner.runId));
   } catch (error) {
     settlement = reservationSettlement(grant, error);
   }
-  const settled = await registry.settleReservation(grant.leaseId, settlement);
-  // `not-reserved` is the ordinary outcome: the completing acquire took the
-  // lease over, so there is no reservation left and nothing to report.
-  if (settled === 'not-reserved') return;
-  console.warn(
-    `[runtime-capabilities] ${settled} the reservation of '${grant.claimId}' for run ${grant.owner.runId}: ${settlement.detail}`,
-  );
+  try {
+    const settled = await settle(grant.leaseId, settlement);
+    // `not-reserved` is the ordinary outcome: the completing acquire took the
+    // lease over, so there is no reservation left and nothing to report.
+    if (settled === 'not-reserved') return;
+    console.warn(
+      `[runtime-capabilities] ${settled} the reservation of '${grant.claimId}' for run ${grant.owner.runId}: ${settlement.detail}`,
+    );
+  } catch (error) {
+    // This function is fired and NOT awaited by the registry's grant hook, so a
+    // rejection here has nobody to catch it and the Gateway installs no
+    // `unhandledRejection` handler — the process would exit, taking every run
+    // with it, because one slot's config would not parse. Settling can still
+    // fail on a write even now that it reads no catalog, so the failure is
+    // reported with everything needed to find the lease by hand, and the claim
+    // is left to `reclaimStaleReservations`, which is exactly the case that
+    // sweep exists for: a reservation nothing completed and nothing settled.
+    console.error(
+      `[runtime-capabilities] could not settle the reservation of '${grant.claimId}' for run ` +
+        `${grant.owner.runId} on slot ${grant.slotId}: lease ${grant.leaseId} is still 'acquiring' ` +
+        `with its wait record and holds the claim until the stale-reservation sweep reclaims it. ` +
+        `Intended settlement was ${settlement.retain ? 'retain' : 'release'} (${settlement.detail}). ` +
+        `Settling failed with: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /** What to do with a reservation whose completion is over. */
 export interface ReservationSettlement {
-  requeue: boolean;
+  /** Keep the claim for this run and let its own next attempt complete it. */
+  retain: boolean;
   detail: string;
 }
 
 /**
  * Decide what a finished completion attempt owes its reservation.
  *
- * Only the HOST-pressure refusal keeps the place in line: it is not about this
- * run, it clears on its own, and the owner earned that place. Every other
+ * Only the HOST-pressure refusal keeps the claim: it is not about this run, it
+ * clears on its own, and handing the claim to the next waiter would refuse them
+ * for exactly the same reason. Every other
  * ending — a refusal about the run, a wait on some other capability, a throw —
  * gives the claim back, because there is nothing left that will complete it and
  * a held claim with no provider locks out every other slot.
@@ -500,7 +530,7 @@ export function reservationSettlement(
 ): ReservationSettlement {
   if (outcome instanceof Error || !isPrepareOutcome(outcome)) {
     return {
-      requeue: false,
+      retain: false,
       detail: `completing reserved claim '${grant.claimId}' threw: ${
         outcome instanceof Error ? outcome.message : String(outcome)
       }`,
@@ -508,12 +538,12 @@ export function reservationSettlement(
   }
   if (outcome.ok) {
     return {
-      requeue: false,
+      retain: false,
       detail: `preparation reported success but reserved claim '${grant.claimId}' was never completed`,
     };
   }
   return {
-    requeue: outcome.conflict?.kind === 'host-pressure',
+    retain: outcome.conflict?.kind === 'host-pressure',
     detail: outcome.waiting
       ? `run ${grant.owner.runId} queued on another capability while '${grant.claimId}' was reserved for it: ${outcome.reason}`
       : `preparation for reserved claim '${grant.claimId}' did not complete: ${outcome.reason}`,

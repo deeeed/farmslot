@@ -1241,6 +1241,15 @@ export async function awaitRecipeRerunProofCapabilities(args: {
   prepare: () => Promise<RecipeRerunPreflightOutcome>;
   /** One line per change of state, never per poll. */
   onProgress: (line: string) => void;
+  /**
+   * Give up this run's place in line. Called on EVERY exit that is not a grant.
+   *
+   * A queue place nobody is waiting behind any more is not inert: it blocks the
+   * capability on its own slot, and the next release drains to it — reserving,
+   * granting and completing it, which boots a fleet-exclusive device for a rerun
+   * the operator cancelled.
+   */
+  abandonWait: () => Promise<void>;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   now?: () => number;
   pollMs?: number;
@@ -1252,37 +1261,66 @@ export async function awaitRecipeRerunProofCapabilities(args: {
   const timeoutMs = args.timeoutMs ?? RECIPE_RERUN_WAIT_TIMEOUT_MS;
   const deadline = now() + timeoutMs;
   let lastReason: string | undefined;
-  for (;;) {
-    if (args.signal.aborted) {
-      throw new Error('Recipe rerun cancelled while waiting for a runtime capability');
-    }
-    // The run itself is the authority on whether anyone still wants this. A
-    // cancelled or finished run must not be handed a device: nothing would
-    // release it, and the recipe it was queued for is not going to run.
-    const run = getRun(args.runId);
-    if (!run) {
-      throw new Error(`Run ${args.runId} is gone; its queued recipe rerun cannot continue`);
-    }
-    if (isTerminalRunStatus(run.status)) {
-      throw new Error(
-        `Run ${args.runId} reached '${run.status}' while its recipe rerun waited for a runtime capability`,
+  // Every throw below leaves the run with a queue place it is no longer waiting
+  // on, so giving it up belongs here rather than at each `throw`: one exit path
+  // that cannot be forgotten when a new reason to stop is added. A failure to
+  // give it up is reported and does not replace the reason the wait ended —
+  // that reason is what the operator has to see — and the stale-reservation
+  // sweep still reclaims a place that was already granted.
+  try {
+    return await pollUntilGranted();
+  } catch (error) {
+    try {
+      await args.abandonWait();
+    } catch (abandonError) {
+      console.warn(
+        `[recipe] rerun for run ${args.runId} stopped waiting but could not give up its place in line: ${
+          abandonError instanceof Error ? abandonError.message : String(abandonError)
+        }`,
       );
     }
-    if (now() >= deadline) {
-      throw new Error(
-        `Recipe rerun waited ${Math.round(timeoutMs / 60_000)}m for a runtime capability and gave up` +
-          (lastReason ? `: ${lastReason}` : ''),
-      );
-    }
-    await sleep(pollMs, args.signal);
-    const outcome = await args.prepare();
-    if (outcome.ready) return;
-    // Only when it changes: the position and the blocking run are what an
-    // operator watches, and repeating an unchanged line every few seconds
-    // buries the rest of the preflight.
-    if (outcome.reason !== lastReason) {
-      lastReason = outcome.reason;
-      args.onProgress(outcome.reason);
+    throw error;
+  }
+
+  async function pollUntilGranted(): Promise<void> {
+    for (;;) {
+      if (args.signal.aborted) {
+        throw new Error('Recipe rerun cancelled while waiting for a runtime capability');
+      }
+      // The run itself is the authority on whether anyone still wants this. A
+      // cancelled or finished run must not be handed a device: nothing would
+      // release it, and the recipe it was queued for is not going to run.
+      const run = getRun(args.runId);
+      if (!run) {
+        throw new Error(`Run ${args.runId} is gone; its queued recipe rerun cannot continue`);
+      }
+      if (isTerminalRunStatus(run.status)) {
+        throw new Error(
+          `Run ${args.runId} reached '${run.status}' while its recipe rerun waited for a runtime capability`,
+        );
+      }
+      if (now() >= deadline) {
+        throw new Error(
+          `Recipe rerun waited ${Math.round(timeoutMs / 60_000)}m for a runtime capability and gave up` +
+            (lastReason ? `: ${lastReason}` : ''),
+        );
+      }
+      await sleep(pollMs, args.signal);
+      // The sleep ENDS EARLY on abort rather than rejecting, so without this the
+      // cancelled rerun ran one more preparation — which re-enqueues the very
+      // queue place the cancellation is about to give up.
+      if (args.signal.aborted) {
+        throw new Error('Recipe rerun cancelled while waiting for a runtime capability');
+      }
+      const outcome = await args.prepare();
+      if (outcome.ready) return;
+      // Only when it changes: the position and the blocking run are what an
+      // operator watches, and repeating an unchanged line every few seconds
+      // buries the rest of the preflight.
+      if (outcome.reason !== lastReason) {
+        lastReason = outcome.reason;
+        args.onProgress(outcome.reason);
+      }
     }
   }
 }
@@ -1428,6 +1466,16 @@ async function executeRecipeRerunJob(args: {
           prepare,
           onProgress: (line) =>
             emitRecipeRerunStream(emit, requestId, `Preflight: still waiting — ${line}\n`),
+          abandonWait: async () => {
+            const given = await getRuntimeCapabilityRegistry().abandonClaimWaits(slotId, runId);
+            for (const lease of given) {
+              emitRecipeRerunStream(
+                emit,
+                requestId,
+                `Preflight: gave up the place in line for ${lease.capabilityId}.\n`,
+              );
+            }
+          },
         });
       }
     } catch (error) {
