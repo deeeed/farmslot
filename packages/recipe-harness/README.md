@@ -84,22 +84,25 @@ A recipe path works in place of a library id. UI, CDP, React Native, browser-ext
 
 ```text
 recipes/
-  wallet/ensure_unlocked.recipe.json
+  shared/wallet/ensure_unlocked.recipe.json
   extension/checkout/smoke.recipe.json
   mobile/checkout/smoke.recipe.json
 ```
 
 Recipe ids derive from their path below `recipes/`. Configure a source as
 `name=/path` when its provenance label should differ from the directory name.
-The first directory may be `core`, `extension`, or `mobile`; it selects an
-adapter variant without becoming part of the id. Thus both examples above have
-the id `checkout.smoke`. Legacy `smoke.mobile.recipe.json` and
+The first directory is the scope: `core`, `extension`, `mobile`, or `shared`.
+Domains sit underneath. Scope does not become part of the id: the shared recipe
+is `wallet.ensure_unlocked`, and both platform examples are `checkout.smoke`.
+Keep one shared graph when only inputs differ; use an adapter variant when the
+behavior differs. An exact adapter variant takes precedence over its shared
+counterpart within the same source. Legacy `smoke.mobile.recipe.json` and
 `smoke.extension.recipe.json` paths remain readable during migration. A recipe
 must not declare its adapter through both forms, and canonical and legacy files
-for the same adapter/id are rejected as duplicates. The top-level `core`,
-`extension`, and `mobile` directory names below `recipes/` are reserved for
-adapter selection. Existing generic domains with one of those names must move
-to a different top-level domain before adopting this release.
+for the same adapter/id are rejected as duplicates. Unscoped generic paths
+remain readable, but new libraries use scope-first folders. The four scope
+directory names are reserved; a shared recipe cannot also declare an adapter
+in its filename.
 
 Sources are ordered and the first source wins. Configure repeatable `--library name=path`, `RECIPE_LIBRARY_PATH`, or the personal library under the Farmslot home. Shadows are reported. Duplicate ids within one source and escaping symlinks are rejected.
 

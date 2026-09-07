@@ -298,10 +298,9 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             context,
           });
           if (!ok) {
-            throw new RecipeExecutionError(
-              'harness',
-              `app.hud completion update failed for ${namespacedNodeId}.`,
-            );
+            // Both the completed action and the failed HUD update are already recorded.
+            failureCause ??= 'harness';
+            return 'fail';
           }
         }
         currentNodeId = next;

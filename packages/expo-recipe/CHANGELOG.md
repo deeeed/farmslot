@@ -4,6 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.9.0 - 2026-09-07
+
+- Expose transport-owned `open()` so native consumers can inspect before interacting without reopening the same session; pair it with `close()`.
+
 ## 0.8.2 - 2026-08-14
 
 - fix: require `test_id` for verifiable Android input replacement, retry empty placeholders with bounded chunked clearing, and fail closed when the field cannot be observed.

@@ -36,6 +36,14 @@ Do not add project-specific actions such as wallet, perps, or meetings to this p
 
 Protocol versioning remains inside recipe metadata. User-facing paths and scripts stay versionless.
 
+### Native session ownership
+
+Consumers of `createAgentDeviceUiTransport` can call `await transport.open()`
+before using their shared SDK client for a snapshot. Later `execute` and
+`observe` calls reuse that open session. Pair it with `await transport.close()`;
+do not open or close the same client independently behind the transport.
+This does not prepare a cold XCTest runner or bound snapshot latency.
+
 ## Usage
 
 ```bash

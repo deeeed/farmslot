@@ -240,26 +240,27 @@ function recipeIdentity(
   const firstDirectory = firstSeparator < 0 ? undefined : base.slice(0, firstSeparator);
   const directoryAdapter =
     firstDirectory && RECIPE_ADAPTERS.has(firstDirectory) ? firstDirectory : undefined;
+  const directoryScope = firstDirectory === 'shared' ? firstDirectory : directoryAdapter;
   const suffix = base.slice(base.lastIndexOf('.') + 1);
   const filenameAdapter = RECIPE_ADAPTERS.has(suffix) ? suffix : undefined;
-  if (directoryAdapter && filenameAdapter) {
+  if (directoryScope && filenameAdapter) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
-      `Library recipe ${libraryFile} declares adapter ${directoryAdapter} in its directory and ${filenameAdapter} in its filename.`,
-      'declare the adapter once using recipes/<adapter>/.../*.recipe.json or keep the legacy *.<adapter>.recipe.json path',
+      `Library recipe ${libraryFile} declares ${directoryScope} scope in its directory and ${filenameAdapter} adapter in its filename.`,
+      'declare the adapter once using recipes/<adapter>/.../*.recipe.json, or use recipes/shared/.../*.recipe.json without an adapter suffix',
     );
   }
   const declaredAdapter = directoryAdapter ?? filenameAdapter;
-  const idPath = directoryAdapter
-    ? base.slice(directoryAdapter.length + 1)
+  const idPath = directoryScope
+    ? base.slice(directoryScope.length + 1)
     : filenameAdapter
       ? base.slice(0, -(filenameAdapter.length + 1))
       : base;
-  if (declaredAdapter && !idPath.trim()) {
+  if ((directoryScope || declaredAdapter) && !idPath.trim()) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_RECIPE_INVALID',
-      `Library recipe ${libraryFile} declares adapter ${declaredAdapter} but has no recipe id.`,
-      `move it to recipes/${declaredAdapter}/<name>.recipe.json or rename it to <name>.${declaredAdapter}.recipe.json`,
+      `Library recipe ${libraryFile} declares ${declaredAdapter ? `adapter ${declaredAdapter}` : 'shared scope'} but has no recipe id.`,
+      `move it to recipes/${directoryScope ?? declaredAdapter}/<name>.recipe.json`,
     );
   }
   if (declaredAdapter && declaredAdapter !== adapter) return undefined;

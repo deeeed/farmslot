@@ -683,29 +683,94 @@ export class CdpWebPage {
   }
 
   async click(selector: string): Promise<unknown> {
-    const target = await this.evaluate<{
+    const target = await this.waitForClickTarget<{
       x: number;
       y: number;
       selector: string;
       tagName: string;
     }>(
-      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el, true); const rect = el.getBoundingClientRect(); return point ? { ...point, width: rect.width, height: rect.height, selector: ${JSON.stringify(selector)}, tagName: el.tagName } : null; })()`,
+      selector,
     );
-    await this.clickPoint(target.x, target.y);
+    await this.pressAndReleasePoint(target.x, target.y);
     return { clicked: true, selector: target.selector, tagName: target.tagName };
   }
 
   async clickText(text: string): Promise<unknown> {
-    const target = await this.evaluate<{
+    const target = await this.waitForClickTarget<{
       x: number;
       y: number;
       text: string;
       tagName: string;
     }>(
-      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, text: expected, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el, true); const rect = el.getBoundingClientRect(); return point ? { ...point, width: rect.width, height: rect.height, text: expected, tagName: el.tagName } : null; })()`,
+      text,
     );
-    await this.clickPoint(target.x, target.y);
+    await this.pressAndReleasePoint(target.x, target.y);
     return { clicked: true, text: target.text, tagName: target.tagName };
+  }
+
+  private async waitForClickTarget<T extends UiPoint>(
+    expression: string,
+    label: string,
+  ): Promise<T> {
+    const deadline = Date.now() + 1_000;
+    let previousGeometry: string | undefined;
+    let stableSince = 0;
+    while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`Click target readiness timed out: ${label}`);
+      }
+      let target: T | null;
+      try {
+        target = await withTimeout(
+          retryTransientCdpContext(deadline, (attemptTimeoutMs) =>
+            evaluateCdpSessionInIsolatedWorld<T | null>(
+              this.session,
+              expression,
+              'farmslot-click-readiness',
+              attemptTimeoutMs,
+            ),
+          ),
+          remainingMs,
+          `Click target readiness timed out: ${label}`,
+        );
+      } catch (error) {
+        // The per-call timer can expire before the enclosing readiness timer.
+        if (error instanceof CdpCallTimeoutError) {
+          throw new Error(`Click target readiness timed out: ${label}`, { cause: error });
+        }
+        throw error;
+      }
+      if (target === null) {
+        previousGeometry = undefined;
+      } else {
+        const geometry = JSON.stringify(target);
+        if (geometry !== previousGeometry) {
+          await this.session.call(
+            'Input.dispatchMouseEvent',
+            {
+              type: 'mouseMoved',
+              x: target.x,
+              y: target.y,
+              button: 'none',
+            },
+            { timeoutMs: Math.max(1, deadline - Date.now()) },
+          );
+          previousGeometry = geometry;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= 50 && Date.now() < deadline) {
+          // Sample unchanged geometry and an unobstructed hit after hover, before pressing.
+          return target;
+        }
+      }
+      const pauseMs = deadline - Date.now();
+      if (pauseMs <= 0) {
+        throw new Error(`Click target readiness timed out: ${label}`);
+      }
+      await sleep(Math.min(25, pauseMs));
+    }
   }
 
   async setInput(selector: string, value: string): Promise<unknown> {
@@ -748,6 +813,10 @@ export class CdpWebPage {
       y,
       button: 'none',
     });
+    await this.pressAndReleasePoint(x, y);
+  }
+
+  private async pressAndReleasePoint(x: number, y: number): Promise<void> {
     await this.session.call('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x,
@@ -1576,7 +1645,7 @@ function deepQueryHelpersExpression(): string {
       }
       return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
     };
-    const clickablePointDeep = (element) => {
+    const clickablePointDeep = (element, observeObstruction = false) => {
       if (!isVisibleDeep(element)) throw new Error('Target is not visible');
       if (element.disabled || element.getAttribute('aria-disabled') === 'true') throw new Error('Target is disabled');
       const rect = element.getBoundingClientRect();
@@ -1597,7 +1666,10 @@ function deepQueryHelpersExpression(): string {
         }
         return false;
       };
-      if (!hit || !composedContains(element, hit)) throw new Error('Target is obscured');
+      if (!hit || !composedContains(element, hit)) {
+        if (observeObstruction) return null;
+        throw new Error('Target is obscured');
+      }
       return { x, y };
     };
     const renderedTextDeep = (root = document) => {

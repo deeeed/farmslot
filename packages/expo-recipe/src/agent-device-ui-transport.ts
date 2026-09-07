@@ -114,6 +114,7 @@ export interface NativeGestureCommandRunner {
 }
 
 export interface AgentDeviceUiTransport extends UiActionTransport {
+  open(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -198,6 +199,9 @@ export function createAgentDeviceUiTransport(
   }
 
   return {
+    async open() {
+      await ensureOpen();
+    },
     async execute(action, node, context) {
       const client = await ensureOpen();
       switch (action) {
