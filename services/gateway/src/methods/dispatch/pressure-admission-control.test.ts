@@ -107,11 +107,12 @@ test('a v1 control file that says enabled is reset to the new opt-in default', (
       false,
       'a v1 file must not carry its inverted meaning across the upgrade',
     );
-    assert.deepEqual(getPressureAdmissionControl(), {
-      enabled: false,
-      updatedAt: null,
-      updatedBy: null,
-    });
+    const reset = getPressureAdmissionControl();
+    assert.equal(reset.enabled, false);
+    assert.equal(reset.updatedBy, 'upgrade', 'the reset is written back so it is reported once');
+    // A second load reads the rewritten v2 file and no longer needs the reset.
+    const rewritten = JSON.parse(readFileSync(controlFile(), 'utf-8')) as { version: number };
+    assert.equal(rewritten.version, 2);
   });
 });
 

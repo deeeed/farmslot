@@ -102,6 +102,13 @@ function controlPath(): string {
   return path.join(farmslotHome(), 'state', 'pressure-admission-control.json');
 }
 
+function writeControlFile(target: string, file: ControlFile): void {
+  mkdirSync(path.dirname(target), { recursive: true });
+  const temp = `${target}.tmp-${process.pid}`;
+  writeFileSync(temp, JSON.stringify(file, null, 2));
+  renameSync(temp, target);
+}
+
 function loadControlState(): PressureAdmissionControlState {
   const target = controlPath();
   if (!existsSync(target)) return { ...DEFAULT_STATE };
@@ -127,13 +134,24 @@ function loadControlState(): PressureAdmissionControlState {
     // A pre-v2 file recorded `enabled` when enabling meant "back to the shipped
     // default", which was ON. Carrying that value forward would leave this
     // install enforcing after an upgrade that made the gate opt-in, so the
-    // stored value is dropped and the operator re-opts in deliberately.
-    console.error(
-      `[pressure-admission] control file is version ${String(file.version)}, not ${CONTROL_VERSION}; ` +
-        'dispatch pressure prevention is now opt-in, so the stored setting is reset to disabled — ' +
-        're-enable it with `farmslot dispatch pressure-admission enable` if you want it enforcing',
-    );
-    return { ...DEFAULT_STATE };
+    // stored value is dropped and the operator re-opts in deliberately. The
+    // reset is written back as a v2 file so this happens, and is reported,
+    // exactly once rather than on every start until someone toggles it.
+    if (file.enabled) {
+      console.error(
+        `[pressure-admission] control file is version ${String(file.version)}, not ${CONTROL_VERSION}; ` +
+          'dispatch pressure prevention is now opt-in, so the stored setting is reset to disabled — ' +
+          're-enable it with `farmslot dispatch pressure-admission enable` if you want it enforcing',
+      );
+    }
+    const reset: ControlFile = {
+      version: CONTROL_VERSION,
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'upgrade',
+    };
+    writeControlFile(target, reset);
+    return { enabled: false, updatedAt: reset.updatedAt, updatedBy: reset.updatedBy };
   }
   return {
     enabled: file.enabled,
@@ -170,10 +188,7 @@ export function setPressureAdmissionEnabled(
     updatedBy: originator.kind === 'principal' ? originator.principalId : 'system',
   };
   const target = controlPath();
-  mkdirSync(path.dirname(target), { recursive: true });
-  const temp = `${target}.tmp-${process.pid}`;
-  writeFileSync(temp, JSON.stringify(next, null, 2));
-  renameSync(temp, target);
+  writeControlFile(target, next);
   cached = { enabled: next.enabled, updatedAt: next.updatedAt, updatedBy: next.updatedBy };
   console.log(
     `[pressure-admission] dispatch pressure prevention ${next.enabled ? 'enabled' : 'DISABLED'} by ${next.updatedBy}`,
