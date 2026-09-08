@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.24.0`
+Protocol version: `0.25.0`
 
 ## WebSocket frame shape
 
