@@ -69,7 +69,20 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   cd apps/command-center && yarn typecheck
   ```
 - [ ] **5. Locate the root cause** — identify the exact file(s) and line(s) causing the issue.
-- [ ] **6. Create branch** — `git checkout -b {{BRANCH}}`
+- [ ] **6. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
+  ```bash
+  cd "{{REPO}}"
+  # Farmslot prepare normally creates the task branch before dispatch.
+  current=$(git symbolic-ref --quiet --short HEAD) || { echo "FATAL: detached HEAD" >&2; exit 1; }
+  if [ "$current" = "{{BRANCH}}" ]; then
+    echo "Using prepared branch $current"
+  elif [ "$current" = "{{DEFAULT_BRANCH}}" ]; then
+    git checkout -b "{{BRANCH}}" || exit 1
+  else
+    echo "FATAL: expected {{BRANCH}} or {{DEFAULT_BRANCH}}, currently on '$current'" >&2
+    exit 1
+  fi
+  ```
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
 - [ ] **8. Validate the fix** — recipe must exit 0 whenever step 4 produced one; then typecheck/tests:
   ```bash

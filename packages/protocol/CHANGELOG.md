@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.25.0 - 2026-09-08

@@ -178,7 +178,7 @@ describe('codex runner', () => {
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(launch);
-    assert.match(launch, /model_reasoning_effort="xhigh"/);
+    assert.match(launch, /model_reasoning_effort="high"/);
     assert.doesNotMatch(launch, /codex exec /);
     assert.match(launch, /'Read TASK\.md'/);
   });
@@ -196,7 +196,7 @@ describe('codex runner', () => {
     );
     assert.match(
       launch,
-      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
+      /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="high".*--model gpt-5\.5$/,
     );
     assert.doesNotMatch(launch, /Read TASK\.md/);
   });
@@ -1634,7 +1634,7 @@ describe('buildLaunchCommand', () => {
       );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-      assert.match(cmd, /model_reasoning_effort="xhigh"/);
+      assert.match(cmd, /model_reasoning_effort="high"/);
       assert.doesNotMatch(cmd, /'Read TASK\.md and execute\.'/);
     });
 
@@ -1654,7 +1654,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /codex-home\/config\.toml/);
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-      assert.match(cmd, /model_reasoning_effort="xhigh"/);
+      assert.match(cmd, /model_reasoning_effort="high"/);
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
     });
@@ -1668,7 +1668,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"/,
       );
-      assert.match(cmd, /model_reasoning_effort="xhigh"/);
+      assert.match(cmd, /model_reasoning_effort="high"/);
       // A template without {model} must still carry the operator's selection.
       assert.match(cmd, /--model gpt-5/);
       assert.equal(cmd.match(/--model/g)?.length, 1);

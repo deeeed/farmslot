@@ -1,4 +1,6 @@
 import {
+  type CodexReasoningEffort,
+  codexReasoningEfforts,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CODEX_MODEL,
@@ -8,14 +10,21 @@ import {
   type ReviewRunnerId,
 } from '@farmslot/protocol';
 
-export type EffortLevel = '' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type EffortLevel = '' | CodexReasoningEffort;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok'];
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
-  // GPT-5.6 family (Codex CLI slugs) first; keep 5.5/5.4 for continuity.
-  codex: [DEFAULT_CODEX_MODEL, 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
+  // Astra first; retain earlier Codex models for explicit selections.
+  codex: [
+    DEFAULT_CODEX_MODEL,
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.5',
+    'gpt-5.4',
+  ],
   // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
   // shared protocol default used by every client.
   cursor: [DEFAULT_CURSOR_MODEL, 'composer-2.5-fast', 'cursor-grok-4.6-high', 'gpt-5.6-sol-max'],
@@ -54,10 +63,17 @@ export function modelForRunnerChange(
 // Effort: claude/cursor don't use it. Codex and Grok expose runner-specific levels.
 export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   claude: [],
-  codex: ['low', 'medium', 'high', 'xhigh'],
+  codex: [...codexReasoningEfforts()],
   cursor: [],
   grok: ['low', 'medium', 'high', 'xhigh', 'max'],
 };
+
+/** Select efforts supported by the runner and the selected model. */
+export function effortsForRunner(runner: string, model: string): EffortLevel[] {
+  return runner === 'codex'
+    ? [...codexReasoningEfforts(model)]
+    : [...(EFFORT_BY_RUNNER[runner] ?? [])];
+}
 
 /** Launch default when effort is omitted (matches gateway resolveRunnerEffort). */
 export const DEFAULT_EFFORT: Record<string, EffortLevel> = {

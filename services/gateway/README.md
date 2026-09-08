@@ -51,7 +51,7 @@ The package is intentionally organized by ownership domains. Keep `src/` itself 
 
 ## Local quality
 
-The Co-Pilot runtime defaults to this Farmslot checkout and Codex `gpt-5.6-sol`. Save a different
+The Co-Pilot runtime defaults to this Farmslot checkout and Codex `gpt-6-astra` with `high` reasoning effort. Save a different
 runner/model and Gateway-autostart policy through `copilot.configure`; the Gateway persists that
 choice. `FARMSLOT_OPERATOR_CHECKOUT`, `FARMSLOT_COPILOT_RUNNER`, and `FARMSLOT_COPILOT_MODEL`
 remain bootstrap overrides. Dangerous execution still requires the per-start typed confirmation

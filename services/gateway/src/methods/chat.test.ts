@@ -778,6 +778,10 @@ await test('ephemeral manual sessions never write to disk until pinSession runs'
 
 await test('estimateContextWindow prefers exact and longest model matches', () => {
   assert(
+    estimateContextWindow('codex:gpt-6-astra') === 272_000,
+    'Astra context window did not resolve',
+  );
+  assert(
     estimateContextWindow('openai:gpt-5.3-codex-spark') === 400_000,
     'spark model did not resolve',
   );

@@ -576,7 +576,7 @@ test('resolveSelfReviewRunnerModel ignores project self_review.model for plan-re
       { runner: 'same', model: 'opus' },
       { reviewRunner: 'codex', model: null },
     ),
-    { reviewRunner: 'codex', model: 'gpt-5.6-sol', crossRunner: true },
+    { reviewRunner: 'codex', model: 'gpt-6-astra', crossRunner: true },
   );
 });
 

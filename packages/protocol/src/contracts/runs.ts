@@ -2652,12 +2652,29 @@ export const DEFAULT_TASK_DIR = '.task';
  * dispatch path — verify all `DEFAULT_CLAUDE_MODEL` callers when touching it. */
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
-/** Default Codex model used when no slot/task/project/user override is set.
- * GPT-5.6 family uses tiered slugs (sol/terra/luna); Sol is the flagship. */
-export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
+/** Default Codex model used when no slot/task/project/user override is set. */
+export const DEFAULT_CODEX_MODEL = 'gpt-6-astra';
+
+/** Reasoning efforts exposed by the Codex CLI, including Astra's max and ultra. */
+export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
+
+/** Model capabilities from the Codex CLI catalog. Unknown models keep the legacy levels. */
+export function codexReasoningEfforts(model?: string | null): readonly CodexReasoningEffort[] {
+  switch (model) {
+    case 'gpt-6-astra':
+    case 'gpt-5.6-sol':
+    case 'gpt-5.6-terra':
+      return CODEX_REASONING_EFFORTS;
+    case 'gpt-5.6-luna':
+      return ['low', 'medium', 'high', 'xhigh', 'max'];
+    default:
+      return ['low', 'medium', 'high', 'xhigh'];
+  }
+}
 
 /** Default Codex reasoning effort when dispatch/launch omits effort. */
-export const DEFAULT_CODEX_EFFORT = 'xhigh';
+export const DEFAULT_CODEX_EFFORT = 'high';
 
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
 export const DEFAULT_CURSOR_MODEL = 'cursor-grok-4.6-high-fast';

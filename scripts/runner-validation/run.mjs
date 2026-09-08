@@ -5,8 +5,9 @@
  * usage:
  *   node scripts/runner-validation/run.mjs [--runner claude|codex|both] [--scenario hook-smoke|all] [--out-dir path] [--timeout-ms 180000] [--keep-session]
  *
+ * Codex effort proof requires --runner codex --scenario dispatch-model-flag.
  * Slot-targeted scenarios (dispatch-model-flag) also accept:
- *   [--slot <slotId>] [--model <model>] [--task <TASK.md path>]
+ *   [--slot <slotId>] [--model <model>] [--effort <effort>] [--task <TASK.md path>]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +25,7 @@ function parseArgs(argv) {
     keepSession: false,
     slotId: null,
     model: null,
+    effort: null,
     taskFile: null,
     // Which admission posture the gateway under test is configured for, for
     // scenarios whose expected outcome depends on it.
@@ -41,12 +43,13 @@ function parseArgs(argv) {
     else if (token === '--keep-session') args.keepSession = true;
     else if (token === '--slot') args.slotId = argv[++i];
     else if (token === '--model') args.model = argv[++i];
+    else if (token === '--effort') args.effort = argv[++i];
     else if (token === '--task') args.taskFile = argv[++i];
     else if (token === '--expect') args.expect = argv[++i];
     else if (token === '--via') args.via = argv[++i];
     else if (token === '--help' || token === '-h') {
       console.log(
-        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session] [--slot slotId] [--model model] [--task TASK.md] [--expect off|refuse|queue] [--via default|project|env]`,
+        `usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario ${listScenarios().join('|')}|all] [--out-dir path] [--timeout-ms 300000] [--keep-session] [--slot slotId] [--model model] [--effort effort] [--task TASK.md] [--expect off|refuse|queue] [--via default|project|env]`,
       );
       process.exit(0);
     } else {
@@ -90,6 +93,7 @@ async function main() {
         outDir: args.outDir,
         slotId: args.slotId,
         model: args.model,
+        effort: args.effort,
         taskFile: args.taskFile,
         ...(args.expect ? { expect: args.expect } : {}),
         ...(args.via ? { via: args.via } : {}),

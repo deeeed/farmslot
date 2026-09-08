@@ -4,8 +4,8 @@ import { customElement, property } from 'lit/decorators.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   DEFAULT_MODEL,
-  EFFORT_BY_RUNNER,
   type EffortLevel,
+  effortsForRunner,
   MODELS_BY_RUNNER,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
@@ -106,7 +106,7 @@ export class RunnerModelEffortPicker extends LitElement {
   }
 
   private effortOptions(): EffortLevel[] {
-    const options = this.runner ? (EFFORT_BY_RUNNER[this.runner] ?? []) : [];
+    const options = effortsForRunner(this.runner, this.model);
     return [
       ...new Set(
         ['' as EffortLevel, ...options, this.effort].filter((effort) => effort !== undefined),
@@ -138,7 +138,12 @@ export class RunnerModelEffortPicker extends LitElement {
   }
 
   private selectModel(model: string) {
-    this.emitChange({ runner: this.runner, model, effort: this.effort });
+    const efforts = effortsForRunner(this.runner, model);
+    this.emitChange({
+      runner: this.runner,
+      model,
+      effort: efforts.includes(this.effort) ? this.effort : '',
+    });
   }
 
   private selectEffort(effort: EffortLevel) {

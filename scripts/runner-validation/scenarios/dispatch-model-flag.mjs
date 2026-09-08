@@ -59,6 +59,8 @@ function expectedModelArgument(model) {
 
 export async function runScenario({
   timeoutMs,
+  runnerAdapter,
+  effort,
   outDir,
   slotId,
   model,
@@ -93,6 +95,7 @@ export async function runScenario({
     runner: reportRunner,
     slotId: slotId ?? null,
     model: model ?? null,
+    effort: effort ?? null,
     runId: null,
     dispatchStatus: null,
     launchCommand: null,
@@ -123,6 +126,7 @@ export async function runScenario({
         'Validation run for the dispatch model flag. Report the active model and stop; make no changes.',
       runner: reportRunner,
       model,
+      ...(effort ? { effort } : {}),
       slotId,
       skipPrepare: true,
       ...(taskFile ? { taskFile } : {}),
@@ -161,6 +165,7 @@ export async function runScenario({
     if (report.dispatchStatus !== 'done') {
       throw new Error(`dispatch step is ${report.dispatchStatus}, expected done`);
     }
+    runnerAdapter?.assertLaunchEffort?.(report.launchCommand, effort);
     report.pass = true;
   } catch (error) {
     report.error = error?.message || String(error);
