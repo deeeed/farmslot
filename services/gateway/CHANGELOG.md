@@ -36,8 +36,28 @@ All notable changes to `@farmslot/gateway` are tracked here.
   physically detached, so a re-home cannot move it to a slot nobody detached.
 - feat(runtime): a re-target is checked against the machine's real device list before anything is
   released. `resource.device.inventory` enumerates a slot's machine through `xcrun simctl list
+devices -j`, `adb devices -l`, and `emulator -list-avds`, routed over the node exec path so a
+  remote machine answers for itself, cached briefly per machine, and labelled with every slot that
+  configures each device, so a device two slots share names both. A `recipe.rerun` target or a posture re-target naming a device that
+  machine does not have is now refused up front, naming the machine and the nearest known
+  identities, instead of costing the run the device it was holding and failing at the provider's
+  boot. Only the capability the plan actually re-targets is checked, so a sibling whose device is
+  momentarily absent cannot kill a re-target that never touched it. Nothing is refused when the tool
+  that answers for a key did not run, nor ever for an `adb_serial` — `adb devices` lists connected
+  transports, so an unbooted emulator is absent from it and booting one is what the acquire does
+  next. A refusal is never issued off a cached snapshot: the inventory is re-read fresh first, so a
+  device created or plugged in inside the cache window is not denied.
 - fix(runtime): a boot or shutdown hook that exits non-zero is reported as success only when the
   device itself says so. The verdict was matching `Unable to (shutdown|boot) device in current
+state` out of the tool's stderr, which let a device caught mid-transition pass as running; it now
+  reads the state back from `simctl list devices -j` or `adb get-state`, and an unanswerable state
+  keeps the failure. Only a settled state answers: `Booting`, `Creating` and an `offline` or
+  `unauthorized` Android transport are transitional, so they confirm neither a boot nor a shutdown.
+  Android reads the transport list rather than `adb get-state`, because a non-zero exit cannot tell a
+  powered-off emulator from a missing adb; an emulator transport absent from a list adb successfully
+  produced is a confirmed shutdown, while an absent physical serial is only unplugged and confirms
+  nothing. The device list is also dropped whenever pool config changes, so the slots each device is
+  configured for never lag the pool file.
 - fix(runs): `complete`, `fail`, and `block` write the backlog repair marker in the same durable
   write as the terminal status, as cancel has since ADR-053. Recording it only after a failed settle
   left a crash between the terminal publish and the settle with no way to rebuild the projection.
@@ -45,6 +65,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
   cleared on load — including when there is no backlog file at all. Every repair walks from a backlog
   item, so a marker on an ad-hoc run was unreachable: it stood forever and `archiveRun`/`deleteRun`
   refused the run permanently.
+
 - feat(runtime)!: host-pressure admission is opt-in and OFF by default, on both gates. A medium- or
   high-cost capability acquire on a machine at critical pressure now proceeds; the pressure snapshot
   is carried on the granted lease with `enforced: false` and reported by `runtime.capability.status`,
