@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Show a CI timeout decision when repeated failures make no progress, including failures already handled by a fix attempt.
+
 - Keep interactive development runs awaiting operator action when a worker reports a blocker or failure, preserving its findings instead of entering failure cleanup.
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
 

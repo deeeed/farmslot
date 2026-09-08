@@ -54,7 +54,8 @@ export function renderRunCiStatus(run: Run, ctx: RunCiStatusRenderContext): unkn
   const phase = ci.phase ?? out?.phase;
   const activeTask = (ci.activeTaskFile ?? out?.activeTaskFile ?? '').split('/').pop() || '';
   const fixInProgress = isCIWatchWorkerFixActive(phase, ci.fixInProgress ?? out?.fixInProgress);
-  const canPoke = ciStep?.status === 'running' && !fixInProgress;
+  const waitingForDecision = phase === 'decision_required' || Boolean(timeoutDecision);
+  const canPoke = ciStep?.status === 'running' && !fixInProgress && !waitingForDecision;
   const pollIntervalMs = ci.pollIntervalMs ?? out?.pollIntervalMs ?? 60_000;
   const lastCheckedAt =
     ci.lastCheckedAt ??
@@ -63,13 +64,14 @@ export function renderRunCiStatus(run: Run, ctx: RunCiStatusRenderContext): unkn
       ? out.checkTimeline[out.checkTimeline.length - 1]?.timestamp
       : undefined);
   const nextPollAt = ci.nextPollAt ?? out?.nextPollAt;
-  const nextCheckMs = fixInProgress
-    ? null
-    : nextPollAt
-      ? Math.max(0, new Date(nextPollAt).getTime() - ctx.now)
-      : lastCheckedAt
-        ? Math.max(0, new Date(lastCheckedAt).getTime() + pollIntervalMs - ctx.now)
-        : null;
+  const nextCheckMs =
+    fixInProgress || waitingForDecision || ciStep?.status !== 'running'
+      ? null
+      : nextPollAt
+        ? Math.max(0, new Date(nextPollAt).getTime() - ctx.now)
+        : lastCheckedAt
+          ? Math.max(0, new Date(lastCheckedAt).getTime() + pollIntervalMs - ctx.now)
+          : null;
   const nextCheck = nextCheckMs !== null ? formatDuration(nextCheckMs) : '';
   const nextCheckColor =
     nextCheckMs === null

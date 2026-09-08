@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Hide the CI polling countdown and check-now button while an operator decision is pending.
+
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

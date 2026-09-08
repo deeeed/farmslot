@@ -20,6 +20,7 @@ import {
   tryInlineCIFix,
 } from './inline-fix.js';
 import {
+  buildCIBotCommentFingerprint,
   buildCIWatchCheckFingerprint,
   type CICheckTimelineEntry,
   type CIOutcome,
@@ -150,6 +151,7 @@ export async function monitorCI(
 
   const config = await loadCIConfig(run.project);
   const startedAt = Date.now();
+  let totalTimeoutWindowStartedAt = startedAt;
   const initialState = readDedup(runId);
   let timeoutWindowStartedAt = Date.parse(initialState.timeoutWindowStartedAt ?? '');
   if (!Number.isFinite(timeoutWindowStartedAt)) timeoutWindowStartedAt = startedAt;
@@ -162,6 +164,7 @@ export async function monitorCI(
   let lastBotCommentCount = 0;
   let lastBotCommentDedupedCount = 0;
   let lastInlineCIFix: InlineCIFix | undefined;
+  let lastActionableFingerprint = initialState.lastActionableFingerprint ?? null;
   // When the last pokeablePoll was resolved early by a poke(), force the next
   // prStatus to bypass the 30s gh-cache so operator refreshes see fresh data.
   let forceNextRefresh = false;
@@ -171,6 +174,7 @@ export async function monitorCI(
     lastProgressAt?: string;
     lastProgressReason?: string;
     checkFingerprint?: string;
+    actionableFingerprint?: string;
     headSha?: string | null;
   }) => {
     const windowStart = patch?.timeoutWindowStartedAt ?? timeoutWindowStartedAt;
@@ -179,11 +183,15 @@ export async function monitorCI(
       timeoutWindowStartedAt = patch.timeoutWindowStartedAt;
     if (patch?.checkFingerprint !== undefined) lastCheckFingerprint = patch.checkFingerprint;
     if (patch?.headSha !== undefined) lastHeadSha = patch.headSha;
+    if (patch?.actionableFingerprint !== undefined)
+      lastActionableFingerprint = patch.actionableFingerprint;
     mutateDedup(runId, (s) => {
       s.timeoutWindowStartedAt = windowStartIso;
       if (patch?.lastProgressAt) s.lastProgressAt = patch.lastProgressAt;
       if (patch?.lastProgressReason) s.lastProgressReason = patch.lastProgressReason;
       if (lastCheckFingerprint != null) s.lastCheckFingerprint = lastCheckFingerprint;
+      if (lastActionableFingerprint != null)
+        s.lastActionableFingerprint = lastActionableFingerprint;
       if (lastHeadSha !== undefined) s.lastHeadSha = lastHeadSha;
     });
     return {
@@ -195,7 +203,7 @@ export async function monitorCI(
 
   const markTimeoutProgress = (
     reason: string,
-    opts?: { checkFingerprint?: string; headSha?: string | null },
+    opts?: { checkFingerprint?: string; actionableFingerprint?: string; headSha?: string | null },
   ) => {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -204,6 +212,7 @@ export async function monitorCI(
       lastProgressAt: nowIso,
       lastProgressReason: reason,
       checkFingerprint: opts?.checkFingerprint,
+      actionableFingerprint: opts?.actionableFingerprint,
       headSha: opts?.headSha,
     });
   };
@@ -383,6 +392,14 @@ export async function monitorCI(
       [],
       headShaNow,
     );
+    const actionableFingerprint = buildCIBotCommentFingerprint(effectiveActionable);
+    if (actionableFingerprint && actionableFingerprint !== lastActionableFingerprint) {
+      markTimeoutProgress('new actionable comment', {
+        checkFingerprint,
+        actionableFingerprint,
+        headSha: headShaNow,
+      });
+    }
     let recommendation = rawRecommendation;
     if (
       rawRecommendation === 'NEEDS_ATTENTION' &&
@@ -490,6 +507,53 @@ export async function monitorCI(
       if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
         return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
       return buildOutcome('passed');
+    }
+
+    // The short window resets on watched progress; the total window bounds
+    // fix/check loops between operator wait decisions. Check before branches
+    // that continue polling, including deduped failures and no-change fixes.
+    const now = Date.now();
+    const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
+    const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
+    const waitingForCI = !allPassed || effectiveActionable.length > 0;
+    if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
+      const elapsedMs = progressWindowExpired
+        ? now - timeoutWindowStartedAt
+        : now - totalTimeoutWindowStartedAt;
+      const configuredMs = progressWindowExpired ? config.maxPollTimeMs : config.maxTotalPollTimeMs;
+      const reason = progressWindowExpired ? 'without watched CI progress' : 'CI-watch wait cap';
+      console.log(
+        `[ci-monitor] run ${runId.slice(0, 8)} — timed out after ${Math.round(elapsedMs / 60_000)}min (${reason}, limit ${configuredMs / 60000}min)`,
+      );
+      const pendingNames = pr.checks.filter((c) => c.status === 'pending').map((c) => c.name);
+      const failedCheckNames = pr.checks.filter((c) => c.status === 'fail').map((c) => c.name);
+      let timeoutDesc = progressWindowExpired
+        ? `CI timed out after ${configuredMs / 60000} min without watched progress`
+        : `CI timed out after ${configuredMs / 60000} min total`;
+      if (pendingNames.length) timeoutDesc += `\nPending: ${pendingNames.join(', ')}`;
+      if (failedCheckNames.length) timeoutDesc += `\nFailed: ${failedCheckNames.join(', ')}`;
+      const state = readDedup(runId);
+      if (state.lastProgressAt)
+        timeoutDesc += `\nLast progress: ${state.lastProgressAt}${state.lastProgressReason ? ` (${state.lastProgressReason})` : ''}`;
+      const actionId = await createCIDecision(
+        runId,
+        'ci_timeout',
+        timeoutDesc,
+        [
+          { id: 'continue', label: 'Keep waiting', style: 'primary' },
+          { id: 'skip', label: 'Release slot', style: 'secondary' },
+          { id: 'abort', label: 'Abort', style: 'danger' },
+        ],
+        { checks: pr.checks },
+      );
+      if (actionId === 'abort') return buildOutcome('aborted');
+      if (actionId === 'skip') return buildOutcome('timeout');
+      // An explicit keep-waiting action grants another wait window without
+      // claiming that CI made progress.
+      totalTimeoutWindowStartedAt = Date.now();
+      syncTimeoutProgressState({ timeoutWindowStartedAt: totalTimeoutWindowStartedAt });
+      forceNextRefresh = await waitForNextPoll('polling');
+      continue;
     }
 
     // All watched checks passed
@@ -807,46 +871,6 @@ export async function monitorCI(
       if (actionId === 'dispatch-pr-complete') {
         return buildOutcome('comments', [], actionId);
       }
-    }
-
-    // Timeout check. The short window resets on watched progress; the total
-    // window prevents endless fix/check loops.
-    const now = Date.now();
-    const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
-    const totalWindowExpired = now - startedAt > config.maxTotalPollTimeMs;
-    if (progressWindowExpired || totalWindowExpired) {
-      const elapsedMs = progressWindowExpired ? now - timeoutWindowStartedAt : now - startedAt;
-      const configuredMs = progressWindowExpired ? config.maxPollTimeMs : config.maxTotalPollTimeMs;
-      const reason = progressWindowExpired
-        ? 'without watched CI progress'
-        : 'absolute CI-watch cap';
-      console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — timed out after ${Math.round(elapsedMs / 60_000)}min (${reason}, limit ${configuredMs / 60000}min)`,
-      );
-      const pendingNames = pr.checks.filter((c) => c.status === 'pending').map((c) => c.name);
-      const failedCheckNames = pr.checks.filter((c) => c.status === 'fail').map((c) => c.name);
-      let timeoutDesc = progressWindowExpired
-        ? `CI timed out after ${configuredMs / 60000} min without watched progress`
-        : `CI timed out after ${configuredMs / 60000} min total`;
-      if (pendingNames.length) timeoutDesc += `\nPending: ${pendingNames.join(', ')}`;
-      if (failedCheckNames.length) timeoutDesc += `\nFailed: ${failedCheckNames.join(', ')}`;
-      const state = readDedup(runId);
-      if (state.lastProgressAt)
-        timeoutDesc += `\nLast progress: ${state.lastProgressAt}${state.lastProgressReason ? ` (${state.lastProgressReason})` : ''}`;
-      const actionId = await createCIDecision(
-        runId,
-        'ci_timeout',
-        timeoutDesc,
-        [
-          { id: 'continue', label: 'Keep waiting', style: 'primary' },
-          { id: 'skip', label: 'Release slot', style: 'secondary' },
-          { id: 'abort', label: 'Abort', style: 'danger' },
-        ],
-        { checks: pr.checks },
-      );
-      if (actionId === 'abort') return buildOutcome('aborted');
-      if (actionId === 'skip') return buildOutcome('timeout');
-      // continue — keep polling
     }
 
     // Sleep before next poll
