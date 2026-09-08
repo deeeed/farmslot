@@ -164,7 +164,7 @@ export async function monitorCI(
   let lastBotCommentCount = 0;
   let lastBotCommentDedupedCount = 0;
   let lastInlineCIFix: InlineCIFix | undefined;
-  let lastActionableFingerprint: string | null = null;
+  let lastActionableFingerprint = initialState.lastActionableFingerprint ?? null;
   // When the last pokeablePoll was resolved early by a poke(), force the next
   // prStatus to bypass the 30s gh-cache so operator refreshes see fresh data.
   let forceNextRefresh = false;
@@ -174,6 +174,7 @@ export async function monitorCI(
     lastProgressAt?: string;
     lastProgressReason?: string;
     checkFingerprint?: string;
+    actionableFingerprint?: string;
     headSha?: string | null;
   }) => {
     const windowStart = patch?.timeoutWindowStartedAt ?? timeoutWindowStartedAt;
@@ -182,11 +183,15 @@ export async function monitorCI(
       timeoutWindowStartedAt = patch.timeoutWindowStartedAt;
     if (patch?.checkFingerprint !== undefined) lastCheckFingerprint = patch.checkFingerprint;
     if (patch?.headSha !== undefined) lastHeadSha = patch.headSha;
+    if (patch?.actionableFingerprint !== undefined)
+      lastActionableFingerprint = patch.actionableFingerprint;
     mutateDedup(runId, (s) => {
       s.timeoutWindowStartedAt = windowStartIso;
       if (patch?.lastProgressAt) s.lastProgressAt = patch.lastProgressAt;
       if (patch?.lastProgressReason) s.lastProgressReason = patch.lastProgressReason;
       if (lastCheckFingerprint != null) s.lastCheckFingerprint = lastCheckFingerprint;
+      if (lastActionableFingerprint != null)
+        s.lastActionableFingerprint = lastActionableFingerprint;
       if (lastHeadSha !== undefined) s.lastHeadSha = lastHeadSha;
     });
     return {
@@ -198,7 +203,7 @@ export async function monitorCI(
 
   const markTimeoutProgress = (
     reason: string,
-    opts?: { checkFingerprint?: string; headSha?: string | null },
+    opts?: { checkFingerprint?: string; actionableFingerprint?: string; headSha?: string | null },
   ) => {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -207,6 +212,7 @@ export async function monitorCI(
       lastProgressAt: nowIso,
       lastProgressReason: reason,
       checkFingerprint: opts?.checkFingerprint,
+      actionableFingerprint: opts?.actionableFingerprint,
       headSha: opts?.headSha,
     });
   };
@@ -388,8 +394,11 @@ export async function monitorCI(
     );
     const actionableFingerprint = buildCIBotCommentFingerprint(effectiveActionable);
     if (actionableFingerprint && actionableFingerprint !== lastActionableFingerprint) {
-      lastActionableFingerprint = actionableFingerprint;
-      markTimeoutProgress('new actionable comment', { checkFingerprint, headSha: headShaNow });
+      markTimeoutProgress('new actionable comment', {
+        checkFingerprint,
+        actionableFingerprint,
+        headSha: headShaNow,
+      });
     }
     let recommendation = rawRecommendation;
     if (
@@ -500,9 +509,9 @@ export async function monitorCI(
       return buildOutcome('passed');
     }
 
-    // Timeout check. The short window resets on watched progress; the total
-    // operator-approved window bounds fix/check loops between wait decisions. Check before branches that continue
-    // polling, including deduped failures and no-change fix results.
+    // The short window resets on watched progress; the total window bounds
+    // fix/check loops between operator wait decisions. Check before branches
+    // that continue polling, including deduped failures and no-change fixes.
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;

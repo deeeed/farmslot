@@ -65,6 +65,7 @@ mock.module('./inline-fix.js', {
 });
 
 const { initCIMonitor, monitorCI, pokeCIPoll, resolveCIDecision } = await import('./service.js');
+const { buildCIBotCommentFingerprint } = await import('./state.js');
 const { createRun, getRun, getAllRuns, loadAllRuns, persistRunNow, updateRun } =
   await import('../runs/store.js');
 await loadAllRuns();
@@ -174,4 +175,29 @@ test('new actionable feedback gets handled before an old no-progress timeout', a
   assert.equal(result.result, 'comments');
   assert.equal(fixCalls, 1);
   assert.equal(getRun(run.id)?.ciWatchState?.lastProgressReason, 'new actionable comment');
+});
+
+test('a restarted monitor does not treat standing review feedback as new progress', async () => {
+  const run = fixture('pending');
+  comments = [
+    {
+      author: 'review-bot',
+      label: 'review',
+      action: 'fix',
+      bodyPreview: 'standing finding',
+      createdAt: new Date(0).toISOString(),
+      source: 'issue_comment',
+      workerResponded: false,
+    },
+  ];
+  updateRun(run.id, {
+    ciWatchState: {
+      ...getRun(run.id)!.ciWatchState!,
+      lastActionableFingerprint: buildCIBotCommentFingerprint(comments),
+    },
+  });
+  const result = await monitorCI(run.id, 404, 'deeeed/farmslot', new AbortController().signal);
+  assert.equal(result.result, 'timeout');
+  assert.equal(fixCalls, 0);
+  assert.equal(getRun(run.id)?.ciWatchState?.lastProgressAt, new Date(0).toISOString());
 });

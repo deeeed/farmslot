@@ -2276,6 +2276,8 @@ export interface RunCiWatchState {
   lastProgressReason?: string;
   /** Last watched-check status fingerprint used to detect progress. */
   lastCheckFingerprint?: string;
+  /** Last observed actionable feedback, retained so restart does not invent progress. */
+  lastActionableFingerprint?: string;
   /** Last observed local PR head SHA used to detect new commits. */
   lastHeadSha?: string | null;
   /** Consecutive-failure counter; resets on success. Gates consecutive fallback (MAX_INLINE_CI_FIX_ATTEMPTS). */
