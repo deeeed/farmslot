@@ -716,11 +716,15 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     // Mark step running + update run status
     const status = STEP_TO_STATUS[stepName];
     const acknowledgedAt = new Date().toISOString();
+    const previousOutputs = current.steps.find((step) => step.name === stepName)?.outputs;
+    // Keep the consumed finding across Resume so the monitor waits for a newer signal.
+    const resumedWorkerFinding =
+      stepName === S.MONITOR && previousOutputs?.reason === 'interactive-worker-operator-owned';
     updateRunStep(runId, stepName, {
       status: 'running',
       startedAt: acknowledgedAt,
       detail: undefined,
-      outputs: undefined,
+      outputs: resumedWorkerFinding ? { ...previousOutputs, awaitingOperator: false } : undefined,
       completedAt: undefined,
       durationMs: undefined,
     });

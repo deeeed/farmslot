@@ -3,6 +3,7 @@ import {
   type DiffStat,
   Events,
   FLOW_STEPS,
+  isInteractiveDevRun,
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   PipelineSteps,
@@ -109,17 +110,22 @@ function repairRunReviewDepthIfNeeded(runId: string): Run {
 export function holdInteractiveCompletionForOperator(
   current: Run,
   stepOutputs: Record<string, unknown>,
-  workerStatus: 'complete' | 'done',
+  workerStatus: 'complete' | 'done' | 'blocked' | 'failed',
 ): Record<string, unknown> {
   const monitorStep = current.steps.find((step) => step.name === S.MONITOR);
+  const needsContinuation = workerStatus === 'blocked' || workerStatus === 'failed';
   const heldOutputs = {
     ...stepOutputs,
     workerTerminalSignalHeld: workerStatus,
     awaitingOperator: true,
-    reason: 'interactive-completion-operator-owned',
+    reason: needsContinuation
+      ? 'interactive-worker-operator-owned'
+      : 'interactive-completion-operator-owned',
   };
   updateRunStep(current.id, S.MONITOR, {
-    detail: 'Worker finished; waiting for operator action',
+    detail: needsContinuation
+      ? `Worker reported ${workerStatus}; provide direction and Resume, or choose a completion action`
+      : 'Worker finished; waiting for operator action',
     durationMs: monitorStep?.startedAt
       ? Date.now() - new Date(monitorStep.startedAt).getTime()
       : undefined,
@@ -462,38 +468,15 @@ export async function executeMonitorStep(
       workerSignal,
       cliCommand,
     };
-    if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
-      // The step itself completed — the worker self-signaled a terminal disposition. Throw
-      // a typed error so the exception-driven catch handles status mutation + slot reset
-      // in one place; the catch marks this step `done` (not failed) using stepOutputs.
-      throw monitorTerminalError({
-        status: workerSignal.status,
-        outcome: workerSignal.status === 'blocked' ? 'partial' : 'failure',
-        reason: workerSignal.reason ?? after.error ?? `worker signaled ${workerSignal.status}`,
-        stepInputs: inputs,
-        stepOutputs,
-      });
-    }
     if (
-      isLightweightInteractiveDevRun(current) &&
-      (workerSignal?.status === 'complete' || workerSignal?.status === 'done')
+      (isInteractiveDevRun(after) &&
+        (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed')) ||
+      (isLightweightInteractiveDevRun(after) &&
+        (workerSignal?.status === 'complete' || workerSignal?.status === 'done'))
     ) {
-      // Hold the run for its operator instead of completing it.
-      //
-      // MONITOR is the only step that can stop this: FLOW_STEPS.dev runs
-      // MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE, so COMPLETE precedes the
-      // gate and would release the slot and kill the worker first.
-      //
-      // `paused`, not `blocked`. Both routes to a terminal-ish status —
-      // MonitorTerminalError's catch and the non-thrown blocked branch — call
-      // cleanupSlotAfterRunFailure, which frees the slot and clears
-      // current_run_id; another run could then claim it and the operator's later
-      // Abort would tear down someone else's work. The orchestrator's post-step
-      // check returns on `paused` before marking the step done and before any
-      // cleanup, so slot ownership and the worker survive. `paused` is
-      // non-terminal, and runInteractiveDevResolve rejects only terminal statuses,
-      // so done-no-pr / blocked / failed / abort / run-self-review all stay
-      // available — as does plain resume.
+      // Interactive findings belong to the operator. Pause before failure cleanup
+      // or COMPLETE can release the slot; retain the original signal as evidence.
+      // Reviewed success still advances through the configured review pipeline.
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal held; ` +
           'interactive completion is operator-owned',
@@ -515,6 +498,16 @@ export async function executeMonitorStep(
         inputs,
         outputs: heldOutputs,
       };
+    }
+    if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
+      // Non-interactive failures use the engine's status and cleanup path.
+      throw monitorTerminalError({
+        status: workerSignal.status,
+        outcome: workerSignal.status === 'blocked' ? 'partial' : 'failure',
+        reason: workerSignal.reason ?? after.error ?? `worker signaled ${workerSignal.status}`,
+        stepInputs: inputs,
+        stepOutputs,
+      });
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run

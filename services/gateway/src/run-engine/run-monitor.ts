@@ -474,7 +474,7 @@ export interface MonitorResult {
 type FreshnessAgentContext = Pick<AgentContext, 'id' | 'role' | 'startedAt'>;
 
 type FreshnessRunContext = {
-  steps: Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt'>[];
+  steps: Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt' | 'outputs'>[];
   monitorState?: Pick<RunMonitorState, 'startedAt'>;
   agentContexts?: FreshnessAgentContext[];
 };
@@ -496,6 +496,14 @@ function matchingSignalContext(
 }
 
 export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: WorkerSignal): boolean {
+  const monitorOutputs = run.steps.find((s) => s.name === PipelineSteps.MONITOR)?.outputs;
+  if (monitorOutputs?.reason === 'interactive-worker-operator-owned') {
+    // Resume must not consume the same finding and immediately pause again.
+    const held = normalizeWorkerSignal(monitorOutputs.workerSignal);
+    const heldAt = held.ok ? parseStrictIsoMs(held.signal.timestamp) : null;
+    const signalAt = parseStrictIsoMs(signal.timestamp);
+    if (heldAt === null || signalAt === null || signalAt <= heldAt) return false;
+  }
   const durableFreshnessFloors = [
     run.steps.find((s) => s.name === PipelineSteps.DISPATCH)?.completedAt,
     run.monitorState?.startedAt,

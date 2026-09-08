@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Keep interactive development runs awaiting operator action when a worker reports a blocker or failure, preserving its findings instead of entering failure cleanup.
 
 ## 0.10.0 - 2026-09-08
 
