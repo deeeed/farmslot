@@ -1,9 +1,11 @@
 {
-  "version": "0.9.0",
-  "date": "2026-08-21",
+  "version": "0.10.0",
+  "date": "2026-09-08",
   "items": [
-    "New dispatches are held during sustained critical pressure; existing work is never touched.",
-    "One-shot overrides are authenticated, generation-bound, and durably consumed.",
-    "History persists across restarts; admission stays in memory and uses cached attribution only."
+    "Host-pressure admission is now opt-in and off by default for both capability acquires and dispatch; a project turns it on with runtime_capabilities.host_pressure_admission, and pressure is still reported as advisory when the gate is off.",
+    "Run resource posture spans every wait: processes stop at an operator gate or terminal, the slot can be freed at a human gate and restored on the answer, and a freed park whose slot was taken is re-homed into another slot on the same machine.",
+    "Validation can be re-targeted to another simulator or device without re-dispatching the run, with the identity checked against the machine's real device inventory before anything is released.",
+    "Device claims can be scoped to a machine or the whole fleet with a FIFO wait queue, so several runs sharing one physical device wait, are granted in order, and see who holds it.",
+    "Terminal cleanup runs after the run's outcome is published, the terminal capability fence survives a gateway restart, and runner stops read the process table structurally under a fixed time budget."
   ]
 }

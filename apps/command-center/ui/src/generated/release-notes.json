@@ -1,9 +1,11 @@
 {
-  "version": "0.9.0",
-  "date": "2026-08-21",
+  "version": "0.10.0",
+  "date": "2026-09-08",
   "items": [
-    "See sustained pressure and attributed causes directly in dispatch candidates.",
-    "Override one dispatch with an audited reason, or disable pressure prevention from Resources.",
-    "Pressure charts now warm-start from persisted history and recover after reconnect."
+    "Run Detail shows the run's resource posture at every wait, with gate choices to keep, minimize, or free the slot, and says when a parked run is restored into a different slot.",
+    "Recipe replay can target another simulator or device, picked from the machine's device inventory with the platform selector alongside.",
+    "The Slot View capability panel shows fleet-scoped claim queues: position, the run holding the claim, and a granted reservation waiting on its provider.",
+    "Machine pause and restore surfaces show what each park retains or stops and the restore verdict from the gateway.",
+    "Backlog dispatch settings carry the run's wait policy."
   ]
 }

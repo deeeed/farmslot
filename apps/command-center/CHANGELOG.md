@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-09-08
+
 - feat(probes): `recipe-rerun-device-target` drives the inventory-backed device picker and the platform selector with real events, including the physical Android device and its configured slots, and keeps the free-text fallback assertions.
 - chore(scripts): the live pressure-admission proof reads the gate mode from the gateway and records whether the refusal was enforced or advisory, matching the opt-in host-pressure admission.
 - feat(probes): add `runtime-capability-claim-queue`, which reads the Slot View capability panel from live gateway data and asserts the queue position and blocking owner painted for a fleet-scoped claim waiter, and that no queue line is painted when nothing is queued. The capability panel and Run Detail also distinguish a granted claim — reserved for this run, provider not started — from a queue place behind another run, so a reservation that stalls is not painted as an acquire in flight.
@@ -13,7 +17,6 @@ All notable changes to `@farmslot/command-center` are tracked here.
 - feat(probes): add the `run-resource-posture` probe, which reads the Run Detail posture summary and capability rows from the rendered page and drives the human-gate posture preview through the real UI path, and the `run-resource-posture-surfaces` probe, which drives the backlog `waitPolicy` field and a live warm-provider Stop through real clicks, verifying each outcome against the Gateway and releasing its own lease afterwards.
 - feat(probes): add the `run-posture-gate-choice-honored` probe, which stages a real run at `operator-wait` with a pending human decision, clicks each gate choice, and checks the Gateway's own preview render — `project-default` must not be flagged as unhonoured for deferring, and a refused `free-slot` must still report its rejection.
 - feat(probes): `cdp.mjs focus <hash>` fronts a tab and grants clipboard access so probes can exercise real copy buttons; add the `run-session-command` probe for the Run Detail runner-session panel.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.9.0 - 2026-08-21
 

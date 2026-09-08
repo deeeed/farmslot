@@ -4,54 +4,16 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- feat(parking): cross-slot re-dispatch contracts for a freed gate park. `MachineParkRecord.rehome`
-  (`MachineParkRehome`) records the slot a restore moved the run out of and the one it moved into,
-  so a client can say "restoring into B, was A" and a repair path can tell which slot the record is
-  homed to. `MachinePauseRestoreTarget` and `GateParkRestoreTargetView` gain `originalSlotId`
-  alongside the Gateway-chosen `slotId`, and the shared gate-park reading gains a `rehoming` slot
-  state with the label, summary line, and gate notice to match — each naming BOTH slots, because an
-  operator told only the new one reads it as where the park was taken and one told only the old
-  attaches to a pane the successor now owns. New eligibility codes: `ELIGIBLE_FREED_SLOT_REHOME`,
-  `RESTORE_REHOME_SESSION_NOT_PORTABLE`, and `RESTORE_NO_REHOME_TARGET`.
-- feat(runtime): device inventory contracts. `resource.device.inventory`
-  (`DeviceInventoryParams`/`DeviceInventoryResult`) lists the devices a slot's machine has, as
-  `DeviceInventoryEntry` records carrying the re-target `key` (`DeviceInventoryKey`), the
-  `identity`, the device name, the tool's own `state`, and `configuredForSlots` — every slot that
-  configures it, a list because two slots legitimately share one physical device.
-  `DeviceInventorySource` says per tool (`DEVICE_INVENTORY_TOOLS`) whether it answered, and
-  `DEVICE_INVENTORY_KEY_TOOL` / `DEVICE_INVENTORY_KEY_LISTS_EXISTENCE` / `deviceInventoryCovers` say
-  which tool answers for which key and whether that tool enumerates what EXISTS or only what is
-  currently connected — so a partial read is usable, silence is never read as absence, and an
-  `adb_serial` is never refused, because `adb devices` lists live transports and booting the device
-  is what the provider acquire does next. `DeviceInventoryRefusal` is the
-  typed refusal for a target the machine does not have, naming the machine and the nearest known
-  identities, and `ResourcePostureRejection` gains a matching `device-unknown` member.
+- Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.25.0 - 2026-09-08
+
+- feat(parking): cross-slot re-dispatch contracts for a freed gate park. `MachineParkRecord.rehome`
+- feat(runtime): device inventory contracts. `resource.device.inventory`
 - feat(runtime): contracts for opt-in host-pressure admission. `ProjectRuntimeCapabilitiesConfig`
-  gains `hostPressureAdmission` (`ProjectHostPressureAdmissionConfig`: a `HostPressureAdmissionMode`
-  from `HOST_PRESSURE_ADMISSION_MODES` — `off` | `refuse` | `queue` — plus optional
-  `load1CriticalMultiplier`, `cpuCriticalPercent`, `memoryCriticalPercent`, `diskCriticalPercent`).
-  Absent means `off`. `RuntimeCapabilityPressureConflict` gains `enforced?: false`, present only when
-  the gate was not enforced: the acquire went through and the conflict is advisory, carried on the
-  granted lease. On the dispatch side, `PressureAdmissionAdmitted` gains `enforced?: false` and
-  `advisory` (`PressureAdmissionAdvisory`: the code, reason, and causes an enabled gate would have
-  rejected with), and `PressureAdmissionControlState` gains `envOverride` for the
-  `FARMSLOT_DISPATCH_PRESSURE_ADMISSION` value that wins over the durable state. `state: 'disabled'`
-  is now the default posture rather than a kill-switch exception. `DispatchPressureAdmissionMode`
-  (`off` | `refuse`, with `DISPATCH_PRESSURE_ADMISSION_MODES`) names the dispatch half of that
-  vocabulary so clients stop re-hardcoding the literals. Unenforced pressure is a
-  SEPARATE type: `RuntimeCapabilityPressureAdvisory` (`kind: 'host-pressure-advisory'`), which is
-  deliberately not a member of `RuntimeCapabilityAcquireConflict`, so a client matching
-  `kind === 'host-pressure'` cannot paint an admitted acquire as a block and the compiler refuses any
-  code path that tries to return one as a refusal. It carries a required `observedAt` because it is
-  pinned to a lease at acquire time and never refreshed. `RuntimeCapabilityLease.pressure` and
-  `RuntimeCapabilityStatusResult.pressure` are now `RuntimeCapabilityLeasePressure`, the union of the
-  two. The dispatch side's discriminant is the existing required `state: 'disabled'`, which every
-  consumer already guards on.
 - feat(runtime): resource claims carry a scope. `RuntimeCapabilityResourceClaim` gains `scope` (`slot` | `machine` | `fleet`, absent means `slot`), with `runtimeCapabilityClaimScope` and `widerRuntimeCapabilityClaimScope` as the only places the default and the symmetric widening are applied. A lease records the `machine` and the `claims` it was taken with, so arbitration across slots reads the snapshot instead of every foreign slot's catalog; a lease with no `claims` predates scopes and stays slot-scoped. `RuntimeCapabilityAcquireParams` gains `queueOnConflict`, deliberately separate from `queueOnPressure` because host pressure and claim contention drain differently. A queued lease carries `wait` (`RuntimeCapabilityScopedClaimWait`) with the blocking owner, which is usually on another slot; the acquire is refused with the new `scoped-wait` conflict naming the claim, the holder, the queued lease and the place in line. `RuntimeCapabilityStatusResult` gains `claimWaiters` (`RuntimeCapabilityClaimWaiter[]`), the fleet-wide queue derived on read from enqueue time, since the slot-filtered lease list cannot say how many runs are ahead. `RunResourcePostureState` gains `resourceWait` (`RunResourceWait`) so a run's durable place in line survives a reconnect; the Gateway derives it from the run's own lease on every read, so it clears itself the moment the reservation is completed. `RunResourceWait` carries a `phase` (`RunResourceWaitPhase`: `queued` behind a holder, or `granted` — the claim reserved for this run with no provider started yet, reported at position 0). Both are waits: a `granted` one that never clears is a claim held with nothing behind it, and reporting only the queued half is what made that invisible on every client.
 - feat(posture): device-identity acquire parameters for runtime capability providers (ADR-054 item 3). `RUNTIME_CAPABILITY_TARGET_KEYS` names the five keys a provider may accept (`platform`, `udid`, `simulator`, `avd`, `adb_serial`), `RUNTIME_CAPABILITY_TARGET_VALUE_PATTERN` is the charset an identity must match because the value is substituted into a project hook command, and `runtimeCapabilityTargetFromParameters`/`formatRuntimeCapabilityTarget` let every client read and label the device a lease resolved to from one derivation. `RecipeRerunParams` gains `target` and `ResourcePostureCapabilityState` gains `target`. An identity may not start with a dash: `-x` passes a shell-safety check but is still an argument to whatever the provider hook runs. `RuntimeCapabilityAcquireParams` also gains `dependencyParameters`, so a caller reconciling a whole proof plan can say which device each dependency should be acquired with rather than letting the order it walks the plan decide.
 - feat(parking): `MachineParkEligibilityCodes` gains `RUNNER_LIVENESS_PROBE_TIMEOUT` and `MACHINE_PAUSE_PREVIEW_STALE`, and `MachinePauseEligibility` gains an optional `details` (`MachinePauseEligibilityDetails`, currently `probeBudgetMs`) that `ResourcePostureRejection`'s `park-ineligible` variant passes through. The two codes name transient races — a liveness probe that ran out of budget, a preview digest that moved between preview and execute — that previously shared a code with genuine verdicts about the run, so a client or validation harness had to read the reason prose to tell them apart. `CompleteStepOutput.slotDisposition` also gains `release-deferred`, for the terminal-flow case where COMPLETE chooses the release but the engine performs it after the run publishes; it used to report `released` for a teardown that had not happened yet.
-
 - feat(posture): `MachineParkRecord` gains `restoreEffects` (`MachineParkRestoreEffect[]`, with `MachineParkRestoreAction` = `verified` | `booted` | `stopped` | `skipped`), the lifecycle effects a restore actually performed per resource, emitted by the Gateway code path that performs them — the single function that runs a resource's boot, shutdown, or relaunch hook, which a capability acquire reaches too, and attributed to the restore that initiated it rather than to the slot it touched — and reset at the start of each attempt. A boot that succeeds leaves no error behind, so an absence of boot errors could never prove no boot happened; this states what was done instead of leaving it to be inferred. Absent on records written before restore recorded its effects.
 - feat(runtime): `RuntimeCapabilityProviderConfig` gains optional `affectedResources` (`RuntimeCapabilityAffectedResource[]`, with `RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS` and `RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS`), which flows onto the catalog entry. A provider declares which slot resources it touches, whether the lease owns that resource or only rides on a slot-lifecycle one, and whether releasing it stops or retains the resource. Absent keeps the old derivation from resource-kind action refs, so no existing catalog changes meaning; an empty array is the distinct claim that the provider touches no watched resource. `MachineParkResource` gains `releaseEffect`, so a park manifest records which resources it will stop and which it deliberately leaves running for restore to verify instead of boot.
 - feat(posture): `RunResourcePostureState` gains `gateChoiceSuppressedForGeneration`, the run generation a `machine.pause.restore` replay took ownership at when it re-presented a gate. Without it a run whose stored choice is `free-slot` re-parks itself the moment its gate comes back, before the operator ever sees it; the restored gate falls back to the framework default once and the choice stays available to make explicitly. Keyed on the generation rather than a bare flag so a suppression cannot outlive the gate it was set for.
