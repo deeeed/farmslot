@@ -4,6 +4,10 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.5.0 - 2026-09-08
+
 - feat(posture): Run Detail says when a gate-parked run is being restored into a different slot than it was parked from and names both, so an operator does not attach to a slot a successor now holds.
 - feat(runs): Run Detail shows one compact line when a run is waiting on a fleet-scoped resource claim — the capability, the claim, the place in line, and the run holding it while it is queued, and that the claim is granted and waiting on its provider once it is this run's.
 - feat(posture): Run Detail posture rows show the device each capability lease actually resolved to, so a re-targeted validation is not read as running on the slot's configured device.

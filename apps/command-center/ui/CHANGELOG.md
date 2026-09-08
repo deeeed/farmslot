@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-09-08
+
 - feat(posture): Run Detail says when a gate-parked run is being restored into a different slot than it was parked from, names both slots, and tells the operator to attach to the new one. The line is absent for an ordinary same-slot restore, and the restore target and its original are exposed as data attributes for CDP proof.
 - feat(runtime): the Slot View capability panel says which scoped claim a queued reservation is behind, its place in the fleet-wide queue, and the run holding the claim — which is usually on another slot, so nothing else on the row could point an operator at it. Run Detail's posture panel shows the same wait for the run itself. Position comes from the Gateway's derived queue, never counted from the slot-filtered lease list, which would tell every waiter it was first.
 - feat(posture): the Run Detail posture rows show the device each capability lease actually resolved to, and the recipe replay controls take a target device, so a replay can run on another simulator or serial without re-dispatching the run. The identity is picked from the machine's own device list, which the controls read from the Gateway and refresh while they are on screen: each choice shows the device's state and every slot that configures it, so a device two slots share names both. A machine that lists nothing for the chosen key, or whose device list cannot be read, falls back to the free-text field and says which of the two it is; `Other…` reaches that field on any machine. An identity the machine does not list also keeps the free-text field, so the control can never display one device while Replay sends another. A typed identity is still validated client-side against the protocol's identity charset. Leaving the choice empty replays on the slot's configured device. The `platform` selector is offered alongside the identity, so a target can also say which of an iOS and an Android provider it means; a platform with no device is refused in the client, as the Gateway refuses it.
@@ -26,8 +30,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - fix(runs): keep publish-package and artifact-mirror refresh waiting while `file.transfer.progress` is still moving; idle-timeout only after a stall, not a 15s wall clock.
 - fix(dispatch): load template catalogs and slot availability once, then filter locally when switching farm, flow, domain, or mode. The slot list has a Refresh control for a forced host recheck or a failed load.
 - fix(runs): Complete Manually is available on failed runs and can prompt for an optional PR number. A failed slot release after the run is already `done` is shown in an alert. Replay is hidden on run detail, slot view, and family inspector once the hatch flag is set.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.9.0 - 2026-08-21
 

@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.25.0 - 2026-09-08
+
 - feat(parking): cross-slot re-dispatch contracts for a freed gate park. `MachineParkRecord.rehome`
   (`MachineParkRehome`) records the slot a restore moved the run out of and the one it moved into,
   so a client can say "restoring into B, was A" and a repair path can tell which slot the record is

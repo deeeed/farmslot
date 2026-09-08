@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-09-08
+
 - feat(parking): a freed gate park whose slot a successor took is restored into a DIFFERENT free slot
   on the same machine instead of being stranded until that successor finishes. The target is picked
   by the same dispatch scoring a new run gets, with the park's preserved branch as the target

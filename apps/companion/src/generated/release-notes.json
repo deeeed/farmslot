@@ -1,11 +1,11 @@
 {
-  "version": "0.4.1",
-  "date": "2026-08-20",
+  "version": "0.5.0",
+  "date": "2026-09-08",
   "items": [
-    "Use the persistent Co-Pilot tmux terminal from Companion and land active runs directly on Timeline",
-    "Navigate run, slot, family, gate, and retrospective workspaces through compact persistent tabs",
-    "Review evidence through shared Before/After, Gate, report, round, and per-step timing surfaces",
-    "Keep recipe HUD accessibility intact and support named native Back, Escape, Enter, and Return actions",
-    "Improve foreground decision reconnection and keep project colors consistent with Command Center"
+    "Run Detail shows the run's resource posture at every wait, with gate choices to keep, minimize, or free the slot.",
+    "A parked run restored into a different slot names both slots so you attach to the right one.",
+    "Runs waiting on a fleet-scoped device claim show their place in line and the run holding it, and when the claim is granted.",
+    "Posture rows show the device each capability actually resolved to after a re-target.",
+    "Machine pause and restore show what each park retains or stops."
   ]
 }
