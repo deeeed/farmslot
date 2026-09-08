@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Keep interactive development runs awaiting operator action when a worker reports a blocker or failure, preserving its findings instead of entering failure cleanup.
+- Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
 
 ## 0.10.0 - 2026-09-08
 

@@ -8,7 +8,7 @@ import type {
   BacklogUpdateInput,
 } from '../contracts/backlog.js';
 import type { OkResult } from '../contracts/index.js';
-import type { Run } from '../contracts/runs.js';
+import { DEFAULT_CODEX_MODEL, type Run } from '../contracts/runs.js';
 
 import { Methods } from './registry.js';
 import type { TmuxWorkerRef } from './tmux.js';
@@ -32,7 +32,7 @@ export const BacklogMethods = {
 } as const;
 
 export const DEFAULT_BACKLOG_REFINEMENT_RUNNER = 'codex';
-export const DEFAULT_BACKLOG_REFINEMENT_MODEL = 'gpt-5.6-sol';
+export const DEFAULT_BACKLOG_REFINEMENT_MODEL = DEFAULT_CODEX_MODEL;
 
 export interface BacklogCreateParams extends BacklogCreateInput {}
 export interface BacklogCreateResult {

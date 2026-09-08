@@ -128,7 +128,7 @@ test('runSessionUsage does not double-count Codex detail fields', async () => {
   writeFileSync(
     sessionPath,
     [
-      { type: 'session_meta', payload: { cwd: home, model: 'gpt-test' } },
+      { type: 'session_meta', payload: { cwd: home, model: 'gpt-6-astra' } },
       {
         type: 'event_msg',
         payload: {
@@ -164,6 +164,7 @@ test('runSessionUsage does not double-count Codex detail fields', async () => {
   assert.match(out, /reasoning_output_tokens=5/);
   // total_tokens comes from total_token_usage.total_tokens directly
   assert.match(out, /total_tokens=112/);
+  assert.match(out, /cost_usd=0.0016/);
 });
 
 // ─── Grok ─────────────────────────────────────────────────────────────────────

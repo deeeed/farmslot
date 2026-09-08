@@ -23,7 +23,7 @@ const CODEX_BIN = path.join(
   os.homedir(),
   '.npm-global/lib/node_modules/@openai/codex/bin/codex.js',
 );
-const DEFAULT_MODEL = 'gpt-5.6-sol';
+const DEFAULT_MODEL = 'gpt-6-astra';
 
 export function binaryPath() {
   return CODEX_BIN;
@@ -110,4 +110,22 @@ export function skipReason(scenario) {
   if (scenario === 'mode-switch') return 'codex exec mode has no interactive permission-mode TUI';
   if (scenario === 'busy-composer') return 'codex has no busy-composer TUI equivalent';
   return null;
+}
+
+/** Assert the gateway's persisted command carries the requested or default effort. */
+export function assertLaunchEffort(command, effort) {
+  // Keep the expected default independent of production so a regression fails this proof.
+  const expected = effort?.trim().toLowerCase() || 'high';
+  if (expected === 'auto') {
+    if (command.includes('model_reasoning_effort')) {
+      throw new Error('auto effort must leave the Codex config default untouched');
+    }
+    return;
+  }
+  if ((command.match(/model_reasoning_effort=/g) ?? []).length !== 1) {
+    throw new Error('expected exactly one Codex effort config argument');
+  }
+  if (!command.includes(`model_reasoning_effort="${expected}"`)) {
+    throw new Error(`launch command does not carry Codex effort ${expected}`);
+  }
 }

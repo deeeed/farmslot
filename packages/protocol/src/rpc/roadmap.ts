@@ -9,6 +9,7 @@ import type {
   RoadmapItemSaveInput,
   RoadmapItemStage,
 } from '../contracts/roadmap.js';
+import { DEFAULT_CODEX_MODEL } from '../contracts/runs.js';
 
 import { Methods } from './registry.js';
 import type { TmuxWorkerRef } from './tmux.js';
@@ -28,7 +29,7 @@ export const RoadmapMethods = {
 } as const;
 
 export const DEFAULT_ROADMAP_REFINEMENT_RUNNER = 'codex';
-export const DEFAULT_ROADMAP_REFINEMENT_MODEL = 'gpt-5.6-sol';
+export const DEFAULT_ROADMAP_REFINEMENT_MODEL = DEFAULT_CODEX_MODEL;
 
 export interface RoadmapListParams {
   project?: string;

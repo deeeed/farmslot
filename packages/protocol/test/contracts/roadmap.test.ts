@@ -40,7 +40,7 @@ test('roadmap protocol exports method constants and stages', () => {
   assert.equal(Methods.ROADMAP_PROMOTION_DRAFT_SAVE, 'roadmap.promotionDraft.save');
   assert.equal(Methods.ROADMAP_PROMOTE, 'roadmap.promote');
   assert.equal(DEFAULT_ROADMAP_REFINEMENT_RUNNER, 'codex');
-  assert.equal(DEFAULT_ROADMAP_REFINEMENT_MODEL, 'gpt-5.6-sol');
+  assert.equal(DEFAULT_ROADMAP_REFINEMENT_MODEL, 'gpt-6-astra');
   assert.equal(RoadmapMethods.list, 'roadmap.list');
   assert.equal(RoadmapMethods.delete, 'roadmap.delete');
   assert.equal(RoadmapMethods.refine, 'roadmap.refine');

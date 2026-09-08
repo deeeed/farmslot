@@ -140,8 +140,8 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
     assert.match(cmd, /\/usr\/local\/bin\/codex .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-    // Omitted effort defaults to xhigh for Codex.
-    assert.match(cmd, /model_reasoning_effort="xhigh"/);
+    // Omitted effort defaults to high for Codex.
+    assert.match(cmd, /model_reasoning_effort="high"/);
   });
 
   it('codex inline fallback: full-auto tier keeps sandbox with approvals disabled', () => {
@@ -154,7 +154,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
       /codex "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "\$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2" --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-    assert.match(cmd, /model_reasoning_effort="xhigh"/);
+    assert.match(cmd, /model_reasoning_effort="high"/);
   });
 
   it('codex inline fallback: explicit effort injects a reasoning config override', () => {
@@ -283,14 +283,14 @@ describe('buildLaunchCommand — {safety_flags} placeholder on dispatch path', (
       /\/usr\/local\/bin\/codex .*--dangerously-bypass-approvals-and-sandbox --model gpt-5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(dangerous);
-    assert.match(dangerous, /model_reasoning_effort="xhigh"/);
+    assert.match(dangerous, /model_reasoning_effort="high"/);
     const sandbox = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, {
       safetyTier: 'sandboxed',
     });
     assert.doesNotMatch(sandbox, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(sandbox, /\/usr\/local\/bin\/codex .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(sandbox);
-    assert.match(sandbox, /model_reasoning_effort="xhigh"/);
+    assert.match(sandbox, /model_reasoning_effort="high"/);
     assert.doesNotMatch(sandbox, /codex {2}--model/);
   });
 });
@@ -336,7 +336,7 @@ describe('RunnerDefinition.defaultSafetyTier registry field', () => {
 describe('runnerDefaultModel', () => {
   it('reads defaults from the runner registry', () => {
     assert.equal(runnerDefaultModel('claude'), 'opus');
-    assert.equal(runnerDefaultModel('codex'), 'gpt-5.6-sol');
+    assert.equal(runnerDefaultModel('codex'), 'gpt-6-astra');
     assert.equal(runnerDefaultModel('cursor'), DEFAULT_CURSOR_MODEL);
     assert.equal(runnerDefaultModel('opencode'), null);
     assert.equal(runnerDefaultModel('unknown-runner'), null);
@@ -487,7 +487,7 @@ describe('buildCodexExecLaunch — safetyTier', () => {
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(cmd, /codex .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-    assert.match(cmd, /model_reasoning_effort="xhigh"/);
+    assert.match(cmd, /model_reasoning_effort="high"/);
   });
 
   it('dangerous tier emits the bypass flag', () => {
@@ -499,7 +499,7 @@ describe('buildCodexExecLaunch — safetyTier', () => {
       safetyTier: 'dangerous',
     });
     assert.match(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-    assert.match(cmd, /model_reasoning_effort="xhigh"/);
+    assert.match(cmd, /model_reasoning_effort="high"/);
   });
 
   it('omitted tier falls back to codex default (sandboxed — no bypass flag)', () => {
@@ -510,17 +510,17 @@ describe('buildCodexExecLaunch — safetyTier', () => {
       repo: '/tmp/repo',
     });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-    assert.match(cmd, /model_reasoning_effort="xhigh"/);
+    assert.match(cmd, /model_reasoning_effort="high"/);
   });
 
-  it('omitted effort defaults to xhigh for Codex', () => {
+  it('omitted effort defaults to high for Codex', () => {
     const cmd = buildCodexExecLaunch({
       binary: 'codex',
       model: null,
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.match(cmd, /--config 'model_reasoning_effort="xhigh"'/);
+    assert.match(cmd, /--config 'model_reasoning_effort="high"'/);
   });
 
   it('explicit effort emits a Codex reasoning override', () => {
@@ -532,6 +532,51 @@ describe('buildCodexExecLaunch — safetyTier', () => {
       repo: '/tmp/repo',
     });
     assert.match(cmd, /--config 'model_reasoning_effort="high"'/);
+  });
+
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+    it(`passes Astra ${effort} effort through inline and pool launch commands`, () => {
+      for (const dispatchCmd of ['', 'cd {repo} && {runner_path}']) {
+        const cmd = buildLaunchCommand(makeVars({ dispatchCmd }), 'codex', 'gpt-6-astra', 'hi', {
+          effort,
+        });
+        assert.ok(cmd.includes(`model_reasoning_effort="${effort}"`));
+        assert.match(cmd, /--model gpt-6-astra/);
+      }
+    });
+  }
+
+  for (const [model, effort] of [
+    ['gpt-5.5', 'max'],
+    ['gpt-5.4', 'ultra'],
+    ['gpt-5.6-luna', 'ultra'],
+  ]) {
+    it(`rejects unsupported ${model} ${effort} before launch`, () => {
+      for (const dispatchCmd of ['', 'cd {repo} && {runner_path}']) {
+        assert.throws(
+          () => buildLaunchCommand(makeVars({ dispatchCmd }), 'codex', model, 'hi', { effort }),
+          /Invalid Codex reasoning effort/,
+        );
+      }
+    });
+  }
+
+  it('keeps conservative effort limits when the model comes from CLI config', () => {
+    assert.throws(
+      () =>
+        buildCodexExecLaunch({ binary: 'codex', model: null, effort: 'ultra', repo: '/tmp/repo' }),
+      /Invalid Codex reasoning effort/,
+    );
+  });
+
+  it('rejects invalid requested effort even when a pool command carries its own override', () => {
+    const vars = makeVars({
+      dispatchCmd: 'cd {repo} && {runner_path} --config model_reasoning_effort="high"',
+    });
+    assert.throws(
+      () => buildLaunchCommand(vars, 'codex', 'gpt-5.5', 'hi', { effort: 'ultra' }),
+      /Invalid Codex reasoning effort/,
+    );
   });
 
   it('rejects unsupported Codex reasoning effort values before launch', () => {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import {
+  codexReasoningEfforts,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_EFFORT,
@@ -30,13 +31,12 @@ import {
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
 
-const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
 const CODEX_PLUGIN_HOOK_ARGS =
   ' "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_1" "$FARMSLOT_CODEX_PLUGIN_HOOK_ARG_2"';
 
 /**
  * Resolve reasoning effort for runners that support it.
- * - empty/omitted → runner default (Codex/Grok: xhigh)
+ * - empty/omitted → runner default (Codex: high, Grok: xhigh)
  * - `auto` → leave unset so the CLI/config default applies
  * - any other non-empty value → pass through
  */
@@ -272,7 +272,7 @@ export function buildRunnerSessionReloadCommand(
       { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
     const modelFlag = runnerModelFlag(model);
-    const effortFlag = codexReasoningEffortFlag(opts.effort);
+    const effortFlag = codexReasoningEffortFlag(opts.effort, model);
     const workerConfigFlags = codexWorkerConfigFlags();
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -347,7 +347,7 @@ export function buildCodexExecLaunch(options: {
   safetyTier?: SafetyTier;
 }): string {
   const modelFlag = runnerModelFlag(options.model);
-  const effortFlag = codexReasoningEffortFlag(options.effort);
+  const effortFlag = codexReasoningEffortFlag(options.effort, options.model);
   const workerConfigFlags = codexWorkerConfigFlags();
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
@@ -356,12 +356,12 @@ export function buildCodexExecLaunch(options: {
   return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary}${CODEX_PLUGIN_HOOK_ARGS}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
-function codexReasoningEffortFlag(effort?: string | null): string {
+function codexReasoningEffortFlag(effort?: string | null, model?: string | null): string {
   const normalized = effort?.trim().toLowerCase();
   // Explicit `auto` leaves Codex config untouched (CLI / config.toml default).
   if (normalized === 'auto') return '';
   const effective = normalized || DEFAULT_CODEX_EFFORT;
-  if (!CODEX_REASONING_EFFORTS.has(effective)) {
+  if (!codexReasoningEfforts(model).some((candidate) => candidate === effective)) {
     throw new Error(`Invalid Codex reasoning effort: ${effort}`);
   }
   return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
@@ -559,8 +559,8 @@ export function buildLaunchCommand(
   }
 
   const safetyFlagsString = runnerFlagsForTier(runner, tier).join(' ');
-  // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
-  // for codex/grok when the operator left effort unset.
+  // Resolve defaults before template expansion so `{effort}` placeholders get
+  // the runner default when the operator left effort unset.
   const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
   // Assert once, before any expansion, for every runner path. A dispatch_cmd
   // carrying `{model}` or `{effort}` is filled in by expandDispatchCmd and never
@@ -679,7 +679,7 @@ export function buildLaunchCommand(
     if (cmdIsRunnerAware) {
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
+          `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort, model)}`,
           installCommand,
         ),
       );
@@ -754,7 +754,9 @@ function injectCodexReasoningEffortFlag(
   command: string,
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   effort?: string | null,
+  model?: string | null,
 ): string {
+  const effortFlag = codexReasoningEffortFlag(effort, model);
   const workerConfigFlags = codexWorkerConfigFlags();
   if (command.includes('mcp_servers.n8n-mcp.enabled=false')) {
     return injectCodexWorkerConfigFlags(command, vars, CODEX_PLUGIN_HOOK_ARGS);
@@ -766,7 +768,6 @@ function injectCodexReasoningEffortFlag(
       `${CODEX_PLUGIN_HOOK_ARGS}${workerConfigFlags}`,
     );
   }
-  const effortFlag = codexReasoningEffortFlag(effort);
   const flags = `${CODEX_PLUGIN_HOOK_ARGS}${effortFlag}${workerConfigFlags}`;
   return injectCodexWorkerConfigFlags(command, vars, flags);
 }

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Estimate GPT-6 Astra session cost using its published input and output token rates.
+
 - feat(runtime): accept `runtime_capabilities.host_pressure_admission` — a required `mode` (`off` |
   `refuse` | `queue`) and optional `load1_critical_multiplier`, `cpu_critical_percent`,
   `memory_critical_percent`, `disk_critical_percent`. An unknown mode, a missing mode, a

@@ -82,7 +82,20 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
     Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, set `STATUS: blocked` with the failing check, and stop. Do not launch the sandbox or Chrome directly.
   - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. Discover the catalog, then acquire the declared native-client provider through `runtime.capability.acquire` (for the configured iOS simulator, `companion-native-client-ios`; its dependencies acquire the simulator and Metro). Require `ok: true`, then verify with `simctl listapps` / `adb` that the Companion bundle is present. If the platform has no declared install provider or acquisition/install fails, set `STATUS: blocked` and stop; do not invoke `companion-prepare.sh` or install scripts directly.
   - **`gateway-cli` only:** skip this step’s boots/installs entirely.
-- [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
+- [ ] **5. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
+  ```bash
+  cd "{{REPO}}"
+  # Farmslot prepare normally creates the task branch before dispatch.
+  current=$(git symbolic-ref --quiet --short HEAD) || { echo "FATAL: detached HEAD" >&2; exit 1; }
+  if [ "$current" = "{{BRANCH}}" ]; then
+    echo "Using prepared branch $current"
+  elif [ "$current" = "{{DEFAULT_BRANCH}}" ]; then
+    git checkout -b "{{BRANCH}}" || exit 1
+  else
+    echo "FATAL: expected {{BRANCH}} or {{DEFAULT_BRANCH}}, currently on '$current'" >&2
+    exit 1
+  fi
+  ```
 
 ### Phase 2: Baseline recipe (all executable ACs)
 

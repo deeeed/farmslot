@@ -800,7 +800,7 @@
             },
             "effort": {
               "type": "string",
-              "enum": ["low", "medium", "auto", "high", "xhigh"],
+              "enum": ["low", "medium", "auto", "high", "xhigh", "max", "ultra"],
               "description": "Default effort level for this flow type.",
               "default": "auto"
             }
