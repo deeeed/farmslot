@@ -9,6 +9,7 @@ import { runnerSessionContextPatch } from '../../runners/session-record.js';
 
 import {
   isWarmHandoffDispatchRecovery,
+  resolveWarmHandoffModel,
   resolveWarmWorkerBinding,
   warmHandoffFailureFromRetainedDelivery,
 } from './warm-session-handoff.js';
@@ -188,4 +189,12 @@ test('warm handoff stamps a capture time on the retained binding it hands to the
     runnerSessionPath: '/sessions/retained-1.jsonl',
     runnerSessionCapturedAt: '2026-09-04T11:00:00.000Z',
   });
+});
+
+test('warm handoff keeps a selected model when the slot observation is unknown', () => {
+  assert.equal(resolveWarmHandoffModel('unknown', 'gpt-6-astra'), 'gpt-6-astra');
+  assert.equal(resolveWarmHandoffModel(null, 'gpt-6-astra'), 'gpt-6-astra');
+  assert.equal(resolveWarmHandoffModel('gpt-5.5', 'gpt-6-astra'), 'gpt-5.5');
+  assert.equal(resolveWarmHandoffModel('unknown', 'unknown'), null);
+  assert.equal(resolveWarmHandoffModel(), null);
 });

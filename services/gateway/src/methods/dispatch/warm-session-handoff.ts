@@ -56,6 +56,14 @@ import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scori
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
+/** A missing slot observation must not hide the model selected for this run. */
+export function resolveWarmHandoffModel(
+  slotModel?: string | null,
+  requestedModel?: string | null,
+): string | null {
+  return [slotModel, requestedModel].find((model) => model && model !== 'unknown') ?? null;
+}
+
 export interface WarmSessionHandoffParams {
   slotId: string;
   taskFile: string;
@@ -208,6 +216,8 @@ export async function warmSessionHandoffDispatch(
     };
   }
 
+  const handoffModel = resolveWarmHandoffModel(slotModelRaw, params.model);
+
   step('probe', `Checking warm worker liveness on ${params.slotId} (${runner})`);
   const alive = await isWorkerAlive(vars, runner, params.parentRunId ?? params.runId);
   if (!alive) {
@@ -357,7 +367,7 @@ export async function warmSessionHandoffDispatch(
     runnerId: runner,
     sessionId: retainedSessionId,
     sessionPath: retainedSessionPath,
-    model: slotModelRaw ?? params.model,
+    model: handoffModel,
     prompt,
     effort: requestingRun.effort ?? parentRun?.effort,
     safetyTier,
@@ -425,7 +435,7 @@ export async function warmSessionHandoffDispatch(
       task_file: `${workerTaskDir}/TASK.md`,
       dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       runner,
-      ...(slotModelRaw && slotModelRaw !== 'unknown' ? { model: slotModelRaw } : {}),
+      ...(handoffModel ? { model: handoffModel } : {}),
     },
   );
   if (!handoffClaim.claimed) {
@@ -479,6 +489,6 @@ export async function warmSessionHandoffDispatch(
     handedOff: true,
     workerTarget,
     runner,
-    model: slotModelRaw,
+    model: handoffModel,
   };
 }
