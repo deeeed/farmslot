@@ -20,6 +20,7 @@ import {
   tryInlineCIFix,
 } from './inline-fix.js';
 import {
+  buildCIBotCommentFingerprint,
   buildCIWatchCheckFingerprint,
   type CICheckTimelineEntry,
   type CIOutcome,
@@ -163,6 +164,7 @@ export async function monitorCI(
   let lastBotCommentCount = 0;
   let lastBotCommentDedupedCount = 0;
   let lastInlineCIFix: InlineCIFix | undefined;
+  let lastActionableFingerprint: string | null = null;
   // When the last pokeablePoll was resolved early by a poke(), force the next
   // prStatus to bypass the 30s gh-cache so operator refreshes see fresh data.
   let forceNextRefresh = false;
@@ -384,6 +386,11 @@ export async function monitorCI(
       [],
       headShaNow,
     );
+    const actionableFingerprint = buildCIBotCommentFingerprint(effectiveActionable);
+    if (actionableFingerprint && actionableFingerprint !== lastActionableFingerprint) {
+      lastActionableFingerprint = actionableFingerprint;
+      markTimeoutProgress('new actionable comment', { checkFingerprint, headSha: headShaNow });
+    }
     let recommendation = rawRecommendation;
     if (
       rawRecommendation === 'NEEDS_ATTENTION' &&
@@ -468,21 +475,44 @@ export async function monitorCI(
       return buildOutcome('passed');
     }
 
+    // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
+    if (mergeConflict) {
+      console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
+      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config);
+      if (autoAction) {
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for merge conflict`,
+        );
+        return buildOutcome('failed', ['MERGE_CONFLICT'], autoAction);
+      }
+      const actionId = await createCIDecision(
+        runId,
+        'merge_conflict',
+        `PR #${prNumber} has merge conflicts`,
+        [
+          { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
+          { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'secondary' },
+          { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
+        ],
+      );
+      if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
+        return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
+      return buildOutcome('passed');
+    }
+
     // Timeout check. The short window resets on watched progress; the total
-    // window prevents endless fix/check loops. Check before branches that continue
+    // operator-approved window bounds fix/check loops between wait decisions. Check before branches that continue
     // polling, including deduped failures and no-change fix results.
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
-    const waitingForCI = !allPassed || effectiveActionable.length > 0 || mergeConflict;
+    const waitingForCI = !allPassed || effectiveActionable.length > 0;
     if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
       const elapsedMs = progressWindowExpired
         ? now - timeoutWindowStartedAt
         : now - totalTimeoutWindowStartedAt;
       const configuredMs = progressWindowExpired ? config.maxPollTimeMs : config.maxTotalPollTimeMs;
-      const reason = progressWindowExpired
-        ? 'without watched CI progress'
-        : 'absolute CI-watch cap';
+      const reason = progressWindowExpired ? 'without watched CI progress' : 'CI-watch wait cap';
       console.log(
         `[ci-monitor] run ${runId.slice(0, 8)} — timed out after ${Math.round(elapsedMs / 60_000)}min (${reason}, limit ${configuredMs / 60000}min)`,
       );
@@ -515,31 +545,6 @@ export async function monitorCI(
       syncTimeoutProgressState({ timeoutWindowStartedAt: totalTimeoutWindowStartedAt });
       forceNextRefresh = await waitForNextPoll('polling');
       continue;
-    }
-
-    // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
-    if (mergeConflict) {
-      console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
-      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config);
-      if (autoAction) {
-        console.log(
-          `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for merge conflict`,
-        );
-        return buildOutcome('failed', ['MERGE_CONFLICT'], autoAction);
-      }
-      const actionId = await createCIDecision(
-        runId,
-        'merge_conflict',
-        `PR #${prNumber} has merge conflicts`,
-        [
-          { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
-          { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'secondary' },
-          { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
-        ],
-      );
-      if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
-        return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
-      return buildOutcome('passed');
     }
 
     // All watched checks passed

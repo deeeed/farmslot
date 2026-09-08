@@ -137,7 +137,7 @@ export function mutateDedup(runId: string, mutator: (s: RunCiWatchState) => void
   return state;
 }
 
-function botSignature(comments: BotComment[]): string {
+export function buildCIBotCommentFingerprint(comments: BotComment[]): string {
   return comments
     .map((c) => `${c.author}|${c.createdAt}|${c.bodyFingerprint ?? c.bodyPreview}`)
     .sort()
@@ -145,7 +145,7 @@ function botSignature(comments: BotComment[]): string {
 }
 
 function fixInputSignature(comments: BotComment[], failedChecks: string[]): string {
-  const c = botSignature(comments);
+  const c = buildCIBotCommentFingerprint(comments);
   const f = [...failedChecks].sort().join('\u0000');
   return `${c}::${f}`;
 }
