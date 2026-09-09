@@ -703,7 +703,9 @@ async function routeAuthorizedMethod(
     case Methods.BACKLOG_SPEC_GET:
       return backlogSpecGet(p as BacklogSpecGetParams);
     case Methods.BACKLOG_RECONCILE_RUN:
-      return backlogReconcileRun(p as BacklogReconcileRunParams, emit);
+      return backlogReconcileRun(p as BacklogReconcileRunParams, (event, payload) => {
+        broadcast({ type: 'event', event, payload, seq: nextEventSeq() });
+      });
     case Methods.BACKLOG_CLOSE_SHIPPED:
       return backlogCloseShipped(p as BacklogCloseShippedParams);
     case Methods.BACKLOG_REFINE:

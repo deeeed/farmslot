@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Broadcast operator run changes to every connected client so completing a run from another tab or the CLI immediately updates its displayed status.
+
 - Show a CI timeout decision when repeated failures make no progress, including failures already handled by a fix attempt.
 
 - Keep interactive development runs awaiting operator action when a worker reports a blocker or failure, preserving its findings instead of entering failure cleanup.

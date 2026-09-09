@@ -107,6 +107,7 @@ import { runSlotHistory } from '../methods/run/slot-history.js';
 import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
 
 export interface RouteRunMethodContext {
+  /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
 }
@@ -122,7 +123,12 @@ export async function routeRunMethod(
   p: unknown,
   context: RouteRunMethodContext,
 ): Promise<RouteRunMethodResult> {
-  const { broadcast, emit } = context;
+  const { broadcast } = context;
+  // Run mutations change shared state. The RPC response goes to the caller,
+  // but lifecycle updates must also reach other tabs and connected clients.
+  const emit = (event: string, payload: unknown) => {
+    broadcast({ type: 'event', event, payload });
+  };
 
   switch (method) {
     // Runs
@@ -195,10 +201,7 @@ export async function routeRunMethod(
       // this, family-observability and slot-card tabs in other windows derive
       // stale `state.runs` and continue showing the resolved card until some
       // unrelated update arrives. Mirrors DECISION_RESOLVE.
-      const broadcastEmit = (event: string, payload: unknown) => {
-        broadcast({ type: 'event', event, payload });
-      };
-      const result = await runResolveDecision(params, broadcastEmit);
+      const result = await runResolveDecision(params, emit);
       // DECISION_RESOLVED is the inbox-side event surface; runResolveDecision
       // only emits RUN_DECISION_RESOLVED, so we still need this explicit
       // broadcast for clients subscribed to the file-based shape.

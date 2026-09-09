@@ -33,6 +33,8 @@ This works — for the transitions that happen to flow through it. The gateway h
 | `broadcastEvent` / `broadcast({type:'event'})`                  | Autonomous `runCreate` (`index.ts:421`); `DECISION_RESOLVE` and `RUN_RESOLVE_DECISION` in `server/route-method.ts` + `server/run-route.ts` | yes                    | **no**                       |
 | per-request `emit` = `sendEvent(state.ws, …)` (`server.ts:557`) | Every RPC handler routed through `routeMethod` — including `run.cancel`, `run.forceComplete`, `run.pause`, `run.resume`                    | requesting socket only | **no**                       |
 
+Implementation update (2026-09-09): run mutation routes and `backlog.reconcileRun` now broadcast their shared run events to authorized clients. Caller-specific streams still use per-request emits. This fixes client visibility; backlog/work-graph settlement remains owned by the transition routing described below.
+
 Consequences that are live today:
 
 1. **Operator cancel does not propagate.** `run.cancel` receives the per-request `emit`. Its `emit(Events.RUN_UPDATED, { run })` reaches one WebSocket. The backlog item keeps `status: 'running'` and the work-graph node is never told. Nothing corrects this until the next gateway restart runs `reconcileBacklogLinks()`.
