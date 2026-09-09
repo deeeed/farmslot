@@ -401,7 +401,7 @@ export async function probeCdpCompositorInteractivity(
         requestAnimationFrame((secondFrame) => resolve(secondFrame > firstFrame));
       });
     });
-    const candidates = [...document.querySelectorAll('button, a, [role="button"], [role="link"], [role="tab"]')];
+    const candidates = [...document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"]')];
     const visibleTargets = candidates.filter((element) => {
       if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
       const style = getComputedStyle(element);

@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.16.1 - 2026-09-09
+
+- Include native form controls and checkbox/radio/switch roles in browser readiness hit tests, so an actionable modal does not block its own setup.
+
 ## 0.16.0 - 2026-09-07
 
 - Wait for stable CDP click targets, refresh contexts invalidated by navigation before dispatch, and run app restart preparation only once.
