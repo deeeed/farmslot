@@ -107,6 +107,7 @@ import { runSlotHistory } from '../methods/run/slot-history.js';
 import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
 
 export interface RouteRunMethodContext {
+  /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
 }
