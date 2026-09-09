@@ -3474,6 +3474,8 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   const expressions: string[] = [];
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.evaluate') {
         expressions.push(String(params.expression));
         return {
@@ -3496,7 +3498,7 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
 
   assert.match(expressions[0] ?? '', /querySelectorDeep/u);
   assert.match(expressions[0] ?? '', /shadowRoot/u);
-  const observationExpression = expressions[1] ?? '';
+  const observationExpression = expressions.at(-1) ?? '';
   assert.match(observationExpression, /querySelectorAllDeep/u);
   assert.match(observationExpression, /shadowRoot/u);
   assert.match(observationExpression, /testAttribute/u);
@@ -4243,6 +4245,8 @@ test('CDP click hit-testing crosses shadow boundaries with composed ancestry', a
   const expressions: string[] = [];
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.evaluate') {
         expressions.push(String(params.expression));
         return { result: { value: { x: 1, y: 2, selector: 's', tagName: 'BUTTON' } } };
@@ -4325,6 +4329,8 @@ test('CDP visible waits use viewport visibility and presses validate hit targets
   const expressions: string[] = [];
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.evaluate') {
         expressions.push(String(params.expression));
         return { result: { value: { x: 10, y: 20, selector: '#submit', tagName: 'BUTTON' } } };
@@ -4337,7 +4343,7 @@ test('CDP visible waits use viewport visibility and presses validate hit targets
   await page.click('#submit');
 
   assert.match(expressions[0] ?? '', /isVisibleDeep\(el\)/u);
-  assert.match(expressions[1] ?? '', /clickablePointDeep\(el\)/u);
+  assert.match(expressions[1] ?? '', /clickablePointDeep\(el, true\)/u);
   assert.match(expressions[1] ?? '', /elementFromPoint/u);
   assert.match(expressions[1] ?? '', /Target is disabled/u);
   assert.match(expressions[1] ?? '', /Target is obscured/u);

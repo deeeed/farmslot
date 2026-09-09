@@ -151,11 +151,7 @@ function lifecycleCalls(
     throw new Error('app.lifecycle target requires appId.');
   }
   if (command === 'restart') {
-    return [
-      ...lifecycleCalls('terminate', target),
-      ...(target.prelaunchCalls ?? []),
-      ...lifecycleCalls('launch', target),
-    ];
+    return [...lifecycleCalls('terminate', target), ...lifecycleCalls('launch', target)];
   }
   if (command === 'launch' || command === 'foreground') {
     return [...(target.prelaunchCalls ?? []), ...lifecyclePlatformCalls(command, target)];
