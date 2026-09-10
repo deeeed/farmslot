@@ -1,0 +1,55 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acknowledge historical PR incident attention in Companion",
+  "description": "Use a stopped, unacknowledged validation monitor produced by e2e-pr-rule-actions.mts. Set PR_PUSH_ATTENTION_ID to the same monitor:<monitor-id>:<incident-id> as attention_id. No push credentials are required for in-app attention.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["attention_id"],
+    "properties": { "attention_id": { "type": "string" } }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "if [ \"$PLATFORM\" = ios ]; then xcrun simctl openurl \"$IOS_SIMULATOR\" \"farmslot-development:///pr-automation?attentionId=$PR_PUSH_ATTENTION_ID\"; else adb -s \"$ANDROID_SERIAL\" shell am start -a android.intent.action.VIEW -d \"farmslot-development:///pr-automation?attentionId=$PR_PUSH_ATTENTION_ID\" net.siteed.farmslot.development; fi",
+        "intent": "An incident link opens its current recipient-scoped record even when the subscription has stopped.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-attention-{{params.attention_id}}",
+        "timeout_ms": 30000,
+        "intent": "The historical conflict is still readable from the shared gateway history.",
+        "next": "visible"
+      },
+      "visible": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "The acknowledgement control is reachable below the notification delivery settings.",
+        "next": "evidence"
+      },
+      "evidence": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-incident-attention.png",
+        "intent": "The screenshot records the historical conflict and its available acknowledgement action.",
+        "next": "acknowledge"
+      },
+      "acknowledge": {
+        "action": "ui.press",
+        "test_id": "companion-pr-attention-ack-{{params.attention_id}}",
+        "intent": "The operator acknowledges their notification independently of GitHub resolution or repair.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-push-acknowledgement.mts",
+        "intent": "A separate gateway connection confirms acknowledgement while preserving the unresolved conflict, stopped subscription and zero repair attempts.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

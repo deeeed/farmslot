@@ -193,6 +193,17 @@ export interface ReviewGatePayload {
   workerLearnings?: string;
 }
 
+/** Review evidence retained independently of the decision to publish it. */
+export type RunReviewResult = Pick<
+  ReviewGatePayload,
+  | 'recommendation'
+  | 'reviewMd'
+  | 'lineComments'
+  | 'reviewSnapshot'
+  | 'artifactManifest'
+  | 'reviewInputArtifactPaths'
+>;
+
 export type PublicationTarget = 'draft' | 'ready';
 export type PublicationStatus =
   | 'not_published'
@@ -266,6 +277,7 @@ export type ReviewSessionFallbackReason =
   | 'unsupported-runner'
   | 'slot-mismatch'
   | 'runner-mismatch'
+  | 'model-mismatch'
   | 'missing-session'
   | 'session-unavailable';
 
@@ -1991,6 +2003,8 @@ export interface MachineParkRecord {
 
 export interface Run {
   id: string;
+  prWork?: import('./pr-monitoring.js').PRWorkReference;
+  prPublications?: import('./pr-monitoring.js').PRPublicationRecord[];
   familyId: string;
   parentRunId?: string | null;
   familyRootTicketOrPr?: string;
@@ -2070,6 +2084,7 @@ export interface Run {
   mergedAt?: string | null;
   steps: RunStep[];
   decisions: RunDecision[];
+  reviewResult?: RunReviewResult;
   metrics: RunMetrics;
   createdAt: string;
   /** Timestamp when the supervised run lifecycle started. */

@@ -5,6 +5,7 @@ import type { PRStatus } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import './pr-card.js';
+import './pr-automation-panel.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
@@ -808,6 +809,7 @@ export class PRBoard extends LitElement {
         }}
         style="display:contents"
       >
+        <pr-automation-panel></pr-automation-panel>
         ${initialLoading
           ? html`<farm-hydrating message="Loading PRs…"></farm-hydrating>`
           : this._bootstrapFailed && this._prs.length === 0

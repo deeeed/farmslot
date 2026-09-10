@@ -37,6 +37,7 @@ export async function dispatchQueueAdd(
   params: DispatchQueueAddParams,
 ): Promise<DispatchQueueAddResult> {
   const rawParams = params as DispatchQueueAddParams & {
+    prWork?: unknown;
     backlogItemId?: unknown;
     workGraphId?: unknown;
     workNodeId?: unknown;
@@ -47,6 +48,7 @@ export async function dispatchQueueAdd(
     ticketData?: unknown;
   };
   if (
+    rawParams.prWork !== undefined ||
     rawParams.backlogItemId !== undefined ||
     rawParams.workGraphId !== undefined ||
     rawParams.workNodeId !== undefined ||

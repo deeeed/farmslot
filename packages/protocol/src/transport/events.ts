@@ -59,6 +59,10 @@ export const Events = {
 
   // PR updates
   PR_UPDATED: 'pr.updated',
+  PR_WATCH_UPDATED: 'prWatch.updated',
+  PR_WATCH_POLICY_UPDATED: 'prWatch.policy.updated',
+  PR_RULES_UPDATED: 'prRules.updated',
+  PR_PUSH_UPDATED: 'prPush.updated',
 
   // Decisions
   DECISION_NEW: 'decision.new',

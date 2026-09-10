@@ -46,6 +46,16 @@ Push notifications, connection state, and concise task/fleet summaries must make
 
 Mobile should complement the desktop command center, not replicate every heavy desktop workflow on a phone.
 
+### 5. Persistent PR attention away from the desk (planned)
+
+Review intake displays Continue/Fresh policy, static/full-live depth, prior reviewed SHA and session continuation outcome. Slots can handle other PRs between rounds while the PR's reviewer context remains resumable.
+
+Expose the same [persistent PR monitors and incidents](PRD-automation-intelligence-canonical.md#6-persistent-pr-monitoring-planned) as Command Center, including externally created PRs and PRs by other authors. Support adding a PR URL, choosing notify-only or automatic repair, inspecting current evidence, requesting a repair, and pausing/snoozing monitoring actions. Push notifications deep-link to current gateway incident state; failed push delivery does not remove the in-app attention item. The app must distinguish a stale observation, pending operator action, queued repair, running repair, and dependency wait.
+
+### 6. Rule-triggered review queue (planned)
+
+Expose the shared [trigger-rule review intake](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned), including the match reason and held/queued/running state. Support team filtering, notifications for authorized audiences, accepting or deferring review items, and authorized rule enable/disable. Use the shared team profile and review facts; approval counts alone cannot indicate readiness. Show the selected execution profile, allowed slots and model/effort choices, actual assignment and any capacity or compatibility blocker. Full source-field mapping and predicate authoring can remain on desktop/CLI without creating a separate mobile rule engine.
+
 ## Boundaries
 
 - This document is the canonical mobile chunk contract.

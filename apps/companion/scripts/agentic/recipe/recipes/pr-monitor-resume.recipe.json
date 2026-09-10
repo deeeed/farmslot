@@ -1,0 +1,74 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Resume a finished monitor in Companion",
+  "description": "Use a finished notify-only monitor and its actual account. Set RESUME_MONITOR_ID and private RESUME_STATE_FILE; detail cards initially collapsed.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["monitor_id"],
+    "properties": {
+      "monitor_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "if [ \"$PLATFORM\" = ios ]; then xcrun simctl openurl \"$IOS_SIMULATOR\" \"farmslot-development:///pr-automation?monitorId=$RESUME_MONITOR_ID\"; else adb -s \"$ANDROID_SERIAL\" shell am start -a android.intent.action.VIEW -d \"farmslot-development:///pr-automation?monitorId=$RESUME_MONITOR_ID\" net.siteed.farmslot.development; fi",
+        "intent": "A monitor link preserves access to finished subscription history.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-monitor-{{params.monitor_id}}",
+        "timeout_ms": 30000,
+        "intent": "The historical monitor remains visible after the provider confirmed completion.",
+        "next": "expand"
+      },
+      "visible": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "The lifecycle action is reachable below the monitor details.",
+        "next": "evidence"
+      },
+      "evidence": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resume-finished.png",
+        "intent": "The screenshot records the finished monitor and its enabled resume control.",
+        "next": "acknowledge"
+      },
+      "acknowledge": {
+        "action": "ui.press",
+        "test_id": "companion-pr-monitor-pause-{{params.monitor_id}}",
+        "intent": "The operator explicitly resumes the same finished subscription without creating another monitor.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-monitor-resume.mts after",
+        "intent": "The live gateway confirms a new observation generation without starting repair.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "before": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-monitor-resume.mts before",
+        "intent": "Record the finished subscription and observation generation before the operator resumes it.",
+        "next": "visible"
+      },
+      "expand": {
+        "action": "ui.press",
+        "test_id": "companion-pr-monitor-details-{{params.monitor_id}}",
+        "intent": "The operator opens actions without rendering every monitor\u2019s full history.",
+        "next": "before"
+      }
+    }
+  }
+}

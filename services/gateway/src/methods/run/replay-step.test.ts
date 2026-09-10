@@ -1646,6 +1646,7 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
     status: 'blocked',
     taskFile,
     decisions: [pendingGate],
+    reviewResult: { recommendation: 'COMMENT', reviewMd: 'Saved report', lineComments: [] },
     metrics: {
       ...run.metrics,
       outcome: 'success',
@@ -1680,6 +1681,7 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   assert.ok(superseded.resolvedAt);
   assert.equal(superseded.context?.supersededBy, 'gate-reentry');
   assert.equal(replayed.metrics.outcome, 'success');
+  assert.equal(replayed.reviewResult?.reviewMd, 'Saved report');
   assert.equal(replayed.metrics.disposition, 'already_fixed');
   assert.deepEqual(replayed.metrics.terminalEvidence, {
     reportPath: 'artifacts/no-change-report.md',
@@ -2188,6 +2190,7 @@ test('runReplayStep preserves worker session state when replaying monitor only',
       runnerSessionId: 'preserved-session',
       runnerSessionPath: '/tmp/preserved-session',
     },
+    reviewResult: { recommendation: 'COMMENT', reviewMd: 'Previous attempt', lineComments: [] },
     steps: run.steps.map((step) =>
       step.name === 'find-slot' ||
       step.name === 'write-task' ||
@@ -2217,6 +2220,11 @@ test('runReplayStep preserves worker session state when replaying monitor only',
   assert.equal(replayed.status, 'monitoring');
   assert.equal(replayed.metrics.runnerSessionId, 'preserved-session');
   assert.equal(replayed.metrics.runnerSessionPath, '/tmp/preserved-session');
+  assert.equal(
+    replayed.reviewResult,
+    undefined,
+    'A replayed worker attempt must supply new review evidence',
+  );
 });
 
 test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', async (t) => {

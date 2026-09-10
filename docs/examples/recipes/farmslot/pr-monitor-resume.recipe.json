@@ -1,0 +1,87 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Resume a finished monitor",
+  "description": "Use a finished notify-only monitor and actual account. Supply RESUME_MONITOR_ID and private RESUME_STATE_FILE. Start with history off.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["monitor_id"],
+    "properties": {
+      "monitor_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "Open the connected PR dashboard.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The connected dashboard exposes review work independently of active slots.",
+        "next": "reviews"
+      },
+      "reviews": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-monitors",
+        "intent": "Finished monitoring records remain available in the shared inventory.",
+        "next": "history"
+      },
+      "history": {
+        "action": "ui.press",
+        "selector": "input[type=\"checkbox\"]",
+        "intent": "Include completed review rounds.",
+        "next": "result"
+      },
+      "result": {
+        "action": "ui.wait_for",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"]",
+        "text_contains": ["finished"],
+        "timeout_ms": 30000,
+        "intent": "The provider-confirmed finished subscription retains its history.",
+        "next": "before"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"]",
+        "scroll_into_view": true,
+        "intent": "The finished subscription and lifecycle action are visible together.",
+        "next": "resume"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/resume-finished.png",
+        "intent": "Record the existing monitor after the resume action.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-monitor-resume.mts after",
+        "intent": "The gateway confirms a new observation generation on the same subscription without repair work.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "before": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-monitor-resume.mts before",
+        "intent": "Record the real finished subscription before using its resume control.",
+        "next": "show"
+      },
+      "resume": {
+        "action": "ui.press",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-lifecycle\"]",
+        "intent": "The operator can explicitly resume a finished subscription without re-adding it.",
+        "next": "capture"
+      }
+    }
+  }
+}

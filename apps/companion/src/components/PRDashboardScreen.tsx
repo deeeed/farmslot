@@ -477,6 +477,14 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
         </Pressable>
       </View>
       <View style={styles.summaryRow}>
+        <Pressable
+          accessibilityRole="button"
+          testID="companion-pr-automation-open"
+          style={styles.actionButton}
+          onPress={() => router.push('/pr-automation')}
+        >
+          <Text style={styles.actionText}>Monitoring and review queue</Text>
+        </Pressable>
         <SummaryPill label="Attention" value={counts.attention} color={colors.statusFail} />
         <SummaryPill label="Active" value={counts.active} color={colors.accent} />
         <SummaryPill label="Ready" value={counts.ready} color={colors.statusOk} />

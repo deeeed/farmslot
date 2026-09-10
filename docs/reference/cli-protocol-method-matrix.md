@@ -303,6 +303,52 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | --------------------------- | ------- | ----------- | --- | -------------------------------------------------------------------------------------------------------------------------- |
 | `providerAccounts.snapshot` | na      |             |     | Command Center fleet Setup / provider seats surface (web UI). Labels and identity only — never tokens or credential paths. |
 
+## prPush.\*
+
+| Method               | Surface  | CLI command | TUI | Note                                                                           |
+| -------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------------ |
+| `prPush.register`    | rpc-only |             |     | Recipient-scoped PR attention and Companion push registration/delivery status. |
+| `prPush.unregister`  | rpc-only |             |     | Recipient-scoped PR attention and Companion push registration/delivery status. |
+| `prPush.list`        | rpc-only |             |     | Recipient-scoped PR attention and Companion push registration/delivery status. |
+| `prPush.acknowledge` | rpc-only |             |     | Recipient-scoped PR attention and Companion push registration/delivery status. |
+
+## prReview.\*
+
+| Method            | Surface  | CLI command                    | TUI | Note                                                               |
+| ----------------- | -------- | ------------------------------ | --- | ------------------------------------------------------------------ |
+| `prReview.submit` | rpc-only | `farmslot rpc prReview.submit` |     | Submit an idempotent PR review/QA request under a team policy.     |
+| `prReview.get`    | rpc-only | `farmslot rpc prReview.get`    |     | Read the authenticated owner's review request and linked work.     |
+| `prReview.cancel` | rpc-only | `farmslot rpc prReview.cancel` |     | Cancel unstarted review intake and retain its idempotency receipt. |
+
+## prRules.\*
+
+| Method                      | Surface  | CLI command                              | TUI | Note                                                                                                   |
+| --------------------------- | -------- | ---------------------------------------- | --- | ------------------------------------------------------------------------------------------------------ |
+| `prRules.list`              | rpc-only | `farmslot rpc prRules.list`              |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.projectImport`     | rpc-only | `farmslot rpc prRules.projectImport`     |     | Inspect a GitHub Project/view and import typed filter mappings without saving policy or starting work. |
+| `prRules.teamSave`          | rpc-only | `farmslot rpc prRules.teamSave`          |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.ruleSave`          | rpc-only | `farmslot rpc prRules.ruleSave`          |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.preview`           | rpc-only | `farmslot rpc prRules.preview`           |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.setEnabled`        | rpc-only | `farmslot rpc prRules.setEnabled`        |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.scan`              | rpc-only | `farmslot rpc prRules.scan`              |     | Team PR trigger rules and durable review intake.                                                       |
+| `prRules.acknowledgeAction` | rpc-only | `farmslot rpc prRules.acknowledgeAction` |     | Acknowledge a rule notification for the authenticated recipient.                                       |
+| `prRules.accept`            | rpc-only | `farmslot rpc prRules.accept`            |     | Accept or defer durable PR review intake.                                                              |
+| `prRules.defer`             | rpc-only | `farmslot rpc prRules.defer`             |     | Accept or defer durable PR review intake.                                                              |
+
+## prWatch.\*
+
+| Method                      | Surface  | CLI command                              | TUI | Note                                                                        |
+| --------------------------- | -------- | ---------------------------------------- | --- | --------------------------------------------------------------------------- |
+| `prWatch.list`              | rpc-only | `farmslot rpc prWatch.list`              |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.get`               | rpc-only | `farmslot rpc prWatch.get`               |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.subscribe`         | rpc-only | `farmslot rpc prWatch.subscribe`         |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.configure`         | rpc-only | `farmslot rpc prWatch.configure`         |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.lifecycle`         | rpc-only | `farmslot rpc prWatch.lifecycle`         |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.acknowledge`       | rpc-only | `farmslot rpc prWatch.acknowledge`       |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.refresh`           | rpc-only | `farmslot rpc prWatch.refresh`           |     | Persistent PR subscriptions; shared with Command Center and Companion.      |
+| `prWatch.repair`            | rpc-only | `farmslot rpc prWatch.repair`            |     | Request repair of monitored PR incidents with explicit execution selection. |
+| `prWatch.projectPolicy.set` | rpc-only | `farmslot rpc prWatch.projectPolicy.set` |     | Opt into monitoring newly published PRs per project.                        |
+
 ## recipe.\*
 
 | Method                      | Surface       | CLI command       | TUI | Note                                                                                           |

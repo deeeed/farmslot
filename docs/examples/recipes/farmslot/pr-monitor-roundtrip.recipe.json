@@ -1,0 +1,86 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Monitor check-name preservation in Command Center",
+  "description": "Run check-pr-monitor-roundtrip.mts setup first. Supply ROUNDTRIP_TAG/PR_URL/GW_URL and the resulting monitor_id. The unavailable validation account cannot start work.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["monitor_id"],
+    "properties": {
+      "monitor_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "navigate",
+    "nodes": {
+      "navigate": {
+        "action": "ui.navigate",
+        "intent": "The desktop monitor editor uses the shared subscription record.",
+        "target": "#prs",
+        "next": "panel"
+      },
+      "panel": {
+        "action": "ui.wait_for",
+        "intent": "Monitoring controls are available independently of PR discovery.",
+        "selector": "pr-automation-panel",
+        "next": "tab"
+      },
+      "tab": {
+        "action": "ui.press",
+        "intent": "The operator can configure the validation subscription.",
+        "test_id": "pr-automation-tab-monitors",
+        "next": "monitor-loaded"
+      },
+      "edit": {
+        "action": "ui.press",
+        "intent": "Load the exact saved monitor including its comma-bearing check name.",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-edit\"]",
+        "next": "limits"
+      },
+      "limits": {
+        "action": "ui.press",
+        "intent": "Monitoring interval and check filters are editable in one form.",
+        "test_id": "pr-monitor-limits",
+        "next": "interval"
+      },
+      "interval": {
+        "action": "ui.set_input",
+        "intent": "Change polling frequency without changing watched-check identities.",
+        "test_id": "pr-monitor-interval",
+        "value": "10",
+        "next": "save"
+      },
+      "save": {
+        "action": "ui.press",
+        "intent": "Save the real monitor configuration through the gateway.",
+        "test_id": "pr-monitor-save",
+        "next": "saved"
+      },
+      "saved": {
+        "action": "ui.wait_for",
+        "intent": "The updated monitor returns to the inventory.",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-edit\"]:not(:disabled)",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "intent": "A gateway read proves whole check names were preserved while the interval changed.",
+        "cmd": "yarn exec tsx scripts/check-pr-monitor-roundtrip.mts desktop",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "monitor-loaded": {
+        "action": "ui.wait_for",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-edit\"]:not(:disabled)",
+        "timeout_ms": 15000,
+        "intent": "The requested subscription has arrived from the gateway before editing.",
+        "next": "edit"
+      }
+    }
+  }
+}

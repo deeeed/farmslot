@@ -8,6 +8,7 @@
 // Env:
 //   METRO_PORT (required; supplied by slot/worktree configuration)
 //   FARMSLOT_METRO_ORIGIN (optional; auto-detects loopback + LAN when unset)
+//   FARMSLOT_CDP_TARGET_ID (optional; select a specific connected device from /json/list)
 
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -64,7 +65,8 @@ if (!expr) {
 }
 
 async function listTargets() {
-  const res = await fetch(`http://127.0.0.1:${metroPort}/json/list`);
+  const origin = process.env.FARMSLOT_METRO_ORIGIN?.trim() || `http://127.0.0.1:${metroPort}`;
+  const res = await fetch(`${origin.replace(/\/$/, '')}/json/list`);
   if (!res.ok) throw new Error(`Metro CDP list failed: HTTP ${res.status}`);
   return res.json();
 }
@@ -156,10 +158,11 @@ async function evalWithOriginFallback(target, expression) {
 }
 
 const targets = await listTargets();
-const target =
-  targets.find((entry) => entry.appId?.includes('farmslot')) ??
-  targets.find((entry) => entry.type === 'node') ??
-  targets[0];
+const target = process.env.FARMSLOT_CDP_TARGET_ID
+  ? targets.find((entry) => entry.id === process.env.FARMSLOT_CDP_TARGET_ID)
+  : (targets.find((entry) => entry.appId?.includes('farmslot')) ??
+    targets.find((entry) => entry.type === 'node') ??
+    targets[0]);
 if (!target?.webSocketDebuggerUrl) {
   console.error(
     `No React Native CDP target on Metro :${metroPort}. Launch the dev client and wait for /json/list.`,

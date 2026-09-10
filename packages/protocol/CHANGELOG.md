@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add persistent PR subscriptions, team trigger rules with saved source progress and Project/view filter bindings and durable notification/enrollment receipts, recipient-scoped push registration and automated review policies for slot/model/effort selection, live QA and saved reviewer sessions.
+
 - Preserve the last actionable CI feedback fingerprint across gateway restarts for no-progress timeouts.
 
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.

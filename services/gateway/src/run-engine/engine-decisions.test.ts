@@ -5,6 +5,7 @@ import type { ReadyGatePayload, ReviewGatePayload, Run, RunDecision } from '@far
 
 import {
   applyRepeatReviewSelection,
+  automatedRepeatReviewSelection,
   autoResolveEngineDecision,
   buildCollisionSuccessorParams,
   buildRepeatReviewContext,
@@ -32,12 +33,14 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     taskFile: overrides.taskFile ?? null,
     steps: overrides.steps ?? [],
     decisions: overrides.decisions ?? [],
+    reviewResult: overrides.reviewResult,
     engineState: overrides.engineState,
     backlogItemId: overrides.backlogItemId,
     workGraphId: overrides.workGraphId,
     workNodeId: overrides.workNodeId,
     allowedSlots: overrides.allowedSlots,
     repeatReviewContext: overrides.repeatReviewContext,
+    prWork: overrides.prWork,
     metrics: overrides.metrics ?? {
       nudgeCount: 0,
       runner: 'claude',
@@ -98,6 +101,41 @@ function readyDecision(): RunDecision {
     payload,
   };
 }
+
+test('artifact-only review evidence supplies continuation SHA and findings without a posting gate', () => {
+  const result = reviewDecision().payload as ReviewGatePayload;
+  const prior = makeRun({
+    id: 'artifact-review',
+    flowType: 'review-pr',
+    status: 'done',
+    ticketOrPr: 'Owner/Repo#42',
+    decisions: [],
+    reviewResult: result,
+  });
+  const current = makeRun({
+    id: 'next-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+  });
+  assert.equal(findLatestPriorReviewRun(current, [prior])?.id, prior.id);
+  const context = buildRepeatReviewContext(
+    current,
+    prior,
+    {
+      project: 'demo',
+      repository: 'Owner/Repo',
+      prNumber: 42,
+      headSha: 'bbbbbbbbbbbbbbbb',
+    },
+    [prior],
+  );
+  assert.equal(context.priorReviewedHeadSha, result.reviewSnapshot!.headSha);
+  assert.equal(context.verdict, result.recommendation);
+  assert.deepEqual(context.unresolvedFindings, [
+    { file: 'src/a.ts', line: 7, description: 'Fix this.' },
+  ]);
+  assert.equal(context.priorGenerations?.[0].headSha, result.reviewSnapshot!.headSha);
+});
 
 test('collision successor retains backlog and work-graph ownership', () => {
   const params = buildCollisionSuccessorParams(
@@ -205,6 +243,29 @@ test('buildRepeatReviewContext freezes prior findings, review range, and Farmslo
   assert.equal(context.reviewScope, 'incremental');
   assert.equal(context.validationDepth, 'static-code');
   assert.equal(context.sessionIntent, 'resume');
+  const continued = automatedRepeatReviewSelection(context, {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    validationDepth: 'full-live',
+  });
+  assert.equal(continued.sessionIntent, 'resume');
+  assert.equal(continued.validationDepth, 'full-live');
+  assert.deepEqual(continued.unresolvedFindings, context.unresolvedFindings);
+  const fresh = automatedRepeatReviewSelection(context, {
+    sessionIntent: 'reset',
+    scope: 'incremental',
+    validationDepth: 'static-code',
+  });
+  assert.equal(fresh.sessionIntent, 'reset');
+  assert.equal(fresh.reviewScope, 'full');
+  assert.deepEqual(fresh.unresolvedFindings, []);
+  const full = automatedRepeatReviewSelection(context, {
+    sessionIntent: 'resume',
+    scope: 'full',
+    validationDepth: 'full-live',
+  });
+  assert.equal(full.sessionIntent, 'reset');
+  assert.equal(full.validationDepth, 'full-live');
   assert.deepEqual(
     context.priorGenerations?.map((entry) => entry.generation),
     [1],

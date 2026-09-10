@@ -1,0 +1,119 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion monitor edit and pause",
+  "description": "Run check-pr-monitor-roundtrip.mts setup and the desktop roundtrip recipe first, then supply ROUNDTRIP_TAG/PR_URL/GW_URL and the monitor_id. The unavailable account cannot read provider data or start work.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["monitor_id"],
+    "properties": {
+      "monitor_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-route",
+    "nodes": {
+      "open-route": {
+        "action": "command",
+        "intent": "Open the native screen backed by the same monitor edited on desktop.",
+        "cmd": "xcrun simctl openurl \"$IOS_SIMULATOR\" \"farmslot-development:///pr-automation\"",
+        "next": "wait-screen"
+      },
+      "wait-screen": {
+        "action": "ui.wait_for",
+        "intent": "The connected native monitor controls are available.",
+        "test_id": "companion-pr-tab-monitors",
+        "timeout_ms": 30000,
+        "next": "monitors"
+      },
+      "monitors": {
+        "action": "ui.press",
+        "intent": "The shared subscription is reachable from the monitored PR list.",
+        "test_id": "companion-pr-tab-monitors",
+        "next": "scroll-monitor"
+      },
+      "scroll-monitor": {
+        "action": "ui.scroll",
+        "intent": "The operator can reach configuration actions below the provider evidence.",
+        "direction": "down",
+        "pixels": 450,
+        "next": "edit"
+      },
+      "edit": {
+        "action": "ui.press",
+        "intent": "Reopen the subscription without changing its identity or check names.",
+        "test_id": "companion-pr-monitor-edit-{{params.monitor_id}}",
+        "next": "scroll-fields"
+      },
+      "scroll-fields": {
+        "action": "ui.scroll",
+        "intent": "Polling settings are reachable below subscription identity and policy.",
+        "direction": "down",
+        "pixels": 350,
+        "next": "interval"
+      },
+      "interval": {
+        "action": "ui.set_input",
+        "intent": "Change polling to fifteen minutes while preserving complete check names.",
+        "test_id": "companion-pr-monitor-interval",
+        "value": "900",
+        "next": "keyboard"
+      },
+      "keyboard": {
+        "action": "ui.key_press",
+        "intent": "Finish editing the interval before saving the native form.",
+        "key": "Enter",
+        "next": "scroll-save"
+      },
+      "scroll-save": {
+        "action": "ui.scroll",
+        "intent": "The save action is reachable below monitoring limits.",
+        "direction": "down",
+        "pixels": 350,
+        "next": "save"
+      },
+      "save": {
+        "action": "ui.press",
+        "intent": "Persist the mobile configuration through the shared gateway API.",
+        "test_id": "companion-pr-monitor-submit",
+        "next": "verify-native"
+      },
+      "verify-native": {
+        "action": "command",
+        "intent": "A new gateway read proves the mobile interval edit retained the comma-bearing check name.",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-monitor-roundtrip.mts native",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "intent": "The updated native subscription shows its policy and available actions.",
+        "path": "screenshots/companion-monitor.png",
+        "next": "pause"
+      },
+      "pause": {
+        "action": "ui.press",
+        "intent": "Pause this exact subscription without stopping other monitoring interests.",
+        "test_id": "companion-pr-monitor-pause-{{params.monitor_id}}",
+        "next": "verify-pause"
+      },
+      "verify-pause": {
+        "action": "command",
+        "intent": "The gateway reports the mobile pause to other clients.",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-monitor-roundtrip.mts paused",
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "intent": "Stop the validation subscription and leave no test monitoring active.",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-monitor-roundtrip.mts cleanup",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -781,8 +781,16 @@ export class CdpWebPage {
     }>(
       `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
-    await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace' });
-    await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace' });
+    await this.session.call('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Backspace',
+      windowsVirtualKeyCode: 8,
+    });
+    await this.session.call('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Backspace',
+      windowsVirtualKeyCode: 8,
+    });
     if (value) await this.session.call('Input.insertText', { text: value });
     const after = await this.evaluate<{ value: string }>(
       `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root)); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,

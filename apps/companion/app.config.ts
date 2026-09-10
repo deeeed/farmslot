@@ -45,6 +45,7 @@ interface AppConfigEnv {
   BUNDLE_ID: string;
   SCHEME: string;
   EAS_PROJECT_ID: string;
+  GOOGLE_SERVICES_FILE: string;
   EXPO_PUBLIC_GATEWAY_URL: string;
   FARMSLOT_REMOTE_GATEWAY_URL: string;
   FARMSLOT_GATEWAY_TOKEN: string;
@@ -60,6 +61,7 @@ const envSchema = Joi.object({
   BUNDLE_ID: Joi.string().allow('').default(''),
   SCHEME: Joi.string().allow('').default(''),
   EAS_PROJECT_ID: Joi.string().uuid().default('5673e87d-de68-4685-9d17-03533e7d63de'),
+  GOOGLE_SERVICES_FILE: Joi.string().allow('').default(''),
   EXPO_PUBLIC_GATEWAY_URL: Joi.string().allow('').default(''),
   FARMSLOT_REMOTE_GATEWAY_URL: Joi.string().allow('').default(''),
   FARMSLOT_GATEWAY_TOKEN: Joi.string().allow('').default(''),
@@ -171,6 +173,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: appIdentifier,
+      googleServicesFile: env.GOOGLE_SERVICES_FILE || undefined,
       permissions: ['android.permission.CAMERA'],
       adaptiveIcon: {
         foregroundImage: variantInfo.icon,
@@ -181,6 +184,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       'expo-router',
       'expo-asset',
       'expo-font',
+      'expo-notifications',
       [
         'expo-splash-screen',
         {

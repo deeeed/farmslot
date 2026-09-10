@@ -56,6 +56,8 @@ export async function initNotifications() {
   // Handle notification tap → navigate
   Notifications.addNotificationResponseReceivedListener((response) => {
     const data = response.notification.request.content.data;
+    // Remote PR notifications select their gateway profile in PRPushRegistration.
+    if (data?.notificationId && data?.profileId) return;
     if (data?.route) {
       router.push(data.route as string);
     }

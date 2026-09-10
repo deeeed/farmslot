@@ -13,6 +13,7 @@ import { AppEnvironmentIndicator } from '../components/AppEnvironmentIndicator';
 import { AppUpdatesMonitor } from '../components/AppUpdatesMonitor';
 import { FallbackHeaderBack } from '../components/FallbackHeaderBack';
 import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
+import { PRPushRegistration } from '../components/PRPushRegistration';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
 import { initNotifications } from '../lib/notifications';
@@ -55,6 +56,7 @@ export default function RootLayout() {
         <GlobalFilterCoordinator />
         {!isStoreScreenshotMode ? (
           <>
+            <PRPushRegistration />
             <WhatsNewMonitor />
             <AppUpdatesMonitor />
           </>
@@ -67,6 +69,13 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="pr-automation"
+            options={{
+              title: 'PR monitoring',
+              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/prs" />,
+            }}
+          />
           <Stack.Screen
             name="filters"
             options={{

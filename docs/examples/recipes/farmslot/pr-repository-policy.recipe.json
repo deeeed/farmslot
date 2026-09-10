@@ -1,0 +1,83 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Inspect supplemental repository policy",
+  "description": "Use a disabled validation rule configured by e2e-pr-repository-policy.mts. Preview displays provider facts and supplemental policy independently.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["rule_id"],
+    "properties": {
+      "rule_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "The operator can inspect source coverage from the shared PR dashboard.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The authenticated dashboard exposes the persisted rule controls.",
+        "next": "rules"
+      },
+      "rules": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-rules",
+        "intent": "Saved discovery rules remain accessible independently of review workers.",
+        "next": "rule"
+      },
+      "rule": {
+        "action": "ui.scroll",
+        "selector": "[data-rule-id=\"{{params.rule_id}}\"]",
+        "scroll_into_view": true,
+        "intent": "The isolated rule's preview control is reachable in the inventory.",
+        "next": "available"
+      },
+      "preview": {
+        "action": "ui.press",
+        "selector": "[data-rule-id=\"{{params.rule_id}}\"] [data-testid=\"pr-rule-preview\"]",
+        "intent": "The operator resumes the rule's saved source traversal without enabling it.",
+        "next": "progress"
+      },
+      "progress": {
+        "action": "ui.wait_for",
+        "text_contains": ["Supplemental approvals:", "GitHub review requirement:", "Activity:"],
+        "timeout_ms": 120000,
+        "intent": "Provider review facts and configured inactivity are shown without claiming merge readiness.",
+        "next": "show",
+        "selector": "section[aria-label=\"Rule preview\"]"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/repository-policy.png",
+        "intent": "Record the real repository policy assessment in the preview.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "selector": "section[aria-label=\"Rule preview\"]",
+        "scroll_into_view": true,
+        "intent": "Supplemental policy summaries are readable alongside their source facts.",
+        "next": "capture"
+      },
+      "available": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-id=\"{{params.rule_id}}\"] [data-testid=\"pr-rule-preview\"]:not(:disabled)",
+        "timeout_ms": 120000,
+        "intent": "An in-progress provider read completes before another preview resumes its checkpoint.",
+        "next": "preview"
+      }
+    }
+  }
+}

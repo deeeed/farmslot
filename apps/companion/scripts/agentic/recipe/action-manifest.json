@@ -180,6 +180,10 @@
       "description": "Scroll the assigned native simulator or device and wait for stability.",
       "schema": {
         "type": "object",
+        "properties": {
+          "direction": { "type": "string", "enum": ["up", "down", "left", "right"] },
+          "pixels": { "type": "number", "minimum": 1 }
+        },
         "additionalProperties": false
       },
       "examples": [

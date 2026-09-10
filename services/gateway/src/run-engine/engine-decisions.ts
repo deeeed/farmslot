@@ -7,14 +7,16 @@ import {
   Events,
   type EvidenceManifestEntry,
   isTerminalRunStatus,
+  type PRReviewOptions,
   type RepeatReviewContext,
   type ReviewChainEntry,
   reviewChainForRun,
-  type ReviewGatePayload,
+  reviewResultForRun,
   type Run,
   type RunCreateParams,
   type RunDecision,
   type RunDecisionPayload,
+  type RunReviewResult,
   type RunStatus,
 } from '@farmslot/protocol';
 
@@ -132,20 +134,12 @@ function canonicalReviewIdentity(
   };
 }
 
-function latestReviewGatePayload(run: Run): ReviewGatePayload | null {
-  const decision = [...run.decisions]
-    .reverse()
-    .find((candidate) => candidate.type === 'engine_review_posting');
-  const payload = decision?.payload;
-  return payload?.kind === 'review' ? payload : null;
-}
-
 function terminalReviewTimestamp(run: Run): string {
   return run.completedAt ?? run.updatedAt ?? run.createdAt;
 }
 
 export function findLatestPriorReviewRun(
-  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType'>,
+  current: Pick<Run, 'id' | 'project' | 'ticketOrPr' | 'flowType' | 'prWork'>,
   allRuns: readonly Run[],
 ): Run | null {
   const identity = canonicalReviewIdentity(current);
@@ -156,7 +150,15 @@ export function findLatestPriorReviewRun(
         if (
           candidate.id === current.id ||
           !isTerminalRunStatus(candidate.status) ||
-          !latestReviewGatePayload(candidate)
+          !reviewResultForRun(candidate)
+        )
+          return false;
+        const requested = current.prWork?.review;
+        if (
+          requested &&
+          (candidate.prWork?.kind !== 'review' ||
+            candidate.prWork.review?.ownerId !== requested.ownerId ||
+            candidate.prWork.review.profile !== requested.profile)
         )
           return false;
         const candidateIdentity = canonicalReviewIdentity(candidate);
@@ -216,7 +218,7 @@ function farmslotOriginForReview(
 function priorReviewChain(
   prior: Run,
   subject: CurrentReviewSubject,
-  payload: ReviewGatePayload | null,
+  payload: RunReviewResult | null,
   artifactRefs: EvidenceManifestEntry[],
 ): ReviewChainEntry[] {
   const existing = reviewChainForRun(prior);
@@ -250,7 +252,7 @@ export function buildRepeatReviewContext(
   subject: CurrentReviewSubject,
   allRuns: readonly Run[],
 ): RepeatReviewContext {
-  const payload = latestReviewGatePayload(prior);
+  const payload = reviewResultForRun(prior);
   const priorHead = payload?.reviewSnapshot?.headSha?.trim() || undefined;
   const artifactRefs = uniqueArtifactRefs([
     ...(payload?.artifactManifest ?? []),
@@ -363,7 +365,10 @@ export async function handleRepeatReviewDecision(
   const allRuns = listRuns({}).runs;
   const prior = findLatestPriorReviewRun(current, allRuns);
   if (!prior) {
-    updateRun(runId, { reviewScope: 'full', reviewValidationDepth: 'static-code' });
+    updateRun(runId, {
+      reviewScope: 'full',
+      reviewValidationDepth: current.reviewValidationDepth ?? 'static-code',
+    });
     return null;
   }
   const context = buildRepeatReviewContext(
@@ -372,6 +377,15 @@ export async function handleRepeatReviewDecision(
     { ...subject, project: current.project, repository: subject.repository.toLowerCase() },
     allRuns,
   );
+  if (current.prWork?.kind === 'review' && current.prWork.review) {
+    const selected = automatedRepeatReviewSelection(context, current.prWork.review.options);
+    updateRun(runId, {
+      repeatReviewContext: selected,
+      reviewScope: selected.reviewScope,
+      reviewValidationDepth: selected.validationDepth,
+    });
+    return selected;
+  }
   const actions = repeatReviewDecisionActions(context);
   const recommendedActionId = context.priorReviewedHeadSha
     ? 'reuse-incremental-static'
@@ -406,6 +420,24 @@ export async function handleRepeatReviewDecision(
     reviewValidationDepth: selected.validationDepth,
   });
   return selected;
+}
+
+/** Apply the already-authorized intake policy through the existing review chain. */
+export function automatedRepeatReviewSelection(
+  context: RepeatReviewContext,
+  options: PRReviewOptions,
+): RepeatReviewContext {
+  const reuse = options.sessionIntent === 'resume';
+  const incremental =
+    reuse && options.scope === 'incremental' && Boolean(context.priorReviewedHeadSha);
+  return {
+    ...context,
+    contextMode: reuse ? 'reuse' : 'fresh',
+    reviewScope: incremental ? 'incremental' : 'full',
+    validationDepth: options.validationDepth,
+    sessionIntent: incremental ? 'resume' : 'reset',
+    ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
+  };
 }
 
 export function autoResolveEngineDecision(

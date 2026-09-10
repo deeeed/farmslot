@@ -221,6 +221,7 @@ function buildInteractiveDevTicketData(
 }
 
 interface RunCreateInternalOptions {
+  beforeCreateAsync?: () => Promise<void>;
   expectedExecutionTemplate?: ExecutionTemplateReference;
   /**
    * Called synchronously immediately before durable store createRun.
@@ -507,6 +508,7 @@ export async function runCreate(
     ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
   };
   // Last ownership check at the durable create boundary (after all awaits above).
+  if (options.beforeCreateAsync) await options.beforeCreateAsync();
   options.beforeCreate?.();
   // Defer background persist on the claim handoff path so the Run file cannot
   // appear on disk before durableStamp writes the queue runId (restart would

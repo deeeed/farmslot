@@ -68,6 +68,10 @@ The shared runner contract is already in production for Claude/Codex. Additional
 10. **Continue runner/process reliability and mobile follow-up** only when they directly block eval experiments, gate operation, or operator-hardening work. Mobile follow-up should be framed as polish on shipped worker/evidence/operator-control surfaces unless it explicitly targets deferred scope such as background wake-word, auto-send, or remote node provisioning. Broader runner expansion remains deferred.
 11. **Add an Operator Workflow Steward** as a planned operator-hardening lane: a gateway-owned, tmux-backed registered runner that supervises implementation, review, QA/recipe, and CI-fix workflows and can perform explicitly armed live UI/UX or control-plane fixes in the operator checkout without consuming a farm slot. Keep it distinct from the restricted embedded Co-Pilot, validate small fixes against the same canonical dev instance where the operator found them, count nested review/QA activity in host pressure, and preserve independent-review/publication/merge authority boundaries. See [ROADMAP-next.md](ROADMAP-next.md) item 16.
 
+12. **Add persistent PR monitoring** as a planned automation lane. Monitor selected PRs independently of run completion, slot ownership and author identity; surface late action requests in Command Center and Companion, with notify-only or explicitly enabled automatic repair. See [the product contract](PRD-automation-intelligence-canonical.md#6-persistent-pr-monitoring-planned) and near-term roadmap item 19.
+
+13. **Add generic trigger rules for review intake.** Discover matching PRs through reusable team profiles across configured repositories and GitHub Projects, including PRs by other authors, then notify, enroll monitors or create held/automatic review work under explicit policy. See [the trigger-rule contract](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned) and near-term roadmap item 20.
+
 See [ROADMAP-next.md](ROADMAP-next.md) for the canonical near-term execution surface.
 
 ## Supporting Deep Dives

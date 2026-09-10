@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Add persistent PR monitors, review/QA requests, rule attention, device push enrollment and publication-policy controls, with gateway-owned actions and drafts preserved across reconnects.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.5.0 - 2026-09-08

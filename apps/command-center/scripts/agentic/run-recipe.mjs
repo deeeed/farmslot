@@ -393,11 +393,20 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
   };
 }
 
-async function connectPage(cdpPort, preferredHash) {
-  const targets = await listCdpTargets('127.0.0.1', cdpPort);
-  const pages = targets.filter((target) => target.type === 'page');
+export function selectCommandCenterTarget(targets, uiUrl, preferredHash) {
+  const origin = new URL(uiUrl).origin;
+  const pages = targets.filter((target) => {
+    if (target.type !== 'page' || !target.url) return false;
+    try {
+      return new URL(target.url).origin === origin;
+    } catch {
+      return false;
+    } // Browser-internal targets without a URL cannot host this client.
+  });
   if (pages.length === 0) {
-    throw new Error(`No CDP page targets on :${cdpPort}. Launch debug Chrome first.`);
+    throw new Error(
+      `No Command Center tab for ${origin}. Open the configured UI before running its recipe.`,
+    );
   }
 
   let selected = pages[0];
@@ -407,7 +416,22 @@ async function connectPage(cdpPort, preferredHash) {
     if (matched) selected = matched;
   }
 
-  return CdpWebPage.connectToTarget(selected);
+  return selected;
+}
+
+async function connectPage(cdpPort, preferredHash, uiUrl) {
+  const targets = await listCdpTargets('127.0.0.1', cdpPort);
+  const page = await CdpWebPage.connectToTarget(
+    selectCommandCenterTarget(targets, uiUrl, preferredHash),
+  );
+  // Background targets can accept CDP calls while dropping native control interactions.
+  try {
+    await page.session.call('Page.bringToFront');
+    return page;
+  } catch (error) {
+    page.close();
+    throw error;
+  }
 }
 
 // Seed the same localStorage keys the UI reads (ui/src/gateway-url.ts) so the slot UI
@@ -706,7 +730,7 @@ async function main() {
       if (input.action === 'ui.navigate') {
         preferredHash = hashFromNavigateTarget(String(input.node.url ?? input.node.target ?? ''));
       }
-      const page = await connectPage(options.cdpPort, preferredHash);
+      const page = await connectPage(options.cdpPort, preferredHash, uiUrl);
       if (gatewayToken) {
         try {
           await page.evaluate(gatewayTokenSeedScript(gatewayToken));

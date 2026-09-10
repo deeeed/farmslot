@@ -1,0 +1,91 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Compact mobile monitor details",
+  "description": "Use an existing monitor with checks. No state is seeded and no provider mutation is performed. Start with its details collapsed.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["monitor_id"],
+    "properties": {
+      "monitor_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "adb -s \"$ANDROID_SERIAL\" shell am start -a android.intent.action.VIEW -d \"farmslot-development:///pr-automation?monitorId={{params.monitor_id}}\" net.siteed.farmslot.development",
+        "intent": "The monitor link makes the requested subscription accessible without scrolling past unrelated history.",
+        "next": "summary"
+      },
+      "summary": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-monitor-details-{{params.monitor_id}}",
+        "intent": "The collapsed card offers an accessible disclosure for its details.",
+        "next": "collapsed"
+      },
+      "collapsed": {
+        "action": "ui.screenshot",
+        "path": "screenshots/monitor-collapsed.png",
+        "intent": "Record the compact summary before opening detailed check history.",
+        "next": "expand"
+      },
+      "expand": {
+        "action": "ui.press",
+        "test_id": "companion-pr-monitor-details-{{params.monitor_id}}",
+        "intent": "The operator opens details for one monitor at a time.",
+        "next": "scroll"
+      },
+      "scroll": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "The check disclosure is reachable without rendering the full CI history.",
+        "next": "checks"
+      },
+      "checks": {
+        "action": "ui.press",
+        "test_id": "companion-pr-monitor-checks-{{params.monitor_id}}",
+        "intent": "The operator chooses when the potentially long CI list is displayed.",
+        "next": "opened"
+      },
+      "opened": {
+        "action": "ui.wait_for",
+        "text_contains": ["Hide checks"],
+        "intent": "The check list disclosure records its expanded state.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/monitor-checks-expanded.png",
+        "intent": "Record expanded checks under the same monitor.",
+        "next": "hide"
+      },
+      "hide": {
+        "action": "ui.press",
+        "test_id": "companion-pr-monitor-checks-{{params.monitor_id}}",
+        "intent": "Closing checks restores access to the monitor actions without a long scroll.",
+        "next": "hidden"
+      },
+      "hidden": {
+        "action": "ui.wait_for",
+        "text_contains": ["Show checks"],
+        "intent": "The disclosure returns to its compact state after closing.",
+        "next": "final"
+      },
+      "final": {
+        "action": "ui.screenshot",
+        "path": "screenshots/monitor-checks-collapsed.png",
+        "intent": "Record the restored compact layout and reachable actions.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

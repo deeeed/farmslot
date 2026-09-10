@@ -81,6 +81,7 @@ import {
   runnerResolvesPreTaskLaunchBlockers,
   runnerSessionPortability,
   runnerSignalShowsCompletion,
+  runnerSupportsEffort,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
   runnerSupportsTmuxNudges,
@@ -2240,5 +2241,15 @@ describe('session portability', () => {
     assert.equal(runnerSessionPortability('aider'), 'workspace');
     assert.equal(runnerSessionPortability(null), 'workspace');
     assert.equal(runnerSessionPortability(''), 'workspace');
+  });
+});
+
+describe('reasoning effort capability', () => {
+  it('validates model-specific efforts through the runner registry', () => {
+    assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', 'ultra'), true);
+    assert.equal(runnerSupportsEffort('codex', 'gpt-5.4', 'ultra'), false);
+    assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', '--help'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), false);
+    assert.equal(runnerSupportsEffort('claude', 'sonnet'), true);
   });
 });

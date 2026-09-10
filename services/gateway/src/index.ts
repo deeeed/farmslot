@@ -35,6 +35,11 @@ import {
   stampQueueItemRunIdNow,
 } from './backlog/dispatch-queue.js';
 import {
+  assertPRQueueAdmission,
+  recordPRQueueRun,
+  refreshPRQueueAdmission,
+} from './backlog/pr-admission.js';
+import {
   initBacklogStore,
   loadBacklog,
   markBacklogRunObserved,
@@ -76,6 +81,9 @@ import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pres
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import { initPRPush } from './methods/pr-push.js';
+import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
+import { initPRMonitorDispatch, initPRMonitoring } from './methods/pr-watch.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
 import {
   getRuntimeCapabilityRegistry,
@@ -115,8 +123,14 @@ import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
-import { broadcast, broadcastEvent, createWebSocketServer, initServerGlobals } from './server.js';
-import { handleGitHubWebhook, handleJiraWebhook } from './webhook.js';
+import {
+  broadcast,
+  broadcastEvent,
+  broadcastPrincipalEvent,
+  createWebSocketServer,
+  initServerGlobals,
+} from './server.js';
+import { handleGitHubWebhook, handleJiraWebhook, setGitHubRuleEventRouter } from './webhook.js';
 
 const PORT = Number(process.env.GATEWAY_PORT) || 7777;
 
@@ -333,6 +347,25 @@ async function main(): Promise<void> {
   // may fire a gh call during startup (run-engine recovery, pr-linkage, etc.).
   initGitHubClient(observedBroadcast);
   loadBindingsCache();
+  const prMonitoring = await initPRMonitoring(
+    gatewayAuthRuntime,
+    broadcastPrincipalEvent,
+    ENABLE_ORCHESTRATION,
+  );
+  const prRules = await initPRRules(
+    gatewayAuthRuntime,
+    broadcastPrincipalEvent,
+    ENABLE_ORCHESTRATION,
+    prMonitoring,
+  );
+  setGitHubRuleEventRouter((pr) => prRules.routeWebhook(pr));
+  await initPRPush(
+    gatewayAuthRuntime,
+    prMonitoring,
+    prRules,
+    ENABLE_ORCHESTRATION,
+    broadcastPrincipalEvent,
+  );
 
   // Rehydrate the persisted normalized pressure ring BEFORE ordinary
   // fleet/resource recovery so pressure charts and dispatch admission
@@ -411,6 +444,7 @@ async function main(): Promise<void> {
   });
 
   initDispatchQueue(observedBroadcast, async (item, claim) => {
+    const prDispatchSelection = item.prWork ? structuredClone(item) : item;
     const projectConfig = await loadProjectConfig(item.project);
     const requestedSafetyTier =
       item.queueKind === 'eval-cell' &&
@@ -435,6 +469,7 @@ async function main(): Promise<void> {
     const beforeCreate = () => {
       assertQueueClaimHeld(claim, 'pre-durable-createRun');
       authorizeOriginator();
+      assertPRQueueAdmission(prDispatchSelection);
     };
     /** After createRun is persisted, drop the queue row and await queue disk write. */
     const dropQueueRowAfterCreate = async (runId: string) => {
@@ -531,13 +566,18 @@ async function main(): Promise<void> {
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
+      beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
       beforeCreate,
-      afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
+      afterCreateSync: (created) => {
+        if (item.prWork) created.prWork = structuredClone(item.prWork);
+        stampQueueItemRunId(item.id, created.id);
+      },
       durableStamp: async (created) => {
         await stampQueueItemRunIdNow(item.id, created.id);
       },
       awaitPersist: true,
     });
+    await recordPRQueueRun(item, run);
     // Link backlog before dropping the queue row so a crash/link-persist failure
     // still leaves item.runId for startup heal (needs-attention can observe the Run).
     try {
@@ -549,6 +589,9 @@ async function main(): Promise<void> {
     }
     await dropQueueRowAfterCreate(run.id);
   });
+
+  initPRRuleDispatch(gatewayAuthRuntime, broadcastPrincipalEvent, ENABLE_ORCHESTRATION);
+  initPRMonitorDispatch(gatewayAuthRuntime, broadcastPrincipalEvent, ENABLE_ORCHESTRATION);
 
   // Shared request handler for the plaintext HTTP server and (when TLS is
   // configured) the HTTPS server — identical health/file/artifact/webhook/

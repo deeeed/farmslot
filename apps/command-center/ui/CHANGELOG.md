@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Add persistent PR monitoring, direct review/QA intake and project publication policies, with team/rule editing, Project/view filter mapping and notification acknowledgement, inherited slot/model and saved-reviewer controls, and visible queue/provider status.
+
+- Keep browser recipes on the configured Command Center origin and activate that tab before sending input.
+
 - Hide the CI polling countdown and check-now button while an operator decision is pending.
 
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.

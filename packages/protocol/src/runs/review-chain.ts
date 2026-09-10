@@ -4,9 +4,13 @@ import type {
   ReviewGatePayload,
   ReviewSessionIntent,
   Run,
+  RunReviewResult,
 } from '../contracts/index.js';
 
-function latestReviewPayload(run: Pick<Run, 'decisions'>): ReviewGatePayload | null {
+export function reviewResultForRun(
+  run: Pick<Run, 'decisions' | 'reviewResult'>,
+): RunReviewResult | null {
+  if (run.reviewResult) return run.reviewResult;
   for (let index = run.decisions.length - 1; index >= 0; index -= 1) {
     const payload = run.decisions[index]?.payload as ReviewGatePayload | undefined;
     if (payload?.kind === 'review') return payload;
@@ -22,13 +26,14 @@ export function currentReviewChainEntry(
     | 'createdAt'
     | 'completedAt'
     | 'decisions'
+    | 'reviewResult'
     | 'metrics'
     | 'repeatReviewContext'
   >,
 ): ReviewChainEntry | null {
   const context = run.repeatReviewContext;
   if (!context) return null;
-  const payload = latestReviewPayload(run);
+  const payload = reviewResultForRun(run);
   return {
     chainId: context.chainId,
     generation: context.generation,

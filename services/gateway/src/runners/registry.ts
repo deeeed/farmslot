@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 
 import {
+  codexReasoningEfforts,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
@@ -186,6 +187,8 @@ export interface RunnerDefinition {
    * through and the runner CLI is the source of truth at dispatch time.
    */
   acceptsModel(model: string): boolean;
+  /** Explicit reasoning effort support. Absent means the adapter has no effort control. */
+  acceptsEffort?: (model: string, effort: string) => boolean;
   /**
    * How runner activity and composer liveness are observed. Event-driven runners
    * use structured activity signals; pane-only runners use tmux capture; none
@@ -316,6 +319,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CODEX_MODEL,
+    acceptsEffort: (model, effort) =>
+      codexReasoningEfforts(model).some((value) => value === effort),
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
@@ -392,6 +397,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_GROK_MODEL,
+    acceptsEffort: (_model, effort) => runnerArgumentValueIsSafe(effort),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',
     sessionUsageProvider: null,
@@ -610,6 +616,14 @@ export function runnerSupportsModel(
   // matter how permissive the runner's own `acceptsModel` is.
   if (!runnerArgumentValueIsSafe(model)) return false;
   return getRunnerDefinition(runnerId).acceptsModel(model);
+}
+
+export function runnerSupportsEffort(runnerId: string, model: string, effort?: string): boolean {
+  if (effort === undefined || effort === 'auto') return true;
+  return (
+    runnerArgumentValueIsSafe(effort) &&
+    (getRunnerDefinition(runnerId).acceptsEffort?.(model, effort) ?? false)
+  );
 }
 
 /**

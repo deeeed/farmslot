@@ -1172,6 +1172,7 @@ export async function runReplayStep(
         ? { executionTemplate: undefined, templateProvenance: undefined }
         : {}),
       decisions: clearedDecisions,
+      ...(resetTerminalOutcome ? { reviewResult: undefined } : {}),
       engineState: engineStateForReplay,
       metrics: resetMetrics,
       agentContexts: resetAgentContexts,

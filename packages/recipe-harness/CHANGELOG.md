@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Clear selected text before typing a replacement during CDP recipe playback.
+
 ## 0.16.1 - 2026-09-09
 
 - Include native form controls and checkbox/radio/switch roles in browser readiness hit tests, so an actionable modal does not block its own setup.
