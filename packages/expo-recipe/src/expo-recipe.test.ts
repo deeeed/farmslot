@@ -500,7 +500,7 @@ test('runs composed recipes from the configured library', async () => {
           reuse: {
             action: 'call',
             intent: 'Reuse the shared readiness boundary.',
-            ref: 'shared.wait-ready',
+            ref: 'wait-ready',
             params: {},
             next: 'done',
           },
@@ -518,7 +518,7 @@ test('runs composed recipes from the configured library', async () => {
     assert.equal(result.status, 'pass', trace);
     assert.match(
       await readFile(path.join(root, 'artifacts', 'recipe-resolution.json'), 'utf8'),
-      /shared\.wait-ready/u,
+      /"ref": "wait-ready"/u,
     );
   } finally {
     if (previousLibraryPath === undefined) delete process.env.RECIPE_LIBRARY_PATH;
