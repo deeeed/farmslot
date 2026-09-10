@@ -193,6 +193,32 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `pr.reviewComments`                     | pr               | bounded-write | —      | —      | Pr ReviewComments gateway method.                     |
 | `pr.status`                             | pr               | read-only     | —      | —      | Pr Status gateway method.                             |
 | `pr.submitReview`                       | pr               | bounded-write | —      | —      | Pr SubmitReview gateway method.                       |
+| `prPush.acknowledge`                    | prPush           | bounded-write | —      | —      | PrPush Acknowledge gateway method.                    |
+| `prPush.list`                           | prPush           | read-only     | —      | —      | PrPush List gateway method.                           |
+| `prPush.register`                       | prPush           | bounded-write | —      | —      | PrPush Register gateway method.                       |
+| `prPush.unregister`                     | prPush           | bounded-write | —      | —      | PrPush Unregister gateway method.                     |
+| `prReview.cancel`                       | prReview         | bounded-write | —      | —      | PrReview Cancel gateway method.                       |
+| `prReview.get`                          | prReview         | read-only     | —      | —      | PrReview Get gateway method.                          |
+| `prReview.submit`                       | prReview         | bounded-write | —      | —      | PrReview Submit gateway method.                       |
+| `prRules.accept`                        | prRules          | bounded-write | —      | —      | PrRules Accept gateway method.                        |
+| `prRules.acknowledgeAction`             | prRules          | bounded-write | —      | —      | PrRules AcknowledgeAction gateway method.             |
+| `prRules.defer`                         | prRules          | bounded-write | —      | —      | PrRules Defer gateway method.                         |
+| `prRules.list`                          | prRules          | read-only     | —      | —      | PrRules List gateway method.                          |
+| `prRules.preview`                       | prRules          | bounded-write | —      | —      | PrRules Preview gateway method.                       |
+| `prRules.projectImport`                 | prRules          | bounded-write | —      | —      | PrRules ProjectImport gateway method.                 |
+| `prRules.ruleSave`                      | prRules          | bounded-write | —      | —      | PrRules RuleSave gateway method.                      |
+| `prRules.scan`                          | prRules          | bounded-write | —      | —      | PrRules Scan gateway method.                          |
+| `prRules.setEnabled`                    | prRules          | bounded-write | —      | —      | PrRules SetEnabled gateway method.                    |
+| `prRules.teamSave`                      | prRules          | bounded-write | —      | —      | PrRules TeamSave gateway method.                      |
+| `prWatch.acknowledge`                   | prWatch          | bounded-write | —      | —      | PrWatch Acknowledge gateway method.                   |
+| `prWatch.configure`                     | prWatch          | bounded-write | —      | —      | PrWatch Configure gateway method.                     |
+| `prWatch.get`                           | prWatch          | read-only     | —      | —      | PrWatch Get gateway method.                           |
+| `prWatch.lifecycle`                     | prWatch          | bounded-write | —      | —      | PrWatch Lifecycle gateway method.                     |
+| `prWatch.list`                          | prWatch          | read-only     | —      | —      | PrWatch List gateway method.                          |
+| `prWatch.projectPolicy.set`             | prWatch          | bounded-write | —      | —      | PrWatch ProjectPolicy Set gateway method.             |
+| `prWatch.refresh`                       | prWatch          | bounded-write | —      | —      | PrWatch Refresh gateway method.                       |
+| `prWatch.repair`                        | prWatch          | bounded-write | —      | —      | PrWatch Repair gateway method.                        |
+| `prWatch.subscribe`                     | prWatch          | bounded-write | —      | —      | PrWatch Subscribe gateway method.                     |
 | `principal.create`                      | principal        | bounded-write | —      | —      | Principal Create gateway method.                      |
 | `principal.grant`                       | principal        | bounded-write | —      | —      | Principal Grant gateway method.                       |
 | `principal.list`                        | principal        | read-only     | —      | —      | Principal List gateway method.                        |
@@ -369,6 +395,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `node.health.updated`           | node      | Node Health Updated gateway event.           |
 | `node.version.mismatch`         | node      | Node Version Mismatch gateway event.         |
 | `pr.updated`                    | pr        | Pr Updated gateway event.                    |
+| `prPush.updated`                | prPush    | PrPush Updated gateway event.                |
+| `prRules.updated`               | prRules   | PrRules Updated gateway event.               |
+| `prWatch.policy.updated`        | prWatch   | PrWatch Policy Updated gateway event.        |
+| `prWatch.updated`               | prWatch   | PrWatch Updated gateway event.               |
 | `queue.updated`                 | queue     | Queue Updated gateway event.                 |
 | `resource.relaunched`           | resource  | Resource Relaunched gateway event.           |
 | `resource.status.updated`       | resource  | Resource Status Updated gateway event.       |
