@@ -1,0 +1,18 @@
+name: PR monitoring validation
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  fixture:
+    if: github.head_ref == 'validation/pr-monitoring-20260910'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify repair fixture
+        shell: bash
+        run: test "$(cat validation/pr-monitoring/value.txt)" = "ready"
