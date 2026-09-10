@@ -224,6 +224,7 @@ test('notification and monitor actions share the subject admission budget withou
   assert.equal(f.store.snapshot().intents.length, 0);
   await f.service.deliverActions();
   assert.equal(f.monitors.list('owner').length, 1);
+  assert.equal(f.monitors.list('owner')[0].config.automaticAttemptLimit, 2);
   assert(f.store.snapshot().actions!.every((item) => item.status === 'applied'));
   const again = await f.store.setEnabled('owner', f.rule.id, f.rule.revision, true, true);
   await f.store.applyPreview('owner', preview(f.team, again, 'head-a', 2));

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "PR webhook routing across Project and repository sources",
+  "description": "Run the production HTTP handler with real GitHub reads and temporary isolated state. Supply RULE_GITHUB_LOGIN, RULE_REPOSITORY and RULE_PR_NUMBER for an accessible PR. No rules, workers or GitHub writes are created in the operator workspace.",
+  "workflow": {
+    "entry": "routing",
+    "nodes": {
+      "routing": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-pr-webhook-routing.mts",
+        "intent": "Prove unavailable targets preserve legacy routing, membership failures request retry, and known repository sources are scheduled without admitting work."
+      }
+    }
+  }
+}

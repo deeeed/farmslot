@@ -149,7 +149,8 @@ export async function handleGitHubWebhook(
     );
   }
 
-  // Only handle pull_request events with relevant actions
+  // Accelerate initial PR intake only. Synchronize, labels, reviews and Project
+  // field changes are discovered by durable rule/monitor polling.
   const action = payload.action as string;
   const pr = payload.pull_request as
     | { number?: number; title?: string; head?: { ref?: string } }

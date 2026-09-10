@@ -85,3 +85,28 @@ test('provider cursor rejection retains a structured error through failed HTTP o
     GitHubCursorError,
   );
 });
+
+test('only structured missing repository or PR errors mean the target is unavailable', async () => {
+  const { GitHubPRUnavailableError } = await import('./github-errors.js');
+  for (const [index, path] of [
+    ['repository'],
+    ['repository', 'pullRequest'],
+    ['node'],
+    ['repository', 'pullRequest', 'labels'],
+  ].entries()) {
+    responses.push({
+      failed: true,
+      stdout: `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify({ errors: [{ type: 'NOT_FOUND', path, message: 'not found' }] })}`,
+    });
+    try {
+      await githubGraphQL(
+        'query { repository { id } }',
+        {},
+        { host: 'github.com', token: `test-not-found-${index}`, scope: 'owner' },
+      );
+      assert.fail('Provider errors must fail');
+    } catch (error) {
+      assert.equal(error instanceof GitHubPRUnavailableError, index < 2);
+    }
+  }
+});

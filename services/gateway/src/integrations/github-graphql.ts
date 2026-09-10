@@ -1,5 +1,10 @@
 import { ghRequest, type GhRequestOpts, githubRequestCacheKey } from './github-client.js';
-import { GitHubCursorError, hasInvalidGitHubCursor } from './github-errors.js';
+import {
+  GitHubCursorError,
+  GitHubPRUnavailableError,
+  hasInvalidGitHubCursor,
+  hasUnavailableGitHubPR,
+} from './github-errors.js';
 import { githubQueryBudget as queryBudget } from './github-query-budget.js';
 
 export interface GitHubPage<T> {
@@ -28,6 +33,7 @@ export async function githubGraphQL<T>(
   };
   queryBudget.observe(quotaKey, result.data?.rateLimit);
   if (hasInvalidGitHubCursor(result.errors)) throw new GitHubCursorError();
+  if (hasUnavailableGitHubPR(result.errors)) throw new GitHubPRUnavailableError();
   if (result.errors?.length || !result.data) {
     throw new Error(
       `GitHub observation incomplete: ${result.errors?.map((error) => error.message).join('; ') ?? 'missing data'}`,

@@ -8,7 +8,12 @@ import { promisify } from 'node:util';
 
 import { type CommandOutput, Events } from '@farmslot/protocol';
 
-import { GitHubCursorError, hasInvalidGitHubCursor } from './github-errors.js';
+import {
+  GitHubCursorError,
+  GitHubPRUnavailableError,
+  hasInvalidGitHubCursor,
+  hasUnavailableGitHubPR,
+} from './github-errors.js';
 import { githubQueryBudget } from './github-query-budget.js';
 
 const execFileAsync = promisify(execFile);
@@ -262,9 +267,12 @@ async function runGh(
         return { stdout: parsed.body, stderr: raw.stderr };
       }
       let invalidCursor = false;
+      let unavailablePR = false;
       if (args.includes('graphql') && parsed.body.trim().startsWith('{')) {
         try {
-          invalidCursor = hasInvalidGitHubCursor(JSON.parse(parsed.body).errors);
+          const errors = JSON.parse(parsed.body).errors;
+          invalidCursor = hasInvalidGitHubCursor(errors);
+          unavailablePR = hasUnavailableGitHubPR(errors);
         } catch (error) {
           if (!(error instanceof SyntaxError))
             throw error; /* Non-JSON provider output remains the HTTP failure below. */
@@ -272,9 +280,11 @@ async function runGh(
       }
       const err = invalidCursor
         ? new GitHubCursorError()
-        : new Error(
-            `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
-          );
+        : unavailablePR
+          ? new GitHubPRUnavailableError()
+          : new Error(
+              `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
+            );
       cacheNegative(key, err);
       throw err;
     }

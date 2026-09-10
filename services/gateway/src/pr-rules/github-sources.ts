@@ -10,6 +10,7 @@ import {
 } from '@farmslot/protocol';
 
 import { githubRequestCacheKey } from '../integrations/github-client.js';
+import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import {
   collectGitHubPages as pages,
   githubGraphQL as query,
@@ -217,8 +218,7 @@ async function collectPRSubjects(
       { owner, name, number: onlyPR.number },
       account,
     );
-    if (!data.repository?.pullRequest)
-      throw new Error('Requested PR is unavailable to the team account');
+    if (!data.repository?.pullRequest) throw new GitHubPRUnavailableError();
     candidates.set(data.repository.pullRequest.id, data.repository.pullRequest);
   }
   const targetPR = onlyPR ? [...candidates.values()][0] : undefined;

@@ -16,6 +16,7 @@ import {
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
+import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { getAllRuns } from '../runs/store.js';
 
@@ -191,10 +192,14 @@ export class PRRuleService {
     const snapshot = this.store.snapshot();
     const matched: string[] = [];
     const relevant: string[] = [];
+    let uncertain = false;
     for (const rule of snapshot.rules) {
       if (!rule.enabled) continue;
       const team = snapshot.teams.find((item) => item.id === rule.config.teamId);
-      if (!team) return 'unknown';
+      if (!team) {
+        uncertain = true;
+        continue;
+      }
       if (team.config.account.host.toLowerCase() !== pr.host.toLowerCase()) continue;
       const repositorySource = team.config.sources.some(
         (source) =>
@@ -206,7 +211,10 @@ export class PRRuleService {
       )
         continue;
       relevant.push(rule.id);
-      if (!this.authorized(rule.ownerId)) return 'unknown';
+      if (!this.authorized(rule.ownerId)) {
+        uncertain = true;
+        continue;
+      }
       if (repositorySource) {
         matched.push(rule.id);
         continue;
@@ -222,14 +230,18 @@ export class PRRuleService {
           { ...rule, config: { ...rule.config, predicate: { kind: 'all', items: [] } } },
           pr,
         );
-        if (!scan.complete) return 'unknown';
+        if (!scan.complete) {
+          uncertain = true;
+          continue;
+        }
         if (scan.subjects.some((subject) => monitoredPRKey(subject.pr) === monitoredPRKey(pr)))
           matched.push(rule.id);
       } catch (error) {
+        if (error instanceof GitHubPRUnavailableError) continue;
         // Failed membership reads must block legacy fallback; the delivery can
         // be retried after access/quota recovers and the reason stays visible.
         this.schedulerError = `Webhook source lookup failed: ${error instanceof Error ? error.message : String(error)}`;
-        return 'unknown';
+        uncertain = true;
       }
     }
     const scheduled = await this.store.scheduleWebhookRefresh(
@@ -238,8 +250,8 @@ export class PRRuleService {
       this.authorized,
       relevant,
     );
-    if (!scheduled) return 'unknown';
     if (matched.length) this.notifyChanges();
+    if (!scheduled || uncertain) return 'unknown';
     return matched.length ? 'rules' : 'legacy';
   }
 
@@ -464,7 +476,7 @@ export class PRRuleService {
           policy: action.monitorPolicy,
           pollIntervalMs: 300_000,
           watchedChecks: [],
-          automaticAttemptLimit: 3,
+          automaticAttemptLimit: 2,
           cooldownMs: 900_000,
         };
         assertPRMonitorConfig(config);

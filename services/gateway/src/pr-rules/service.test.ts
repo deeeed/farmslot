@@ -324,3 +324,45 @@ test('activation baselines its completed preview so PRs discovered after enablem
     'The post-activation PR cannot be silently added to the historical baseline',
   );
 });
+
+test('unreadable Project targets preserve legacy routing and uncertain rules do not starve known sources', async (t) => {
+  const { GitHubPRUnavailableError } = await import('../integrations/github-errors.js');
+  const { store, team, rule, subject } = await revisionFixture(t);
+  await store.saveTeam(
+    'owner',
+    {
+      ...team.config,
+      sources: [{ kind: 'github-project', projectId: 'PVT_project', label: 'Project' }],
+    },
+    team.id,
+    team.revision,
+  );
+  await store.setEnabled('owner', rule.id, rule.revision, true, false);
+  let unavailable = true;
+  const service = new PRRuleService(
+    store,
+    () => true,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      if (unavailable) throw new GitHubPRUnavailableError();
+      throw new Error('Project membership lookup failed');
+    },
+  );
+  assert.equal(await service.routeWebhook(subject.pr), 'legacy');
+  const repoTeam = await store.saveTeam('owner', { ...team.config, name: 'Repository source' });
+  let repoRule = await store.saveRule('owner', { ...rule.config, teamId: repoTeam.id });
+  repoRule = await store.setEnabled('owner', repoRule.id, repoRule.revision, true, false);
+  assert.equal(await service.routeWebhook(subject.pr), 'rules');
+  const before = store.snapshot();
+  unavailable = false;
+  assert.equal(await service.routeWebhook(subject.pr), 'unknown');
+  assert(store.rule(repoRule.id, 'owner').scan.nextScanAt);
+  assert.equal(store.snapshot().intents.length, 0);
+  assert.equal(
+    store.rule(rule.id, 'owner').revision,
+    before.rules.find((r) => r.id === rule.id)!.revision,
+  );
+});

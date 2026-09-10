@@ -264,3 +264,32 @@ test('targeted head and eligibility refresh updates only the admitted PR without
     true,
   );
 });
+
+test('later matching and nonmatching scans preserve completed and failed review records', async (t) => {
+  for (const status of ['completed', 'failed'] as const) {
+    const { store } = await fixture(t);
+    const { team, rule } = await ruleFor(store, 'owner', true);
+    const input = preview(team, rule, `head-${status}`);
+    await store.applyPreview('owner', input);
+    const intent = store.snapshot().intents.find((i) => i.headSha === `head-${status}`)!;
+    await store.updateDispatch(intent.id, { status, reviewedSha: intent.headSha });
+    const before = store.intent(intent.id);
+    input.checkedAt = new Date(Date.now() + 1000).toISOString();
+    input.items[0].match.reasons = ['New scan reasons'];
+    await store.applyPreview('owner', input);
+    assert.deepEqual(store.intent(intent.id), before);
+    await store.applyPreview('owner', { ...input, items: [] });
+    assert.deepEqual(store.intent(intent.id), before);
+    await store.saveTeam('owner', { ...team.config, name: 'Updated team' }, team.id, team.revision);
+    assert.deepEqual(store.intent(intent.id), before);
+    const changed = await store.saveRule(
+      'owner',
+      { ...rule.config, name: 'Updated rule' },
+      rule.id,
+      rule.revision,
+    );
+    assert.deepEqual(store.intent(intent.id), before);
+    await store.setEnabled('owner', changed.id, changed.revision, false, false);
+    assert.deepEqual(store.intent(intent.id), before);
+  }
+});

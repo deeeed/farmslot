@@ -18,3 +18,24 @@ export class GitHubCursorError extends Error {
     this.name = 'GitHubCursorError';
   }
 }
+
+/** Only a missing repository/PR is non-ownership; nested field failures stay uncertain. */
+export function hasUnavailableGitHubPR(errors: unknown): boolean {
+  return (
+    Array.isArray(errors) &&
+    errors.length > 0 &&
+    errors.every(
+      (error) =>
+        error?.type === 'NOT_FOUND' &&
+        Array.isArray(error.path) &&
+        (JSON.stringify(error.path) === '["repository"]' ||
+          JSON.stringify(error.path) === '["repository","pullRequest"]'),
+    )
+  );
+}
+export class GitHubPRUnavailableError extends Error {
+  constructor() {
+    super('Requested PR is unavailable to the team account');
+    this.name = 'GitHubPRUnavailableError';
+  }
+}

@@ -49,12 +49,14 @@ export class PRRuleStore {
     ];
     return this.change((data) => {
       if (!isDeepStrictEqual(revisions(data), revisions(expected))) return false;
-      if (data.rules.some((rule) => relevantRuleIds.includes(rule.id) && !authorized(rule.ownerId)))
-        return false;
+      const permitted = new Map(data.rules.map((rule) => [rule.id, authorized(rule.ownerId)]));
+      const uncertain = data.rules.some(
+        (rule) => relevantRuleIds.includes(rule.id) && !permitted.get(rule.id),
+      );
       const now = new Date().toISOString();
       for (const rule of data.rules)
-        if (matchedRuleIds.includes(rule.id)) rule.scan.nextScanAt = now;
-      return true;
+        if (matchedRuleIds.includes(rule.id) && permitted.get(rule.id)) rule.scan.nextScanAt = now;
+      return !uncertain;
     });
   }
   private pending: Promise<unknown> = Promise.resolve();
@@ -358,6 +360,7 @@ export class PRRuleStore {
       }
       // A saved profile cannot leave old constraints eligible while reconciliation is pending.
       for (const intent of data.intents) {
+        if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.teamId === team.id) contribution.eligible = false;
         reconcileReviewIntent(intent);
@@ -406,6 +409,7 @@ export class PRRuleStore {
       data.rules = data.rules.filter((item) => item.id !== rule.id).concat(rule);
       withdrawRuleActions(data, rule.id);
       for (const intent of data.intents) {
+        if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.ruleId === rule.id) contribution.eligible = false;
         reconcileReviewIntent(intent);
@@ -474,6 +478,7 @@ export class PRRuleStore {
         withdrawRuleActions(data, rule.id);
         rule.scan.backfillRequested = false;
         for (const intent of data.intents) {
+          if (intent.status === 'completed' || intent.status === 'failed') continue;
           for (const contribution of intent.contributions)
             if (contribution.ruleId === id) contribution.eligible = false;
           reconcileReviewIntent(intent);
@@ -640,6 +645,7 @@ export class PRRuleStore {
         }
         const id = reviewIntentId(item);
         let intent = data.intents.find((entry) => entry.id === id);
+        if (intent?.status === 'completed' || intent?.status === 'failed') continue;
         const existing = intent?.contributions.find((source) => source.ruleId === rule.id);
         const hasPreviousReview = data.intents.some(
           (entry) =>
@@ -709,6 +715,7 @@ export class PRRuleStore {
         clearDeferred('review');
       }
       for (const intent of data.intents) {
+        if (intent.status === 'completed' || intent.status === 'failed') continue;
         if (!eligible.has(intent.id))
           for (const source of intent.contributions)
             if (source.ruleId === rule.id) source.eligible = false;
