@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Support PR automation validation through live gateway assertions in browser recipes.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-09-08
