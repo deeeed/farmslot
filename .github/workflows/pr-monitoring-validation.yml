@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   fixture:
-    if: github.head_ref == 'validation/pr-monitoring-20260910'
+    if: github.head_ref == 'validation/pr-monitoring-changed-20260910'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
