@@ -1,0 +1,51 @@
+import { StyleSheet } from 'react-native';
+
+import { colors, fonts, radii, spacing } from '../../../lib/theme';
+export const styles = StyleSheet.create({
+  choices: { maxHeight: 220 },
+  page: { flex: 1, backgroundColor: colors.bgBase },
+  content: { padding: spacing.lg, paddingBottom: 110, gap: spacing.lg },
+  card: {
+    padding: spacing.lg,
+    backgroundColor: colors.bgCard,
+    borderRadius: radii.lg,
+    gap: spacing.md,
+  },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, alignItems: 'center' },
+  title: { color: colors.textPrimary, fontSize: fonts.sizeLg, fontWeight: '600' },
+  text: { color: colors.textPrimary, fontSize: fonts.sizeMd },
+  muted: { color: colors.textMuted, fontSize: fonts.sizeSm },
+  error: { color: colors.statusFail, fontSize: fonts.sizeMd },
+  attention: { color: colors.statusWarn, fontSize: fonts.sizeSm },
+  button: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 4,
+    borderWidth: 1,
+    borderColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  selected: { borderColor: colors.accent, backgroundColor: colors.accent + '20' },
+  disabled: { opacity: 0.45 },
+  buttonText: { color: colors.accent, fontSize: fonts.sizeSm, fontWeight: '600' },
+  input: {
+    color: colors.textPrimary,
+    backgroundColor: colors.bgSurface,
+    borderColor: colors.bgCardHover,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+    minHeight: 44,
+    fontSize: fonts.sizeMd,
+  },
+  field: { gap: spacing.sm, marginVertical: spacing.sm },
+  switch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.lg,
+  },
+  switchLabel: { flex: 1, color: colors.textSecondary, fontSize: fonts.sizeMd },
+  link: { color: colors.accent, fontSize: fonts.sizeMd },
+});

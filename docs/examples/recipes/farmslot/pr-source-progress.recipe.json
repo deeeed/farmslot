@@ -1,0 +1,68 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Inspect saved rule scan progress",
+  "description": "Use a disabled rule prepared by e2e-pr-source-checkpoints.mts. Preview reads must show their saved progress and observation window without activating the rule.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["rule_id"],
+    "properties": { "rule_id": { "type": "string" } }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "The operator can inspect source coverage from the shared PR dashboard.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The authenticated dashboard exposes the persisted rule controls.",
+        "next": "rules"
+      },
+      "rules": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-rules",
+        "intent": "Saved discovery rules remain accessible independently of review workers.",
+        "next": "rule"
+      },
+      "rule": {
+        "action": "ui.scroll",
+        "selector": "[data-rule-id=\"{{params.rule_id}}\"]",
+        "scroll_into_view": true,
+        "intent": "The isolated rule's preview control is reachable in the inventory.",
+        "next": "preview"
+      },
+      "preview": {
+        "action": "ui.press",
+        "selector": "[data-rule-id=\"{{params.rule_id}}\"] [data-testid=\"pr-rule-preview\"]",
+        "intent": "The operator resumes the rule's saved source traversal without enabling it.",
+        "next": "progress"
+      },
+      "progress": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"pr-source-progress\"]",
+        "timeout_ms": 120000,
+        "intent": "Source progress is returned by the live gateway rather than inferred from UI activity.",
+        "next": "show"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "selector": "[data-testid=\"pr-source-progress\"]",
+        "scroll_into_view": true,
+        "intent": "The saved page count and observation age are readable together.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-source-progress.png",
+        "intent": "The screenshot records actual saved-page progress and source coverage status.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

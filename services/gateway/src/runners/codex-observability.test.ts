@@ -5,15 +5,87 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import { claudeHookObservability } from './claude-observability.js';
 import {
   buildCodexNativeBindingProbeCommand,
   buildCodexPromptProbeCommand,
   buildCodexSessionIdProbeCommand,
+  codexSessionObservability,
   parseCodexNativeBindingProbe,
   parseCodexPromptProbe,
 } from './codex-observability.js';
+import { makeVars } from './test-fixtures.js';
 
 const prompt = 'Read SELF-REVIEW-FIX.md';
+
+test('retained delivery uses native completion without bypassing ownership or newer prompt evidence', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'codex-retained-state-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const session = path.join(root, 'session.jsonl');
+  const at = Date.now();
+  await writeFile(
+    session,
+    [
+      { type: 'session_meta', payload: { id: 'saved-reviewer' } },
+      {
+        type: 'event_msg',
+        timestamp: new Date(at).toISOString(),
+        payload: { type: 'task_complete', turn_id: 'turn-one' },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join('\n') + '\n',
+  );
+  const hooks = t.mock.method(claudeHookObservability, 'getSessionDeliveryState', async () => ({
+    value: 'active' as const,
+    source: 'hook' as const,
+    confidence: 'high' as const,
+    observedAt: at - 100,
+  }));
+  const read = () =>
+    codexSessionObservability.getSessionDeliveryState(
+      makeVars({ remoteRepo: root }),
+      '%1',
+      'saved-reviewer',
+      session,
+    );
+  assert.equal((await read())?.value, 'idle');
+  hooks.mock.mockImplementation(async () => ({
+    value: 'active' as const,
+    source: 'hook' as const,
+    confidence: 'high' as const,
+    observedAt: at + 100,
+  }));
+  assert.equal((await read())?.value, 'active');
+  hooks.mock.restore();
+  await writeFile(
+    session,
+    [
+      { type: 'session_meta', payload: { id: 'saved-reviewer' } },
+      {
+        type: 'event_msg',
+        timestamp: new Date(at).toISOString(),
+        payload: { type: 'task_started', turn_id: 'turn-two' },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join('\n') + '\n',
+  );
+  const lateStop = t.mock.method(claudeHookObservability, 'getSessionDeliveryState', async () => ({
+    value: 'idle' as const,
+    source: 'hook' as const,
+    confidence: 'high' as const,
+    observedAt: at + 100,
+  }));
+  assert.equal(
+    (await read())?.value,
+    'active',
+    'A delayed Stop hook cannot hide an active native turn',
+  );
+  lateStop.mock.restore();
+  t.mock.method(claudeHookObservability, 'getSessionDeliveryState', async () => null);
+  assert.equal(await read(), null);
+});
 
 function record(timestamp: string, text: string): string {
   return JSON.stringify({

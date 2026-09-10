@@ -1,0 +1,188 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion PR intake and background recovery",
+  "description": "Native iOS validation with real gateway receipts. Supply INTAKE_PR_URL/PROJECT/SLOT/GW_URL and matching params. Uses a disabled slot and unavailable provider account. The pr_key parameter uses lowercase owner/repo#number.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["pr_url", "pr_key", "team_id"],
+    "properties": {
+      "pr_url": {
+        "type": "string"
+      },
+      "pr_key": {
+        "type": "string"
+      },
+      "team_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "check-existing-work",
+    "nodes": {
+      "check-existing-work": {
+        "action": "command",
+        "cmd": "INTAKE_CLIENT=companion yarn exec tsx ../../scripts/check-pr-review-ui-intake.mts before",
+        "next": "prepare-team",
+        "intent": "Refuse to interfere with existing operator intake for this PR."
+      },
+      "prepare-team": {
+        "action": "command",
+        "cmd": "INTAKE_CLIENT=companion INTAKE_EXPECT_OBSERVATION_ERROR=1 yarn exec tsx ../../scripts/e2e-pr-review-intake.mts",
+        "timeout_ms": 60000,
+        "next": "open-prs",
+        "intent": "Create or refresh the disabled-slot validation team through real RPCs and clean its setup request."
+      },
+      "open-prs": {
+        "action": "command",
+        "cmd": "xcrun simctl openurl \"$IOS_SIMULATOR\" \"farmslot-development:///pr-automation\"",
+        "intent": "Open the real Companion monitoring route on the assigned simulator.",
+        "next": "wait-panel"
+      },
+      "wait-panel": {
+        "action": "ui.wait_for",
+        "next": "open-queue",
+        "intent": "The connected native screen exposes shared gateway PR work.",
+        "test_id": "companion-pr-tab-reviews"
+      },
+      "open-queue": {
+        "action": "ui.press",
+        "test_id": "companion-pr-tab-reviews",
+        "next": "open-request",
+        "intent": "Open durable review intake."
+      },
+      "open-request": {
+        "action": "ui.press",
+        "test_id": "companion-pr-request-open",
+        "next": "enter-pr",
+        "intent": "Start an individual review request."
+      },
+      "enter-pr": {
+        "action": "ui.set_input",
+        "test_id": "companion-pr-request-url",
+        "value": "{{params.pr_url}}",
+        "next": "hide-keyboard",
+        "intent": "The individual review targets the supplied PR without depending on an originating Farmslot run."
+      },
+      "choose-team": {
+        "action": "ui.press",
+        "next": "override-review",
+        "intent": "The request inherits the disabled-slot validation team policy.",
+        "test_id": "companion-pr-request-team-{{params.team_id}}"
+      },
+      "override-review": {
+        "action": "ui.press",
+        "test_id": "companion-pr-request-override",
+        "next": "scroll-review-options",
+        "intent": "Choose explicit review and QA settings while inheriting the disabled slot."
+      },
+      "choose-live": {
+        "action": "ui.press",
+        "test_id": "companion-pr-depth-full-live",
+        "next": "scroll-submit",
+        "intent": "Require live QA while continuing the saved reviewer context."
+      },
+      "submit-request": {
+        "action": "ui.press",
+        "test_id": "companion-pr-request-submit",
+        "next": "wait-request",
+        "intent": "Submit through the production intake API."
+      },
+      "wait-request": {
+        "action": "ui.wait_for",
+        "text_contains": ["unavailable"],
+        "timeout_ms": 20000,
+        "next": "verify-request",
+        "intent": "Verify provider failure is visible on the persisted request.",
+        "test_id": "companion-pr-request-{{params.pr_key}}"
+      },
+      "verify-request": {
+        "action": "command",
+        "cmd": "INTAKE_CLIENT=companion yarn exec tsx ../../scripts/check-pr-review-ui-intake.mts submitted",
+        "next": "capture-request",
+        "intent": "Assert the gateway received the selected team, Continue and live QA settings, with no dispatch."
+      },
+      "capture-request": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-pr-request.png",
+        "next": "cancel-request",
+        "intent": "Reviewers can inspect the persisted failure state and available cancellation control."
+      },
+      "cancel-request": {
+        "action": "ui.press",
+        "next": "verify-cancelled",
+        "intent": "Cancel the request using its real UI control.",
+        "test_id": "companion-pr-request-cancel-{{params.pr_key}}"
+      },
+      "verify-cancelled": {
+        "action": "command",
+        "cmd": "INTAKE_CLIENT=companion yarn exec tsx ../../scripts/check-pr-review-ui-intake.mts cancelled",
+        "next": "done",
+        "intent": "Verify cancellation persisted and no work is queued."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "hide-keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "intent": "Finish entering the URL so team controls remain accessible.",
+        "next": "open-team-picker"
+      },
+      "background": {
+        "action": "command",
+        "cmd": "xcrun simctl launch \"$IOS_SIMULATOR\" com.apple.mobilesafari",
+        "intent": "Opening another app to copy a URL must not discard the draft.",
+        "next": "return"
+      },
+      "return": {
+        "action": "command",
+        "cmd": "xcrun simctl launch \"$IOS_SIMULATOR\" net.siteed.farmslot.development",
+        "intent": "Returning to Companion reconnects and preserves the draft and request identity.",
+        "next": "draft-preserved"
+      },
+      "draft-preserved": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-request-submit",
+        "timeout_ms": 30000,
+        "intent": "The review form survives native backgrounding and reconnect.",
+        "next": "submit-request"
+      },
+      "open-team-picker": {
+        "action": "ui.press",
+        "test_id": "companion-pr-request-team-picker",
+        "intent": "Choose the team policy without expanding the whole team inventory in the form.",
+        "next": "find-team"
+      },
+      "find-team": {
+        "action": "ui.set_input",
+        "test_id": "companion-pr-request-team-search",
+        "value": "Direct review failure validation",
+        "intent": "Narrow the native chooser to the disabled-slot validation policy.",
+        "next": "hide-team-keyboard"
+      },
+      "hide-team-keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "intent": "The selected team is reachable after dismissing the search keyboard.",
+        "next": "choose-team"
+      },
+      "scroll-review-options": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "The operator can reach validation-depth controls below the session settings.",
+        "next": "choose-live"
+      },
+      "scroll-submit": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 450,
+        "intent": "The submit control is visible after choosing the review policy.",
+        "next": "background"
+      }
+    }
+  }
+}

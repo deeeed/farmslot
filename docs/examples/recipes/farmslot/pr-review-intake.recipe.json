@@ -1,0 +1,127 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Direct PR review intake through Command Center",
+  "description": "Use a disabled validation slot and an unavailable account to prove real UI submission, inherited execution, live QA selection, visible provider failure and cancellation. Set INTAKE_PR_URL, INTAKE_PROJECT, INTAKE_SLOT and GW_URL in the recipe environment.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["pr_url", "pr_key"],
+    "properties": {
+      "pr_url": {
+        "type": "string"
+      },
+      "pr_key": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "check-existing-work",
+    "nodes": {
+      "check-existing-work": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-review-ui-intake.mts before",
+        "next": "prepare-team",
+        "intent": "Refuse to interfere with existing operator intake for this PR."
+      },
+      "prepare-team": {
+        "action": "command",
+        "cmd": "INTAKE_EXPECT_OBSERVATION_ERROR=1 yarn exec tsx scripts/e2e-pr-review-intake.mts",
+        "timeout_ms": 60000,
+        "next": "open-prs",
+        "intent": "Create or refresh the disabled-slot validation team through real RPCs and clean its setup request."
+      },
+      "open-prs": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "next": "wait-panel",
+        "intent": "Open the real connected PR dashboard."
+      },
+      "wait-panel": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "next": "open-queue",
+        "intent": "Persistent monitoring stays accessible when the PR discovery dashboard cannot load."
+      },
+      "open-queue": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-reviews",
+        "next": "open-request",
+        "intent": "Open durable review intake."
+      },
+      "open-request": {
+        "action": "ui.press",
+        "test_id": "pr-review-request-open",
+        "next": "enter-pr",
+        "intent": "Start an individual review request."
+      },
+      "enter-pr": {
+        "action": "ui.set_input",
+        "test_id": "pr-review-request-url",
+        "value": "{{params.pr_url}}",
+        "next": "choose-team",
+        "intent": "The individual review targets the supplied PR without depending on an originating Farmslot run."
+      },
+      "choose-team": {
+        "action": "ui.press",
+        "selector": "[data-team-name=\"Direct review failure validation\"]",
+        "next": "override-review",
+        "intent": "The request inherits the disabled-slot validation team policy."
+      },
+      "override-review": {
+        "action": "ui.press",
+        "test_id": "pr-review-request-override",
+        "next": "choose-live",
+        "intent": "Choose explicit review and QA settings while inheriting the disabled slot."
+      },
+      "choose-live": {
+        "action": "ui.press",
+        "test_id": "pr-review-depth-full-live",
+        "next": "submit-request",
+        "intent": "Require live QA while continuing the saved reviewer context."
+      },
+      "submit-request": {
+        "action": "ui.press",
+        "test_id": "pr-review-request-submit",
+        "next": "wait-request",
+        "intent": "Submit through the production intake API."
+      },
+      "wait-request": {
+        "action": "ui.wait_for",
+        "selector": "[data-request-pr=\"{{params.pr_key}}\"]",
+        "text_contains": ["unavailable"],
+        "timeout_ms": 20000,
+        "next": "verify-request",
+        "intent": "Verify provider failure is visible on the persisted request."
+      },
+      "verify-request": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-review-ui-intake.mts submitted",
+        "next": "capture-request",
+        "intent": "Assert the gateway received the selected team, Continue and live QA settings, with no dispatch."
+      },
+      "capture-request": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-review-provider-error.png",
+        "next": "cancel-request",
+        "intent": "Reviewers can inspect the persisted failure state and available cancellation control."
+      },
+      "cancel-request": {
+        "action": "ui.press",
+        "selector": "[data-request-pr=\"{{params.pr_key}}\"] [data-testid=\"pr-review-request-cancel\"]",
+        "next": "verify-cancelled",
+        "intent": "Cancel the request using its real UI control."
+      },
+      "verify-cancelled": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-review-ui-intake.mts cancelled",
+        "next": "done",
+        "intent": "Verify cancellation persisted and no work is queued."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

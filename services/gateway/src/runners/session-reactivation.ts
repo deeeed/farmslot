@@ -396,7 +396,7 @@ async function reactivateRunnerSessionWithPrompt(
       return {
         delivered: false,
         disposition: 'safe-send',
-        reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without terminal hook proof`,
+        reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without structured terminal proof`,
       };
     }
     const probe = await execOnSlot(options.vars, resumableSessionProbeCommand(sessionPath), {

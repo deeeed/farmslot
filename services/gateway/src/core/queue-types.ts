@@ -4,6 +4,7 @@ export type InternalDispatchQueueAddParams = DispatchQueueAddParams &
   Pick<
     QueueItem,
     | 'backlogItemId'
+    | 'prWork'
     | 'workGraphId'
     | 'workNodeId'
     | 'ticketData'

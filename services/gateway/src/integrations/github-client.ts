@@ -2,11 +2,14 @@
 // Adds ETag/If-None-Match caching, X-RateLimit parsing with threshold broadcasts,
 // concurrency limiting, and a 10s negative cache for failed requests.
 // Long-term replacement for per-caller ghExec/ghExecCached (roadmap F2.8).
-
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
 import { type CommandOutput, Events } from '@farmslot/protocol';
+
+import { GitHubCursorError, hasInvalidGitHubCursor } from './github-errors.js';
+import { githubQueryBudget } from './github-query-budget.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +25,8 @@ export interface GitHubClientOpts {
 export interface GhRequestOpts {
   force?: boolean; // bypass ETag + negative cache for this call
   signal?: AbortSignal; // cancel the underlying gh child process
+  /** Explicit account binding. Tokens remain process-local and are never cache keys or log fields. */
+  account?: { host: string; token: string; scope: string };
 }
 
 interface CacheEntry {
@@ -132,7 +137,7 @@ export function isGhPRChecksPendingExit(
  * flows through concurrency + negative cache.
  */
 export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<CommandOutput> {
-  const key = args.join('\0');
+  const key = githubRequestCacheKey(args, opts?.account);
   const force = opts?.force === true;
   const signal = opts?.signal;
   const canShareInFlight = !force;
@@ -147,7 +152,7 @@ export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<C
     const existing = inFlight.get(key);
     if (existing) return attachSharedAbortSignal(existing, signal);
     const controller = new AbortController();
-    const promise = runGh(args, key, force, controller.signal).finally(() => {
+    const promise = runGh(args, key, force, controller.signal, opts?.account).finally(() => {
       inFlight.delete(key);
     });
     const entry: InFlightEntry = { promise, controller, refCount: 0 };
@@ -156,7 +161,20 @@ export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<C
   }
 
   // Forced calls bypass the in-flight share map; signal kills the child directly.
-  return runGh(args, key, force, signal);
+  return runGh(args, key, force, signal, opts?.account);
+}
+
+export function githubRequestCacheKey(args: string[], account?: GhRequestOpts['account']): string {
+  return JSON.stringify([
+    account
+      ? [
+          account.host.toLowerCase(),
+          account.scope,
+          createHash('sha256').update(account.token).digest('hex'),
+        ]
+      : 'ambient',
+    args,
+  ]);
 }
 
 // ─── Internals ───
@@ -201,6 +219,7 @@ async function runGh(
   key: string,
   force: boolean,
   signal?: AbortSignal,
+  account?: GhRequestOpts['account'],
 ): Promise<CommandOutput> {
   await acquire();
   try {
@@ -220,14 +239,18 @@ async function runGh(
         headerFlags.push('-H', `If-None-Match: ${cached.etag}`);
         ghArgs.splice(1, 0, ...headerFlags);
       }
-      const raw = await spawnGh(ghArgs, signal);
+      const raw = await spawnGh(ghArgs, signal, account);
       const parsed = parseResponse(raw.stdout);
       updateQuotaFromHeaders(parsed.headers);
+      githubQueryBudget.observeHeaders(
+        githubRequestCacheKey([], account ? { ...account, scope: 'query-budget' } : undefined),
+        parsed.headers,
+      );
 
       if (parsed.status === 304 && cached) {
         return { stdout: cached.body, stderr: '' };
       }
-      if (parsed.status >= 200 && parsed.status < 300) {
+      if (!raw.failed && parsed.status >= 200 && parsed.status < 300) {
         const etag = parsed.headers.get('etag');
         if (etag) {
           etagCache.set(key, { etag, body: parsed.body, at: Date.now() });
@@ -238,15 +261,26 @@ async function runGh(
         }
         return { stdout: parsed.body, stderr: raw.stderr };
       }
-      const err = new Error(
-        `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
-      );
+      let invalidCursor = false;
+      if (args.includes('graphql') && parsed.body.trim().startsWith('{')) {
+        try {
+          invalidCursor = hasInvalidGitHubCursor(JSON.parse(parsed.body).errors);
+        } catch (error) {
+          if (!(error instanceof SyntaxError))
+            throw error; /* Non-JSON provider output remains the HTTP failure below. */
+        }
+      }
+      const err = invalidCursor
+        ? new GitHubCursorError()
+        : new Error(
+            `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
+          );
       cacheNegative(key, err);
       throw err;
     }
 
     // Non-api: plain execFile, no ETag. Still de-duped and concurrency-bounded.
-    const raw = await spawnGh(args, signal);
+    const raw = await spawnGh(args, signal, account);
     return raw;
   } catch (err) {
     if (!(err instanceof Error)) throw err;
@@ -257,10 +291,21 @@ async function runGh(
   }
 }
 
-async function spawnGh(args: string[], signal?: AbortSignal): Promise<CommandOutput> {
+async function spawnGh(
+  args: string[],
+  signal?: AbortSignal,
+  account?: GhRequestOpts['account'],
+): Promise<CommandOutput & { failed?: boolean }> {
   // Unset GH_TOKEN so `gh` uses the keyring token (full repo scope).
   const env = { ...process.env };
   delete env.GH_TOKEN;
+  if (account) {
+    delete env.GITHUB_TOKEN;
+    delete env.GITHUB_ENTERPRISE_TOKEN;
+    env.GH_TOKEN = account.token;
+    env.GH_ENTERPRISE_TOKEN = account.token;
+    env.GH_HOST = account.host;
+  }
   try {
     const { stdout, stderr } = await execFileAsync('gh', args, {
       env,
@@ -271,18 +316,16 @@ async function spawnGh(args: string[], signal?: AbortSignal): Promise<CommandOut
   } catch (err) {
     if (isAbortError(err)) throw err;
     const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-    // `gh api --include` exits non-zero on 304 Not Modified, but still writes
-    // the full HTTP response (headers + empty body) to stdout. Surface the
-    // stdout so runGh's ETag path can parse the 304 and serve the cached
-    // body instead of treating this as a hard failure (which would poison
-    // the negative cache for every identical read).
+    // Keep structured HTTP responses on failure so quota/reset headers remain observable.
+    // runGh still rejects failures, including GraphQL errors carried by HTTP 200.
     if (
       args[0] === 'api' &&
       args.includes('--include') &&
+      !args.includes('--paginate') &&
       typeof e.stdout === 'string' &&
-      /^HTTP\/[\d.]+\s+304/m.test(e.stdout)
+      /^HTTP\/[\d.]+\s+\d{3}/m.test(e.stdout)
     ) {
-      return { stdout: e.stdout, stderr: e.stderr ?? '' };
+      return { stdout: e.stdout, stderr: e.stderr ?? '', failed: true };
     }
     // `gh pr checks` exits 8 when at least one check is pending, even though
     // stdout still contains the requested JSON/JQ output. Preserve that data

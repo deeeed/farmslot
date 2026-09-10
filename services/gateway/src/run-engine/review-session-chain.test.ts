@@ -23,6 +23,7 @@ function runs() {
         role: 'review',
         label: 'Independent review',
         runner: 'codex',
+        model: 'gpt-6-astra',
         slotId: 'slot-1',
         runId: 'review-1',
         runnerSessionId: 'session-1',
@@ -81,4 +82,47 @@ test('repeat review resumes only the exact prior reviewer binding', () => {
     kind: 'fallback',
     reason: 'runner-mismatch',
   });
+});
+
+test('reviewer continuity does not cross models or automation owners', () => {
+  const { current, prior } = runs();
+  assert.equal(
+    resolveRepeatReviewResumePlan(current, prior, 'codex', 'gpt-6-astra').kind,
+    'resume',
+  );
+  assert.deepEqual(resolveRepeatReviewResumePlan(current, prior, 'codex', 'different-model'), {
+    kind: 'fallback',
+    reason: 'model-mismatch',
+  });
+  const work = {
+    kind: 'review' as const,
+    id: 'review:one',
+    sourceId: 'intent-one',
+    pr: { host: 'github.com', repo: 'owner/repo', number: 1 },
+    headSha: 'head-a',
+    review: {
+      ownerId: 'owner',
+      profile: 'standard',
+      options: {
+        sessionIntent: 'resume' as const,
+        scope: 'incremental' as const,
+        validationDepth: 'static-code' as const,
+      },
+    },
+  };
+  assert.deepEqual(resolveRepeatReviewResumePlan({ ...current, prWork: work }, prior, 'codex'), {
+    kind: 'fallback',
+    reason: 'missing-session',
+  });
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(
+      { ...current, prWork: work },
+      {
+        ...prior,
+        prWork: { ...work, review: { ...work.review, ownerId: 'other' } },
+      },
+      'codex',
+    ),
+    { kind: 'fallback', reason: 'missing-session' },
+  );
 });

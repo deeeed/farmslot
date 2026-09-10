@@ -364,6 +364,9 @@ import {
   prReviewComments,
   prSubmitReview,
 } from '../methods/pr/review-comments.js';
+import { prPushMethod } from '../methods/pr-push.js';
+import { prRulesMethod } from '../methods/pr-rules.js';
+import { routePRWatchMethod } from '../methods/pr-watch.js';
 import {
   credentialIssue,
   credentialList,
@@ -926,6 +929,35 @@ async function routeAuthorizedMethod(
     }
 
     // PR
+    case Methods.PR_PUSH_REGISTER:
+    case Methods.PR_PUSH_UNREGISTER:
+    case Methods.PR_PUSH_LIST:
+    case Methods.PR_PUSH_ACKNOWLEDGE:
+      return prPushMethod(method, p);
+    case Methods.PR_RULES_LIST:
+    case Methods.PR_RULE_PROJECT_IMPORT:
+    case Methods.PR_TEAM_SAVE:
+    case Methods.PR_RULE_SAVE:
+    case Methods.PR_RULE_PREVIEW:
+    case Methods.PR_RULE_SET_ENABLED:
+    case Methods.PR_RULE_SCAN:
+    case Methods.PR_RULE_ACTION_ACKNOWLEDGE:
+    case Methods.PR_REVIEW_ACCEPT:
+    case Methods.PR_REVIEW_DEFER:
+    case Methods.PR_REVIEW_REQUEST:
+    case Methods.PR_REVIEW_REQUEST_GET:
+    case Methods.PR_REVIEW_REQUEST_CANCEL:
+      return prRulesMethod(method, p);
+    case Methods.PR_WATCH_LIST:
+    case Methods.PR_WATCH_GET:
+    case Methods.PR_WATCH_SUBSCRIBE:
+    case Methods.PR_WATCH_CONFIGURE:
+    case Methods.PR_WATCH_LIFECYCLE:
+    case Methods.PR_WATCH_ACKNOWLEDGE:
+    case Methods.PR_WATCH_REFRESH:
+    case Methods.PR_WATCH_REPAIR:
+    case Methods.PR_WATCH_PROJECT_POLICY_SET:
+      return (await routePRWatchMethod(method, p)).value;
     case Methods.PR_STATUS:
       return prStatus(p as PRStatusParams);
     case Methods.PR_LIST:

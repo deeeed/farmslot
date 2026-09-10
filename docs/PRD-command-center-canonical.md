@@ -45,6 +45,16 @@ The chunk must support drill-down into a slot's working tree, diffs, artifacts, 
 
 The Command Center consumes the shared runner-execution model. It must not redefine runner behavior ad hoc for one UI surface.
 
+### 6. Monitored PR queue (planned)
+
+Provide the desktop subscription and incident controls defined in [persistent PR monitoring](PRD-automation-intelligence-canonical.md#6-persistent-pr-monitoring-planned). Operators can add any accessible PR, including external PRs by other authors, choose notify-only or automatic repair, and see freshness, the reason attention is needed, and linked queued/running repairs. This queue remains usable without active runs or slots. Actions and policy changes use gateway authority and update other clients immediately.
+
+### 7. Trigger rules and review intake (planned)
+
+Reuse the existing Continue/Fresh and static/full-live review controls. Show the saved reviewer session, prior reviewed SHA and actual continuation or fallback outcome. A selected slot pool can rotate among PRs and later reload a previous reviewer for an incremental follow-up. Configure whether a busy compatible reviewer waits or allows a fresh start elsewhere.
+
+Provide the source/field binding editor, dry-run match preview, activation/backfill controls and review queue for [declarative trigger rules](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned). Show held review intake separately from automatically admitted work, with rule/fact provenance and missing-project or permission explanations. Provide reusable team profiles across GitHub Projects and repositories, with team filters, configurable review policies and authorized notification audiences. Show GitHub review/CI facts separately from Project workflow fields and inferred owner suggestions. Allow each review rule to select one slot or a list of allowed slots, plus runner/model/effort choices through an execution profile. Preview compatible combinations and show requested versus actual assignments, capacity waits and configuration conflicts.
+
 ## Boundaries
 
 - This document is the canonical command-center contract.

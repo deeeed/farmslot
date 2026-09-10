@@ -12,6 +12,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type PressureAdmissionDecision,
+  type PRExecutionChoice,
   type QueueClaim,
   type QueueItem,
   type Run,
@@ -30,6 +31,8 @@ import {
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 import type { WorkOriginator } from '../security/work-originator.js';
+
+import { preparePRQueueAdmission } from './pr-admission.js';
 
 export type QueueRecord = QueueItem & { originator?: WorkOriginator };
 
@@ -412,6 +415,12 @@ export function addItem(
 ): QueueItem {
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
+  if (params.prWork) {
+    const existing = queue.find((item) => item.prWork?.id === params.prWork?.id);
+    if (existing) return publicQueueItem(existing);
+    const run = getAllRuns().find((item) => item.prWork?.id === params.prWork?.id);
+    if (run) throw new Error(`PR automation work already created run ${run.id}`);
+  }
   if (params.backlogItemId && params.launchPlanId && params.launchCandidateId) {
     const existing = queue.find(
       (item) =>
@@ -436,6 +445,7 @@ export function addItem(
   const tags = normalizeRunTags(params.tags);
   const item: QueueRecord = {
     id: randomUUID(),
+    prWork: params.prWork ? structuredClone(params.prWork) : undefined,
     queueKind: params.queueKind ?? 'dispatch',
     backlogItemId: params.backlogItemId,
     workGraphId: params.workGraphId,
@@ -1035,6 +1045,60 @@ export async function selectQueueDispatchSlot(
   return preview.preview.slotId;
 }
 
+export async function selectPRQueueExecution(
+  slots: SlotStatus[],
+  item: QueueItem,
+  choices: PRExecutionChoice[],
+): Promise<string | null> {
+  const groups = new Map<string, PRExecutionChoice[]>();
+  for (const choice of choices) {
+    const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
+    groups.set(key, [...(groups.get(key) ?? []), choice]);
+  }
+  for (const group of groups.values()) {
+    const model = group[0];
+    const allowedSlots = [
+      ...new Set(
+        group
+          .filter((choice) =>
+            slots.some(
+              (slot) =>
+                slot.slot === choice.slotId && slot.enabled && canDispatchQueuedItemToSlot(slot),
+            ),
+          )
+          .map((choice) => choice.slotId),
+      ),
+    ];
+    if (
+      !slots.some(
+        (slot) =>
+          allowedSlots.includes(slot.slot) &&
+          slot.enabled &&
+          // Runtime health is scored by the shared resolver; prepare brings cold slots up.
+          canDispatchQueuedItemToSlot(slot),
+      )
+    )
+      continue;
+    const proposed = {
+      ...item,
+      slotId: undefined,
+      allowedSlots,
+      runner: model.runner,
+      model: model.model,
+      effort: model.effort,
+    };
+    const slotId = await selectQueueDispatchSlot(slots, proposed);
+    if (slotId) {
+      item.allowedSlots = allowedSlots;
+      item.runner = model.runner;
+      item.model = model.model;
+      item.effort = model.effort;
+      return slotId;
+    }
+  }
+  return null;
+}
+
 // ─── Auto-dispatch ───
 
 export function canDispatchQueuedItemToSlot(slot: SlotStatus): boolean {
@@ -1129,6 +1193,20 @@ async function tryDispatchNextOnce(): Promise<void> {
   for (const pendingItem of pending) {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
+    let prChoices: PRExecutionChoice[] | undefined;
+    if (item.prWork) {
+      const admission = await preparePRQueueAdmission(item);
+      if (!liveQueuedItem(item.id)) continue;
+      if (!admission.ready) {
+        if (item.waitingReason !== admission.reason) {
+          item.waitingReason = admission.reason;
+          schedulePersist('pr-admission-wait');
+          broadcastQueue();
+        }
+        continue;
+      }
+      prChoices = admission.choices;
+    }
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const usage = evalSuiteCapUsage(item.evalCell.capGroupId, queue);
       if (usage.active + usage.dispatching >= usage.cap) {
@@ -1147,9 +1225,12 @@ async function tryDispatchNextOnce(): Promise<void> {
 
     let slot: SlotStatus | undefined;
     try {
-      const slotId = await selectQueueDispatchSlot(fleet.slots, item);
+      const selectionSlots = prChoices ? (await loadFleetStatus()).slots : fleet.slots;
+      const slotId = prChoices
+        ? await selectPRQueueExecution(selectionSlots, item, prChoices)
+        : await selectQueueDispatchSlot(selectionSlots, item);
       if (stopIfClaimLost(claim, 'slot-selection')) return;
-      slot = fleet.slots.find((s) => s.slot === slotId);
+      slot = selectionSlots.find((s) => s.slot === slotId);
     } catch (error) {
       releaseQueueClaim(claim, { quiet: true });
       console.debug(
@@ -1159,12 +1240,21 @@ async function tryDispatchNextOnce(): Promise<void> {
     }
 
     if (!slot || !canDispatchQueuedItemToSlot(slot)) {
+      if (
+        item.prWork &&
+        item.waitingReason !== 'Waiting for an allowed slot and model to become available'
+      ) {
+        item.waitingReason = 'Waiting for an allowed slot and model to become available';
+        schedulePersist('pr-slot-wait');
+        broadcastQueue();
+      }
       releaseQueueClaim(claim, { quiet: true });
       continue;
     }
     if (stopIfClaimLost(claim, 'slot-eligibility')) return;
 
     item.slotId = slot.slot;
+    delete item.waitingReason;
     // Promote the quiet claim: one durable write + broadcast for the real dispatch.
     renewQueueClaim(claim);
     schedulePersist('mark-dispatching');

@@ -25,7 +25,11 @@ import { execOnSlot } from '../core/exec.js';
 import { execLocal } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
+import {
+  findPRNumber,
+  persistRunPrNumber,
+  recordRunPRPublication,
+} from '../integrations/pr-linkage.js';
 import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
@@ -400,6 +404,13 @@ export function publicationStatusForRun(run: Run | null | undefined): Publicatio
 
 export function isArtifactOnlyRun(run: Pick<Run, 'completionPolicy'> | null | undefined): boolean {
   return run?.completionPolicy === 'artifact-only';
+}
+
+export function shouldMarkReadyAfterCompletion(
+  run: Pick<Run, 'prWork' | 'completionPolicy'>,
+): boolean {
+  // Monitoring grants repair authority, not permission to promote a draft PR.
+  return run.prWork?.kind !== 'repair' && !isArtifactOnlyRun(run);
 }
 
 function gatePolicyForRun(run: Run): GatePolicy {
@@ -905,13 +916,17 @@ export async function runCompletionPipeline(
     await postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls, undefined, {
       failOnError: true,
     });
-    try {
-      await markPRReady(ciRepo, prNumber);
-      flags.prMarkedReady = true;
-    } catch {
-      /* tracked via flag */
+    if (shouldMarkReadyAfterCompletion(updatedRun)) {
+      try {
+        await markPRReady(ciRepo, prNumber);
+        flags.prMarkedReady = true;
+      } catch {
+        /* tracked via flag */
+      }
     }
   }
+
+  if (!suppressPrMutation && ciRepo && prNumber) recordRunPRPublication(runId, ciRepo, prNumber);
 
   // 6. Create retrospective decision for user review
   //    Skipped when flow has ci-watch (retrospective moves there) or human-gate (serves as quality check)
@@ -1182,6 +1197,7 @@ export async function publishCompletionPackage(
     const publicationStatus: PublicationStatus =
       target === 'ready' ? 'published_ready' : 'published_draft';
     flags.publicationStatus = publicationStatus;
+    recordRunPRPublication(runId, ciRepo, prNumber);
     updateRun(runId, {
       engineState: {
         ...getRun(runId)?.engineState,

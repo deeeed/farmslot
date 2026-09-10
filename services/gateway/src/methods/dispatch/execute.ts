@@ -20,6 +20,7 @@ import {
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../../agents/contexts.js';
+import { assertPRReviewWorktreeHead } from '../../backlog/pr-admission.js';
 import {
   applyProjectCommandEnv,
   claimSlotStatusIf,
@@ -1137,7 +1138,7 @@ export async function dispatchExecute(
     : null;
   const repeatReviewSessionIntent = reviewSessionIntentForContext(currentRun?.repeatReviewContext);
   const repeatReviewResumePlan = currentRun
-    ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner)
+    ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner, model)
     : ({ kind: 'reset' } as const);
   let reviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
   const recordReviewSession = (trace: ReviewSessionTrace): void => {
@@ -1289,6 +1290,7 @@ export async function dispatchExecute(
   if (params.runId) {
     const { captureWorktreeHeadSha } = await import('../../run-engine/diff-artifacts.js');
     const worktreeHeadAtDispatch = await captureWorktreeHeadSha(params.slotId);
+    assertPRReviewWorktreeHead(getRun(params.runId), worktreeHeadAtDispatch);
     if (worktreeHeadAtDispatch) {
       updateRunStore(params.runId, { worktreeHeadAtDispatch });
     }

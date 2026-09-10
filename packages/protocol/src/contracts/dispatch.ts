@@ -30,6 +30,8 @@ export interface EvalQueueCell {
 
 export interface QueueItem {
   id: string;
+  prWork?: import('./pr-monitoring.js').PRWorkReference;
+  waitingReason?: string;
   queueKind?: QueueItemKind;
   /** Backlog item that produced this queue entry, when queued from durable backlog. */
   backlogItemId?: string;

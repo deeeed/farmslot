@@ -654,6 +654,21 @@ async function readCodexPromptAcceptance(
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
   promptAcceptanceMode: 'native-text',
+  async getSessionDeliveryState(vars, target, sessionId, sessionPath) {
+    // Retain the shared pane/session ownership checks, then use the native turn boundary.
+    // Some CLI executions complete without emitting Stop, leaving the hook snapshot active.
+    const hooks = await claudeHookObservability.getSessionDeliveryState(
+      vars,
+      target,
+      sessionId,
+      sessionPath,
+    );
+    if (!hooks) return null;
+    const native = await readCodexNativeTurnState(vars, sessionId, sessionPath);
+    return native && (native.value === 'active' || native.observedAt >= hooks.observedAt)
+      ? native
+      : hooks;
+  },
   async getSessionBinding(vars, target, observedNotBeforeMs = 0) {
     const paneId = await resolveTmuxPaneId(vars, target);
     if (!paneId) return null;

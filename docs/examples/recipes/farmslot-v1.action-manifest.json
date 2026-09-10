@@ -123,7 +123,15 @@
       "description": "Scroll the assigned browser, simulator, or device and wait for UI stability.",
       "schema": {
         "type": "object",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "properties": {
+          "selector": {
+            "type": "string"
+          },
+          "scroll_into_view": {
+            "type": "boolean"
+          }
+        }
       },
       "examples": [
         {

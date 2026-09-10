@@ -24,6 +24,10 @@ copilot/notified-decisions.json
 .farm-status.json
 .monitor_state.json
 .dispatch-queue.json
+/.pr-monitors.json
+/.pr-monitors.json.*.tmp
+/.pr-rules.json
+/.pr-rules.json.*.tmp
 /.dispatch-queue.json.provenance-v1
 .farm-cache/
 .roadmap/
@@ -154,3 +158,7 @@ pool/*.bak.*
 # atomic-write temp files from the gateway state writers
 .farm-status.json.*.tmp
 .dispatch-queue.json.tmp.*
+
+.pr-push.json
+
+.pr-source-checkpoints.json

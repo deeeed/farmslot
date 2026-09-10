@@ -609,7 +609,7 @@
     },
     "providerAccounts.snapshot": {
       "surface": "na",
-      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only — never tokens or credential paths."
+      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only \u2014 never tokens or credential paths."
     },
     "recipe.cancel": {
       "surface": "rpc-only",
@@ -1174,6 +1174,132 @@
     "workspace.metro.unsubscribe": {
       "surface": "na",
       "note": "Slot Workspace IDE view (web UI)."
+    },
+    "prWatch.acknowledge": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.acknowledge",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.configure": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.configure",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.get": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.get",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.lifecycle": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.lifecycle",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.list": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.list",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.refresh": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.refresh",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.subscribe": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.subscribe",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.repair": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.repair",
+      "note": "Request repair of monitored PR incidents with explicit execution selection."
+    },
+    "prWatch.projectPolicy.set": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.projectPolicy.set",
+      "note": "Opt into monitoring newly published PRs per project."
+    },
+    "prRules.list": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.list",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prReview.submit": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.submit",
+      "note": "Submit an idempotent PR review/QA request under a team policy."
+    },
+    "prReview.get": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.get",
+      "note": "Read the authenticated owner's review request and linked work."
+    },
+    "prReview.cancel": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.cancel",
+      "note": "Cancel unstarted review intake and retain its idempotency receipt."
+    },
+    "prRules.teamSave": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.teamSave",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.ruleSave": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.ruleSave",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.preview": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.preview",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.setEnabled": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.setEnabled",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.scan": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.scan",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.accept": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.accept",
+      "note": "Accept or defer durable PR review intake."
+    },
+    "prRules.defer": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.defer",
+      "note": "Accept or defer durable PR review intake."
+    },
+    "prRules.acknowledgeAction": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.acknowledgeAction",
+      "note": "Acknowledge a rule notification for the authenticated recipient."
+    },
+    "prRules.projectImport": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.projectImport",
+      "note": "Inspect a GitHub Project/view and import typed filter mappings without saving policy or starting work."
+    },
+    "prPush.register": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.unregister": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.list": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.acknowledge": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
     }
   }
 }

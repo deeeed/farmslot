@@ -1,0 +1,111 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Explicit Project filter mapping",
+  "description": "Uses a unique PROJECT_MAPPING_PREFIX and an unavailable account to verify source draft editing and activation guards through real browser and gateway paths. It does not claim successful GitHub Project discovery.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["prefix"],
+    "properties": {
+      "prefix": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "intent": "A disabled Project source with an unsupported filter cannot enable or emit actions.",
+        "cmd": "yarn exec tsx scripts/check-pr-project-mapping.mts setup",
+        "next": "navigate"
+      },
+      "navigate": {
+        "action": "ui.navigate",
+        "intent": "Team source setup is available in the real connected dashboard.",
+        "target": "#prs",
+        "next": "panel"
+      },
+      "panel": {
+        "action": "ui.wait_for",
+        "intent": "PR automation controls are available independently of active runs.",
+        "selector": "pr-automation-panel",
+        "next": "rules"
+      },
+      "rules": {
+        "action": "ui.press",
+        "intent": "The operator can inspect the saved Project source draft.",
+        "test_id": "pr-automation-tab-rules",
+        "next": "edit"
+      },
+      "edit": {
+        "action": "ui.press",
+        "intent": "Open the draft created by the gateway fixture without changing source membership.",
+        "selector": "[data-team-name=\"{{params.prefix}}\"] [data-testid=\"pr-team-edit\"]",
+        "next": "unmapped"
+      },
+      "unmapped": {
+        "action": "ui.wait_for",
+        "intent": "The unsupported term is visible with the activation restriction.",
+        "selector": "pr-project-filter-editor",
+        "text_contains": ["Needs mapping"],
+        "next": "map"
+      },
+      "map": {
+        "action": "ui.press",
+        "intent": "The operator explicitly maps the single-quoted open-state filter.",
+        "selector": "[data-map-term=\"0\"]",
+        "next": "apply"
+      },
+      "apply": {
+        "action": "ui.press",
+        "intent": "Confirm the visible state-equals-open predicate for the original term.",
+        "test_id": "pr-project-mapping-apply",
+        "next": "mapped-visible"
+      },
+      "mapped-visible": {
+        "action": "ui.wait_for",
+        "intent": "The source records that this term was explicitly mapped.",
+        "selector": "pr-project-filter-editor",
+        "text_contains": ["Explicit mapping"],
+        "next": "show"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "intent": "The original filter and explicit predicate are readable together.",
+        "selector": "pr-project-filter-editor",
+        "scroll_into_view": true,
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "intent": "The evidence shows the retained original term and mapped condition.",
+        "path": "screenshots/project-filter-mapping.png",
+        "next": "save"
+      },
+      "save": {
+        "action": "ui.press",
+        "intent": "Persist the mapping without enabling the rule or broadening the source.",
+        "test_id": "pr-team-save",
+        "next": "saved"
+      },
+      "saved": {
+        "action": "ui.wait_for",
+        "intent": "The team edit has returned to the saved inventory.",
+        "selector": "[data-team-name=\"{{params.prefix}}\"] [data-testid=\"pr-team-edit\"]:not(:disabled)",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "intent": "Gateway reads prove term preservation and continued access checks before activation.",
+        "cmd": "yarn exec tsx scripts/check-pr-project-mapping.mts mapped",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

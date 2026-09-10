@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add persistent PR monitoring, opt-in publication enrollment and queued repair/review work, with resumable source scans, Project/view filter import, durable rule attention, recipient-scoped push delivery and monitor enrollment, explicit execution policies and saved reviewer sessions for follow-up rounds.
+
 - Broadcast operator run changes to every connected client so completing a run from another tab or the CLI immediately updates its displayed status.
 
 - Show a CI timeout decision when repeated failures make no progress, including failures already handled by a fix attempt.

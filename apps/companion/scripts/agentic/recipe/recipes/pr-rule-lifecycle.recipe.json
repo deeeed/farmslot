@@ -1,0 +1,121 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion rule lifecycle",
+  "description": "Use a disabled validation rule created by e2e-pr-rule-actions.mts. The associated notification may already be acknowledged. Supply its IDs/names and PR_RULE_VALIDATION_ID/PR_RULE_NOTIFICATION_ID. This recipe ends with the rule disabled.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["notification_id", "rule_id", "team_id", "team_name"],
+    "properties": {
+      "notification_id": {
+        "type": "string"
+      },
+      "rule_id": {
+        "type": "string"
+      },
+      "team_id": {
+        "type": "string"
+      },
+      "team_name": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-route",
+    "nodes": {
+      "open-route": {
+        "action": "command",
+        "cmd": "xcrun simctl openurl \"$IOS_SIMULATOR\" \"farmslot-development:///pr-automation?notificationId=$PR_RULE_NOTIFICATION_ID\"",
+        "intent": "A notification link opens Rules even when PR automation is already mounted.",
+        "next": "rule-tab"
+      },
+      "rule-tab": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-tab-rules",
+        "timeout_ms": 30000,
+        "intent": "The native screen has reconnected to shared PR state.",
+        "next": "filter"
+      },
+      "filter": {
+        "action": "ui.press",
+        "test_id": "companion-pr-filter-team-picker",
+        "intent": "Filter the rule inventory to the validation team.",
+        "next": "search"
+      },
+      "search": {
+        "action": "ui.set_input",
+        "test_id": "companion-pr-filter-team-search",
+        "value": "{{params.team_name}}",
+        "intent": "The operator can find a team in a long inventory.",
+        "next": "keyboard"
+      },
+      "keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "intent": "The matching team is accessible after completing the search.",
+        "next": "choose"
+      },
+      "choose": {
+        "action": "ui.press",
+        "test_id": "companion-pr-filter-team-{{params.team_id}}",
+        "intent": "The chosen team determines which rule policies are displayed.",
+        "next": "show-rule"
+      },
+      "show-rule": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Rule lifecycle controls are reachable below the team attention card.",
+        "next": "preview"
+      },
+      "preview": {
+        "action": "ui.press",
+        "test_id": "companion-pr-rule-preview-{{params.rule_id}}",
+        "intent": "Re-enabling requires a fresh preview of current GitHub facts.",
+        "next": "preview-ready"
+      },
+      "preview-ready": {
+        "action": "ui.wait_for",
+        "text_contains": ["Complete preview"],
+        "timeout_ms": 120000,
+        "intent": "The operator can inspect complete source coverage before activation.",
+        "next": "enable"
+      },
+      "enable": {
+        "action": "ui.press",
+        "test_id": "companion-pr-rule-toggle-{{params.rule_id}}",
+        "intent": "Explicitly enable future changes without importing historical work.",
+        "next": "verify-enabled"
+      },
+      "verify-enabled": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-rule-state.mts enabled",
+        "intent": "Native activation reaches the authoritative gateway record.",
+        "next": "wait-control-ready"
+      },
+      "disable-again": {
+        "action": "ui.press",
+        "test_id": "companion-pr-rule-toggle-{{params.rule_id}}",
+        "intent": "Leave the validation rule disabled after exercising activation.",
+        "next": "verify-final"
+      },
+      "verify-final": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-rule-state.mts disabled",
+        "intent": "The final disabled state is visible through a separate client connection.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "wait-control-ready": {
+        "action": "command",
+        "cmd": "FARMSLOT_METRO_ORIGIN=http://localhost:$METRO_PORT yarn exec tsx ../../scripts/check-pr-rule-state.mts ui-ready",
+        "intent": "Read the rendered accessibility state until activation finishes before pressing Disable. The earlier gateway broadcast can arrive while this control is still disabled.",
+        "next": "disable-again"
+      }
+    }
+  }
+}

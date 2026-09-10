@@ -1,0 +1,120 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Inspect supplemental repository policy in Companion",
+  "description": "Use the disabled team/rule configured by e2e-pr-repository-policy.mts. Supplemental targets remain distinct from GitHub requirements.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["rule_id", "team_id", "team_name"],
+    "properties": {
+      "rule_id": {
+        "type": "string"
+      },
+      "team_id": {
+        "type": "string"
+      },
+      "team_name": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "if [ \"$PLATFORM\" = ios ]; then xcrun simctl openurl \"$IOS_SIMULATOR\" farmslot-development:///pr-automation; else adb -s \"$ANDROID_SERIAL\" shell am start -a android.intent.action.VIEW -d farmslot-development:///pr-automation net.siteed.farmslot.development; fi",
+        "intent": "The operator can inspect source coverage from PR automation on the selected device.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-tab-rules",
+        "timeout_ms": 30000,
+        "intent": "The connected screen exposes shared rule controls.",
+        "next": "rules"
+      },
+      "rules": {
+        "action": "ui.press",
+        "test_id": "companion-pr-tab-rules",
+        "intent": "Rule previews remain available without accepting or starting reviews.",
+        "next": "filter"
+      },
+      "filter": {
+        "action": "ui.press",
+        "test_id": "companion-pr-filter-team-picker",
+        "intent": "The operator can isolate one team's source progress.",
+        "next": "search"
+      },
+      "search": {
+        "action": "ui.set_input",
+        "test_id": "companion-pr-filter-team-search",
+        "value": "{{params.team_name}}",
+        "intent": "The selected validation team can be found in the saved inventory.",
+        "next": "keyboard"
+      },
+      "keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "intent": "The filtered team selection remains reachable after completing the search.",
+        "next": "choose"
+      },
+      "choose": {
+        "action": "ui.press",
+        "test_id": "companion-pr-filter-team-{{params.team_id}}",
+        "intent": "Only the selected team's rule controls are displayed.",
+        "next": "visible"
+      },
+      "visible": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "The rule's preview action is reachable below its team configuration.",
+        "next": "preview"
+      },
+      "preview": {
+        "action": "ui.press",
+        "test_id": "companion-pr-rule-preview-{{params.rule_id}}",
+        "intent": "The operator resumes saved source discovery without enabling the rule.",
+        "next": "progress"
+      },
+      "progress": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-source-progress",
+        "timeout_ms": 120000,
+        "intent": "The returned provider progress includes its observation window and saved page count.",
+        "next": "results"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "The provider progress and any retry timing can be read together.",
+        "next": "assessment"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/repository-policy.png",
+        "intent": "Record the real provider facts with the supplemental team policy.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "results": {
+        "action": "ui.press",
+        "test_id": "companion-pr-rule-results-{{params.rule_id}}",
+        "intent": "The operator opens policy details only when needed instead of scrolling through every match.",
+        "next": "show"
+      },
+      "assessment": {
+        "action": "ui.wait_for",
+        "text_contains": ["Supplemental approvals:", "GitHub review requirement:", "Activity:"],
+        "timeout_ms": 30000,
+        "intent": "The same provider and policy assessment appears in Companion.",
+        "next": "capture"
+      }
+    }
+  }
+}

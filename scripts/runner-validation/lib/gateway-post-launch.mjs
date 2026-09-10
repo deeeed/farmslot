@@ -799,11 +799,14 @@ export function runGatewayRepeatReviewResume({
   currentSlotId = slotId,
   sessionIntent = 'resume',
   expectedKind = 'resumed',
+  probeOnly = false,
   timeoutMs = 120_000,
 }) {
   const snippet = `
 import os from 'node:os';
 import { attemptRepeatReviewResume, resolveRepeatReviewResumePlan } from './services/gateway/src/run-engine/review-session-chain.ts';
+import { automatedRepeatReviewSelection } from './services/gateway/src/run-engine/engine-decisions.ts';
+import { getRunnerObservability } from './services/gateway/src/runners/registry.ts';
 
 const vars = {
   slotId: ${JSON.stringify(slotId)},
@@ -868,6 +871,7 @@ const prior = {
     role: 'review',
     label: 'Independent review',
     runner: ${JSON.stringify(runner)},
+    model: ${JSON.stringify(model)},
     slotId: ${JSON.stringify(slotId)},
     runId: 'review-generation-1',
     runnerSessionId: ${JSON.stringify(sessionId)},
@@ -876,7 +880,22 @@ const prior = {
     startedAt: new Date().toISOString(),
   }],
 };
-const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)});
+const reviewOptions = { sessionIntent: ${JSON.stringify(sessionIntent)}, scope: 'incremental', validationDepth: 'full-live' };
+if (${JSON.stringify(probeOnly)}) {
+  const state = await getRunnerObservability(${JSON.stringify(runner)}).getSessionDeliveryState(vars, ${JSON.stringify(target)}, ${JSON.stringify(sessionId)}, ${JSON.stringify(sessionPath)});
+  console.log(JSON.stringify({ kind: 'state', state }));
+  process.exit(0);
+}
+const prWork = {
+  kind: 'review', id: 'review:validation', sourceId: 'validation-intent',
+  pr: { host: 'github.com', repo: 'deeeed/farmslot', number: 1 }, headSha: '2222222',
+  review: { ownerId: 'validation-owner', profile: 'validation-review', options: reviewOptions },
+};
+current.prWork = prWork;
+prior.prWork = { ...prWork, id: 'review:prior-validation', headSha: '1111111' };
+current.repeatReviewContext = automatedRepeatReviewSelection(current.repeatReviewContext, reviewOptions);
+if (current.repeatReviewContext.validationDepth !== 'full-live') throw new Error('Review policy lost live QA depth');
+const plan = resolveRepeatReviewResumePlan(current, prior, ${JSON.stringify(runner)}, ${JSON.stringify(model)});
 if (plan.kind !== 'resume') {
   console.log(JSON.stringify({ kind: 'not-resumed', plan }));
   process.exit(${JSON.stringify(expectedKind)} === 'not-resumed' ? 0 : 1);

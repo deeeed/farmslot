@@ -1,0 +1,500 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Team and review rule authoring through Command Center",
+  "description": "Create, edit and reload a team and disabled review rule using real browser inputs and gateway assertions. Requires a unique AUTHORING_PREFIX, AUTHORING_GITHUB_LOGIN, and matching AUTHORING_REPO/PROJECT/SLOT environment. Use an explicitly supplied account; no rule is activated.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["prefix", "repo", "project", "slot", "ui_url", "account_login"],
+    "properties": {
+      "prefix": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "project": {
+        "type": "string"
+      },
+      "slot": {
+        "type": "string"
+      },
+      "ui_url": {
+        "type": "string"
+      },
+      "account_login": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "check-before",
+    "nodes": {
+      "check-before": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts before",
+        "intent": "Verify before through an authenticated gateway read.",
+        "next": "open-prs"
+      },
+      "open-prs": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "Open the connected PR dashboard.",
+        "next": "wait-panel"
+      },
+      "wait-panel": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "timeout_ms": 15000,
+        "intent": "Monitoring controls remain accessible independently of run-based PR discovery.",
+        "next": "open-rules"
+      },
+      "open-rules": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
+        "intent": "Open team and rule authoring.",
+        "next": "create-team"
+      },
+      "create-team": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-create\"]",
+        "intent": "Create a new team using the UI.",
+        "next": "initial-predicate"
+      },
+      "team-name": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-team-name\"]",
+        "value": "{{params.prefix}} team",
+        "intent": "Name the validation team.",
+        "next": "team-account"
+      },
+      "team-account": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-team-account\"]",
+        "value": "{{params.account_login}}",
+        "intent": "Use the explicitly supplied GitHub account for provider access.",
+        "next": "source"
+      },
+      "source": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-team-source-repository\"]",
+        "value": "{{params.repo}}",
+        "intent": "The team discovers PRs only from the configured repository.",
+        "next": "predicate-all"
+      },
+      "predicate-all": {
+        "action": "ui.press",
+        "test_id": "pr-predicate-all",
+        "intent": "The team requires all configured eligibility conditions together.",
+        "next": "team-review"
+      },
+      "team-review": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-policy-review-override\"]",
+        "intent": "Set team review defaults.",
+        "next": "team-live"
+      },
+      "team-live": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-review-depth-full-live\"]",
+        "intent": "Require live QA.",
+        "next": "team-execution"
+      },
+      "team-execution": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-policy-execution-override\"]",
+        "intent": "Set team slots and models.",
+        "next": "team-slot"
+      },
+      "team-slot": {
+        "action": "ui.press",
+        "selector": "[data-slot-id=\"{{params.slot}}\"]",
+        "intent": "Pin the disabled validation slot.",
+        "next": "add-repo"
+      },
+      "add-repo": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-repository-add\"]",
+        "intent": "Add the repository mapping.",
+        "next": "repo-name"
+      },
+      "repo-name": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-repository-name\"]",
+        "value": "{{params.repo}}",
+        "intent": "Map the source repository.",
+        "next": "repo-project"
+      },
+      "repo-project": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-repository-project\"]",
+        "value": "{{params.project}}",
+        "intent": "Choose the matching Farmslot project.",
+        "next": "repo-profile"
+      },
+      "repo-profile": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-repository-profile\"]",
+        "value": "authoring-validation",
+        "intent": "The repository has a distinct review purpose for deduplication.",
+        "next": "save-team"
+      },
+      "save-team": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-save\"]",
+        "intent": "Persist the team through the gateway.",
+        "next": "team-saved"
+      },
+      "team-saved": {
+        "action": "ui.wait_for",
+        "selector": "[data-team-name=\"{{params.prefix}} team\"]",
+        "timeout_ms": 15000,
+        "intent": "The newly persisted team is visible in the dashboard inventory.",
+        "next": "check-team"
+      },
+      "check-team": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts team",
+        "intent": "Verify team through an authenticated gateway read.",
+        "next": "edit-team"
+      },
+      "edit-team": {
+        "action": "ui.press",
+        "selector": "[data-team-name=\"{{params.prefix}} team\"] [data-testid=\"pr-team-edit\"]",
+        "intent": "Reopen the saved team.",
+        "next": "repo-override"
+      },
+      "repo-override": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-repository-0-review-override\"]",
+        "intent": "Override inherited review settings for one repository.",
+        "next": "repo-fresh"
+      },
+      "repo-fresh": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-repository-0-fresh\"]",
+        "intent": "Choose Fresh while preserving inherited live QA.",
+        "next": "exclude-label"
+      },
+      "exclude-label": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-repository-exclusions\"]",
+        "value": "skip-review",
+        "intent": "Add a repository exclusion.",
+        "next": "save-team-edit"
+      },
+      "save-team-edit": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-save\"]",
+        "intent": "Save an edit with the original revision.",
+        "next": "team-edit-saved"
+      },
+      "team-edit-saved": {
+        "action": "ui.wait_for",
+        "selector": "[data-team-name=\"{{params.prefix}} team\"] [data-testid=\"pr-team-edit\"]:not(:disabled)",
+        "timeout_ms": 15000,
+        "intent": "The dashboard reflects the repository override after the save completes.",
+        "next": "check-team-edited"
+      },
+      "check-team-edited": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts team-edited",
+        "intent": "Verify team-edited through an authenticated gateway read.",
+        "next": "create-rule"
+      },
+      "create-rule": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-rule-create\"]",
+        "intent": "Create a held review rule.",
+        "next": "rule-name"
+      },
+      "rule-name": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-rule-name\"]",
+        "value": "{{params.prefix}} rule",
+        "intent": "Name the validation rule.",
+        "next": "rule-team"
+      },
+      "rule-team": {
+        "action": "ui.press",
+        "selector": "[data-rule-team-name=\"{{params.prefix}} team\"]",
+        "intent": "Choose the team created through the UI.",
+        "next": "rule-interval"
+      },
+      "rule-interval": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-rule-interval\"]",
+        "value": "120",
+        "intent": "The scheduler must poll at the configured two-minute interval.",
+        "next": "rule-limit"
+      },
+      "rule-limit": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-rule-limit\"]",
+        "value": "3",
+        "intent": "Bound each scan.",
+        "next": "save-rule"
+      },
+      "save-rule": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-rule-save\"]",
+        "intent": "Save without enabling or backfilling.",
+        "next": "rule-saved"
+      },
+      "rule-saved": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-name=\"{{params.prefix}} rule\"]",
+        "timeout_ms": 15000,
+        "intent": "The new rule appears disabled so configuration cannot start historical work.",
+        "next": "check-rule"
+      },
+      "check-rule": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts rule",
+        "intent": "Verify rule through an authenticated gateway read.",
+        "next": "reload"
+      },
+      "reload": {
+        "action": "ui.navigate",
+        "target": "{{params.ui_url}}/?authoring-reload=1#prs",
+        "intent": "Reload from the server and recover saved records.",
+        "next": "wait-reloaded"
+      },
+      "wait-reloaded": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "timeout_ms": 15000,
+        "intent": "Persisted PR policies remain accessible after a full page reload.",
+        "next": "rules-reloaded"
+      },
+      "rules-reloaded": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
+        "intent": "Open rules after reload.",
+        "next": "edit-rule"
+      },
+      "edit-rule": {
+        "action": "ui.press",
+        "selector": "[data-rule-name=\"{{params.prefix}} rule\"] [data-testid=\"pr-rule-edit\"]",
+        "intent": "Reopen the persisted rule.",
+        "next": "restored-team"
+      },
+      "rule-limit-edit": {
+        "action": "ui.set_input",
+        "selector": "[data-testid=\"pr-rule-limit\"]",
+        "value": "4",
+        "intent": "Edit the scan limit without resetting inherited actions.",
+        "next": "save-rule-edit"
+      },
+      "save-rule-edit": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-rule-save\"]",
+        "intent": "Update the same rule.",
+        "next": "rule-edit-saved"
+      },
+      "rule-edit-saved": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-name=\"{{params.prefix}} rule\"] [data-testid=\"pr-rule-edit\"]:not(:disabled)",
+        "timeout_ms": 15000,
+        "intent": "The edited admission limit belongs to the same disabled rule.",
+        "next": "check-rule-edited"
+      },
+      "check-rule-edited": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts rule-edited",
+        "intent": "Verify rule-edited through an authenticated gateway read.",
+        "next": "create-action-rule"
+      },
+      "activation-gated": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-name=\"{{params.prefix}} rule\"] [data-testid=\"pr-rule-toggle\"]:disabled",
+        "timeout_ms": 15000,
+        "intent": "Activation requires a current complete preview.",
+        "next": "open-stale-team"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-authoring.png",
+        "intent": "The final dashboard shows both the saved team and disabled review rule.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "initial-predicate": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"pr-predicate-field\"] option[value=\"state\"]:checked",
+        "intent": "The visible default fact agrees with the state predicate that will be saved.",
+        "next": "team-name"
+      },
+      "restored-team": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-team-name=\"{{params.prefix}} team\"]:checked",
+        "intent": "Reopening the rule restores its required team selection before editing.",
+        "next": "rule-limit-edit"
+      },
+      "open-stale-team": {
+        "action": "ui.press",
+        "selector": "[data-team-name=\"{{params.prefix}} team\"] [data-testid=\"pr-team-edit\"]",
+        "intent": "An open editor keeps the revision it originally loaded.",
+        "next": "concurrent-edit"
+      },
+      "concurrent-edit": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts concurrent-edit",
+        "intent": "Another authenticated client changes the validation team while the browser editor remains open.",
+        "next": "stale-exclusions"
+      },
+      "stale-exclusions": {
+        "action": "ui.set_input",
+        "test_id": "pr-repository-exclusions",
+        "value": "should-not-overwrite",
+        "intent": "The browser now has a local draft based on an older team revision.",
+        "next": "save-stale-team"
+      },
+      "save-stale-team": {
+        "action": "ui.press",
+        "test_id": "pr-team-save",
+        "intent": "The gateway must reject the stale browser draft instead of erasing the other client edit.",
+        "next": "conflict-visible"
+      },
+      "conflict-visible": {
+        "action": "ui.wait_for",
+        "selector": "[role=\"alert\"]",
+        "text_contains": ["Team profile changed"],
+        "intent": "The user receives a revision conflict and keeps the draft available.",
+        "next": "check-conflict"
+      },
+      "check-conflict": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts conflict",
+        "intent": "Authoritative policy still contains the other client edit and original exclusions.",
+        "next": "show-conflict"
+      },
+      "capture-conflict": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-authoring-conflict.png",
+        "intent": "Reviewers can inspect the visible conflict and preserved draft.",
+        "next": "close-stale-editor"
+      },
+      "close-stale-editor": {
+        "action": "ui.press",
+        "test_id": "pr-automation-editor-close",
+        "intent": "Discard the rejected validation draft while leaving the saved disabled policies intact.",
+        "next": "show-saved-rule"
+      },
+      "show-conflict": {
+        "action": "ui.scroll",
+        "selector": "[role=\"alert\"]",
+        "intent": "The revision conflict explanation is within the captured viewport.",
+        "next": "capture-conflict",
+        "scroll_into_view": true
+      },
+      "show-saved-rule": {
+        "action": "ui.scroll",
+        "selector": "[data-rule-name=\"{{params.prefix}} rule\"]",
+        "intent": "The saved disabled rule and its controls are within the captured viewport.",
+        "next": "capture",
+        "scroll_into_view": true
+      },
+      "create-action-rule": {
+        "action": "ui.press",
+        "intent": "A separate rule can request notifications and monitoring without reviews.",
+        "test_id": "pr-rule-create",
+        "next": "action-rule-name"
+      },
+      "action-rule-name": {
+        "action": "ui.set_input",
+        "intent": "Name the rule whose actions will be configured.",
+        "test_id": "pr-rule-name",
+        "value": "{{params.prefix}} actions",
+        "next": "action-rule-team"
+      },
+      "action-rule-team": {
+        "action": "ui.press",
+        "intent": "The action rule uses the same explicit team scope.",
+        "selector": "[data-rule-team-name=\"{{params.prefix}} team\"]",
+        "next": "remove-review-action"
+      },
+      "remove-review-action": {
+        "action": "ui.press",
+        "intent": "Matching PRs will not create review intents.",
+        "test_id": "pr-rule-action-review",
+        "next": "add-notify-action"
+      },
+      "add-notify-action": {
+        "action": "ui.press",
+        "intent": "Matching PRs will create durable team attention.",
+        "test_id": "pr-rule-action-notify",
+        "next": "add-monitor-action"
+      },
+      "add-monitor-action": {
+        "action": "ui.press",
+        "intent": "Matching PRs can enroll independent monitoring.",
+        "test_id": "pr-rule-action-monitor",
+        "next": "allow-new-monitor-repair"
+      },
+      "allow-new-monitor-repair": {
+        "action": "ui.press",
+        "intent": "Automatic repair requires an explicit policy for new subscriptions.",
+        "test_id": "pr-rule-monitor-repair",
+        "next": "repair-slot"
+      },
+      "repair-slot": {
+        "action": "ui.press",
+        "intent": "Repair execution is pinned independently of team review defaults.",
+        "selector": "[data-slot-id=\"{{params.slot}}\"]",
+        "next": "save-action-rule"
+      },
+      "save-action-rule": {
+        "action": "ui.press",
+        "intent": "Persist the action configuration without activating it.",
+        "test_id": "pr-rule-save",
+        "next": "action-rule-saved"
+      },
+      "action-rule-saved": {
+        "action": "ui.wait_for",
+        "intent": "The new action rule is visible as disabled.",
+        "selector": "[data-rule-name=\"{{params.prefix}} actions\"]",
+        "next": "check-action-rule"
+      },
+      "check-action-rule": {
+        "action": "command",
+        "intent": "Gateway configuration contains only Notify and Add monitor with the chosen repair slot.",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts action-rule",
+        "next": "edit-action-rule"
+      },
+      "edit-action-rule": {
+        "action": "ui.press",
+        "intent": "Reopen the saved action configuration without replacing its identity.",
+        "selector": "[data-rule-name=\"{{params.prefix}} actions\"] [data-testid=\"pr-rule-edit\"]",
+        "next": "remove-monitor-repair"
+      },
+      "remove-monitor-repair": {
+        "action": "ui.press",
+        "intent": "The operator can downgrade new subscriptions to notify-only.",
+        "test_id": "pr-rule-monitor-repair",
+        "next": "save-action-rule-edit"
+      },
+      "save-action-rule-edit": {
+        "action": "ui.press",
+        "intent": "Save the notify-only policy while keeping the rule disabled.",
+        "test_id": "pr-rule-save",
+        "next": "action-rule-edit-saved"
+      },
+      "action-rule-edit-saved": {
+        "action": "ui.wait_for",
+        "intent": "The updated action rule returns to the disabled inventory.",
+        "selector": "[data-rule-name=\"{{params.prefix}} actions\"] [data-testid=\"pr-rule-edit\"]:not(:disabled)",
+        "next": "check-action-rule-edited"
+      },
+      "check-action-rule-edited": {
+        "action": "command",
+        "intent": "The gateway retains Notify/Add monitor and has removed repair execution authority.",
+        "cmd": "yarn exec tsx scripts/check-pr-authoring.mts action-rule-edited",
+        "next": "activation-gated"
+      }
+    }
+  }
+}

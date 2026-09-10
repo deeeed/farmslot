@@ -1,0 +1,73 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acknowledge live PR rule attention in Command Center",
+  "description": "Run alongside e2e-pr-rule-actions.mts with RULE_ACK_VIA_UI=1. Use the notification ID emitted by that live gateway scenario. Its finally block disables the validation rule and stops its monitor. Set PR_RULE_NOTIFICATION_ID to the same ID for the gateway assertion.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["notification_id"],
+    "properties": {
+      "notification_id": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-prs",
+    "nodes": {
+      "open-prs": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "The PR dashboard exposes persisted rule attention independently of runs.",
+        "next": "wait-panel"
+      },
+      "wait-panel": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The connected dashboard provides authoritative monitoring and rule controls.",
+        "next": "open-rules"
+      },
+      "open-rules": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-rules",
+        "intent": "The operator can inspect current matches and their requested actions.",
+        "next": "wait-notification"
+      },
+      "wait-notification": {
+        "action": "ui.wait_for",
+        "selector": "[data-rule-notification=\"{{params.notification_id}}\"]",
+        "intent": "The real GitHub-backed match is visible as an unacknowledged attention item.",
+        "next": "show-notification"
+      },
+      "show-notification": {
+        "action": "ui.scroll",
+        "selector": "[data-rule-notification=\"{{params.notification_id}}\"]",
+        "scroll_into_view": true,
+        "intent": "Match provenance and the acknowledgement control are readable together.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-rule-notification.png",
+        "intent": "The captured attention item shows the actual PR, team and match reason.",
+        "next": "acknowledge"
+      },
+      "acknowledge": {
+        "action": "ui.press",
+        "selector": "[data-rule-notification=\"{{params.notification_id}}\"] [data-testid=\"pr-rule-notification-ack\"]",
+        "intent": "The operator acknowledges this notification without changing the rule or monitor policy.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-rule-notification.mts \"$PR_RULE_NOTIFICATION_ID\"",
+        "intent": "A new gateway read proves that acknowledgement was persisted for this recipient.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

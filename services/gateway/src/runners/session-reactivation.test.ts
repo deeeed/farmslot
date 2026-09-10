@@ -126,6 +126,9 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
+      if (command.includes('def reverse_lines(') && command.includes('session_path = Path(')) {
+        return { exitCode: 0, stdout: JSON.stringify({ status: 'unavailable' }), stderr: '' };
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     },
     isLocal: () => false,

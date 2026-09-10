@@ -36,6 +36,7 @@ import {
   removeQueueItemInternal,
   removeQueueItemInternalNow,
   reorderItems,
+  selectPRQueueExecution,
   selectQueueDispatchSlot,
   setQueueDispatchPressureCaptureForTests,
   stampQueueItemRunId,
@@ -1965,4 +1966,61 @@ test('memory-only create failure requeues and purges the orphan Run', async (t) 
   assert.ok(requeued, 'row must be requeued for retry');
   assert.equal(requeued.status, 'queued');
   assert.equal(requeued.runId, undefined);
+});
+
+test('PR queue prepares cold allowed slots while respecting busy slots and model constraints', async () => {
+  setQueueDispatchPressureCaptureForTests(admitAllPressure);
+  const slots: SlotStatus[] = [
+    { ...readyFleetSlot('allowed-a').slots[0], agent: 'working' },
+    {
+      ...readyFleetSlot('allowed-b').slots[0],
+      dispatchable: false,
+      warm: false,
+      health: { ssh: 'LOCAL', device: 'ios:OFF', devserver: 'OFF', cdp: 'OFF', fixtures: '0/2' },
+    },
+    readyFleetSlot('unlisted').slots[0],
+  ];
+  const item: QueueItem = {
+    id: 'pr-selection',
+    flowType: 'review-pr',
+    project: 'farmslot-farm',
+    ticketOrPr: 'owner/repo#42',
+    priority: 10,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  const first = { slotId: 'allowed-a', runner: 'codex', model: 'gpt-6-astra', effort: 'high' };
+  const second = { slotId: 'allowed-b', runner: 'codex', model: 'gpt-6-astra', effort: 'medium' };
+  assert.equal(await selectPRQueueExecution(slots, item, [first]), null);
+  assert.equal(await selectPRQueueExecution(slots, item, [first, second]), 'allowed-b');
+  assert.equal(item.effort, 'medium');
+  assert.deepEqual(item.allowedSlots, ['allowed-b']);
+});
+
+test('PR queue filters every disabled member of a mixed model group before scoring', async () => {
+  setQueueDispatchPressureCaptureForTests(admitAllPressure);
+  const cold = {
+    ...readyFleetSlot('allowed-cold').slots[0],
+    dispatchable: false,
+    warm: false,
+    health: { ssh: 'LOCAL', device: 'ios:OFF', devserver: 'OFF', cdp: 'OFF', fixtures: '0/2' },
+  };
+  const disabled = { ...readyFleetSlot('disabled-warm').slots[0], enabled: false };
+  const item: QueueItem = {
+    id: 'pr-disabled-mixed',
+    flowType: 'review-pr',
+    project: 'farmslot-farm',
+    ticketOrPr: 'owner/repo#43',
+    priority: 10,
+    createdAt: new Date().toISOString(),
+    status: 'queued',
+  };
+  const models = [cold, disabled].map((slot) => ({
+    slotId: slot.slot,
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+  }));
+  assert.equal(await selectPRQueueExecution([cold, disabled], item, models), 'allowed-cold');
+  assert.deepEqual(item.allowedSlots, ['allowed-cold']);
 });

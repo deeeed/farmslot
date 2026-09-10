@@ -9,8 +9,7 @@ import {
   runGatewayArgvRelaunch,
   runGatewayRepeatReviewResume,
 } from '../lib/gateway-post-launch.mjs';
-import { eventName, readHookLines } from '../lib/hooks.mjs';
-import { installHooks, obsDirFor } from '../lib/install.mjs';
+import { installHooks } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
 import {
   listSessionCandidates,
@@ -25,7 +24,6 @@ import {
   sendShellScript,
   tmux,
 } from '../lib/tmux.mjs';
-import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'retained-handoff-smoke';
 
@@ -148,7 +146,24 @@ console.log(JSON.stringify(retainedReviewerDeliveryPlan(${JSON.stringify(runner)
   return JSON.parse(stdout.trim().split('\n').at(-1));
 }
 
-export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
+function waitForReviewerIdle(options, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const observed = runGatewayRepeatReviewResume({ ...options, probeOnly: true });
+    const state = observed.result?.state;
+    if (state?.value === 'idle' && state.confidence === 'high') return true;
+    sleepMs(1500);
+  }
+  return false;
+}
+
+export async function runScenario({
+  runnerAdapter,
+  timeoutMs,
+  keepSession,
+  outDir,
+  model: requestedModel,
+}) {
   const runner = runnerAdapter.RUNNER_ID;
   if (runner === 'cursor') {
     return runCursorArgvRelaunch({ runnerAdapter, timeoutMs, keepSession, outDir });
@@ -169,7 +184,6 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   const runtimeDir = '.agent';
   const slotId = `runner-validate-${host}-${runner}`;
   const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
-  const logPath = path.join(obsDirFor(repo, runtimeDir), 'hooks.jsonl');
   let paneId = null;
   const report = {
     runner,
@@ -178,6 +192,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     sessionId: null,
     sessionPath: null,
     initialCompleted: false,
+    interleavedSessionId: null,
+    interleavedCompleted: false,
     handoffDelivered: false,
     repeatReviewSessionTrace: null,
     repeatReviewResumePlan: null,
@@ -199,24 +215,36 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     paneId = shell.paneId;
     let target = tmux(['display-message', '-p', '-t', paneId, '#{session_name}:#{window_index}']);
     const dispatchMs = Date.now();
-    const beforeCount = readHookLines(logPath).length;
 
-    const model = runner === 'claude' ? 'opus' : undefined;
+    const model = requestedModel ?? (runner === 'claude' ? 'opus' : undefined);
     report.liveReviewerResetPlan = resolveLiveResetPlan(runner);
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model });
     const binding = waitForSessionBinding(
       { runner, repo, beforePaths, sinceMs: dispatchMs, paneId, slotId },
       Math.min(timeoutMs, 30_000),
     );
-    const initialRows = pollHookRows(logPath, beforeCount, ['Stop'], timeoutMs);
-    report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
-    sleepMs(2000);
-
     if (!binding) throw new Error(`initial ${runner} session binding was not captured`);
     report.sessionPath = binding.runnerSessionPath;
     report.sessionId =
       binding.runnerSessionId ?? runnerSessionIdForPath(runner, binding.runnerSessionPath);
     if (!report.sessionId) throw new Error(`initial ${runner} session id was not captured`);
+
+    report.initialCompleted = waitForReviewerIdle(
+      {
+        repo,
+        target,
+        runner,
+        sessionId: report.sessionId,
+        sessionPath: report.sessionPath,
+        prompt: DEFAULT_PROMPT,
+        runnerPath: runnerAdapter.binaryPath(),
+        model,
+        slotId,
+      },
+      timeoutMs,
+    );
+    if (!report.initialCompleted)
+      throw new Error('Initial reviewer did not reach a structured terminal state');
 
     const repeatReviewReset = runGatewayRepeatReviewResume({
       repo,
@@ -286,6 +314,51 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       throw new Error('retained handoff did not replace the owning pane');
     }
 
+    const beforeInterleaved = listSessionCandidates(runner, repo, runtimeDir);
+    const interleavedAt = Date.now();
+    runLaunchInTmux(
+      paneId,
+      repo,
+      runner,
+      runnerAdapter,
+      'Reply with exactly SECOND_REVIEW_OK and nothing else.',
+      { model },
+    );
+    const interleaved = waitForSessionBinding(
+      {
+        runner,
+        repo,
+        beforePaths: beforeInterleaved,
+        sinceMs: interleavedAt,
+        paneId,
+        slotId,
+      },
+      Math.min(timeoutMs, 30_000),
+    );
+    if (!interleaved) throw new Error('Interleaved reviewer session binding was not captured');
+    report.interleavedSessionId =
+      interleaved.runnerSessionId ?? runnerSessionIdForPath(runner, interleaved.runnerSessionPath);
+    if (!report.interleavedSessionId || report.interleavedSessionId === report.sessionId)
+      throw new Error('Interleaved review must use a distinct session');
+    report.interleavedCompleted = waitForReviewerIdle(
+      {
+        repo,
+        target,
+        runner,
+        sessionId: report.interleavedSessionId,
+        sessionPath: interleaved.runnerSessionPath,
+        prompt: DEFAULT_PROMPT,
+        runnerPath: runnerAdapter.binaryPath(),
+        model,
+        slotId,
+      },
+      timeoutMs,
+    );
+    if (!report.interleavedCompleted) throw new Error('Interleaved review did not finish');
+    killSession(session);
+    paneId = ensureShellSession(session, repo).paneId;
+    target = tmux(['display-message', '-p', '-t', paneId, '#{session_name}:#{window_index}']);
+
     const handoff = runGatewayRepeatReviewResume({
       repo,
       target,
@@ -311,6 +384,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     // before this parent process captures it, so pane survival is not evidence.
     report.pass =
       report.initialCompleted &&
+      report.interleavedCompleted &&
       report.repeatReviewResumePlan?.kind === 'resume' &&
       report.repeatReviewResetPlan?.kind === 'reset' &&
       report.repeatReviewSlotMismatchPlan?.reason === 'slot-mismatch' &&

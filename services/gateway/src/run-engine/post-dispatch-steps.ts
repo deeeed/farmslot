@@ -79,6 +79,7 @@ import {
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
+import { recordArtifactOnlyReviewResult } from './review-result.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 const S = PipelineSteps;
@@ -769,6 +770,7 @@ export async function executeHumanGateStep(
     };
   }
   if (artifactOnly) {
+    if (current.flowType === 'review-pr') await recordArtifactOnlyReviewResult(runId);
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for artifact-only completion policy`,
     );
@@ -1137,7 +1139,7 @@ export async function executeCompleteStep(
     noCodeDisposition,
     artifactOnly,
   };
-  await captureReviewInputArtifactsForRun(current);
+  if (current.flowType !== 'review-pr') await captureReviewInputArtifactsForRun(current);
 
   const hasCIWatch = shouldSkipRetrospectiveAtComplete(current);
   const skipRetrospective = hasCIWatch;
@@ -1190,7 +1192,7 @@ export async function executeCompleteStep(
     suppressPrMutation: noCodeDisposition || artifactOnly,
   });
   await refreshRunLinks(runId);
-  if (completion.prNumber) {
+  if (completion.prNumber && current.flowType !== 'review-pr') {
     await captureReviewInputArtifactsForRun(getRun(runId) ?? current);
   }
 

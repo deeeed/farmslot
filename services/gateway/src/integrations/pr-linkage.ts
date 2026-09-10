@@ -5,7 +5,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
-import { Events, type Run } from '@farmslot/protocol';
+import { Events, monitoredPRKey, PR_BOUND_FLOW_TYPES, type Run } from '@farmslot/protocol';
 
 import { isFollowUpFlow } from '../family-observability/context.js';
 import { refreshRunLinks } from '../run-engine/run-links.js';
@@ -225,4 +225,17 @@ export async function persistRunPrNumber(runId: string, prNumber: number): Promi
   await refreshRunLinks(runId);
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   console.log(`[pr-linkage] linked run ${runId.slice(0, 8)} -> PR #${prNumber}`);
+}
+
+/** Called by publication paths, never by mere PR discovery or review intake. */
+export function recordRunPRPublication(runId: string, repo: string, number: number): void {
+  const run = getRun(runId);
+  if (!run || PR_BOUND_FLOW_TYPES.has(run.flowType) || run.completionPolicy === 'artifact-only')
+    return;
+  const pr = { host: 'github.com', repo, number };
+  if (run.prPublications?.some((entry) => monitoredPRKey(entry.pr) === monitoredPRKey(pr))) return;
+  updateRun(runId, {
+    prPublications: [...(run.prPublications ?? []), { pr, publishedAt: new Date().toISOString() }],
+  });
+  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 }

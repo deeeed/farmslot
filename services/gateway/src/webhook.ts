@@ -4,7 +4,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { FlowType, Principal, ProjectConfig } from '@farmslot/protocol';
+import type { FlowType, MonitoredPRIdentity, Principal, ProjectConfig } from '@farmslot/protocol';
 
 import { addItem } from './backlog/dispatch-queue.js';
 import { loadProjectConfigs } from './fleet/state.js';
@@ -13,6 +13,12 @@ import type { WorkOriginator } from './security/work-originator.js';
 
 export type WebhookProvider = 'github' | 'jira';
 export type WebhookPrincipalResolver = (principalId: string) => Principal | null;
+
+type GitHubRuleEventRouter = (pr: MonitoredPRIdentity) => Promise<'rules' | 'legacy' | 'unknown'>;
+let routeGitHubRuleEvent: GitHubRuleEventRouter | undefined;
+export function setGitHubRuleEventRouter(router: GitHubRuleEventRouter | undefined): void {
+  routeGitHubRuleEvent = router;
+}
 
 export type WebhookAuthorityResolution =
   | { ok: true; originator: WorkOriginator }
@@ -155,6 +161,10 @@ export async function handleGitHubWebhook(
   }
 
   const prNumber = pr.number;
+  if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber < 1) {
+    json(res, 400, { error: 'Invalid pull_request.number' });
+    return;
+  }
   const prTitle = pr.title || '';
   const headBranch = pr.head?.ref || '';
 
@@ -162,7 +172,24 @@ export async function handleGitHubWebhook(
     `[webhook/github] PR #${prNumber} ${action} on ${repoFullName} (branch: ${headBranch}, title: ${prTitle})`,
   );
 
-  // Check auto_dispatch (default true)
+  // Enabled rules own their sources, including held/nonmatching work. A legacy
+  // queue entry here would bypass matching and produce another review later.
+  const route = await routeGitHubRuleEvent?.({
+    host: 'github.com',
+    repo: repoFullName,
+    number: prNumber,
+  });
+  if (route === 'rules') {
+    json(res, 200, { routed: 'rules', repository: repoFullName });
+    return;
+  }
+  if (route === 'unknown') {
+    res.setHeader('Retry-After', '60');
+    json(res, 503, { error: 'Rule source membership is unavailable', retry: true });
+    return;
+  }
+
+  // Check auto_dispatch (default true) for sources still using legacy dispatch.
   if (project.webhooks?.auto_dispatch === false) {
     console.log(`[webhook/github] auto_dispatch disabled for ${project.name}, skipping queue`);
     json(res, 200, { ignored: true, reason: 'auto_dispatch disabled' });

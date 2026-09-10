@@ -42,9 +42,10 @@ export type RepeatReviewResumeAttempt =
  * Runner mechanics remain behind the shared runner capability adapter.
  */
 export function resolveRepeatReviewResumePlan(
-  current: Pick<Run, 'flowType' | 'project' | 'slotId' | 'repeatReviewContext'>,
+  current: Pick<Run, 'flowType' | 'project' | 'slotId' | 'repeatReviewContext' | 'prWork'>,
   prior: Run | null,
   runner: string,
+  model?: string | null,
 ): RepeatReviewResumePlan {
   const context = current.repeatReviewContext;
   if (!context || context.sessionIntent !== 'resume') return { kind: 'reset' };
@@ -61,6 +62,14 @@ export function resolveRepeatReviewResumePlan(
   ) {
     return { kind: 'fallback', reason: 'missing-session' };
   }
+  const requested = current.prWork?.review;
+  if (
+    requested &&
+    (prior.prWork?.kind !== 'review' ||
+      prior.prWork.review?.ownerId !== requested.ownerId ||
+      prior.prWork.review.profile !== requested.profile)
+  )
+    return { kind: 'fallback', reason: 'missing-session' };
   const priorRef = parseGitHubRef(prior.ticketOrPr);
   if (
     !priorRef ||
@@ -96,6 +105,7 @@ export function resolveRepeatReviewResumePlan(
       reason: anotherRunner ? 'runner-mismatch' : 'missing-session',
     };
   }
+  if (model && reviewer.model !== model) return { kind: 'fallback', reason: 'model-mismatch' };
   return {
     kind: 'resume',
     binding: {

@@ -34,6 +34,7 @@ import {
   signalFileForTask,
 } from '@farmslot/protocol';
 
+import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
@@ -592,6 +593,7 @@ export function createRun(
     deferBackgroundPersist?: boolean;
   },
 ): Run {
+  assertNoAutomatedPRConflict(params, getAllRuns());
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
   }
@@ -933,6 +935,21 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
     return run;
   }
   const updatedAt = new Date().toISOString();
+
+  const activating =
+    isTerminalRunStatus(run.status) &&
+    partial.status !== undefined &&
+    !isTerminalRunStatus(partial.status);
+  const rebindingPR =
+    partial.prNumber !== undefined ||
+    partial.prWork !== undefined ||
+    partial.prPublications !== undefined ||
+    partial.ticketOrPr !== undefined ||
+    partial.project !== undefined ||
+    partial.links !== undefined;
+  if ((activating || rebindingPR) && !isTerminalRunStatus(partial.status ?? run.status)) {
+    assertPRRunActivation({ ...run, ...partial }, getAllRuns());
+  }
 
   const shouldInvalidateRecipeRunGroups =
     (Object.prototype.hasOwnProperty.call(partial, 'liveRecipeContext') &&

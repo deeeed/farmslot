@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Clear selected text before typing a replacement during CDP recipe playback.
+
 ## 0.15.1 - 2026-08-28
 
 - Classify unresolved relative or absolute bundle imports as source errors instead of missing package dependencies, while retaining missing-package precedence for mixed failures.

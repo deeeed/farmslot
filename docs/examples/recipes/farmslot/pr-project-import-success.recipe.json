@@ -1,0 +1,105 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Import a real GitHub Project view",
+  "description": "Read an accessible Project view with the selected account, verify mapped filters, and discard the unsaved team draft.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["project_url", "login"],
+    "properties": {
+      "project_url": {
+        "type": "string"
+      },
+      "login": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "gateway-access",
+    "nodes": {
+      "gateway-access": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-pr-project-import.mts",
+        "timeout_ms": 120000,
+        "intent": "A real provider import returns its Project catalog and preserves configuration without creating work.",
+        "next": "open-prs"
+      },
+      "open-prs": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "The operator can configure PR sources from the connected dashboard.",
+        "next": "wait-panel"
+      },
+      "wait-panel": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "Source authoring remains accessible independently of active runs.",
+        "next": "open-rules"
+      },
+      "open-rules": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-rules",
+        "intent": "Team and rule configuration is available to the authorized operator.",
+        "next": "open-team"
+      },
+      "open-team": {
+        "action": "ui.press",
+        "test_id": "pr-team-create",
+        "intent": "A new team draft can inspect sources before any policy is saved.",
+        "next": "choose-account"
+      },
+      "choose-account": {
+        "action": "ui.set_input",
+        "test_id": "pr-team-account",
+        "value": "{{params.login}}",
+        "intent": "Project reads use the explicitly selected GitHub account.",
+        "next": "enter-url"
+      },
+      "enter-url": {
+        "action": "ui.set_input",
+        "test_id": "pr-project-import-url",
+        "value": "{{params.project_url}}",
+        "intent": "The saved-view URL identifies the Project scope the operator intends to import.",
+        "next": "import"
+      },
+      "import": {
+        "action": "ui.press",
+        "test_id": "pr-project-import",
+        "intent": "Import requests real provider metadata without saving a broader source.",
+        "next": "access-error"
+      },
+      "access-error": {
+        "action": "ui.wait_for",
+        "selector": "pr-project-filter-editor",
+        "text_contains": ["Imported view:", "Mapped"],
+        "timeout_ms": 120000,
+        "intent": "The imported view retains provider filter terms and exposes their mapped predicates.",
+        "next": "show-error"
+      },
+      "show-error": {
+        "action": "ui.scroll",
+        "selector": "pr-project-filter-editor",
+        "scroll_into_view": true,
+        "intent": "The original view filters are readable in the unsaved source draft.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/project-import-success.png",
+        "intent": "The screenshot records successfully imported provider filters before any team is saved.",
+        "next": "close-draft"
+      },
+      "close-draft": {
+        "action": "ui.press",
+        "test_id": "pr-automation-editor-close",
+        "intent": "Discard the unsaved validation draft without modifying existing teams.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

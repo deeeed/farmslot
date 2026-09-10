@@ -14,10 +14,29 @@ import {
   commandCenterRecipeParams,
   recipeGraphUsesAnyAction,
   recipeUsesAnyAction,
+  selectCommandCenterTarget,
 } from './run-recipe.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const execFileAsync = promisify(execFile);
+
+test('recipe authentication and HUD stay on the configured UI origin', () => {
+  const unrelated = { id: 'unrelated', type: 'page', url: 'https://example.com/#prs' };
+  const board = { id: 'board', type: 'page', url: 'http://localhost:5175/#prs' };
+  const fleet = { id: 'fleet', type: 'page', url: 'http://localhost:5175/#fleet' };
+  assert.equal(
+    selectCommandCenterTarget([unrelated, board], 'http://localhost:5175', '').id,
+    'board',
+  );
+  assert.equal(
+    selectCommandCenterTarget([unrelated, fleet, board], 'http://localhost:5175', '#prs').id,
+    'board',
+  );
+  assert.throws(
+    () => selectCommandCenterTarget([unrelated], 'http://localhost:5175', '#prs'),
+    /No Command Center tab/,
+  );
+});
 
 test('Command Center derives a strict manifest for only its implemented actions', async () => {
   const manifest = JSON.parse(

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Inspect PR push inventory in Command Center",
+  "description": "Run after e2e-pr-push-registration.mts against the same validation gateway. Its disabled validation device must appear without exposing an Expo token.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "Open the shared PR dashboard.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The connected dashboard exposes the shared PR automation controls.",
+        "next": "notifications"
+      },
+      "notifications": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-attention",
+        "intent": "Inspect notification delivery separately from incidents and repair policy.",
+        "next": "device"
+      },
+      "device": {
+        "action": "ui.wait_for",
+        "text": "push-validation",
+        "intent": "The second client sees the gateway-persisted registration.",
+        "next": "visible"
+      },
+      "visible": {
+        "action": "ui.scroll",
+        "selector": "[data-testid=\"pr-push-device\"]",
+        "scroll_into_view": true,
+        "intent": "Make the registration status readable.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-push-inventory.png",
+        "intent": "The screenshot records the disabled device status shown by the gateway-backed inventory.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

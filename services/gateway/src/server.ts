@@ -722,7 +722,7 @@ function sendEvent(ws: WebSocket, event: string, payload: unknown): void {
   ws.send(JSON.stringify(frame));
 }
 
-export function broadcast(frame: EventFrame): void {
+export function broadcast(frame: EventFrame, ownerId?: string): void {
   const msg = JSON.stringify(frame);
   let authorizationFaultLogged = false;
   for (const [ws, state] of clients) {
@@ -730,6 +730,10 @@ export function broadcast(frame: EventFrame): void {
     let canReceive: boolean;
     try {
       canReceive = canReceiveBroadcast(activeAuthRuntime, state, frame.event);
+      if (canReceive && ownerId !== undefined) {
+        const resolved = activeAuthRuntime.resolver.resolveSessionPrincipal(state);
+        canReceive = resolved.ok && resolved.principal.id === ownerId;
+      }
     } catch (err) {
       // Live authorization must fail closed for this receiver without turning every
       // timer, monitor, and request that broadcasts into an uncaught crash path.
@@ -752,6 +756,10 @@ export function broadcastEvent(event: string, payload: unknown): void {
     payload,
     seq: ++eventSeq,
   });
+}
+
+export function broadcastPrincipalEvent(ownerId: string, event: string, payload: unknown): void {
+  broadcast({ type: 'event', event, payload, seq: ++eventSeq }, ownerId);
 }
 
 export function closeSessions(predicate: (state: ClientState) => boolean): void {

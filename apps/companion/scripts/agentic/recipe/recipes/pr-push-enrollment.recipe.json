@@ -1,0 +1,65 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Enroll the Android Companion for PR push",
+  "description": "Use a selected development device connected to the validation gateway. The OS notification permission must already be granted. This enables PR push on that device; disable it after the delivery proof.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "adb -s \"$ANDROID_SERIAL\" shell am start -a android.intent.action.VIEW -d 'farmslot-development:///pr-automation' net.siteed.farmslot.development",
+        "intent": "Open the real PR automation route on the selected Android device.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-pr-tab-attention",
+        "timeout_ms": 30000,
+        "intent": "The notification tab is reachable from PR automation.",
+        "next": "notifications"
+      },
+      "notifications": {
+        "action": "ui.press",
+        "test_id": "companion-pr-tab-attention",
+        "intent": "Open recipient-scoped attention and device registration.",
+        "next": "show-toggle"
+      },
+      "show-toggle": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 350,
+        "intent": "Reach the push enrollment control below the team filter.",
+        "next": "enable"
+      },
+      "enable": {
+        "action": "ui.press",
+        "test_id": "companion-pr-push-toggle",
+        "intent": "Explicitly enroll this device for real PR push delivery.",
+        "next": "registered"
+      },
+      "registered": {
+        "action": "ui.wait_for",
+        "text_contains": ["Push enabled on this device"],
+        "timeout_ms": 60000,
+        "intent": "Expo token acquisition and gateway registration have completed.",
+        "next": "screenshot"
+      },
+      "screenshot": {
+        "action": "ui.screenshot",
+        "path": "screenshots/pr-push-enrolled.png",
+        "intent": "The screenshot records the enabled notification status returned by the gateway.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx ../../scripts/check-pr-push-device.mts android",
+        "intent": "A separate authenticated gateway client sees the Android registration without receiving its token.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

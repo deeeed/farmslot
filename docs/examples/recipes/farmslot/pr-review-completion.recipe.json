@@ -1,0 +1,78 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Inspect completed artifact-only review",
+  "description": "Use an existing completed request. Supply REVIEW_REQUEST_ID/GW_URL and its intent_id and 12-character reviewed_sha. Start with Show history off.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["intent_id", "reviewed_sha"],
+    "properties": {
+      "intent_id": {
+        "type": "string"
+      },
+      "reviewed_sha": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "ui.navigate",
+        "target": "#prs",
+        "intent": "Open the connected PR dashboard.",
+        "next": "ready"
+      },
+      "ready": {
+        "action": "ui.wait_for",
+        "selector": "pr-automation-panel",
+        "intent": "The connected dashboard exposes review work independently of active slots.",
+        "next": "reviews"
+      },
+      "reviews": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-reviews",
+        "intent": "Inspect durable review requests.",
+        "next": "history"
+      },
+      "history": {
+        "action": "ui.press",
+        "selector": "input[type=\"checkbox\"]",
+        "intent": "Include completed review rounds.",
+        "next": "result"
+      },
+      "result": {
+        "action": "ui.wait_for",
+        "selector": "[data-review-id=\"{{params.intent_id}}\"]",
+        "text_contains": ["completed", "Reviewed {{params.reviewed_sha}}"],
+        "timeout_ms": 30000,
+        "intent": "The completed worker round exposes its actual reviewed commit.",
+        "next": "show"
+      },
+      "show": {
+        "action": "ui.scroll",
+        "selector": "[data-review-id=\"{{params.intent_id}}\"]",
+        "scroll_into_view": true,
+        "intent": "The reviewed commit and completed status are readable together on the selected round.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "screenshots/completed-review.png",
+        "intent": "Record the completed request and reviewed commit rendered by the client.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-review-completion.mts",
+        "intent": "Confirm report, commit and findings persist on the same actual run without publication.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

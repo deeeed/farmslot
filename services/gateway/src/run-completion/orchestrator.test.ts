@@ -30,8 +30,27 @@ import {
   readEvidenceManifest,
   sanitizePRBody,
   selectedEvidenceKeysForPublication,
+  shouldMarkReadyAfterCompletion,
 } from './orchestrator.js';
 import { makeRun } from './test-fixtures.js';
+
+test('monitor repair completion preserves draft publication state', () => {
+  assert.equal(shouldMarkReadyAfterCompletion({}), true);
+  assert.equal(shouldMarkReadyAfterCompletion({ completionPolicy: 'artifact-only' }), false);
+  assert.equal(
+    shouldMarkReadyAfterCompletion({
+      prWork: {
+        kind: 'repair',
+        id: 'repair',
+        sourceId: 'monitor',
+        headSha: 'head',
+        pr: { host: 'github.com', repo: 'owner/repo', number: 1 },
+        incidentIds: ['incident'],
+      },
+    }),
+    false,
+  );
+});
 
 test('dev and fix-bug publication require their dedicated PR description artifact', () => {
   assert.doesNotThrow(() =>
