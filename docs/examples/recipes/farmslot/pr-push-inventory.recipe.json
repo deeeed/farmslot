@@ -13,15 +13,15 @@
       },
       "ready": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "The connected dashboard exposes the shared PR automation controls.",
         "next": "notifications"
       },
       "notifications": {
         "action": "ui.press",
-        "test_id": "pr-automation-tab-attention",
-        "intent": "Inspect notification delivery separately from incidents and repair policy.",
-        "next": "device"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section before selecting its settings view.",
+        "next": "notifications-workspace-view"
       },
       "device": {
         "action": "ui.wait_for",
@@ -45,6 +45,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "notifications-workspace-view": {
+        "action": "ui.press",
+        "test_id": "pr-automation-tab-attention",
+        "intent": "Inspect notification delivery separately from incidents and repair policy.",
+        "next": "device"
       }
     }
   }

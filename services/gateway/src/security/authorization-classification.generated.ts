@@ -44,6 +44,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'chat.sessionPin': { classification: 'admin' },
   'chat.sessions': { classification: 'admin' },
   'chat.sessionsBulkDelete': { classification: 'admin' },
+  'config.githubAccounts': { classification: 'admin' },
   'config.pool': { classification: 'admin' },
   'config.pool.raw': { classification: 'admin' },
   'config.pool.update': { classification: 'admin' },

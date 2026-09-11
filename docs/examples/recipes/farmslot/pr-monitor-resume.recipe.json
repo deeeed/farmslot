@@ -23,7 +23,7 @@
       },
       "ready": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "The connected dashboard exposes review work independently of active slots.",
         "next": "reviews"
       },
@@ -37,12 +37,12 @@
         "action": "ui.press",
         "selector": "input[type=\"checkbox\"]",
         "intent": "Include completed review rounds.",
-        "next": "result"
+        "next": "select-monitor"
       },
       "result": {
         "action": "ui.wait_for",
         "selector": "[data-monitor-id=\"{{params.monitor_id}}\"]",
-        "text_contains": ["finished"],
+        "text_contains": ["Finished"],
         "timeout_ms": 30000,
         "intent": "The provider-confirmed finished subscription retains its history.",
         "next": "before"
@@ -81,6 +81,12 @@
         "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-lifecycle\"]",
         "intent": "The operator can explicitly resume a finished subscription without re-adding it.",
         "next": "capture"
+      },
+      "select-monitor": {
+        "action": "ui.press",
+        "selector": "[data-monitor-ids~=\"{{params.monitor_id}}\"]",
+        "intent": "Select the historical PR to inspect its monitor.",
+        "next": "result"
       }
     }
   }

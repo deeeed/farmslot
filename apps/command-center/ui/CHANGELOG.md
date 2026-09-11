@@ -4,6 +4,21 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show GitHub review requirements separately from run setup, suppress duplicate review starts by default with an explicit Review anyway override, group the review queue by status, and toggle PR details by clicking the selected row.
+
+- Show the PR author in the PR list and selected detail header.
+
+- Unify tracked PRs, monitoring, and review candidates around one full-width list with a closable right-side detail overlay, URL-restored sections and mobile navigation; separate automation settings and distinguish teams from rules.
+
+- Show ongoing PR work and its slot on monitor cards, with check and repair controls disabled until the active run ends.
+
+- Make monitored PRs compact and expandable, improve text contrast and PR boundaries, show check schedules, and explain alert and agent-repair actions.
+
+- Configure how often rule-created monitors check each PR, separately from matching-PR discovery.
+- Reuse searchable shared choices and slot dialogs across PR configuration, and restore team/rule drafts and editor navigation from private browser draft links.
+
+- Simplify PR team setup with existing farm selection, Project URLs, configured gateway accounts, and collapsed advanced settings; explain teams versus rules, keep forms within mobile widths, and pause dashboard polling while editing.
+
 - Add persistent PR monitoring, direct review/QA intake and project publication policies, with team/rule editing, Project/view filter mapping and notification acknowledgement, inherited slot/model and saved-reviewer controls, and visible queue/provider status.
 
 - Keep browser recipes on the configured Command Center origin and activate that tab before sending input.

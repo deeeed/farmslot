@@ -39,7 +39,7 @@
       },
       "wait-panel": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "next": "open-queue",
         "intent": "Persistent monitoring stays accessible when the PR discovery dashboard cannot load."
       },
@@ -51,7 +51,7 @@
       },
       "open-request": {
         "action": "ui.press",
-        "test_id": "pr-review-request-open",
+        "test_id": "pr-workspace-request-review",
         "next": "enter-pr",
         "intent": "Start an individual review request."
       },

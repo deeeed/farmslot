@@ -46,6 +46,7 @@ import {
   setBinding,
 } from '../integrations/github-bindings-cache.js';
 import { ghRequest } from '../integrations/github-client.js';
+import { GitHubQueryBudgetError } from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
 import {
@@ -261,6 +262,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   try {
     await prefetchPRBatchViaGraphQL(prsByRepo);
   } catch (err) {
+    if (err instanceof GitHubQueryBudgetError) throw err;
     console.warn(
       `[pr.batch] prefetch_failed err=${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
     );
@@ -279,7 +281,8 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
           summary: info.summary,
           repoOverride: info.repo,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof GitHubQueryBudgetError) throw error;
         return null;
       }
     }),
@@ -399,6 +402,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   return {
     pr: prNum,
     title: prTitle,
+    author: raw.author,
     summary: summary ?? null,
     repo: ghRepo,
     headRef: headRefName && headRefName !== '' ? headRefName : null,
@@ -793,7 +797,8 @@ async function findPRForBranch(
     if (isNaN(num)) return null;
     setBinding(branch, repo, num);
     return { pr: num, repo };
-  } catch {
+  } catch (error) {
+    if (error instanceof GitHubQueryBudgetError) throw error;
     return null;
   }
 }

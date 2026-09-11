@@ -180,16 +180,26 @@ export class FleetSummaryBar extends LitElement {
   }
 
   private renderQuota() {
-    const q = this.quota;
-    if (!q || !q.limit) return '';
+    if (!this.quota?.limit) return '';
+    const observations = this.quota.observations ?? [this.quota];
+    const live = observations.filter((item) => Date.parse(item.resetAt) > Date.now());
+    const q = live.reduce(
+      (lowest, item) => (item.percentUsed > lowest.percentUsed ? item : lowest),
+      live[0] ?? this.quota,
+    );
     const pctRemaining = Math.max(0, 100 - q.percentUsed);
     const severity = pctRemaining < 5 ? 'crit' : pctRemaining < 20 ? 'warn' : 'ok';
     const resetMin = Math.max(0, Math.round((new Date(q.resetAt).getTime() - Date.now()) / 60000));
-    const title = `GitHub API: ${q.remaining}/${q.limit} remaining (${q.percentUsed}% used). Resets in ${resetMin}m at ${new Date(q.resetAt).toLocaleTimeString()}.`;
+    const expired = new Date(q.resetAt).getTime() <= Date.now();
+    const resource = q.resource === 'graphql' ? 'GraphQL' : q.resource === 'core' ? 'REST' : 'API';
+    const buckets = live
+      .map((item) => `${item.resource ?? 'API'}: ${item.remaining}/${item.limit}`)
+      .join('; ');
+    const title = `Lowest remaining quota observed by this gateway${buckets ? ` (${buckets})` : ''}. Last observed GitHub ${resource} quota: ${q.remaining}/${q.limit} remaining.${q.observedAt ? ` Observed at ${new Date(q.observedAt).toLocaleTimeString()}.` : ''} ${expired ? 'Reset time passed; waiting for the next GitHub response.' : `Resets in ${resetMin}m at ${new Date(q.resetAt).toLocaleTimeString()}.`}`;
     return html`
-      <span class="quota ${severity}" title=${title}>
-        <span class="quota-label">gh</span>
-        ${q.remaining}/${q.limit}
+      <span class="quota ${expired ? 'ok' : severity}" title=${title}>
+        <span class="quota-label">gh ${resource}</span>
+        ${expired ? 'awaiting update' : `${q.remaining}/${q.limit}`}
       </span>
     `;
   }

@@ -1,3 +1,10 @@
+export class GitHubQueryBudgetError extends Error {
+  constructor(readonly retryAt: string) {
+    super(`GitHub query budget is reserved; next eligible read at ${retryAt}`);
+    this.name = 'GitHubQueryBudgetError';
+  }
+}
+
 export interface GitHubQueryQuota {
   cost: number;
   remaining: number;
@@ -25,8 +32,7 @@ export class GitHubQueryBudget {
 
   assertAvailable(key: string, now = Date.now()): void {
     const retryAt = this.nextEligibleAt(key, now);
-    if (retryAt)
-      throw new Error(`GitHub query budget is reserved; next eligible read at ${retryAt}`);
+    if (retryAt) throw new GitHubQueryBudgetError(retryAt);
   }
 
   observe(key: string, value: unknown): void {

@@ -26,6 +26,7 @@ import {
 import { resolvePRExecution, verifyPRRepairExecution } from '../backlog/pr-execution.js';
 import { getAllRuns, runRecordPath } from '../runs/store.js';
 
+import { activePRRuns } from './active-work.js';
 import { monitorRepairIsOpen, monitorRepairRefusal } from './repair-plan.js';
 import type { PRMonitoringService } from './service.js';
 import type { PRMonitorStore } from './store.js';
@@ -178,7 +179,7 @@ export class PRRepairDispatcher implements PRQueueAdmissionHooks {
         }
         continue;
       }
-      if (this.authorized(monitor.ownerId))
+      if (this.authorized(monitor.ownerId) && !activePRRuns(monitor).length)
         await this.store.ensureRepair(monitor.id, monitor.ownerId);
       const previousRevision = monitor.revision;
       monitor = this.store.get(monitor.id, monitor.ownerId);

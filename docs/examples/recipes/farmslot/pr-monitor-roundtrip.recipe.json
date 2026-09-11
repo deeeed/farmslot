@@ -24,14 +24,14 @@
       "panel": {
         "action": "ui.wait_for",
         "intent": "Monitoring controls are available independently of PR discovery.",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "next": "tab"
       },
       "tab": {
         "action": "ui.press",
         "intent": "The operator can configure the validation subscription.",
         "test_id": "pr-automation-tab-monitors",
-        "next": "monitor-loaded"
+        "next": "select-monitor"
       },
       "edit": {
         "action": "ui.press",
@@ -61,7 +61,7 @@
       "saved": {
         "action": "ui.wait_for",
         "intent": "The updated monitor returns to the inventory.",
-        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-edit\"]:not(:disabled)",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"][aria-busy=\"false\"] > summary",
         "next": "verify"
       },
       "verify": {
@@ -76,10 +76,16 @@
       },
       "monitor-loaded": {
         "action": "ui.wait_for",
-        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"] [data-testid=\"pr-monitor-edit\"]:not(:disabled)",
+        "selector": "[data-monitor-id=\"{{params.monitor_id}}\"][aria-busy=\"false\"] > summary",
         "timeout_ms": 15000,
         "intent": "The requested subscription has arrived from the gateway before editing.",
         "next": "edit"
+      },
+      "select-monitor": {
+        "action": "ui.press",
+        "selector": "[data-monitor-ids~=\"{{params.monitor_id}}\"]",
+        "intent": "Select this PR in the unified list to open its monitoring controls.",
+        "next": "monitor-loaded"
       }
     }
   }

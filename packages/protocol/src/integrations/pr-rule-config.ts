@@ -194,7 +194,9 @@ export function assertPRTriggerRuleConfig(value: unknown): asserts value is PRTr
       if (action.execution !== undefined) assertPRExecutionProfile(action.execution);
       if (action.review !== undefined) assertPRReviewOptions(action.review);
     } else if (action.kind === 'monitor') {
-      keys(action, ['kind', 'policy']);
+      keys(action, ['kind', 'policy', 'pollIntervalMs']);
+      if (action.pollIntervalMs !== undefined)
+        integer(action.pollIntervalMs, 'monitor.pollIntervalMs', 60_000, 86_400_000);
       record(action.policy, 'monitor policy');
       if (action.policy.mode === 'notify-only') keys(action.policy, ['mode']);
       else if (action.policy.mode === 'automatic-repair') {

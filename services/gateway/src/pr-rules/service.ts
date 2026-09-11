@@ -474,7 +474,7 @@ export class PRRuleService {
           teamId: action.teamId,
           project: action.project,
           policy: action.monitorPolicy,
-          pollIntervalMs: 300_000,
+          pollIntervalMs: action.monitorPollIntervalMs ?? 300_000,
           watchedChecks: [],
           automaticAttemptLimit: 2,
           cooldownMs: 900_000,
@@ -495,6 +495,23 @@ export class PRRuleService {
   }
   async decideReview(ownerId: string, id: string, action: 'accept' | 'defer'): Promise<void> {
     this.assertAuthorized(ownerId);
+    if (action === 'accept') {
+      const intent = this.store.list(ownerId).intents.find((item) => item.id === id);
+      if (!intent) throw new Error('Review intent not found');
+      assertReviewNotStarting(id);
+      if (['running', 'completed', 'failed'].includes(intent.status))
+        throw new Error('Use the linked run controls for a review that has already started');
+      for (const source of intent.contributions.filter((source) => source.eligible)) {
+        if (source.submissionId !== undefined) {
+          const submission = await this.refreshSubmission(ownerId, source.submissionId);
+          if (submission.error) throw new Error(submission.error);
+        } else {
+          const preview = await this.refreshTarget(ownerId, source.ruleId, intent.pr);
+          if (!preview.complete)
+            throw new Error('Current GitHub review status could not be verified.');
+        }
+      }
+    }
     await this.store.decideReview(id, ownerId, action, assertReviewNotStarting);
     this.notifyChanges();
   }

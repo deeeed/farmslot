@@ -6,7 +6,11 @@
     "type": "object",
     "additionalProperties": false,
     "required": ["rule_id"],
-    "properties": { "rule_id": { "type": "string" } }
+    "properties": {
+      "rule_id": {
+        "type": "string"
+      }
+    }
   },
   "workflow": {
     "entry": "open",
@@ -19,15 +23,15 @@
       },
       "ready": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "The authenticated dashboard exposes the persisted rule controls.",
         "next": "rules"
       },
       "rules": {
         "action": "ui.press",
-        "test_id": "pr-automation-tab-rules",
-        "intent": "Saved discovery rules remain accessible independently of review workers.",
-        "next": "rule"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section before selecting its settings view.",
+        "next": "rules-workspace-view"
       },
       "rule": {
         "action": "ui.scroll",
@@ -62,7 +66,16 @@
         "intent": "The screenshot records actual saved-page progress and source coverage status.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "rules-workspace-view": {
+        "action": "ui.press",
+        "intent": "Saved discovery rules remain accessible independently of review workers.",
+        "next": "rule",
+        "selector": "[aria-label=\"PR automation views\"] [data-testid=\"pr-automation-tab-rules\"]"
+      }
     }
   }
 }

@@ -1,6 +1,7 @@
 import { html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import type { PRRulePredicate } from '@farmslot/protocol';
 import type {
   BacklogItem,
   DispatchCandidatesResult,
@@ -26,6 +27,8 @@ import type {
 import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
 import { INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1 } from '@farmslot/protocol';
 
+import '../components/pr-dashboard/pr-project-field-picker.js';
+import '../components/shared/choice-picker.js';
 // Import components we're showcasing
 import '../components/fleet-map/slot-card.js';
 import '../components/fleet-map/fleet-canvas.js';
@@ -90,6 +93,7 @@ import '../components/slot-actions/slot-actions-modal.js';
 import '../components/shared/update-banner.js';
 
 import { buildCaseCatalog, catalogItemFromManual } from '../components/evals/eval-suite-helpers.js';
+import { newPRExecution } from '../components/pr-dashboard/pr-execution-picker.js';
 import type { RunnerModelEffortChangeDetail } from '../components/shared/runner-model-effort-picker.js';
 import type { SlotChoiceChangeDetail } from '../components/shared/slot-choice-list.js';
 import type { StreamFeed } from '../components/stream-feed/stream-feed.js';
@@ -176,6 +180,8 @@ type DevRoute =
   | 'runner-model-effort'
   | 'slot-choice-list'
   | 'slot-selector'
+  | 'choice-picker'
+  | 'pr-execution'
   | 'step-inspector'
   | 'step-artifacts'
   | 'resource-panel'
@@ -204,6 +210,8 @@ const DEV_ROUTE_GROUP_LABELS: Record<DevHarnessGroup, string> = {
 };
 
 const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup }> = [
+  { route: 'choice-picker', label: 'Searchable Choice Picker', group: 'components' },
+  { route: 'pr-execution', label: 'PR Execution Configuration', group: 'components' },
   { route: 'fleet-map', label: 'Fleet Map', group: 'screens' },
   { route: 'terminal-grid', label: 'Terminal Grid', group: 'screens' },
   { route: 'pr-board', label: 'PR Board', group: 'screens' },
@@ -272,6 +280,14 @@ const VALID_DEV_ROUTES = new Set<DevRoute>(DEV_ROUTES.map(({ route }) => route))
 
 @customElement('dev-harness')
 export class DevHarness extends LitElement {
+  @state() private choiceValue = '';
+  @state() private projectFieldComparison: Extract<PRRulePredicate, { kind: 'compare' }> = {
+    kind: 'compare',
+    field: { projectId: 'project-demo', fieldId: 'field-status', valueType: 'single-select' },
+    operator: 'equals',
+    value: 'review',
+  };
+  @state() private prExecution = newPRExecution();
   @state() private route: DevRoute = 'index';
   @state() private _pickerDomain = 'perps';
   @state() private _pickerMode: 'autonomous' | 'interactive' = 'autonomous';
@@ -460,6 +476,62 @@ export class DevHarness extends LitElement {
         return this.renderRunnerModelEffortPicker();
       case 'slot-choice-list':
         return this.renderSlotChoiceList();
+      case 'choice-picker':
+        return html`<div style="padding:24px;max-width:500px">
+          <h3>Shared searchable choices</h3>
+          <label
+            >Farm<choice-picker
+              .value=${this.choiceValue}
+              @change=${(event: Event) => {
+                this.choiceValue = (event.target as HTMLSelectElement).value;
+              }}
+              ><option value="">Choose a farm</option>
+              <option value="mobile">Mobile farm</option>
+              <option value="extension">Extension farm</option>
+              <option value="offline" disabled>Unavailable farm</option></choice-picker
+            ></label
+          >
+          <p>Selected: ${this.choiceValue || 'none'}</p>
+        </div>`;
+      case 'pr-execution':
+        return html`<div style="padding:24px;max-width:900px">
+          <h3>PR execution using shared selectors</h3>
+          <pr-execution-picker
+            .slots=${mockFleetSlots()}
+            .allProjects=${true}
+            .value=${this.prExecution}
+            @execution-change=${(event: CustomEvent) => {
+              this.prExecution = event.detail;
+            }}
+          ></pr-execution-picker>
+          <h3>Restored Project field selection</h3>
+          <pr-project-field-picker
+            .node=${this.projectFieldComparison}
+            .catalogs=${[
+              {
+                id: 'project-demo',
+                title: 'Example Project',
+                url: 'https://github.com/orgs/example/projects/1',
+                fields: [
+                  {
+                    id: 'field-status',
+                    name: 'Status',
+                    dataType: 'SINGLE_SELECT',
+                    options: [
+                      { id: 'todo', name: 'Todo' },
+                      { id: 'review', name: 'In review' },
+                    ],
+                  },
+                ],
+              },
+            ]}
+            @comparison-change=${(
+              event: CustomEvent<Extract<PRRulePredicate, { kind: 'compare' }>>,
+            ) => {
+              this.projectFieldComparison = event.detail;
+            }}
+          ></pr-project-field-picker>
+        </div>`;
       case 'slot-selector':
         return this.renderSlotSelector();
       case 'step-inspector':
@@ -4010,6 +4082,7 @@ ${JSON.stringify(
           .filters=${{ projects: [], machines: ['runner-local'] }}
           project="example-mobile"
           heading="Dev harness slot selector"
+          .filterable=${true}
           @slot-selector-change=${(event: CustomEvent<{ selected: string[] }>) => {
             this._slotSelectorSelection = event.detail.selected;
           }}

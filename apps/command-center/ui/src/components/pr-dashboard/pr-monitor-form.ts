@@ -3,14 +3,20 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   assertPRMonitorConfig,
+  type ConfigGitHubAccountsResult,
   monitoredPRUrl,
   parseGitHubPullUrl,
   type PRExecutionProfile,
   type PRMonitorConfig,
+  type PRSourceAccount,
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
 import './pr-execution-picker.js';
+import './pr-github-account-picker.js';
+
+import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 import { newPRExecution } from './pr-execution-picker.js';
@@ -22,6 +28,7 @@ export interface PRMonitorFormSave {
 
 @customElement('pr-monitor-form')
 export class PRMonitorForm extends LitElement {
+  @property() prUrl = '';
   @property({ attribute: false }) initial?: PRMonitorConfig;
   @property({ attribute: false }) projects: string[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
@@ -29,6 +36,9 @@ export class PRMonitorForm extends LitElement {
   @property({ type: Boolean }) enabled = false;
   @property({ type: Boolean }) disabled = false;
   @state() private url = '';
+  @property({ attribute: false }) accounts: ConfigGitHubAccountsResult['accounts'] = [];
+  @property() accountError = '';
+  @state() private accountHost = 'github.com';
   @state() private login = '';
   @state() private project = '';
   @state() private automatic = false;
@@ -41,10 +51,12 @@ export class PRMonitorForm extends LitElement {
   static styles = prAutomationStyles;
 
   protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('prUrl') && !this.initial) this.url = this.prUrl;
     if (changed.has('initial') && this.initial) {
       const config = this.initial;
       this.url = monitoredPRUrl(config.pr);
       this.login = config.account.login;
+      this.accountHost = config.account.host;
       this.project = config.project ?? '';
       this.automatic = config.policy.mode === 'automatic-repair';
       this.execution =
@@ -70,7 +82,7 @@ export class PRMonitorForm extends LitElement {
           repo: parsed.repo,
           number: parsed.number,
         },
-        account: { host: this.initial?.account.host ?? 'github.com', login: this.login.trim() },
+        account: { host: this.accountHost, login: this.login.trim() },
         ...(this.project ? { project: this.project } : {}),
         ...(this.initial?.teamId ? { teamId: this.initial.teamId } : {}),
         policy: this.automatic
@@ -113,41 +125,42 @@ export class PRMonitorForm extends LitElement {
                     this.url = (event.target as HTMLInputElement).value;
                   }}
               /></label>`}
+          <pr-github-account-picker
+            .accounts=${this.accounts}
+            .value=${{ host: this.accountHost, login: this.login }}
+            .disabled=${this.disabled || (Boolean(this.initial) && !this.publication)}
+            .error=${this.accountError}
+            @account-change=${(event: CustomEvent<PRSourceAccount>) => {
+              event.stopPropagation();
+              this.login = event.detail.login;
+              this.accountHost = event.detail.host;
+            }}
+          ></pr-github-account-picker>
           <label
-            >GitHub account login<input
-              required
-              .value=${this.login}
-              ?disabled=${Boolean(this.initial) && !this.publication}
-              placeholder="Account configured on the gateway"
-              @input=${(event: Event) => {
-                this.login = (event.target as HTMLInputElement).value;
-              }}
-          /></label>
-          <label
-            >Project<select
+            >Project<choice-picker
               .value=${this.project}
               ?disabled=${this.publication && Boolean(this.initial?.project)}
               ?required=${this.publication || this.automatic}
               @change=${(event: Event) => {
-                this.project = (event.target as HTMLSelectElement).value;
+                this.project = (event.target as ChoicePicker).value;
               }}
             >
               <option value="">Monitoring only, no project</option>
               ${[...new Set([...this.projects, this.project].filter(Boolean))].map(
                 (name) => html`<option .value=${name}>${name}</option>`,
               )}
-            </select></label
+            </choice-picker></label
           >
           <label
-            >Response<select
+            >Response<choice-picker
               .value=${this.automatic ? 'automatic' : 'notify'}
               @change=${(event: Event) => {
-                this.automatic = (event.target as HTMLSelectElement).value === 'automatic';
+                this.automatic = (event.target as ChoicePicker).value === 'automatic';
               }}
             >
               <option value="notify">Notify only</option>
               <option value="automatic">Automatically run PR completion</option>
-            </select></label
+            </choice-picker></label
           >
         </div>
         ${this.publication

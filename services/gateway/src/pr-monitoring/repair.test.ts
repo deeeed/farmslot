@@ -92,6 +92,47 @@ async function fixture(t: test.TestContext) {
   };
 }
 
+test('active PR work prevents planning a new automatic repair', async (t) => {
+  const { store, monitor, dispatcher } = await fixture(t);
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'project',
+    ticketOrPr: 'owner/repo#501',
+  });
+  updateRun(run.id, { status: 'monitoring', slotId: 'work-slot' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  await dispatcher.reconcile();
+  assert.equal(store.get(monitor.id, 'owner').repairs?.length ?? 0, 0);
+  assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === monitor.id));
+});
+
+test('active PR work suspends an existing queued repair without losing the request', async (t) => {
+  const { store, monitor, dispatcher } = await fixture(t);
+  await dispatcher.reconcile();
+  const repair = store.get(monitor.id, 'owner').repairs?.[0];
+  assert(repair);
+  assert(getQueueSnapshot().some((item) => item.prWork?.sourceId === monitor.id));
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'project',
+    ticketOrPr: 'owner/repo#501',
+  });
+  updateRun(run.id, { status: 'monitoring', slotId: 'work-slot' });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  await dispatcher.reconcile();
+  const suspended = store.get(monitor.id, 'owner').repairs?.find((item) => item.id === repair.id);
+  assert.equal(suspended?.state, 'blocked');
+  assert.match(suspended?.waitingReason ?? '', /owned by run/);
+  assert.equal(suspended?.runId, undefined);
+  assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === monitor.id));
+});
+
 test('repair-produced check heads retain limits and cooldown after restart without hiding new evidence', async (t) => {
   const { store, monitor, file } = await fixture(t);
   let current = store.get(monitor.id, 'owner');

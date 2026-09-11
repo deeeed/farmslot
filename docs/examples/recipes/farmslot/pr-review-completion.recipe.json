@@ -26,7 +26,7 @@
       },
       "ready": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "The connected dashboard exposes review work independently of active slots.",
         "next": "reviews"
       },
@@ -40,12 +40,12 @@
         "action": "ui.press",
         "selector": "input[type=\"checkbox\"]",
         "intent": "Include completed review rounds.",
-        "next": "result"
+        "next": "select-review-pr"
       },
       "result": {
         "action": "ui.wait_for",
         "selector": "[data-review-id=\"{{params.intent_id}}\"]",
-        "text_contains": ["completed", "Reviewed {{params.reviewed_sha}}"],
+        "text_contains": ["Completed", "Reviewed {{params.reviewed_sha}}"],
         "timeout_ms": 30000,
         "intent": "The completed worker round exposes its actual reviewed commit.",
         "next": "show"
@@ -72,6 +72,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "select-review-pr": {
+        "action": "ui.press",
+        "selector": "[data-review-ids~=\"{{params.intent_id}}\"]",
+        "intent": "Select the PR to inspect its completed review in the shared viewer.",
+        "next": "result"
       }
     }
   }

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
+import type { GitHubRateLimitPayload } from '@farmslot/protocol';
+
 const responses: Array<{ stdout: string; failed?: boolean }> = [];
 let calls = 0;
 const fakeExecFile = Object.assign(
@@ -109,4 +111,56 @@ test('only structured missing repository or PR errors mean the target is unavail
       assert.equal(error instanceof GitHubPRUnavailableError, index < 2);
     }
   }
+});
+
+test('legacy dashboard GraphQL reads obey the observed reserve without blocking REST', async () => {
+  const account = { host: 'github.com', token: 'test-dashboard-reserve', scope: 'owner' };
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  responses.push({
+    stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: 12\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"data":{"viewer":{"login":"reader"}}}`,
+  });
+  await ghRequest(['api', 'graphql', '-f', 'query=query { viewer { login } }'], { account });
+  const before = calls;
+  for (const args of [
+    ['api', 'graphql', '--paginate'],
+    ['pr', 'view', '1'],
+    ['pr', 'checks', '1'],
+    ['pr', 'list'],
+  ])
+    await assert.rejects(ghRequest(args, { account }), /query budget is reserved/);
+  assert.equal(calls, before, 'Held requests must not spawn gh');
+  responses.push({
+    stdout:
+      'HTTP/2.0 200 OK\r\nx-ratelimit-resource: core\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: 4500\r\n\r\n{}',
+  });
+  await ghRequest(['api', 'repos/owner/repo'], { account });
+  assert.equal(calls, before + 1);
+  const { getQuotaSnapshot } = await import('./github-client.js');
+  const observations = getQuotaSnapshot().observations!;
+  assert(observations.some((item) => item.resource === 'graphql' && item.remaining === 12));
+  assert(observations.some((item) => item.resource === 'core' && item.remaining === 4500));
+});
+
+test('quota broadcasts update counts within a bucket and identify the resource', async () => {
+  const { initGitHubClient, getQuotaSnapshot } = await import('./github-client.js');
+  const events: Array<{ event: string; payload: unknown }> = [];
+  initGitHubClient((event, payload) => events.push({ event, payload }));
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  for (const remaining of [4000, 3900, 3950]) {
+    responses.push({
+      stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-limit: 5000\r\nx-ratelimit-remaining: ${remaining}\r\nx-ratelimit-reset: ${reset}\r\n\r\n{}`,
+    });
+    await ghRequest(['api', 'graphql', '-f', `query=query { value${remaining} }`], {
+      account: { host: 'github.com', token: 'test-quota-counts', scope: 'owner' },
+    });
+  }
+  assert.equal(events.length, 2);
+  assert.equal(getQuotaSnapshot().resource, 'graphql');
+  assert.equal(
+    getQuotaSnapshot().remaining,
+    3900,
+    'A late older response cannot raise the displayed budget',
+  );
+  assert.equal((events[1].payload as GitHubRateLimitPayload).remaining, 3900);
+  assert(Number.isFinite(Date.parse((events[1].payload as GitHubRateLimitPayload).observedAt!)));
 });

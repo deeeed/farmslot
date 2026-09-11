@@ -90,6 +90,7 @@ test('synthesizeRawSnapshotFromGraphQL → parseChecksOutput maps CheckRun + Sta
     reviewDecision: 'APPROVED',
     headRefName: 'feat/x',
     title: 'My PR',
+    author: { login: 'pr-author' },
     statusCheckRollup: {
       contexts: {
         nodes: [
@@ -142,6 +143,7 @@ test('synthesizeRawSnapshotFromGraphQL → parseChecksOutput maps CheckRun + Sta
   // Expect TSV rows in the bucket vocabulary that `gh pr checks --json bucket` emits.
   // Don't `.trim()` — that would strip the trailing tab on the last StatusContext
   // row (jq @tsv emits 4 columns with empty trailing fields preserved).
+  assert.equal(snap.author, 'pr-author');
   const lines = snap.checksStdout.replace(/\n$/, '').split('\n');
   assert.equal(lines.length, 5);
   assert.equal(lines[0], 'lint\tpass\tt1\tt2');

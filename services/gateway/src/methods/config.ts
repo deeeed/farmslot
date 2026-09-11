@@ -6,6 +6,7 @@ import { copyFile, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
+  ConfigGitHubAccountsResult,
   ConfigPoolParams,
   ConfigPoolRawResult,
   ConfigPoolResult,
@@ -49,6 +50,7 @@ import {
   loadProjectConfig,
   loadProjectConfigs,
 } from '../fleet/state.js';
+import { gatewayGitHubAccounts } from '../integrations/github-accounts.js';
 import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
@@ -543,4 +545,13 @@ export async function configProjectAutoRecoveryUpdate(
   if (!project) throw new Error(`Project not found after update: ${params.project}`);
   console.log(`[config] project ${params.project} auto_recovery updated, backup: ${backupPath}`);
   return { ok: true, backup: backupPath, project };
+}
+
+export async function configGitHubAccounts(params: unknown): Promise<ConfigGitHubAccountsResult> {
+  if (!params || typeof params !== 'object' || Array.isArray(params))
+    throw new Error('Parameters must be an object');
+  const refresh = (params as { refresh?: unknown }).refresh;
+  if (refresh !== undefined && typeof refresh !== 'boolean')
+    throw new Error('refresh must be boolean');
+  return gatewayGitHubAccounts(refresh === true);
 }

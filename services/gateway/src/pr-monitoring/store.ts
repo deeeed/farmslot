@@ -280,6 +280,7 @@ export class PRMonitorStore {
     expectedRevision: number,
     result: { observation: PRMonitorObservation } | { error: string; checkedAt: string },
     expectedObservationGeneration?: number,
+    canObserve: () => boolean = () => true,
   ): Promise<PRMonitor | null> {
     const update = structuredClone(result);
     return this.change((data) => {
@@ -289,7 +290,7 @@ export class PRMonitorStore {
         expectedObservationGeneration === undefined
           ? monitor.revision !== expectedRevision
           : (monitor.observationGeneration ?? 0) !== expectedObservationGeneration;
-      if (stale || monitor.lifecycle !== 'active') return null;
+      if (stale || monitor.lifecycle !== 'active' || !canObserve()) return null;
       const checkedAt = 'observation' in update ? update.observation.checkedAt : update.checkedAt;
       if (!Number.isFinite(Date.parse(checkedAt))) throw new Error('Invalid observation timestamp');
       if (monitor.observation && checkedAt < monitor.observation.checkedAt) return null;

@@ -84,6 +84,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `chat.sessionPin`                       | chat             | bounded-write | —      | —      | Chat SessionPin gateway method.                       |
 | `chat.sessions`                         | chat             | bounded-write | —      | —      | Chat Sessions gateway method.                         |
 | `chat.sessionsBulkDelete`               | chat             | bounded-write | —      | —      | Chat SessionsBulkDelete gateway method.               |
+| `config.githubAccounts`                 | config           | bounded-write | —      | —      | Config GithubAccounts gateway method.                 |
 | `config.pool`                           | config           | bounded-write | —      | —      | Config Pool gateway method.                           |
 | `config.pool.raw`                       | config           | bounded-write | —      | —      | Config Pool Raw gateway method.                       |
 | `config.pool.update`                    | config           | bounded-write | —      | —      | Config Pool Update gateway method.                    |

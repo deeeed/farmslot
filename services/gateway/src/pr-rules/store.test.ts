@@ -84,6 +84,7 @@ function preview(team: PRTeamProfile, rule: PRTriggerRule, headSha = 'head-a'): 
           facts: {
             state: { state: 'known', value: 'open' },
             draft: { state: 'known', value: false },
+            author: { state: 'known', value: 'teammate' },
           },
         },
         match: { state: 'match', reasons: ['Configured team matched'] },
@@ -108,6 +109,8 @@ test('activation baselines existing PRs; later changes admit once and survive re
   const reloaded = await PRRuleStore.load(file);
   await reloaded.applyPreview('owner', changed);
   assert.equal(reloaded.list('owner').intents.length, 1);
+  assert.equal(reloaded.list('owner').intents[0].author, 'teammate');
+  assert.equal(reloaded.list('owner').intents[0].title, 'PR');
 });
 
 test('overlapping teams deduplicate reviews, intersect constraints, and filter private provenance', async (t) => {

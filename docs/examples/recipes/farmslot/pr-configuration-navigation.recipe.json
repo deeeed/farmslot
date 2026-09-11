@@ -1,0 +1,19 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Shared PR configuration selectors and draft navigation",
+  "description": "Set FARMSLOT_UI_URL, SETUP_FARM and SETUP_GITHUB_LOGIN. Optionally set SETUP_RULE_TEAM to verify separate discovery and monitor intervals through draft reload. Uses real gateway metadata in an isolated browser tab; no team/rule saves or work dispatches. Verifies shared controls, private draft reload and browser history.",
+  "workflow": {
+    "entry": "configuration",
+    "nodes": {
+      "configuration": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-configuration-navigation.mts",
+        "intent": "Check the team/rule explanation at mobile and desktop widths, choose real farm slots, preserve global and per-model settings through reload and Back/Forward, and exercise shared dev-harness selectors.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end"
+      }
+    }
+  }
+}

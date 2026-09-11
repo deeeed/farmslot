@@ -366,3 +366,51 @@ test('unreadable Project targets preserve legacy routing and uncertain rules do 
     before.rules.find((r) => r.id === rule.id)!.revision,
   );
 });
+
+test('accept refreshes GitHub review state before rejecting duplicate work or allowing a re-request', async (t) => {
+  const { store, rule, subject } = await revisionFixture(t);
+  const reviewRule = await store.saveRule(
+    'owner',
+    { ...rule.config, actions: [{ kind: 'review', autoStart: false }] },
+    rule.id,
+    rule.revision,
+  );
+  await store.setEnabled('owner', reviewRule.id, reviewRule.revision, true, true);
+  subject.facts.draft = { state: 'known', value: false };
+  subject.reviewObservation = {
+    observedAt: new Date().toISOString(),
+    headSha: 'head',
+    state: 'open',
+    draft: false,
+    decision: 'REVIEW_REQUIRED',
+    reviewer: 'reader',
+    requested: false,
+    review: null,
+  };
+  let reads = 0;
+  const service = new PRRuleService(
+    store,
+    () => true,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      reads++;
+      return { complete: true, subjects: [subject], errors: [], ignoredItems: 0 };
+    },
+  );
+  await store.applyPreview('owner', await service.preview('owner', reviewRule.id, subject.pr));
+  const intent = store.list('owner').intents[0];
+  assert(intent);
+  subject.reviewObservation.review = { state: 'APPROVED', commit: 'head', submittedAt: null };
+  await assert.rejects(service.decideReview('owner', intent.id, 'accept'), /already reviewed/);
+  assert.equal(reads, 2);
+  assert.equal(store.intent(intent.id)?.contributions[0].acceptedAt, undefined);
+  subject.reviewObservation.requested = true;
+  await service.decideReview('owner', intent.id, 'accept');
+  assert.equal(reads, 3);
+  assert(store.intent(intent.id)?.contributions[0].acceptedAt);
+  await assert.rejects(service.decideReview('other-owner', intent.id, 'accept'), /not found/);
+  assert.equal(reads, 3, 'An unauthorized principal never reads the PR through another account');
+});

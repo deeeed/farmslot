@@ -36,15 +36,15 @@
       },
       "wait-panel": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "Source authoring remains accessible independently of active runs.",
         "next": "open-rules"
       },
       "open-rules": {
         "action": "ui.press",
-        "test_id": "pr-automation-tab-rules",
-        "intent": "Team and rule configuration is available to the authorized operator.",
-        "next": "open-team"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section before selecting its settings view.",
+        "next": "open-rules-workspace-view"
       },
       "open-team": {
         "action": "ui.press",
@@ -102,6 +102,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "open-rules-workspace-view": {
+        "action": "ui.press",
+        "intent": "Team and rule configuration is available to the authorized operator.",
+        "next": "open-team",
+        "selector": "[aria-label=\"PR automation views\"] [data-testid=\"pr-automation-tab-rules\"]"
       }
     }
   }

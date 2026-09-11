@@ -12,14 +12,18 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
 import './pr-execution-picker.js';
 import './pr-review-options-picker.js';
+
+import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 import { newPRExecution } from './pr-execution-picker.js';
 
 @customElement('pr-review-request-form')
 export class PRReviewRequestForm extends LitElement {
+  @property() prUrl = '';
   @property({ attribute: false }) teams: PRTeamProfile[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
   @property({ type: Boolean }) disabled = false;
@@ -33,6 +37,9 @@ export class PRReviewRequestForm extends LitElement {
   @state() private error = '';
   private requestKey?: string;
   static styles = prAutomationStyles;
+  protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has('prUrl')) this.url = this.prUrl;
+  }
   private edited() {
     this.requestKey = undefined;
   }
@@ -86,13 +93,12 @@ export class PRReviewRequestForm extends LitElement {
               }}
           /></label>
           <label
-            >Team policy<select
+            >Team policy<choice-picker
               data-testid="pr-review-request-team"
-              .size=${Math.min(6, Math.max(2, this.teams.length + 1))}
               required
               .value=${this.teamId}
               @change=${(event: Event) => {
-                this.teamId = (event.target as HTMLSelectElement).value;
+                this.teamId = (event.target as ChoicePicker).value;
               }}
             >
               <option value="">Choose a team</option>
@@ -102,7 +108,7 @@ export class PRReviewRequestForm extends LitElement {
                     ${item.config.name}
                   </option>`,
               )}
-            </select></label
+            </choice-picker></label
           >
         </div>
         ${!this.teams.length

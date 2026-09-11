@@ -56,3 +56,18 @@ export async function resolvePRSourceAccount(
   }
   return binding;
 }
+
+/** Account references can be edited offline; a new binding must resolve to a real gateway credential. */
+export async function verifyPRSourceAccountChange(
+  account: PRSourceAccount,
+  ownerId: string,
+  previous?: PRSourceAccount,
+): Promise<void> {
+  if (
+    previous &&
+    previous.host.toLowerCase() === account.host.toLowerCase() &&
+    previous.login.toLowerCase() === account.login.toLowerCase()
+  )
+    return;
+  await resolvePRSourceAccount(account, ownerId);
+}

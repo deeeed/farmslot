@@ -50,6 +50,7 @@ async function fixture(t: test.TestContext) {
       facts: {
         state: { state: 'known', value: 'open' },
         draft: { state: 'known', value: false },
+        author: { state: 'known', value: 'pr-author' },
       },
     },
     match: { state: 'match', reasons: ['Matches team policy'] },
@@ -79,6 +80,8 @@ test('idempotent intake survives restart and rejects changed payloads without tr
   assert.equal((await restarted.submit('owner', request)).id, first.id);
   assert.equal(restarted.submission(first.id, 'owner').intentId, applied.intentId);
   assert.equal(restarted.intent(applied.intentId!)?.status, 'held');
+  assert.equal(restarted.intent(applied.intentId!)?.author, 'pr-author');
+  assert.equal(restarted.intent(applied.intentId!)?.title, 'Review');
   assert.equal(restarted.intent(applied.intentId!)?.contributions[0].ownerId, 'owner');
   assert.equal(
     restarted.intent(applied.intentId!)?.contributions[0].review?.validationDepth,

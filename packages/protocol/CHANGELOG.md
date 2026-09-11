@@ -4,6 +4,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose account-scoped GitHub review observations and a shared guard against unnecessary repeat reviews.
+
+- Include optional author and review title metadata in PR status and review intent contracts.
+
+- Expose active PR-owning runs and slots alongside monitoring state without changing saved subscription lifecycles.
+
+- Allow trigger rules to configure the polling interval of newly enrolled PR monitors independently of discovery.
+- Add gateway GitHub account inventory and API resource/timestamp metadata for quota observations.
+
 - Add persistent PR subscriptions, team trigger rules with saved source progress and Project/view filter bindings and durable notification/enrollment receipts, recipient-scoped push registration and automated review policies for slot/model/effort selection, live QA and saved reviewer sessions.
 
 - Preserve the last actionable CI feedback fingerprint across gateway restarts for no-progress timeouts.

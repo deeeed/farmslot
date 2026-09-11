@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the gateway GitHub account inventory method.
+
 - Document the gateway methods and events for PR monitoring, review rules, and push notifications.
 
 - docs(api): regenerate the gateway API reference for `resource.device.inventory` and classify it read-only in the generator.

@@ -181,6 +181,7 @@ export class GatewayClient {
   private wsAbort: AbortController | null = null;
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
+  private principalId: string | null = null;
   private reqId = 0;
   private pending = new Map<string, PendingRequest>();
   private eventSubs = new Map<string, Set<EventCallback>>();
@@ -222,6 +223,10 @@ export class GatewayClient {
 
   get connectionState(): ConnectionState {
     return this.state;
+  }
+
+  get authenticatedPrincipalId(): string | null {
+    return this.state === 'connected' ? this.principalId : null;
   }
 
   get connectionEpoch(): number {
@@ -378,6 +383,7 @@ export class GatewayClient {
       ...this.auth,
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
+    this.principalId = result.principal?.id ?? null;
     this.epoch += 1;
     this.backoff = 1000;
     this.lastAuthError = null;

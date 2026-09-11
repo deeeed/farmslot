@@ -6,6 +6,12 @@ export interface GitHubRulePR {
   title: string;
   updatedAt?: string;
   reviewDecision?: string | null;
+  viewerLatestReview?: {
+    state: string;
+    submittedAt: string | null;
+    commit: { oid: string } | null;
+  } | null;
+  viewerLatestReviewRequest?: { id: string } | null;
   state: string;
   isDraft: boolean;
   headRefOid: string;
@@ -40,7 +46,7 @@ export interface GitHubProjectItem {
 }
 
 export const GITHUB_RULE_PAGE_INFO = 'pageInfo { hasNextPage endCursor }';
-export const GITHUB_RULE_PR_FIELDS = `id number title state updatedAt reviewDecision isDraft headRefOid baseRefOid baseRefName headRefName author { login } repository { nameWithOwner } labels(first:20) { ${GITHUB_RULE_PAGE_INFO} nodes { name } }`;
+export const GITHUB_RULE_PR_FIELDS = `id number title state updatedAt reviewDecision viewerLatestReview { state submittedAt commit { oid } } viewerLatestReviewRequest { id } isDraft headRefOid baseRefOid baseRefName headRefName author { login } repository { nameWithOwner } labels(first:20) { ${GITHUB_RULE_PAGE_INFO} nodes { name } }`;
 const GITHUB_PROJECT_FIELD_COMMON = '... on ProjectV2FieldCommon { id name dataType }';
 export const GITHUB_PROJECT_FIELD = `${GITHUB_PROJECT_FIELD_COMMON} ... on ProjectV2SingleSelectField { options { id name } }`;
 export const GITHUB_PROJECT_VALUE_FIELDS = `

@@ -5,6 +5,7 @@ export * from './contracts/index.js';
 export * from './integrations/github-ref.js';
 export * from './integrations/pr-monitoring.js';
 export * from './integrations/pr-project-import.js';
+export * from './integrations/pr-review-requirements.js';
 export * from './integrations/pr-rule-config.js';
 export * from './integrations/pr-rule-predicates.js';
 export * from './pairing/index.js';

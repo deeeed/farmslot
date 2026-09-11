@@ -8,7 +8,10 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
 import './pr-review-policy-editor.js';
+
+import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 import type { PRReviewPolicyChange } from './pr-review-policy-editor.js';
@@ -52,15 +55,20 @@ export class PRRepositoryPolicies extends LitElement {
                     this.edit(index, { repo: (event.target as HTMLInputElement).value.trim() })}
               /></label>
               <label
-                >Farmslot project<input
+                >Farmslot project<choice-picker
                   data-testid="pr-repository-project"
-                  list="pr-policy-projects"
                   .value=${policy.project ?? ''}
                   @change=${(event: Event) =>
                     this.edit(index, {
-                      project: (event.target as HTMLInputElement).value.trim() || undefined,
+                      project: (event.target as ChoicePicker).value || undefined,
                     })}
-              /></label>
+                >
+                  <option value="">No review farm selected</option>
+                  ${this.projects.map(
+                    (project) => html`<option .value=${project}>${project}</option>`,
+                  )}
+                </choice-picker></label
+              >
               <label
                 >Review profile<input
                   data-testid="pr-repository-profile"
@@ -138,9 +146,7 @@ export class PRRepositoryPolicies extends LitElement {
             </button>
           </section>`,
       )}
-      <datalist id="pr-policy-projects">
-        ${this.projects.map((project) => html`<option .value=${project}></option>`)}
-      </datalist>
+
       <button
         type="button"
         data-testid="pr-repository-add"

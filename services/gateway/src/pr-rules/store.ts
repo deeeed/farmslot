@@ -7,6 +7,7 @@ import {
   assertPRTeamConfig,
   assertPRTriggerRuleConfig,
   monitoredPRKey,
+  prReviewBlockedReason,
   type PRReviewContribution,
   type PRReviewIntent,
   type PRReviewRequest,
@@ -23,7 +24,12 @@ import {
 import { writeAtomicJSON } from '../core/atomic-json.js';
 
 import { admitRuleAction, withdrawRuleActions } from './actions.js';
-import { reconcileReviewIntent, reviewIntentId, reviewSubjectRevision } from './intents.js';
+import {
+  reconcileReviewIntent,
+  reviewIntentId,
+  reviewSubjectRevision,
+  updateReviewDisplay,
+} from './intents.js';
 import { decodePRRuleStore } from './store-schema.js';
 import { applyReviewSubmission, createReviewSubmission } from './submissions.js';
 
@@ -267,7 +273,13 @@ export class PRRuleStore {
         (source) => source.ownerId === ownerId && source.eligible,
       );
       if (!owned.length) throw new Error('No current matching rule authorizes this review');
-      if (action === 'accept') delete intent.dispatchHold;
+      if (action === 'accept') {
+        const unnecessary = owned
+          .map((source) => prReviewBlockedReason(source.reviewObservation))
+          .find(Boolean);
+        if (unnecessary) throw new Error(unnecessary);
+        delete intent.dispatchHold;
+      }
       for (const source of owned) {
         const rule = data.rules.find((item) => item.id === source.ruleId);
         const submission = data.submissions?.find((item) => item.id === source.submissionId);
@@ -683,7 +695,9 @@ export class PRRuleStore {
           };
           data.intents.push(intent);
         }
+        updateReviewDisplay(intent, item);
         const contribution: PRReviewContribution = {
+          reviewObservation: item.subject.reviewObservation,
           ruleId: rule.id,
           ruleRevision: rule.revision,
           teamId: team.id,

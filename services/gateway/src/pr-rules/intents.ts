@@ -4,6 +4,7 @@ import {
   DEFAULT_PR_REVIEW_OPTIONS,
   intersectPRExecutionProfiles,
   monitoredPRKey,
+  prReviewBlockedReason,
   type PRReviewIntent,
   type PRRulePreviewItem,
 } from '@farmslot/protocol';
@@ -28,6 +29,15 @@ export function reviewSubjectRevision(item: PRRulePreviewItem): string {
     .digest('hex');
 }
 
+export function updateReviewDisplay(intent: PRReviewIntent, item: PRRulePreviewItem): void {
+  const author = item.subject.facts.author;
+  intent.title = item.subject.title;
+  intent.author =
+    author?.state === 'known' && typeof author.value === 'string'
+      ? author.value || undefined
+      : undefined;
+}
+
 export function reconcileReviewIntent(intent: PRReviewIntent): void {
   if (intent.status === 'running' || intent.status === 'completed' || intent.status === 'failed')
     return;
@@ -35,6 +45,15 @@ export function reconcileReviewIntent(intent: PRReviewIntent): void {
   if (!contributors.length) {
     intent.status = 'withdrawn';
     intent.waitingReason = 'No enabled rule currently authorizes this review';
+    return;
+  }
+  const unnecessary = contributors
+    .map((item) => prReviewBlockedReason(item.reviewObservation))
+    .find(Boolean);
+  if (unnecessary) {
+    intent.status = 'held';
+    // This summary is shared across owners; account-specific details stay in filtered contributions.
+    intent.waitingReason = 'Review is not needed for the current GitHub state.';
     return;
   }
   const projects = new Set(contributors.map((item) => item.project));
@@ -91,6 +110,7 @@ export function reviewIntentAuthorized(intent: PRReviewIntent): boolean {
     active.length > 0 &&
     active.every(
       (item) =>
+        !prReviewBlockedReason(item.reviewObservation) &&
         !item.configurationErrors.length &&
         !item.deferredAt &&
         (item.autoStart || Boolean(item.acceptedAt)),

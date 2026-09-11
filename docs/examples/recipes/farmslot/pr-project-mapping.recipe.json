@@ -30,14 +30,14 @@
       "panel": {
         "action": "ui.wait_for",
         "intent": "PR automation controls are available independently of active runs.",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "next": "rules"
       },
       "rules": {
         "action": "ui.press",
-        "intent": "The operator can inspect the saved Project source draft.",
-        "test_id": "pr-automation-tab-rules",
-        "next": "edit"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section before selecting its settings view.",
+        "next": "rules-workspace-view"
       },
       "edit": {
         "action": "ui.press",
@@ -105,6 +105,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "rules-workspace-view": {
+        "action": "ui.press",
+        "intent": "The operator can inspect the saved Project source draft.",
+        "next": "edit",
+        "selector": "[aria-label=\"PR automation views\"] [data-testid=\"pr-automation-tab-rules\"]"
       }
     }
   }

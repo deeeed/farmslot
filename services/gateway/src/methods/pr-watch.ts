@@ -5,6 +5,7 @@ import {
   assertPRMonitorConfig,
   Events,
   Methods,
+  monitoredPRKey,
   type PRMonitorConfig,
   type PRProjectMonitorPolicy,
 } from '@farmslot/protocol';
@@ -12,6 +13,7 @@ import {
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
 import { farmslotRoot, loadProjectConfig } from '../fleet/state.js';
 import { PRRepairDispatcher } from '../pr-monitoring/dispatch.js';
+import { verifyPRSourceAccountChange } from '../pr-monitoring/github-account.js';
 import { PRPublicationEnrollment } from '../pr-monitoring/publication.js';
 import { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRMonitorStore } from '../pr-monitoring/store.js';
@@ -30,6 +32,7 @@ export function initPRMonitorDispatch(
   poll: boolean,
 ): void {
   if (!service) throw new Error('PR monitoring must be initialized before repair dispatch');
+  const monitoring = service;
   dispatcher?.stop();
   dispatcher = new PRRepairDispatcher(
     service.store,
@@ -38,7 +41,8 @@ export function initPRMonitorDispatch(
       const owner = auth.resolver.resolvePrincipalId(ownerId);
       return owner.ok && isAdminPrincipal(owner.principal);
     },
-    (monitor) => publish(monitor.ownerId, Events.PR_WATCH_UPDATED, { monitor }),
+    (monitor) =>
+      publish(monitor.ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) }),
   );
   initPRQueueAdmission('repair', dispatcher);
   enrollment?.stop();
@@ -58,17 +62,18 @@ export async function initPRMonitoring(
   publishPolicy = (ownerId, policy) => publish(ownerId, Events.PR_WATCH_POLICY_UPDATED, { policy });
   service?.stop();
   const store = await PRMonitorStore.load(resolve(farmslotRoot, '.pr-monitors.json'));
-  service = new PRMonitoringService(
+  const monitoring = new PRMonitoringService(
     store,
     (ownerId) => {
       const owner = auth.resolver.resolvePrincipalId(ownerId);
       return owner.ok && isAdminPrincipal(owner.principal);
     },
     (ownerId, monitor) => {
-      publish(ownerId, Events.PR_WATCH_UPDATED, { monitor });
+      publish(ownerId, Events.PR_WATCH_UPDATED, { monitor: monitoring.present(monitor) });
       if (poll) dispatcher?.wake();
     },
   );
+  service = monitoring;
   if (poll) service.start();
   return service;
 }
@@ -108,6 +113,7 @@ export async function routePRWatchMethod(
   )
     return { handled: false };
   if (!service) throw new Error('PR monitoring service is not initialized');
+  const presentMonitor = service.present.bind(service);
   const originator = currentSessionOriginator();
   if (originator.kind !== 'principal')
     throw new Error('An authenticated monitoring principal is required');
@@ -117,17 +123,28 @@ export async function routePRWatchMethod(
     return {
       handled: true,
       value: {
-        monitors: service.store.list(ownerId),
+        monitors: service.store.list(ownerId).map(presentMonitor),
         schedulerError: service.schedulerError ?? dispatcher?.error,
         projectPolicies: service.store.projectPolicies(ownerId),
         publicationErrors: enrollment?.errors(ownerId),
       },
     };
-  if (method === Methods.PR_WATCH_SUBSCRIBE)
+  if (method === Methods.PR_WATCH_SUBSCRIBE) {
+    const config = configuration(p.config);
+    const existing = service.store
+      .list(ownerId)
+      .find(
+        (monitor) =>
+          monitoredPRKey(monitor.config.pr) === monitoredPRKey(config.pr) &&
+          monitor.config.account.host.toLowerCase() === config.account.host.toLowerCase() &&
+          monitor.config.account.login.toLowerCase() === config.account.login.toLowerCase(),
+      );
+    await verifyPRSourceAccountChange(config.account, ownerId, existing?.config.account);
     return {
       handled: true,
-      value: { monitor: await service.subscribe(ownerId, configuration(p.config)) },
+      value: { monitor: presentMonitor(await service.subscribe(ownerId, config)) },
     };
+  }
   if (method === Methods.PR_WATCH_PROJECT_POLICY_SET) {
     const project = string(p.project, 'project');
     if (typeof p.enabled !== 'boolean') throw new Error('enabled must be explicit');
@@ -156,6 +173,10 @@ export async function routePRWatchMethod(
       automaticAttemptLimit: full.automaticAttemptLimit,
       cooldownMs: full.cooldownMs,
     };
+    const previousAccount = service.store
+      .projectPolicies(ownerId)
+      .find((policy) => policy.project === project)?.config.account;
+    await verifyPRSourceAccountChange(policyConfig.account, ownerId, previousAccount);
     const policy = await service.store.saveProjectPolicy(
       ownerId,
       project,
@@ -169,9 +190,12 @@ export async function routePRWatchMethod(
   }
   const id = string(p.id, 'id');
   if (method === Methods.PR_WATCH_GET)
-    return { handled: true, value: { monitor: service.store.get(id, ownerId) } };
+    return { handled: true, value: { monitor: presentMonitor(service.store.get(id, ownerId)) } };
   if (method === Methods.PR_WATCH_REFRESH)
-    return { handled: true, value: { monitor: await service.refresh(id, ownerId) } };
+    return {
+      handled: true,
+      value: { monitor: presentMonitor(await service.refresh(id, ownerId)) },
+    };
   if (typeof p.revision !== 'number' || !Number.isSafeInteger(p.revision) || p.revision < 1)
     throw new Error('revision must be a positive integer');
   let monitor;
@@ -188,9 +212,15 @@ export async function routePRWatchMethod(
       execution,
     });
     dispatcher?.wake();
-  } else if (method === Methods.PR_WATCH_CONFIGURE)
-    monitor = await service.configure(id, ownerId, p.revision, configuration(p.config));
-  else if (method === Methods.PR_WATCH_ACKNOWLEDGE)
+  } else if (method === Methods.PR_WATCH_CONFIGURE) {
+    const config = configuration(p.config);
+    await verifyPRSourceAccountChange(
+      config.account,
+      ownerId,
+      service.store.get(id, ownerId).config.account,
+    );
+    monitor = await service.configure(id, ownerId, p.revision, config);
+  } else if (method === Methods.PR_WATCH_ACKNOWLEDGE)
     monitor = await service.acknowledge(
       id,
       ownerId,
@@ -203,5 +233,5 @@ export async function routePRWatchMethod(
       throw new Error('Invalid monitor lifecycle');
     monitor = await service.lifecycle(id, ownerId, p.revision, p.lifecycle);
   }
-  return { handled: true, value: { monitor } };
+  return { handled: true, value: { monitor: presentMonitor(monitor) } };
 }

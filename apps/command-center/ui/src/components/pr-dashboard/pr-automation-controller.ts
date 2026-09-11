@@ -1,6 +1,8 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
 import {
+  type ConfigGitHubAccountsResult,
+  type ConfigProjectsResult,
   Events,
   Methods,
   type PRPushListResult,
@@ -14,6 +16,10 @@ import { getState, subscribe } from '../../state.js';
 export class PRAutomationController implements ReactiveController {
   monitors: PRWatchListResult = { monitors: [] };
   reviews: PRRulesListResult = { teams: [], rules: [], intents: [] };
+  projectConfigs: ConfigProjectsResult['projects'] = [];
+  githubAccounts: ConfigGitHubAccountsResult['accounts'] = [];
+  accountsError = '';
+  private accountsLoaded = false;
   push: PRPushListResult = { attention: [], devices: [], deliveries: [] };
   error = '';
   actionError = '';
@@ -34,7 +40,12 @@ export class PRAutomationController implements ReactiveController {
     return getState().fleet?.slots ?? [];
   }
   get projects(): string[] {
-    return [...new Set(this.slots.map((slot) => slot.project))].sort();
+    return [
+      ...new Set([
+        ...this.projectConfigs.map((project) => project.name),
+        ...this.slots.map((slot) => slot.project),
+      ]),
+    ].sort();
   }
 
   hostConnected(): void {
@@ -48,6 +59,10 @@ export class PRAutomationController implements ReactiveController {
       ].map((event) => gateway.subscribe(event, () => void this.refresh())),
       subscribe(() => this.host.requestUpdate()),
       gateway.onConnectionChange(() => {
+        this.projectConfigs = [];
+        this.githubAccounts = [];
+        this.accountsError = '';
+        this.accountsLoaded = false;
         this.push = { attention: [], devices: [], deliveries: [] };
         this.monitors = { monitors: [] };
         this.reviews = { teams: [], rules: [], intents: [] };
@@ -77,10 +92,13 @@ export class PRAutomationController implements ReactiveController {
       this.loading = true;
       this.host.requestUpdate();
       const epoch = gateway.connectionEpoch;
-      const [monitors, reviews, push] = await Promise.allSettled([
+      if (!this.accountsLoaded) await this.refreshAccounts();
+      if (!this.active || epoch !== gateway.connectionEpoch) continue;
+      const [monitors, reviews, push, projects] = await Promise.allSettled([
         gateway.request<PRWatchListResult>(Methods.PR_WATCH_LIST, {}),
         gateway.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
         gateway.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
+        gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
       ]);
       if (!this.active || epoch !== gateway.connectionEpoch) continue;
       const errors: string[] = [];
@@ -90,11 +108,32 @@ export class PRAutomationController implements ReactiveController {
       else errors.push(`Review intake: ${String(reviews.reason)}`);
       if (push.status === 'fulfilled') this.push = push.value;
       else errors.push(`Notifications: ${String(push.reason)}`);
+      if (projects.status === 'fulfilled') this.projectConfigs = projects.value.projects;
+      else errors.push(`Farm projects: ${String(projects.reason)}`);
       this.error = errors.join('; ');
       this.loading = false;
       this.host.requestUpdate();
     }
     this.loading = false;
+  }
+  async refreshAccounts(refresh = false): Promise<void> {
+    const epoch = gateway.connectionEpoch;
+    try {
+      const result = await gateway.request<ConfigGitHubAccountsResult>(
+        Methods.CONFIG_GITHUB_ACCOUNTS,
+        { refresh },
+        30_000,
+      );
+      if (epoch !== gateway.connectionEpoch) return;
+      this.githubAccounts = result.accounts;
+      this.accountsError = result.error ?? '';
+    } catch (error) {
+      if (epoch !== gateway.connectionEpoch) return;
+      this.githubAccounts = [];
+      this.accountsError = error instanceof Error ? error.message : String(error);
+    }
+    this.accountsLoaded = true;
+    this.host.requestUpdate();
   }
   async mutate<T>(method: string, params: unknown): Promise<T | undefined> {
     if (this.busy) return undefined;
