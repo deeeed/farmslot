@@ -158,6 +158,7 @@ for (const [name, actual, expected] of [
       pools: Methods.CONFIG_POOLS,
       pool: Methods.CONFIG_POOL,
       projects: Methods.CONFIG_PROJECTS,
+      githubAccounts: Methods.CONFIG_GITHUB_ACCOUNTS,
       project: Methods.CONFIG_PROJECT,
       poolRaw: Methods.CONFIG_POOL_RAW,
       templates: Methods.CONFIG_TEMPLATES,

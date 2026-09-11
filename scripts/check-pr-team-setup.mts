@@ -45,10 +45,10 @@ const { targetId } = await host.session.call<{ targetId: string }>('Target.creat
 });
 let page: CdpWebPage | undefined;
 try {
-  await page.session.call('Page.bringToFront');
   const target = (await listCdpTargets('127.0.0.1', port)).find((t) => t.id === targetId);
   assert(target);
   page = await CdpWebPage.connectToTarget(target);
+  await page.session.call('Page.bringToFront');
   const methods: string[] = [];
   await page.session.call('Network.enable');
   page.session.on('Network.webSocketFrameSent', (params) => {
@@ -189,8 +189,18 @@ try {
     !methods.slice(callsBefore).includes('pr.list'),
     'Dashboard polling must pause while editing',
   );
-  assert(
-    !methods.slice(callsBefore).some((m) => m.startsWith('prRules.') || m === 'prWatch.subscribe'),
+  assert.deepEqual(
+    methods
+      .slice(callsBefore)
+      .filter(
+        (method) =>
+          (method.startsWith('prRules.') && method !== 'prRules.list') ||
+          (method.startsWith('prReview.') && method !== 'prReview.get') ||
+          ['prWatch.subscribe', 'prWatch.repair', 'run.create', 'dispatch.execute'].includes(
+            method,
+          ),
+      ),
+    [],
     'Draft must not create or scan automation',
   );
   await page.click('[data-testid="pr-draft-discard"]');

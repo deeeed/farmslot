@@ -29,7 +29,8 @@ export function parseGitHubAccounts(value: unknown): ConfigGitHubAccountsResult[
       try {
         assertPRSourceAccount(account);
       } catch {
-        // A malformed CLI identity cannot be selected; independently valid accounts remain usable.
+        // assertPRSourceAccount throws Error for malformed host/login data.
+        // Skip that identity so independently valid accounts remain usable.
         continue;
       }
       if (

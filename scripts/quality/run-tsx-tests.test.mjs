@@ -796,3 +796,37 @@ test('module-mock files carry their own duration and verdict', () => {
     ],
   );
 });
+
+test('module-mock tests honor the requested TypeScript decorator configuration', () => {
+  mkdirSync(path.join(REPO_ROOT, 'temp'), { recursive: true });
+  const dir = mkdtempSync(path.join(REPO_ROOT, 'temp', 'farmslot-tsconfig-'));
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ type: 'module' }));
+  const config = path.join(dir, 'tsconfig.json');
+  const probe = path.join(dir, 'decorators.test.ts');
+  writeFileSync(config, JSON.stringify({ compilerOptions: { experimentalDecorators: true } }));
+  writeFileSync(
+    probe,
+    `
+    import assert from 'node:assert/strict';
+    import { mock, test } from 'node:test';
+    mock.module('node:os', { namedExports: { platform: () => 'test' } });
+    function field(_target: object, name: string) { assert.equal(name, 'value'); }
+    class Subject { @field value = 1; }
+    test('legacy decorators', () => assert.equal(new Subject().value, 1));
+  `,
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, '--tsconfig', config, probe],
+      {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.equal(result.status, 0, `${result.stdout ?? ''}${result.stderr ?? ''}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

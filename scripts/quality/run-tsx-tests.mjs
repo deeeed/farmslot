@@ -287,7 +287,11 @@ async function runOne(file, context) {
   try {
     result = await runYarn(testCommand(file, context), {
       cwd: context.cwd,
-      env: { ...context.env, [TEST_STATUS_ENV]: testStatusFile },
+      env: {
+        ...context.env,
+        ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
+        [TEST_STATUS_ENV]: testStatusFile,
+      },
       buffered: context.buffered,
     });
   } finally {

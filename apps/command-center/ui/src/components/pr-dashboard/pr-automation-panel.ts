@@ -97,6 +97,8 @@ export class PRAutomationPanel extends LitElement {
   private lastDraft = '';
   private editorScope: string | null | undefined;
   private onHashChange = () => {
+    // Invalidate saves immediately, even if inventory loading delays route restoration.
+    this.editorVersion++;
     this.pendingRoute = parsePRAutomationUrl(location.hash) ?? undefined;
     this.requestUpdate();
   };
