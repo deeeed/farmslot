@@ -9,9 +9,11 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  interactiveHandoffDecisionActions,
   isLightweightInteractiveDevRun,
   type MonitorSnapshot,
   type MonitorViolation,
+  parseInteractiveHandoffTimeoutMinutes,
   PipelineSteps,
   primaryRoleForFlow,
   type Run,
@@ -2356,6 +2358,10 @@ async function createBlockedDecision(
   if (!run) throw new Error('Run not found');
 
   const monitorCtx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  const extendMinutes =
+    reason === 'interactive_handoff'
+      ? parseInteractiveHandoffTimeoutMinutes(description)
+      : undefined;
 
   const decision: RunDecision = {
     id: randomUUID(),
@@ -2364,20 +2370,16 @@ async function createBlockedDecision(
     description,
     actions:
       reason === 'interactive_handoff'
-        ? [
-            {
-              id: 'signal-written',
-              label: 'Check SIGNAL.json & resume',
-              style: 'primary',
-              description:
-                'Reads SIGNAL.json on the slot. Resumes the run only if it contains a fresh terminal status.',
-            },
-            { id: 'abort', label: 'Abort Run', style: 'danger' },
-          ]
+        ? interactiveHandoffDecisionActions({ extendMinutes })
         : actions,
     createdAt: new Date().toISOString(),
     context:
-      reason === 'interactive_handoff' ? { signalFile: monitorCtx?.signalFile ?? null } : undefined,
+      reason === 'interactive_handoff'
+        ? {
+            signalFile: monitorCtx?.signalFile ?? null,
+            ...(extendMinutes != null ? { extendMinutes } : {}),
+          }
+        : undefined,
   };
 
   run.decisions.push(decision);

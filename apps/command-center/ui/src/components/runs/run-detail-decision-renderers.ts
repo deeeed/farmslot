@@ -43,6 +43,8 @@ import {
  * surfaces start needing operator-facing explanations.
  */
 const DECISION_ACTION_FALLBACK_HELP: Record<string, string> = {
+  'monitor_interactive_handoff::continue':
+    'Keep watching the worker for another timeout period. Does not require SIGNAL.json.',
   'engine_collision::create-new':
     'Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch — does not link to existing runs.',
   'engine_collision::start-comparison':

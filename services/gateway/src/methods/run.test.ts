@@ -1395,6 +1395,87 @@ test('runResolveDecision rejects interactive PR-complete handoff resume without 
   assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
 });
 
+test('runResolveDecision extends a timed-out interactive handoff without SIGNAL.json', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `TAT-${Date.now()}`,
+    mode: 'interactive',
+  });
+  const decision: RunDecision = {
+    id: 'interactive-handoff-timeout',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description:
+      'The agent did not write a terminal signal. Finish the PR work in the slot (or verify the signal file), then resume the run.\n\nMonitor note: exceeded 90 minute timeout.',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  const result = await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: 'continue',
+    },
+    () => {},
+  );
+  assert.equal(result.run.decisions[0]?.resolvedAction, 'continue');
+  assert.ok(result.run.decisions[0]?.resolvedAt);
+  updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+});
+
+test('runResolveDecision still rejects continue on a non-timeout interactive handoff', async (t) => {
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'example-mobile-farm',
+    ticketOrPr: `example-org/example-mobile#${Date.now()}`,
+    mode: 'interactive',
+  });
+  const decision: RunDecision = {
+    id: 'interactive-handoff-worker-done',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Worker stopped for human handoff',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runResolveDecision(
+        {
+          runId: run.id,
+          decisionId: decision.id,
+          actionId: 'continue',
+        },
+        () => {},
+      ),
+    /Action not found/,
+  );
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+});
+
 test('runProbeWorkerSignal reports missing slot when run is unbound', async (t) => {
   const run = createRun({
     flowType: 'pr-complete',

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow a timed-out interactive handoff to extend monitoring by the configured timeout without a SIGNAL.json. `continue` is the action id; already-pending timeout notes still qualify.
+
 - Expose account-scoped GitHub review observations and a shared guard against unnecessary repeat reviews.
 
 - Include optional author and review title metadata in PR status and review intent contracts.

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run gate` lists and accepts `continue` on a timed-out interactive handoff so monitoring can be extended without SIGNAL.json.
+
 - feat(machine): `farmslot machine status` and `machine restore` print `restore=<slot> (was
 <original>)` when the Gateway re-homed a freed gate park onto a different slot, so an operator
   attaches to the slot the run actually came back into rather than the one it was parked from.
