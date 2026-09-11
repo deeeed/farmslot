@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PRReviewObservation } from '../contracts/pr-rules.js';
-
-import { prReviewBlockedReason } from './pr-review-requirements.js';
+import type { PRReviewObservation } from '../../src/contracts/pr-rules.js';
+import { prReviewBlockedReason } from '../../src/integrations/pr-review-requirements.js';
 
 const observation: PRReviewObservation = {
   observedAt: '2026-09-10T12:00:00.000Z',
