@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- On a timed-out interactive handoff, offer Extend monitoring for another timeout period without SIGNAL.json. A blocked run with a live monitor keeps the existing worker checklist panel, including after the timeout hold.
+- On a timed-out interactive handoff, offer Extend monitoring for another timeout period without SIGNAL.json. A blocked run with a live monitor keeps the existing worker checklist panel.
 
 - Show GitHub review requirements separately from run setup, suppress duplicate review starts by default with an explicit Review anyway override, group the review queue by status, and toggle PR details by clicking the selected row.
 

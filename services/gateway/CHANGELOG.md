@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Let a timed-out interactive handoff keep watching for another timeout period without SIGNAL.json. `continue` extends the monitor window; a worker-done handoff still requires a terminal signal.
+- Let a timed-out interactive handoff keep watching for another timeout period without SIGNAL.json. `continue` resets the persisted monitor window so a restart does not immediately re-hold. Worker-done handoffs still require a terminal signal.
 
 - Observe GitHub review requirements and account review history, and prevent queued reviews when requirements are satisfied or the account already reviewed the current commit.
 

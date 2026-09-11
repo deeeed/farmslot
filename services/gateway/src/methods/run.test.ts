@@ -1422,6 +1422,15 @@ test('runResolveDecision extends a timed-out interactive handoff without SIGNAL.
     }
   });
 
+  const staleStart = '2026-09-10T15:49:53.703Z';
+  updateRun(run.id, {
+    monitorState: {
+      nudgeCount: 0,
+      lastPollAt: staleStart,
+      startedAt: staleStart,
+    },
+  });
+  const before = Date.now();
   const result = await runResolveDecision(
     {
       runId: run.id,
@@ -1432,7 +1441,53 @@ test('runResolveDecision extends a timed-out interactive handoff without SIGNAL.
   );
   assert.equal(result.run.decisions[0]?.resolvedAction, 'continue');
   assert.ok(result.run.decisions[0]?.resolvedAt);
+  const persistedStart = getRun(run.id)?.monitorState?.startedAt;
+  assert.ok(persistedStart);
+  assert.ok(new Date(persistedStart).getTime() >= before);
+  assert.notEqual(persistedStart, staleStart);
   updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+});
+
+test('runResolveDecision still requires SIGNAL.json when continue is listed without a timeout note', async (t) => {
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'example-mobile-farm',
+    ticketOrPr: `example-org/example-mobile#${Date.now()}`,
+    mode: 'interactive',
+  });
+  const decision: RunDecision = {
+    id: 'interactive-handoff-listed-continue',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Worker stopped for human handoff',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+      { id: 'continue', label: 'Extend monitoring 90 min', style: 'secondary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runResolveDecision(
+        {
+          runId: run.id,
+          decisionId: decision.id,
+          actionId: 'continue',
+        },
+        () => {},
+      ),
+    /fresh terminal SIGNAL\.json/,
+  );
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
 });
 
 test('runResolveDecision still rejects continue on a non-timeout interactive handoff', async (t) => {

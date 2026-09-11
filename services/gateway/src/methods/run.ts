@@ -91,6 +91,7 @@ import {
 } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
+  persistMonitorWindowStart,
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
@@ -1422,6 +1423,10 @@ export async function runResolveDecision(
   // Mark decision as resolved
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = params.actionId;
+  const extendMonitorWindow =
+    params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
+    (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
+  if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
   updateRun(params.runId, { decisions: existing.decisions });
 
   // Unblock whichever resolver owns this decision

@@ -876,7 +876,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <step-inspector
               .step=${ctx.selectedStep}
               .run=${ctx.run}
-              .taskProgress=${ctx.selectedStepProgress}
+              .taskProgress=${ctx.selectedStep?.name === 'monitor'
+                ? null
+                : ctx.selectedStepProgress}
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>

@@ -433,6 +433,15 @@ test('run detail task-progress helpers preserve worker active and self-review fi
     ),
     false,
   );
+  assert.equal(
+    isTaskProgressRunActive(
+      makeRun({
+        status: 'failed',
+        steps: [{ name: 'monitor', status: 'running' }],
+      }),
+    ),
+    false,
+  );
   assert.equal(isTaskProgressRunActive(makeRun({ status: 'completing' })), false);
   assert.equal(
     isTaskProgressRunActive(makeRun({ status: 'completing' }), { includeCompleting: true }),

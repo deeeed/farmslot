@@ -4,7 +4,7 @@ export const INTERACTIVE_HANDOFF_SIGNAL_ACTION = 'signal-written';
 export const INTERACTIVE_HANDOFF_EXTEND_ACTION = 'continue';
 export const DEFAULT_MONITOR_EXTEND_MINUTES = 90;
 
-const TIMEOUT_NOTE_RE = /exceeded (\d+) minute timeout/;
+const TIMEOUT_NOTE_RE = /Monitor note: exceeded (\d+) minute timeout/;
 
 export function parseInteractiveHandoffTimeoutMinutes(
   description: string | undefined,
@@ -61,7 +61,8 @@ export function interactiveHandoffAllowsExtend(
   decision: Pick<RunDecision, 'type' | 'actions' | 'description' | 'context'>,
 ): boolean {
   if (decision.type !== 'monitor_interactive_handoff') return false;
-  if (decision.actions.some((action) => action.id === INTERACTIVE_HANDOFF_EXTEND_ACTION)) {
+  const fromContext = decision.context?.extendMinutes;
+  if (typeof fromContext === 'number' && Number.isFinite(fromContext) && fromContext > 0) {
     return true;
   }
   return parseInteractiveHandoffTimeoutMinutes(decision.description) != null;

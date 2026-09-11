@@ -123,6 +123,7 @@ export function isTaskProgressRunActive(
     return true;
   }
   return Boolean(
+    run.status === 'blocked' &&
     run.steps?.some((step) => LIVE_PROGRESS_STEPS.has(step.name) && step.status === 'running'),
   );
 }

@@ -6,6 +6,7 @@ import { marked } from 'marked';
 import {
   type BranchAffinityNudgePayload,
   DEFAULT_BRANCH,
+  interactiveHandoffAllowsExtend,
   isDispatchScoreStale,
   type PendingDecision,
   type PRStatus,
@@ -188,7 +189,10 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             ? html`<div
                 style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:4px"
               >
-                Mode: ${run.mode}. Finish in the slot, then check SIGNAL.json to resume.
+                Mode: ${run.mode}.
+                ${interactiveHandoffAllowsExtend(pending)
+                  ? 'Finish in the slot, or extend monitoring without SIGNAL.json.'
+                  : 'Finish in the slot, then check SIGNAL.json to resume.'}
               </div>`
             : nothing}
         </div>

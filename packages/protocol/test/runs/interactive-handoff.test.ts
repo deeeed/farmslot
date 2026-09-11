@@ -35,6 +35,7 @@ function handoff(
 test('parseInteractiveHandoffTimeoutMinutes reads the monitor timeout note', () => {
   assert.equal(parseInteractiveHandoffTimeoutMinutes(undefined), undefined);
   assert.equal(parseInteractiveHandoffTimeoutMinutes('Waiting for SIGNAL.json'), undefined);
+  assert.equal(parseInteractiveHandoffTimeoutMinutes('exceeded 90 minute timeout.'), undefined);
   assert.equal(
     parseInteractiveHandoffTimeoutMinutes('Monitor note: exceeded 90 minute timeout.'),
     90,
@@ -75,6 +76,25 @@ test('legacy timeout handoffs expose extend even when it was not persisted', () 
     [INTERACTIVE_HANDOFF_SIGNAL_ACTION, INTERACTIVE_HANDOFF_EXTEND_ACTION, 'abort'],
   );
   assert.equal(interactiveHandoffExtendMinutes(decision), 90);
+});
+
+test('listed continue is not enough without a timeout note', () => {
+  const decision = handoff({
+    actions: [
+      {
+        id: INTERACTIVE_HANDOFF_SIGNAL_ACTION,
+        label: 'Check SIGNAL.json & resume',
+        style: 'primary',
+      },
+      {
+        id: INTERACTIVE_HANDOFF_EXTEND_ACTION,
+        label: 'Extend monitoring 90 min',
+        style: 'secondary',
+      },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+  });
+  assert.equal(interactiveHandoffAllowsExtend(decision), false);
 });
 
 test('worker-done interactive handoffs do not get an implicit extend action', () => {

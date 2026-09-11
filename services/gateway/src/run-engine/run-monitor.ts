@@ -463,6 +463,23 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
   }
 }
 
+/** Reset the persisted monitor clock so a restart cannot immediately re-timeout. */
+export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
+  const run = getRun(runId);
+  if (!run) return;
+  const startedAt = new Date(startedAtMs).toISOString();
+  const prev = run.monitorState;
+  updateRun(runId, {
+    monitorState: prev
+      ? { ...prev, startedAt }
+      : {
+          nudgeCount: run.metrics.nudgeCount,
+          lastPollAt: startedAt,
+          startedAt,
+        },
+  });
+}
+
 // ─── Main monitoring loop ───
 
 export interface MonitorResult {
@@ -1517,6 +1534,7 @@ export async function monitorRun(
           // Avoid immediately reopening the same timeout decision if the operator resolved the
           // handoff but the signal read races with a file write/delete.
           state.startedAt = Date.now();
+          persistMonitorWindowStart(runId, state.startedAt);
           continue;
         }
         const actionId = await createBlockedDecision(
@@ -1530,6 +1548,7 @@ export async function monitorRun(
         }
         // "continue" — extend by another full timeout period
         state.startedAt = Date.now();
+        persistMonitorWindowStart(runId, state.startedAt);
       }
     }
     exitReason = 'cancelled';
