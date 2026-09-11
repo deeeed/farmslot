@@ -96,6 +96,16 @@ export abstract class ReadyWorkspaceState extends LitElement {
       this._pendingConfirm = pending;
     },
   });
+  hasOpenOverlay(): boolean {
+    return (
+      this._diffModalOpen ||
+      this._reviewModalOpen ||
+      this._reviewFlowModalOpen ||
+      this._lightboxOpen ||
+      this._inputArtifactViewerOpen
+    );
+  }
+
   readonly _boundKeydown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
     if (this._diffModalOpen) {

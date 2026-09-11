@@ -71,6 +71,7 @@ function renderFamilyRunSelectorItem(
     <button
       class="run-item ${selected ? 'selected' : ''} ${terminalRunEmphasisClass(run.status)}"
       style=${`--run-status-color:${status}; --run-status-bg:${status}18`}
+      data-testid=${`family-run-${run.runId}`}
       @click=${() => options.onSelectRun(run.runId)}
     >
       <div class="run-item-top">

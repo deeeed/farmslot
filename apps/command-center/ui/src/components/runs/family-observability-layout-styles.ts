@@ -12,6 +12,9 @@ export const familyObservabilityLayoutStyles = css`
     font-family: ${unsafeCSS(fonts.mono)};
     box-sizing: border-box;
   }
+  :host(.gate-maximized) {
+    overflow: hidden;
+  }
   .back {
     color: ${unsafeCSS(colors.textMuted)};
     cursor: pointer;
@@ -162,6 +165,43 @@ export const familyObservabilityLayoutStyles = css`
     font-size: 11px;
     margin-top: 4px;
     line-height: 1.4;
+  }
+  .publish-gate-reopen-head {
+    display: flex;
+    align-items: center;
+    gap: ${unsafeCSS(spacing.sm)};
+    flex-wrap: wrap;
+  }
+  .publish-gate-reopen-actions {
+    margin-left: auto;
+    display: flex;
+    gap: ${unsafeCSS(spacing.sm)};
+    flex-wrap: wrap;
+  }
+  .publish-gate-host {
+    margin-top: ${unsafeCSS(spacing.sm)};
+    height: min(82vh, 920px);
+    min-height: 520px;
+    overflow: auto;
+    border: 1px solid ${unsafeCSS(colors.textMuted)}33;
+    border-radius: ${unsafeCSS(radii.md)};
+  }
+  .publish-gate-reopen.maximized {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    margin: 0;
+    padding: ${unsafeCSS(spacing.md)};
+    display: flex;
+    flex-direction: column;
+    background: ${unsafeCSS(colors.bgCard)};
+    border: none;
+    border-radius: 0;
+  }
+  .publish-gate-reopen.maximized .publish-gate-host {
+    flex: 1;
+    height: auto;
+    min-height: 0;
   }
   .compare-tabs {
     display: flex;

@@ -10,9 +10,15 @@ import type {
 } from '@farmslot/protocol';
 
 import '../shared/step-artifacts.js';
+import '../workspace/ready-workspace.js';
 import './run-pipeline.js';
 import './step-inspector.js';
 
+import {
+  familyPublishGateMaximizeLabel,
+  familyPublishGateReopenLabel,
+  familyReadyGateDecision,
+} from './family-observability-gate-model.js';
 import { pendingRetrospectiveDecision } from './family-observability-retrospective-model.js';
 import { renderPendingRetrospectiveDecision } from './family-observability-retrospective-renderers.js';
 import {
@@ -51,6 +57,10 @@ interface FamilySelectedRunDetailRenderOptions {
     freshDispatch?: boolean,
   ) => void;
   renderLedgerDiffDetail: (run: FamilyObservabilityRunSummary) => unknown;
+  gateOpen: boolean;
+  gateMaximized: boolean;
+  onTogglePublishGate: () => void;
+  onTogglePublishGateMaximize: () => void;
 }
 
 export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRenderOptions) {
@@ -61,10 +71,81 @@ export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRe
       decision: retrospective,
       onResolve: options.onResolveRetrospective,
     })}
+    ${renderFamilyPublishGateReopen(options)}
     ${renderFamilyRunSummaryGrid({ run: options.run, runs: options.runs, prs: options.prs })}
     ${renderFamilyRunPipelineDetail(options)} ${options.renderLedgerDiffDetail(options.run)}
     ${renderFamilyRecipeQualityDetail(options.run)} ${renderFamilyRecipeProvenance(options.run)}
     ${renderFamilyLearnings(options.run)} ${renderFamilyMissingData(options.run)}
+  `;
+}
+
+function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOptions) {
+  const decision = familyReadyGateDecision(options.fullRun) ?? familyReadyGateDecision(options.run);
+  if (!decision) return nothing;
+  const resolvedLabel = decision.resolvedAt
+    ? `Resolved · ${decision.resolvedAction ?? 'done'}`
+    : 'Pending';
+  const maximized = options.gateOpen && options.gateMaximized;
+  return html`
+    <div
+      class="detail-section publish-gate-reopen ${maximized ? 'maximized' : ''}"
+      data-testid="family-publish-gate"
+      data-gate-open=${options.gateOpen ? 'true' : 'false'}
+      data-gate-max=${maximized ? 'true' : 'false'}
+      data-resolved-action=${decision.resolvedAction ?? ''}
+    >
+      <div class="publish-gate-reopen-head">
+        <div class="detail-title">Publish gate</div>
+        <span class="muted">${resolvedLabel}</span>
+        <span class="publish-gate-reopen-actions">
+          ${options.gateOpen
+            ? html`
+                <button
+                  class="action-btn small"
+                  type="button"
+                  data-testid="family-maximize-publish-gate"
+                  @click=${options.onTogglePublishGateMaximize}
+                >
+                  ${familyPublishGateMaximizeLabel(maximized)}
+                </button>
+              `
+            : nothing}
+          <button
+            class="action-btn small"
+            type="button"
+            data-testid="family-reopen-publish-gate"
+            @click=${options.onTogglePublishGate}
+          >
+            ${familyPublishGateReopenLabel({ decision, gateOpen: options.gateOpen })}
+          </button>
+        </span>
+      </div>
+      ${options.gateOpen
+        ? options.fullRun
+          ? html`
+              <div class="publish-gate-host">
+                <ready-workspace
+                  .runId=${options.fullRun.id}
+                  .decision=${decision}
+                  .run=${options.fullRun}
+                  slotId=${options.fullRun.slotId ?? ''}
+                  branch=${options.fullRun.branch ?? ''}
+                  runner=${options.fullRun.metrics.runner ?? ''}
+                  .postureBlockedReason=${decision.resolvedAt
+                    ? null
+                    : 'Resolve this gate from Run Detail so resource posture can be chosen.'}
+                ></ready-workspace>
+              </div>
+            `
+          : html`<div class="muted">
+              ${options.fullRunLoading
+                ? 'Loading publish gate…'
+                : options.fullRunError
+                  ? `Publish gate unavailable: ${options.fullRunError}`
+                  : 'Publish gate run payload unavailable.'}
+            </div>`
+        : nothing}
+    </div>
   `;
 }
 
