@@ -976,7 +976,7 @@ export class DevHarness extends LitElement {
       <p class="section-label">Retrospective — family-first historical view</p>
       <family-observability
         .familyId=${'family-proj-2501'}
-        .initialRunId=${snapshot.latestRunId}
+        .initialRunId=${'run-root'}
         .snapshotOverride=${snapshot}
         .fullRunOverrides=${fullRuns}
       ></family-observability>

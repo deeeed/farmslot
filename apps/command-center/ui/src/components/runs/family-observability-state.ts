@@ -28,6 +28,7 @@ import {
 export abstract class FamilyObservabilityState extends LitElement {
   abstract _applyDiffModalFromHash(): void;
   abstract _closeDiffModal(syncHash?: boolean): void;
+  abstract _restorePublishGateMaximize(): void;
 
   @property() familyId = '';
   @property() initialRunId = '';
@@ -82,6 +83,8 @@ export abstract class FamilyObservabilityState extends LitElement {
   @state() _tokenTrajectory: import('./family-observability-token-model.js').FamilyTokenTrajectory =
     'all-runs';
   @state() _replayError = '';
+  @state() _gateOpen = false;
+  @state() _gateMaximized = false;
   _mdPreviewCache = new Map<string, MdFetchEntry<string>>();
   _pairsCache: {
     source: FamilyObservabilitySnapshot | null;
@@ -116,11 +119,17 @@ export abstract class FamilyObservabilityState extends LitElement {
     },
   });
   _onModalKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && this._diffModal) {
+    if (e.key !== 'Escape') return;
+    if (this._diffModal) {
       // Stop the lightbox (rendered as a sibling) from also reacting to the
       // same Escape — without this both modals close on a single press.
       e.stopPropagation();
       this._closeDiffModal();
+      return;
+    }
+    if (this._gateMaximized) {
+      e.stopPropagation();
+      this._restorePublishGateMaximize();
     }
   };
 }

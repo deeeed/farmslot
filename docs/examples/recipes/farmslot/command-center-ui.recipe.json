@@ -79,10 +79,55 @@
       },
       "assert-review-workspace-basics": {
         "action": "ui.wait_for",
-        "next": "capture-recipe-workspace",
+        "next": "open-family-publish-gate-harness",
         "selector": "review-workspace",
         "text_contains": ["Review"],
         "intent": "Verify the Review workspace renders the reviewer context used beside recipe evidence during ready/review flows."
+      },
+      "open-family-publish-gate-harness": {
+        "action": "ui.navigate",
+        "next": "assert-family-reopen-control",
+        "target": "#dev/family-observability",
+        "intent": "Open the family retrospective harness on a historical run that already has a resolved publish-gate decision."
+      },
+      "assert-family-reopen-control": {
+        "action": "ui.wait_for",
+        "next": "press-family-reopen",
+        "test_id": "family-reopen-publish-gate",
+        "text_contains": ["Reopen publish gate"],
+        "intent": "Verify a selected historical run with a publish-gate decision offers reopen without requiring a live pending gate."
+      },
+      "press-family-reopen": {
+        "action": "ui.press",
+        "next": "assert-family-ready-workspace",
+        "test_id": "family-reopen-publish-gate",
+        "intent": "Reopen the persisted publish-gate workspace from family history."
+      },
+      "assert-family-ready-workspace": {
+        "action": "ui.wait_for",
+        "next": "press-family-maximize",
+        "selector": "ready-workspace",
+        "text_contains": ["Resolved"],
+        "intent": "Verify family history remounts the same ready-workspace panel in read-only resolved form."
+      },
+      "press-family-maximize": {
+        "action": "ui.press",
+        "next": "assert-family-gate-maximized",
+        "test_id": "family-maximize-publish-gate",
+        "intent": "Maximize the remounted publish-gate workspace so the historical review uses the full view."
+      },
+      "assert-family-gate-maximized": {
+        "action": "ui.wait_for",
+        "next": "capture-family-publish-gate",
+        "selector": "[data-testid=\"family-publish-gate\"][data-gate-max=\"true\"]",
+        "text_contains": ["Restore"],
+        "intent": "Verify maximize fills the family view and the control switches to Restore."
+      },
+      "capture-family-publish-gate": {
+        "action": "ui.screenshot",
+        "path": "screenshots/family-publish-gate-reopen.svg",
+        "next": "capture-recipe-workspace",
+        "intent": "Record the maximized family publish-gate workspace for review."
       },
       "capture-recipe-workspace": {
         "action": "ui.screenshot",

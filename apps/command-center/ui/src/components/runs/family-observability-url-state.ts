@@ -54,6 +54,7 @@ export function familyRunHash(
     evidence?: FamilyEvidenceFilter;
     tokens?: FamilyTokenScope;
     trajectory?: FamilyTokenTrajectory;
+    gate?: boolean | 'max';
   } = {},
 ): string {
   const params = new URLSearchParams({ run: runId });
@@ -62,7 +63,30 @@ export function familyRunHash(
   if (options.trajectory && options.trajectory !== 'all-runs') {
     params.set('trajectory', options.trajectory);
   }
+  if (options.gate === 'max') params.set('gate', 'max');
+  else if (options.gate) params.set('gate', '1');
   return buildHash(`family/${familyId}`, params);
+}
+
+export type FamilyGateView = 'closed' | 'open' | 'max';
+
+export function familyGateViewFromHash(hash: string = location.hash): FamilyGateView {
+  const { params } = parseHashRoute(hash);
+  const value = params.get('gate');
+  if (value === 'max') return 'max';
+  if (value === '1') return 'open';
+  return 'closed';
+}
+
+export function gateOpenFromFamilyHash(hash: string = location.hash): boolean {
+  return familyGateViewFromHash(hash) !== 'closed';
+}
+
+export function familyGateViewHash(view: FamilyGateView, hash: string = location.hash): string {
+  const { route, params } = parseHashRoute(hash);
+  if (view === 'closed') params.delete('gate');
+  else params.set('gate', view === 'max' ? 'max' : '1');
+  return buildHash(route, params);
 }
 
 export function tokenViewFromFamilyHash(hash: string = location.hash): {

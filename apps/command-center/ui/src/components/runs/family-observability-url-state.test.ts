@@ -6,8 +6,11 @@ import {
   evidenceFilterFromFamilyHash,
   familyDiffModalHash,
   familyEvidenceFilterHash,
+  familyGateViewFromHash,
+  familyGateViewHash,
   familyRunHash,
   familyTokenViewHash,
+  gateOpenFromFamilyHash,
   slotHistoryHashForRun,
   tokenViewFromFamilyHash,
 } from './family-observability-url-state.js';
@@ -21,6 +24,32 @@ test('familyRunHash preserves route shape and encodes run id', () => {
   assert.equal(
     familyRunHash('family-1', 'run-a', { tokens: 'run', trajectory: 'pr-complete-milestones' }),
     '#family/family-1?run=run-a&tokens=run&trajectory=pr-complete-milestones',
+  );
+  assert.equal(
+    familyRunHash('family-1', 'run-a', { gate: true }),
+    '#family/family-1?run=run-a&gate=1',
+  );
+  assert.equal(
+    familyRunHash('family-1', 'run-a', { gate: 'max' }),
+    '#family/family-1?run=run-a&gate=max',
+  );
+});
+
+test('family gate hash helpers round-trip without dropping existing params', () => {
+  const hash = '#family/fam-1?run=abc&machines=macwork';
+  assert.equal(familyGateViewFromHash(hash), 'closed');
+  assert.equal(gateOpenFromFamilyHash(hash), false);
+  assert.equal(familyGateViewHash('open', hash), '#family/fam-1?run=abc&machines=macwork&gate=1');
+  assert.equal(familyGateViewFromHash('#family/fam-1?run=abc&gate=1'), 'open');
+  assert.equal(gateOpenFromFamilyHash('#family/fam-1?run=abc&gate=1'), true);
+  assert.equal(
+    familyGateViewHash('max', '#family/fam-1?run=abc&machines=macwork&gate=1'),
+    '#family/fam-1?run=abc&machines=macwork&gate=max',
+  );
+  assert.equal(familyGateViewFromHash('#family/fam-1?run=abc&gate=max'), 'max');
+  assert.equal(
+    familyGateViewHash('closed', '#family/fam-1?run=abc&machines=macwork&gate=max'),
+    '#family/fam-1?run=abc&machines=macwork',
   );
 });
 

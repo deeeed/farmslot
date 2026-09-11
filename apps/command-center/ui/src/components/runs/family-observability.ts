@@ -100,6 +100,8 @@ import {
   evidenceFilterFromFamilyHash,
   familyCompareViewHash,
   familyEvidenceFilterHash,
+  familyGateViewFromHash,
+  familyGateViewHash,
   familyRunHash,
   familyTokenViewHash,
   slotHistoryHashForRun,
@@ -122,6 +124,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
       tokens: this._tokenScope === 'family' ? undefined : this._tokenScope,
       trajectory: this._tokenTrajectory === 'all-runs' ? undefined : this._tokenTrajectory,
+      gate: this._gateMaximized ? 'max' : this._gateOpen || undefined,
     });
     if (window.location.hash !== newHash) {
       history.replaceState(null, '', newHash);
@@ -210,6 +213,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._applyEvidenceFilterFromHash();
     this._applyCompareViewFromHash();
     this._applyTokenViewFromHash();
+    this._applyGateOpenFromHash();
     void this._loadSnapshot();
     this._fleetSlots = getState().fleet?.slots ?? [];
     this._prs = getState().prs ?? [];
@@ -278,6 +282,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._applyEvidenceFilterFromHash();
     this._applyCompareViewFromHash();
     this._applyTokenViewFromHash();
+    this._applyGateOpenFromHash();
   };
 
   private _applyTokenViewFromHash(): void {
@@ -297,6 +302,41 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _applyEvidenceFilterFromHash(): void {
     const filter = evidenceFilterFromFamilyHash();
     this._evidenceFilter = filter ?? 'all';
+  }
+
+  private _applyGateOpenFromHash(): void {
+    const view = familyGateViewFromHash();
+    this._gateOpen = view !== 'closed';
+    this._gateMaximized = view === 'max';
+    if (this._gateOpen && this.selectedRunId) void this._ensureFullRun(this.selectedRunId);
+  }
+
+  private _persistGateViewHash(): void {
+    const view = !this._gateOpen ? 'closed' : this._gateMaximized ? 'max' : 'open';
+    const newHash = familyGateViewHash(view);
+    if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
+  }
+
+  private _togglePublishGate = () => {
+    this._gateOpen = !this._gateOpen;
+    if (!this._gateOpen) this._gateMaximized = false;
+    if (this._gateOpen && this.selectedRunId) void this._ensureFullRun(this.selectedRunId);
+    this._persistGateViewHash();
+  };
+
+  private _togglePublishGateMaximize = () => {
+    if (!this._gateOpen) {
+      this._gateOpen = true;
+      if (this.selectedRunId) void this._ensureFullRun(this.selectedRunId);
+    }
+    this._gateMaximized = !this._gateMaximized;
+    this._persistGateViewHash();
+  };
+
+  override _restorePublishGateMaximize(): void {
+    if (!this._gateMaximized) return;
+    this._gateMaximized = false;
+    this._persistGateViewHash();
   }
 
   updated(changed: Map<string, unknown>): void {
@@ -969,6 +1009,10 @@ export class FamilyObservability extends FamilyObservabilityState {
       onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
         this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
       renderLedgerDiffDetail: (targetRun) => this._renderLedgerDiffDetail(targetRun),
+      gateOpen: this._gateOpen,
+      gateMaximized: this._gateMaximized,
+      onTogglePublishGate: this._togglePublishGate,
+      onTogglePublishGateMaximize: this._togglePublishGateMaximize,
     });
   }
 
