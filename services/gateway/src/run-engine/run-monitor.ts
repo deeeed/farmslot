@@ -9,9 +9,11 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  interactiveHandoffDecisionActions,
   isLightweightInteractiveDevRun,
   type MonitorSnapshot,
   type MonitorViolation,
+  parseInteractiveHandoffTimeoutMinutes,
   PipelineSteps,
   primaryRoleForFlow,
   type Run,
@@ -459,6 +461,23 @@ export function resolveMonitorDecision(decisionId: string, actionId: string): vo
     resolver(actionId);
     decisionResolvers.delete(decisionId);
   }
+}
+
+/** Reset the persisted monitor clock so a restart cannot immediately re-timeout. */
+export function persistMonitorWindowStart(runId: string, startedAtMs: number = Date.now()): void {
+  const run = getRun(runId);
+  if (!run) return;
+  const startedAt = new Date(startedAtMs).toISOString();
+  const prev = run.monitorState;
+  updateRun(runId, {
+    monitorState: prev
+      ? { ...prev, startedAt }
+      : {
+          nudgeCount: run.metrics.nudgeCount,
+          lastPollAt: startedAt,
+          startedAt,
+        },
+  });
 }
 
 // ─── Main monitoring loop ───
@@ -1515,6 +1534,7 @@ export async function monitorRun(
           // Avoid immediately reopening the same timeout decision if the operator resolved the
           // handoff but the signal read races with a file write/delete.
           state.startedAt = Date.now();
+          persistMonitorWindowStart(runId, state.startedAt);
           continue;
         }
         const actionId = await createBlockedDecision(
@@ -1528,6 +1548,7 @@ export async function monitorRun(
         }
         // "continue" — extend by another full timeout period
         state.startedAt = Date.now();
+        persistMonitorWindowStart(runId, state.startedAt);
       }
     }
     exitReason = 'cancelled';
@@ -2356,6 +2377,10 @@ async function createBlockedDecision(
   if (!run) throw new Error('Run not found');
 
   const monitorCtx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  const extendMinutes =
+    reason === 'interactive_handoff'
+      ? parseInteractiveHandoffTimeoutMinutes(description)
+      : undefined;
 
   const decision: RunDecision = {
     id: randomUUID(),
@@ -2364,20 +2389,16 @@ async function createBlockedDecision(
     description,
     actions:
       reason === 'interactive_handoff'
-        ? [
-            {
-              id: 'signal-written',
-              label: 'Check SIGNAL.json & resume',
-              style: 'primary',
-              description:
-                'Reads SIGNAL.json on the slot. Resumes the run only if it contains a fresh terminal status.',
-            },
-            { id: 'abort', label: 'Abort Run', style: 'danger' },
-          ]
+        ? interactiveHandoffDecisionActions({ extendMinutes })
         : actions,
     createdAt: new Date().toISOString(),
     context:
-      reason === 'interactive_handoff' ? { signalFile: monitorCtx?.signalFile ?? null } : undefined,
+      reason === 'interactive_handoff'
+        ? {
+            signalFile: monitorCtx?.signalFile ?? null,
+            ...(extendMinutes != null ? { extendMinutes } : {}),
+          }
+        : undefined,
   };
 
   run.decisions.push(decision);

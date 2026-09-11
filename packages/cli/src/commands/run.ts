@@ -11,6 +11,7 @@ import {
   type EventFrame,
   failedRunCancelEffects,
   type HumanGrade,
+  isAllowedRunDecisionAction,
   observedReviewSessionContinuity,
   type ReviewChainEntry,
   reviewChainForRun,
@@ -22,6 +23,7 @@ import {
   type RunPauseResult,
   type RunResumeResult,
   type RunSessionCommandResult,
+  visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 
 import { bold, cyan, green } from '../colors.js';
@@ -45,8 +47,8 @@ export function assertRunGateActionAvailable(
   decision: NonNullable<Run['decisions']>[number],
   actionId: string,
 ): void {
-  if (decision.actions?.some((action) => action.id === actionId)) return;
-  const available = (decision.actions ?? []).map((action) => action.id);
+  if (isAllowedRunDecisionAction(decision, actionId)) return;
+  const available = visibleInteractiveHandoffActions(decision).map((action) => action.id);
   throw Object.assign(
     new Error(
       `Action ${actionId} is not available for decision ${decision.id}.` +
@@ -506,13 +508,18 @@ export function registerRunCommand(program: Command): void {
           !emit.machine,
         );
         const pending = (current.decisions ?? []).filter((d) => !d.resolvedAt);
+        const listed = pending.map((d) =>
+          d.type === 'monitor_interactive_handoff'
+            ? { ...d, actions: visibleInteractiveHandoffActions(d) }
+            : d,
+        );
         if (!opts.action) {
           if (emit.machine) {
-            emit.ok({ pending });
-          } else if (pending.length === 0) {
+            emit.ok({ pending: listed });
+          } else if (listed.length === 0) {
             output.write('No pending decisions.\n');
           } else {
-            for (const d of pending) {
+            for (const d of listed) {
               output.write(`${d.id}  ${d.title ?? ''}\n`);
               for (const a of d.actions ?? []) output.write(`  - ${a.id}  ${a.label}\n`);
             }

@@ -1,4 +1,10 @@
-import type { PendingDecision, Run, RunDecision, RunDecisionPayload } from '@farmslot/protocol';
+import {
+  type PendingDecision,
+  type Run,
+  type RunDecision,
+  type RunDecisionPayload,
+  visibleInteractiveHandoffActions,
+} from '@farmslot/protocol';
 
 export function pendingDecisionForRun(
   run: Run,
@@ -18,7 +24,10 @@ export function pendingDecisionForRun(
       ticketOrPr: run.ticketOrPr,
       ...(decision.context ?? {}),
     },
-    actions: decision.actions,
+    actions:
+      decision.type === 'monitor_interactive_handoff'
+        ? visibleInteractiveHandoffActions(decision)
+        : decision.actions,
     createdAt: decision.createdAt,
     ...(payload ? { payload } : {}),
     runMeta: {

@@ -6,6 +6,7 @@ import { marked } from 'marked';
 import {
   type BranchAffinityNudgePayload,
   DEFAULT_BRANCH,
+  interactiveHandoffAllowsExtend,
   isDispatchScoreStale,
   type PendingDecision,
   type PRStatus,
@@ -43,6 +44,8 @@ import {
  * surfaces start needing operator-facing explanations.
  */
 const DECISION_ACTION_FALLBACK_HELP: Record<string, string> = {
+  'monitor_interactive_handoff::continue':
+    'Keep watching the worker for another timeout period. Does not require SIGNAL.json.',
   'engine_collision::create-new':
     'Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch — does not link to existing runs.',
   'engine_collision::start-comparison':
@@ -186,7 +189,10 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             ? html`<div
                 style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:4px"
               >
-                Mode: ${run.mode}. Finish in the slot, then check SIGNAL.json to resume.
+                Mode: ${run.mode}.
+                ${interactiveHandoffAllowsExtend(pending)
+                  ? 'Finish in the slot, or extend monitoring without SIGNAL.json.'
+                  : 'Finish in the slot, then check SIGNAL.json to resume.'}
               </div>`
             : nothing}
         </div>

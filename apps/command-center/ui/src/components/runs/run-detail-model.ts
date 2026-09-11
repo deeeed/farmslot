@@ -104,17 +104,27 @@ export function runFamilyPrStatus(
   return prs.find((pr) => prNumbers.includes(pr.pr)) ?? null;
 }
 
+const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch']);
+
 export function isTaskProgressRunActive(
-  run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'>,
+  run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
+    steps?: readonly Pick<RunStep, 'name' | 'status'>[];
+  },
   options: { includeCompleting?: boolean } = {},
 ): boolean {
-  return (
+  if (
     run.status === 'monitoring' ||
     run.status === 'paused' ||
     run.status === 'self-reviewing' ||
     run.status === 'ci-watching' ||
     (options.includeCompleting === true && run.status === 'completing') ||
     Boolean(run.activeTaskFile && run.activeTaskFile !== run.taskFile)
+  ) {
+    return true;
+  }
+  return Boolean(
+    run.status === 'blocked' &&
+    run.steps?.some((step) => LIVE_PROGRESS_STEPS.has(step.name) && step.status === 'running'),
   );
 }
 

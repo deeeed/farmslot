@@ -81,3 +81,34 @@ test('projects run metadata when the decision has no optional payload', () => {
   assert.equal(projected.runMeta?.runId, 'run-2');
   assert.equal('payload' in projected, false);
 });
+
+test('projects an extend action onto timed-out interactive handoffs', () => {
+  const decision: RunDecision = {
+    id: 'decision-timeout',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description:
+      'The agent did not write a terminal signal.\n\nMonitor note: exceeded 90 minute timeout.',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: '2026-09-11T00:00:00.000Z',
+  };
+  const run = {
+    id: 'run-timeout',
+    familyId: 'family-timeout',
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-1',
+    slotId: 'slot-1',
+    metrics: {},
+  } as Run;
+
+  const projected = pendingDecisionForRun(run, decision);
+  assert.deepEqual(
+    projected.actions.map((action) => action.id),
+    ['signal-written', 'continue', 'abort'],
+  );
+  assert.equal(projected.actions[1]?.label, 'Extend monitoring 90 min');
+});

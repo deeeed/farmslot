@@ -265,7 +265,7 @@ export class StepInspector extends StepInspectorState {
     const pct = Math.max(0, Math.min(100, (tp.completedSteps / tp.totalSteps) * 100));
     return html`
       <div class="section-title">Task Progress</div>
-      <div class="task-progress">
+      <div class="task-progress" data-testid="step-task-progress">
         <div class="task-progress-summary">
           <span
             >${tp.completedSteps}/${tp.totalSteps}${tp.currentPhase

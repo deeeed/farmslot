@@ -8,6 +8,9 @@ import {
   failedRunCancelEffects,
   FLOW_STEPS,
   type IndependentReviewStatus,
+  INTERACTIVE_HANDOFF_EXTEND_ACTION,
+  interactiveHandoffAllowsExtend,
+  isAllowedRunDecisionAction,
   isGateParkInFlightOrFreed,
   isInteractiveDevRun,
   isSlotFreedByPark,
@@ -88,6 +91,7 @@ import {
 } from '../run-engine/recover-inflight-reviews.js';
 import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
+  persistMonitorWindowStart,
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
@@ -1322,7 +1326,7 @@ export async function runResolveDecision(
   // effects on a real machine — and a request that was never going to be
   // accepted must not buy any of them. A typo'd action id did exactly that:
   // full restore, then `Action not found`.
-  if (!decision.actions.some((action) => action.id === params.actionId)) {
+  if (!isAllowedRunDecisionAction(decision, params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
   if (decision.type === 'improvement' && params.actionId === 'apply') {
@@ -1338,7 +1342,11 @@ export async function runResolveDecision(
   // operator answering the gate is what asks for the run back. Still before
   // anything READS or consumes the decision, so a refusal leaves it pending.
   const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
-  if (decision.type === 'monitor_interactive_handoff' && params.actionId !== 'abort') {
+  const skipHandoffSignal =
+    params.actionId === 'abort' ||
+    (params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
+      interactiveHandoffAllowsExtend(decision));
+  if (decision.type === 'monitor_interactive_handoff' && !skipHandoffSignal) {
     const signal = await readFreshTerminalSignalForRun(existing.id, existing.slotId);
     if (!signal) {
       throw new Error(
@@ -1415,6 +1423,10 @@ export async function runResolveDecision(
   // Mark decision as resolved
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = params.actionId;
+  const extendMonitorWindow =
+    params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
+    (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
+  if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
   updateRun(params.runId, { decisions: existing.decisions });
 
   // Unblock whichever resolver owns this decision

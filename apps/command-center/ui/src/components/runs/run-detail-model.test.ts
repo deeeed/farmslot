@@ -418,6 +418,30 @@ test('runFamilyPrStatus resolves PR status from sibling runs in the same family'
 
 test('run detail task-progress helpers preserve worker active and self-review filtering rules', () => {
   assert.equal(isTaskProgressRunActive(makeRun({ status: 'monitoring' })), true);
+  assert.equal(
+    isTaskProgressRunActive(
+      makeRun({
+        status: 'blocked',
+        steps: [{ name: 'monitor', status: 'running' }],
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    isTaskProgressRunActive(
+      makeRun({ status: 'blocked', steps: [{ name: 'prepare', status: 'running' }] }),
+    ),
+    false,
+  );
+  assert.equal(
+    isTaskProgressRunActive(
+      makeRun({
+        status: 'failed',
+        steps: [{ name: 'monitor', status: 'running' }],
+      }),
+    ),
+    false,
+  );
   assert.equal(isTaskProgressRunActive(makeRun({ status: 'completing' })), false);
   assert.equal(
     isTaskProgressRunActive(makeRun({ status: 'completing' }), { includeCompleting: true }),

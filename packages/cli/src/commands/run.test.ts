@@ -108,6 +108,27 @@ test('run gate rejects actions that the pending decision does not offer', () => 
   );
 });
 
+test('run gate allows continue on a timed-out interactive handoff', () => {
+  const decision = {
+    id: 'handoff-1',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description:
+      'The agent did not write a terminal signal.\n\nMonitor note: exceeded 90 minute timeout.',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: '2026-09-11T00:00:00.000Z',
+  } as NonNullable<import('@farmslot/protocol').Run['decisions']>[number];
+
+  assert.doesNotThrow(() => assertRunGateActionAvailable(decision, 'continue'));
+  assert.throws(
+    () => assertRunGateActionAvailable(decision, 'not-real'),
+    /Available actions: signal-written, continue, abort/,
+  );
+});
+
 test('run create builds params from a GitHub/Jira ticket source', () => {
   assert.deepEqual(
     buildRunCreateParams({

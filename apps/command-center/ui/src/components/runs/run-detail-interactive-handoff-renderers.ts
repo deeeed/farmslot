@@ -4,10 +4,13 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import {
+  INTERACTIVE_HANDOFF_EXTEND_ACTION,
+  INTERACTIVE_HANDOFF_SIGNAL_ACTION,
   primaryRoleForFlow,
   type ResourcePostureGateChoice,
   type Run,
   type RunDecision,
+  visibleInteractiveHandoffActions,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -54,9 +57,12 @@ export function renderInteractiveHandoffGate(
   context: InteractiveHandoffRenderContext,
 ) {
   const signalFile = workerSignalFileForRun(run, decision);
-  const primaryAction = decision.actions.find((action) => action.id === 'signal-written');
-  const abortAction = decision.actions.find((action) => action.id === 'abort');
+  const actions = visibleInteractiveHandoffActions(decision);
+  const primaryAction = actions.find((action) => action.id === INTERACTIVE_HANDOFF_SIGNAL_ACTION);
+  const extendAction = actions.find((action) => action.id === INTERACTIVE_HANDOFF_EXTEND_ACTION);
+  const abortAction = actions.find((action) => action.id === 'abort');
   const primaryHelp = primaryAction?.description ?? '';
+  const extendHelp = extendAction?.description ?? '';
 
   return html`
     <style>
@@ -155,6 +161,23 @@ export function renderInteractiveHandoffGate(
                   ${context.signalCheckBusy ? 'Checking…' : primaryAction.label}
                 </button>
                 ${primaryHelp ? html`<div class="gate-action-help">${primaryHelp}</div>` : nothing}
+              </div>
+            `
+          : nothing}
+        ${extendAction
+          ? html`
+              <div class="gate-action-cell">
+                <button
+                  class="gate-action-btn"
+                  data-testid="handoff-extend-monitoring"
+                  style="border-color:${colors.textMuted}; color:${colors.textPrimary}"
+                  ?disabled=${context.actionsBlocked || context.signalCheckBusy}
+                  title=${extendHelp}
+                  @click=${() => context.confirmResolve(run.id, decision, extendAction.id)}
+                >
+                  ${extendAction.label}
+                </button>
+                ${extendHelp ? html`<div class="gate-action-help">${extendHelp}</div>` : nothing}
               </div>
             `
           : nothing}
