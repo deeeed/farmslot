@@ -58,6 +58,18 @@ export type PRRuleFact =
   | { state: 'known'; value: PRRuleValue }
   | { state: 'unknown'; reason: string };
 
+/** Observed GitHub review state for one configured account; cannot authorize execution. */
+export interface PRReviewObservation {
+  observedAt: string;
+  headSha: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  decision: string | null;
+  reviewer: string;
+  requested: boolean;
+  review: { state: string; commit: string | null; submittedAt: string | null } | null;
+}
+
 export interface PRRuleSubject {
   pr: MonitoredPRIdentity;
   headSha: string;
@@ -66,6 +78,7 @@ export interface PRRuleSubject {
   /** Keyed with prRuleFieldKey; Project option IDs remain distinct from their display names. */
   facts: Record<string, PRRuleFact>;
   sourceReasons?: string[];
+  reviewObservation?: PRReviewObservation;
   /** Supplemental display observations; not changes that authorize rule admission. */
   reviewPolicyFacts?: {
     approvalCount?: number;
@@ -153,7 +166,7 @@ export interface PRTeamProfile {
 
 export type PRRuleAction =
   | { kind: 'notify' }
-  | { kind: 'monitor'; policy: PRMonitorPolicy }
+  | { kind: 'monitor'; policy: PRMonitorPolicy; pollIntervalMs?: number }
   | {
       kind: 'review';
       autoStart: boolean;
@@ -227,6 +240,7 @@ export interface PRRuleActionRecord {
   reasons: string[];
   project?: string;
   monitorPolicy?: PRMonitorPolicy;
+  monitorPollIntervalMs?: number;
   current: boolean;
   status: 'pending' | 'applied' | 'withdrawn';
   monitorId?: string;
@@ -289,6 +303,7 @@ export interface PRReviewSubmission {
 }
 
 export type PRReviewContribution = {
+  reviewObservation?: PRReviewObservation;
   teamId: string;
   teamRevision: number;
   ownerId: string;
@@ -308,6 +323,9 @@ export type PRReviewContribution = {
 
 export interface PRReviewIntent {
   id: string;
+  /** Display metadata from discovery; absent on older saved intents. */
+  title?: string;
+  author?: string;
   /** Explicit resubmission after execution starts creates another round for this head/profile. */
   round?: number;
   pr: MonitoredPRIdentity;

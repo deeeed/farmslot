@@ -336,3 +336,40 @@ test('restart during remapping recovers the replacement instead of treating it a
   assert.equal(rows.length, 1);
   assert.equal(rows[0].project, 'new-project');
 });
+
+test('GitHub approval and an existing review on this head remove queued duplicate reviews', async (t) => {
+  const { store, intent, dispatcher, preview, file } = await fixture(t);
+  await dispatcher.reconcile();
+  assert(getQueueSnapshot().some((item) => item.prWork?.sourceId === intent.id));
+  const observation = {
+    observedAt: new Date().toISOString(),
+    headSha: 'head-a',
+    state: 'open' as const,
+    draft: false,
+    decision: 'REVIEW_REQUIRED',
+    reviewer: 'reader',
+    requested: false,
+    review: { state: 'APPROVED', commit: 'head-a', submittedAt: null },
+  };
+  preview.items[0].subject.reviewObservation = observation;
+  await store.applyPreview('owner', preview);
+  await dispatcher.reconcile();
+  assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === intent.id));
+  assert.match(store.intent(intent.id)?.waitingReason ?? '', /Review is not needed/);
+  assert(!store.intent(intent.id)?.waitingReason?.includes('reader'));
+  const restarted = await PRRuleStore.load(file);
+  assert.equal(
+    restarted.intent(intent.id)?.contributions[0].reviewObservation?.review?.commit,
+    'head-a',
+  );
+  observation.requested = true;
+  await store.applyPreview('owner', preview);
+  await dispatcher.reconcile();
+  assert(getQueueSnapshot().some((item) => item.prWork?.sourceId === intent.id));
+  observation.requested = false;
+  observation.decision = 'APPROVED';
+  await store.applyPreview('owner', preview);
+  await dispatcher.reconcile();
+  assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === intent.id));
+  assert.match(store.intent(intent.id)?.waitingReason ?? '', /Review is not needed/);
+});

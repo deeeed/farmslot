@@ -36,6 +36,7 @@ export class SlotChoiceRow extends LitElement {
       gap: 10px;
       grid-template-columns: 44px 132px minmax(0, 1fr) var(--slot-choice-meta-width, 200px);
       width: 100%;
+      box-sizing: border-box;
       padding: 8px 10px;
       background: ${unsafeCSS(colors.bgCard)};
       border: 1px solid #2a2a44;
@@ -175,6 +176,18 @@ export class SlotChoiceRow extends LitElement {
       padding: 2px 6px;
       white-space: nowrap;
     }
+    @media (max-width: 600px) {
+      .candidate-row {
+        grid-template-columns: 28px minmax(0, 1fr);
+      }
+      .cand-summary,
+      .cand-meta {
+        grid-column: 2;
+      }
+      .cand-meta {
+        justify-self: stretch;
+      }
+    }
   `;
 
   render() {
@@ -184,6 +197,7 @@ export class SlotChoiceRow extends LitElement {
       <button
         class="candidate-row ${this.selected ? 'selected' : ''} ${this.warning ? 'warning' : ''}"
         type="button"
+        aria-pressed=${String(this.selected)}
         ?disabled=${this.disabled}
         part="button"
       >

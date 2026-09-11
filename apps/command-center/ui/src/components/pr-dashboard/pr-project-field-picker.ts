@@ -3,6 +3,10 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { PRProjectCatalog, PRRuleField, PRRulePredicate } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
+
+import type { ChoicePicker } from '../shared/choice-picker.js';
+
 import { prAutomationStyles } from './pr-automation-styles.js';
 
 type Comparison = Extract<PRRulePredicate, { kind: 'compare' }>;
@@ -40,11 +44,12 @@ export class PRProjectFieldPicker extends LitElement {
     );
     return html`<fieldset ?disabled=${this.disabled}>
       <label
-        >Project field<select
+        >Project field<choice-picker
           data-testid="pr-project-field-binding"
+          .value=${selected?.key ?? ''}
           @change=${(event: Event) => {
             const choice = entries.find(
-              (item) => item.key === (event.target as HTMLSelectElement).value,
+              (item) => item.key === (event.target as ChoicePicker).value,
             );
             if (choice)
               this.change({
@@ -59,31 +64,32 @@ export class PRProjectFieldPicker extends LitElement {
               });
           }}
         >
-          <option value="" .selected=${!selected}>Choose a field by name</option>
+          <option value="" disabled .selected=${!selected}>Choose a field by name</option>
           ${entries.map(
             (item) =>
               html`<option .value=${item.key} .selected=${item === selected}>
                 ${item.project.title} / ${item.entry.name}
               </option>`,
           )}
-        </select></label
+        </choice-picker></label
       >
       ${selected?.entry.options && field.valueType === 'single-select'
         ? node.operator === 'equals'
           ? html`<label
-              >Option<select
+              >Option<choice-picker
                 data-testid="pr-project-field-option"
+                .value=${typeof node.value === 'string' ? node.value : ''}
                 @change=${(event: Event) =>
-                  this.change({ ...node, value: (event.target as HTMLSelectElement).value })}
+                  this.change({ ...node, value: (event.target as ChoicePicker).value })}
               >
-                <option value="" .selected=${!node.value}>Choose an option</option>
+                <option value="" disabled .selected=${!node.value}>Choose an option</option>
                 ${selected.entry.options.map(
                   (option) =>
                     html`<option .value=${option.id} .selected=${node.value === option.id}>
                       ${option.name}
                     </option>`,
                 )}
-              </select></label
+              </choice-picker></label
             >`
           : node.operator === 'one-of'
             ? html`<div class="row">

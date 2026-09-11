@@ -23,15 +23,15 @@
       },
       "wait-panel": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "intent": "The connected dashboard provides authoritative monitoring and rule controls.",
         "next": "open-rules"
       },
       "open-rules": {
         "action": "ui.press",
-        "test_id": "pr-automation-tab-rules",
-        "intent": "The operator can inspect current matches and their requested actions.",
-        "next": "wait-notification"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section before selecting its settings view.",
+        "next": "open-rules-workspace-view"
       },
       "wait-notification": {
         "action": "ui.wait_for",
@@ -67,6 +67,12 @@
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "open-rules-workspace-view": {
+        "action": "ui.press",
+        "intent": "The operator can inspect current matches and their requested actions.",
+        "next": "wait-notification",
+        "selector": "[aria-label=\"PR automation views\"] [data-testid=\"pr-automation-tab-rules\"]"
       }
     }
   }

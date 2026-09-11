@@ -38,7 +38,26 @@ function workId(intent: PRReviewIntent): string {
 }
 function fingerprint(intent: PRReviewIntent): string {
   return createHash('sha256')
-    .update(JSON.stringify([intent.headSha, intent.dispatchHold, intent.contributions]))
+    .update(
+      JSON.stringify([
+        intent.headSha,
+        intent.dispatchHold,
+        intent.contributions.map(({ reviewObservation, ...policy }) => ({
+          ...policy,
+          ...(reviewObservation
+            ? {
+                reviewObservation: {
+                  ...reviewObservation,
+                  observedAt: undefined,
+                  review: reviewObservation.review
+                    ? { ...reviewObservation.review, submittedAt: undefined }
+                    : null,
+                },
+              }
+            : {}),
+        })),
+      ]),
+    )
     .digest('hex');
 }
 

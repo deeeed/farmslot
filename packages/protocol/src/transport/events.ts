@@ -413,11 +413,19 @@ export interface ResourceRelaunchedPayload {
   at: string;
 }
 
-export interface GitHubRateLimitPayload {
+export interface GitHubQuotaObservation {
+  /** Last observed API resource; REST and GraphQL have separate quotas. */
+  resource?: string;
+  observedAt?: string;
   remaining: number;
   limit: number;
   resetAt: string;
   percentUsed: number;
+}
+
+export interface GitHubRateLimitPayload extends GitHubQuotaObservation {
+  /** Keep independent credential/resource observations so a healthy REST response cannot hide low GraphQL quota. */
+  observations?: GitHubQuotaObservation[];
 }
 
 export interface FleetThumbnail {

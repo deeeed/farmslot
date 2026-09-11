@@ -3,10 +3,13 @@ import type {
   PRMonitorConfig,
   PRMonitorLifecycle,
   PRMonitorObservation,
+  Run,
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
+import { getAllRuns } from '../runs/store.js';
 
+import { activePRRuns } from './active-work.js';
 import { fetchPRMonitorObservation } from './github-observation.js';
 import { type ManualRepairSelection, monitorRepairIsOpen } from './repair-plan.js';
 import type { PRMonitorStore } from './store.js';
@@ -17,6 +20,7 @@ export class PRMonitoringService {
   private timer?: ReturnType<typeof setInterval>;
   private sweep?: Promise<void>;
   private readonly refreshing = new Map<string, Promise<PRMonitor>>();
+  private readonly workSnapshots = new Map<string, string>();
   schedulerError?: string;
 
   constructor(
@@ -24,7 +28,15 @@ export class PRMonitoringService {
     private readonly authorized: (ownerId: string) => boolean,
     private readonly broadcast: (ownerId: string, monitor: PRMonitor) => void,
     private readonly observe: Observer = fetchPRMonitorObservation,
+    private readonly runs: () => Run[] = getAllRuns,
   ) {}
+
+  present(monitor: PRMonitor): PRMonitor {
+    return {
+      ...monitor,
+      activeRuns: this.authorized(monitor.ownerId) ? activePRRuns(monitor, this.runs()) : [],
+    };
+  }
 
   start(): void {
     if (this.timer) return;
@@ -60,8 +72,20 @@ export class PRMonitoringService {
 
   private async reconcileDue(now: number): Promise<void> {
     for (const monitor of this.store.snapshot().monitors) {
+      // Suspension updates contain live run metadata and must respect revocation too.
+      if (!this.authorized(monitor.ownerId)) continue;
+      const work = activePRRuns(monitor, this.runs());
+      const snapshot = JSON.stringify(work);
+      const previous = this.workSnapshots.get(monitor.id);
+      this.workSnapshots.set(monitor.id, snapshot);
+      if (
+        (previous !== undefined && previous !== snapshot) ||
+        (previous === undefined && work.length > 0)
+      )
+        this.broadcast(monitor.ownerId, monitor);
       if (
         monitor.lifecycle !== 'active' ||
+        work.length > 0 ||
         (monitor.nextCheckAt && Date.parse(monitor.nextCheckAt) > now)
       )
         continue;
@@ -133,6 +157,7 @@ export class PRMonitoringService {
   private async refreshOnce(id: string, ownerId: string): Promise<PRMonitor> {
     const monitor = this.store.get(id, ownerId);
     if (monitor.lifecycle !== 'active') return monitor;
+    if (activePRRuns(monitor, this.runs()).length && this.authorized(ownerId)) return monitor;
     let result: { observation: PRMonitorObservation } | { error: string; checkedAt: string };
     try {
       this.assertAuthorized(ownerId);
@@ -145,12 +170,15 @@ export class PRMonitoringService {
         checkedAt: new Date().toISOString(),
       };
     }
+    // A run may acquire the PR while GitHub is responding. Its work owns the PR's state now.
+    if (activePRRuns(monitor, this.runs()).length) return this.store.get(id, ownerId);
     const updated = await this.store.observe(
       id,
       ownerId,
       monitor.revision,
       result,
       monitor.observationGeneration ?? 0,
+      () => !activePRRuns(monitor, this.runs()).length,
     );
     if (updated) this.broadcast(ownerId, updated);
     return updated ?? this.store.get(id, ownerId);
@@ -169,6 +197,7 @@ export class PRMonitoringService {
   ): Promise<PRMonitor> {
     this.assertAuthorized(ownerId);
     const before = this.store.get(id, ownerId);
+    this.assertNoActiveWork(before);
     if (before.revision !== revision)
       throw new Error('Monitor changed; refresh before requesting repair');
     await this.refresh(id, ownerId);
@@ -178,6 +207,7 @@ export class PRMonitoringService {
         'Monitor policy changed while refreshing; review it before requesting repair',
       );
     const repair = await this.store.ensureRepair(id, ownerId, selection, () => {
+      this.assertNoActiveWork(this.store.get(id, ownerId));
       const active = this.store.get(id, ownerId).repairs?.find(monitorRepairIsOpen);
       if (
         active?.runId ||
@@ -191,6 +221,14 @@ export class PRMonitoringService {
     const result = this.store.get(id, ownerId);
     this.broadcast(ownerId, result);
     return result;
+  }
+
+  private assertNoActiveWork(monitor: PRMonitor): void {
+    const run = activePRRuns(monitor, this.runs())[0];
+    if (run)
+      throw new Error(
+        `PR work is ongoing in run ${run.id}${run.slotId ? ` on ${run.slotId}` : ''}; monitoring resumes when it ends`,
+      );
   }
 
   async enrolled(id: string, ownerId: string): Promise<PRMonitor> {

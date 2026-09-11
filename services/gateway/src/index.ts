@@ -347,6 +347,8 @@ async function main(): Promise<void> {
   // may fire a gh call during startup (run-engine recovery, pr-linkage, etc.).
   initGitHubClient(observedBroadcast);
   loadBindingsCache();
+  // Restore PR ownership before periodic monitoring can perform its first check.
+  await loadAllRuns();
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,
     broadcastPrincipalEvent,
@@ -386,8 +388,7 @@ async function main(): Promise<void> {
   );
   const needsBootstrap = missingFile || !cached || cached.slots.length === 0 || staleFile;
 
-  // Restore active runs from .runs/ + init engine + monitor
-  await loadAllRuns();
+  // Initialize the engine and monitor after run ownership has been restored.
   initRunEngine(observedBroadcast, settledBroadcast);
   initRunMonitor(observedBroadcast);
   {

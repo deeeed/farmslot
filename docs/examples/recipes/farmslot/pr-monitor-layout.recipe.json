@@ -1,0 +1,19 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Unified PR workspace, viewer and monitoring",
+  "description": "Set FARMSLOT_UI_URL. Uses real monitors and review candidates in an isolated browser tab. Checks full-width list and right-side detail overlay, closing and scroll restoration, per-PR actions, URL restoration, mobile navigation and optional active-work suspension without changing monitoring settings or starting work.",
+  "workflow": {
+    "entry": "layout",
+    "nodes": {
+      "layout": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-monitor-layout.mts",
+        "intent": "Navigate the shared PR list/viewer and automation settings on desktop/mobile; verify full-width list geometry, overlay bounds, close/Escape and scroll restoration, URL/history restoration, per-PR monitoring and review controls with the observed PR author, overall GitHub review status, neutral run-setup badges, same-row close, default duplicate-review suppression and the explicit Review anyway setup path, active-work suspension, and unchanged gateway settings.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end"
+      }
+    }
+  }
+}

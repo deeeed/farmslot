@@ -165,6 +165,8 @@ export interface PRMonitor {
   ownerId: string;
   config: PRMonitorConfig;
   lifecycle: PRMonitorLifecycle;
+  /** Live gateway projection. Active work suspends checks without changing saved lifecycle. */
+  activeRuns?: Array<Pick<import('./runs.js').Run, 'id' | 'slotId' | 'status'>>;
   createdAt: string;
   updatedAt: string;
   originatingRunIds: string[];

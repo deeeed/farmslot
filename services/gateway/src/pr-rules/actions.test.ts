@@ -173,6 +173,41 @@ function preview(
 const notify: PRRuleAction = { kind: 'notify' };
 const monitor: PRRuleAction = { kind: 'monitor', policy: { mode: 'notify-only' } };
 
+test('monitor intervals survive pending action persistence and remain separate from discovery', async (t) => {
+  const f = await fixture(t, [{ ...monitor, pollIntervalMs: 7_200_000 }]);
+  await f.store.applyPreview('owner', preview(f.team, f.rule));
+  const store = await PRRuleStore.load(f.file);
+  const monitors = await PRMonitorStore.load(f.monitorFile);
+  const service = new PRRuleService(store, f.authorized, () => {}, undefined, undefined, {
+    store: monitors,
+    enrolled: async (id, owner) => monitors.get(id, owner),
+  });
+  await service.deliverActions();
+  assert.equal(store.snapshot().rules[0].config.pollIntervalMs, 300_000);
+  assert.equal(monitors.list('owner')[0].config.pollIntervalMs, 7_200_000);
+  assert.equal(
+    (await PRMonitorStore.load(f.monitorFile)).list('owner')[0].config.pollIntervalMs,
+    7_200_000,
+  );
+});
+
+test('legacy monitor rules keep the five minute default and invalid intervals are rejected', async (t) => {
+  const f = await fixture(t, [monitor]);
+  await f.store.applyPreview('owner', preview(f.team, f.rule));
+  await f.service.deliverActions();
+  assert.equal(f.monitors.list('owner')[0].config.pollIntervalMs, 300_000);
+  for (const pollIntervalMs of [0, 59_999, 86_400_001, 60_000.5, NaN]) {
+    assert.throws(
+      () =>
+        f.store.saveRule('owner', {
+          ...f.rule.config,
+          actions: [{ ...monitor, pollIntervalMs }],
+        }),
+      /monitor.pollIntervalMs/,
+    );
+  }
+});
+
 test('notifications baseline historical matches, persist once, and filter recipients and acknowledgements', async (t) => {
   const f = await fixture(t, [notify], false);
   await f.store.applyPreview('owner', preview(f.team, f.rule));
@@ -237,6 +272,7 @@ test('monitor enrollment preserves a stopped notify-only subscription despite au
   const f = await fixture(t, [
     {
       kind: 'monitor',
+      pollIntervalMs: 7_200_000,
       policy: {
         mode: 'automatic-repair',
         execution: {
@@ -262,6 +298,7 @@ test('monitor enrollment preserves a stopped notify-only subscription despite au
   await f.service.deliverActions();
   const result = f.monitors.get(existing.id, 'owner');
   assert.equal(result.config.policy.mode, 'notify-only');
+  assert.equal(result.config.pollIntervalMs, 60_000);
   assert.equal(result.lifecycle, 'stopped');
   assert.equal(f.store.snapshot().actions![0].monitorId, existing.id);
   assert.equal(f.monitors.list('owner').length, 1);

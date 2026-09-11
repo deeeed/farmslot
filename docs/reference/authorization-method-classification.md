@@ -40,6 +40,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `chat.sessionPin`                       | admin          |                                                          |
 | `chat.sessions`                         | admin          |                                                          |
 | `chat.sessionsBulkDelete`               | admin          |                                                          |
+| `config.githubAccounts`                 | admin          |                                                          |
 | `config.pool`                           | admin          |                                                          |
 | `config.pool.raw`                       | admin          |                                                          |
 | `config.pool.update`                    | admin          |                                                          |

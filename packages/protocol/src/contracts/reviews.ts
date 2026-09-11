@@ -34,6 +34,7 @@ export type PRFamilyMergeState =
 
 export interface PRStatus {
   pr: number;
+  author?: string;
   title: string;
   summary: string | null;
   repo: string;

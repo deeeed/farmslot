@@ -199,6 +199,7 @@ export const Methods = {
   CONFIG_POOLS: 'config.pools',
   CONFIG_POOL: 'config.pool',
   CONFIG_PROJECTS: 'config.projects',
+  CONFIG_GITHUB_ACCOUNTS: 'config.githubAccounts',
   CONFIG_PROJECT: 'config.project',
   CONFIG_POOL_RAW: 'config.pool.raw',
   CONFIG_TEMPLATES: 'config.templates',

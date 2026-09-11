@@ -12,6 +12,7 @@ import {
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { verifyPRSourceAccountChange } from '../pr-monitoring/github-account.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRReviewDispatcher } from '../pr-rules/dispatch.js';
 import { collectPRRuleSources } from '../pr-rules/github-sources.js';
@@ -119,6 +120,9 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   const revision = p.revision as number | undefined;
   if (method === Methods.PR_TEAM_SAVE) {
     assertPRTeamConfig(p.config);
+    const config = p.config;
+    const previous = id ? service.store.team(id, ownerId).config.account : undefined;
+    await verifyPRSourceAccountChange(config.account, ownerId, previous);
     return { team: await service.saveTeam(ownerId, p.config, id, revision) };
   }
   if (method === Methods.PR_RULE_SAVE) {

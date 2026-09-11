@@ -1,0 +1,19 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Configure a PR team from an existing farm",
+  "description": "Provide FARMSLOT_UI_URL and SETUP_FARM; set SETUP_GITHUB_LOGIN when multiple gateway accounts exist. Uses a separate browser tab and gateway config reads, with no team/rule writes or GitHub imports. Checks desktop/mobile layouts and editor polling over one minute.",
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/check-pr-team-setup.mts",
+        "intent": "Verify real farm metadata fills the draft, configured accounts are selected, advanced settings collapse, and editing does not request PR discovery.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end"
+      }
+    }
+  }
+}

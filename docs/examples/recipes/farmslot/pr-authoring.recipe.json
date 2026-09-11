@@ -44,16 +44,16 @@
       },
       "wait-panel": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "timeout_ms": 15000,
         "intent": "Monitoring controls remain accessible independently of run-based PR discovery.",
         "next": "open-rules"
       },
       "open-rules": {
         "action": "ui.press",
-        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
-        "intent": "Open team and rule authoring.",
-        "next": "create-team"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section.",
+        "next": "open-rules-workspace-view"
       },
       "create-team": {
         "action": "ui.press",
@@ -66,27 +66,26 @@
         "selector": "[data-testid=\"pr-team-name\"]",
         "value": "{{params.prefix}} team",
         "intent": "Name the validation team.",
-        "next": "team-account"
+        "next": "account-ready"
       },
       "team-account": {
-        "action": "ui.set_input",
+        "action": "ui.press",
         "selector": "[data-testid=\"pr-team-account\"]",
-        "value": "{{params.account_login}}",
-        "intent": "Use the explicitly supplied GitHub account for provider access.",
-        "next": "source"
+        "intent": "Select the explicitly requested configured account; a sole account is already read-only.",
+        "next": "choose-configured-account"
       },
       "source": {
         "action": "ui.set_input",
         "selector": "[data-testid=\"pr-team-source-repository\"]",
         "value": "{{params.repo}}",
         "intent": "The team discovers PRs only from the configured repository.",
-        "next": "predicate-all"
+        "next": "open-filters"
       },
       "predicate-all": {
         "action": "ui.press",
         "test_id": "pr-predicate-all",
         "intent": "The team requires all configured eligibility conditions together.",
-        "next": "team-review"
+        "next": "open-review-settings"
       },
       "team-review": {
         "action": "ui.press",
@@ -104,13 +103,13 @@
         "action": "ui.press",
         "selector": "[data-testid=\"pr-policy-execution-override\"]",
         "intent": "Set team slots and models.",
-        "next": "team-slot"
+        "next": "choose-team-slots"
       },
       "team-slot": {
         "action": "ui.press",
-        "selector": "[data-slot-id=\"{{params.slot}}\"]",
+        "selector": "slot-choice-row[data-slot-id=\"{{params.slot}}\"]",
         "intent": "Pin the disabled validation slot.",
-        "next": "add-repo"
+        "next": "close-team-slots"
       },
       "add-repo": {
         "action": "ui.press",
@@ -126,11 +125,10 @@
         "next": "repo-project"
       },
       "repo-project": {
-        "action": "ui.set_input",
+        "action": "ui.press",
         "selector": "[data-testid=\"pr-repository-project\"]",
-        "value": "{{params.project}}",
-        "intent": "Choose the matching Farmslot project.",
-        "next": "repo-profile"
+        "intent": "Open the shared farm picker.",
+        "next": "choose-repo-project"
       },
       "repo-profile": {
         "action": "ui.set_input",
@@ -162,7 +160,7 @@
         "action": "ui.press",
         "selector": "[data-team-name=\"{{params.prefix}} team\"] [data-testid=\"pr-team-edit\"]",
         "intent": "Reopen the saved team.",
-        "next": "repo-override"
+        "next": "open-edit-mappings"
       },
       "repo-override": {
         "action": "ui.press",
@@ -217,9 +215,9 @@
       },
       "rule-team": {
         "action": "ui.press",
-        "selector": "[data-rule-team-name=\"{{params.prefix}} team\"]",
+        "selector": "[data-testid=\"pr-rule-team\"]",
         "intent": "Choose the team created through the UI.",
-        "next": "rule-interval"
+        "next": "choose-rule-team"
       },
       "rule-interval": {
         "action": "ui.set_input",
@@ -262,16 +260,16 @@
       },
       "wait-reloaded": {
         "action": "ui.wait_for",
-        "selector": "pr-automation-panel",
+        "selector": "[data-testid=\"pr-workspace\"]",
         "timeout_ms": 15000,
         "intent": "Persisted PR policies remain accessible after a full page reload.",
         "next": "rules-reloaded"
       },
       "rules-reloaded": {
         "action": "ui.press",
-        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
-        "intent": "Open rules after reload.",
-        "next": "edit-rule"
+        "test_id": "pr-workspace-automation",
+        "intent": "Open the Automation section.",
+        "next": "rules-reloaded-workspace-view"
       },
       "edit-rule": {
         "action": "ui.press",
@@ -344,7 +342,7 @@
         "action": "command",
         "cmd": "yarn exec tsx scripts/check-pr-authoring.mts concurrent-edit",
         "intent": "Another authenticated client changes the validation team while the browser editor remains open.",
-        "next": "stale-exclusions"
+        "next": "open-stale-mappings"
       },
       "stale-exclusions": {
         "action": "ui.set_input",
@@ -414,8 +412,8 @@
       "action-rule-team": {
         "action": "ui.press",
         "intent": "The action rule uses the same explicit team scope.",
-        "selector": "[data-rule-team-name=\"{{params.prefix}} team\"]",
-        "next": "remove-review-action"
+        "selector": "[data-testid=\"pr-rule-team\"]",
+        "next": "choose-action-rule-team"
       },
       "remove-review-action": {
         "action": "ui.press",
@@ -439,13 +437,13 @@
         "action": "ui.press",
         "intent": "Automatic repair requires an explicit policy for new subscriptions.",
         "test_id": "pr-rule-monitor-repair",
-        "next": "repair-slot"
+        "next": "choose-repair-slots"
       },
       "repair-slot": {
         "action": "ui.press",
         "intent": "Repair execution is pinned independently of team review defaults.",
-        "selector": "[data-slot-id=\"{{params.slot}}\"]",
-        "next": "save-action-rule"
+        "selector": "slot-choice-row[data-slot-id=\"{{params.slot}}\"]",
+        "next": "close-repair-slots"
       },
       "save-action-rule": {
         "action": "ui.press",
@@ -494,6 +492,114 @@
         "intent": "The gateway retains Notify/Add monitor and has removed repair execution authority.",
         "cmd": "yarn exec tsx scripts/check-pr-authoring.mts action-rule-edited",
         "next": "activation-gated"
+      },
+      "advanced-sources": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-advanced-sources\"] > summary",
+        "intent": "Open manual repository entry.",
+        "next": "add-manual-source"
+      },
+      "add-manual-source": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-manual-source-add\"]",
+        "intent": "Add an explicit repository source.",
+        "next": "source"
+      },
+      "open-filters": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-filters\"] > summary",
+        "intent": "Open optional PR filters.",
+        "next": "predicate-all"
+      },
+      "open-review-settings": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-review-settings\"] > summary",
+        "intent": "Open review defaults.",
+        "next": "team-review"
+      },
+      "open-farm-mappings": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-farm-mappings\"] > summary",
+        "intent": "Open per-repository execution settings.",
+        "next": "add-repo"
+      },
+      "open-edit-mappings": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-farm-mappings\"] > summary",
+        "intent": "Open the saved mappings for editing.",
+        "next": "repo-override"
+      },
+      "open-stale-mappings": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-team-farm-mappings\"] > summary",
+        "intent": "Expose the stale editor mapping without changing its saved revision.",
+        "next": "stale-exclusions"
+      },
+      "account-ready": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"pr-team-account\"]:not([disabled])",
+        "intent": "Wait for the explicitly requested account in the gateway inventory.",
+        "next": "team-account"
+      },
+      "choose-configured-account": {
+        "action": "ui.press",
+        "selector": "[data-choice-value=\"github.com/{{params.account_login}}\"]",
+        "intent": "Choose the configured gateway account.",
+        "next": "advanced-sources"
+      },
+      "choose-team-slots": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-execution-choose-slots\"]",
+        "intent": "Open the shared slot selector.",
+        "next": "team-slot"
+      },
+      "close-team-slots": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"slot-selector-done\"]",
+        "intent": "Confirm the chosen review slots.",
+        "next": "open-farm-mappings"
+      },
+      "choose-repo-project": {
+        "action": "ui.press",
+        "selector": "[data-choice-value=\"{{params.project}}\"]",
+        "intent": "Use the existing Farmslot project.",
+        "next": "repo-profile"
+      },
+      "choose-rule-team": {
+        "action": "ui.press",
+        "selector": "[data-choice-label=\"{{params.prefix}} team\"]",
+        "intent": "Select the saved team in the shared choice picker.",
+        "next": "rule-interval"
+      },
+      "choose-action-rule-team": {
+        "action": "ui.press",
+        "selector": "[data-choice-label=\"{{params.prefix}} team\"]",
+        "intent": "Select the same team for monitor actions.",
+        "next": "remove-review-action"
+      },
+      "choose-repair-slots": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-execution-choose-slots\"]",
+        "intent": "Open the shared repair slot selector.",
+        "next": "repair-slot"
+      },
+      "close-repair-slots": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"slot-selector-done\"]",
+        "intent": "Confirm repair slots.",
+        "next": "save-action-rule"
+      },
+      "open-rules-workspace-view": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
+        "intent": "Open team and rule authoring.",
+        "next": "create-team"
+      },
+      "rules-reloaded-workspace-view": {
+        "action": "ui.press",
+        "selector": "[data-testid=\"pr-automation-tab-rules\"]",
+        "intent": "Open rules after reload.",
+        "next": "edit-rule"
       }
     }
   }

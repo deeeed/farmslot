@@ -3,6 +3,7 @@
 import type { CommandOutput } from '@farmslot/protocol';
 
 import { ghRequest } from '../../integrations/github-client.js';
+import { GitHubQueryBudgetError } from '../../integrations/github-query-budget.js';
 
 // ─── GitHub raw-response cache ───
 // Shields the GitHub API from the 60s UI poll + ci-monitor tick. Keyed by
@@ -15,6 +16,7 @@ import { ghRequest } from '../../integrations/github-client.js';
 // used by explicit refresh flows (ciWatch.poke, UI manual refresh).
 
 export interface PRRawSnapshot {
+  author?: string;
   checksStdout: string;
   prStateStdout: string;
   commentsStdout: string;
@@ -29,6 +31,8 @@ const prRawInflight = new Map<string, Promise<PRRawSnapshot>>();
 
 function swallowGh(label: string) {
   return (err: unknown): CommandOutput => {
+    // A paused GraphQL read is not empty PR data. Fail the refresh without replacing the cache.
+    if (err instanceof GitHubQueryBudgetError) throw err;
     const message = err instanceof Error ? err.message : String(err);
     if (/rate limit|API rate limit exceeded|secondary rate limit/i.test(message)) {
       console.error(`[gh-rate-limit] ${label}: ${message.slice(0, 400)}`);
@@ -76,9 +80,9 @@ export async function getPRRawData(
           '--repo',
           ghRepo,
           '--json',
-          'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt',
+          'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
           '--jq',
-          '[.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv',
+          '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
         ],
         { force },
       ).catch(swallowGh(`pr.view#${prNum}`)),
@@ -134,9 +138,11 @@ export async function getPRRawData(
         { force },
       ).catch(swallowGh(`pulls.commits#${prNum}`)),
     ]);
+    const [stateLine, author] = prState.stdout.trimEnd().split('\n');
     const snap: PRRawSnapshot = {
+      author: author || undefined,
       checksStdout: checks.stdout,
-      prStateStdout: prState.stdout,
+      prStateStdout: stateLine ?? '',
       commentsStdout: comments.stdout,
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,
@@ -255,6 +261,7 @@ interface GqlPageInfo {
 }
 
 interface GqlPullRequestNode {
+  author?: GqlAuthor | null;
   state?: string;
   mergeable?: string;
   mergeStateStatus?: string;
@@ -320,7 +327,7 @@ export function buildBatchQuery(prCount: number): string {
   for (let i = 0; i < prCount; i++) {
     aliases.push(
       `    pr_${i}: pullRequest(number: $pr_${i}) {\n` +
-        `      state mergeable mergeStateStatus reviewDecision headRefName createdAt updatedAt closedAt mergedAt title\n` +
+        `      state mergeable mergeStateStatus reviewDecision headRefName createdAt updatedAt closedAt mergedAt title author { login }\n` +
         `      statusCheckRollup { contexts(first: 100) {\n` +
         `        pageInfo { hasNextPage }\n` +
         `        nodes {\n` +
@@ -487,6 +494,7 @@ export function synthesizeRawSnapshotFromGraphQL(
   const latestCommitStdout = lastDate ? lastDate + '\n' : '';
 
   return {
+    author: node.author?.login || undefined,
     checksStdout,
     prStateStdout,
     commentsStdout,
@@ -496,7 +504,7 @@ export function synthesizeRawSnapshotFromGraphQL(
   };
 }
 
-// One GraphQL request per repo chunk. On any failure we log and continue —
+// One GraphQL request per repo chunk. Quota holds fail the refresh; other failures log and continue —
 // `prList` falls through to the per-PR REST path for whichever PRs aren't in cache.
 // Relies on `ghRequest`'s 10MB stdout buffer; a 25-PR chunk with 100 contexts × 100
 // review threads × 50 comments could in principle approach that ceiling on monster
@@ -520,7 +528,8 @@ async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
     const res = await ghRequest(args);
     stdout = res.stdout;
   } catch (err) {
-    // REST fallback engages — see function-level comment.
+    if (err instanceof GitHubQueryBudgetError) throw err;
+    // Per-PR fallback engages — see function-level comment.
     console.warn(
       `[pr.batch] graphql_failed repo=${chunk.repo} prs=${chunk.prs.length} err=${fmtBatchErr(err)}`,
     );
@@ -531,7 +540,8 @@ async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
   try {
     parsed = JSON.parse(stdout) as GqlBatchResponse;
   } catch (err) {
-    // REST fallback engages — see function-level comment.
+    if (err instanceof GitHubQueryBudgetError) throw err;
+    // Per-PR fallback engages — see function-level comment.
     console.warn(`[pr.batch] graphql_parse_failed repo=${chunk.repo} err=${fmtBatchErr(err, 120)}`);
     return;
   }

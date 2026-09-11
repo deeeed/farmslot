@@ -14,6 +14,12 @@ const pr = {
   title: 'PR',
   updatedAt: '2026-01-01T00:00:00Z',
   reviewDecision: 'CHANGES_REQUESTED',
+  viewerLatestReview: {
+    state: 'APPROVED',
+    submittedAt: '2026-01-01T00:00:00Z',
+    commit: { oid: 'head-a' },
+  },
+  viewerLatestReviewRequest: null,
   state: 'OPEN',
   isDraft: false,
   headRefOid: 'head-a',
@@ -149,6 +155,9 @@ test('configured supplemental policy uses unique current approvals and provider 
   const scan = await collectPRRuleTarget(configured, rule, identity);
   assert.equal(scan.complete, true);
   const subject = scan.subjects[0];
+  assert.equal(subject.reviewObservation?.reviewer, 'reader');
+  assert.equal(subject.reviewObservation?.review?.commit, 'head-a');
+  assert.equal(subject.reviewObservation?.requested, false);
   assert.equal(subject.reviewPolicyFacts?.approvalCount, 1);
   const preview = buildPRReviewPreviewItem(configured, subject, rule.config.predicate);
   assert(preview.policySummary?.includes('Supplemental approvals: 1/1 (target met)'));

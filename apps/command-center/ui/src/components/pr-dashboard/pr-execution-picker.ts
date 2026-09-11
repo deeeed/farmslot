@@ -1,5 +1,5 @@
 import { html, LitElement, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   DEFAULT_CODEX_EFFORT,
@@ -9,9 +9,11 @@ import {
 } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
+import '../shared/slot-selector-modal.js';
 
 import type { EffortLevel } from '../../utils/runner-options.js';
 import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
+import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 
@@ -29,6 +31,7 @@ export class PRExecutionPicker extends LitElement {
   @property() project = '';
   @property({ type: Boolean }) allProjects = false;
   @property({ type: Boolean }) disabled = false;
+  @state() private picker: 'allowed' | number | undefined;
   static styles = prAutomationStyles;
 
   private change(value: PRExecutionProfile) {
@@ -50,6 +53,33 @@ export class PRExecutionPicker extends LitElement {
           : { kind: 'pool', allowedSlots: next },
     });
   }
+  private applySelection(selected: string[]) {
+    if (this.disabled) return;
+    if (this.picker === 'allowed')
+      this.change({
+        ...this.value,
+        slotPolicy:
+          selected.length === 1
+            ? { kind: 'exact', slotId: selected[0] }
+            : { kind: 'pool', allowedSlots: selected },
+      });
+    else
+      this.change({
+        ...this.value,
+        models: this.value.models.map((model, index) =>
+          index === this.picker
+            ? { ...model, allowedSlots: selected.length ? selected : undefined }
+            : model,
+        ),
+      });
+  }
+  private slotSummary(selected: readonly string[]) {
+    return html`<div class="row">
+      ${selected.slice(0, 4).map((id) => html`<code>${id}</code>`)}${selected.length > 4
+        ? html`<span class="muted">+${selected.length - 4} more</span>`
+        : nothing}
+    </div>`;
+  }
   render() {
     const selected =
       this.value.slotPolicy.kind === 'exact'
@@ -63,20 +93,22 @@ export class PRExecutionPicker extends LitElement {
       ${!this.project && !this.allProjects
         ? html`<p class="muted">Choose a project to select its slots.</p>`
         : nothing}
-      <div class="slots">
-        ${slots.map(
-          (slot) =>
-            html`<label class="check"
-              ><input
-                data-slot-id=${slot.slot}
-                type="checkbox"
-                .checked=${selected.includes(slot.slot)}
-                @change=${(event: Event) =>
-                  this.toggleSlot(slot.slot, (event.target as HTMLInputElement).checked)}
-              />${slot.slot}${!slot.enabled ? ' (disabled)' : ''}</label
-            >`,
-        )}
+      <div class="row">
+        <button
+          type="button"
+          data-testid="pr-execution-choose-slots"
+          ?disabled=${this.disabled || (!this.project && !this.allProjects)}
+          @click=${() => {
+            this.picker = 'allowed';
+          }}
+        >
+          Choose slots${selected.length ? ` · ${selected.length} selected` : ''}
+        </button>
+        ${!selected.length
+          ? html`<span class="attention">Choose at least one slot before starting reviews.</span>`
+          : nothing}
       </div>
+      ${this.slotSummary(selected)}
       ${selected
         .filter((id) => !slots.some((slot) => slot.slot === id))
         .map(
@@ -113,25 +145,30 @@ export class PRExecutionPicker extends LitElement {
                   ),
                 })}
             ></runner-model-effort-picker>
-            <label
-              >Limit this model to slots, optional<input
-                .value=${model.allowedSlots?.join(', ') ?? ''}
-                placeholder="slot-a, slot-b"
-                @change=${(event: Event) => {
-                  const ids = (event.target as HTMLInputElement).value
-                    .split(',')
-                    .map((id) => id.trim())
-                    .filter(Boolean);
-                  this.change({
-                    ...this.value,
-                    models: this.value.models.map((entry, i) =>
-                      i === index
-                        ? { ...entry, allowedSlots: ids.length ? ids : undefined }
-                        : entry,
-                    ),
-                  });
+            <details>
+              <summary data-testid=${`pr-model-restrictions-${index}`}>
+                Slot restrictions ·
+                ${model.allowedSlots?.length
+                  ? `${model.allowedSlots.length} slots`
+                  : 'all allowed slots'}
+              </summary>
+              <p class="muted">
+                ${model.allowedSlots?.length
+                  ? `${model.allowedSlots.length} restricted slots`
+                  : 'Uses the allowed slots selected above.'}
+              </p>
+              ${this.slotSummary(model.allowedSlots ?? [])}
+              <button
+                type="button"
+                data-testid=${`pr-execution-model-slots-${index}`}
+                ?disabled=${this.disabled || !selected.length}
+                @click=${() => {
+                  this.picker = index;
                 }}
-            /></label>
+              >
+                Choose a subset
+              </button>
+            </details>
             ${this.value.models.length > 1
               ? html`<button
                   type="button"
@@ -156,6 +193,32 @@ export class PRExecutionPicker extends LitElement {
       >
         Add model alternative
       </button>
+      ${this.picker !== undefined
+        ? html`<slot-selector-modal
+            .open=${true}
+            .filterable=${true}
+            .disabled=${this.disabled}
+            .project=${new Set(slots.map((slot) => slot.project)).size === 1
+              ? (slots[0]?.project ?? '')
+              : ''}
+            .slots=${this.picker === 'allowed'
+              ? slots
+              : slots.filter((slot) => selected.includes(slot.slot))}
+            .selected=${this.picker === 'allowed'
+              ? selected
+              : (this.value.models[this.picker]?.allowedSlots ?? selected)}
+            heading=${this.picker === 'allowed' ? 'Allowed review slots' : 'Slots for this model'}
+            description="Search or filter existing farm slots. One slot runs each review."
+            clearLabel=${this.picker === 'allowed' ? 'Clear selection' : 'Use all allowed slots'}
+            @slot-selector-change=${(event: CustomEvent<SlotSelectorChangeDetail>) => {
+              event.stopPropagation();
+              this.applySelection(event.detail.selected);
+            }}
+            @slot-selector-close=${() => {
+              this.picker = undefined;
+            }}
+          ></slot-selector-modal>`
+        : nothing}
     </fieldset>`;
   }
 }

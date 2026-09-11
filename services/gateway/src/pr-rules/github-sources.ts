@@ -76,7 +76,9 @@ async function repositoryPRs(
   const [owner, name] = repo.split('/');
   return readPages(traversal, repositoryKey(repo), async (cursor) => {
     const data = await query<{ repository: { pullRequests: Page<GitHubRulePR> } }>(
-      `query($owner:String!,$name:String!,$cursor:String) { repository(owner:$owner,name:$name) { pullRequests(first:100,after:$cursor,states:OPEN) { ${pageInfo} nodes { ${GITHUB_RULE_PR_FIELDS} } } } }`,
+      // Review metadata and nested labels make 100-PR pages time out on large repositories.
+      // Keep pages small; the traversal persists cursors and resumes within its request budget.
+      `query($owner:String!,$name:String!,$cursor:String) { repository(owner:$owner,name:$name) { pullRequests(first:25,after:$cursor,states:OPEN) { ${pageInfo} nodes { ${GITHUB_RULE_PR_FIELDS} } } } }`,
       { owner, name, cursor },
       account,
     );
@@ -364,6 +366,25 @@ async function collectPRSubjects(
       'head-branch': pr.headRefName,
     }))
       subject.facts[key] = { state: 'known', value };
+    // Old discovery checkpoints lack these fields. Missing data must not imply no prior review.
+    if ('viewerLatestReview' in pr && 'viewerLatestReviewRequest' in pr) {
+      subject.reviewObservation = {
+        observedAt: subject.observedAt,
+        headSha: pr.headRefOid,
+        state: pr.state.toLowerCase() as 'open' | 'closed' | 'merged',
+        draft: pr.isDraft,
+        decision: pr.reviewDecision ?? null,
+        reviewer: team.config.account.login,
+        requested: !!pr.viewerLatestReviewRequest,
+        review: pr.viewerLatestReview
+          ? {
+              state: pr.viewerLatestReview.state,
+              commit: pr.viewerLatestReview.commit?.oid ?? null,
+              submittedAt: pr.viewerLatestReview.submittedAt,
+            }
+          : null,
+      };
+    }
     subject.reviewPolicyFacts = {
       lastActivityAt: pr.updatedAt,
       providerReviewDecision: pr.reviewDecision ?? undefined,

@@ -8,6 +8,7 @@ export type PRLayout = 'board' | 'list';
 export interface PRKey {
   repo: string;
   pr: number;
+  host?: string;
 }
 
 export interface PRBoardUrlState {
@@ -24,15 +25,19 @@ export interface PRDispatchCompleteDetail {
 
 export function prKeyEqual(a: PRKey | null, b: PRKey | null): boolean {
   if (!a || !b) return a === b;
-  return a.pr === b.pr && a.repo === b.repo;
+  return (
+    a.pr === b.pr &&
+    a.repo.toLowerCase() === b.repo.toLowerCase() &&
+    (a.host ?? 'github.com').toLowerCase() === (b.host ?? 'github.com').toLowerCase()
+  );
 }
 
 export function matchesPrKey(pr: PRStatus, key: PRKey | null): boolean {
-  return !!key && pr.pr === key.pr && pr.repo === key.repo;
+  return !!key && prKeyEqual({ repo: pr.repo, pr: pr.pr }, key);
 }
 
 export function prBoardUrlStateFromHash(
-  prs: readonly PRStatus[],
+  prs: readonly Pick<PRStatus, 'repo' | 'pr'>[],
   hash: string = location.hash,
 ): PRBoardUrlState | null {
   const { route, params } = parseHashRoute(hash);
@@ -46,6 +51,7 @@ export function prBoardUrlStateFromHash(
   if (Number.isFinite(prNum)) {
     if (repoParam) {
       selectedPr = { repo: repoParam, pr: prNum };
+      if (params.get('prHost')) selectedPr.host = params.get('prHost')!;
     } else {
       // Legacy URLs with bare pr= are resolved only when the number is unique.
       const hits = prs.filter((pr) => pr.pr === prNum);
@@ -69,10 +75,13 @@ export function prBoardUrlStateHash(
   if (key) {
     params.set('pr', String(key.pr));
     params.set('repo', key.repo);
+    if (key.host && key.host !== 'github.com') params.set('prHost', key.host);
+    else params.delete('prHost');
     params.set('view', state.modalPr ? 'modal' : 'detail');
   } else {
     params.delete('pr');
     params.delete('repo');
+    params.delete('prHost');
     params.delete('view');
   }
   if (state.layout === 'list') {
@@ -87,9 +96,24 @@ export function prCompleteDispatchHash(
   detail: PRDispatchCompleteDetail,
   hash: string = location.hash,
 ): string {
+  return prDispatchHash('pr-complete', detail, hash);
+}
+
+export function prReviewDispatchHash(
+  detail: PRDispatchCompleteDetail,
+  hash: string = location.hash,
+): string {
+  return prDispatchHash('review-pr', detail, hash);
+}
+
+function prDispatchHash(
+  flow: 'pr-complete' | 'review-pr',
+  detail: PRDispatchCompleteDetail,
+  hash: string,
+): string {
   const ticket = detail.repo ? `${detail.repo}#${detail.pr}` : String(detail.pr);
   const params = new URLSearchParams();
-  params.set('flow', 'pr-complete');
+  params.set('flow', flow);
   params.set('ticket', ticket);
   if (detail.project) params.set('project', detail.project);
 

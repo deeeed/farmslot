@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 
-import { type CommandOutput, Events } from '@farmslot/protocol';
+import { type CommandOutput, Events, type GitHubRateLimitPayload } from '@farmslot/protocol';
 
 import {
   GitHubCursorError,
@@ -45,12 +45,7 @@ interface NegativeCacheEntry {
   at: number;
 }
 
-interface QuotaSnapshot {
-  remaining: number;
-  limit: number;
-  resetAt: string; // ISO-8601 UTC
-  percentUsed: number; // 0-100
-}
+type QuotaSnapshot = GitHubRateLimitPayload;
 
 // ─── Module state ───
 
@@ -77,6 +72,7 @@ let quota: QuotaSnapshot = {
   percentUsed: 0,
 };
 let lastQuotaBucket: 'ok' | 'warn' | 'crit' | null = null;
+const quotaObservations = new Map<string, Omit<GitHubRateLimitPayload, 'observations'>>();
 
 // Simple semaphore
 let running = 0;
@@ -228,6 +224,15 @@ async function runGh(
 ): Promise<CommandOutput> {
   await acquire();
   try {
+    // Dashboard batches and gh PR read commands use GraphQL too. Respect the
+    // same reserve as rule/monitor discovery, including requests queued before a low-quota response.
+    if (
+      args.includes('graphql') ||
+      (args[0] === 'pr' && ['view', 'list', 'checks'].includes(args[1]))
+    )
+      githubQueryBudget.assertAvailable(
+        githubRequestCacheKey([], account ? { ...account, scope: 'query-budget' } : undefined),
+      );
     const isApi = args[0] === 'api';
     const isPaginated = args.includes('--paginate');
     const useEtag = isApi && !isPaginated && !force;
@@ -246,11 +251,12 @@ async function runGh(
       }
       const raw = await spawnGh(ghArgs, signal, account);
       const parsed = parseResponse(raw.stdout);
-      updateQuotaFromHeaders(parsed.headers);
-      githubQueryBudget.observeHeaders(
-        githubRequestCacheKey([], account ? { ...account, scope: 'query-budget' } : undefined),
-        parsed.headers,
+      const quotaKey = githubRequestCacheKey(
+        [],
+        account ? { ...account, scope: 'query-budget' } : undefined,
       );
+      updateQuotaFromHeaders(parsed.headers, quotaKey);
+      githubQueryBudget.observeHeaders(quotaKey, parsed.headers);
 
       if (parsed.status === 304 && cached) {
         return { stdout: cached.body, stderr: '' };
@@ -410,13 +416,13 @@ function parseResponse(raw: string): ParsedResponse {
   return { status, headers, body };
 }
 
-function updateQuotaFromHeaders(headers: Map<string, string>): void {
+function updateQuotaFromHeaders(headers: Map<string, string>, credentialKey: string): void {
   const remainingStr = headers.get('x-ratelimit-remaining');
   const limitStr = headers.get('x-ratelimit-limit');
   const resetStr = headers.get('x-ratelimit-reset');
   if (remainingStr == null || limitStr == null) return;
 
-  const remaining = Number(remainingStr);
+  let remaining = Number(remainingStr);
   const limit = Number(limitStr);
   if (!Number.isFinite(remaining) || !Number.isFinite(limit) || limit <= 0) return;
 
@@ -425,16 +431,34 @@ function updateQuotaFromHeaders(headers: Map<string, string>): void {
     Number.isFinite(resetEpoch) && resetEpoch > 0
       ? new Date(resetEpoch * 1000).toISOString()
       : new Date(0).toISOString();
+  const resource = headers.get('x-ratelimit-resource');
+  const observationKey = `${credentialKey}/${resource ?? 'unknown'}`;
+  const previous = quotaObservations.get(observationKey);
+  if (previous && Date.parse(previous.resetAt) > Date.parse(resetAt)) return;
+  // Concurrent requests may finish out of order. Match the reserve's monotonic accounting within a reset window.
+  if (previous?.resetAt === resetAt) remaining = Math.min(previous.remaining, remaining);
   const percentUsed = Math.max(0, Math.min(100, ((limit - remaining) / limit) * 100));
-
-  quota = { remaining, limit, resetAt, percentUsed };
+  const changed =
+    remaining !== previous?.remaining || limit !== previous?.limit || resetAt !== previous?.resetAt;
+  const observation = {
+    remaining,
+    limit,
+    resetAt,
+    percentUsed,
+    resource,
+    observedAt: new Date().toISOString(),
+  };
+  quotaObservations.set(observationKey, observation);
+  if (quotaObservations.size > 100)
+    quotaObservations.delete(quotaObservations.keys().next().value!);
+  quota = { ...observation, observations: [...quotaObservations.values()] };
 
   const percentRemaining = (remaining / limit) * 100;
   const bucket: 'ok' | 'warn' | 'crit' =
     percentRemaining <= critPercent ? 'crit' : percentRemaining <= warnPercent ? 'warn' : 'ok';
 
-  if (bucket !== lastQuotaBucket && broadcast) {
-    broadcast(Events.GITHUB_RATE_LIMIT, { remaining, limit, resetAt, percentUsed });
+  if (changed && broadcast) broadcast(Events.GITHUB_RATE_LIMIT, { ...quota });
+  if (bucket !== lastQuotaBucket) {
     console.log(
       `[github-client] quota bucket ${lastQuotaBucket} → ${bucket} remaining=${remaining}/${limit} resetAt=${resetAt}`,
     );

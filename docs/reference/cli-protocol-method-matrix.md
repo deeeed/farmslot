@@ -66,20 +66,21 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## config.\*
 
-| Method                               | Surface       | CLI command       | TUI | Note                                                                                           |
-| ------------------------------------ | ------------- | ----------------- | --- | ---------------------------------------------------------------------------------------------- |
-| `config.pools`                       | typed-command | `farmslot config` |     |                                                                                                |
-| `config.pool`                        | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.projects`                    | typed-command | `farmslot config` |     |                                                                                                |
-| `config.project`                     | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.pool.raw`                    | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.templates`                   | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.templatePreview`             | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.templateOptions`             | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.slot.update`                 | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.pool.update`                 | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.project.autoRecovery.update` | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `config.project.backlog.update`      | rpc-only      |                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                               | Surface       | CLI command                          | TUI | Note                                                                                                 |
+| ------------------------------------ | ------------- | ------------------------------------ | --- | ---------------------------------------------------------------------------------------------------- |
+| `config.pools`                       | typed-command | `farmslot config`                    |     |                                                                                                      |
+| `config.pool`                        | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.projects`                    | typed-command | `farmslot config`                    |     |                                                                                                      |
+| `config.githubAccounts`              | rpc-only      | `farmslot rpc config.githubAccounts` |     | List verified gateway GitHub accounts without credentials; explicit refresh rechecks authentication. |
+| `config.project`                     | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.pool.raw`                    | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.templates`                   | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.templatePreview`             | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.templateOptions`             | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.slot.update`                 | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.pool.update`                 | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.project.autoRecovery.update` | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
+| `config.project.backlog.update`      | rpc-only      |                                      |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.       |
 
 ## copilot.\*
 

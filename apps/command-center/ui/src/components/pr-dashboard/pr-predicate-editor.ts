@@ -8,7 +8,10 @@ import type {
   PRRuleValue,
 } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
 import './pr-project-field-picker.js';
+
+import type { ChoicePicker } from '../shared/choice-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 
@@ -90,11 +93,11 @@ export class PRPredicateEditor extends LitElement {
       );
     return html`<div class="grid">
         <label
-          >PR fact<select
+          >PR fact<choice-picker
             data-testid="pr-predicate-field"
             .value=${typeof field === 'string' ? field : 'project-field'}
             @change=${(event: Event) => {
-              const value = (event.target as HTMLSelectElement).value;
+              const value = (event.target as ChoicePicker).value;
               const next: PRRuleField =
                 value === 'project-field'
                   ? { projectId: '', fieldId: '', valueType: 'single-select' }
@@ -115,15 +118,15 @@ export class PRPredicateEditor extends LitElement {
             <option value="project-field" .selected=${typeof field !== 'string'}>
               GitHub Project field
             </option>
-          </select></label
+          </choice-picker></label
         >
         <label
-          >Comparison<select
+          >Comparison<choice-picker
             data-testid="pr-predicate-operator"
             .value=${node.operator}
             @change=${(event: Event) => {
               const operator = operators(field).find(
-                (operator) => operator === (event.target as HTMLSelectElement).value,
+                (operator) => operator === (event.target as ChoicePicker).value,
               )!;
               this.change({ ...node, operator, value: initialValue(field, operator) });
             }}
@@ -134,7 +137,7 @@ export class PRPredicateEditor extends LitElement {
                   ${operator}
                 </option>`,
             )}
-          </select></label
+          </choice-picker></label
         >
         ${optionPicker
           ? nothing
@@ -230,11 +233,11 @@ export class PRPredicateEditor extends LitElement {
                     })}
               /></label>
               <label
-                >Field type<select
+                >Field type<choice-picker
                   .value=${field.valueType}
                   @change=${(event: Event) => {
                     const type = (['text', 'number', 'date', 'single-select'] as const).find(
-                      (type) => type === (event.target as HTMLSelectElement).value,
+                      (type) => type === (event.target as ChoicePicker).value,
                     )!;
                     const next = { ...field, valueType: type };
                     this.change({
@@ -251,7 +254,7 @@ export class PRPredicateEditor extends LitElement {
                         ${type}
                       </option>`,
                   )}
-                </select></label
+                </choice-picker></label
               >
             </div>
             <p class="muted">

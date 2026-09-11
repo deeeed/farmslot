@@ -6,6 +6,7 @@ import type {
   ProjectAutoRecoveryConfig,
   ProjectBacklogConfig,
   ProjectConfig,
+  PRSourceAccount,
   SlotConfigUpdate,
   TemplatePreview,
   WorkerTemplateOption,
@@ -17,6 +18,7 @@ export const ConfigMethods = {
   pools: Methods.CONFIG_POOLS,
   pool: Methods.CONFIG_POOL,
   projects: Methods.CONFIG_PROJECTS,
+  githubAccounts: Methods.CONFIG_GITHUB_ACCOUNTS,
   project: Methods.CONFIG_PROJECT,
   poolRaw: Methods.CONFIG_POOL_RAW,
   templates: Methods.CONFIG_TEMPLATES,
@@ -146,4 +148,14 @@ export interface ConfigPoolsResult {
 
 export interface ConfigProjectsResult {
   projects: ProjectConfig[];
+}
+
+/** Authenticated GitHub identities available to the gateway. No credentials leave the server. */
+export interface ConfigGitHubAccountsResult {
+  accounts: Array<PRSourceAccount & { active: boolean }>;
+  checkedAt: string;
+  error?: string;
+}
+export interface ConfigGitHubAccountsParams {
+  refresh?: boolean;
 }

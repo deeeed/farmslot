@@ -214,6 +214,11 @@ export class SlotChoiceList extends LitElement {
       opacity: 0.45;
     }
 
+    @media (max-width: 600px) {
+      .choice-header {
+        display: none;
+      }
+    }
     .empty {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: 11px;
@@ -303,7 +308,9 @@ export class SlotChoiceList extends LitElement {
       branch: slot.branch || DEFAULT_BRANCH,
       task: `${slot.machine} · ${slot.runner ? `${slot.runner}/${slot.model ?? 'default'}` : 'default runner'}`,
       lifecycle: slot.lifecycle,
-      state: slot.agent ?? 'idle',
+      state: slot.enabled === false ? 'disabled' : (slot.agent ?? 'idle'),
+      warning: slot.enabled === false,
+      badges: slot.enabled === false ? [{ label: 'Disabled', tone: 'warning' as const }] : [],
       group: this.grouped ? `${slot.machine} / ${slot.project}` : undefined,
     }));
   }
@@ -352,6 +359,7 @@ export class SlotChoiceList extends LitElement {
     const selected = this.selectedSet().has(slotId);
     return html`
       <slot-choice-row
+        data-slot-id=${slotId}
         .rank=${option.rank ?? (selected ? '#1' : `#${index + 1}`)}
         .slotId=${slotId}
         .branch=${option.branch || DEFAULT_BRANCH}

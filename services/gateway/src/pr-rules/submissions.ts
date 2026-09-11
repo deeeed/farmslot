@@ -10,7 +10,7 @@ import {
   type PRRulePreviewItem,
 } from '@farmslot/protocol';
 
-import { reconcileReviewIntent, reviewIntentId } from './intents.js';
+import { reconcileReviewIntent, reviewIntentId, updateReviewDisplay } from './intents.js';
 import type { PRRuleStoreData } from './store.js';
 
 export function createReviewSubmission(
@@ -144,7 +144,9 @@ export function applyReviewSubmission(
         };
         data.intents.push(intent);
       }
+      updateReviewDisplay(intent, item);
       const source: PRReviewContribution = {
+        reviewObservation: item.subject.reviewObservation,
         submissionId: id,
         submissionRevision: submission.revision,
         ownerId,

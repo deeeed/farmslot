@@ -4,6 +4,17 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Observe GitHub review requirements and account review history, and prevent queued reviews when requirements are satisfied or the account already reviewed the current commit.
+
+- Retain review candidate titles and authors from discovery and include authors in existing PR status reads.
+
+- Suspend PR checks and new repair planning while an active run owns the PR; discard competing observations and preserve manual pause settings.
+
+- Use smaller GitHub repository pages so PR discovery can resume past provider timeouts on large repositories.
+
+- Preserve rule-selected PR monitoring intervals through enrollment and restarts; existing subscriptions keep their settings.
+- Expose verified gateway GitHub account identities without credentials, verify new account bindings, and apply the GraphQL reserve to legacy dashboard reads while retaining confirmed PR data on quota holds and keeping quota observations current.
+
 - Add persistent PR monitoring, opt-in publication enrollment and queued repair/review work, with resumable source scans, repository-scoped webhook routing, Project/view filter import, durable rule attention, recipient-scoped push delivery and monitor enrollment, explicit execution policies and saved reviewer sessions for follow-up rounds.
 
 - Broadcast operator run changes to every connected client so completing a run from another tab or the CLI immediately updates its displayed status.

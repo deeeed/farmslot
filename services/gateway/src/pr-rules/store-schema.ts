@@ -20,6 +20,44 @@ const timestamp = {
   type: 'string',
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$',
 };
+const reviewObservation = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'observedAt',
+    'headSha',
+    'state',
+    'draft',
+    'decision',
+    'reviewer',
+    'requested',
+    'review',
+  ],
+  properties: {
+    observedAt: timestamp,
+    headSha: text,
+    state: { enum: ['open', 'closed', 'merged'] },
+    draft: { type: 'boolean' },
+    decision: { type: ['string', 'null'] },
+    reviewer: text,
+    requested: { type: 'boolean' },
+    review: {
+      anyOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['state', 'commit', 'submittedAt'],
+          properties: {
+            state: text,
+            commit: { type: ['string', 'null'] },
+            submittedAt: { type: ['string', 'null'] },
+          },
+        },
+      ],
+    },
+  },
+};
 const common = {
   id: text,
   ownerId: text,
@@ -85,6 +123,7 @@ const validate = ajv.compile<PRRuleStoreData>({
               observedAt: timestamp,
               facts: { type: 'object' },
               sourceReasons: strings,
+              reviewObservation,
               reviewPolicyFacts: {
                 type: 'object',
                 additionalProperties: false,
@@ -111,6 +150,7 @@ const validate = ajv.compile<PRRuleStoreData>({
               execution: { type: 'object' },
             },
           },
+          monitorPollIntervalMs: { type: 'integer', minimum: 60_000, maximum: 86_400_000 },
           current: { type: 'boolean' },
           status: { enum: ['pending', 'applied', 'withdrawn'] },
           monitorId: text,
@@ -248,6 +288,8 @@ const validate = ajv.compile<PRRuleStoreData>({
         properties: {
           id: text,
           round: revision,
+          title: { type: 'string' },
+          author: text,
           pr: { type: 'object' },
           headSha: text,
           reviewProfile: text,
@@ -299,6 +341,7 @@ const validate = ajv.compile<PRRuleStoreData>({
                 project: text,
                 execution: { type: 'object' },
                 review: { type: 'object' },
+                reviewObservation,
                 autoStart: { type: 'boolean' },
                 eligible: { type: 'boolean' },
                 configurationErrors: strings,

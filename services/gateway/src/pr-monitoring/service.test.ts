@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import type { PRMonitorConfig, PRMonitorObservation } from '@farmslot/protocol';
+import type { PRMonitorConfig, PRMonitorObservation, Run } from '@farmslot/protocol';
 
+import { makeRun } from '../run-engine/test-fixtures.js';
+
+import { activePRRuns } from './active-work.js';
 import { PRMonitoringService } from './service.js';
 import { PRMonitorStore } from './store.js';
 
@@ -46,6 +49,158 @@ async function fixture(t: test.TestContext) {
   const file = join(directory, 'monitors.json');
   return { file, store: await PRMonitorStore.load(file) };
 }
+
+test('active PR work skips enrollment and polling; terminal work resumes a due check', async (t) => {
+  const { file, store } = await fixture(t);
+  const run = makeRun({
+    flowType: 'pr-complete',
+    ticketOrPr: 'owner/repo#1',
+    status: 'ci-watching',
+    slotId: 'slot-a',
+  });
+  const runs = [run];
+  let reads = 0;
+  const service = new PRMonitoringService(
+    store,
+    () => true,
+    () => {},
+    async () => {
+      reads++;
+      return observation();
+    },
+    () => runs,
+  );
+  const monitor = await service.subscribe('owner', config);
+  assert.equal(monitor.lifecycle, 'active', 'Automatic suspension preserves the saved preference');
+  assert.deepEqual(activePRRuns(monitor, runs), [
+    { id: run.id, slotId: 'slot-a', status: 'ci-watching' },
+  ]);
+  await service.refresh(monitor.id, 'owner');
+  await service.tick();
+  assert.equal(reads, 0);
+  const restored = new PRMonitoringService(
+    await PRMonitorStore.load(file),
+    () => true,
+    () => {},
+    async () => {
+      reads++;
+      return observation();
+    },
+    () => runs,
+  );
+  await restored.tick();
+  assert.equal(reads, 0, 'A restarted gateway recomputes active work');
+  run.status = 'done';
+  await restored.tick();
+  assert.equal(reads, 1);
+  assert.equal(restored.store.get(monitor.id, 'owner').observation?.headSha, 'head-a');
+  assert.deepEqual(activePRRuns(monitor, runs), []);
+});
+
+test('same-number work in another repository does not block monitoring, and manual pause survives release', async (t) => {
+  const { store } = await fixture(t);
+  const run = makeRun({ flowType: 'review-pr', ticketOrPr: 'owner/other#1', status: 'monitoring' });
+  let reads = 0;
+  const service = new PRMonitoringService(
+    store,
+    () => true,
+    () => {},
+    async () => {
+      reads++;
+      return observation();
+    },
+    () => [run],
+  );
+  let monitor = await service.subscribe('owner', config);
+  assert.equal(reads, 1);
+  run.ticketOrPr = 'owner/repo#1';
+  await service.tick();
+  monitor = await service.lifecycle(monitor.id, 'owner', monitor.revision, 'paused');
+  run.status = 'done';
+  await service.tick(Date.now() + config.pollIntervalMs * 2);
+  assert.equal(reads, 1);
+  assert.equal(store.get(monitor.id, 'owner').lifecycle, 'paused');
+});
+
+test('revoked owners receive no fresh active-work metadata or suspension broadcasts', async (t) => {
+  const { store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const run = makeRun({ flowType: 'review-pr', ticketOrPr: 'owner/repo#1', status: 'monitoring' });
+  let broadcasts = 0;
+  const service = new PRMonitoringService(
+    store,
+    () => false,
+    () => {
+      broadcasts++;
+    },
+    async () => {
+      throw new Error('must not read');
+    },
+    () => [run],
+  );
+  assert.deepEqual(service.present(monitor).activeRuns, []);
+  await service.tick();
+  assert.equal(broadcasts, 0);
+});
+
+test('work acquiring the PR during observation discards the response and refuses manual repairs', async (t) => {
+  const { store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const runs: Run[] = [];
+  let resolve!: (value: PRMonitorObservation) => void;
+  const response = new Promise<PRMonitorObservation>((done) => {
+    resolve = done;
+  });
+  const service = new PRMonitoringService(
+    store,
+    () => true,
+    () => {},
+    () => response,
+    () => runs,
+  );
+  const pending = service.refresh(monitor.id, 'owner');
+  const run = makeRun({
+    flowType: 'review-pr',
+    ticketOrPr: 'owner/repo#1',
+    status: 'monitoring',
+    slotId: 'slot-b',
+  });
+  runs.push(run);
+  resolve(observation());
+  await pending;
+  assert.equal(store.get(monitor.id, 'owner').observation, undefined);
+  await assert.rejects(
+    service.requestRepair(monitor.id, 'owner', monitor.revision, {
+      project: 'project',
+      execution: {
+        slotPolicy: { kind: 'exact', slotId: 'slot-b' },
+        models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+      },
+    }),
+    /work is ongoing/,
+  );
+  assert.equal(store.get(monitor.id, 'owner').repairs, undefined);
+});
+
+test('work acquiring the PR before the store transaction also invalidates observation', async (t) => {
+  const { store } = await fixture(t);
+  const monitor = await store.subscribe('owner', config);
+  const runs: Run[] = [];
+  const observe = store.observe.bind(store);
+  store.observe = (...args) => {
+    runs.push(makeRun({ flowType: 'review-pr', ticketOrPr: 'owner/repo#1', status: 'monitoring' }));
+    return observe(...args);
+  };
+  const service = new PRMonitoringService(
+    store,
+    () => true,
+    () => {},
+    async () => observation(),
+    () => runs,
+  );
+  await service.refresh(monitor.id, 'owner');
+  assert.equal(store.get(monitor.id, 'owner').observation, undefined);
+});
 
 test('a clientless sweep discovers feedback after reloading a completed run subscription', async (t) => {
   const { file, store } = await fixture(t);

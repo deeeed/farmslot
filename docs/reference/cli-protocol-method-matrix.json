@@ -1300,6 +1300,11 @@
     "prPush.acknowledge": {
       "surface": "rpc-only",
       "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "config.githubAccounts": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc config.githubAccounts",
+      "note": "List verified gateway GitHub accounts without credentials; explicit refresh rechecks authentication."
     }
   }
 }

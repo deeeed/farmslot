@@ -12,8 +12,12 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import '../shared/choice-picker.js';
 import './pr-review-policy-editor.js';
 
+import type { ChoicePicker } from '../shared/choice-picker.js';
+
+import type { PRFormDraft, PRRuleEditorDraft } from './pr-automation-draft-store.js';
 import { prAutomationStyles } from './pr-automation-styles.js';
 import { newPRExecution } from './pr-execution-picker.js';
 import { defaultPRPredicate } from './pr-predicate-editor.js';
@@ -36,6 +40,7 @@ export class PRRuleForm extends LitElement {
   @property({ attribute: false }) initial?: PRTriggerRuleConfig;
   @property({ attribute: false }) teams: PRTeamProfile[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) restoredDraft?: PRRuleEditorDraft;
   @property({ type: Boolean }) disabled = false;
   @state() private draft = newRule();
   @state() private repository = '';
@@ -48,9 +53,35 @@ export class PRRuleForm extends LitElement {
       this.repository = '';
       this.error = '';
     }
+    if (changes.has('restoredDraft') && this.restoredDraft) {
+      this.draft = structuredClone(this.restoredDraft.config);
+      this.repository = this.restoredDraft.repository;
+    }
+  }
+  snapshotDraft(): PRFormDraft {
+    return {
+      kind: 'rule',
+      value: { config: structuredClone(this.draft), repository: this.repository },
+    };
+  }
+  private draftChanged() {
+    this.dispatchEvent(
+      new CustomEvent<PRFormDraft>('pr-draft-change', {
+        detail: this.snapshotDraft(),
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
   private edit(patch: Partial<PRTriggerRuleConfig>) {
     this.draft = { ...this.draft, ...patch };
+    this.dispatchEvent(
+      new CustomEvent<PRFormDraft>('pr-draft-change', {
+        detail: this.snapshotDraft(),
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
   private review(patch: PRReviewPolicyChange & { autoStart?: boolean }) {
     this.edit({
@@ -98,7 +129,7 @@ export class PRRuleForm extends LitElement {
     const policy = team?.config.repositories.find((item) => item.repo === this.repository);
     const review = draft.actions.find((action) => action.kind === 'review');
     const monitor = draft.actions.find((action) => action.kind === 'monitor');
-    return html`<form @submit=${this.save}>
+    return html`<form @submit=${this.save} @input=${this.draftChanged}>
       <fieldset ?disabled=${this.disabled}>
         <div class="grid">
           <label
@@ -106,19 +137,18 @@ export class PRRuleForm extends LitElement {
               data-testid="pr-rule-name"
               required
               .value=${draft.name}
-              @change=${(event: Event) =>
+              @input=${(event: Event) =>
                 this.edit({ name: (event.target as HTMLInputElement).value.trim() })}
           /></label>
           <label
-            >Team policy<select
+            >Team policy<choice-picker
               data-testid="pr-rule-team"
               ?disabled=${!!this.initial}
-              .size=${Math.min(6, Math.max(2, this.teams.length + 1))}
               required
               .value=${draft.teamId}
-              @change=${(event: Event) => {
+              @input=${(event: Event) => {
                 this.repository = '';
-                this.edit({ teamId: (event.target as HTMLSelectElement).value });
+                this.edit({ teamId: (event.target as ChoicePicker).value });
               }}
             >
               <option value="" .selected=${!draft.teamId}>Choose a team</option>
@@ -132,17 +162,17 @@ export class PRRuleForm extends LitElement {
                     ${item.config.name}
                   </option>`,
               )}
-            </select></label
+            </choice-picker></label
           >
           <label
-            >Poll interval in seconds<input
+            >Discover matching PRs every, seconds<input
               data-testid="pr-rule-interval"
               type="number"
               required
               min="60"
               max="86400"
               .value=${String(draft.pollIntervalMs / 1000)}
-              @change=${(event: Event) =>
+              @input=${(event: Event) =>
                 this.edit({
                   pollIntervalMs: Number((event.target as HTMLInputElement).value) * 1000,
                 })}
@@ -155,7 +185,7 @@ export class PRRuleForm extends LitElement {
               min="1"
               max="100"
               .value=${String(draft.maxAdmissionsPerScan)}
-              @change=${(event: Event) =>
+              @input=${(event: Event) =>
                 this.edit({
                   maxAdmissionsPerScan: Number((event.target as HTMLInputElement).value),
                 })}
@@ -191,7 +221,7 @@ export class PRRuleForm extends LitElement {
                     type="checkbox"
                     data-testid=${`pr-rule-action-${kind}`}
                     .checked=${draft.actions.some((action) => action.kind === kind)}
-                    @change=${(event: Event) =>
+                    @input=${(event: Event) =>
                       this.toggleAction(kind, (event.target as HTMLInputElement).checked)}
                   />${{
                     notify: 'Notify team',
@@ -205,12 +235,37 @@ export class PRRuleForm extends LitElement {
         ${monitor
           ? html`<section>
               <h3>Monitor policy</h3>
+              <label
+                >Check each PR every, minutes<input
+                  data-testid="pr-rule-monitor-interval"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  required
+                  .value=${String((monitor.pollIntervalMs ?? 300_000) / 60_000)}
+                  @input=${(event: Event) =>
+                    this.edit({
+                      actions: this.draft.actions.map((action) =>
+                        action.kind === 'monitor'
+                          ? {
+                              ...action,
+                              pollIntervalMs:
+                                Number((event.target as HTMLInputElement).value) * 60_000,
+                            }
+                          : action,
+                      ),
+                    })}
+              /></label>
+              <p class="muted">
+                Use 120 for every 2 hours. This interval applies to new monitors; discovery above
+                controls how often the rule looks for matching PRs.
+              </p>
               <label class="check"
                 ><input
                   type="checkbox"
                   data-testid="pr-rule-monitor-repair"
                   .checked=${monitor.policy.mode === 'automatic-repair'}
-                  @change=${(event: Event) =>
+                  @input=${(event: Event) =>
                     this.monitorPolicy(
                       (event.target as HTMLInputElement).checked
                         ? { mode: 'automatic-repair', execution: newPRExecution() }
@@ -225,7 +280,13 @@ export class PRRuleForm extends LitElement {
               ${monitor.policy.mode === 'automatic-repair'
                 ? html`<pr-execution-picker
                     .value=${monitor.policy.execution}
-                    .slots=${this.slots}
+                    .slots=${team?.config.repositories.some((policy) => policy.project)
+                      ? this.slots.filter((slot) =>
+                          team.config.repositories.some(
+                            (policy) => policy.project === slot.project,
+                          ),
+                        )
+                      : this.slots}
                     .allProjects=${true}
                     .disabled=${this.disabled}
                     @execution-change=${(event: CustomEvent<PRExecutionProfile>) => {
@@ -240,7 +301,7 @@ export class PRRuleForm extends LitElement {
           ><input
             type="checkbox"
             .checked=${draft.rereviewOnHeadChange}
-            @change=${(event: Event) =>
+            @input=${(event: Event) =>
               this.edit({ rereviewOnHeadChange: (event.target as HTMLInputElement).checked })}
           />Request another review when the head changes</label
         >
@@ -252,17 +313,17 @@ export class PRRuleForm extends LitElement {
                   type="checkbox"
                   data-testid="pr-rule-auto-start"
                   .checked=${review.autoStart}
-                  @change=${(event: Event) =>
+                  @input=${(event: Event) =>
                     this.review({ autoStart: (event.target as HTMLInputElement).checked })}
                 />Start automatically when an allowed slot is available</label
               >
               <p class="muted">Otherwise matches wait for acceptance and occupy no slot.</p>
               <label
-                >Show inherited settings for<select
+                >Show inherited settings for<choice-picker
                   data-testid="pr-rule-inheritance-repository"
                   .value=${this.repository}
-                  @change=${(event: Event) => {
-                    this.repository = (event.target as HTMLSelectElement).value;
+                  @input=${(event: Event) => {
+                    this.repository = (event.target as ChoicePicker).value;
                   }}
                 >
                   <option value="" .selected=${!this.repository}>Team defaults</option>
@@ -272,7 +333,7 @@ export class PRRuleForm extends LitElement {
                         ${item.repo}
                       </option>`,
                   )}
-                </select></label
+                </choice-picker></label
               >
               ${policy
                 ? html`<p class="muted">
@@ -285,7 +346,11 @@ export class PRRuleForm extends LitElement {
                 .review=${review.review}
                 .inheritedExecution=${policy?.execution ?? team?.config.execution}
                 .inheritedReview=${policy?.review ?? team?.config.review}
-                .slots=${this.slots}
+                .slots=${team?.config.repositories.some((policy) => policy.project)
+                  ? this.slots.filter((slot) =>
+                      team.config.repositories.some((policy) => policy.project === slot.project),
+                    )
+                  : this.slots}
                 .allProjects=${true}
                 .disabled=${this.disabled}
                 @policy-change=${(event: CustomEvent<PRReviewPolicyChange>) => {

@@ -273,6 +273,7 @@ import {
   chatSessionsBulkDelete,
 } from '../methods/chat.js';
 import {
+  configGitHubAccounts,
   configPool,
   configPoolRaw,
   configPools,
@@ -1115,6 +1116,8 @@ async function routeAuthorizedMethod(
       return configPoolRaw(p as ConfigPoolParams);
     case Methods.CONFIG_PROJECTS:
       return configProjects();
+    case Methods.CONFIG_GITHUB_ACCOUNTS:
+      return configGitHubAccounts(params);
     case Methods.CONFIG_PROJECT:
       return configProject(p as ConfigProjectParams);
     case Methods.CONFIG_TEMPLATES:
