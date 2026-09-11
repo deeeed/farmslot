@@ -82,10 +82,31 @@ export function gateOpenFromFamilyHash(hash: string = location.hash): boolean {
   return familyGateViewFromHash(hash) !== 'closed';
 }
 
-export function familyGateViewHash(view: FamilyGateView, hash: string = location.hash): string {
+const READY_WORKSPACE_HASH_KEYS = [
+  'tab',
+  'file',
+  'modal',
+  'lightboxIndex',
+  'lightboxRecipeRunId',
+  'evidencePreview',
+  'recipeRun',
+] as const;
+
+export function familyGateViewHash(
+  view: FamilyGateView,
+  hash: string = location.hash,
+  options: { clearWorkspaceParams?: boolean } = {},
+): string {
   const { route, params } = parseHashRoute(hash);
-  if (view === 'closed') params.delete('gate');
-  else params.set('gate', view === 'max' ? 'max' : '1');
+  if (view === 'closed') {
+    params.delete('gate');
+    if (options.clearWorkspaceParams) {
+      for (const key of READY_WORKSPACE_HASH_KEYS) params.delete(key);
+      if (!params.get('diffRun')) params.delete('diffArtifact');
+    }
+  } else {
+    params.set('gate', view === 'max' ? 'max' : '1');
+  }
   return buildHash(route, params);
 }
 

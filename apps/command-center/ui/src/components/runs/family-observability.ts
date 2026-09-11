@@ -119,7 +119,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (this.selectedRunId !== runId) this._selectedStep = null;
     this.selectedRunId = runId;
     void this._ensureFullRun(runId);
-    if (!this.familyId) return;
+    if (!this.familyId || this.snapshotOverride) return;
     const newHash = familyRunHash(this.familyId, runId, {
       evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
       tokens: this._tokenScope === 'family' ? undefined : this._tokenScope,
@@ -313,7 +313,9 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _persistGateViewHash(): void {
     const view = !this._gateOpen ? 'closed' : this._gateMaximized ? 'max' : 'open';
-    const newHash = familyGateViewHash(view);
+    const newHash = familyGateViewHash(view, location.hash, {
+      clearWorkspaceParams: view === 'closed' && !this._diffModal,
+    });
     if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
   }
 
@@ -339,7 +341,13 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._persistGateViewHash();
   }
 
+  override _publishGateWorkspaceOverlayOpen(): boolean {
+    const workspace = this.renderRoot.querySelector('ready-workspace');
+    return Boolean(workspace?.hasOpenOverlay());
+  }
+
   updated(changed: Map<string, unknown>): void {
+    this.classList.toggle('gate-maximized', this._gateOpen && this._gateMaximized);
     if (changed.has('familyId') || changed.has('snapshotOverride')) {
       void this._loadSnapshot();
     }

@@ -37,3 +37,12 @@ export function familyPublishGateReopenLabel(input: {
 export function familyPublishGateMaximizeLabel(maximized: boolean): string {
   return maximized ? 'Restore' : 'Maximize';
 }
+
+export function shouldRestorePublishGateOnEscape(input: {
+  familyDiffOpen: boolean;
+  gateMaximized: boolean;
+  workspaceOverlayOpen: boolean;
+}): boolean {
+  if (input.familyDiffOpen || input.workspaceOverlayOpen) return false;
+  return input.gateMaximized;
+}

@@ -87,13 +87,6 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
     : 'Pending';
   const maximized = options.gateOpen && options.gateMaximized;
   return html`
-    ${maximized
-      ? html`<div
-          class="publish-gate-backdrop"
-          data-testid="family-publish-gate-backdrop"
-          @click=${options.onTogglePublishGateMaximize}
-        ></div>`
-      : nothing}
     <div
       class="detail-section publish-gate-reopen ${maximized ? 'maximized' : ''}"
       data-testid="family-publish-gate"
@@ -138,6 +131,9 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
                   slotId=${options.fullRun.slotId ?? ''}
                   branch=${options.fullRun.branch ?? ''}
                   runner=${options.fullRun.metrics.runner ?? ''}
+                  .postureBlockedReason=${decision.resolvedAt
+                    ? null
+                    : 'Resolve this gate from Run Detail so resource posture can be chosen.'}
                 ></ready-workspace>
               </div>
             `

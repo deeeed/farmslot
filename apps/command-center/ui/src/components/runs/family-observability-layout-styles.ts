@@ -12,6 +12,9 @@ export const familyObservabilityLayoutStyles = css`
     font-family: ${unsafeCSS(fonts.mono)};
     box-sizing: border-box;
   }
+  :host(.gate-maximized) {
+    overflow: hidden;
+  }
   .back {
     color: ${unsafeCSS(colors.textMuted)};
     cursor: pointer;
@@ -183,17 +186,12 @@ export const familyObservabilityLayoutStyles = css`
     border: 1px solid ${unsafeCSS(colors.textMuted)}33;
     border-radius: ${unsafeCSS(radii.md)};
   }
-  .publish-gate-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 35;
-    background: #00000099;
-  }
   .publish-gate-reopen.maximized {
     position: fixed;
     inset: 0;
-    z-index: 36;
+    z-index: 1200;
     margin: 0;
+    padding: ${unsafeCSS(spacing.md)};
     display: flex;
     flex-direction: column;
     background: ${unsafeCSS(colors.bgCard)};

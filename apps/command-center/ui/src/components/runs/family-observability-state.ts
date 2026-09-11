@@ -19,6 +19,7 @@ import type { CompareTab } from './family-observability-comparison-renderers.js'
 import type { FamilyDiffModalState } from './family-observability-diff-modal.js';
 import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
 import type { EvidenceMatrix } from './family-observability-evidence-matrix.js';
+import { shouldRestorePublishGateOnEscape } from './family-observability-gate-model.js';
 import type { GradeDraft } from './family-observability-grading.js';
 import {
   FamilyImprovementProposalTracker,
@@ -29,6 +30,7 @@ export abstract class FamilyObservabilityState extends LitElement {
   abstract _applyDiffModalFromHash(): void;
   abstract _closeDiffModal(syncHash?: boolean): void;
   abstract _restorePublishGateMaximize(): void;
+  abstract _publishGateWorkspaceOverlayOpen(): boolean;
 
   @property() familyId = '';
   @property() initialRunId = '';
@@ -127,7 +129,13 @@ export abstract class FamilyObservabilityState extends LitElement {
       this._closeDiffModal();
       return;
     }
-    if (this._gateMaximized) {
+    if (
+      shouldRestorePublishGateOnEscape({
+        familyDiffOpen: Boolean(this._diffModal),
+        gateMaximized: this._gateMaximized,
+        workspaceOverlayOpen: this._publishGateWorkspaceOverlayOpen(),
+      })
+    ) {
       e.stopPropagation();
       this._restorePublishGateMaximize();
     }

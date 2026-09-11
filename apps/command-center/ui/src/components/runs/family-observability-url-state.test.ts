@@ -47,9 +47,27 @@ test('family gate hash helpers round-trip without dropping existing params', () 
     '#family/fam-1?run=abc&machines=macwork&gate=max',
   );
   assert.equal(familyGateViewFromHash('#family/fam-1?run=abc&gate=max'), 'max');
+  assert.equal(gateOpenFromFamilyHash('#family/fam-1?run=abc&gate=max'), true);
+  assert.equal(familyGateViewFromHash('#family/fam-1?run=abc&gate=true'), 'closed');
   assert.equal(
     familyGateViewHash('closed', '#family/fam-1?run=abc&machines=macwork&gate=max'),
     '#family/fam-1?run=abc&machines=macwork',
+  );
+  assert.equal(
+    familyGateViewHash(
+      'closed',
+      '#family/fam-1?run=abc&gate=1&tab=pr-preview&file=src%2Fa.ts&diffArtifact=artifacts%2Fa.diff',
+      { clearWorkspaceParams: true },
+    ),
+    '#family/fam-1?run=abc',
+  );
+  assert.equal(
+    familyGateViewHash(
+      'closed',
+      '#family/fam-1?run=abc&diffRun=run-1&diffArtifact=artifacts%2Fa.diff&tab=diff&gate=1',
+      { clearWorkspaceParams: true },
+    ),
+    '#family/fam-1?run=abc&diffRun=run-1&diffArtifact=artifacts%2Fa.diff',
   );
 });
 

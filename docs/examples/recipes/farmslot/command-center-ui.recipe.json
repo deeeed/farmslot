@@ -126,8 +126,47 @@
       "capture-family-publish-gate": {
         "action": "ui.screenshot",
         "path": "screenshots/family-publish-gate-reopen.svg",
-        "next": "capture-recipe-workspace",
+        "next": "press-family-restore",
         "intent": "Record the maximized family publish-gate workspace for review."
+      },
+      "press-family-restore": {
+        "action": "ui.press",
+        "next": "assert-family-gate-restored",
+        "test_id": "family-maximize-publish-gate",
+        "intent": "Restore the publish-gate workspace from fullscreen back into the selected-run column."
+      },
+      "assert-family-gate-restored": {
+        "action": "ui.wait_for",
+        "next": "press-family-close",
+        "selector": "[data-testid=\"family-publish-gate\"][data-gate-max=\"false\"]",
+        "text_contains": ["Maximize"],
+        "intent": "Verify Restore leaves the gate open inline instead of unmounting it."
+      },
+      "press-family-close": {
+        "action": "ui.press",
+        "next": "assert-family-gate-closed",
+        "test_id": "family-reopen-publish-gate",
+        "intent": "Close the remounted publish-gate workspace."
+      },
+      "assert-family-gate-closed": {
+        "action": "ui.wait_for",
+        "next": "select-family-run-without-gate",
+        "selector": "ready-workspace",
+        "expected": "absent",
+        "intent": "Verify Close unmounts ready-workspace rather than only leaving fullscreen."
+      },
+      "select-family-run-without-gate": {
+        "action": "ui.press",
+        "next": "assert-family-no-reopen-control",
+        "test_id": "family-run-run-review",
+        "intent": "Select a family run that never reached the publication gate."
+      },
+      "assert-family-no-reopen-control": {
+        "action": "ui.wait_for",
+        "next": "capture-recipe-workspace",
+        "test_id": "family-reopen-publish-gate",
+        "expected": "absent",
+        "intent": "Verify a run without a ready decision does not offer reopen."
       },
       "capture-recipe-workspace": {
         "action": "ui.screenshot",

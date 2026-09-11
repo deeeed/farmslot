@@ -7,6 +7,7 @@ import {
   familyPublishGateMaximizeLabel,
   familyPublishGateReopenLabel,
   familyReadyGateDecision,
+  shouldRestorePublishGateOnEscape,
 } from './family-observability-gate-model.js';
 
 function readyDecision(overrides: Partial<RunDecision> = {}): RunDecision {
@@ -76,4 +77,31 @@ test('familyPublishGateReopenLabel distinguishes pending, resolved, and open', (
 test('familyPublishGateMaximizeLabel toggles maximize and restore', () => {
   assert.equal(familyPublishGateMaximizeLabel(false), 'Maximize');
   assert.equal(familyPublishGateMaximizeLabel(true), 'Restore');
+});
+
+test('shouldRestorePublishGateOnEscape yields to family diff and workspace overlays', () => {
+  assert.equal(
+    shouldRestorePublishGateOnEscape({
+      familyDiffOpen: false,
+      gateMaximized: true,
+      workspaceOverlayOpen: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRestorePublishGateOnEscape({
+      familyDiffOpen: true,
+      gateMaximized: true,
+      workspaceOverlayOpen: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRestorePublishGateOnEscape({
+      familyDiffOpen: false,
+      gateMaximized: true,
+      workspaceOverlayOpen: true,
+    }),
+    false,
+  );
 });
