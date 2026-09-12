@@ -163,3 +163,6 @@ pool/*.bak.*
 
 .pr-source-checkpoints.json
 /.pr-source-checkpoints.json.*.tmp
+
+# Root-level test byproducts (dispatch pressure tests write here)
+/artifacts/
