@@ -129,6 +129,12 @@ test('linear journal, durable uncertain receipt, exact recovery and stale genera
     await until(() => manager.read('owner', session.id).session.state === 'idle');
     const journal = readFileSync(join(root, `${session.id}.journal`), 'utf8');
     assert.ok(
+      journal
+        .trim()
+        .split('\n')
+        .every((line) => Object.keys(JSON.parse(line)).length > 0),
+    );
+    assert.ok(
       journal.split('long-prompt-marker').length < 10,
       'Stream events repeated prompt history',
     );

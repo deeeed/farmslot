@@ -86,7 +86,8 @@ intent before submission. Receipts distinguish pending, unknown, accepted, faile
 and completed. `submitted` records a submission attempt; only `accepted` records
 native acknowledgement. A lost reply or unknown receipt never triggers a resend.
 `read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
-latest 100 receipts. Older IDs remain deduplicated. Consume each page once and
+latest 100 receipts. Older IDs remain deduplicated across process generations;
+a missing receipt in a page does not mean the command was never submitted. Consume each page once and
 persist its returned cursor. Pending interactions are separate from the event
 page. Respond with `request.id`; `nativeId` is evidence, not an input token.
 

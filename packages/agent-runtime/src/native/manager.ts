@@ -125,7 +125,6 @@ export class NativeSessionManager {
         for (const command of entry.commands ?? []) commands.set(command.commandId, command);
         if (entry.event) events.push(entry.event);
       }
-      if (!entries.length) continue;
       if (!info || !context) throw new Error('Native journal has no durable session identity');
       const record: SessionRecord = {
         info,
@@ -171,6 +170,7 @@ export class NativeSessionManager {
       ...(commands.length ? { commands } : {}),
       event,
     };
+    if (!event && !entry.info && !entry.context && !entry.pending && !entry.commands) return;
     const fd = openSync(join(this.root, `${record.info.id}.journal`), 'a', 0o600);
     try {
       writeFileSync(fd, `${JSON.stringify(entry)}\n`);
