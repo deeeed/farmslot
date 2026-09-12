@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { claudeNativeAdapter } from './claude.js';
 
@@ -53,8 +53,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 });
 `;
 
-async function fixture() {
+async function startSession(t: TestContext, ...args: Parameters<typeof claudeNativeAdapter.start>) {
+  const session = await claudeNativeAdapter.start(...args);
+  t.after(() => session.close());
+  return session;
+}
+
+async function fixture(t: TestContext) {
   const directory = await mkdtemp(path.join(tmpdir(), 'farmslot-claude-native-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const executable = path.join(directory, 'claude');
   const invocation = path.join(directory, 'invocation.json');
   const response = path.join(directory, 'response.json');
@@ -71,10 +78,11 @@ async function waitFor(events: Array<Record<string, unknown>>, type: string): Pr
   throw new Error(`Timed out waiting for ${type}`);
 }
 
-test('Claude maps acknowledged interruption followed by a successful result to interrupted', async () => {
-  const { executable, invocation } = await fixture();
+test('Claude maps acknowledged interruption followed by a successful result to interrupted', async (t) => {
+  const { executable, invocation } = await fixture(t);
   const events: Array<Record<string, unknown>> = [];
-  const session = await claudeNativeAdapter.start(
+  const session = await startSession(
+    t,
     {
       cwd: process.cwd(),
       executable,
@@ -93,10 +101,11 @@ test('Claude maps acknowledged interruption followed by a successful result to i
   }
 });
 
-test('Claude stream-json adapter preserves structured session, turn, tool, and approval events', async () => {
-  const { executable, invocation } = await fixture();
+test('Claude stream-json adapter preserves structured session, turn, tool, and approval events', async (t) => {
+  const { executable, invocation } = await fixture(t);
   const events: Array<Record<string, unknown>> = [];
-  const session = await claudeNativeAdapter.start(
+  const session = await startSession(
+    t,
     {
       cwd: process.cwd(),
       executable,
@@ -152,9 +161,10 @@ test('Claude stream-json adapter preserves structured session, turn, tool, and a
   await session.close();
 });
 
-test('Claude stream-json adapter resumes the exact native session id', async () => {
-  const { executable, invocation } = await fixture();
-  const session = await claudeNativeAdapter.start(
+test('Claude stream-json adapter resumes the exact native session id', async (t) => {
+  const { executable, invocation } = await fixture(t);
+  const session = await startSession(
+    t,
     {
       cwd: process.cwd(),
       executable,
@@ -169,10 +179,11 @@ test('Claude stream-json adapter resumes the exact native session id', async () 
   await session.close();
 });
 
-test('Claude stream-json adapter answers native questions by question text', async () => {
-  const { executable, invocation, response: responsePath } = await fixture();
+test('Claude stream-json adapter answers native questions by question text', async (t) => {
+  const { executable, invocation, response: responsePath } = await fixture(t);
   const events: Array<Record<string, unknown>> = [];
-  const session = await claudeNativeAdapter.start(
+  const session = await startSession(
+    t,
     {
       cwd: process.cwd(),
       executable,
@@ -195,8 +206,8 @@ test('Claude stream-json adapter answers native questions by question text', asy
   await session.close();
 });
 
-test('Claude initialization accepts a configured session ID without an early native echo', async () => {
-  const { executable } = await fixture();
+test('Claude initialization accepts a configured session ID without an early native echo', async (t) => {
+  const { executable } = await fixture(t);
   await writeFile(
     executable,
     `#!/usr/bin/env node
@@ -207,7 +218,7 @@ createInterface({input:process.stdin}).on('line', line => {
 });`,
   );
   const events: Array<Record<string, unknown>> = [];
-  const session = await claudeNativeAdapter.start({ cwd: process.cwd(), executable }, (event) =>
+  const session = await startSession(t, { cwd: process.cwd(), executable }, (event) =>
     events.push(event),
   );
   assert.match(session.nativeSessionId, /^[a-f0-9-]{36}$/);
@@ -215,19 +226,20 @@ createInterface({input:process.stdin}).on('line', line => {
   await session.close();
 });
 
-test('Claude startup preserves process failure instead of rejecting undefined', async () => {
-  const { executable } = await fixture();
+test('Claude startup preserves process failure instead of rejecting undefined', async (t) => {
+  const { executable } = await fixture(t);
   await writeFile(executable, '#!/usr/bin/env node\nprocess.exit(1);\n');
   await assert.rejects(
-    claudeNativeAdapter.start({ cwd: process.cwd(), executable }, () => {}),
+    startSession(t, { cwd: process.cwd(), executable }, () => {}),
     /Native runner exited: code=1/,
   );
 });
 
-test('Claude correlates output before replay and allows permission responses while acceptance is pending', async () => {
-  const { executable, invocation } = await fixture();
+test('Claude correlates output before replay and allows permission responses while acceptance is pending', async (t) => {
+  const { executable, invocation } = await fixture(t);
   const events: Array<Record<string, unknown>> = [];
-  const session = await claudeNativeAdapter.start(
+  const session = await startSession(
+    t,
     {
       cwd: process.cwd(),
       executable,

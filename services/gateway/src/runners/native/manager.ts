@@ -53,7 +53,9 @@ export async function resolveNativeExecutable(
     timeout: 10_000,
     env: nativeEnvironment(executable),
   });
-  return { executable, version: result.stdout.trim() };
+  const version = result.stdout.trim();
+  if (!version) throw new Error('Native executable did not provide version metadata');
+  return { executable, version };
 }
 
 function nativeEnvironment(executable: string): NodeJS.ProcessEnv {
@@ -64,6 +66,8 @@ interface SessionRecord {
   info: NativeSessionInfo;
   events: NativeSessionEvent[];
   adapter?: NativeAdapterSession;
+  startup?: Promise<NativeAdapterSession>;
+  // Retain receipts for the session lifetime so old command IDs stay idempotent.
   commands: Map<string, { text: string; state: 'pending' | 'accepted' | 'uncertain' }>;
   pendingRequests: Set<string>;
   sending: boolean;
@@ -136,7 +140,7 @@ export class NativeSessionManager {
     };
     this.sessions.set(info.id, record);
     try {
-      record.adapter = await transport.adapter.start(
+      record.startup = transport.adapter.start(
         {
           ...params,
           mode,
@@ -145,6 +149,7 @@ export class NativeSessionManager {
         },
         (event) => this.append(record, event),
       );
+      record.adapter = await record.startup;
       info.nativeSessionId = record.adapter.nativeSessionId;
       if (record.adapter.capabilities) info.capabilities = { ...record.adapter.capabilities };
       if (info.state === 'starting') info.state = 'idle';
@@ -163,10 +168,11 @@ export class NativeSessionManager {
       sequence: record.events.length + 1,
       at: new Date().toISOString(),
     });
-    if (event.type === 'turn.started') record.info.state = 'running';
+    if (event.type === 'turn.started' && record.info.state !== 'closing')
+      record.info.state = 'running';
     if (event.type === 'error' && event.status === 'failed') record.info.state = 'closing';
     if (event.type === 'turn.completed') {
-      record.info.state = 'idle';
+      if (record.info.state !== 'closing') record.info.state = 'idle';
       record.pendingRequests.clear();
     }
     if (event.type === 'session.closed') {
@@ -261,10 +267,11 @@ export class NativeSessionManager {
   }
   async close(owner: string, id: string): Promise<void> {
     const record = this.owned(owner, id);
-    if (record.info.state === 'closed') return;
+    if (record.info.state === 'closed' || record.info.state === 'failed') return;
     record.info.state = 'closing';
-    await record.adapter?.close();
-    if (this.owned(owner, id).info.state !== 'closed')
+    const adapter = record.adapter ?? (await record.startup);
+    await adapter?.close();
+    if (!['closed', 'failed'].includes(this.owned(owner, id).info.state))
       this.append(record, { type: 'session.closed' });
   }
 }

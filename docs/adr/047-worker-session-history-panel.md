@@ -139,6 +139,7 @@ Stop investing and hide the panel if any of these hold after a reasonable trial:
 - [ADR-032](032-runner-observability-via-hooks.md) — live correlation via hooks
 - [PRD-command-center-canonical.md](../PRD-command-center-canonical.md) — operator surfaces
 - [PRD-runner-execution-canonical.md](../PRD-runner-execution-canonical.md) — runner session metadata
+- [ADR-056](056-runner-session-archive.md) — opaque recycle snapshot so History still works after the slot forgets the live file
 
 ## Open questions
 

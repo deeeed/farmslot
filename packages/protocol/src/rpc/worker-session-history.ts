@@ -8,7 +8,11 @@ export const WorkerSessionHistoryMethods = {
   unsubscribe: Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE,
 } as const;
 
-export type WorkerSessionHistorySource = 'transcript' | 'pane-degraded' | 'unavailable';
+export type WorkerSessionHistorySource =
+  | 'transcript'
+  | 'transcript-archive'
+  | 'pane-degraded'
+  | 'unavailable';
 
 export interface WorkerSessionHistoryTool {
   id?: string;

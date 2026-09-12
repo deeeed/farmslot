@@ -414,7 +414,13 @@ export const claudeNativeAdapter: NativeAdapter = {
         // tool requests and streamed output, so send must not wait for that replay.
         commandId = id;
         pendingCommands.set(text, id);
-        process.write({ type: 'user', message: { role: 'user', content: text } });
+        try {
+          process.write({ type: 'user', message: { role: 'user', content: text } });
+        } catch (error) {
+          pendingCommands.delete(text);
+          commandId = undefined;
+          throw error;
+        }
       },
       async respond(requestId: string, response: NativeSessionResponse) {
         const request = pendingRequests.get(requestId);

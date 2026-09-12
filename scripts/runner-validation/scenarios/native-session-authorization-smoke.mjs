@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -10,6 +11,32 @@ import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'native-session-authorization-smoke';
 export const RUNNER_AGNOSTIC = true;
+
+const { WebSocket } = createRequire(path.join(ROOT, 'services/gateway/package.json'))('ws');
+
+function anonymousRpc(method, params) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(process.env.FARMSLOT_GATEWAY);
+    const id = randomUUID();
+    let settled = false;
+    const finish = (error, response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.close();
+      if (error) reject(error);
+      else resolve(response);
+    };
+    const timer = setTimeout(() => finish(new Error('Unauthenticated RPC timed out')), 5000);
+    socket.on('error', (error) => finish(error));
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'req', id, method, params })));
+    socket.on('message', (data) => {
+      const response = JSON.parse(data.toString());
+      if (response.type === 'res' && response.id === id) finish(null, response);
+    });
+    socket.on('close', () => finish(new Error('Unauthenticated RPC closed without a response')));
+  });
+}
 
 // Use a separately activated validation gateway. Both accounts must authenticate;
 // the second account should also be admin so this proves native profile ownership.
@@ -98,6 +125,10 @@ export async function runScenario({ outDir }) {
       ['native.session.close', target],
     ];
     for (const [method, params] of attempts) {
+      const anonymous = await anonymousRpc(method, params);
+      assert.equal(anonymous.ok, false, `Unauthenticated caller accessed ${method}`);
+      assert.equal(anonymous.error?.code, 'AUTH_REQUIRED');
+      report.checks.push({ method, anonymousRejected: true, code: anonymous.error.code });
       const result = rpc(other, method, params);
       if (method === 'native.session.send') report.unauthorizedSendAccepted = result.ok;
       assert.equal(result.ok, false, `Other principal accessed ${method}`);

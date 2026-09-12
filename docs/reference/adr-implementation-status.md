@@ -36,7 +36,8 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out             |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc |
 | [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                          |
-| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions                  |
+| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | Partial        | Live History shipped; recycle snapshot is ADR-056                            |
+| [056](../adr/056-runner-session-archive.md)                | Runner session archive at recycle  | Accepted   | In progress    | Opaque jsonl snapshot for Claude/Codex/Grok; History fallback                |
 | [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
 | [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Accepted   | Implemented    | None tracked                                                                 |
 

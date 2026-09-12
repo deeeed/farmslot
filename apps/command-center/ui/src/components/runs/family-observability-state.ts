@@ -87,6 +87,11 @@ export abstract class FamilyObservabilityState extends LitElement {
   @state() _replayError = '';
   @state() _gateOpen = false;
   @state() _gateMaximized = false;
+  @state() _sessionStates: Record<
+    string,
+    import('./run-detail-session-renderers.js').RunSessionRowState | undefined
+  > = {};
+  _sessionRequestSeq: Record<string, number> = {};
   _mdPreviewCache = new Map<string, MdFetchEntry<string>>();
   _pairsCache: {
     source: FamilyObservabilitySnapshot | null;

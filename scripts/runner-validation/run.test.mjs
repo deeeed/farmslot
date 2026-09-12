@@ -151,6 +151,7 @@ test('runner-validation catalog includes supported runners and registered scenar
   assert.equal(new Set(listScenarios()).size, listScenarios().length);
   assert.ok(listScenarios().includes('native-session-smoke'));
   assert.ok(listScenarios().includes('native-session-authorization-smoke'));
+  assert.ok(listScenarios().includes('native-session-startup-close'));
   assert.ok(listScenarios().includes('review-recovery-terminal-contract'));
   assert.ok(listScenarios().includes('self-review-fix-turn-lease'));
   assert.ok(listScenarios().includes('hook-smoke'));

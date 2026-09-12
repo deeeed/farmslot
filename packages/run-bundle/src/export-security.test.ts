@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { exportRunsToBundle, listBundle } from './index.js';
+import { exportRunsToBundle, importBundle, listBundle } from './index.js';
 
 function writeMinimalFarmslotRoot(root: string): void {
   writeFileSync(path.join(root, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
@@ -79,6 +79,87 @@ test('export omits sensitive files from task trees', () => {
     );
   } finally {
     rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});
+
+test('export strips runner session archives and never packs session-archives/', () => {
+  const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-export-archive-'));
+  const bundlePath = path.join(tmpdir(), `export-archive-${Date.now()}.farmrun`);
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const taskFile = path.join(
+    sourceRoot,
+    'projects',
+    'demo-farm',
+    'tasks',
+    'dev',
+    'case-archive',
+    'TASK.md',
+  );
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile,
+    steps: [],
+    decisions: [],
+    metrics: {
+      nudgeCount: 0,
+      model: 'claude',
+      runner: 'claude',
+      runnerSessionArchive: {
+        status: 'captured',
+        kind: 'jsonl',
+        relativeDir: `session-archives/${runId}/dev`,
+      },
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeMinimalFarmslotRoot(sourceRoot);
+  writeRun(sourceRoot, run);
+  const archiveDir = path.join(sourceRoot, '.runs', 'session-archives', runId, 'dev');
+  mkdirSync(archiveDir, { recursive: true });
+  writeFileSync(path.join(archiveDir, 'transcript.jsonl'), '{"type":"user"}\n', 'utf-8');
+
+  const destRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-import-archive-'));
+  writeMinimalFarmslotRoot(destRoot);
+  try {
+    exportRunsToBundle({
+      farmslotRoot: sourceRoot,
+      outputPath: bundlePath,
+      profile: 'full',
+      positionalRunId: runId,
+    });
+    const manifest = listBundle(bundlePath);
+    assert.equal(
+      Object.keys(manifest.entries).some((key) => key.includes('session-archives')),
+      false,
+    );
+    const imported = importBundle({
+      farmslotRoot: destRoot,
+      bundlePath,
+      mode: 'reference-only',
+    });
+    const importedId = imported.importedRunIds[0];
+    assert.ok(importedId);
+    const importedRun = JSON.parse(
+      readFileSync(path.join(destRoot, '.runs', `${importedId}.json`), 'utf-8'),
+    ) as Run;
+    assert.equal(importedRun.metrics.runnerSessionArchive, undefined);
+    assert.equal(existsSync(path.join(destRoot, '.runs', 'session-archives')), false);
+  } finally {
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(destRoot, { recursive: true, force: true });
     rmSync(bundlePath, { force: true });
   }
 });
