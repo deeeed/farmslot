@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import type {
   ChatClientContext,
@@ -24,12 +24,13 @@ import type {
 import { Events, Methods } from '@farmslot/protocol';
 
 import './chat-message.js';
+import './native-session-view.js';
 import './chat-history-modal.js';
 import '../shared/runner-model-effort-picker.js';
 import '../terminal/terminal-view.js';
 
 import { gateway, GatewayRequestError } from '../../gateway-client.js';
-import { safeLsSet } from '../../utils/storage.js';
+import { safeLsGet, safeLsSet } from '../../utils/storage.js';
 import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import { buildChatClientContext } from './chat-client-context.js';
@@ -56,6 +57,34 @@ import { chatPanelViewModel } from './chat-panel-view-model.js';
 
 @customElement('chat-panel')
 export class ChatPanel extends ChatPanelState {
+  @state() private agentWorkspace = safeLsGet('farmslot-copilot-view') === 'workspace';
+
+  private selectExperience(workspace: boolean) {
+    this.agentWorkspace = workspace;
+    safeLsSet('farmslot-copilot-view', workspace ? 'workspace' : 'terminal');
+    if (workspace)
+      this.drawerHeight = Math.max(this.drawerHeight, Math.round(window.innerHeight * 0.8));
+  }
+
+  private experiencePicker() {
+    return html`<div class="cp-experience" aria-label="Copilot experience">
+      <button
+        class="cp-new-btn"
+        aria-pressed=${!this.agentWorkspace}
+        data-testid="copilot-terminal-mode"
+        @click=${() => this.selectExperience(false)}
+      >
+        Terminal</button
+      ><button
+        class="cp-new-btn"
+        aria-pressed=${this.agentWorkspace}
+        data-testid="copilot-workspace-mode"
+        @click=${() => this.selectExperience(true)}
+      >
+        Agent workspace
+      </button>
+    </div>`;
+  }
   protected override createRenderRoot() {
     return this;
   }
@@ -673,6 +702,29 @@ export class ChatPanel extends ChatPanelState {
   render() {
     if (!this.open) return html``;
 
+    if (this.agentWorkspace)
+      return html`${renderChatPanelStyles()}
+        <div
+          class="cp-drawer ${this.fullscreen ? 'fullscreen' : ''}"
+          style="--cp-height:${this.fullscreen ? '100vh' : `${this.drawerHeight}px`}"
+        >
+          <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
+          <div class="cp-header">
+            <span class="cp-title">Co-Pilot</span>${this.experiencePicker()}
+            <button class="cp-new-btn" @click=${this.toggleFullscreen}>
+              ${this.fullscreen ? 'Restore size' : 'Expand'}
+            </button>
+            <button
+              class="cp-close-btn"
+              aria-label="Close Copilot"
+              @click=${() => this.dispatchEvent(new CustomEvent('close', { bubbles: true }))}
+            >
+              ×
+            </button>
+          </div>
+          <native-session-view></native-session-view>
+        </div>`;
+
     const activeSessionId = this.activeSessionId();
     const view = chatPanelViewModel({
       sending: this.sending,
@@ -693,7 +745,7 @@ export class ChatPanel extends ChatPanelState {
       >
         <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
         <div class="cp-header">
-          <span class="cp-title">✦ Co-Pilot</span>
+          <span class="cp-title">✦ Co-Pilot</span>${this.experiencePicker()}
           <div
             class="cp-session"
             title="One Co-Pilot chat per browser. Current screen context is attached to every message you send."

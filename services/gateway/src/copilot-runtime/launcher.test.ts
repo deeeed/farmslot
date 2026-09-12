@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { buildLaunchCommand } from '../runners/launch-command.js';
+
 import {
   buildCopilotLaunch,
   COPILOT_TMUX_TARGET,
@@ -41,6 +43,14 @@ test('launcher uses configured operator checkout and buildLaunchCommand tier fla
     runtimeDir: '.sandbox/farmslot-farm/agent',
   });
   assert.match(hooked.command, /\.sandbox\/farmslot-farm\/agent/);
+  assert.equal(hooked.bootstrapOnLaunch, true);
+  assert.match(hooked.command, /'read bootstrap'$/);
+  const ordinary = buildLaunchCommand(hooked.vars, 'claude', 'opus', 'read bootstrap');
+  assert.doesNotMatch(
+    ordinary,
+    /'read bootstrap'/,
+    'Ordinary dispatch must retain its post-launch delivery policy',
+  );
 });
 
 test('operator checkout resolves from gateway configuration without a user path', () => {
@@ -48,7 +58,10 @@ test('operator checkout resolves from gateway configuration without a user path'
   process.env.FARMSLOT_OPERATOR_CHECKOUT = '/gateway/configured/root';
   try {
     assert.equal(resolveOperatorCheckout(), '/gateway/configured/root');
-    assert.equal(createCopilotRunnerVars('/gateway/configured/root').repo, '/gateway/configured/root');
+    assert.equal(
+      createCopilotRunnerVars('/gateway/configured/root').repo,
+      '/gateway/configured/root',
+    );
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_OPERATOR_CHECKOUT;
     else process.env.FARMSLOT_OPERATOR_CHECKOUT = previous;

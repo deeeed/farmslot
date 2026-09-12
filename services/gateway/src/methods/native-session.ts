@@ -5,8 +5,16 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
+import { readWorkspaceText } from '../core/workspace-files.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
+
+import {
+  nativeCatalog,
+  nativeWorkspaceChanges,
+  nativeWorkspaceDiff,
+  nativeWorkspaceList,
+} from './native-workspace.js';
 
 function owner(): string {
   const originator = currentSessionOriginator();
@@ -33,6 +41,27 @@ export async function nativeSessionRoute(method: string, value: unknown): Promis
   const p = value as Record<string, unknown>;
   try {
     switch (method) {
+      case Methods.NATIVE_SESSION_CATALOG:
+        return await nativeCatalog();
+      case Methods.NATIVE_SESSION_WORKSPACE_LIST:
+      case Methods.NATIVE_SESSION_WORKSPACE_READ:
+      case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
+      case Methods.NATIVE_SESSION_WORKSPACE_DIFF: {
+        const { session } = await nativeSessionManager.read(
+          principal,
+          string(p, 'sessionId'),
+          undefined,
+          1,
+        );
+        if (method === Methods.NATIVE_SESSION_WORKSPACE_CHANGES)
+          return await nativeWorkspaceChanges(session.cwd);
+        const path = string(p, 'path');
+        if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
+          return await nativeWorkspaceList(session.cwd, path);
+        if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
+          return { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
+        return { path, content: await readWorkspaceText(session.cwd, path) };
+      }
       case Methods.NATIVE_SESSION_CREATE: {
         const params: NativeSessionCreateParams = {
           runner: string(p, 'runner'),

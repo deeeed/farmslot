@@ -132,6 +132,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `machine.pause.preview`                 | admin          |                                                          |
 | `machine.pause.restore`                 | admin          |                                                          |
 | `machine.pause.status`                  | admin          |                                                          |
+| `native.session.catalog`                | admin          |                                                          |
 | `native.session.close`                  | admin          |                                                          |
 | `native.session.create`                 | admin          |                                                          |
 | `native.session.interrupt`              | admin          |                                                          |
@@ -139,6 +140,10 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `native.session.read`                   | admin          |                                                          |
 | `native.session.respond`                | admin          |                                                          |
 | `native.session.send`                   | admin          |                                                          |
+| `native.session.workspace.changes`      | admin          |                                                          |
+| `native.session.workspace.diff`         | admin          |                                                          |
+| `native.session.workspace.list`         | admin          |                                                          |
+| `native.session.workspace.read`         | admin          |                                                          |
 | `node.connect`                          | node-subject   |                                                          |
 | `node.health`                           | operator       |                                                          |
 | `node.health.all`                       | operator       |                                                          |

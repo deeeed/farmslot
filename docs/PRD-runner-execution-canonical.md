@@ -22,7 +22,8 @@ An operator should be able to supervise different agent runners through one Farm
 - Runner-agnostic execution is a declared Farmslot product capability with open roadmap work.
 - Existing runner support and tmux-based supervision provide the starting point, but the fully generalized contract is not complete yet.
 - Other product chunks already depend on this capability being normalized instead of remaining ad hoc.
-- Native structured transports are approved under [ADR-057](adr/057-structured-runner-transports.md). Implementation and live validation remain pending; protocol initialization alone does not establish support.
+- Native structured transports are approved under [ADR-057](adr/057-structured-runner-transports.md). Codex and Claude gateway adapters shipped in PR #615; local supervision, durable events, and recovery shipped in PR #616 with live gateway validation. Protocol initialization alone does not establish support.
+- G003 adds the Command Center conversation and workspace interface. Workers, remote nodes, retained reviewers, Companion, additional runners, and user-owned account setup remain later approved phases.
 - The first implementation is experimental under one pinned principal. User-owned execution profiles and proven isolation are later rollout gates, not initial multi-tenant guarantees.
 
 ## Requirements
@@ -56,6 +57,12 @@ Each session has one authoritative input owner and a durable identity bound to i
 The execution node supervises the process independently of gateway and client connections. Persisted events support cursor-based replay. Recovery must report uncertainty and must not resend an accepted prompt. Execution-node loss does not promise process survival.
 
 Users install and authenticate the native runner in their own execution context. Farmslot preserves native tools, authentication, and permission controls. Shared deployments require enforced principal and execution isolation under [ADR-051](adr/051-principal-and-credential-model.md). A shared gateway credential is not proof of account isolation. Subscription eligibility and billing need provider-specific evidence; inference success and token estimates cannot establish them. No automatic paid-API fallback is implied.
+
+### Client integration contract
+
+Command Center adds an opt-in structured interface within Copilot. Users retain supported runner/model selection, execution context, and the regular tmux flow. Streamed text, expandable tools, approvals/questions, interruption, and recovery consume server-declared capabilities and durable session identity. Refresh restores the same session and pending requests; connection loss cannot trigger a new prompt submission.
+
+The approved interface includes read-only source and Git diff views. Gateway lookup binds each file/diff request to the authorized session and its recorded working directory, preserving path boundaries. Files/Changes report current workspace state and the comparison scope, without inventing per-turn checkpoints or attributing every edit to the agent. [DESIGN.md](../DESIGN.md) owns layout, accessibility, and T3-inspired interaction choices. Existing archive/history readers must retain coherent native session identity.
 
 ### 7. Validation and rollout
 

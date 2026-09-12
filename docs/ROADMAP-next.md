@@ -49,15 +49,17 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 ## Structured runner transports
 
-**Status:** Approved for implementation across all phases; validation pending.
+**Status:** All phases approved. G001 gateway adapters and G002 local session durability shipped in PRs #615 and #616. G003 Command Center integration is current; later phases remain open.
 
 Add opt-in native runner sessions while retaining tmux defaults. The shared runner layer owns commands, events, session identity, and capabilities for both modes. Native runners keep their tools and authentication. Scope and gates are defined in [ADR-057](adr/057-structured-runner-transports.md) and the [runner execution PRD](PRD-runner-execution-canonical.md#6-native-structured-sessions).
 
-1. Prove Codex and Claude through production gateway RPC, including permissions, interruption, follow-up context, and saved-session resume. Re-run tmux acceptance and retained-handoff scenarios.
-2. Add execution-node process supervision, durable events, replay, duplicate command protection, and account-bound pending requests. Prove concurrent sessions and gateway recovery.
-3. Deliver opt-in native Copilot in Command Center. Prove a complete task and reconnect through real browser controls.
+1. **Shipped, G001, PR #615:** Codex and Claude native gateway adapters with capability-gated permissions, interruption, follow-up context, and saved-session resume. Live gateway validation is recorded; the local legacy interactive authentication limitation remains explicit in validation evidence.
+2. **Shipped, G002, PR #616:** local process supervision, durable events, replay, duplicate command protection, and owner-bound pending requests, with live gateway recovery and process-failure validation. Remote-node integration remains phase 4.
+3. **Current, G003:** deliver opt-in native Copilot within the existing chat flow, retaining regular runner/model selection and terminal access. Add streamed conversation, expandable tools, composer approvals/questions, Stop and recovery controls, plus read-only Files/Changes beside the transcript on wide screens and tabs on narrow screens. Adapt T3 interaction patterns to Farmslot under [DESIGN.md](../DESIGN.md); workspace Git changes must not imply turn checkpoints. Prove complete tasks, actual source/diff changes, and pending-request refresh/reconnect through real browser controls.
 4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion. Reconcile live and archived session identity before integration.
 5. Add Grok, Cursor, and OpenCode, then native installation/login flows for user-owned accounts. Prove each declared capability and account isolation before enabling shared deployments.
+
+The first UI release remains restricted to one pinned principal in a trusted local execution context. Shared user accounts require the phase 5 isolation gates.
 
 Record bounded subscription and billing observations separately from protocol success. Missing provider evidence remains unknown. PI runtime replacement, whole T3 UI import, and arbitrary live TUI takeover stay outside this rollout.
 

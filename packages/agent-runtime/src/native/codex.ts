@@ -58,6 +58,7 @@ export const codexNativeAdapter: NativeAdapter = {
       { id: string | number; method: string; params: Record<string, unknown> }
     >();
     const publish = (event: NativeEventInput) => emit({ commandId, turnId, ...event });
+    const pendingTools = new Map<string, NonNullable<NativeEventInput['tool']>>();
     const process = new JsonLineProcess(
       options.executable,
       ['app-server'],
@@ -92,6 +93,7 @@ export const codexNativeAdapter: NativeAdapter = {
                     ? 'Answer runner questions'
                     : 'Allow runner action?',
                 detail: optionalString(params.reason) ?? optionalString(params.command),
+                tool: pendingTools.get(optionalString(params.itemId) ?? ''),
                 questions: questions(params.questions),
               },
               data: { ...params, method: message.method },
@@ -123,15 +125,19 @@ export const codexNativeAdapter: NativeAdapter = {
             const item = wireObject(params.item);
             const itemType = wireString(item.type);
             if (!['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(itemType)) {
+              const tool = {
+                name: itemType,
+                input: item.command ?? item.arguments ?? item.changes,
+                output: item.aggregatedOutput ?? item.result,
+                status: optionalString(item.status),
+              };
+              const itemId = wireString(item.id);
+              if (message.method === 'item/started') pendingTools.set(itemId, tool);
+              else pendingTools.delete(itemId);
               publish({
                 type: message.method === 'item/started' ? 'tool.started' : 'tool.completed',
-                nativeId: wireString(item.id),
-                tool: {
-                  name: itemType,
-                  input: item.command ?? item.arguments ?? item.changes,
-                  output: item.aggregatedOutput ?? item.result,
-                  status: optionalString(item.status),
-                },
+                nativeId: itemId,
+                tool,
                 data: item,
               });
             }
@@ -152,6 +158,7 @@ export const codexNativeAdapter: NativeAdapter = {
               data: { status, error: turn.error },
             });
             requests.clear();
+            pendingTools.clear();
             turnId = undefined;
             commandId = undefined;
             break;

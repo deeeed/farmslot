@@ -6,6 +6,36 @@ import test from 'node:test';
 
 import { testController } from './test-helpers.js';
 
+test('launch-time bootstrap prepares correlation first and only observes acceptance', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-bootstrap-argv-'));
+  let prepared = false;
+  let observed = false;
+  const { controller, tmux } = testController({
+    home,
+    checkout: process.cwd(),
+    bootstrapOnLaunch: true,
+    prepareInstruction: async () => {
+      assert.equal(tmux.sessions.size, 0);
+      prepared = true;
+      return { digest: 'test-digest', sentAt: 1234 };
+    },
+    sendInstruction: async (...args) => {
+      assert.equal(prepared, true);
+      assert.equal(tmux.sessions.has('farmslot-copilot'), true);
+      assert.deepEqual(args[6], { observeOnly: true, acceptanceSinceMs: 1234 });
+      observed = true;
+      return true;
+    },
+  });
+  try {
+    const started = await controller.start({ runner: 'claude', model: 'sonnet' });
+    assert.equal(started.session.status, 'running');
+    assert.equal(observed, true);
+  } finally {
+    await controller.stop({ reason: 'test-complete' });
+  }
+});
+
 test('chat transport reports accepted, deferred, and failed delivery without TUI parsing', async () => {
   for (const [outcome, expected] of [
     [true, 'accepted'],

@@ -136,6 +136,7 @@ export interface RunnerGracefulExitCapability {
 export interface RunnerDefinition {
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
   nativeTransport?: 'codex-app-server' | 'claude-stream-json';
+  nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'> };
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
@@ -143,6 +144,8 @@ export interface RunnerDefinition {
   requiresExplicitTerminationIdentity?: boolean;
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  /** Supports an explicit opt-in first instruction as a CLI argument. */
+  supportsInitialPromptArg?: boolean;
   /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
   resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
@@ -257,8 +260,10 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
+    supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',
+    nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
@@ -299,6 +304,17 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   codex: {
     id: 'codex',
     nativeTransport: 'codex-app-server',
+    nativeChoices: {
+      models: [
+        DEFAULT_CODEX_MODEL,
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+      ],
+      modes: ['default', 'plan'],
+    },
     defaultLaunchMode: 'interactive',
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
@@ -587,6 +603,10 @@ export function isRunnerPaneRetired(runnerId?: string | null): boolean {
   const def = getRunnerDefinition(runnerId);
   if (def.observabilityScope !== 'event-driven' || !getRunnerObservability(runnerId)) return false;
   return def.requiresBusyComposerPoll !== true;
+}
+
+export function runnerSupportsInitialPromptArg(runnerId: string): boolean {
+  return getRunnerDefinition(runnerId).supportsInitialPromptArg === true;
 }
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
@@ -2538,6 +2558,9 @@ export async function sendRunnerInstructionSafely(
   logPrefix: string,
   timeoutMs?: number,
   opts: {
+    /** Launch already supplied input; wait for its exact native acknowledgement without typing. */
+    observeOnly?: boolean;
+    acceptanceSinceMs?: number;
     forceBusyPoll?: boolean;
     recovery?: RunnerSendRecoveryContext;
     retainedSession?: { sessionId: string; sessionPath: string };
@@ -2547,6 +2570,30 @@ export async function sendRunnerInstructionSafely(
   const def = getRunnerDefinition(runner);
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   const loopStartMs = Date.now();
+  if (opts.observeOnly) {
+    if (!Number.isSafeInteger(opts.acceptanceSinceMs) || opts.acceptanceSinceMs! < 0)
+      throw new Error('Launch observation requires a prompt acceptance boundary');
+    const observability = getRunnerObservability(runner);
+    if (!observability) return false;
+    while (Date.now() < loopStartMs + effectiveTimeoutMs) {
+      const reading = await observability.promptAccepted(
+        vars,
+        target,
+        runnerPromptDigest(message),
+        opts.acceptanceSinceMs!,
+        true,
+        message,
+      );
+      if (
+        reading?.value === true &&
+        reading.confidence === 'high' &&
+        reading.exactPromptMatch === true
+      )
+        return true;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  }
   // Hook digests are correlation-safe across a bounded retry window. Native
   // exact-text history is not: an identical operator nudge may be intentional,
   // so only a native acceptance from this send call can suppress it.

@@ -7,6 +7,7 @@ export interface NativeSessionCapabilities {
   questions: boolean;
   interrupt: boolean;
   resume: boolean;
+  resumeUnavailableReason?: string;
 }
 
 export interface NativeSessionCreateParams {
@@ -88,6 +89,7 @@ export interface NativeSessionEvent {
   at: string;
   type:
     | 'session.started'
+    | 'command.submitted'
     | 'command.accepted'
     | 'turn.started'
     | 'text.delta'
@@ -109,6 +111,8 @@ export interface NativeSessionEvent {
     id: string;
     title: string;
     detail?: string;
+    /** Proposed action captured from the native tool event for this request. */
+    tool?: NativeSessionEvent['tool'];
     questions?: Array<{
       id: string;
       prompt: string;
@@ -128,4 +132,35 @@ export interface NativeSessionReadResult {
   /** Most recent 100 receipts. Older command IDs remain durably deduplicated. */
   commands: NativeCommandReceipt[];
   pendingRequests: NativeSessionEvent[];
+}
+
+/** Curated native choices; availability and billing remain account-owned. */
+export interface NativeRunnerOption {
+  runner: string;
+  models: string[];
+  defaultModel: string;
+  modes: Array<'default' | 'plan'>;
+}
+export interface NativeSessionCatalogResult {
+  runners: NativeRunnerOption[];
+  contexts: Array<{ cwd: string; label: string; slotId?: string; project?: string }>;
+}
+export interface NativeWorkspacePathParams extends NativeSessionTargetParams {
+  /** Relative to the session's recorded working directory. */
+  path: string;
+}
+export interface NativeWorkspaceListResult {
+  entries: Array<{ path: string; name: string; directory: boolean }>;
+  truncated: boolean;
+}
+export interface NativeWorkspaceChangesResult {
+  files: Array<{ path: string; status: string }>;
+}
+export interface NativeWorkspaceReadResult {
+  path: string;
+  content: string;
+}
+export interface NativeWorkspaceDiffResult {
+  path: string;
+  diff: string;
 }

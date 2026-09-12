@@ -27,6 +27,8 @@ export interface NativeAdapterSession {
 }
 export interface NativeAdapter {
   capabilities: NativeSessionCapabilities;
+  /** Compatibility policy based on the native executable's version metadata. */
+  resumeUnavailableReason?: (version: string) => string | undefined;
   start(
     options: NativeAdapterOptions,
     emit: (event: NativeEventInput) => void,

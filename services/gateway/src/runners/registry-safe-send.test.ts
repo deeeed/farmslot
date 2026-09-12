@@ -255,6 +255,46 @@ const {
   sendRunnerPostLaunchPrompt,
 } = await import('./registry.js');
 
+test('launch observation requires exact high-confidence acceptance and never touches the pane', async () => {
+  const previousReading = promptAcceptedReading;
+  try {
+    for (const reading of [
+      null,
+      { value: false, confidence: 'high', exactPromptMatch: true },
+      { value: true, confidence: 'low', exactPromptMatch: true },
+      { value: true, confidence: 'high', exactPromptMatch: false },
+      { value: true, confidence: 'high', exactPromptMatch: true },
+    ] as const) {
+      callOrder.length = 0;
+      promptAcceptedReading = reading && { ...reading, source: 'hook', observedAt: Date.now() };
+      const accepted = await sendRunnerInstructionSafely(
+        vars,
+        target,
+        'claude',
+        message,
+        '[test]',
+        1,
+        { observeOnly: true, acceptanceSinceMs: Date.now() - 100 },
+      );
+      assert.equal(
+        accepted,
+        reading?.value === true && reading.confidence === 'high' && reading.exactPromptMatch,
+      );
+      assert.deepEqual(callOrder, ['obs:promptAccepted']);
+    }
+    callOrder.length = 0;
+    await assert.rejects(
+      sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 1, {
+        observeOnly: true,
+      }),
+      /requires a prompt acceptance boundary/,
+    );
+    assert.deepEqual(callOrder, []);
+  } finally {
+    promptAcceptedReading = previousReading;
+  }
+});
+
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;

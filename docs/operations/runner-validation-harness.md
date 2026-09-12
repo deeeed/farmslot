@@ -292,3 +292,81 @@ state available for diagnosis; use `close` to clean up its owned session.
 Also run `native-session-smoke`, `native-session-startup-close`,
 `native-session-authorization-smoke`, and the existing tmux acceptance and
 retained-handoff scenarios. Unit fixtures cannot substitute for these live checks.
+
+### Native Copilot workspace stages
+
+`native-copilot-workspace` drives the actual Agent workspace controls through CDP,
+then checks durable events and file effects through gateway reads. Use a disposable
+Git fixture containing `src/greeting.ts` with an initial `Hello` greeting, registered
+as a local slot in the isolated gateway pool. The source must be committed before
+the edit so the workspace diff has a baseline.
+
+The scenario requires gateway `ws://127.0.0.1:18777`, UI
+`http://127.0.0.1:18778/#fleet`, and CDP `19323`. Supply existing owner credentials
+through the normal gateway environment and log into the isolated browser first.
+Keep the fixture and private state file under checkout `temp/native-validation`.
+It never drives the regular Copilot tmux singleton.
+
+```bash
+export FARMSLOT_GATEWAY=ws://127.0.0.1:18777
+export FARMSLOT_UI_URL=http://127.0.0.1:18778/#fleet
+export FARMSLOT_CDP_PORT=19323
+export FARMSLOT_NATIVE_UI_FIXTURE="$PWD/temp/native-validation/ui-fixture"
+export FARMSLOT_NATIVE_UI_STATE="$PWD/temp/native-validation/ui-state.json"
+export FARMSLOT_NATIVE_UI_STAGE=create
+node scripts/runner-validation/run.mjs --runner claude --model sonnet \
+  --scenario native-copilot-workspace --out-dir temp/native-validation/evidence
+```
+
+Run one stage per invocation with the same state file:
+
+- `create` selects the runner, model and configured fixture through UI controls.
+  `FARMSLOT_NATIVE_UI_MODE=plan` selects plan mode when the catalog offers it.
+- `edit` submits one bounded greeting edit. `finish-edit` waits without resending.
+- `inspect-edit` checks that a pending permission with normalized tool details
+  displays the proposed file and diff after refresh, before the file changes.
+- `workspace` checks rendered diff/source, visible Send control, and the same
+  transcript after a page refresh. It saves a screenshot.
+- `layout` resizes the browser to 500px and 1440px, checks drawer and expanded
+  views, and verifies the conversation controls remain reachable and the
+  workspace fits. It restores the original browser size afterward.
+- `request-approval` submits a shell write to `approval-proof.txt`. Set
+  `FARMSLOT_NATIVE_UI_APPROVAL_CASE=deny`, then run `deny` to refresh the pending
+  request, deny it and prove the file is absent. Repeat with case `approve`, then
+  stage `approve`, to prove the permitted write. The proof file must be absent
+  before starting each new approval case; run denial first.
+- `interrupt` submits a bounded sleep and stops it after a tool-start event. If
+  permission is pending, inspect and answer it explicitly in the UI, then run
+  `stop` without submitting another task.
+- `context-question` asks for a recovery label through the native question tool.
+  `context-answer` refreshes the page and enters a random custom answer without
+  putting it in a user prompt. These stages require question and resume support.
+- `context-fail` runs a three-minute fixture tool and kills the owned native
+  process while it waits. Inspect any approval in the UI, then rerun the stage.
+  It requires confirmed process cleanup and no completion effect.
+- `context-resume` clicks Resume, verifies a new process generation with the same
+  native session, and checks recall of the question answer without prompt replay
+  or restarting the interrupted tool.
+- `close` clicks Close session and waits for confirmed process cleanup.
+
+The client-only replay previews at `#dev/native-session?replay=matching`,
+`foreign-command`, and `foreign-generation` seed an old browser receipt before
+mount and return 100 newer receipts through a fixture API. Fill Message with
+`cdp.mjs fill`, then run `probes/native-replay-lock.js` with `cdp.mjs eval`.
+Only the matching terminal event enables Send. These previews prove client
+replay handling, not native inference or gateway receipt retention.
+
+An edit or sleep awaiting approval produces `pending: true` and `pass: false`, with
+the next action in the report. The explicit `request-approval` stage passes only
+its pending-control check. It requires the normalized request detail to match
+the exact bounded command; a reason-only or different action stays partial and
+requires inspection. The decision stages also check that exact command before
+clicking Approve or Deny. This is partial evidence, not a completed edit or interruption.
+State is saved before every submission and decision. A retry never repeats an
+uncertain action; resolve its outcome or use a separate fresh fixture/state for a
+new attempt. The scenario leaves sessions open between stages so pending-request
+refresh and recovery remain observable. Finish with `close`.
+
+These stages cover the workspace UI flow. Run the separate session authorization,
+workspace boundary, explicit recovery, responsive layout, and isolated regular
+Copilot checks before claiming the full integration is validated.
