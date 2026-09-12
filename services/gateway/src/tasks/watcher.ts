@@ -24,7 +24,10 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
-import { resolveTaskProgressMarkdownPathForSlot } from './progress-path.js';
+import {
+  resolveTaskProgressMarkdownPath,
+  resolveTaskProgressMarkdownPathForSlot,
+} from './progress-path.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
 
 export type TaskProgressHandler = (
@@ -236,33 +239,39 @@ export async function watchSlot(
 
   for (const context of watchContexts) {
     const key = watchKey(slotId, context?.id);
-    // Watch and hash the file whose checkboxes are the steps: CHECKLIST.md when the
-    // task dir has one, otherwise the context's task file. Hashing TASK.md would
-    // freeze progress after the first update because `mark N` edits CHECKLIST.md.
-    const contextTaskPath = await resolveTaskProgressMarkdownPathForSlot(
-      vars,
-      resolveContextFilePath(vars.remoteRepo, context?.taskFile, taskMdPath),
+    // Watch and hash the file whose checkboxes are the steps: CHECKLIST.md when
+    // the task dir has one, otherwise the context's task file. Hashing TASK.md
+    // would freeze progress after the first update because `mark N` edits
+    // CHECKLIST.md. The slot probe that decides between the two runs inside the
+    // pending setup below, so unwatchSlot can drain it; a probe before
+    // registration let a release return while this setup was still in flight.
+    const candidateTaskPath = resolveContextFilePath(
+      vars.remoteRepo,
+      context?.taskFile,
+      taskMdPath,
     );
+    const checklistCandidatePath = resolveTaskProgressMarkdownPath(candidateTaskPath);
     const contextSignalPath = resolveContextFilePath(
       vars.remoteRepo,
       context?.signalFile,
       signalPath,
-      contextTaskPath,
+      candidateTaskPath,
     );
     const runId = options.runId ?? context?.runId ?? activeRun?.id ?? null;
     const existingWatch = activeWatches.get(key);
-    const nextWatchIdentity = {
+    const identityFor = (taskFilePath: string) => ({
       runId,
-      taskFilePath: contextTaskPath,
+      taskFilePath,
       signalFilePath: contextSignalPath,
-    };
-    // Fast path: identical live watch with no rebind in flight — nothing to
-    // do. With one in flight the live entry may be about to change, so the
-    // authoritative check happens inside the chained promise below.
+    });
+    // Fast path: identical live watch (on either candidate file) with no rebind
+    // in flight — nothing to do. With one in flight the live entry may be about
+    // to change, so the authoritative check happens inside the chained promise.
     if (
       existingWatch &&
       !pendingWatchKeys.has(key) &&
-      !shouldRebindWatch(existingWatch, nextWatchIdentity)
+      (!shouldRebindWatch(existingWatch, identityFor(candidateTaskPath)) ||
+        !shouldRebindWatch(existingWatch, identityFor(checklistCandidatePath)))
     ) {
       continue;
     }
@@ -286,6 +295,8 @@ export async function watchSlot(
           // this rebind only needs it settled before reading the map.
         }
       }
+      const contextTaskPath = await resolveTaskProgressMarkdownPathForSlot(vars, candidateTaskPath);
+      const nextWatchIdentity = identityFor(contextTaskPath);
       const staleWatch = activeWatches.get(key);
       if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
       if (staleWatch) {
