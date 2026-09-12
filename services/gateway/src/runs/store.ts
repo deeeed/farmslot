@@ -1234,6 +1234,12 @@ export async function archiveRun(id: string): Promise<boolean> {
   }
   runs.delete(id);
   invalidateArchivedRunsCache();
+  try {
+    await rm(runSessionArchiveDir(id), { recursive: true, force: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw err;
+  }
   return true;
 }
 

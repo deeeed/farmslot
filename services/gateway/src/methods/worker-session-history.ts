@@ -271,6 +271,8 @@ export async function workerSessionHistoryGet(
         liveError = 'Runner transcript file is not available on disk.';
       }
     } catch (err) {
+      // Expected after recycle when the slot or live path is gone. Fall through
+      // to the run-owned snapshot instead of failing History closed.
       liveError = err instanceof Error ? err.message : String(err);
     }
   }
@@ -282,6 +284,7 @@ export async function workerSessionHistoryGet(
         lines: archived.lines,
         path: archived.originalPath,
         size: archived.size,
+        truncated: archived.truncated,
         source: 'transcript-archive',
         degradedReason: 'Live transcript is gone; showing the recycle snapshot.',
       });

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -13,18 +13,13 @@ import {
 
 import { getAgentContexts, selectAgentContext } from '../agents/contexts.js';
 import { slotCopyFile, slotFileExists, type SlotLocality, slotStat } from '../core/slot-io.js';
-import {
-  getRun,
-  runsDirectory,
-  runSessionArchiveDir,
-  updateRun,
-  updateRunAgentContexts,
-} from '../runs/store.js';
+import { getRun, runSessionArchiveDir, updateRun, updateRunAgentContexts } from '../runs/store.js';
 
 import { runnerSessionArchiveKind } from './registry.js';
 import { runnerHistorySessionFilePath } from './worker-session-history.js';
 
 export const SESSION_ARCHIVE_MAX_BYTES = 32 * 1024 * 1024;
+export const SESSION_ARCHIVE_MAX_LINES = 10_000;
 export const SESSION_ARCHIVE_TRANSCRIPT = 'transcript.jsonl';
 export const SESSION_ARCHIVE_MANIFEST = 'manifest.json';
 
@@ -59,21 +54,20 @@ export function runnerSessionArchiveRelativeDir(runId: string, contextId: string
 }
 
 function archiveTargets(run: Run): ArchiveTarget[] {
-  const contexts = getAgentContexts(run);
-  if (contexts.length > 0) {
-    return contexts
-      .filter((ctx): ctx is AgentContext & { runnerSessionPath: string } =>
-        Boolean(ctx.runnerSessionPath?.trim()),
-      )
-      .map((ctx) => ({
-        contextId: ctx.id,
-        role: ctx.role,
-        runner: ctx.runner ?? run.metrics.runner ?? '',
-        runnerSessionId: ctx.runnerSessionId,
-        runnerSessionPath: ctx.runnerSessionPath,
-        existing: ctx.runnerSessionArchive,
-      }));
-  }
+  const fromContexts = getAgentContexts(run)
+    .filter((ctx): ctx is AgentContext & { runnerSessionPath: string } =>
+      Boolean(ctx.runnerSessionPath?.trim()),
+    )
+    .map((ctx) => ({
+      contextId: ctx.id,
+      role: ctx.role,
+      runner: ctx.runner ?? run.metrics.runner ?? '',
+      runnerSessionId: ctx.runnerSessionId,
+      runnerSessionPath: ctx.runnerSessionPath,
+      existing: ctx.runnerSessionArchive,
+    }));
+  if (fromContexts.length > 0) return fromContexts;
+
   const pathValue = run.metrics.runnerSessionPath?.trim();
   if (!pathValue || !run.metrics.runner) return [];
   const role = primaryRoleForFlow(run.flowType);
@@ -91,11 +85,38 @@ function archiveTargets(run: Run): ArchiveTarget[] {
 
 function resolveArchiveRef(run: Run, contextId?: string): RunnerSessionArchiveRef | undefined {
   if (contextId) {
-    const match = getAgentContexts(run).find((ctx) => ctx.id === contextId);
-    if (match?.runnerSessionArchive) return match.runnerSessionArchive;
+    return getAgentContexts(run).find((ctx) => ctx.id === contextId)?.runnerSessionArchive;
   }
-  const selected = selectAgentContext(run, contextId ? { contextId } : undefined);
+  const selected = selectAgentContext(run);
   return selected?.runnerSessionArchive ?? run.metrics.runnerSessionArchive;
+}
+
+function tailJsonl(raw: string): { lines: string[]; truncated: boolean } {
+  const lines = raw.split('\n');
+  if (lines.length <= SESSION_ARCHIVE_MAX_LINES) return { lines, truncated: false };
+  return { lines: lines.slice(-SESSION_ARCHIVE_MAX_LINES), truncated: true };
+}
+
+function isInsideDir(root: string, candidate: string): boolean {
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return candidate === root || candidate.startsWith(prefix);
+}
+
+async function confinedArchiveTranscript(runId: string, contextId: string): Promise<string | null> {
+  const root = runSessionArchiveDir(runId);
+  const filePath = path.join(
+    runnerSessionArchiveContextDir(runId, contextId),
+    SESSION_ARCHIVE_TRANSCRIPT,
+  );
+  try {
+    const [resolvedRoot, resolvedFile] = await Promise.all([realpath(root), realpath(filePath)]);
+    if (!isInsideDir(resolvedRoot, resolvedFile)) return null;
+    return resolvedFile;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 async function copyJsonlArchive(params: {
@@ -159,6 +180,17 @@ async function copyJsonlArchive(params: {
       runId: params.runId,
     });
     const bytes = await readFile(destFile);
+    if (bytes.byteLength > SESSION_ARCHIVE_MAX_BYTES) {
+      await rm(destDir, { recursive: true, force: true });
+      return {
+        status: 'missing',
+        kind,
+        runner: params.target.runner,
+        originalPath: sourcePath,
+        sizeBytes: bytes.byteLength,
+        reason: `Runner transcript is larger than ${SESSION_ARCHIVE_MAX_BYTES} bytes.`,
+      };
+    }
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const capturedAt = new Date().toISOString();
     const ref: RunnerSessionArchiveRef = {
@@ -279,15 +311,21 @@ export async function readRunnerSessionArchiveLines(params: {
   originalPath: string;
   size: number;
   relativeDir: string;
+  truncated: boolean;
 } | null> {
   const ref = resolveArchiveRef(params.run, params.contextId);
-  if (!ref || ref.status !== 'captured' || !ref.relativeDir || !ref.originalPath) return null;
-  const filePath = path.join(runsDirectory(), ref.relativeDir, SESSION_ARCHIVE_TRANSCRIPT);
+  if (!ref || ref.status !== 'captured' || !ref.originalPath) return null;
+  const contextId = params.contextId ?? selectAgentContext(params.run)?.id;
+  if (!contextId) return null;
+  const filePath = await confinedArchiveTranscript(params.run.id, contextId);
+  if (!filePath) return null;
   const raw = await readFile(filePath, 'utf8');
+  const { lines, truncated } = tailJsonl(raw);
   return {
-    lines: raw.split('\n'),
+    lines,
     originalPath: ref.originalPath,
     size: Buffer.byteLength(raw),
-    relativeDir: ref.relativeDir,
+    relativeDir: runnerSessionArchiveRelativeDir(params.run.id, contextId),
+    truncated,
   };
 }

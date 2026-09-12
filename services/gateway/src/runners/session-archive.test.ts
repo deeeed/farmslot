@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  archiveRun,
+  createRun,
+  deleteRun,
+  getRun,
+  runSessionArchiveDir,
+  updateRun,
+} from '../runs/store.js';
 
 import { archiveRunnerSessionsForSlotRelease } from './session-archive.js';
 
@@ -97,6 +105,97 @@ test('resolves a grok session directory to chat_history.jsonl', async (t) => {
   const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
   assert.equal(result.captured, 1);
   assert.equal(getRun(run.id)?.metrics.runnerSessionArchive?.originalPath, jsonl);
+});
+
+test('records missing when the live transcript path is gone', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-missing`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    metrics: {
+      ...run.metrics,
+      runner: 'claude',
+      runnerSessionPath: path.join(os.tmpdir(), `no-such-session-${Date.now()}.jsonl`),
+    },
+  });
+
+  const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  assert.equal(result.captured, 0);
+  assert.equal(result.missing, 1);
+  assert.equal(getRun(run.id)?.metrics.runnerSessionArchive?.status, 'missing');
+});
+
+test('archives from metrics when agent contexts have no session path', async (t) => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'fs-session-archive-metrics-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const sessionPath = path.join(tmp, 'session.jsonl');
+  await writeFile(sessionPath, `${CLAUDE_LINES.join('\n')}\n`, 'utf8');
+
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-metrics`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Worker',
+        status: 'complete',
+        slotId: '',
+        runId: run.id,
+        runner: 'claude',
+      },
+    ],
+    metrics: {
+      ...run.metrics,
+      runner: 'claude',
+      runnerSessionPath: sessionPath,
+    },
+  });
+
+  const result = await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  assert.equal(result.captured, 1);
+});
+
+test('evicting a run deletes its session archive directory', async (t) => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'fs-session-archive-evict-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const sessionPath = path.join(tmp, 'session.jsonl');
+  await writeFile(sessionPath, `${CLAUDE_LINES.join('\n')}\n`, 'utf8');
+
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-evict`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: {
+      ...run.metrics,
+      runner: 'claude',
+      runnerSessionPath: sessionPath,
+    },
+  });
+  await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  const dir = runSessionArchiveDir(run.id);
+  assert.equal(existsSync(dir), true);
+  assert.equal(await archiveRun(run.id), true);
+  assert.equal(existsSync(dir), false);
+  assert.equal(getRun(run.id), undefined);
 });
 
 test('does not copy transcripts for runners that declare sessionArchive none', async (t) => {

@@ -15,7 +15,7 @@ Copying the live path into the eval result package is the wrong unit. Grok is a 
 Snapshot the runner transcript **once**, at slot release, after the agent is killed and before workspace recycle.
 
 - Capability: `sessionArchive: 'jsonl' | 'none'` on `RunnerDefinition`. Fail closed. Claude, Codex, and Grok opt in. Cursor, OpenCode, scripted, and unknown runners stay `none`.
-- Store opaque bytes next to `.runs/` as `session-archives/<runId>/<contextId>/`, with a pointer on the run (`metrics.runnerSessionArchive` and the agent context). Do not embed the transcript in `.runs/<id>.json`.
+- Store opaque bytes under `.runs/session-archives/<runId>/<contextId>/`, with a pointer on the run (`metrics.runnerSessionArchive` and the agent context). Do not embed the transcript in `.runs/<id>.json`. Evicting or deleting the run deletes that directory.
 - Grok's session path may be a directory; the runner layer resolves it to `chat_history.jsonl` before copy. Same History projectors read the snapshot later.
 - Not eval evidence. Not a farmrun payload. `sanitizeRunForBundleExport` strips the pointer.
 - Command Center stays the ADR-047 History tab. When the live file is gone, `worker.session.history.get` returns `source: 'transcript-archive'`. No new cockpit. This is a rare review path after recycle.

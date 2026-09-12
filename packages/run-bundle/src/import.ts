@@ -24,6 +24,7 @@ import {
 import {
   assertApprovedTaskRestoreRelativePath,
   resolveTaskFileAbsolute,
+  stripRunnerSessionArchives,
 } from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
@@ -310,7 +311,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
           if (existsSync(candidate)) packagePaths.push(candidate);
         }
       }
-      persistRunRecord(runsDir, next);
+      persistRunRecord(runsDir, stripRunnerSessionArchives(next));
       importedRunIds.push(next.id);
     }
 

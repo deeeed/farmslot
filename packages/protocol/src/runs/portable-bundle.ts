@@ -5,9 +5,25 @@ import type { Run } from '../contracts/runs.js';
 
 const TERMINAL_IMPORT_STATUSES = new Set(['done', 'failed', 'cancelled', 'blocked']);
 
+/** Drop recycle-snapshot pointers so farmrun never claims a local transcript it does not carry. */
+export function stripRunnerSessionArchives<T extends Pick<Run, 'metrics' | 'agentContexts'>>(
+  run: T,
+): T {
+  const next = { ...run, metrics: { ...run.metrics } };
+  delete next.metrics.runnerSessionArchive;
+  if (next.agentContexts) {
+    next.agentContexts = next.agentContexts.map((ctx) => {
+      const copy = { ...ctx };
+      delete copy.runnerSessionArchive;
+      return copy;
+    });
+  }
+  return next;
+}
+
 /** Strip volatile monitor/engine fields for reference-profile export. */
 export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile): Run {
-  const cloned = structuredClone(run);
+  const cloned = stripRunnerSessionArchives(structuredClone(run));
   if (profile === 'reference' || profile === 'family') {
     delete cloned.monitorState;
     if (cloned.engineState) {
@@ -38,16 +54,6 @@ export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile):
   }
   delete cloned.importProvenance;
   delete cloned.readOnly;
-  // Transcript snapshots stay on the exporting gateway. Bundles must not claim
-  // a local archive they do not carry, and they must not ship raw session bytes.
-  if (cloned.metrics) delete cloned.metrics.runnerSessionArchive;
-  if (cloned.agentContexts) {
-    cloned.agentContexts = cloned.agentContexts.map((ctx) => {
-      const next = { ...ctx };
-      delete next.runnerSessionArchive;
-      return next;
-    });
-  }
   return cloned;
 }
 

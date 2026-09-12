@@ -1060,6 +1060,8 @@ export class FamilyObservability extends FamilyObservabilityState {
       const command = runSessionCommandTextForKind(result, kind);
       let copyError: string | null = null;
       if (command) {
+        // A refused clipboard must not hide the liveness the gateway proved,
+        // and must never be reported as a successful copy.
         try {
           await copyTextToClipboard(command);
         } catch (err) {
