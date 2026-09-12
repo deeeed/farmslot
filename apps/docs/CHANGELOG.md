@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Add the task directory contract reference (TASK.md task document + CHECKLIST.md execution checklist, provenance and handoff files, what travels to the slot) and point the agent-runtime, worker-artifacts, and template-variables pages at it.
 - Document the native session commands for structured agent interaction through the gateway.
 
 - Document the gateway GitHub account inventory method.
