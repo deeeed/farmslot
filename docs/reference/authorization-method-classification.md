@@ -132,6 +132,13 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `machine.pause.preview`                 | admin          |                                                          |
 | `machine.pause.restore`                 | admin          |                                                          |
 | `machine.pause.status`                  | admin          |                                                          |
+| `native.session.close`                  | admin          |                                                          |
+| `native.session.create`                 | admin          |                                                          |
+| `native.session.interrupt`              | admin          |                                                          |
+| `native.session.list`                   | admin          |                                                          |
+| `native.session.read`                   | admin          |                                                          |
+| `native.session.respond`                | admin          |                                                          |
+| `native.session.send`                   | admin          |                                                          |
 | `node.connect`                          | node-subject   |                                                          |
 | `node.health`                           | operator       |                                                          |
 | `node.health.all`                       | operator       |                                                          |

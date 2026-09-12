@@ -356,6 +356,7 @@ import {
   llmAuthTest,
 } from '../methods/llm-auth.js';
 import { llmConfigGet, llmConfigSet, llmTiers } from '../methods/llm-config.js';
+import { nativeSessionRoute } from '../methods/native-session.js';
 import { prForSlot, prList, prMonitor, prStatus } from '../methods/pr.js';
 import {
   prAddComment,
@@ -583,6 +584,14 @@ async function routeAuthorizedMethod(
   if (runRoute.handled) return runRoute.value;
 
   switch (method) {
+    case Methods.NATIVE_SESSION_CREATE:
+    case Methods.NATIVE_SESSION_READ:
+    case Methods.NATIVE_SESSION_LIST:
+    case Methods.NATIVE_SESSION_SEND:
+    case Methods.NATIVE_SESSION_RESPOND:
+    case Methods.NATIVE_SESSION_INTERRUPT:
+    case Methods.NATIVE_SESSION_CLOSE:
+      return nativeSessionRoute(method, p);
     // Gateway self-status
     case Methods.GATEWAY_PING:
       return { ok: true, serverTimeMs: Date.now() };

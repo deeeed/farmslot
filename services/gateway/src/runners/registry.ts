@@ -127,6 +127,8 @@ export interface RunnerGracefulExitCapability {
 }
 
 export interface RunnerDefinition {
+  /** Opt-in native protocol. Missing means structured sessions are unavailable. */
+  nativeTransport?: 'codex-app-server' | 'claude-stream-json';
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
@@ -243,6 +245,7 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
     id: 'claude',
+    nativeTransport: 'claude-stream-json',
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
@@ -281,6 +284,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   codex: {
     id: 'codex',
+    nativeTransport: 'codex-app-server',
     defaultLaunchMode: 'interactive',
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
