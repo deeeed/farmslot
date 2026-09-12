@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add opt-in native runner session commands and structured events for conversation, tools, approvals, interruption, and resume.
+- Add opt-in native runner session commands and structured events for conversation, tools, approvals, interruption, and resume, with process generations, bounded replay, and durable command outcomes across reconnects.
 - Snapshot a runner transcript at recycle as an opaque archive pointer, and let History name that copy `transcript-archive`. Cursor and other non-jsonl runners stay unsupported.
 
 - Allow a timed-out interactive handoff to extend monitoring by the configured timeout without a SIGNAL.json. `continue` is the action id; already-pending timeout notes still qualify.

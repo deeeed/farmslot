@@ -17,11 +17,19 @@
     "./scripts/checklist-target.cjs": "./scripts/checklist-target.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
     "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs",
-    "./scripts/execution-template-cli.mjs": "./scripts/execution-template-cli.mjs"
+    "./scripts/execution-template-cli.mjs": "./scripts/execution-template-cli.mjs",
+    "./native": {
+      "types": "./dist/native/index.d.ts",
+      "import": "./dist/native/index.js"
+    },
+    "./native/*": {
+      "types": "./dist/native/*.d.ts",
+      "import": "./dist/native/*.js"
+    }
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
-    "test": "node test/mark-checklist-step.test.cjs && node test/checklist-target-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template",
+    "test": "node test/mark-checklist-step.test.cjs && node test/checklist-target-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/execution-template && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src/native",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",

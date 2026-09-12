@@ -17,6 +17,10 @@ writeFileSync(process.env.FARMSLOT_NATIVE_INVOCATION, JSON.stringify(process.arg
 createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.type === 'control_request' && message.request?.subtype === 'initialize') {
+    if (process.env.FARMSLOT_NATIVE_FAIL_INITIALIZE) {
+      send({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'fixture initialization failure' } });
+      return;
+    }
     if (process.argv.includes('--resume')) send({ type: 'system', subtype: 'hook_started', session_id: 'temporary-startup-session' });
     send({ type: 'system', subtype: 'init', session_id: sessionId });
     send({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response: {} } });
@@ -77,6 +81,36 @@ async function waitFor(events: Array<Record<string, unknown>>, type: string): Pr
   }
   throw new Error(`Timed out waiting for ${type}`);
 }
+
+test('Claude records confirmed cleanup when resume initialization is rejected', async (t) => {
+  const { executable, invocation } = await fixture(t);
+  const events: Array<Record<string, unknown>> = [];
+  const options = {
+    cwd: process.cwd(),
+    executable,
+    resumeSessionId: '11111111-1111-4111-8111-111111111111',
+    env: { ...process.env, FARMSLOT_NATIVE_INVOCATION: invocation },
+  };
+  await assert.rejects(
+    claudeNativeAdapter.start(
+      {
+        ...options,
+        env: { ...options.env, FARMSLOT_NATIVE_FAIL_INITIALIZE: '1' },
+      },
+      (event) => events.push(event),
+    ),
+    /rejected stream-json initialization/,
+  );
+  const closures = events.filter((event) => event.type === 'session.closed');
+  assert.equal(closures.length, 1);
+  assert.equal(closures[0]?.status, 'failed');
+  assert.deepEqual(closures[0]?.data, {
+    processStopped: true,
+    error: 'Claude closed before initialization',
+  });
+  const retried = await startSession(t, options, () => {});
+  assert.equal(retried.nativeSessionId, options.resumeSessionId);
+});
 
 test('Claude maps acknowledged interruption followed by a successful result to interrupted', async (t) => {
   const { executable, invocation } = await fixture(t);

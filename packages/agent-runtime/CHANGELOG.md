@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a supervised native session host with private local IPC, durable command receipts and event replay, and explicit saved-conversation recovery for gateway and node clients.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.1 - 2026-08-14
