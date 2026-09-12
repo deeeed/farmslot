@@ -102,7 +102,14 @@ function collectTemplateIssues(displayPath, fileName, content, workerTerminal, i
   // requireSignal=false). Skipping mark-less templates entirely let a template
   // omit the required terminal command without any author-time signal.
   if (templateUsesTerminalMark(content)) {
-    for (const issue of lintWorkerTemplateStructure(content)) {
+    // Nested-loop role checklists render beside an existing task dir and keep
+    // their own header, and dev-interactive renders into TASK.md for lightweight
+    // interactive dev; every other flow template must not carry one (the
+    // generated TASK.md does).
+    const roleChecklist = /^(self-review|self-review-fix|ci-fix|dev-interactive)(?:[.-]|$)/.test(
+      fileName,
+    );
+    for (const issue of lintWorkerTemplateStructure(content, { roleChecklist })) {
       issues.push(`${displayPath}: ${issue}`);
     }
   }

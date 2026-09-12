@@ -25,6 +25,7 @@ type ResolutionTier =
 
 type FamilyArtifactKey =
   | 'task-md'
+  | 'checklist-md'
   | 'report'
   | 'learnings'
   | 'recipe'
@@ -82,9 +83,15 @@ export interface FamilyContextManifest {
 const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
   {
     key: 'task-md',
-    label: 'Original task file',
+    label: 'Original task document',
     sourceRelativePath: 'TASK.md',
     materializedRelativePath: 'inputs/inherited/TASK.md',
+  },
+  {
+    key: 'checklist-md',
+    label: 'Original execution checklist',
+    sourceRelativePath: 'CHECKLIST.md',
+    materializedRelativePath: 'inputs/inherited/CHECKLIST.md',
   },
   {
     key: 'report',

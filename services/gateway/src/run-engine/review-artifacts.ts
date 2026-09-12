@@ -129,13 +129,14 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
     labelPrefix: 'review-artifacts',
   });
 
-  const workerTask = path.join(workerTaskDir, 'TASK.md');
-  if (await slotFileExists(vars, workerTask)) {
-    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'), {
+  for (const document of ['TASK.md', 'CHECKLIST.md']) {
+    const workerDocument = path.join(workerTaskDir, document);
+    if (!(await slotFileExists(vars, workerDocument))) continue;
+    await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
       phase: 'mirror',
       runId,
       slotId: run.slotId ?? vars.slotId,
-      label: 'TASK.md.worker',
+      label: `${document}.worker`,
     });
   }
   console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);

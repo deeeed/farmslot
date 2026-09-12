@@ -1,0 +1,736 @@
+{
+  "spec": "MANUAL-000109",
+  "config": {
+    "cpuCritical": 0.9,
+    "memoryCritical": 0.9,
+    "diskCritical": 0.95,
+    "load1Critical": 1.5,
+    "minConsecutiveCriticalSamples": 3,
+    "staleAfterMs": 150000,
+    "evidenceSampleWindow": 8,
+    "maxCauses": 5,
+    "validationFixtureMachine": null
+  },
+  "evaluatedAt": "2026-08-21T10:00:00.000Z",
+  "cases": [
+    {
+      "case": "green",
+      "input": "3 samples below thresholds",
+      "decision": {
+        "outcome": "admitted",
+        "machine": "macwork",
+        "state": "green",
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.3,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.4,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.35,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            }
+          ],
+          "consecutiveCriticalSamples": 0,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        }
+      }
+    },
+    {
+      "case": "transient",
+      "input": "2 consecutive critical of required 3",
+      "decision": {
+        "outcome": "admitted",
+        "machine": "macwork",
+        "state": "transient",
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.3,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.97,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 2,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        }
+      }
+    },
+    {
+      "case": "sustained",
+      "input": "3 consecutive critical of required 3",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_SUSTAINED_CRITICAL",
+        "reason": "Machine macwork has been critical for 3 consecutive samples (threshold 3); new dispatches are rejected until pressure recedes or an operator overrides this one dispatch.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:00.000Z",
+              "generation": "gen-a",
+              "sampleId": -20,
+              "cpu": 0.4,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            },
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        },
+        "overridable": true
+      }
+    },
+    {
+      "case": "unknown-ownership",
+      "input": "sustained with unknown/manual/active/stale causes",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_SUSTAINED_CRITICAL",
+        "reason": "Machine macwork has been critical for 3 consecutive samples (threshold 3); new dispatches are rejected until pressure recedes or an operator overrides this one dispatch.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "unknown",
+            "confidence": "high",
+            "cleanupEligible": false
+          },
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "manual",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": false
+          },
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "active",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": false
+          },
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "stale",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        },
+        "overridable": true
+      }
+    },
+    {
+      "case": "stale",
+      "input": "newest sample 300s old with 150s limit",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "stale",
+        "code": "PRESSURE_EVIDENCE_STALE",
+        "reason": "Newest pressure sample for machine macwork is 300s old (limit 150s); dispatch admission fails closed until fresh samples arrive.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|-200|2026-08-21T09:55:00.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:53:20.000Z",
+              "generation": "gen-a",
+              "sampleId": -300,
+              "cpu": 0.3,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            },
+            {
+              "collectedAt": "2026-08-21T09:55:00.000Z",
+              "generation": "gen-a",
+              "sampleId": -200,
+              "cpu": 0.3,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            }
+          ],
+          "consecutiveCriticalSamples": 0,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:55:00.000Z"
+        },
+        "overridable": false
+      }
+    },
+    {
+      "case": "unavailable",
+      "input": "no capture / offline / empty history",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "ghost",
+        "state": "unavailable",
+        "code": "PRESSURE_EVIDENCE_UNAVAILABLE",
+        "reason": "No pressure evidence is available for machine ghost; dispatch admission fails closed.",
+        "causes": [],
+        "evidence": {
+          "machine": "ghost",
+          "generation": null,
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [],
+          "consecutiveCriticalSamples": 0,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": null
+        },
+        "overridable": false
+      }
+    },
+    {
+      "case": "override-accepted",
+      "input": "sustained + matching-generation override",
+      "decision": {
+        "outcome": "admitted",
+        "machine": "macwork",
+        "state": "override",
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        },
+        "override": {
+          "machine": "macwork",
+          "pressureGeneration": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "reason": "urgent hotfix",
+          "principalId": "principal-arthur",
+          "requestedAt": "2026-08-21T10:00:00.000Z",
+          "scope": "single-dispatch"
+        }
+      }
+    },
+    {
+      "case": "override-stale-race",
+      "input": "generation advanced after preview",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_OVERRIDE_STALE",
+        "reason": "Override was issued against pressure generation macwork|gen-a|70|2026-08-21T09:59:30.000Z but the machine is now at macwork|gen-a|101|2026-08-21T09:59:55.000Z; review the fresh decision and re-submit the override deliberately.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|101|2026-08-21T09:59:55.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:55.000Z",
+              "generation": "gen-a",
+              "sampleId": 101,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 4,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:55.000Z"
+        },
+        "overridable": true
+      }
+    },
+    {
+      "case": "override-mismatch",
+      "input": "override bound to a different machine",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_OVERRIDE_MISMATCH",
+        "reason": "Override is bound to machine mini but the dispatch targets macwork; submit a fresh override for this machine.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        },
+        "overridable": true
+      }
+    },
+    {
+      "case": "restart-restored-ring",
+      "input": "restored ring before first live sample",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "unavailable",
+        "code": "PRESSURE_EVIDENCE_UNAVAILABLE",
+        "reason": "Machine macwork has no live pressure sample this gateway session (history source: restored); restored history is charts-only and dispatch admission fails closed.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-a|70|2026-08-21T09:59:30.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:59:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 70,
+              "cpu": 0.2,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": false
+            }
+          ],
+          "consecutiveCriticalSamples": 0,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:30.000Z"
+        },
+        "overridable": false
+      }
+    },
+    {
+      "case": "validation-fixture",
+      "input": "adapter-forced sustained rejection",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_SUSTAINED_CRITICAL",
+        "reason": "Machine macwork has been critical for 3 consecutive samples (threshold 3); new dispatches are rejected until pressure recedes or an operator overrides this one dispatch.",
+        "causes": [],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|validation-fixture|2|2026-09-12T13:49:00.000Z",
+          "evaluatedAt": "2026-09-12T13:49:07.554Z",
+          "samples": [
+            {
+              "collectedAt": "2026-09-12T13:48:58.000Z",
+              "generation": "validation-fixture",
+              "sampleId": 0,
+              "cpu": 0.9,
+              "memory": 0.9,
+              "disk": 0.95,
+              "load1": 1.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-09-12T13:48:59.000Z",
+              "generation": "validation-fixture",
+              "sampleId": 1,
+              "cpu": 0.9,
+              "memory": 0.9,
+              "disk": 0.95,
+              "load1": 1.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-09-12T13:49:00.000Z",
+              "generation": "validation-fixture",
+              "sampleId": 2,
+              "cpu": 0.9,
+              "memory": 0.9,
+              "disk": 0.95,
+              "load1": 1.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-09-12T13:49:00.000Z",
+          "validationFixture": true
+        },
+        "overridable": true
+      }
+    },
+    {
+      "case": "warm-start-restored-ring",
+      "input": "restored 2-critical ring + 1 live critical sample",
+      "decision": {
+        "outcome": "rejected",
+        "machine": "macwork",
+        "state": "sustained-critical",
+        "code": "PRESSURE_SUSTAINED_CRITICAL",
+        "reason": "Machine macwork has been critical for 3 consecutive samples (threshold 3); new dispatches are rejected until pressure recedes or an operator overrides this one dispatch.",
+        "causes": [
+          {
+            "process": "node",
+            "processCount": 4,
+            "cpuPercent": 240,
+            "rssBytes": 4294967296,
+            "classification": "retained",
+            "confidence": "high",
+            "slotId": "macwork-ff-1",
+            "runId": "run-1",
+            "cleanupEligible": true
+          }
+        ],
+        "evidence": {
+          "machine": "macwork",
+          "generation": "macwork|gen-after-restart|1|2026-08-21T09:59:40.000Z",
+          "evaluatedAt": "2026-08-21T10:00:00.000Z",
+          "samples": [
+            {
+              "collectedAt": "2026-08-21T09:58:30.000Z",
+              "generation": "gen-a",
+              "sampleId": 10,
+              "cpu": 0.95,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:00.000Z",
+              "generation": "gen-a",
+              "sampleId": 40,
+              "cpu": 0.96,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            },
+            {
+              "collectedAt": "2026-08-21T09:59:40.000Z",
+              "generation": "gen-after-restart",
+              "sampleId": 1,
+              "cpu": 0.99,
+              "memory": 0.4,
+              "disk": 0.5,
+              "load1": 0.5,
+              "critical": true
+            }
+          ],
+          "consecutiveCriticalSamples": 3,
+          "requiredConsecutiveCriticalSamples": 3,
+          "staleAfterMs": 150000,
+          "latestSampleAt": "2026-08-21T09:59:40.000Z"
+        },
+        "overridable": true
+      }
+    }
+  ]
+}

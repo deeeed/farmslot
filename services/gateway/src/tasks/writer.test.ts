@@ -537,7 +537,15 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   const manifest = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'checklist-target.json'), 'utf-8'),
   );
-  assert.deepEqual(manifest, { checklist: 'TASK.md' });
+  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md' });
+  // handoff.json describes the run in the shape a skill task dir uses.
+  const handoff = JSON.parse(
+    await readFile(path.join(path.dirname(taskA), 'inputs', 'handoff.json'), 'utf-8'),
+  ) as { surface: string; taskDocument: string; flow: string; task: { sourceKind: string } };
+  assert.equal(handoff.surface, 'farmslot');
+  assert.equal(handoff.taskDocument, 'TASK.md');
+  assert.equal(handoff.flow, 'dev');
+  assert.equal(handoff.task.sourceKind, 'text');
 });
 
 test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
@@ -786,12 +794,15 @@ test('writeTaskFile renders selected template variant and leaves source template
   taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
+  const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
   const provenance = JSON.parse(
     await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
   ) as { templateName?: string; templateVariant?: string | null; templateIsDefault?: boolean };
-  assert.match(rendered, /Template version marker: PROJ-/);
+  // The template renders into CHECKLIST.md; TASK.md is the generated task document.
+  assert.match(checklist, /Template version marker: PROJ-/);
+  assert.match(checklist, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
   assert.match(rendered, new RegExp(`FAMILY_ID: ${run.familyId}`));
-  assert.match(rendered, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
+  assert.doesNotMatch(rendered, /Template version marker/);
   assert.equal(await readFile(variantPath, 'utf-8'), variantSource);
   assert.equal(provenance.templateName, 'dev-template-test.md');
   assert.equal(provenance.templateVariant, 'template-test');
@@ -815,12 +826,15 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
     templateSelectionSource?: string;
     templateSelectionReason?: string;
   };
-  assert.match(rendered, /Worker: Interactive Dev/);
+  const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
+  assert.match(checklist, /Worker: Interactive Dev/);
+  assert.match(rendered, /> Human-operated — pauses at HUMAN GATE steps for approval\./);
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(provenance.templateSelectionSource, 'implicit-interactive-dev');
   assert.match(provenance.templateSelectionReason ?? '', /interactive mode/);
   for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
     assert.doesNotMatch(rendered, forbidden);
+    assert.doesNotMatch(checklist, forbidden);
   }
 });
 
@@ -862,7 +876,8 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
     templateSelectionSource?: string;
     templateSelectionReason?: string;
   };
-  assert.match(rendered, /Worker: Interactive PR-Complete/);
+  const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
+  assert.match(checklist, /Worker: Interactive PR-Complete/);
   assert.match(rendered, /Interactive PR-complete handoff/);
   assert.match(rendered, /STATUS: waiting-human/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);

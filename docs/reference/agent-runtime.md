@@ -15,7 +15,7 @@
 
 A runtime-compatible task directory contains:
 
-- `TASK.md` or `CHECKLIST.md` with `- [ ]` checklist items;
+- `CHECKLIST.md` with `- [ ]` checklist items (the execution checklist) beside `TASK.md`, the task document that holds the ticket and acceptance criteria and is never enumerated (see [Task directory contract](task-directory-contract.md));
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;

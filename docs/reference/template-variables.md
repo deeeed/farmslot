@@ -6,7 +6,7 @@ Three families — never mix: worker TASK double-brace vars (writer.ts), hooks/r
 
 ## TASK format {#task-format}
 
-Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip fenced blocks, HTML details blocks, and informational sections (acceptance criteria, description, task, …). SIGNAL.json is terminal only.
+Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip fenced blocks, HTML details blocks, and informational sections (acceptance criteria, description, task, …). SIGNAL.json is terminal only. The template renders into CHECKLIST.md (the only enumerated file); TASK.md is the generated task document: ticket, acceptance criteria, pointers — never steps (see reference/task-directory-contract).
 
 ## Worker TASK.md (double-brace VAR)
 

@@ -1,53 +1,15 @@
-# Worker: Review-PR — #{{PR_NUMBER}}
-
-> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | {{TASK_DIR}}/mark no-change --reason "…" | {{TASK_DIR}}/mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
+# Review-PR checklist
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps in a single uninterrupted run.**
 
 You are reviewing a **farmslot** PR (Command Center + gateway + optional Companion). Work autonomously — if blocked, set `STATUS: blocked` with reason and stop.
 
-## Task
+The PR body, linked tickets, their descriptions, and the numbered acceptance criteria are in TASK.md (`## Description`, `## Linked Tickets`, `## Linked Ticket Descriptions`, `## Acceptance Criteria`). Reference ACs by number throughout.
 
-```text
-PR_NUMBER: {{PR_NUMBER}}
-PR_TITLE: {{PR_TITLE}}
-PR_BRANCH: {{PR_BRANCH}}
-PR_URL: {{PR_URL}}
-PR_INTEGRATION: {{PR_INTEGRATION_NOTE}}
-REVIEW_TIER: {{REVIEW_TIER}}
-RECIPE_STRATEGY: {{RECIPE_STRATEGY}}
-TASK_DIR: {{TASK_DIR}}
-SESSION: {{SESSION}}
-REPO: {{REPO}}
-PLATFORM: {{PLATFORM}}
-CDP_PORT: {{CDP_PORT}}
-WATCHER_PORT: {{WATCHER_PORT}}
-RUNTIME_DIR: {{RUNTIME_DIR}}
-SLOT: {{SLOT}}
-STATUS: pending
-```
-
-## PR Body
-
-{{PR_BODY}}
-
-## Linked Tickets
-
-{{LINKED_TICKETS}}
-
-## Linked Ticket Descriptions
-
-{{LINKED_DESCRIPTIONS}}
-
-## Acceptance Criteria (numbered — reference by number throughout)
-
-{{ACCEPTANCE_CRITERIA}}
-
-If empty or `_Not specified_`, **do not invent ACs**:
+If TASK.md's `## Acceptance Criteria` is `_Not specified_`, **do not invent ACs**:
 
 1. Flag PR hygiene: no linked issue — review evaluates PR-author claims only.
-2. Extract **verbatim** claims from Summary / Validation / Screenshots sections. Label `## Review Claims` (not Acceptance Criteria).
+2. Extract **verbatim** claims from the PR body's Summary / Validation / Screenshots sections. Append them to TASK.md under `## Review Claims` (not Acceptance Criteria).
 
 ---
 
@@ -84,7 +46,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 ### Setup (1–5)
 
 - [ ] **1. Read quality docs** — `{{recipe_quality_path}}`, `{{review_quality_path}}`, both CLAUDE files.
-- [ ] **2. Update status** — `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **2. Update status** — `STATUS: working` in TASK.md, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Print tier** — `Review tier: {{REVIEW_TIER}}`.
 - [ ] **4. Doctor + CDP** [standard+full]:
   ```bash

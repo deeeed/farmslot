@@ -2,13 +2,23 @@ import { existsSync } from 'node:fs';
 import { chmod, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { CHECKLIST_TARGET_MANIFEST } from '@farmslot/protocol/checklist-target';
+import {
+  CHECKLIST_TARGET_MANIFEST,
+  INTERACTIVE_CHECKLIST_MARKDOWN,
+} from '@farmslot/protocol/checklist-target';
 
 import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
-export const TASK_ROOT_SIDECARS = [CHECKLIST_MARKER_INPUT, CHECKLIST_TARGET_MANIFEST] as const;
+// CHECKLIST.md is a task-root file like the marker and manifest: when the
+// gateway writes it (split task document, interactive dev) it must travel
+// with TASK.md, or `checklist-target.json` points at a file the slot lacks.
+export const TASK_ROOT_SIDECARS = [
+  CHECKLIST_MARKER_INPUT,
+  CHECKLIST_TARGET_MANIFEST,
+  INTERACTIVE_CHECKLIST_MARKDOWN,
+] as const;
 
 export interface CopyPreparedTaskRootSidecarsParams {
   taskDir: string;
