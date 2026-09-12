@@ -1132,11 +1132,13 @@ export async function writeTaskFile(
     // Last-resort: extract root and dependency recipes from the PR body via LLM. Only
     // runs when family inheritance produced no recipe — covers human-authored
     // PRs where farmslot has no fix-bug/dev ancestor in the family chain.
-    // Skip when the worker template doesn't reference {{RECIPE_SOURCE}} —
-    // without the provenance gate the staged recipe goes nowhere and the LLM
-    // call is wasted (e.g. projects/farmslot-farm has no recipe runner and
-    // its pr-complete.md doesn't render the placeholder).
-    if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('{{RECIPE_SOURCE}}')) {
+    // Skip when the worker template doesn't consume the provenance gate — the
+    // RECIPE_SOURCE value now lives in the TASK.md Task block, so the checklist
+    // references it by name rather than as a {{RECIPE_SOURCE}} placeholder.
+    // Without the gate the staged recipe goes nowhere and the LLM call is wasted
+    // (e.g. projects/farmslot-farm has no recipe runner and its pr-complete.md
+    // never mentions RECIPE_SOURCE).
+    if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('RECIPE_SOURCE')) {
       emit('substep', {
         name: 'pr-body-recipe-llm',
         detail: 'Extracting root + dependency recipes from PR body (LLM)',
