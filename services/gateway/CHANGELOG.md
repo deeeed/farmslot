@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Route native sessions to authenticated execution nodes with matching profile ownership and connection-bound replies.
+
 - Expose configured local agent workspace choices and bounded source and Git changes reads, with capped lists and clear errors for oversized diffs.
 - Fix terminal Copilot bootstrap when the runner starts with a suggested prompt, using exact launch acknowledgement without duplicate sends.
 

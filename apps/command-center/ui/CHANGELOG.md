@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Operate native sessions on connected execution nodes, keeping session controls, delivery receipts, and workspace views bound to the selected machine.
+
 - Add an opt-in agent workspace to Copilot with runner/model selection, resumable conversations, tool activity, approvals/questions, and embedded source and changes views.
 
 - Make runner-session reopen and tmux-attach copy controls more visible on run detail, and show them on the family selected-run so any family member can copy the same commands.

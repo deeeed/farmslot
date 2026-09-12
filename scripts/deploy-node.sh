@@ -13,6 +13,8 @@
 # distinct install dir, service name, gateway URL, and IPC state. Default
 # instance is "prod" (identical to the original single-instance behavior).
 # Select the other with --instance dev or FARMSLOT_NODE_INSTANCE=dev.
+# Set FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID to opt this node into native sessions
+# for that gateway principal. Runner installation and login remain node-owned.
 #
 # One-time prerequisites:
 #   macOS: node installed + Screen Recording permission for `node` binary
@@ -300,8 +302,38 @@ fi
 NODE_DIR=$(dirname "$NODE_PATH")
 echo "[deploy] node: $NODE_PATH"
 
+NODE_SERVICE_ARGS=("$NODE_PATH" --require "$REMOTE_DIR/node_modules/tsx/dist/preflight.cjs" --import "file://$REMOTE_DIR/node_modules/tsx/dist/loader.mjs" "$REMOTE_DIR/src/index.ts")
+NODE_SERVICE_PATH="$NODE_DIR:/usr/local/bin:/usr/bin:/bin"
+if [[ "$REMOTE_OS" == "Darwin" ]]; then
+  NODE_SERVICE_PATH="$REMOTE_DIR/node_modules/.bin:$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin"
+fi
+if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
+  # Native CLI configuration can depend on exports in the user's login shell.
+  # Load those on the execution machine, without exporting credentials to the gateway.
+  NATIVE_SHELL=$(run 'printf "%s" "${SHELL:-/bin/sh}"')
+  if [[ "$NATIVE_SHELL" != /* ]]; then
+    echo "[deploy] ERROR: native execution requires an absolute user shell path" >&2
+    exit 1
+  fi
+  NATIVE_COMMAND=$(python3 -c 'import shlex,sys; print("exec " + shlex.join(sys.argv[1:]))' "${NODE_SERVICE_ARGS[@]}")
+  NODE_SERVICE_ARGS=("$NATIVE_SHELL" -lc "$NATIVE_COMMAND")
+  NODE_SERVICE_PATH="$REMOTE_HOME/.local/bin:$REMOTE_HOME/.npm-global/bin:$NODE_SERVICE_PATH"
+fi
+NODE_SERVICE_PATH=$(python3 -c 'import sys; print(":".join(dict.fromkeys(sys.argv[1].split(":"))))' "$NODE_SERVICE_PATH")
+
 xml_escape() {
   python3 -c 'import html,sys; print(html.escape(sys.stdin.read().rstrip("\n"), quote=True))'
+}
+
+launchd_node_arguments() {
+  local argument
+  for argument in "${NODE_SERVICE_ARGS[@]}"; do
+    printf '        <string>%s</string>\n' "$(printf '%s' "$argument" | xml_escape)"
+  done
+}
+
+systemd_node_arguments() {
+  python3 -c 'import sys; print(" ".join("\"" + arg.replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%").replace("$", "$$") + "\"" for arg in sys.argv[1:]))' "${NODE_SERVICE_ARGS[@]}"
 }
 
 launchd_auth_env_xml() {
@@ -333,11 +365,14 @@ systemd_auth_env_lines() {
   fi
 }
 
-# Non-prod-only env: keeps the dev instance's home dir and screen-control IPC
-# socket from colliding with prod's when both run on the same machine. Prod
-# stays unset here, so services/node falls back to its original defaults
-# unchanged (~/.farmslot, /tmp/farmslot-screen-control-<uid>.sock).
+# Native ownership is opt-in for either instance. The dev instance also gets
+# a separate home and screen-control socket; prod retains its existing defaults.
 launchd_instance_env_xml() {
+  if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
+    printf '        <key>FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID</key>
+        <string>%s</string>
+' "$(printf '%s' "$FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID" | xml_escape)"
+  fi
   if [[ -n "$INSTANCE_SUFFIX" ]]; then
     printf '        <key>FARMSLOT_HOME</key>
         <string>%s</string>
@@ -348,6 +383,10 @@ launchd_instance_env_xml() {
 }
 
 systemd_instance_env_lines() {
+  if [[ -n "${FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID:-}" ]]; then
+    printf 'Environment="FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=%s"
+' "$(printf '%s' "$FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')"
+  fi
   if [[ -n "$INSTANCE_SUFFIX" ]]; then
     printf 'Environment="FARMSLOT_HOME=%s"
 Environment="SCREEN_CONTROL_SOCKET=%s"
@@ -508,12 +547,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
     <string>${PLIST_NAME}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${NODE_PATH}</string>
-        <string>--require</string>
-        <string>${REMOTE_DIR}/node_modules/tsx/dist/preflight.cjs</string>
-        <string>--import</string>
-        <string>file://${REMOTE_DIR}/node_modules/tsx/dist/loader.mjs</string>
-        <string>${REMOTE_DIR}/src/index.ts</string>
+$(launchd_node_arguments)
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -524,7 +558,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
         <key>CAPTURE_HELPER_PATH</key>
         <string>${CAPTURE_HELPER_REMOTE}</string>
 $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
-        <string>${REMOTE_DIR}/node_modules/.bin:${NODE_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin</string>
+        <string>$(printf '%s' "$NODE_SERVICE_PATH" | xml_escape)</string>
     </dict>
     <key>WorkingDirectory</key>
     <string>${REMOTE_DIR}</string>
@@ -591,11 +625,11 @@ Type=simple
 WorkingDirectory=${REMOTE_DIR}
 Environment=GATEWAY_URL=ws://${GATEWAY_IP}:${GATEWAY_PORT}
 Environment=MACHINE_NAME=${NODE_MACHINE_NAME}
-Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=${NODE_SERVICE_PATH}
 $(systemd_auth_env_lines)
 $(systemd_instance_env_lines)
 Environment=HOME=${REMOTE_HOME}
-ExecStart=${NODE_PATH} --require ${REMOTE_DIR}/node_modules/tsx/dist/preflight.cjs --import file://${REMOTE_DIR}/node_modules/tsx/dist/loader.mjs ${REMOTE_DIR}/src/index.ts
+ExecStart=$(systemd_node_arguments)
 Restart=always
 RestartSec=5
 StandardOutput=append:${REMOTE_DIR}/node.log

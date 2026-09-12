@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ROOT } from '../lib/common.mjs';
+import { ROOT, shSingleQuote } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 
 export const SCENARIO_ID = 'native-session-smoke';
@@ -18,6 +18,9 @@ export const SCENARIO_ID = 'native-session-smoke';
 const STAGES = ['core', 'approvals', 'questions', 'interrupt', 'resume'];
 
 function rpc(method, params = {}) {
+  const executionNodeId = process.env.FARMSLOT_NATIVE_EXECUTION_NODE;
+  if (executionNodeId && method.startsWith('native.session.'))
+    params = { ...params, executionNodeId };
   let stdout;
   try {
     stdout = execFileSync(
@@ -63,16 +66,65 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
   const runner = runnerAdapter.RUNNER_ID;
   const stages = (process.env.FARMSLOT_NATIVE_STAGES ?? STAGES.join(',')).split(',');
   for (const stage of stages) assert.ok(STAGES.includes(stage), `Unknown native stage: ${stage}`);
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), `farmslot-native-${runner}-`));
-  const cwd = path.join(fixture, 'repo');
-  fs.mkdirSync(cwd);
-  execFileSync('git', ['init', '--quiet'], { cwd });
   const secret = `CONTEXT_${randomUUID().replaceAll('-', '')}`;
-  fs.writeFileSync(path.join(cwd, 'fixture.txt'), `${secret}\n`);
+  const fixtureSsh = process.env.FARMSLOT_NATIVE_FIXTURE_SSH;
+  const onFixtureHost = (script) =>
+    JSON.parse(
+      execFileSync(
+        'ssh',
+        [
+          '-o',
+          'BatchMode=yes',
+          '-o',
+          'ConnectTimeout=8',
+          fixtureSsh,
+          `node -e ${shSingleQuote(script)}`,
+        ],
+        { encoding: 'utf8', timeout: 30_000 },
+      ),
+    );
+  let fixture;
+  let cwd;
+  let fixtureHost = os.hostname();
+  if (fixtureSsh) {
+    assert.ok(
+      process.env.FARMSLOT_NATIVE_EXECUTION_NODE &&
+        process.env.FARMSLOT_NATIVE_EXECUTION_NODE !== 'local',
+      'Remote fixtures require an explicit execution node',
+    );
+    const created =
+      onFixtureHost(`const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+      const fixture=fs.mkdtempSync(path.join(os.tmpdir(),${JSON.stringify(`farmslot-native-${runner}-`)}));
+      const cwd=path.join(fixture,'repo');fs.mkdirSync(cwd);require('node:child_process').execFileSync('git',['init','--quiet'],{cwd});
+      fs.writeFileSync(path.join(cwd,'fixture.txt'),${JSON.stringify(`${secret}\n`)});
+      console.log(JSON.stringify({fixture,cwd,host:os.hostname()}));`);
+    ({ fixture, cwd } = created);
+    fixtureHost = created.host;
+  } else {
+    fixture = fs.mkdtempSync(path.join(os.tmpdir(), `farmslot-native-${runner}-`));
+    cwd = path.join(fixture, 'repo');
+    fs.mkdirSync(cwd);
+    execFileSync('git', ['init', '--quiet'], { cwd });
+    fs.writeFileSync(path.join(cwd, 'fixture.txt'), `${secret}\n`);
+  }
+  const readFixture = (target) =>
+    fixtureSsh
+      ? onFixtureHost(
+          `console.log(JSON.stringify(require('node:fs').readFileSync(${JSON.stringify(target)},'utf8')))`,
+        )
+      : fs.readFileSync(target, 'utf8');
+  const existsFixture = (target) =>
+    fixtureSsh
+      ? onFixtureHost(
+          `console.log(JSON.stringify(require('node:fs').existsSync(${JSON.stringify(target)})))`,
+        )
+      : fs.existsSync(target);
   const report = {
     runner,
+    executionNodeId: process.env.FARMSLOT_NATIVE_EXECUTION_NODE ?? 'local',
     gateway: process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777',
     fixture,
+    fixtureHost,
     stages,
     billing:
       'Not measured. Native account access does not establish subscription cost or entitlement.',
@@ -95,6 +147,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
     }
     latest.events = events;
     assert.equal(latest.session.id, session.id);
+    assert.equal(latest.session.executionNodeId, report.executionNodeId);
     assert.ok(latest.cursor >= savedSequence, 'Event cursor went backwards');
     const sequences = latest.events.map((event) => event.sequence);
     assert.equal(new Set(sequences).size, sequences.length, 'Duplicate event sequence');
@@ -271,8 +324,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
             result.events.some((event) => event.type === 'tool.completed'),
             'No tool completion event',
           );
-          assert.equal(fs.readFileSync(target, 'utf8'), 'native-validation');
-        } else assert.equal(fs.existsSync(target), false, 'Denied tool still wrote its target');
+          assert.equal(readFixture(target), 'native-validation');
+        } else assert.equal(existsFixture(target), false, 'Denied tool still wrote its target');
         report.checks.push({
           name: `approval-${decision}-side-effect`,
           pass: true,

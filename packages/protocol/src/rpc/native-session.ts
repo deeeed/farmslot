@@ -11,6 +11,8 @@ export interface NativeSessionCapabilities {
 }
 
 export interface NativeSessionCreateParams {
+  /** Omitted or local selects the gateway host; otherwise an authenticated execution node. */
+  executionNodeId?: string;
   runner: string;
   cwd: string;
   model?: string;
@@ -20,6 +22,16 @@ export interface NativeSessionCreateParams {
 }
 export interface NativeSessionTargetParams {
   sessionId: string;
+  executionNodeId?: string;
+}
+
+/** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
+export interface NativeExecutionNodeDeclaration {
+  ownerPrincipalId: string;
+}
+export interface NativeSessionListResult {
+  sessions: NativeSessionInfo[];
+  unavailableExecutionNodes?: Array<{ executionNodeId: string; message: string }>;
 }
 export interface NativeSessionReadParams extends NativeSessionTargetParams {
   after?: number;
@@ -143,7 +155,13 @@ export interface NativeRunnerOption {
 }
 export interface NativeSessionCatalogResult {
   runners: NativeRunnerOption[];
-  contexts: Array<{ cwd: string; label: string; slotId?: string; project?: string }>;
+  contexts: Array<{
+    cwd: string;
+    label: string;
+    slotId?: string;
+    project?: string;
+    executionNodeId?: string;
+  }>;
 }
 export interface NativeWorkspacePathParams extends NativeSessionTargetParams {
   /** Relative to the session's recorded working directory. */

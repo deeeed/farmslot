@@ -33,8 +33,13 @@ await waitFor(
 const errors = Array.from(view.querySelectorAll('.error'))
   .map((element) => element.textContent.trim())
   .filter(Boolean);
+const selection = view.querySelector('[data-testid="native-session-select"]')?.value ?? '';
+const [executionNodeId, sessionId] = selection.startsWith('[')
+  ? JSON.parse(selection)
+  : ['local', selection];
 return {
-  sessionId: view.querySelector('[data-testid="native-session-select"]')?.value ?? '',
+  executionNodeId,
+  sessionId,
   contexts: Array.from(view.querySelectorAll('[data-testid="native-context"] option')).map(
     (option) => ({ value: option.value, label: option.textContent.trim() }),
   ),

@@ -1,6 +1,6 @@
 # ADR-057: Structured runner transports
 
-**Status:** Accepted; local adapters and durability shipped; client integration in progress
+**Status:** Accepted; local adapters, durability and Command Center shipped; worker/node integration in progress
 **Date:** 2026-09-12
 **Scope:** [Runner execution PRD](../PRD-runner-execution-canonical.md), [near-term roadmap](../ROADMAP-next.md)
 **Related:** [ADR-023](023-runner-agnostic-tui-execution.md), [ADR-032](032-runner-observability-via-hooks.md), [ADR-047](047-worker-session-history-panel.md), [ADR-051](051-principal-and-credential-model.md)
@@ -46,6 +46,8 @@ Users install and sign into the native runner in their execution context. Farmsl
 
 Account context comes from authorized execution context, not an arbitrary client-supplied label. Bind launch, history access, commands, and approval replies to that context. Account switching requires a distinct process and session context; stale replies cannot reach the new account. Keep credentials out of event history and client payloads.
 
+Native node execution requires an issued node credential bound to the exact machine and `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` set on that node. `deploy-node.sh` carries this opt-in into its service environment. The node keeps native journals under its own Farmslot home and retains runner installation and login locally. Session and workspace requests include `executionNodeId`; omission continues to select the gateway host. Replacing a node connection cannot answer requests sent to the previous connection, and a missing node never redirects a session to the gateway host.
+
 The first implementation is experimental and restricted to a pinned principal in a single trusted operator context. The account-setup phase adds user-owned execution profiles. Shared deployments require principal authorization and execution isolation consistent with ADR-051. Separate account labels under one unrestricted OS user do not establish a security boundary. Do not advertise multi-user account isolation until process, filesystem, and credential access checks prove that boundary.
 
 Successful inference establishes access at the time of the request. Subscription entitlement, permitted automation, quotas, and billing require separate provider-specific evidence. Compare equivalent native TUI and structured tasks using provider usage records where available. Mark unavailable or delayed billing evidence explicitly. Initialization and estimated token cost cannot establish subscription economics.
@@ -64,7 +66,7 @@ recovery is therefore gated to sessions started with 2.1.265 or newer. Older
 sessions remain readable/closeable and expose the unsupported capability. Test
 tool-result and assistant-message context, not only tokens from user prompts.
 
-G001 shipped in PR #615 with live-validated local Codex and Claude adapters. G002 shipped in PR #616 with local process supervision, durable events, replay, and recovery validation. G003 Command Center integration is current. Worker and retained-reviewer integration, remote execution, Companion, additional runners, and isolated user-account setup remain pending. The trusted local principal restriction still applies; these results do not establish shared-account isolation or subscription billing.
+G001 shipped in PR #615 with live-validated local Codex and Claude adapters. G002 shipped in PR #616 with local process supervision, durable events, replay, and recovery validation. G003 Command Center integration shipped in PR #618. G004 worker and retained-reviewer integration, remote execution, and Companion are current; additional runners and isolated user-account setup remain pending. The trusted local principal restriction still applies; these results do not establish shared-account isolation or subscription billing.
 
 | Phase | Deliverable                                         | Required proof                                                                                                                                                              |
 | ----- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

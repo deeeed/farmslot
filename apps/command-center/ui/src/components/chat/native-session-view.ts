@@ -4,12 +4,14 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import {
   type ChatMessage,
+  Events,
   Methods,
   type NativeCommandReceipt,
   type NativeSessionCatalogResult,
   type NativeSessionCreateParams,
   type NativeSessionEvent,
   type NativeSessionInfo,
+  type NativeSessionListResult,
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
@@ -33,7 +35,13 @@ import {
 import { nativeSessionStyles } from './native-session-styles.js';
 import { type NativeSessionApi } from './native-workspace.js';
 
-type LocalCommand = { sessionId: string; generation: string; commandId: string; text: string };
+type LocalCommand = {
+  sessionId: string;
+  executionNodeId?: string;
+  generation: string;
+  commandId: string;
+  text: string;
+};
 
 @customElement('native-session-view')
 export class NativeSessionView extends LitElement {
@@ -44,6 +52,11 @@ export class NativeSessionView extends LitElement {
   @state() private sessions: NativeSessionInfo[] = [];
   @state() private session?: NativeSessionInfo;
   @state() private selectedId = '';
+  @state() private selectedNodeId = 'local';
+  @state() private executionNodeId = 'local';
+  @state() private unavailableNodes: NonNullable<
+    NativeSessionListResult['unavailableExecutionNodes']
+  > = [];
   @state() private creating = false;
   @state() private runner = '';
   @state() private model = '';
@@ -59,12 +72,16 @@ export class NativeSessionView extends LitElement {
   @state() private caughtUp = false;
   @state() private busy = false;
   @state() private error = '';
+  @state() private pollError = '';
   @state() private workspace = false;
   @state() private responseAttempts = new Set<string>();
   @state() private invalidDelivery = false;
   private revision = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private unsubscribe?: () => void;
+  private nodeUnsubscribers: Array<() => void> = [];
+  private inventoryTimer?: ReturnType<typeof setTimeout>;
+  private inventoryRevision = 0;
   private storageScope = '';
   private polling = false;
   private timelineEvents?: NativeSessionEvent[];
@@ -85,12 +102,20 @@ export class NativeSessionView extends LitElement {
     this.connected = this.fixture || gateway.connectionState === 'connected';
     if (this.fixture) void this.connect();
     else {
+      this.nodeUnsubscribers = [Events.NODE_CONNECTED, Events.NODE_DISCONNECTED].map((event) =>
+        gateway.subscribe(event, () => {
+          clearTimeout(this.inventoryTimer);
+          this.inventoryTimer = setTimeout(() => void this.refreshSessions(), 100);
+        }),
+      );
       this.unsubscribe = gateway.onConnectionChange((status) => {
         this.connected = status === 'connected';
         if (this.connected) void this.connect();
         else {
           this.caughtUp = false;
           clearTimeout(this.timer);
+          clearTimeout(this.inventoryTimer);
+          this.inventoryRevision++;
         }
       });
       if (this.connected) void this.connect();
@@ -101,11 +126,34 @@ export class NativeSessionView extends LitElement {
     super.disconnectedCallback();
     this.revision++;
     clearTimeout(this.timer);
+    clearTimeout(this.inventoryTimer);
+    this.nodeUnsubscribers.forEach((unsubscribe) => unsubscribe());
+    this.nodeUnsubscribers = [];
     this.unsubscribe?.();
   }
 
   private key(suffix: string) {
     return `farmslot-native:${this.storageScope}:${suffix}`;
+  }
+
+  private sessionKey(suffix: string) {
+    return this.key(
+      this.selectedNodeId === 'local'
+        ? suffix
+        : `node:${encodeURIComponent(this.selectedNodeId)}:${suffix}`,
+    );
+  }
+
+  private sessionChoice(session: Pick<NativeSessionInfo, 'id' | 'executionNodeId'>) {
+    return session.executionNodeId === 'local'
+      ? session.id
+      : JSON.stringify([session.executionNodeId, session.id]);
+  }
+
+  private contextChoice(context: { executionNodeId?: string; cwd: string }) {
+    return !context.executionNodeId || context.executionNodeId === 'local'
+      ? context.cwd
+      : JSON.stringify([context.executionNodeId, context.cwd]);
   }
 
   private async connect() {
@@ -116,7 +164,11 @@ export class NativeSessionView extends LitElement {
       this.storageScope = scope;
       this.revision++;
       this.selectedId = safeLsGet(this.key('selected')) ?? '';
+      this.selectedNodeId = safeLsGet(this.key('selected-node')) ?? 'local';
       this.session = undefined;
+      this.sessions = [];
+      this.catalog = undefined;
+      this.responseAttempts = new Set();
       this.transcript = { events: [], cursor: 0 };
       this.requests = [];
       this.receipts = [];
@@ -127,8 +179,8 @@ export class NativeSessionView extends LitElement {
   }
 
   private loadLocal() {
-    this.draft = safeLsGet(this.key(`draft:${this.selectedId}`)) ?? '';
-    const raw = safeLsGet(this.key(`command:${this.selectedId}`));
+    this.draft = safeLsGet(this.sessionKey(`draft:${this.selectedId}`)) ?? '';
+    const raw = safeLsGet(this.sessionKey(`command:${this.selectedId}`));
     this.localCommand = undefined;
     this.invalidDelivery = false;
     if (raw) {
@@ -139,6 +191,8 @@ export class NativeSessionView extends LitElement {
           typeof value === 'object' &&
           'sessionId' in value &&
           value.sessionId === this.selectedId &&
+          (('executionNodeId' in value ? value.executionNodeId : undefined) ?? 'local') ===
+            this.selectedNodeId &&
           'generation' in value &&
           typeof value.generation === 'string' &&
           'commandId' in value &&
@@ -161,23 +215,41 @@ export class NativeSessionView extends LitElement {
   }
 
   private async refreshSessions() {
+    // Connection status represents transport loss; reconnect reloads inventory.
+    if (!this.connected) return;
     const revision = this.revision;
+    const inventoryRevision = ++this.inventoryRevision;
     try {
       const [catalog, result] = await Promise.all([
         this.api.request<NativeSessionCatalogResult>(Methods.NATIVE_SESSION_CATALOG, {}),
-        this.api.request<{ sessions: NativeSessionInfo[] }>(Methods.NATIVE_SESSION_LIST, {}),
+        this.api.request<NativeSessionListResult>(Methods.NATIVE_SESSION_LIST, {}),
       ]);
-      if (!this.isConnected || revision !== this.revision) return;
+      if (
+        !this.isConnected ||
+        !this.connected ||
+        revision !== this.revision ||
+        inventoryRevision !== this.inventoryRevision
+      )
+        return;
       this.catalog = catalog;
       this.sessions = [...result.sessions].reverse();
+      this.unavailableNodes = result.unavailableExecutionNodes ?? [];
       if (!this.runner) {
         this.runner = catalog.runners[0]?.runner ?? '';
         this.model = catalog.runners[0]?.defaultModel ?? '';
       }
-      if (!this.cwd) this.cwd = catalog.contexts[0]?.cwd ?? '';
+      if (!this.cwd && !this.customCwd) {
+        this.cwd = catalog.contexts[0]?.cwd ?? '';
+        this.executionNodeId = catalog.contexts[0]?.executionNodeId ?? 'local';
+      }
       if (!this.selectedId) this.creating = true;
     } catch (error) {
-      if (revision === this.revision) this.error = (error as Error).message;
+      if (
+        this.connected &&
+        revision === this.revision &&
+        inventoryRevision === this.inventoryRevision
+      )
+        this.error = (error as Error).message;
     }
   }
 
@@ -197,17 +269,24 @@ export class NativeSessionView extends LitElement {
       for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
         const page = await this.api.request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, {
           sessionId: this.selectedId,
+          executionNodeId: this.selectedNodeId,
           after: this.transcript.cursor,
           limit: 200,
         });
         if (!this.isConnected || revision !== this.revision) return;
+        if (
+          page.session.id !== this.selectedId ||
+          page.session.executionNodeId !== this.selectedNodeId
+        )
+          throw new Error('Native replay returned another session or execution node');
+        this.pollError = '';
         const timeline = this.renderRoot.querySelector('.timeline');
         const nearBottom =
           !timeline || timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
         this.transcript = appendNativePage(this.transcript, page);
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
-            safeLsRemove(this.key(`response:${event.sessionId}:${event.request.id}`));
+            safeLsRemove(this.sessionKey(`response:${event.sessionId}:${event.request.id}`));
             const attempts = new Set(this.responseAttempts);
             attempts.delete(event.request.id);
             this.responseAttempts = attempts;
@@ -231,7 +310,7 @@ export class NativeSessionView extends LitElement {
               this.transcript.events,
             )
           ) {
-            safeLsRemove(this.key(`command:${this.selectedId}`));
+            safeLsRemove(this.sessionKey(`command:${this.selectedId}`));
             this.localCommand = undefined;
           }
         }
@@ -244,7 +323,7 @@ export class NativeSessionView extends LitElement {
       }
     } catch (error) {
       if (revision === this.revision) {
-        this.error = (error as Error).message;
+        this.pollError = (error as Error).message;
         this.caughtUp = false;
       }
     } finally {
@@ -253,9 +332,11 @@ export class NativeSessionView extends LitElement {
     }
   }
 
-  private select(id: string) {
+  private select(id: string, executionNodeId = 'local') {
     this.revision++;
     this.selectedId = id;
+    this.selectedNodeId = executionNodeId;
+    this.responseAttempts = new Set();
     this.creating = !id;
     this.session = undefined;
     this.transcript = { events: [], cursor: 0 };
@@ -263,8 +344,10 @@ export class NativeSessionView extends LitElement {
     this.requests = [];
     this.caughtUp = false;
     this.error = '';
+    this.pollError = '';
     this.busy = false;
     safeLsSet(this.key('selected'), id);
+    safeLsSet(this.key('selected-node'), executionNodeId);
     this.loadLocal();
     this.schedule(0);
   }
@@ -275,20 +358,27 @@ export class NativeSessionView extends LitElement {
     const revision = this.revision;
     const params: NativeSessionCreateParams = resume
       ? {
+          executionNodeId: resume.executionNodeId,
           runner: resume.runner,
           model: resume.model,
           mode: resume.mode,
           cwd: resume.cwd,
           resumeSessionId: resume.nativeSessionId,
         }
-      : { runner: this.runner, model: this.model || undefined, mode: this.mode, cwd: this.cwd };
+      : {
+          executionNodeId: this.executionNodeId,
+          runner: this.runner,
+          model: this.model || undefined,
+          mode: this.mode,
+          cwd: this.cwd,
+        };
     try {
       const result = await this.api.request<{ session: NativeSessionInfo }>(
         Methods.NATIVE_SESSION_CREATE,
         params,
       );
       if (revision !== this.revision || !this.isConnected) return;
-      this.select(result.session.id);
+      this.select(result.session.id, result.session.executionNodeId);
       this.session = result.session;
       await this.refreshSessions();
     } catch (error) {
@@ -319,23 +409,25 @@ export class NativeSessionView extends LitElement {
     if (!this.canSend || !this.draft.trim() || !this.session) return;
     const command: LocalCommand = {
       sessionId: this.session.id,
+      executionNodeId: this.session.executionNodeId,
       generation: this.session.generation,
       commandId: crypto.randomUUID(),
       text: this.draft.trim(),
     };
-    if (!safeLsSet(this.key(`command:${command.sessionId}`), JSON.stringify(command))) {
+    if (!safeLsSet(this.sessionKey(`command:${command.sessionId}`), JSON.stringify(command))) {
       this.error =
         'Browser storage is unavailable. Enable storage to preserve delivery receipts across refresh.';
       return;
     }
     this.localCommand = command;
     this.draft = '';
-    safeLsRemove(this.key(`draft:${command.sessionId}`));
+    safeLsRemove(this.sessionKey(`draft:${command.sessionId}`));
     this.error = '';
     const revision = this.revision;
     try {
       await this.api.request<NativeSessionSendResult>(Methods.NATIVE_SESSION_SEND, {
         sessionId: command.sessionId,
+        executionNodeId: command.executionNodeId,
         commandId: command.commandId,
         text: command.text,
       });
@@ -353,7 +445,10 @@ export class NativeSessionView extends LitElement {
     this.busy = true;
     this.error = '';
     try {
-      await this.api.request(method, { sessionId: this.session.id });
+      await this.api.request(method, {
+        sessionId: this.session.id,
+        executionNodeId: this.session.executionNodeId,
+      });
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
     } finally {
@@ -372,7 +467,7 @@ export class NativeSessionView extends LitElement {
       this.responseDisabled(event)
     )
       return;
-    const attempt = this.key(`response:${event.sessionId}:${request.id}`);
+    const attempt = this.sessionKey(`response:${event.sessionId}:${request.id}`);
     if (!safeLsSet(attempt, 'attempted')) {
       this.error = 'Browser storage is unavailable. Enable it before answering.';
       return;
@@ -383,6 +478,7 @@ export class NativeSessionView extends LitElement {
     try {
       await this.api.request(Methods.NATIVE_SESSION_RESPOND, {
         sessionId: event.sessionId,
+        executionNodeId: this.session.executionNodeId,
         requestId: request.id,
         ...response,
       });
@@ -401,7 +497,7 @@ export class NativeSessionView extends LitElement {
       event.generation !== this.session?.generation ||
       !!event.responseState ||
       this.responseAttempts.has(event.request?.id ?? '') ||
-      !!safeLsGet(this.key(`response:${event.sessionId}:${event.request?.id}`))
+      !!safeLsGet(this.sessionKey(`response:${event.sessionId}:${event.request?.id}`))
     );
   }
 
@@ -513,14 +609,37 @@ export class NativeSessionView extends LitElement {
         <label class="inline"
           >Session<select
             data-testid="native-session-select"
-            @change=${(e: Event) => this.select((e.target as HTMLSelectElement).value)}
+            @change=${(e: Event) => {
+              const value = (e.target as HTMLSelectElement).value;
+              const selected = this.sessions.find((item) => this.sessionChoice(item) === value);
+              if (selected) this.select(selected.id, selected.executionNodeId);
+              else if (!value) this.select('');
+            }}
           >
             <option value="" .selected=${!this.selectedId}>New session</option>
+            ${this.selectedId &&
+            !this.sessions.some(
+              (item) => item.id === this.selectedId && item.executionNodeId === this.selectedNodeId,
+            )
+              ? html`<option
+                  .selected=${true}
+                  value=${this.sessionChoice({
+                    id: this.selectedId,
+                    executionNodeId: this.selectedNodeId,
+                  })}
+                >
+                  ${this.selectedNodeId} · ${this.selectedId.slice(0, 8)} · Unavailable
+                </option>`
+              : nothing}
             ${this.sessions.map(
               (item) =>
-                html`<option value=${item.id} .selected=${item.id === this.selectedId}>
+                html`<option
+                  value=${this.sessionChoice(item)}
+                  .selected=${item.id === this.selectedId &&
+                  item.executionNodeId === this.selectedNodeId}
+                >
                   ${item.runner} · ${item.model ?? 'default'} · ${item.cwd.split('/').at(-1)} ·
-                  ${item.id.slice(0, 8)} · ${item.state}
+                  ${item.executionNodeId} · ${item.id.slice(0, 8)} · ${item.state}
                 </option>`,
             )}
           </select></label
@@ -562,6 +681,13 @@ export class NativeSessionView extends LitElement {
         >
       </div>
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
+      ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
+      ${this.unavailableNodes.map(
+        (node) =>
+          html`<p class="error" role="status">
+            ${node.executionNodeId}: ${node.message}. Session inventory is incomplete.
+          </p>`,
+      )}
       ${this.creating
         ? html`<section class="new-session">
             <p>Start an agent workspace using an installed runner and its own account.</p>
@@ -580,22 +706,40 @@ export class NativeSessionView extends LitElement {
             <label
               >Working directory<select
                 data-testid="native-context"
-                .value=${this.customCwd ? '__custom__' : this.cwd}
+                .value=${this.customCwd
+                  ? '__custom__'
+                  : this.contextChoice({ cwd: this.cwd, executionNodeId: this.executionNodeId })}
                 ?disabled=${this.busy}
                 @change=${(e: Event) => {
                   const value = (e.target as HTMLSelectElement).value;
                   this.customCwd = value === '__custom__';
-                  this.cwd = this.customCwd ? '' : value;
+                  if (this.customCwd) {
+                    this.cwd = '';
+                    this.executionNodeId = 'local';
+                  } else {
+                    const context = this.catalog?.contexts.find(
+                      (item) => this.contextChoice(item) === value,
+                    );
+                    if (context) {
+                      this.cwd = context.cwd;
+                      this.executionNodeId = context.executionNodeId ?? 'local';
+                    }
+                  }
                 }}
               >
                 ${(this.catalog?.contexts ?? []).map(
                   (context) =>
                     html`<option
-                      value=${context.cwd}
-                      .selected=${!this.customCwd && context.cwd === this.cwd}
+                      value=${this.contextChoice(context)}
+                      .selected=${!this.customCwd &&
+                      this.contextChoice(context) ===
+                        this.contextChoice({
+                          cwd: this.cwd,
+                          executionNodeId: this.executionNodeId,
+                        })}
                     >
                       ${context.label}${context.project ? ` · ${context.project}` : ''} ·
-                      ${context.cwd}
+                      ${context.executionNodeId ?? 'local'} · ${context.cwd}
                     </option>`,
                 )}
                 <option value="__custom__" .selected=${this.customCwd}>
@@ -632,7 +776,7 @@ export class NativeSessionView extends LitElement {
             >
             <p class="meta">
               Model choices are configured suggestions. Your runner account determines access and
-              billing. This workspace is local to the configured owner.
+              billing. The selected machine runs the session using its configured owner's account.
             </p>
             <div>
               <button
@@ -769,7 +913,7 @@ ${JSON.stringify(
                         .value=${this.draft}
                         @input=${(e: Event) => {
                           this.draft = (e.target as HTMLTextAreaElement).value;
-                          safeLsSet(this.key(`draft:${this.selectedId}`), this.draft);
+                          safeLsSet(this.sessionKey(`draft:${this.selectedId}`), this.draft);
                         }}
                         @keydown=${(e: KeyboardEvent) => {
                           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -827,6 +971,7 @@ ${JSON.stringify(
                 ${this.workspace
                   ? html`<native-workspace
                       .sessionId=${session.id}
+                      .executionNodeId=${session.executionNodeId}
                       .api=${this.api}
                     ></native-workspace>`
                   : nothing}

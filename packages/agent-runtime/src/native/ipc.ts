@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { NativeSessionCreateParams, NativeSessionResponse } from '@farmslot/protocol';
 
 export interface HostIdentity {
+  executionNodeId?: string;
   pid: number;
   token: string;
   socket: string;

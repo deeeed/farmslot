@@ -18,7 +18,10 @@ await new Promise<void>((resolve, reject) => {
 });
 const root = process.argv[2]!;
 const identity = readJson<HostIdentity>(join(root, 'host.json'));
-const manager = new NativeSessionManager(join(root, 'sessions'));
+const manager = new NativeSessionManager(
+  join(root, 'sessions'),
+  identity.executionNodeId ?? 'local',
+);
 const server = createServer({ allowHalfOpen: true }, (socket) => {
   socket.setEncoding('utf8');
   socket.setTimeout(50_000, () => socket.destroy());

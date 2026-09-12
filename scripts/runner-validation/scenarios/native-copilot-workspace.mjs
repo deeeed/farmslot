@@ -30,6 +30,10 @@ const stages = [
   'context-answer',
   'context-fail',
   'context-resume',
+  'node-checkpoint',
+  'node-offline',
+  'node-reconnect',
+  'node-contexts',
   'close',
 ];
 const viewSelector = 'native-session-view >>> ';
@@ -38,10 +42,19 @@ const viewRoot = "document.querySelector('native-session-view')?.shadowRoot";
 /** Stage boundaries are durable reservations. An interrupted invocation never sends again. */
 export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, model }) {
   const runner = runnerAdapter.RUNNER_ID;
+  const executionNodeId = process.env.FARMSLOT_NATIVE_EXECUTION_NODE ?? 'local';
+  const selectionValue = (id) =>
+    executionNodeId === 'local' ? id : JSON.stringify([executionNodeId, id]);
   const stage = process.env.FARMSLOT_NATIVE_UI_STAGE;
-  const report = { runner, stage, checks: [], pass: false, pending: false };
+  const report = { runner, executionNodeId, stage, checks: [], pass: false, pending: false };
   let state;
   try {
+    if (executionNodeId !== 'local')
+      assert.equal(
+        process.env.FARMSLOT_NATIVE_UI_COLOCATED,
+        '1',
+        'This UI recipe requires a co-located node because fixture assertions use the local filesystem',
+      );
     assert.ok(stages.includes(stage), `Set FARMSLOT_NATIVE_UI_STAGE to ${stages.join(', ')}`);
     assert.equal(new URL(process.env.FARMSLOT_GATEWAY).origin, 'ws://127.0.0.1:18777');
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
@@ -77,9 +90,10 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
     fs.mkdirSync(evidenceDir, { recursive: true });
     state = fs.existsSync(statePath)
       ? JSON.parse(fs.readFileSync(statePath, 'utf8'))
-      : { fixture, runner, marker: randomUUID(), commands: {} };
+      : { fixture, runner, executionNodeId, marker: randomUUID(), commands: {} };
     assert.equal(state.fixture, fixture);
     assert.equal(state.runner, runner);
+    assert.equal(state.executionNodeId ?? 'local', executionNodeId);
     const save = () => {
       const temporary = `${statePath}.tmp`;
       fs.writeFileSync(temporary, JSON.stringify(state, null, 2), { mode: 0o600 });
@@ -103,7 +117,14 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
     const evaluate = async (expression) =>
       (await cdp('eval', route, `return { value: await (async () => { ${expression} })() };`))
         .value;
-    const rpc = (method, params = {}) => cdp('gateway', method, JSON.stringify(params));
+    const rpc = (method, params = {}) =>
+      cdp(
+        'gateway',
+        method,
+        JSON.stringify(
+          method.startsWith('native.session.') ? { ...params, executionNodeId } : params,
+        ),
+      );
     const click = (selector) =>
       evaluate(
         `const element = ${viewRoot}?.querySelector(${JSON.stringify(selector)}); if (!element || element.disabled) throw new Error('Control unavailable'); element.click(); return { clicked:true };`,
@@ -132,6 +153,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         after = page.cursor;
       } while (page.hasMore);
       assert.equal(page.session.id, state.sessionId);
+      assert.equal(page.session.executionNodeId, executionNodeId);
       assert.equal(page.session.runner, runner);
       if (state.model) assert.equal(page.session.model, state.model);
       if (state.mode) assert.equal(page.session.mode, state.mode);
@@ -140,6 +162,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
     };
     const assertSelected = async () => {
       const ui = await observe();
+      assert.equal(ui.executionNodeId, executionNodeId);
       assert.equal(ui.sessionId, state.sessionId, 'Selected session differs from the scenario');
       assert.ok(ui.identity?.includes(state.sessionId), 'Session details disagree with selector');
       return ui;
@@ -150,7 +173,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         await until(
           () =>
             evaluate(
-              `return Array.from(${viewRoot}?.querySelector('[data-testid="native-session-select"]')?.options??[]).some(option=>option.value===${JSON.stringify(state.sessionId)});`,
+              `return Array.from(${viewRoot}?.querySelector('[data-testid="native-session-select"]')?.options??[]).some(option=>option.value===${JSON.stringify(selectionValue(state.sessionId))});`,
             ),
           'saved session option',
         );
@@ -158,7 +181,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
           'select',
           route,
           `${viewSelector}[data-testid="native-session-select"]`,
-          state.sessionId,
+          selectionValue(state.sessionId),
         );
       }
       await until(async () => {
@@ -167,7 +190,12 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
       }, 'saved session identity');
     };
     const reload = async () => {
-      await cdp('goto', uiUrl.href);
+      const previousOrigin = await evaluate('return performance.timeOrigin;');
+      await evaluate('setTimeout(() => location.reload(), 100); return true;');
+      await until(
+        async () => (await evaluate('return performance.timeOrigin;')) !== previousOrigin,
+        'new page document',
+      );
       await until(async () => {
         const ui = await observe();
         return ui.sessionId === state.sessionId && ui.identity?.includes(state.sessionId);
@@ -262,15 +290,22 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
         assert.ok(choice, 'Runner lacks native UI catalog entry');
         const selectedModel = process.env.FARMSLOT_NATIVE_UI_MODEL ?? model ?? choice.defaultModel;
         assert.ok(choice.models.includes(selectedModel), 'Requested model is not selectable');
-        const context = catalog.contexts.find((item) => path.resolve(item.cwd) === fixture);
-        assert.ok(context, 'Register the disposable local slot in the isolated pool first');
+        const context = catalog.contexts.find(
+          (item) =>
+            path.resolve(item.cwd) === fixture &&
+            (item.executionNodeId ?? 'local') === executionNodeId,
+        );
+        assert.ok(
+          context,
+          'Register the disposable execution-node slot in the isolated pool first',
+        );
         await click('[data-testid="native-new"]');
         await evaluate(`const button=Array.from(${viewRoot}?.querySelectorAll('button')??[]).find(item=>item.textContent.trim()==='Refresh sessions');
           if(!button || button.disabled)throw new Error('Refresh sessions unavailable');button.click();return true;`);
         await until(
           () =>
             evaluate(
-              `return Array.from(${viewRoot}?.querySelector('[data-testid="native-context"]')?.options??[]).some(option=>option.value===${JSON.stringify(context.cwd)});`,
+              `return Array.from(${viewRoot}?.querySelector('[data-testid="native-context"]')?.options??[]).some(option=>option.value===${JSON.stringify(selectionValue(context.cwd))});`,
             ),
           'configured fixture option',
         );
@@ -278,7 +313,12 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
           await evaluate(
             `const picker=${viewRoot}?.querySelector('runner-model-effort-picker')?.shadowRoot; const button=Array.from(picker?.querySelectorAll('button')??[]).find(item=>item.textContent.trim()===${JSON.stringify(label)}); if(!button || button.disabled) throw new Error('Picker choice unavailable'); button.click(); return {clicked:true};`,
           );
-        await cdp('select', route, `${viewSelector}[data-testid="native-context"]`, context.cwd);
+        await cdp(
+          'select',
+          route,
+          `${viewSelector}[data-testid="native-context"]`,
+          selectionValue(context.cwd),
+        );
         state.model = selectedModel;
         state.mode = process.env.FARMSLOT_NATIVE_UI_MODE ?? 'default';
         assert.ok(choice.modes.includes(state.mode), 'Requested interaction mode is unavailable');
@@ -309,7 +349,109 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
     } else {
       assert.ok(state.sessionId, 'Run create first');
       await selectSaved();
-      if (stage === 'edit' || stage === 'finish-edit') {
+      if (stage === 'node-contexts') {
+        assert.notEqual(executionNodeId, 'local');
+        const catalog = await rpc('native.session.catalog');
+        const matches = catalog.contexts.filter((context) => context.cwd === fixture);
+        assert.ok(matches.some((context) => context.executionNodeId === executionNodeId));
+        assert.ok(matches.some((context) => (context.executionNodeId ?? 'local') === 'local'));
+        await click('[data-testid="native-new"]');
+        await click('[data-testid="native-refresh"]');
+        await until(async () => {
+          const ui = await observe();
+          return (
+            ui.contexts.some((context) => context.value === fixture) &&
+            ui.contexts.some((context) => context.value === selectionValue(fixture))
+          );
+        }, 'separate local and node context choices');
+        for (const value of [fixture, selectionValue(fixture)]) {
+          await cdp('select', route, `${viewSelector}[data-testid="native-context"]`, value);
+          assert.equal((await observe()).selectedContext, value);
+        }
+        check('identical-directory-paths-remain-distinct-machine-choices', {
+          screenshot: await screenshot('node-contexts'),
+        });
+        await selectSaved();
+        await assertSelected();
+      } else if (stage === 'node-offline') {
+        assert.ok(state.nodeCheckpoint, 'Record a node checkpoint before taking it offline');
+        const inventory = await cdp('gateway', 'native.session.list', '{}');
+        assert.ok(
+          inventory.unavailableExecutionNodes?.some(
+            (node) => node.executionNodeId === executionNodeId,
+          ),
+        );
+        await click('[data-testid="native-refresh"]');
+        await until(
+          async () =>
+            (await observe()).errors.some(
+              (error) =>
+                error.includes(executionNodeId) && error.includes('inventory is incomplete'),
+            ),
+          'offline node inventory banner',
+        );
+        state.offlineInventoryObserved = true;
+        save();
+        check('offline-inventory-banner-visible-before-reconnect');
+      } else if (stage === 'node-checkpoint') {
+        assert.notEqual(executionNodeId, 'local', 'Select a node-backed session');
+        const snapshot = await read();
+        assert.ok(snapshot.pendingRequests.length, 'Hold a real pending approval during restart');
+        state.nodeCheckpoint = {
+          session: snapshot.session,
+          cursor: snapshot.cursor,
+          pendingRequests: snapshot.pendingRequests.map((event) => event.request.id),
+          commands: snapshot.commands,
+        };
+        save();
+        check('node-restart-checkpoint-with-pending-approval', { cursor: snapshot.cursor });
+      } else if (stage === 'node-reconnect') {
+        assert.ok(state.nodeCheckpoint, 'Record node-checkpoint before restarting the daemon');
+        const snapshot = await read();
+        for (const field of [
+          'id',
+          'executionNodeId',
+          'ownerPrincipalId',
+          'nativeSessionId',
+          'generation',
+          'hostPid',
+          'processPid',
+        ])
+          assert.equal(
+            snapshot.session[field],
+            state.nodeCheckpoint.session[field],
+            `Restart changed ${field}`,
+          );
+        assert.ok(snapshot.cursor >= state.nodeCheckpoint.cursor);
+        assert.deepEqual(
+          snapshot.commands,
+          state.nodeCheckpoint.commands,
+          'Restart replayed a command',
+        );
+        assert.deepEqual(
+          snapshot.pendingRequests.map((event) => event.request.id),
+          state.nodeCheckpoint.pendingRequests,
+        );
+        await until(
+          async () => (await observe()).errors.length === 0,
+          'recovered node without stale errors or inventory banner',
+        );
+        const recovered = await assertSelected();
+        assert.deepEqual(recovered.errors, [], 'Recovered node still shows an unavailable error');
+        await reload();
+        const ui = await assertSelected();
+        assert.deepEqual(ui.errors, [], 'Recovered node still shows an unavailable error');
+        for (const id of state.nodeCheckpoint.pendingRequests)
+          assert.ok(
+            ui.requests.some((request) => request.id === id),
+            'Pending approval did not return to the UI',
+          );
+        check('node-reconnect-preserves-process-command-and-approval-identities', {
+          screenshot: await screenshot('node-reconnect'),
+        });
+        if (state.offlineInventoryObserved)
+          check('node-reconnect-clears-offline-inventory-without-manual-refresh');
+      } else if (stage === 'edit' || stage === 'finish-edit') {
         if (stage === 'edit')
           await sendOnce(
             'edit',
@@ -698,6 +840,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
             );
           }, 'approval request');
           state.commands[key].requestId = pending.request.id;
+          state.commands[key].requestDetail = pending.request.detail ?? null;
           save();
           await until(
             async () => (await observe()).requests.some((item) => item.id === pending.request.id),
@@ -728,11 +871,22 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
             const pending = (await read()).pendingRequests.find(
               (event) => event.request?.id === command.requestId,
             );
-            assert.equal(
-              pending?.request?.detail,
-              expectedCommand,
-              'Pending action differs from the exact bounded proof command',
+            assert.ok(
+              'requestDetail' in command,
+              'Capture the initial request detail before deciding',
             );
+            assert.equal(
+              pending?.request?.detail ?? null,
+              command.requestDetail,
+              'Pending action details changed after request capture',
+            );
+            // Denying an identified request cannot authorize an unverified tool action.
+            if (stage === 'approve')
+              assert.equal(
+                pending?.request?.detail,
+                expectedCommand,
+                'Pending action differs from the exact bounded proof command',
+              );
             command.decisionAttempted = stage;
             save();
             await click(`[data-request-id="${command.requestId}"] [data-testid="native-${stage}"]`);
