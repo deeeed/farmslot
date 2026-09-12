@@ -66,21 +66,28 @@ function archiveTargets(run: Run): ArchiveTarget[] {
       runnerSessionPath: ctx.runnerSessionPath,
       existing: ctx.runnerSessionArchive,
     }));
-  if (fromContexts.length > 0) return fromContexts;
 
   const pathValue = run.metrics.runnerSessionPath?.trim();
-  if (!pathValue || !run.metrics.runner) return [];
-  const role = primaryRoleForFlow(run.flowType);
-  return [
-    {
-      contextId: contextIdFor(role),
-      role,
-      runner: run.metrics.runner,
-      runnerSessionId: run.metrics.runnerSessionId,
-      runnerSessionPath: pathValue,
-      existing: run.metrics.runnerSessionArchive,
-    },
-  ];
+  if (pathValue && run.metrics.runner) {
+    const already = fromContexts.some(
+      (target) =>
+        target.runnerSessionPath === pathValue ||
+        runnerHistorySessionFilePath(target.runnerSessionPath, target.runner) ===
+          runnerHistorySessionFilePath(pathValue, run.metrics.runner),
+    );
+    if (!already) {
+      const role = primaryRoleForFlow(run.flowType);
+      fromContexts.push({
+        contextId: contextIdFor(role),
+        role,
+        runner: run.metrics.runner,
+        runnerSessionId: run.metrics.runnerSessionId,
+        runnerSessionPath: pathValue,
+        existing: run.metrics.runnerSessionArchive,
+      });
+    }
+  }
+  return fromContexts;
 }
 
 function resolveArchiveRef(run: Run, contextId?: string): RunnerSessionArchiveRef | undefined {
@@ -254,7 +261,8 @@ export async function archiveRunnerSessionsForSlotRelease(params: {
   let attempted = 0;
 
   for (const target of targets) {
-    if (target.existing?.status === 'captured') {
+    const resolvedPath = runnerHistorySessionFilePath(target.runnerSessionPath, target.runner);
+    if (target.existing?.status === 'captured' && target.existing.originalPath === resolvedPath) {
       refs.set(target.contextId, target.existing);
       skipped += 1;
       continue;

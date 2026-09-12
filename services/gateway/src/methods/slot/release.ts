@@ -341,7 +341,10 @@ async function slotReleaseImpl(
       // `releasing` — every later teardown step still needs to run.
       step('attachments', `Attachment cleanup skipped: ${(err as Error).message}`);
     }
-    const archiveRunId = params.expectedRunId ?? boundOwner;
+    const archiveRunId =
+      params.expectedRunId ??
+      ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ??
+      boundOwner;
     if (archiveRunId) {
       try {
         const archive = await archiveRunnerSessionsForSlotRelease({

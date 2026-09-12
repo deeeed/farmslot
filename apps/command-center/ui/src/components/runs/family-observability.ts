@@ -367,7 +367,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       this._applyFullRunOverrides();
     }
     if (changed.has('initialRunId') && this.initialRunId) {
-      this.selectedRunId = this.initialRunId;
+      this._selectRun(this.initialRunId);
     }
     if (changed.has('selectedRunId') && this.selectedRunId) {
       void this._ensureFullRun(this.selectedRunId);
