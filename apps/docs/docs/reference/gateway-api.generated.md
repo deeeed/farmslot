@@ -179,6 +179,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `native.session.catalog`                | native           | bounded-write | —      | —      | Native Session Catalog gateway method.                |
 | `native.session.close`                  | native           | bounded-write | —      | —      | Native Session Close gateway method.                  |
 | `native.session.create`                 | native           | bounded-write | —      | —      | Native Session Create gateway method.                 |
+| `native.session.ensure`                 | native           | bounded-write | —      | —      | Native Session Ensure gateway method.                 |
 | `native.session.interrupt`              | native           | bounded-write | —      | —      | Native Session Interrupt gateway method.              |
 | `native.session.list`                   | native           | read-only     | —      | —      | Native Session List gateway method.                   |
 | `native.session.read`                   | native           | read-only     | —      | —      | Native Session Read gateway method.                   |

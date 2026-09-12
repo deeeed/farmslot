@@ -125,6 +125,7 @@ export const Methods = {
 
   // Worker session history (read-only transcript projection)
   NATIVE_SESSION_CREATE: 'native.session.create',
+  NATIVE_SESSION_ENSURE: 'native.session.ensure',
   NATIVE_SESSION_READ: 'native.session.read',
   NATIVE_SESSION_LIST: 'native.session.list',
   NATIVE_SESSION_SEND: 'native.session.send',

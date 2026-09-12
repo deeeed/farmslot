@@ -151,6 +151,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'native.session.catalog': { classification: 'admin' },
   'native.session.close': { classification: 'admin' },
   'native.session.create': { classification: 'admin' },
+  'native.session.ensure': { classification: 'admin' },
   'native.session.interrupt': { classification: 'admin' },
   'native.session.list': { classification: 'admin' },
   'native.session.read': { classification: 'admin' },

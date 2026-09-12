@@ -127,11 +127,11 @@ export async function runScenario({ outDir }) {
       pass: true,
     });
     const session = {
-      id: 'broker-fixture-session',
+      id: randomUUID(),
       ownerPrincipalId: owner.principalId,
       executionNodeId: machine,
     };
-    for (const method of ['create', 'read', 'close']) {
+    for (const method of ['create', 'ensure', 'read', 'close']) {
       for (const invalid of [
         { sessions: [] },
         { sessions: [session] },
@@ -150,9 +150,17 @@ export async function runScenario({ outDir }) {
         assert.equal(result.ok, false, `${method} accepted malformed or mismatched node identity`);
         assert.equal(result.error.code, 'NATIVE_SESSION_ERROR');
       }
+      payload = { session };
+      const valid = await owner.request(`native.session.${method}`, {
+        executionNodeId: machine,
+        sessionId: session.id,
+        runner: 'codex',
+        cwd: '/unused-broker-fixture',
+      });
+      assert.equal(valid.ok, true, `${method} rejected an owned matching session identity`);
     }
     report.checks.push({
-      name: 'single-session-replies-reject-lists-empty-ids-and-foreign-identities',
+      name: 'single-session-replies-including-ensure-reject-foreign-identities-and-accept-matching-ids',
       pass: true,
     });
     for (const code of ['INVALID_PARAMS', 'AUTH_FORBIDDEN', 'NATIVE_SESSION_ERROR']) {

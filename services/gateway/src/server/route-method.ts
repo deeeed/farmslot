@@ -587,6 +587,7 @@ async function routeAuthorizedMethod(
 
   switch (method) {
     case Methods.NATIVE_SESSION_CREATE:
+    case Methods.NATIVE_SESSION_ENSURE:
     case Methods.NATIVE_SESSION_READ:
     case Methods.NATIVE_SESSION_LIST:
     case Methods.NATIVE_SESSION_SEND:

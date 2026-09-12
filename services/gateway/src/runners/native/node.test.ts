@@ -45,6 +45,7 @@ test('remote native routing validates reply shape and exact owner, node, and ses
   try {
     for (const method of [
       Methods.NATIVE_SESSION_CREATE,
+      Methods.NATIVE_SESSION_ENSURE,
       Methods.NATIVE_SESSION_READ,
       Methods.NATIVE_SESSION_CLOSE,
     ]) {
@@ -65,7 +66,11 @@ test('remote native routing validates reply shape and exact owner, node, and ses
       payload = { session };
       assert.deepEqual(await route(method), payload);
     }
-    for (const method of [Methods.NATIVE_SESSION_READ, Methods.NATIVE_SESSION_CLOSE]) {
+    for (const method of [
+      Methods.NATIVE_SESSION_ENSURE,
+      Methods.NATIVE_SESSION_READ,
+      Methods.NATIVE_SESSION_CLOSE,
+    ]) {
       payload = { session: { ...session, id: 'another-session' } };
       await assert.rejects(route(method), /mismatched session/);
     }

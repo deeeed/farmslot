@@ -1,5 +1,5 @@
 import { NativeSessionClient } from '@farmslot/agent-runtime/native';
-import type { NativeSessionCreateParams } from '@farmslot/protocol';
+import type { NativeSessionCreateParams, NativeSessionEnsureParams } from '@farmslot/protocol';
 
 import { KNOWN_RUNNERS } from '../registry.js';
 
@@ -11,6 +11,10 @@ export function validateNativeRunner(runner: string, model?: string) {
     throw new Error('Model is incompatible with this runner');
 }
 class GatewayNativeSessions extends NativeSessionClient {
+  override ensure(owner: string, params: NativeSessionEnsureParams) {
+    validateNativeRunner(params.runner, params.model);
+    return super.ensure(owner, params);
+  }
   override create(owner: string, params: NativeSessionCreateParams) {
     validateNativeRunner(params.runner, params.model);
     return super.create(owner, params);

@@ -16,7 +16,7 @@ export async function routeNativeExecution(
   const executionNodeId = params.executionNodeId ?? 'local';
   if (typeof executionNodeId !== 'string' || !executionNodeId.trim())
     throw new GatewayMethodError('INVALID_PARAMS', 'executionNodeId must be a nonempty string');
-  if (method === Methods.NATIVE_SESSION_CREATE) {
+  if (method === Methods.NATIVE_SESSION_CREATE || method === Methods.NATIVE_SESSION_ENSURE) {
     if (
       typeof params.runner !== 'string' ||
       (params.model !== undefined && typeof params.model !== 'string')
@@ -40,6 +40,7 @@ export async function routeNativeExecution(
   );
   const hasSession = [
     Methods.NATIVE_SESSION_CREATE,
+    Methods.NATIVE_SESSION_ENSURE,
     Methods.NATIVE_SESSION_READ,
     Methods.NATIVE_SESSION_CLOSE,
   ].some((candidate) => candidate === method);

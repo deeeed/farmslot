@@ -135,6 +135,7 @@ The table is normative; unlisted or unproven methods are admin-only.
 | `native.session.catalog`                | admin          |                                                          |
 | `native.session.close`                  | admin          |                                                          |
 | `native.session.create`                 | admin          |                                                          |
+| `native.session.ensure`                 | admin          |                                                          |
 | `native.session.interrupt`              | admin          |                                                          |
 | `native.session.list`                   | admin          |                                                          |
 | `native.session.read`                   | admin          |                                                          |

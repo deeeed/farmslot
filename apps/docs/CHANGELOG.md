@@ -4,7 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Document native session commands and session-owned source and Git changes reads through the gateway.
+- Document native session commands, duplicate-safe session creation, and session-owned source and Git changes reads through the gateway.
 
 - Document the gateway GitHub account inventory method.
 

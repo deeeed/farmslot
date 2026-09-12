@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add an explicit native session ensure operation for retry-safe worker launch.
+
 - Add explicit execution-node selection and native node ownership declarations for structured sessions.
 
 - Add owned agent workspace catalog and read-only file/change RPC contracts, proposed tool details for approvals, durable prompt submission events, and explicit reasons for unavailable recovery.
