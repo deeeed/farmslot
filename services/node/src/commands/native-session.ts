@@ -18,7 +18,7 @@ export class NativeNodeSessions {
     if (owner?.trim()) {
       if (!machine || machine === 'local')
         throw new Error('Native execution requires a distinct node machine ID');
-      this.declaration = { ownerPrincipalId: owner.trim() };
+      this.declaration = { ownerPrincipalId: owner.trim(), supportsEnsure: true };
     }
     this.client = new NativeSessionClient(
       path.join(root, 'nodes', encodeURIComponent(machine)),

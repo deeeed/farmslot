@@ -110,6 +110,7 @@ export async function runScenario({ runnerAdapter, outDir, model }) {
       [
         'old-host',
         'old-node',
+        'resume-diagnostic',
         'persistence',
         'checkpoint',
         'replay',
@@ -123,11 +124,22 @@ export async function runScenario({ runnerAdapter, outDir, model }) {
       statePath.startsWith(path.join(ROOT, 'temp/native-validation/')),
       'Select a private validation state file',
     );
-    if (['old-host', 'old-node', 'persistence', 'checkpoint'].includes(stage)) {
+    if (
+      ['old-host', 'old-node', 'resume-diagnostic', 'persistence', 'checkpoint'].includes(stage)
+    ) {
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-native-ensure-'));
       execFileSync('git', ['init', '--quiet'], { cwd });
       params = { sessionId: randomUUID(), runner, cwd, ...(model ? { model } : {}) };
-      if (stage === 'persistence') {
+      if (stage === 'resume-diagnostic') {
+        for (const resumeSessionId of ['', null])
+          await refused({ ...params, resumeSessionId }, /not for resume/);
+        assert.equal(
+          (await rpc('native.session.list')).sessions.some((item) => item.cwd === cwd),
+          false,
+        );
+        report.checks.push('malformed-resume-mixing-is-explained-without-launch');
+        removeFixture = true;
+      } else if (stage === 'persistence') {
         assert.equal(executionNodeId, 'local');
         const hostRoot = path.resolve(process.env.FARMSLOT_NATIVE_ENSURE_HOST_STATE ?? '');
         assert.ok(
@@ -161,7 +173,9 @@ export async function runScenario({ runnerAdapter, outDir, model }) {
         const before = (await rpc('native.session.list')).sessions.map(identity);
         await refused(
           params,
-          stage === 'old-host' ? /Native host upgrade required/ : /Unknown native session method/,
+          stage === 'old-host'
+            ? /Native host upgrade required/
+            : /Native execution node upgrade required/,
         );
         assert.deepEqual((await rpc('native.session.list')).sessions.map(identity), before);
         report.checks.push(`${stage}-refuses-without-creating-and-ordinary-inventory-survives`);
@@ -187,10 +201,11 @@ export async function runScenario({ runnerAdapter, outDir, model }) {
         await refused({ ...params, sessionId: params.sessionId.toUpperCase() }, /lowercase UUID/);
         await refused(
           { ...params, cwd: path.dirname(params.cwd) },
-          /another owner or launch configuration/,
+          /launch configuration differs: cwd/,
         );
-        await refused({ ...params, mode: 'plan' }, /another owner or launch configuration/);
-        await refused({ ...params, resumeSessionId: session.nativeSessionId }, /not for resume/);
+        await refused({ ...params, mode: 'plan' }, /launch configuration differs: mode/);
+        for (const resumeSessionId of [session.nativeSessionId, '', null])
+          await refused({ ...params, resumeSessionId }, /not for resume/);
         const other = process.env.FARMSLOT_NATIVE_OTHER_TOKEN;
         assert.ok(
           other && other !== process.env.FARMSLOT_GATEWAY_TOKEN,

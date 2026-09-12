@@ -346,15 +346,15 @@ export class NativeSessionManager {
   ): SessionRecord | undefined {
     const record = reservedId ? this.sessions.get(reservedId) : undefined;
     if (!record) return undefined;
-    if (
-      record.info.ownerPrincipalId !== owner ||
-      record.info.runner !== params.runner ||
-      record.info.cwd !== params.cwd ||
-      record.info.model !== params.model ||
-      record.info.mode !== (params.mode ?? 'default') ||
-      JSON.stringify(record.context) !== JSON.stringify(executionContext())
-    )
-      throw new Error('Reserved sessionId belongs to another owner or launch configuration');
+    if (record.info.ownerPrincipalId !== owner)
+      throw new Error('Reserved sessionId belongs to another owner');
+    for (const field of ['runner', 'cwd', 'model', 'mode'] as const) {
+      const requested = field === 'mode' ? (params.mode ?? 'default') : params[field];
+      if (record.info[field] !== requested)
+        throw new Error(`Reserved sessionId launch configuration differs: ${field}`);
+    }
+    if (JSON.stringify(record.context) !== JSON.stringify(executionContext()))
+      throw new Error('Reserved sessionId launch configuration differs: account execution context');
     return record;
   }
 

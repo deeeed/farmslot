@@ -5,6 +5,7 @@ import { NativeNodeSessions } from './native-session.js';
 
 test('node native execution rejects other owners and conflicting execution identities before startup', async () => {
   const service = new NativeNodeSessions('node-a', 'owner', '/unused-native-test');
+  assert.deepEqual(service.declaration, { ownerPrincipalId: 'owner', supportsEnsure: true });
   await assert.rejects(
     service.route({ owner: 'another', method: 'native.session.list', params: {} }),
     /not owned/,

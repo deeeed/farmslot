@@ -67,7 +67,6 @@ export async function routeNativeSession(
             throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native interaction mode');
           params.mode = p.mode;
         }
-        if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
         if (method === Methods.NATIVE_SESSION_ENSURE) {
           if (p.resumeSessionId !== undefined)
             throw new NativeSessionMethodError(
@@ -81,6 +80,7 @@ export async function routeNativeSession(
             }),
           };
         }
+        if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
         return { session: await client.create(principal, params) };
       }
       case Methods.NATIVE_SESSION_LIST:

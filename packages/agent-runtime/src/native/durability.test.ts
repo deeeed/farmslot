@@ -20,7 +20,7 @@ import { delimiter, join } from 'node:path';
 import test from 'node:test';
 
 import { NativeSessionClient } from './client.js';
-import { type HostIdentity, requestHost, socketDirectory } from './ipc.js';
+import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from './storage.js';
 
@@ -94,13 +94,10 @@ test('reserved native creation is concurrent-safe and survives journal reload wi
     assert.equal(second.generation, first.generation);
     assert.equal(second.processPid, first.processPid);
     assert.equal(manager.list('owner').length, 1);
-    await assert.rejects(
-      manager.ensure('another-owner', params),
-      /another owner or launch configuration/,
-    );
+    await assert.rejects(manager.ensure('another-owner', params), /another owner/);
     await assert.rejects(
       manager.ensure('owner', { ...params, model: 'changed' }),
-      /launch configuration/,
+      /launch configuration differs: model/,
     );
     await assert.rejects(
       manager.ensure('owner', { ...params, sessionId: '../escape' }),
@@ -112,6 +109,16 @@ test('reserved native creation is concurrent-safe and survives journal reload wi
     );
     const invalidResume = { ...params, resumeSessionId: first.nativeSessionId };
     await assert.rejects(manager.ensure('owner', invalidResume), /not resume/);
+    for (const resumeSessionId of ['', null, first.nativeSessionId])
+      assert.throws(
+        () =>
+          decodeRequest({
+            method: 'ensure',
+            owner: 'owner',
+            params: { ...params, resumeSessionId },
+          }),
+        /Reserved sessionId is not for resume/,
+      );
     await manager.close('owner', first.id);
     const reloaded = new NativeSessionManager(fixture.root);
     const retried = await reloaded.ensure('owner', params);

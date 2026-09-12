@@ -37,6 +37,8 @@ export interface NativeSessionEnsureParams extends Omit<
 /** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
 export interface NativeExecutionNodeDeclaration {
   ownerPrincipalId: string;
+  /** The node routes reserved creation; its retained host is checked separately at invocation. */
+  supportsEnsure?: boolean;
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];

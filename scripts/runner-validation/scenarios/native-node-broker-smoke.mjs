@@ -101,7 +101,7 @@ export async function runScenario({ outDir }) {
     const otherNode = await connect(token, 'node');
     clients.push(otherNode);
     const machine = 'native-broker-validation';
-    const declaration = { ownerPrincipalId: owner.principalId };
+    const declaration = { ownerPrincipalId: owner.principalId, supportsEnsure: true };
     const register = (client, name) =>
       client.request('node.connect', {
         machine: name,

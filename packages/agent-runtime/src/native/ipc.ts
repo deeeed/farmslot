@@ -63,7 +63,6 @@ export function decodeRequest(value: unknown): HostRequest {
       cwd: string(v, 'cwd'),
     };
     if (v.model !== undefined) params.model = string(v, 'model');
-    if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
     if (v.mode !== undefined) {
       if (v.mode !== 'default' && v.mode !== 'plan') throw new Error('Invalid native mode');
       params.mode = v.mode;
@@ -72,6 +71,7 @@ export function decodeRequest(value: unknown): HostRequest {
       if (v.resumeSessionId !== undefined) throw new Error('Reserved sessionId is not for resume');
       return { method, owner, params: { ...params, sessionId: string(v, 'sessionId') } };
     }
+    if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
     return { method, owner, params };
   }
   const id = string(p, 'id');

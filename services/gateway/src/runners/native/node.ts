@@ -32,6 +32,11 @@ export async function routeNativeExecution(
       'NATIVE_SESSION_ERROR',
       'Native execution node is unavailable for this owner',
     );
+  if (method === Methods.NATIVE_SESSION_ENSURE && !node.nativeSessions.supportsEnsure)
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Native execution node upgrade required for idempotent creation; existing sessions remain available',
+    );
   const result = await sendNodeRequest(
     node,
     'native.session',

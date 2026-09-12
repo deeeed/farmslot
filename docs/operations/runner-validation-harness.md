@@ -303,7 +303,9 @@ Use `FARMSLOT_NATIVE_ENSURE_STAGE` to select each step:
 
 1. Before upgrading the execution host, run `old-host`. With an older colocated
    node, set `FARMSLOT_NATIVE_EXECUTION_NODE` and run `old-node`. Both require a
-   structured refusal and unchanged ordinary session inventory.
+   structured upgrade-required refusal and unchanged ordinary session inventory.
+   The gateway checks the node's declared `supportsEnsure` capability; the node
+   separately checks its retained host's capability.
 2. On a current host, run `checkpoint`. Four concurrent gateway requests must
    return one reserved session, process and generation. Invalid IDs, changed
    configuration, resume mixing and another admin must be refused.
@@ -328,6 +330,10 @@ its reserved journal path, then repairs that path. Both creation and retry must
 return the initial filesystem error, with no native process or conversation.
 It removes the obstruction even when the assertion fails. Run this on an
 exclusively test-owned local host.
+
+Run `resume-diagnostic` to check that empty or null resume parameters are rejected
+as mixing initial creation with resume, without creating a session. `checkpoint`
+also requires configuration-mismatch errors to identify the changed field.
 
 ### Native Copilot workspace stages
 
