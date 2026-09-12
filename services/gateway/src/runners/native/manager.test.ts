@@ -24,7 +24,7 @@ test('manager owns exact sessions and gates new input until the accepted turn ru
   await writeFile(executable, fixture);
   await chmod(executable, 0o755);
   process.env.PATH = `${cwd}${delimiter}${oldPath}`;
-  const manager = new NativeSessionManager();
+  const manager = new NativeSessionManager(join(cwd, 'state'));
   try {
     const session = await manager.create('owner', { runner: 'codex', cwd });
     assert.deepEqual(manager.list('other'), []);
@@ -86,7 +86,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   );
   await chmod(executable, 0o755);
   process.env.PATH = `${cwd}${delimiter}${oldPath}`;
-  const manager = new NativeSessionManager();
+  const manager = new NativeSessionManager(join(cwd, 'state'));
   const creating = manager.create('owner', { runner: 'codex', cwd });
   t.after(async () => {
     try {
@@ -126,7 +126,7 @@ test('close retains a failed terminal outcome instead of synthesizing success', 
   await writeFile(executable, fixture + "\nprocess.on('SIGTERM',()=>process.exit(23));\n");
   await chmod(executable, 0o755);
   process.env.PATH = `${cwd}${delimiter}${oldPath}`;
-  const manager = new NativeSessionManager();
+  const manager = new NativeSessionManager(join(cwd, 'state'));
   try {
     const session = await manager.create('owner', { runner: 'codex', cwd });
     await manager.close('owner', session.id);
@@ -138,6 +138,44 @@ test('close retains a failed terminal outcome instead of synthesizing success', 
     );
     await manager.close('owner', session.id);
     assert.equal(manager.read('owner', session.id).session.state, 'failed');
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('early interrupt targets the accepted native turn before its first turn event', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'native-early-interrupt-'));
+  const oldPath = process.env.PATH;
+  await writeFile(
+    join(cwd, 'codex'),
+    fixture.replace(
+      " if(m.method==='turn/start')",
+      " if(m.method==='turn/interrupt') { send({id:m.id,result:{}}); send({method:'turn/completed',params:{threadId:'owned-thread',turn:{id:'accepted-but-not-started',status:'interrupted'}}}); }\n if(m.method==='turn/start')",
+    ),
+  );
+  await chmod(join(cwd, 'codex'), 0o755);
+  process.env.PATH = `${cwd}${delimiter}${oldPath}`;
+  const manager = new NativeSessionManager(join(cwd, 'state'));
+  try {
+    const session = await manager.create('owner', { runner: 'codex', cwd });
+    await manager.send('owner', session.id, 'early', 'interrupt this');
+    assert.equal(manager.read('owner', session.id).session.state, 'waiting');
+    await manager.interrupt('owner', session.id);
+    for (
+      let attempt = 0;
+      manager.read('owner', session.id).session.state !== 'idle' && attempt < 100;
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const snapshot = manager.read('owner', session.id);
+    assert.equal(snapshot.commands[0]?.outcome, 'interrupted');
+    assert.equal(
+      snapshot.events.some((event) => event.type === 'turn.started'),
+      false,
+    );
   } finally {
     for (const session of manager.list('owner')) await manager.close('owner', session.id);
     if (oldPath === undefined) delete process.env.PATH;

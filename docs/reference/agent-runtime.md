@@ -59,3 +59,66 @@ The builder preserves additive metadata under `extra` while protecting the requi
 ## Compatibility
 
 The previous script paths in `@farmslot/skills` and `scripts/quality/` remain compatibility shims for one migration window. New templates should point to `packages/agent-runtime/scripts/*` in the Farmslot monorepo or use `farmslot-agent` when installed as a package.
+
+## Native session host
+
+`@farmslot/agent-runtime/native` exports `NativeSessionClient`. The gateway runner
+layer validates registry capabilities and model policy, then calls this client.
+Execution nodes can use the same runtime without importing gateway code.
+
+The client starts a detached supervisor and host on demand. The host owns native
+stdin; the supervisor stops wrapper groups and observed descendants after host failure.
+The native launch wrapper waits for durable PID registration before executing the
+installed binary. Closing a session waits for that cleanup to finish.
+A gateway or browser disconnect only ends its RPC connection.
+
+Set `FARMSLOT_NATIVE_STATE_DIR` to a stable private directory for each configured
+execution profile. The default is `native-sessions` beneath `FARMSLOT_HOME`, or
+`~/.farmslot/native-sessions` when no home override is configured. State directories
+require mode 0700 and files use 0600. A hashed socket path under `/tmp` fits macOS
+limits. IPC uses a private random bearer token, distinct from provider credentials.
+Native authentication environment and configuration stay inherited locally;
+the runtime does not serialize them or send them over IPC. Account labels under
+one OS user do not provide tenant isolation.
+
+Session journals append events and changed metadata/receipts, fsyncing command
+intent before submission. Receipts distinguish pending, unknown, accepted, failed
+and completed. `submitted` records a submission attempt; only `accepted` records
+native acknowledgement. A lost reply or unknown receipt never triggers a resend.
+`read` accepts `after` and `limit`, returns a cursor and `hasMore`, and exposes the
+latest 100 receipts. Older IDs remain deduplicated. Consume each page once and
+persist its returned cursor. Pending interactions are separate from the event
+page. Respond with `request.id`; `nativeId` is evidence, not an input token.
+
+After runner or host failure, reads expose failure and recovery instructions.
+Explicit `create` with the recorded `resumeSessionId` retains the Farmslot session
+ID and command history, and starts a new generation only after confirmed cleanup
+of the previous generation. It preserves the working directory and native account configuration.
+It never starts a blank conversation as a recovery fallback. Unknown acceptance
+remains unknown, including after resume. Stale approval IDs cannot target the new
+generation. An interrupt reply acknowledges native control; the ordered terminal
+turn event supplies the actual interrupted/completed outcome.
+
+The host uses source entry points with the workspace TypeScript loader during
+development, and packaged `dist/native` entry points after `yarn workspace
+@farmslot/agent-runtime build`. Ship the entire native output directory. Existing
+hosts retain their loaded code until stopped. Finish/close sessions before an
+operator stops the supervisor for an upgrade; restarting the gateway alone keeps
+those sessions on the existing host.
+
+A partial ownership claim or a surviving process whose death cannot be verified
+blocks automatic takeover. Inspect `host.log`, the private lock/worker records,
+and the recorded process groups before removing a stale claim. Never remove a
+lock while its supervisor or host is alive. PID reuse is treated conservatively;
+the runtime does not kill an unrelated live group to force recovery. The supervisor and each runner track OS descendant identity and retain detached
+children for cleanup. They stop observed owners before the final process scan and
+verify process start metadata before each signal. Processes that fully daemonize
+and reparent between scans cannot be attributed reliably; full OS containment and
+node-loss survival remain outside this phase. Journals currently remain on disk for the
+session lifetime and load into host memory; archival/compaction is not implemented.
+
+See the staged live proof in the runner validation operations guide. Local
+regressions run with `node --import tsx --test
+packages/agent-runtime/src/native/durability.test.ts`. The host test needs permission
+to bind a local Unix socket. The same regression can run from the built output
+with `node --test packages/agent-runtime/dist/native/durability.test.js`.

@@ -82,6 +82,7 @@ export async function runScenario({ outDir }) {
   };
   let sessionId;
   let runnerPid;
+  let hostPid;
   let closing;
   const outcome = rpc('native.session.create', { runner: 'claude', cwd }).then(
     (value) => ({ value }),
@@ -96,10 +97,12 @@ export async function runScenario({ outDir }) {
     assert.ok(reserved);
     sessionId = reserved.id;
     assert.equal(reserved.state, 'starting');
+    hostPid = reserved.hostPid;
+    assert.notEqual(hostPid, gatewayPid);
     let pid = JSON.parse(fs.readFileSync(ready, 'utf8')).ppid;
     for (let depth = 0; pid > 1 && depth < 12; depth++) {
       const parent = parentPid(pid);
-      if (parent === gatewayPid) {
+      if (parent === hostPid) {
         runnerPid = pid;
         break;
       }
@@ -155,7 +158,7 @@ export async function runScenario({ outDir }) {
     if (runnerPid) {
       try {
         process.kill(runnerPid, 0);
-        if (parentPid(runnerPid) === gatewayPid) {
+        if (parentPid(runnerPid) === hostPid) {
           process.kill(runnerPid, 'SIGTERM');
           report.pass = false;
           report.cleanupForced = true;

@@ -88,6 +88,12 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
 
   function read() {
     latest = rpc('native.session.read', { sessionId: session.id });
+    const events = [...latest.events];
+    while (latest.hasMore) {
+      latest = rpc('native.session.read', { sessionId: session.id, after: latest.cursor });
+      events.push(...latest.events);
+    }
+    latest.events = events;
     assert.equal(latest.session.id, session.id);
     assert.ok(latest.cursor >= savedSequence, 'Event cursor went backwards');
     const sequences = latest.events.map((event) => event.sequence);
@@ -242,7 +248,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
         const result = await complete(command, (value) => {
           for (const event of eventsFor(value, command)) {
             if (event.type !== 'approval.requested') continue;
-            const requestId = event.nativeId;
+            const requestId = event.request?.id;
             assert.ok(requestId, 'Approval has no native request identity');
             if (answered.has(requestId)) continue;
             const requested = JSON.stringify(event.data);
@@ -298,7 +304,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
           for (const event of eventsFor(value, command)) {
             if (event.type !== 'question.requested') continue;
             assert.ok(event.request?.id, 'Question has no normalized request identity');
-            assert.equal(event.nativeId, event.request.id);
+            assert.notEqual(event.nativeId, event.request.id);
             if (answered.has(event.request.id)) continue;
             assert.equal(event.request.questions?.length, 1, 'Expected one normalized question');
             const question = event.request.questions[0];

@@ -22,6 +22,8 @@ export interface NativeSessionTargetParams {
 }
 export interface NativeSessionReadParams extends NativeSessionTargetParams {
   after?: number;
+  /** 1..500 events per page, default 200. */
+  limit?: number;
 }
 export interface NativeSessionSendParams extends NativeSessionTargetParams {
   commandId: string;
@@ -29,11 +31,22 @@ export interface NativeSessionSendParams extends NativeSessionTargetParams {
 }
 export interface NativeSessionSendResult {
   commandId: string;
-  /** Input reached the owned transport; this alone does not prove native acceptance. */
-  submitted: true;
+  /** Submission was attempted or may have occurred; this is not native acceptance. */
+  submitted: boolean;
+  state: NativeCommandState;
   /** True only after native protocol evidence confirms acceptance. */
   accepted: boolean;
 }
+export type NativeCommandState = 'pending' | 'unknown' | 'accepted' | 'failed' | 'completed';
+export interface NativeCommandReceipt {
+  generation: string;
+  commandId: string;
+  state: NativeCommandState;
+  submitted: boolean;
+  accepted: boolean;
+  outcome?: 'completed' | 'failed' | 'interrupted';
+}
+
 export interface NativeSessionResponse {
   decision?: 'approve' | 'deny';
   answers?: Record<string, string[]>;
@@ -44,6 +57,16 @@ export interface NativeSessionRespondParams
 }
 export interface NativeSessionInfo {
   id: string;
+  /** Host generation, distinct from the native conversation identity. */
+  generation: string;
+  hostPid: number;
+  /** Process group leader. Retained as historical evidence after cleanup. */
+  processPid?: number;
+  /** Non-secret argv marker for verifying process ownership before delayed cleanup. */
+  processIdentity?: string;
+  /** Wrapper group and observed descendants stopped; not exhaustive OS containment. */
+  processStopped?: boolean;
+  recovery?: string;
   runner: string;
   nativeSessionId: string;
   ownerPrincipalId: string;
@@ -61,6 +84,7 @@ export interface NativeSessionInfo {
 export interface NativeSessionEvent {
   sessionId: string;
   sequence: number;
+  generation: string;
   at: string;
   type:
     | 'session.started'
@@ -80,6 +104,7 @@ export interface NativeSessionEvent {
   nativeId?: string;
   text?: string;
   tool?: { name: string; input?: unknown; output?: unknown; status?: string };
+  responseState?: 'unknown';
   request?: {
     id: string;
     title: string;
@@ -99,4 +124,8 @@ export interface NativeSessionReadResult {
   session: NativeSessionInfo;
   events: NativeSessionEvent[];
   cursor: number;
+  hasMore: boolean;
+  /** Most recent 100 receipts. Older command IDs remain durably deduplicated. */
+  commands: NativeCommandReceipt[];
+  pendingRequests: NativeSessionEvent[];
 }

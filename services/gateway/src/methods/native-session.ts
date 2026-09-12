@@ -48,14 +48,17 @@ export async function nativeSessionRoute(method: string, value: unknown): Promis
         return { session: await nativeSessionManager.create(principal, params) };
       }
       case Methods.NATIVE_SESSION_LIST:
-        return { sessions: nativeSessionManager.list(principal) };
+        return { sessions: await nativeSessionManager.list(principal) };
       case Methods.NATIVE_SESSION_READ:
+        if (p.limit !== undefined && typeof p.limit !== 'number')
+          throw new GatewayMethodError('INVALID_PARAMS', 'limit must be an integer');
         if (p.after !== undefined && typeof p.after !== 'number')
           throw new GatewayMethodError('INVALID_PARAMS', 'after must be an integer');
-        return nativeSessionManager.read(
+        return await nativeSessionManager.read(
           principal,
           string(p, 'sessionId'),
           p.after as number | undefined,
+          p.limit as number | undefined,
         );
       case Methods.NATIVE_SESSION_SEND: {
         const commandId = string(p, 'commandId');
@@ -104,7 +107,10 @@ export async function nativeSessionRoute(method: string, value: unknown): Promis
         return { interrupted: true };
       case Methods.NATIVE_SESSION_CLOSE:
         await nativeSessionManager.close(principal, string(p, 'sessionId'));
-        return { closed: true };
+        return {
+          closed: true,
+          session: (await nativeSessionManager.read(principal, string(p, 'sessionId'))).session,
+        };
       default:
         throw new Error('Unknown native session method');
     }

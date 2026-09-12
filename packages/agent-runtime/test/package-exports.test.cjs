@@ -13,6 +13,13 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.j
 
 assert.equal(packageJson.name, '@farmslot/agent-runtime');
 assert.ok(packageJson.bin['farmslot-agent']);
+assert.ok(packageJson.exports['./native']);
+for (const entry of ['native/client.js', 'native/host.js', 'native/supervisor.js']) {
+  assert.ok(
+    fs.existsSync(path.join(packageRoot, 'dist', entry)),
+    `Missing packaged native entry: ${entry}`,
+  );
+}
 assert.ok(packageJson.exports['./scripts/mark-checklist-step.cjs']);
 assert.ok(packageJson.exports['./scripts/checklist-target.cjs']);
 assert.ok(packageJson.exports['./scripts/worker-terminal-contract.cjs']);

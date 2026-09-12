@@ -215,3 +215,80 @@ Tmux driver delegates to [.agents/skills/tmux-model-driver](../../.agents/skills
 - [Runner observability empirical gate](./runner-observability-empirical-gate.md)
 - [Runner token usage extraction](../reference/runner-token-usage.md) — extraction contracts + manual `TOKEN_CHECK_OK` protocol
 - [Phase 1 plan](../plans/runner-observability-hooks-phase1.md)
+
+### Durable native sessions
+
+ADR-057 phase 2 uses `native-session-durability` against isolated gateway18777.
+This staged scenario leaves the gateway lifecycle to its operator. It never uses
+Copilot or restarts a gateway. Run it separately for Codex and Claude, and repeat
+the failure/recovery stages with both `FARMSLOT_NATIVE_KILL=runner` and `host`.
+A passed stage is partial evidence; the full sequence is the acceptance proof.
+
+Configure the gateway with a dedicated absolute `FARMSLOT_NATIVE_STATE_DIR` and
+its pinned `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID`. Keep the same state directory,
+native HOME/configuration, and owner across restarts. Export the owner gateway
+token through the environment. Never put tokens in scenario arguments or reports.
+
+```sh
+export FARMSLOT_GATEWAY=ws://127.0.0.1:18777
+export FARMSLOT_RPC_TIMEOUT_MS=120000
+export FARMSLOT_NATIVE_DURABILITY_STATE=/absolute/private/path/codex-durability.json
+export FARMSLOT_NATIVE_DURABILITY_STAGE=start
+node scripts/runner-validation/run.mjs --runner codex --scenario native-session-durability --out-dir temp/native-validation/evidence
+```
+
+Repeat that command with these stages in order:
+
+1. `start` waits for structured tool start and the fixture's process marker.
+2. Stop the isolated gateway through its existing launcher. Run `offline` while
+   it is stopped. The scenario releases the bounded tool and checks its side
+   effect before any gateway restart.
+3. Restart the gateway with the same configuration. Run `reconnect` to check the
+   same host, native identity and generation, contiguous missing events, cursor
+   exhaustion, and duplicate-command receipts without repeated side effects.
+4. Run `approval`, stop the gateway, run `approval-offline`, then restart it.
+   Run `approval-reconnect` with `FARMSLOT_NATIVE_OTHER_TOKEN` set to a second
+   authenticated admin. It rejects cross-owner, native-ID and stale replies,
+   then proves that the retained denial prevented the write.
+5. Run `failure` to kill only the recorded test runner, or the test host with
+   `FARMSLOT_NATIVE_KILL=host`. Host killing refuses to proceed if another active
+   session is still active. Run `recover` to resume the exact
+   saved conversation, recall its token without tools, reject the old approval,
+   and check that earlier commands were not replayed.
+   Repeat host failure with `FARMSLOT_NATIVE_TORN_JOURNAL=1` and the same private
+   `FARMSLOT_NATIVE_STATE_DIR` to prove cleanup repairs an incomplete journal write.
+6. Run `close`. With all validation sessions stopped, run `uncertain-cleanup`
+   with `FARMSLOT_NATIVE_STATE_DIR` pointing beneath the checkout's
+   `temp/native-validation/`. It temporarily marks the stopped session's journal
+   cleanup as unconfirmed and proves the real gateway rejects resume and close
+   success. The stage stops the native host, restores the original record, and
+   never changes the gateway or provider credentials. Then remove the private
+   scenario state file and fixture directory.
+
+For Claude, run `startup-failure` after `close`, then `close` again. It installs
+a temporary resume hook in the fixture, waits for native initialization timeout,
+checks confirmed process cleanup, removes the hook, and proves explicit retry
+keeps the same conversation. No inference is needed for this stage.
+
+`native-session-cleanup-isolation` proves that a denied cleanup signal cannot
+stop another session on the same host. Use an empty validation host and launch
+its gateway with `NODE_OPTIONS=--import=<checkout>/scripts/runner-validation/fixtures/native-signal-fault.mjs`
+and `FARMSLOT_NATIVE_SIGNAL_FAULT=<checkout>/temp/native-validation/<unique>.json`.
+Set the same fault path and `FARMSLOT_NATIVE_STATE_DIR` on the scenario command.
+The preload only injects one failure for the fixture's explicit host and process
+IDs. The scenario requires the close RPC to reject, recovery to remain blocked,
+and a second real native session to finish a turn on the same host. It then stops
+the exclusive test host. Restart the validation gateway without the preload
+afterward. Never use this injector in an operator gateway.
+
+Incidental approvals fail the stage with session/request IDs for explicit review
+through `native.session.read/respond`. Rerun the same stage after responding; its
+private state retains submitted commands. The scenario only automatically approves
+an exact fixture command, so shell-wrapped commands may require manual review.
+
+The bounded tool expires after three minutes. Complete the stop/offline stages
+within that window. A timeout is failed proof, not completion. A failure leaves
+state available for diagnosis; use `close` to clean up its owned session.
+Also run `native-session-smoke`, `native-session-startup-close`,
+`native-session-authorization-smoke`, and the existing tmux acceptance and
+retained-handoff scenarios. Unit fixtures cannot substitute for these live checks.
