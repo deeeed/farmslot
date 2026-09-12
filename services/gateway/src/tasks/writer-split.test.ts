@@ -180,6 +180,8 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.equal(handoff.project, 'farmslot-farm');
   assert.equal(handoff.repo, 'deeeed/farmslot');
   assert.equal(handoff.flow, 'fix-bug');
+  // No domain on this run: the key must still be present (closeout requires a string).
+  assert.equal(handoff.domain, '');
   assert.equal(typeof handoff.startedAt, 'string');
   assert.deepEqual(handoff.task, {
     title: 'Saving a note drops the last character',

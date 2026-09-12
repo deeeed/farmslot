@@ -1,6 +1,7 @@
 // methods/task.ts — Task progress parsed from the task checklist markdown file.
-// Interactive lightweight dev stores checkboxes in CHECKLIST.md; the generated
-// `mark` helper prefers that file too. Autonomous templates keep progress in TASK.md.
+// Every flow stores checklist progress in CHECKLIST.md (the execution checklist);
+// TASK.md is the task document and is never enumerated. The progress-path
+// resolver falls back to TASK.md only for task dirs written before the split.
 
 import path from 'node:path';
 

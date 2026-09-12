@@ -108,7 +108,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     '## Task',
     '',
-    '```',
+    '```text',
     taskBlock,
     'STATUS: pending',
     '```',
@@ -198,7 +198,8 @@ export interface HandoffMetadata {
   surface: 'farmslot';
   project: string;
   repo?: string;
-  domain?: string;
+  /** Effective run domain; empty string when none — the closeout parser requires the key. */
+  domain: string;
   flow: string;
   startedAt: string;
   task: { title: string; sourceKind: HandoffSourceKind; ticket?: string; sourceRef?: string };
@@ -231,7 +232,7 @@ export function buildHandoffMetadata(input: {
     surface: 'farmslot',
     project: input.run.project,
     ...(input.repo ? { repo: input.repo } : {}),
-    ...(input.domain ? { domain: input.domain } : {}),
+    domain: input.domain ?? '',
     flow: input.run.flowType,
     startedAt: input.startedAt ?? new Date().toISOString(),
     task: {
