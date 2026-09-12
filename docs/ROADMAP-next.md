@@ -1,8 +1,8 @@
 # Farmslot Near-Term Roadmap
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-30 (captured the tmux-backed Operator Workflow Steward lane.)
-**Stale by:** 2026-09-10
+**Last updated:** 2026-09-12, approved structured runner transports
+**Stale by:** 2026-10-12
 
 This is the canonical near-term execution roadmap for Farmslot after the dispatch comparison, bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev work, shared dispatch queue/eval caps, worker-template selection, backlog intake, and dev publication gating. Use it with [ROADMAP.md](ROADMAP.md), [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), and the canonical chunk PRDs.
 
@@ -46,6 +46,20 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 20. **Declarative trigger rules and review intake — planned.** Configure reusable team profiles, repository review policies and typed label/Project-field predicates across GitHub repositories and Projects, preview matches, then create held or explicitly auto-started `review-pr` work and optionally enroll PR monitors. Assign allowed slots and runner/model/effort choices per review rule. Reuse the shared queue, identity, authorization and client decision model; no team- or organization-specific framework logic. Scope: [trigger-rule product contract](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned).
 
 **Shipped current-state note:** Mobile Tmux Worker Control is not a remaining protocol lane. [ADR-033](adr/033-mobile-tmux-worker-control.md) is implemented through M8: gateway/node inventory, worker-ref terminal control, hook/status enrichment, node-level branch/activity summaries, Companion worker list/terminal, shortcut keys, foreground voice nudges, authenticated node redeploy hardening, live tmux parser validation, Android real-device smoke, iOS simulator launch smoke, optional per-node `tmux_workers` include/exclude policy, and the follow-up xterm/PTY streaming + keyboard/drag polish are complete. Remaining mobile work belongs under the stabilization pass unless it explicitly targets deferred scope such as background wake-word, auto-send without tap, or remote node provisioning.
+
+## Structured runner transports
+
+**Status:** Approved for implementation across all phases; validation pending.
+
+Add opt-in native runner sessions while retaining tmux defaults. The shared runner layer owns commands, events, session identity, and capabilities for both modes. Native runners keep their tools and authentication. Scope and gates are defined in [ADR-057](adr/057-structured-runner-transports.md) and the [runner execution PRD](PRD-runner-execution-canonical.md#6-native-structured-sessions).
+
+1. Prove Codex and Claude through production gateway RPC, including permissions, interruption, follow-up context, and saved-session resume. Re-run tmux acceptance and retained-handoff scenarios.
+2. Add execution-node process supervision, durable events, replay, duplicate command protection, and account-bound pending requests. Prove concurrent sessions and gateway recovery.
+3. Deliver opt-in native Copilot in Command Center. Prove a complete task and reconnect through real browser controls.
+4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion. Reconcile live and archived session identity before integration.
+5. Add Grok, Cursor, and OpenCode, then native installation/login flows for user-owned accounts. Prove each declared capability and account isolation before enabling shared deployments.
+
+Record bounded subscription and billing observations separately from protocol success. Missing provider evidence remains unknown. PI runtime replacement, whole T3 UI import, and arbitrary live TUI takeover stay outside this rollout.
 
 ## Decision: What Lands Next
 

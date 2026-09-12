@@ -13,6 +13,9 @@ import * as interactionSmoke from './interaction-smoke.mjs';
 import * as machinePauseRestoreSmoke from './machine-pause-restore-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
 import * as monitorStuckSmoke from './monitor-stuck-smoke.mjs';
+import * as nativeSessionAuthorizationSmoke from './native-session-authorization-smoke.mjs';
+import * as nativeSessionSmoke from './native-session-smoke.mjs';
+import * as nativeSessionStartupClose from './native-session-startup-close.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
 import * as resourcePostureSmoke from './resource-posture-smoke.mjs';
@@ -54,6 +57,9 @@ export const SCENARIOS = {
   'budget-guard-smoke': budgetGuardSmoke,
   'mode-switch': modeSwitch,
   'monitor-stuck-smoke': monitorStuckSmoke,
+  'native-session-smoke': nativeSessionSmoke,
+  'native-session-authorization-smoke': nativeSessionAuthorizationSmoke,
+  'native-session-startup-close': nativeSessionStartupClose,
   'session-attribution-smoke': sessionAttributionSmoke,
   'session-reopen-smoke': sessionReopenSmoke,
   'terminal-order-smoke': terminalOrderSmoke,

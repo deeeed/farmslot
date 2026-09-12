@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add experimental Codex and Claude native sessions through authenticated gateway RPC, with runner-owned login, exact session ownership, and structured conversation events.
 - Copy Claude, Codex, and Grok session transcripts once at slot release into `.runs/session-archives/`. History.get uses that copy when the live file is gone. Other runners do not archive.
 
 - Let a timed-out interactive handoff keep watching for another timeout period without SIGNAL.json. `continue` resets the persisted monitor window so a restart does not immediately re-hold. Worker-done handoffs still require a terminal signal.

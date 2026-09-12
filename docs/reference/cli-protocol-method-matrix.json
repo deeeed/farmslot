@@ -1305,6 +1305,34 @@
       "surface": "rpc-only",
       "command": "farmslot rpc config.githubAccounts",
       "note": "List verified gateway GitHub accounts without credentials; explicit refresh rechecks authentication."
+    },
+    "native.session.create": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.read": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.list": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.send": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.respond": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.interrupt": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.close": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
     }
   }
 }

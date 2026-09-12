@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the native session commands for structured agent interaction through the gateway.
+
 - Document the gateway GitHub account inventory method.
 
 - Document the gateway methods and events for PR monitoring, review rules, and push notifications.

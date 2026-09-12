@@ -124,6 +124,13 @@ export const Methods = {
   TERMINAL_WORKER_SNAPSHOT: 'terminal.worker.snapshot',
 
   // Worker session history (read-only transcript projection)
+  NATIVE_SESSION_CREATE: 'native.session.create',
+  NATIVE_SESSION_READ: 'native.session.read',
+  NATIVE_SESSION_LIST: 'native.session.list',
+  NATIVE_SESSION_SEND: 'native.session.send',
+  NATIVE_SESSION_RESPOND: 'native.session.respond',
+  NATIVE_SESSION_INTERRUPT: 'native.session.interrupt',
+  NATIVE_SESSION_CLOSE: 'native.session.close',
   WORKER_SESSION_HISTORY_GET: 'worker.session.history.get',
   WORKER_SESSION_HISTORY_SUBSCRIBE: 'worker.session.history.subscribe',
   WORKER_SESSION_HISTORY_UNSUBSCRIBE: 'worker.session.history.unsubscribe',

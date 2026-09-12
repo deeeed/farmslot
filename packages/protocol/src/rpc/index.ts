@@ -16,6 +16,7 @@ export * from './gateway.js';
 export * from './git.js';
 export * from './intelligence.js';
 export * from './machine-pause.js';
+export * from './native-session.js';
 export * from './nodes.js';
 export * from './pr.js';
 export * from './pr-push.js';

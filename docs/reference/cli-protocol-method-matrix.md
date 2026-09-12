@@ -246,6 +246,18 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `machine.pause.status`  | typed-command | `farmslot machine status`          |     |      |
 | `machine.pause.restore` | typed-command | `farmslot machine restore`         |     |      |
 
+## native.\*
+
+| Method                     | Surface  | CLI command | TUI | Note                                                                                   |
+| -------------------------- | -------- | ----------- | --- | -------------------------------------------------------------------------------------- |
+| `native.session.create`    | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.read`      | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.list`      | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.send`      | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.respond`   | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.interrupt` | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+| `native.session.close`     | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
+
 ## node.\*
 
 | Method            | Surface  | CLI command | TUI | Note                                                                                           |
