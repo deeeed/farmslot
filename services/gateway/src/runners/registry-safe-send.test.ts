@@ -251,9 +251,15 @@ const {
   PromptDeliveryUncertainError,
   resolvePrimaryWorkerTarget,
   runnerHasDurablePromptHandoff,
+  runnerSupportsInitialPromptArg,
   sendRunnerInstructionSafely,
   sendRunnerPostLaunchPrompt,
 } = await import('./registry.js');
+
+test('initial prompt capability rejects unknown runner ids', () => {
+  assert.equal(runnerSupportsInitialPromptArg('claude'), true);
+  assert.equal(runnerSupportsInitialPromptArg('unregistered-runner'), false);
+});
 
 test('launch observation requires exact high-confidence acceptance and never touches the pane', async () => {
   const previousReading = promptAcceptedReading;

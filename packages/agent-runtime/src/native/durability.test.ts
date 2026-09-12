@@ -128,6 +128,13 @@ test('linear journal, durable uncertain receipt, exact recovery and stale genera
     await manager.send('owner', session.id, 'long', 'long-prompt-marker');
     await until(() => manager.read('owner', session.id).session.state === 'idle');
     const journal = readFileSync(join(root, `${session.id}.journal`), 'utf8');
+    const submittedEntry = journal
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.event?.type === 'command.submitted');
+    assert.equal(submittedEntry.commands[0].state, 'unknown');
+    assert.equal(submittedEntry.commands[0].submitted, true);
     assert.ok(
       journal
         .trim()

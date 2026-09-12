@@ -62,8 +62,6 @@ export class ChatPanel extends ChatPanelState {
   private selectExperience(workspace: boolean) {
     this.agentWorkspace = workspace;
     safeLsSet('farmslot-copilot-view', workspace ? 'workspace' : 'terminal');
-    if (workspace)
-      this.drawerHeight = Math.max(this.drawerHeight, Math.round(window.innerHeight * 0.8));
   }
 
   private experiencePicker() {
@@ -745,7 +743,7 @@ export class ChatPanel extends ChatPanelState {
       >
         <div class="cp-resize-handle" title="Resize chat" @pointerdown=${this.startResize}></div>
         <div class="cp-header">
-          <span class="cp-title">✦ Co-Pilot</span>${this.experiencePicker()}
+          <span class="cp-title">Co-Pilot</span>${this.experiencePicker()}
           <div
             class="cp-session"
             title="One Co-Pilot chat per browser. Current screen context is attached to every message you send."

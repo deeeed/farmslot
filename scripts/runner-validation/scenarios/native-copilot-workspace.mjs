@@ -18,6 +18,9 @@ const stages = [
   'inspect-edit',
   'workspace',
   'layout',
+  'presentation',
+  'changes-limit',
+  'reservation',
   'request-approval',
   'deny',
   'approve',
@@ -480,6 +483,140 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
           'same assistant response after refresh',
         );
         check('refresh-preserves-one-prompt-and-response');
+      } else if (stage === 'presentation') {
+        assert.equal((await read()).session.state, 'idle');
+        const panel = () =>
+          evaluate(
+            `const p=document.querySelector('chat-panel');return {height:p.querySelector('.cp-drawer').getBoundingClientRect().height,title:p.querySelector('.cp-title').textContent};`,
+          );
+        const before = await panel();
+        await evaluate(
+          `document.querySelector('[data-testid="copilot-terminal-mode"]').click();return true;`,
+        );
+        const terminal = await panel();
+        await evaluate(
+          `document.querySelector('[data-testid="copilot-workspace-mode"]').click();return true;`,
+        );
+        await selectSaved();
+        const workspace = await panel();
+        assert.deepEqual(
+          terminal,
+          before,
+          'Switching experience changed the title or drawer height',
+        );
+        assert.deepEqual(
+          workspace,
+          before,
+          'Returning to workspace changed the title or drawer height',
+        );
+        const color = await until(
+          () =>
+            evaluate(
+              `const status=${viewRoot}?.querySelector('.status[data-state="idle"]');return status?getComputedStyle(status).color:false;`,
+            ),
+          'idle status',
+        );
+        assert.equal(color, 'rgb(0, 255, 136)', 'Healthy idle status uses warning color');
+        await click('[data-testid="native-workspace-toggle"]');
+        const w = `${viewRoot}?.querySelector('native-workspace')?.shadowRoot`;
+        await evaluate(
+          `Array.from(${w}.querySelectorAll('[role="tab"]')).find(b=>b.textContent.trim()==='Files').click();return true;`,
+        );
+        await until(
+          () =>
+            evaluate(
+              `const root=${w};if(root?.querySelector('[data-path="README.md"]'))return true;Array.from(root?.querySelectorAll('button')??[]).find(b=>b.textContent.trim()==='Parent directory')?.click();return false;`,
+            ),
+          'unchanged fixture file',
+        );
+        await evaluate(`${w}.querySelector('[data-path="README.md"]').click();return true;`);
+        await until(
+          () => evaluate(`return Boolean(${w}?.querySelector('[data-testid="workspace-diff"]'));`),
+          'Diff control',
+        );
+        await evaluate(`${w}.querySelector('[data-testid="workspace-diff"]').click();return true;`);
+        await until(
+          () =>
+            evaluate(
+              `return ${w}?.querySelector('.viewer .empty')?.textContent.includes('No changes against HEAD for this file.')??false;`,
+            ),
+          'explicit unchanged-file message',
+        );
+        check('mode-switch-preserves-height-title-and-renders-idle-and-unchanged-file-states', {
+          color,
+          screenshot: await screenshot('presentation'),
+        });
+      } else if (stage === 'changes-limit') {
+        const directory = fs.mkdtempSync(path.join(fixture, 'changes-limit-'));
+        try {
+          for (let index = 0; index < 502; index++)
+            fs.writeFileSync(
+              path.join(directory, `${String(index).padStart(4, '0')}.txt`),
+              'fixture\n',
+            );
+          await evaluate(
+            `if(!${viewRoot}?.querySelector('native-workspace'))${viewRoot}.querySelector('[data-testid="native-workspace-toggle"]').click();return true;`,
+          );
+          const w = `${viewRoot}?.querySelector('native-workspace')?.shadowRoot`;
+          await evaluate(
+            `Array.from(${w}.querySelectorAll('[role="tab"]')).find(b=>b.textContent.trim()==='Changes').click();return true;`,
+          );
+          await until(
+            () =>
+              evaluate(
+                `const notice=Array.from(${w}?.querySelectorAll('.scope')??[]).find(e=>e.textContent.includes('First 500 changed files shown'));if(!notice)return false;notice.scrollIntoView({block:'nearest'});return true;`,
+              ),
+            'visible change-list limit',
+          );
+          const changes = await rpc('native.session.workspace.changes', {
+            sessionId: state.sessionId,
+          });
+          assert.equal(changes.files.length, 500);
+          assert.equal(changes.truncated, true);
+          check('large-workspace-list-exposes-cap-in-rpc-and-ui', {
+            screenshot: await screenshot('changes-limit'),
+          });
+        } finally {
+          fs.rmSync(directory, { recursive: true, force: true });
+        }
+      } else if (stage === 'reservation') {
+        assert.ok(process.env.FARMSLOT_NATIVE_STATE_DIR, 'Set the isolated native state directory');
+        const nativeRoot = fs.realpathSync(process.env.FARMSLOT_NATIVE_STATE_DIR);
+        inside(nativeRoot);
+        await sendOnce('reservation', 'Reply exactly RESERVED. Do not use tools.');
+        assert.equal((await finish('reservation'))?.status, 'completed');
+        const snapshot = await read();
+        assert.equal(
+          JSON.parse(fs.readFileSync(path.join(nativeRoot, 'ready.json'), 'utf8')).pid,
+          snapshot.session.hostPid,
+        );
+        const journal = fs
+          .readFileSync(path.join(nativeRoot, 'sessions', `${state.sessionId}.journal`), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        const id = state.commands.reservation.id;
+        const entry = journal.find(
+          (item) => item.event?.type === 'command.submitted' && item.event.commandId === id,
+        );
+        const command = entry?.commands?.find((item) => item.commandId === id);
+        assert.equal(
+          command?.state,
+          'unknown',
+          'Prompt and uncertainty were not reserved atomically',
+        );
+        assert.equal(command.submitted, true);
+        assert.ok(
+          !journal.some((item) =>
+            item.commands?.some(
+              (command) => command.commandId === id && command.state === 'pending',
+            ),
+          ),
+          'Redundant pending-command journal write',
+        );
+        check('real-ui-command-reserves-prompt-and-uncertainty-in-one-journal-append', {
+          commandId: id,
+        });
       } else if (stage === 'layout') {
         const original = await evaluate('return {width:innerWidth,height:innerHeight};');
         try {
@@ -654,7 +791,11 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
               ['running', 'waiting'].includes(snapshot.session.state),
               'Sleep finished before interruption',
             );
-            await click('[data-testid="native-stop"]');
+            if (!state.commands.interrupt.stopAttempted) {
+              state.commands.interrupt.stopAttempted = true;
+              save();
+              await click('[data-testid="native-stop"]');
+            }
           }
           const completed = await finish('interrupt');
           assert.equal(completed?.status, 'interrupted');
@@ -689,7 +830,7 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
               event.type === 'question.requested',
           );
         }, 'native question');
-        assert.equal(pending.request.questions.length, 1, 'Expected one recovery-label question');
+        assert.equal(pending.request.questions?.length, 1, 'Expected one recovery-label question');
         state.context.requestId = pending.request.id;
         save();
         check('native-question-awaits-custom-answer', { requestId: pending.request.id });
@@ -794,7 +935,10 @@ export async function runScenario({ runnerAdapter, timeoutMs = 180000, outDir, m
               ['closed', 'failed'].includes(snapshot.session.state),
             'Stop the owned native process during a bounded tool, verify cleanup, then run context-resume',
           );
-          assert.ok(snapshot.session.capabilities.resume, snapshot.session.resumeUnavailableReason);
+          assert.ok(
+            snapshot.session.capabilities.resume,
+            snapshot.session.capabilities.resumeUnavailableReason,
+          );
           await click('[data-testid="native-resume"]');
           snapshot = await until(async () => {
             const current = await read();

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Expose configured local agent workspace choices and session-owned, bounded source and Git changes reads.
+- Expose configured local agent workspace choices and bounded source and Git changes reads, with capped lists and clear errors for oversized diffs.
 - Fix terminal Copilot bootstrap when the runner starts with a suggested prompt, using exact launch acknowledgement without duplicate sends.
 
 - Add experimental Codex and Claude native sessions through authenticated gateway RPC, with runner-owned login and structured events. A supervised host keeps work running through gateway restarts and preserves command deduplication, approval ownership, and explicit recovery.

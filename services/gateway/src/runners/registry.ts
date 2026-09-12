@@ -606,7 +606,7 @@ export function isRunnerPaneRetired(runnerId?: string | null): boolean {
 }
 
 export function runnerSupportsInitialPromptArg(runnerId: string): boolean {
-  return getRunnerDefinition(runnerId).supportsInitialPromptArg === true;
+  return isKnownRunner(runnerId) && getRunnerDefinition(runnerId).supportsInitialPromptArg === true;
 }
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
@@ -2575,7 +2575,7 @@ export async function sendRunnerInstructionSafely(
       throw new Error('Launch observation requires a prompt acceptance boundary');
     const observability = getRunnerObservability(runner);
     if (!observability) return false;
-    while (Date.now() < loopStartMs + effectiveTimeoutMs) {
+    do {
       const reading = await observability.promptAccepted(
         vars,
         target,
@@ -2590,8 +2590,10 @@ export async function sendRunnerInstructionSafely(
         reading.exactPromptMatch === true
       )
         return true;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
+      const remaining = loopStartMs + effectiveTimeoutMs - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500, remaining)));
+    } while (Date.now() < loopStartMs + effectiveTimeoutMs);
     return false;
   }
   // Hook digests are correlation-safe across a bounded retry window. Native

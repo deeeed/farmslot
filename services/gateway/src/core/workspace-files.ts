@@ -13,6 +13,7 @@ export async function workspacePath(
   relative: string,
   missing = false,
 ): Promise<string> {
+  // Reject even legal POSIX backslash filenames to avoid separator ambiguity across clients.
   if (path.isAbsolute(relative) || relative.includes('\\') || relative.includes('\0'))
     throw new Error('Use a relative workspace path');
   const parts = relative.split('/').filter((part) => part && part !== '.');

@@ -158,7 +158,7 @@ export class NativeWorkspace extends LitElement {
         if (revision !== this.revision) return;
         this.changes = result;
       }
-      if (this.selected) await this.openFile(this.selected, this.display);
+      if (this.selected) await this.openFile(this.selected, this.display, sessionId);
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
     } finally {
@@ -166,7 +166,7 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
-  private async openFile(path: string, display: 'source' | 'diff') {
+  private async openFile(path: string, display: 'source' | 'diff', sessionId = this.sessionId) {
     const revision = ++this.revision;
     this.selected = path;
     this.display = display;
@@ -178,13 +178,13 @@ export class NativeWorkspace extends LitElement {
       if (display === 'source') {
         const result = await this.api.request<NativeWorkspaceReadResult>(
           Methods.NATIVE_SESSION_WORKSPACE_READ,
-          { sessionId: this.sessionId, path },
+          { sessionId, path },
         );
         if (revision === this.revision) this.source = result;
       } else {
         const result = await this.api.request<NativeWorkspaceDiffResult>(
           Methods.NATIVE_SESSION_WORKSPACE_DIFF,
-          { sessionId: this.sessionId, path },
+          { sessionId, path },
         );
         if (revision === this.revision) this.diff = result;
       }
@@ -281,6 +281,12 @@ export class NativeWorkspace extends LitElement {
               )}
               ${this.changes?.files.length === 0
                 ? html`<p class="empty">No workspace changes.</p>`
+                : nothing}
+              ${this.changes?.truncated
+                ? html`<p class="scope">
+                    First ${this.changes.files.length} changed files shown. Use Files to inspect
+                    other paths.
+                  </p>`
                 : nothing}`}
         </nav>
         <section class="viewer" aria-label="File preview">
@@ -310,10 +316,12 @@ export class NativeWorkspace extends LitElement {
                 .language=${this.language(this.source.path)}
               ></code-viewer>`
             : this.diff
-              ? html`<diff-review
-                  .filename=${this.diff.path}
-                  .diff=${this.diff.diff}
-                ></diff-review>`
+              ? this.diff.diff
+                ? html`<diff-review
+                    .filename=${this.diff.path}
+                    .diff=${this.diff.diff}
+                  ></diff-review>`
+                : html`<p class="empty">No changes against HEAD for this file.</p>`
               : html`<p class="empty">
                   ${this.loading ? 'Loading workspace…' : 'Select a file to inspect.'}
                 </p>`}

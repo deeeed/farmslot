@@ -32,6 +32,7 @@ function rpc(method, params = {}, token = process.env.FARMSLOT_GATEWAY_TOKEN) {
   } catch (error) {
     throw Object.assign(new Error(`Gateway ${method} failed`), {
       rpcCode: String(error.stderr ?? '').match(/"code":"([A-Z_]+)"/)?.[1],
+      rpcDetail: String(error.stderr ?? ''),
     });
   }
 }
@@ -139,6 +140,27 @@ export async function runScenario({ runnerAdapter, outDir }) {
     assert.equal(rpc('native.session.read', target).session.state, 'idle');
     report.checks.push(
       'another authenticated administrator cannot access catalog or session workspace',
+    );
+    for (let index = 0; index < 502; index++)
+      fs.writeFileSync(path.join(cwd, `bulk-${String(index).padStart(4, '0')}.txt`), 'fixture\n');
+    fs.writeFileSync(path.join(cwd, 'zz-tail.txt'), 'tail\n');
+    const bounded = rpc('native.session.workspace.changes', target);
+    assert.equal(bounded.files.length, 500);
+    assert.equal(bounded.truncated, true);
+    assert.ok(!bounded.files.some((file) => file.path === 'zz-tail.txt'));
+    assert.match(
+      rpc('native.session.workspace.diff', { ...target, path: 'zz-tail.txt' }).diff,
+      /\+tail/,
+    );
+    fs.writeFileSync(path.join(cwd, 'safe.ts'), Buffer.alloc(1024 * 1024 + 100, 'x'));
+    assert.throws(
+      () => rpc('native.session.workspace.diff', { ...target, path: 'safe.ts' }),
+      (error) =>
+        error.rpcCode === 'NATIVE_SESSION_ERROR' &&
+        error.rpcDetail.includes('Diff exceeds the 1 MiB viewer limit'),
+    );
+    report.checks.push(
+      'changes list is capped, direct file diffs remain available, and oversized diff errors name the viewer limit',
     );
     report.pass = true;
   } catch (error) {

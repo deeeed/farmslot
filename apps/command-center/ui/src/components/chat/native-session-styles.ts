@@ -74,6 +74,15 @@ export const nativeSessionStyles = css`
   .status {
     color: ${unsafeCSS(colors.statusWarn)};
   }
+  .status[data-state='idle'] {
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .status[data-state='failed'] {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
+  .status[data-state='closed'] {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
   .error {
     padding: 8px 10px;
     color: ${unsafeCSS(colors.statusFail)};

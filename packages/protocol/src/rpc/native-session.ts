@@ -155,6 +155,7 @@ export interface NativeWorkspaceListResult {
 }
 export interface NativeWorkspaceChangesResult {
   files: Array<{ path: string; status: string }>;
+  truncated?: boolean;
 }
 export interface NativeWorkspaceReadResult {
   path: string;

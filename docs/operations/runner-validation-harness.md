@@ -330,6 +330,13 @@ Run one stage per invocation with the same state file:
 - `layout` resizes the browser to 500px and 1440px, checks drawer and expanded
   views, and verifies the conversation controls remain reachable and the
   workspace fits. It restores the original browser size afterward.
+- `presentation` checks consistent title and drawer height when switching modes,
+  healthy idle color, and the explicit unchanged-file message.
+- `changes-limit` creates disposable files and checks the 500-file cap through
+  the gateway and UI, then removes its files.
+- `reservation` sends one bounded acknowledgement task through the UI and checks
+  its atomic prompt/uncertainty journal entry. Set `FARMSLOT_NATIVE_STATE_DIR` to
+  the isolated gateway's state directory.
 - `request-approval` submits a shell write to `approval-proof.txt`. Set
   `FARMSLOT_NATIVE_UI_APPROVAL_CASE=deny`, then run `deny` to refresh the pending
   request, deny it and prove the file is absent. Repeat with case `approve`, then

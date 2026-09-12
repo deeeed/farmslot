@@ -436,17 +436,15 @@ export class NativeSessionManager {
       text,
       commandId,
       generation: record.info.generation,
-      state: 'pending',
-      submitted: false,
+      // Reserve uncertainty and the visible prompt together before touching stdin.
+      state: 'unknown',
+      submitted: true,
       accepted: false,
     };
     record.commands.set(commandId, command);
-    this.append(record, { type: 'command.submitted', commandId, text });
     try {
-      // Persist uncertainty before touching stdin. A crash here must never trigger a resend.
-      command.state = 'unknown';
-      command.submitted = true;
-      this.persist(record);
+      // A crash after this durable reservation must never trigger a resend.
+      this.append(record, { type: 'command.submitted', commandId, text });
       await record.adapter.send(text, commandId);
       return {
         submitted: command.submitted,

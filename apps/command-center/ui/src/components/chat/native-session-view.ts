@@ -208,7 +208,9 @@ export class NativeSessionView extends LitElement {
         for (const event of page.events) {
           if (event.type === 'approval.resolved' && event.request) {
             safeLsRemove(this.key(`response:${event.sessionId}:${event.request.id}`));
-            this.responseAttempts.delete(event.request.id);
+            const attempts = new Set(this.responseAttempts);
+            attempts.delete(event.request.id);
+            this.responseAttempts = attempts;
           }
         }
         this.session = page.session;
@@ -548,7 +550,10 @@ export class NativeSessionView extends LitElement {
                 : ''}
             </button>`
           : nothing}
-        <span class="status" role="status"
+        <span
+          class="status"
+          role="status"
+          data-state=${this.connected ? (session?.state ?? '') : 'disconnected'}
           >${!this.connected
             ? 'Disconnected. Draft and session preserved.'
             : session

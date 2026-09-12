@@ -87,3 +87,43 @@ test('Git changes remain scoped to session subdirectory and use literal filename
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('large change lists are capped without hiding a directly requested file diff', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'native-large-changes-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  try {
+    git('init');
+    await writeFile(path.join(root, 'tracked.txt'), 'before\n');
+    git('add', '.');
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-m',
+      'fixture',
+    );
+    await Promise.all(
+      Array.from({ length: 502 }, (_, index) =>
+        writeFile(path.join(root, `file-${String(index).padStart(4, '0')}.txt`), 'payload\n'),
+      ),
+    );
+    const changes = await nativeWorkspaceChanges(root);
+    assert.equal(changes.files.length, 500);
+    assert.equal(changes.truncated, true);
+    assert.match(await nativeWorkspaceDiff(root, 'file-0501.txt'), /\+payload/);
+    await writeFile(path.join(root, 'tracked.txt'), Buffer.alloc(WORKSPACE_TEXT_LIMIT + 100, 'x'));
+    await assert.rejects(
+      nativeWorkspaceDiff(root, 'tracked.txt'),
+      /Diff exceeds the 1 MiB viewer limit/,
+    );
+    await writeFile(path.join(root, 'many-lines.txt'), '\n'.repeat(WORKSPACE_TEXT_LIMIT));
+    await assert.rejects(
+      nativeWorkspaceDiff(root, 'many-lines.txt'),
+      /Diff exceeds the 1 MiB viewer limit/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
