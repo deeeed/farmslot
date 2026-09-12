@@ -79,6 +79,8 @@ export function testController(input: {
   checkout: string;
   tmux?: FakeCopilotTmux;
   sendInstruction?: CopilotRuntimeControllerOptions['sendInstruction'];
+  bootstrapOnLaunch?: boolean;
+  prepareInstruction?: CopilotRuntimeControllerOptions['prepareInstruction'];
   interrupt?: CopilotRuntimeControllerOptions['interrupt'];
   checkoutIdentity?: CopilotCheckoutIdentity;
   emit?: (event: string, payload: unknown) => void;
@@ -98,9 +100,11 @@ export function testController(input: {
       command: `${runner} --test-launch`,
       commandHash: 'launch-command-hash',
       vars: createCopilotRunnerVars(checkout),
+      bootstrapOnLaunch: input.bootstrapOnLaunch,
     }),
     sendInstruction: async (...args) =>
       input.sendInstruction ? input.sendInstruction(...args) : true,
+    prepareInstruction: input.prepareInstruction,
     interrupt: async (...args) => (input.interrupt ? input.interrupt(...args) : true),
     workload: testWorkload,
     resolveRuntimeDir: async () => '.agent',

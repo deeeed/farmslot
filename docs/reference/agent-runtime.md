@@ -62,6 +62,15 @@ The previous script paths in `@farmslot/skills` and `scripts/quality/` remain co
 
 ## Native session host
 
+Claude saved-session recovery requires sessions started with Claude Code 2.1.265
+or newer. Earlier releases have documented native history-loss bugs: [2.1.83
+fixed hook progress forking the conversation chain, and 2.1.265 fixed resume after
+tool-process interruption](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md).
+Farmslot leaves those older sessions readable and closeable but disables recovery
+with an explicit reason. Updating a binary cannot establish that an older saved
+conversation is complete. Start a new session after updating the native runner;
+Farmslot neither rewrites its history nor replays previous work to fill gaps.
+
 `@farmslot/agent-runtime/native` exports `NativeSessionClient`. The gateway runner
 layer validates registry capabilities and model policy, then calls this client.
 Execution nodes can use the same runtime without importing gateway code.

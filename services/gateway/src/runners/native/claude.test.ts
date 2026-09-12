@@ -4,7 +4,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { claudeNativeAdapter } from './claude.js';
+import { claudeNativeAdapter, claudeResumeUnavailableReason } from './claude.js';
+
+test('saved recovery rejects native versions with known history-loss defects', () => {
+  for (const version of [
+    '2.1.78 (Claude Code)',
+    '2.1.264 (Claude Code)',
+    'unavailable',
+    '2.1.265-beta',
+  ])
+    assert.match(claudeResumeUnavailableReason(version) ?? '', /2\.1\.265/);
+  for (const version of ['2.1.265 (Claude Code)', '2.1.269 (Claude Code)', '2.2.0'])
+    assert.equal(claudeResumeUnavailableReason(version), undefined);
+});
 
 const fakeClaude = `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');

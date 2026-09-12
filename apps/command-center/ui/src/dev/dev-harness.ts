@@ -85,6 +85,7 @@ import '../components/work-graph/work-graph-panel.js';
 import '../components/resources/resource-panel.js';
 import '../components/device-grid/device-grid.js';
 import './chat-dev.js';
+import './native-session-dev.js';
 import './terminal-attachment-dev.js';
 import './machine-health-dev.js';
 import './machine-pause-dev.js';
@@ -190,6 +191,7 @@ type DevRoute =
   | 'resource-panel'
   | 'device-grid'
   | 'interactive-packets'
+  | 'native-session'
   | 'chat'
   | 'machine-health'
   | 'machine-pause'
@@ -232,6 +234,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'review-workspace', label: 'Review Workspace', group: 'screens' },
   { route: 'ready-workspace', label: 'Ready Workspace', group: 'screens' },
   { route: 'device-grid', label: 'Device Grid', group: 'screens' },
+  { route: 'native-session', label: 'Agent workspace', group: 'screens' },
   { route: 'chat', label: 'Chat Co-Pilot', group: 'screens' },
   { route: 'machine-health', label: 'Machine Health', group: 'screens' },
   { route: 'machine-pause', label: 'Machine Pause & Restore', group: 'components' },
@@ -554,6 +557,8 @@ export class DevHarness extends LitElement {
         return this.renderDeviceGrid();
       case 'interactive-packets':
         return this.renderInteractivePackets();
+      case 'native-session':
+        return html`<native-session-dev></native-session-dev>`;
       case 'chat':
         return html`<chat-dev-harness></chat-dev-harness>`;
       case 'machine-health':

@@ -17,7 +17,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
  if(m.method==='turn/start') {
   send({method:'turn/started',params:{threadId:'thread-one',turn:{id:'turn-one'}}});
   send({id:m.id,result:{turn:{id:'turn-one'}}});
-  send({id:78,method:'item/commandExecution/requestApproval',params:{threadId:'thread-one',turnId:'turn-one',itemId:'tool-one',command:'pwd'}});
+  send({method:'item/started',params:{threadId:'thread-one',item:{id:'tool-one',type:'fileChange',changes:[{path:'greeting.ts',diff:'-Hello\\n+Hello from Farmslot'}],status:'inProgress'}}});
+  send({id:78,method:'item/fileChange/requestApproval',params:{threadId:'thread-one',turnId:'turn-one',itemId:'tool-one'}});
  }
  if(m.id===78 && m.result) {
   send({method:'item/completed',params:{threadId:'thread-one',item:{id:'tool-one',type:'commandExecution',status:m.result.decision==='decline'?'declined':'completed'}}});
@@ -43,6 +44,10 @@ test('Codex correlates structured acceptance and denies only the exact pending r
     );
     assert.equal(events.find((event) => event.type === 'turn.started')?.turnId, 'turn-one');
     assert.equal(events.find((event) => event.type === 'approval.requested')?.request?.id, '78');
+    assert.deepEqual(
+      events.find((event) => event.type === 'approval.requested')?.request?.tool?.input,
+      [{ path: 'greeting.ts', diff: '-Hello\n+Hello from Farmslot' }],
+    );
     await assert.rejects(session.respond('other', { decision: 'approve' }), /stale/);
     await session.respond('78', { decision: 'deny' });
     await new Promise((resolve) => setTimeout(resolve, 20));

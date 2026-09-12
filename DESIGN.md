@@ -3,9 +3,11 @@
 ## Source of truth
 
 - Status: Active
-- Last refreshed: 2026-09-02
+- Last refreshed: 2026-09-12
 - Primary product surfaces: Command Center operator UI and recipe-derived visual review boards.
 - Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`, `apps/companion/DESIGN.md`, and `docs/adr/052-recipe-derived-visual-review-boards.md`.
+
+- Native conversation evidence: `docs/adr/057-structured-runner-transports.md`, `docs/PRD-runner-execution-canonical.md`, `apps/command-center/ui/src/components/chat/chat-panel.ts`, `apps/command-center/ui/src/components/shared/runner-model-effort-picker.ts`, and the existing `diff-viewer/code-viewer.ts` and `diff-viewer/diff-review.ts` components. T3 Code reference: MIT, commit `fd5553f1afcef4f410a067687faa991743b5034c`, `ComposerPendingApprovalPanel.tsx` and `DiffPanel.tsx`. These inform interaction patterns; this is not a pixel-matching brief.
 
 ## Brand
 
@@ -19,6 +21,8 @@
 - Non-goals: replacing markdown specs/ADRs as authoring source of truth; building Jira-scale project management; hiding raw files from power users.
 - Success signals: users can identify what is ready, blocked, running, failed, and what will unlock next without reading JSON.
 
+- Native conversation goal: operate an installed runner through Farmslot chat, inspect tools and workspace changes, answer requests, and reconnect to the same session without requiring a terminal. Keep the existing runner/model choice and tmux experience available.
+
 ## Personas and jobs
 
 - Primary personas: Arthur as operator/architect; external coding agents reviewing or editing markdown specs.
@@ -30,6 +34,8 @@
 - Primary navigation: Command Center left nav with dedicated surfaces for runs, backlog, roadmap, and graphs.
 - Core routes/screens: work graphs route for dependency visualization; backlog/roadmap routes for item authoring and refinement.
 - Content hierarchy: project/status/tags first, then visual graph, then selected node detail and raw references.
+
+- Native conversation hierarchy: existing Copilot entry point, session and execution context, runner/model, transcript, pending decisions and composer, then Files/Changes. An expanded conversation area makes workspace review usable without adding another top-level application.
 
 ## Design principles
 
@@ -54,6 +60,8 @@
 - Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states; visual-review boards default to one remembered capture platform with an explicit Compare mode that groups platform variants under one surface, and navigation maps start at the top level with independently expandable branches.
 - Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 
+- Native conversation components: reuse the runner/model picker, expandable tool rows, Monaco source viewer, and diff2html diff viewer. Add an opt-in structured session view inside Copilot, with transcript and workspace panels. The shared protocol owns capabilities and request identity; clients render them without runner-name branches.
+
 ## Accessibility
 
 - Target standard: practical WCAG AA for text contrast and keyboard operation.
@@ -62,11 +70,15 @@
 - Screen-reader semantics: route titles, project filter labels, diagram labels, and node button labels.
 - Reduced motion and sensory considerations: avoid required animation; sound, desktop notifications, and Companion haptics are independently configurable and never the only indication that action is required.
 
+- Native conversation controls: keyboard-operable tool disclosure, tabs, Stop, and approval/question actions with visible focus. Approval detail is complete, selectable, scrollable, and labeled; a truncated summary cannot be the only available detail. Announce new pending requests and connection changes without announcing every streamed token.
+
 ## Responsive behavior
 
 - Supported breakpoints/devices: desktop-first with single-column fallback below ~1100px.
 - Layout adaptations: list/detail and graph/detail splits collapse into stacked panels; dense inventory tables and SVG remain horizontally scrollable when columns cannot safely compress.
 - Touch/hover differences: buttons remain tap targets; hover is enhancement only.
+
+- Native conversation layout: transcript/composer beside Files/Changes in an expanded wide view. Below the existing desktop breakpoint, use Conversation, Files, and Changes tabs so code and approval details retain readable width. Keep the pending-request count visible when viewing files, and return focus to the invoking control when closing expanded detail.
 
 ## Interaction states
 
@@ -76,6 +88,14 @@
 - Success: satisfied/ready/succeeded nodes and edges use green badges/lines.
 - Disabled: not currently used for read-only graph visualization.
 - Offline/slow network, if applicable: preserve previous state until reconnect via existing store behavior.
+
+### Native conversation and workspace states
+
+- New session: choose the supported runner/model and execution context before starting. Explain the structured interface as chat with tools and file views. Existing terminal sessions keep their mode.
+- Active session: stream text and expandable tool activity in order; keep the composer reachable and show Stop while supported. Pending approvals/questions sit beside the composer with request count, full detail, and explicit actions.
+- Delivery: distinguish submitting, accepted, running, completed, interrupted, and unknown using server evidence. A disconnected client preserves its draft and transcript, disables unavailable actions, and reconnects to the same durable session without resending the prompt.
+- Recovery: refresh restores history and pending decisions. Show Resume only when the server confirms cleanup and saved context are safe. Explain unknown outcomes without turning them into success or inviting duplicate submission. Bind every reply to the current session/generation request.
+- Workspace: Files shows read-only source; Changes shows current Git changes for the session workspace and identifies the comparison scope. Provide loading, refresh, empty, unavailable, and error states. Workspace changes can include edits from other tools or people; do not label them as a turn checkpoint or claim the agent authored every change.
 
 ## Content voice
 
@@ -94,7 +114,13 @@
   gateway or project runtime state.
 - Test/screenshot expectations: run `yarn --cwd apps/command-center typecheck`, targeted UI model tests, format check, and CDP browser validation for every UI change.
 
+- Native conversation constraints: resolve workspace files and diffs through session-authorized gateway methods rooted in the recorded working directory. Render runner text safely; never insert raw runner HTML. Keep event replay bounded and deduplicated, load code viewers on demand, and avoid moving the reader while they inspect earlier output.
+- Native conversation validation: real gateway and CDP controls must prove tool use, approve/deny, questions where supported, interrupt, follow-up context, refresh/reconnect with a pending request, and an actual edit visible in source and diff views. Preserve an isolated tmux regression check.
+- T3 reuse: adapt the composer request placement, expandable activity, and separate diff area to Lit and Farmslot tokens. Preserve the MIT copyright and license for substantial copied code; inspect dependency and asset licenses separately. Do not import T3's React/Effect application stack.
+
 ## Open questions
 
 - [ ] Should work graph project filtering share the global filter state used by runs/backlog, or remain route-local? / Arthur / affects cross-screen IA consistency.
 - [ ] Should graph nodes deep-link to backlog item specs once backlog route URLs stabilize? / Arthur / affects navigation scope.
+
+- Native conversation assumptions: desktop-first within the existing Copilot flow, read-only source/diff inspection, and a pinned trusted local principal for the first UI release. Remote execution, Companion, additional runners, and isolated user account setup remain later approved phases. No design question blocks this scope.

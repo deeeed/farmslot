@@ -22,6 +22,7 @@ import {
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
   runnerSessionReloadCapability,
+  runnerSupportsInitialPromptArg,
   runnerSupportsInteractivePrompt,
 } from './registry.js';
 import {
@@ -466,6 +467,8 @@ function buildScriptedRunnerLaunch(options: {
 }
 
 export interface BuildLaunchOptions {
+  /** Opt-in first instruction; ordinary dispatch keeps its current delivery policy. */
+  initialPromptOnLaunch?: boolean;
   /** Override the repo used for inline `cd` (defaults to `vars.remoteRepo`). */
   repo?: string;
   /** Relative path to the TASK.md passed to dispatch_cmd expansion. */
@@ -527,7 +530,10 @@ export function buildLaunchCommand(
   const cmdHasModelPlaceholder = hasDispatchCmd && vars.dispatchCmd.includes('{model}');
   const modelFlag = runnerModelFlag(model);
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
-  const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
+  if (opts.initialPromptOnLaunch && !runnerSupportsInitialPromptArg(runner))
+    throw new Error('Runner does not support an initial prompt argument');
+  const launchPrompt =
+    opts.initialPromptOnLaunch || !runnerNeedsPostLaunchPrompt(runner) ? prompt : '';
 
   const withRecipeTrust = (command: string): string =>
     withTaskRecipeTrustEnvironment(
@@ -658,7 +664,7 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}${launchPrompt ? ` ${shellQuote(launchPrompt)}` : ''}`,
         installCommand,
         settingsFallback,
       ),

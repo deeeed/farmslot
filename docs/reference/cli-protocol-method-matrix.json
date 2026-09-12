@@ -1333,6 +1333,26 @@
     "native.session.close": {
       "surface": "rpc-only",
       "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
+    },
+    "native.session.catalog": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.list": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.read": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.changes": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.diff": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
     }
   }
 }

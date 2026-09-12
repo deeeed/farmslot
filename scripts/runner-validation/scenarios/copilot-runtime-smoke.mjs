@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { writeEvidence } from '../lib/evidence.mjs';
@@ -24,8 +25,32 @@ async function waitForHistory(token, timeoutMs) {
   throw new Error(`Timed out waiting for ${token} in shared Co-Pilot history`);
 }
 
+async function waitForIdle(session, sinceMs, timeoutMs) {
+  return JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        path.resolve('scripts/runner-validation/gateway/copilot-idle.mts'),
+        JSON.stringify({
+          checkout: session.checkout.path,
+          runner: session.runner,
+          target: session.tmuxTarget,
+          sinceMs,
+          timeoutMs,
+        }),
+      ],
+      { encoding: 'utf8', env: process.env, timeout: timeoutMs + 10000 },
+    ),
+  );
+}
+
 export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  const marker = randomUUID();
+  const clientToken = `COPILOT_COMMAND_CENTER_PROOF_${marker}`;
+  const directToken = `COPILOT_DIRECT_TMUX_PROOF_${marker}`;
   const report = {
     runner,
     start: null,
@@ -44,23 +69,30 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     } catch (error) {
       if (!String(error).includes('METHOD_NOT_FOUND')) throw error;
     }
+    const startedAt = Date.now();
     report.start = rpc('copilot.start', { runner, safetyTier: 'sandboxed' });
+    report.bootstrapIdle = await waitForIdle(report.start.session, startedAt, timeoutMs);
+    const sentAt = Date.now();
     report.send = rpc('chat.send', {
       sessionId: 'global',
-      message: 'Acknowledge COPILOT_COMMAND_CENTER_PROOF once.',
+      message: `Acknowledge ${clientToken} once.`,
     });
-    await waitForHistory('COPILOT_COMMAND_CENTER_PROOF', timeoutMs);
+    if (report.send.delivery?.state !== 'accepted')
+      throw new Error('Client prompt lacks an exact delivery acknowledgement');
+    await waitForHistory(clientToken, timeoutMs);
+    report.clientIdle = await waitForIdle(report.start.session, sentAt, timeoutMs);
 
     execFileSync('tmux', [
       'send-keys',
       '-t',
       'farmslot-copilot:agent.0',
-      'Acknowledge COPILOT_DIRECT_TMUX_PROOF once.',
-      'Enter',
+      '-l',
+      `Acknowledge ${directToken} once.`,
     ]);
-    const shared = await waitForHistory('COPILOT_DIRECT_TMUX_PROOF', timeoutMs);
+    execFileSync('tmux', ['send-keys', '-t', 'farmslot-copilot:agent.0', 'Enter']);
+    const shared = await waitForHistory(directToken, timeoutMs);
     report.directTmuxMessages = shared.messages.filter((message) =>
-      message.content.includes('COPILOT_DIRECT_TMUX_PROOF'),
+      message.content.includes(directToken),
     ).length;
 
     report.reconnect = rpc('copilot.start', { mode: 'reconnect' });

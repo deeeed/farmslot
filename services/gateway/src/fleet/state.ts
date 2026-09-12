@@ -690,14 +690,14 @@ export function startFileWatcher(): void {
 
 // ─── Pool configs ───
 
-export async function loadPoolConfigs(): Promise<PoolConfig[]> {
+export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]> {
   const pools: PoolConfig[] = [];
   try {
-    const files = await readdir(poolDir);
+    const files = await readdir(directory);
     for (const file of files) {
       if (isIgnoredPoolFile(file)) continue;
       try {
-        const content = await readFile(path.join(poolDir, file), 'utf-8');
+        const content = await readFile(path.join(directory, file), 'utf-8');
         const raw = JSON.parse(content);
         const tmuxWorkers = normalizeTmuxWorkerFilters(raw.tmux_workers ?? raw.tmuxWorkers);
         pools.push({

@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Add a supervised native session host with private local IPC, durable command receipts and event replay, and explicit saved-conversation recovery for gateway and node clients.
+- Add a supervised native session host with private local IPC, durable prompts and command receipts, event replay, and explicit saved-conversation recovery. Disable recovery for older Claude histories affected by documented native history-loss bugs.
+- Include the proposed file changes from native tool events with permission requests so clients can display the action before approval.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

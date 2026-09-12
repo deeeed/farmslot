@@ -590,6 +590,11 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_SEND:
     case Methods.NATIVE_SESSION_RESPOND:
     case Methods.NATIVE_SESSION_INTERRUPT:
+    case Methods.NATIVE_SESSION_CATALOG:
+    case Methods.NATIVE_SESSION_WORKSPACE_LIST:
+    case Methods.NATIVE_SESSION_WORKSPACE_READ:
+    case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
+    case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
     case Methods.NATIVE_SESSION_CLOSE:
       return nativeSessionRoute(method, p);
     // Gateway self-status

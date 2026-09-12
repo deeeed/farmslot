@@ -208,6 +208,8 @@ export class NativeSessionManager {
         );
       if (!previous || previous.info.ownerPrincipalId !== ownerPrincipalId)
         throw new Error('Resume requires an owned native session');
+      const unavailable = transport.adapter.resumeUnavailableReason?.(previous.info.version);
+      if (unavailable) throw new Error(unavailable);
       if (!['closed', 'failed'].includes(previous.info.state))
         throw new Error('Close the current native input owner before resuming');
       if (previous.info.processPid && !previous.info.processStopped)
@@ -221,6 +223,8 @@ export class NativeSessionManager {
     if (!transport.adapter.capabilities.modes.includes(mode))
       throw new Error('Native runner does not support this interaction mode');
     const resolved = await resolveNativeExecutable(transport.binary, params.cwd);
+    const unavailable = transport.adapter.resumeUnavailableReason?.(resolved.version);
+    if (params.resumeSessionId && unavailable) throw new Error(unavailable);
     // Reserve before starting the child, so simultaneous resume calls cannot create two input owners.
     if (
       params.resumeSessionId &&
@@ -284,7 +288,7 @@ export class NativeSessionManager {
       if (record.adapter.capabilities) info.capabilities = { ...record.adapter.capabilities };
       if (info.state === 'starting') info.state = 'idle';
       this.persist(record);
-      return { ...info };
+      return this.snapshot(record);
     } catch (error) {
       info.state = 'failed';
       this.append(record, { type: 'error', text: (error as Error).message });
@@ -356,10 +360,22 @@ export class NativeSessionManager {
       throw new Error('Native session not found for this principal');
     return record;
   }
+  private snapshot(record: SessionRecord): NativeSessionInfo {
+    const unavailable = adapters[record.info.runner]?.adapter.resumeUnavailableReason?.(
+      record.info.version,
+    );
+    return {
+      ...record.info,
+      capabilities: {
+        ...record.info.capabilities,
+        ...(unavailable ? { resume: false, resumeUnavailableReason: unavailable } : {}),
+      },
+    };
+  }
   list(owner: string): NativeSessionInfo[] {
     return [...this.sessions.values()]
       .filter((record) => record.info.ownerPrincipalId === owner)
-      .map((record) => ({ ...record.info }));
+      .map((record) => this.snapshot(record));
   }
   read(owner: string, id: string, after = 0, limit = 200) {
     const record = this.owned(owner, id);
@@ -376,7 +392,7 @@ export class NativeSessionManager {
       bytes += size;
     }
     return {
-      session: { ...record.info },
+      session: this.snapshot(record),
       events,
       cursor: after + events.length,
       hasMore: after + events.length < record.events.length,
@@ -420,17 +436,15 @@ export class NativeSessionManager {
       text,
       commandId,
       generation: record.info.generation,
-      state: 'pending',
-      submitted: false,
+      // Reserve uncertainty and the visible prompt together before touching stdin.
+      state: 'unknown',
+      submitted: true,
       accepted: false,
     };
     record.commands.set(commandId, command);
-    this.persist(record);
     try {
-      // Persist uncertainty before touching stdin. A crash here must never trigger a resend.
-      command.state = 'unknown';
-      command.submitted = true;
-      this.persist(record);
+      // A crash after this durable reservation must never trigger a resend.
+      this.append(record, { type: 'command.submitted', commandId, text });
       await record.adapter.send(text, commandId);
       return {
         submitted: command.submitted,
