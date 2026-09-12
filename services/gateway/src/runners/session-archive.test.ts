@@ -14,9 +14,17 @@ import {
   updateRun,
 } from '../runs/store.js';
 
-import { archiveRunnerSessionsForSlotRelease } from './session-archive.js';
+import {
+  archiveRunnerSessionsForSlotRelease,
+  runnerSessionArchiveContextDir,
+} from './session-archive.js';
 
 const localVars = { host: 'localhost', machine: 'test', sshTarget: 'localhost' };
+
+test('archive context dirs never treat dot segments as parent paths', () => {
+  assert.match(runnerSessionArchiveContextDir('run-1', '..'), /run-1[/\\]context$/);
+  assert.match(runnerSessionArchiveContextDir('run-1', '.'), /run-1[/\\]context$/);
+});
 
 const CLAUDE_LINES = [
   JSON.stringify({
@@ -196,6 +204,36 @@ test('evicting a run deletes its session archive directory', async (t) => {
   assert.equal(await archiveRun(run.id), true);
   assert.equal(existsSync(dir), false);
   assert.equal(getRun(run.id), undefined);
+});
+
+test('deleting a run deletes its session archive directory', async (t) => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'fs-session-archive-delete-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const sessionPath = path.join(tmp, 'session.jsonl');
+  await writeFile(sessionPath, `${CLAUDE_LINES.join('\n')}\n`, 'utf8');
+
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `ARCHIVE-${Date.now()}-delete`,
+    runner: 'claude',
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: {
+      ...run.metrics,
+      runner: 'claude',
+      runnerSessionPath: sessionPath,
+    },
+  });
+  await archiveRunnerSessionsForSlotRelease({ vars: localVars, runId: run.id });
+  const dir = runSessionArchiveDir(run.id);
+  assert.equal(existsSync(dir), true);
+  assert.equal(await deleteRun(run.id), true);
+  assert.equal(existsSync(dir), false);
 });
 
 test('does not copy transcripts for runners that declare sessionArchive none', async (t) => {

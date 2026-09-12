@@ -183,9 +183,12 @@ test('two same-role reviewer rows stay distinct so each copies its own session',
 test('the request guard is keyed per context so one row cannot strand another', () => {
   // A single global counter meant clicking a second row invalidated the first
   // row's in-flight request, leaving it on "Loading…" with no way back.
-  const source = readFileSync(path.resolve(import.meta.dirname, 'run-detail.ts'), 'utf8');
+  const detail = readFileSync(path.resolve(import.meta.dirname, 'run-detail.ts'), 'utf8');
+  const family = readFileSync(path.resolve(import.meta.dirname, 'family-observability.ts'), 'utf8');
 
-  assert.match(source, /this\._sessionRequestSeq\[row\.contextId\]/);
-  assert.match(source, /requestSeq === this\._sessionRequestSeq\[row\.contextId\]/);
-  assert.doesNotMatch(source, /\+\+this\._sessionRequestSeq;/);
+  for (const source of [detail, family]) {
+    assert.match(source, /this\._sessionRequestSeq\[row\.contextId\]/);
+    assert.match(source, /requestSeq === this\._sessionRequestSeq\[row\.contextId\]/);
+    assert.doesNotMatch(source, /\+\+this\._sessionRequestSeq;/);
+  }
 });

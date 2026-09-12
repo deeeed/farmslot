@@ -171,7 +171,11 @@ export async function workerSessionHistoryGet(
   const contextId = params.contextId ?? ctx?.id;
   const slotId = params.slotId ?? run.slotId ?? undefined;
   const runnerSessionId = ctx?.runnerSessionId ?? run.metrics.runnerSessionId ?? null;
-  let runnerSessionPath = ctx?.runnerSessionPath ?? run.metrics.runnerSessionPath ?? null;
+  const explicitContext = Boolean(params.contextId || (params.role && params.role !== 'primary'));
+  let runnerSessionPath = ctx?.runnerSessionPath?.trim() || null;
+  if (!explicitContext) {
+    runnerSessionPath = runnerSessionPath ?? run.metrics.runnerSessionPath ?? null;
+  }
 
   const base = { ...params, slotId, runId: run.id, role, contextId };
   if (!runner) {
@@ -247,7 +251,7 @@ export async function workerSessionHistoryGet(
   let liveError: string | undefined;
   if (slotId) {
     try {
-      if (!runnerSessionPath) {
+      if (!runnerSessionPath && !explicitContext) {
         const vars = await loadSlotVars(slotId);
         const binding = await resolveRunnerSessionForRun(run, vars);
         runnerSessionPath = binding?.runnerSessionPath ?? null;

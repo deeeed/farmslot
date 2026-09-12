@@ -42,7 +42,8 @@ interface ArchiveTarget {
 
 function safeSegment(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return cleaned.slice(0, 80) || 'context';
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'context';
+  return cleaned.slice(0, 80);
 }
 
 export function runnerSessionArchiveContextDir(runId: string, contextId: string): string {
