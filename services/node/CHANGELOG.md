@@ -4,7 +4,7 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
-- Add opt-in native session execution through the shared durable host, gated by the configured profile owner.
+- Add opt-in native session execution through the shared durable host, gated by the configured profile owner, and declare support for duplicate-safe session creation.
 
 - Isolated Codex `CODEX_HOME` now copies the operator `model_provider` and its matching `[model_providers.<id>]` table from `~/.codex/config.toml`. A provider id with no table is left uncopied so the isolated config cannot dangle. Re-install refreshes or drops the copy and keeps unrelated profile provider tables.
 

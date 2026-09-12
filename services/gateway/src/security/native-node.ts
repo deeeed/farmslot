@@ -29,5 +29,11 @@ export function nativeNodeDeclaration(
       'INVALID_PARAMS',
       'Native node requires a distinct machine and configured owner',
     );
-  return { ownerPrincipalId: value.ownerPrincipalId };
+  const supportsEnsure = 'supportsEnsure' in value ? value.supportsEnsure : undefined;
+  if (supportsEnsure !== undefined && typeof supportsEnsure !== 'boolean')
+    throw new GatewayMethodError('INVALID_PARAMS', 'Native node supportsEnsure must be boolean');
+  return {
+    ownerPrincipalId: value.ownerPrincipalId,
+    ...(supportsEnsure !== undefined ? { supportsEnsure } : {}),
+  };
 }

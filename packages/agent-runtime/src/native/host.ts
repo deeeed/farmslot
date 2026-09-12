@@ -46,6 +46,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
           case 'create':
             value = await manager.create(p.owner, p.params);
             break;
+          case 'ensure':
+            value = await manager.ensure(p.owner, p.params);
+            break;
           case 'list':
             value = manager.list(p.owner);
             break;

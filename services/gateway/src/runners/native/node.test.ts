@@ -31,7 +31,10 @@ test('remote native routing validates reply shape and exact owner, node, and ses
       handleNodeResponse(frame.id, true, payload, undefined, undefined, ws);
     },
   } as WebSocket;
-  registerNode(machine, 1, ws, undefined, undefined, { ownerPrincipalId: owner });
+  registerNode(machine, 1, ws, undefined, undefined, {
+    ownerPrincipalId: owner,
+    supportsEnsure: true,
+  });
   const publicNode = getAllNodes().find((node) => node.machine === machine)!;
   assert.equal('nativeSessions' in publicNode, false);
   assert.equal(getNode(machine)?.nativeSessions?.ownerPrincipalId, owner);
@@ -45,6 +48,7 @@ test('remote native routing validates reply shape and exact owner, node, and ses
   try {
     for (const method of [
       Methods.NATIVE_SESSION_CREATE,
+      Methods.NATIVE_SESSION_ENSURE,
       Methods.NATIVE_SESSION_READ,
       Methods.NATIVE_SESSION_CLOSE,
     ]) {
@@ -65,7 +69,11 @@ test('remote native routing validates reply shape and exact owner, node, and ses
       payload = { session };
       assert.deepEqual(await route(method), payload);
     }
-    for (const method of [Methods.NATIVE_SESSION_READ, Methods.NATIVE_SESSION_CLOSE]) {
+    for (const method of [
+      Methods.NATIVE_SESSION_ENSURE,
+      Methods.NATIVE_SESSION_READ,
+      Methods.NATIVE_SESSION_CLOSE,
+    ]) {
       payload = { session: { ...session, id: 'another-session' } };
       await assert.rejects(route(method), /mismatched session/);
     }
@@ -93,6 +101,17 @@ test('remote native routing validates reply shape and exact owner, node, and ses
       before,
       'unauthorized or unavailable targets must never receive a request',
     );
+    for (const supportsEnsure of [undefined, false]) {
+      registerNode(machine, 1, ws, undefined, undefined, {
+        ownerPrincipalId: owner,
+        supportsEnsure,
+      });
+      const beforeLegacy = requests;
+      await assert.rejects(route(Methods.NATIVE_SESSION_ENSURE), /execution node upgrade required/);
+      assert.equal(requests, beforeLegacy, 'Old nodes must not receive a reserved create');
+      payload = { sessions: [session] };
+      assert.deepEqual(await route(Methods.NATIVE_SESSION_LIST), payload);
+    }
   } finally {
     unregisterByWs(ws);
   }

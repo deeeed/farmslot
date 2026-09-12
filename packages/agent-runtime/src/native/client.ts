@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   NativeSessionCreateParams,
+  NativeSessionEnsureParams,
   NativeSessionInfo,
   NativeSessionReadResult,
   NativeSessionResponse,
@@ -82,12 +83,22 @@ export class NativeSessionClient {
     );
   }
   private async call<T>(request: HostRequest): Promise<T> {
-    return requestHost<T>(await this.host(), request);
+    const host = await this.host();
+    if (request.method === 'ensure' && !host.supportsEnsure)
+      throw new Error(
+        'Native host upgrade required for idempotent creation; existing sessions remain available',
+      );
+    return requestHost<T>(host, request);
   }
   create(owner: string, params: NativeSessionCreateParams) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
     return this.call<NativeSessionInfo>({ method: 'create', owner, params });
+  }
+  ensure(owner: string, params: NativeSessionEnsureParams) {
+    if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
+      throw new Error('Native session targets another execution node');
+    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params });
   }
   list(owner: string) {
     return this.call<NativeSessionInfo[]>({ method: 'list', owner });

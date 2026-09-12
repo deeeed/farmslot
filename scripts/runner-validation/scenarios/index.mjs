@@ -19,6 +19,7 @@ import * as nativeNodeInventory from './native-node-inventory.mjs';
 import * as nativeSessionAuthorizationSmoke from './native-session-authorization-smoke.mjs';
 import * as nativeSessionCleanupIsolation from './native-session-cleanup-isolation.mjs';
 import * as nativeSessionDurability from './native-session-durability.mjs';
+import * as nativeSessionEnsure from './native-session-ensure.mjs';
 import * as nativeSessionErrorSmoke from './native-session-error-smoke.mjs';
 import * as nativeSessionSmoke from './native-session-smoke.mjs';
 import * as nativeSessionStartupClose from './native-session-startup-close.mjs';
@@ -70,6 +71,7 @@ export const SCENARIOS = {
   'native-workspace-smoke': nativeWorkspaceSmoke,
   'native-session-durability': nativeSessionDurability,
   'native-session-error-smoke': nativeSessionErrorSmoke,
+  'native-session-ensure': nativeSessionEnsure,
   'native-session-cleanup-isolation': nativeSessionCleanupIsolation,
   'native-session-smoke': nativeSessionSmoke,
   'native-session-authorization-smoke': nativeSessionAuthorizationSmoke,

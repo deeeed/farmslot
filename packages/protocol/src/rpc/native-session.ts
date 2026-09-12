@@ -25,9 +25,20 @@ export interface NativeSessionTargetParams {
   executionNodeId?: string;
 }
 
+/** Idempotent initial creation. Older runtimes reject this operation without launching. */
+export interface NativeSessionEnsureParams extends Omit<
+  NativeSessionCreateParams,
+  'resumeSessionId'
+> {
+  /** Lowercase UUID prevents journal aliases on case-insensitive filesystems. */
+  sessionId: string;
+}
+
 /** Opt-in declaration made by an authenticated node, not a client-supplied account claim. */
 export interface NativeExecutionNodeDeclaration {
   ownerPrincipalId: string;
+  /** The node routes reserved creation; its retained host is checked separately at invocation. */
+  supportsEnsure?: boolean;
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];

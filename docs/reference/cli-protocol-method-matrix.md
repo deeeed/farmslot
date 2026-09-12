@@ -248,20 +248,21 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## native.\*
 
-| Method                             | Surface  | CLI command | TUI | Note                                                                                   |
-| ---------------------------------- | -------- | ----------- | --- | -------------------------------------------------------------------------------------- |
-| `native.session.create`            | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.interrupt`         | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.close`             | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile. |
-| `native.session.catalog`           | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                  |
-| `native.session.workspace.list`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                  |
-| `native.session.workspace.read`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                  |
-| `native.session.workspace.changes` | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                  |
-| `native.session.workspace.diff`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                  |
+| Method                             | Surface  | CLI command | TUI | Note                                                                                                |
+| ---------------------------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------------------------- |
+| `native.session.create`            | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.ensure`            | rpc-only |             |     | Idempotent native session creation under a caller-reserved UUID; native profile ownership required. |
+| `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.interrupt`         | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.close`             | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
+| `native.session.catalog`           | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
+| `native.session.workspace.list`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
+| `native.session.workspace.read`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
+| `native.session.workspace.changes` | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
+| `native.session.workspace.diff`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
 
 ## node.\*
 

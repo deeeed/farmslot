@@ -293,6 +293,48 @@ Also run `native-session-smoke`, `native-session-startup-close`,
 `native-session-authorization-smoke`, and the existing tmux acceptance and
 retained-handoff scenarios. Unit fixtures cannot substitute for these live checks.
 
+### Reserved native session creation
+
+`native-session-ensure` checks duplicate-safe initial creation without inference.
+Set the isolated local `FARMSLOT_GATEWAY`, owner token, a second authenticated
+admin in `FARMSLOT_NATIVE_OTHER_TOKEN`, and a private
+`FARMSLOT_NATIVE_ENSURE_STATE` file beneath `temp/native-validation/`.
+Use `FARMSLOT_NATIVE_ENSURE_STAGE` to select each step:
+
+1. Before upgrading the execution host, run `old-host`. With an older colocated
+   node, set `FARMSLOT_NATIVE_EXECUTION_NODE` and run `old-node`. Both require a
+   structured upgrade-required refusal and unchanged ordinary session inventory.
+   The gateway checks the node's declared `supportsEnsure` capability; the node
+   separately checks its retained host's capability.
+2. On a current host, run `checkpoint`. Four concurrent gateway requests must
+   return one reserved session, process and generation. Invalid IDs, changed
+   configuration, resume mixing and another admin must be refused.
+3. Restart only the isolated gateway and run `replay`. The scenario requires a
+   different live gateway PID and the original native process and generation.
+4. Run `close`, restart the exclusively test-owned native host, and call
+   `native.session.list` to load its journals. Run `reload` with
+   `FARMSLOT_NATIVE_ENSURE_HOST_STATE` pointing to that host's private state
+   directory. The closed reservation must remain closed without relaunch.
+5. To test failed reservations, repeat `checkpoint`, stop its exclusively owned
+   host while the session is idle, load its journals through `native.session.list`,
+   and run `failed` with the same host-state variable. The reservation must remain
+   failed with confirmed process cleanup. No prompt may have been accepted.
+
+Run both Codex and Claude with separate state files. Service restarts are explicit
+operator actions; the scenario never kills a service. Final stages remove only
+their own temporary Git fixture. Initialization proves reservation behavior,
+not inference access or subscription entitlement.
+
+The `persistence` stage uses the same private host-state variable to obstruct only
+its reserved journal path, then repairs that path. Both creation and retry must
+return the initial filesystem error, with no native process or conversation.
+It removes the obstruction even when the assertion fails. Run this on an
+exclusively test-owned local host.
+
+Run `resume-diagnostic` to check that empty or null resume parameters are rejected
+as mixing initial creation with resume, without creating a session. `checkpoint`
+also requires configuration-mismatch errors to identify the changed field.
+
 ### Native Copilot workspace stages
 
 `native-copilot-workspace` drives the actual Agent workspace controls through CDP,

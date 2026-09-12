@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add idempotent native session creation with caller-reserved IDs, preserving live and terminal reservations across retries.
+
 - Share native session and bounded workspace operations with execution nodes, with node identity pinned to each host and journal.
 - Preserve native failed-turn diagnostics so clients can show login and provider errors.
 

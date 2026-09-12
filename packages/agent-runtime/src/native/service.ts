@@ -55,7 +55,8 @@ export async function routeNativeSession(
           return { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
         return { path, content: await readWorkspaceText(session.cwd, path) };
       }
-      case Methods.NATIVE_SESSION_CREATE: {
+      case Methods.NATIVE_SESSION_CREATE:
+      case Methods.NATIVE_SESSION_ENSURE: {
         const params: NativeSessionCreateParams = {
           runner: string(p, 'runner'),
           cwd: string(p, 'cwd'),
@@ -65,6 +66,19 @@ export async function routeNativeSession(
           if (p.mode !== 'default' && p.mode !== 'plan')
             throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native interaction mode');
           params.mode = p.mode;
+        }
+        if (method === Methods.NATIVE_SESSION_ENSURE) {
+          if (p.resumeSessionId !== undefined)
+            throw new NativeSessionMethodError(
+              'INVALID_PARAMS',
+              'Reserved sessionId is not for resume',
+            );
+          return {
+            session: await client.ensure(principal, {
+              ...params,
+              sessionId: string(p, 'sessionId'),
+            }),
+          };
         }
         if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
         return { session: await client.create(principal, params) };

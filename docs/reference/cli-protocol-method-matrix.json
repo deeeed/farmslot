@@ -1353,6 +1353,10 @@
     "native.session.workspace.diff": {
       "surface": "rpc-only",
       "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.ensure": {
+      "surface": "rpc-only",
+      "note": "Idempotent native session creation under a caller-reserved UUID; native profile ownership required."
     }
   }
 }
