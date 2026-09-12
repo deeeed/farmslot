@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Make runner-session reopen and tmux-attach copy controls more visible on run detail, and show them on the family selected-run so any family member can copy the same commands.
+
+- On the experimental History tab, show a recycle snapshot of the runner transcript when the live session file is gone. This is a rare review path, not a new panel.
+
 - On family run history, reopen the publish-gate workspace for a selected run that had one, including done and cancelled runs. Maximize it for review. The link keeps `gate=1` or `gate=max` so a screenshot can return to the same panel.
 
 - On a timed-out interactive handoff, offer Extend monitoring for another timeout period without SIGNAL.json. A blocked run with a live monitor keeps the existing worker checklist panel.

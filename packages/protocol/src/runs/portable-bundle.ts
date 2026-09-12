@@ -5,9 +5,25 @@ import type { Run } from '../contracts/runs.js';
 
 const TERMINAL_IMPORT_STATUSES = new Set(['done', 'failed', 'cancelled', 'blocked']);
 
+/** Drop recycle-snapshot pointers so farmrun never claims a local transcript it does not carry. */
+export function stripRunnerSessionArchives<T extends Pick<Run, 'metrics' | 'agentContexts'>>(
+  run: T,
+): T {
+  const next = { ...run, metrics: { ...run.metrics } };
+  delete next.metrics.runnerSessionArchive;
+  if (next.agentContexts) {
+    next.agentContexts = next.agentContexts.map((ctx) => {
+      const copy = { ...ctx };
+      delete copy.runnerSessionArchive;
+      return copy;
+    });
+  }
+  return next;
+}
+
 /** Strip volatile monitor/engine fields for reference-profile export. */
 export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile): Run {
-  const cloned = structuredClone(run);
+  const cloned = stripRunnerSessionArchives(structuredClone(run));
   if (profile === 'reference' || profile === 'family') {
     delete cloned.monitorState;
     if (cloned.engineState) {

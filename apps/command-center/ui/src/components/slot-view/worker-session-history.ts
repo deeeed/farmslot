@@ -15,12 +15,19 @@ import '../chat/chat-message.js';
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
+import {
+  workerHistoryShowsMessages,
+  workerHistorySourceLabel,
+} from './worker-session-history-render.js';
+
 @customElement('worker-session-history')
 export class WorkerSessionHistoryElement extends LitElement {
   @property() slotId = '';
   @property() runId = '';
   @property() role = '';
   @property() contextId = '';
+  /** Dev-harness fixture. Live slot view never sets this. */
+  @property({ attribute: false }) snapshotOverride: WorkerSessionHistorySnapshot | null = null;
 
   @state() private snapshot: WorkerSessionHistorySnapshot | null = null;
   @state() private loading = false;
@@ -45,6 +52,14 @@ export class WorkerSessionHistoryElement extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
+    this.setAttribute('data-testid', 'worker-session-history');
+    this.setAttribute('data-source', this.snapshot?.source ?? 'unavailable');
+    if (changed.has('snapshotOverride') && this.snapshotOverride) {
+      this.snapshot = this.snapshotOverride;
+      this.loading = false;
+      this.error = '';
+      return;
+    }
     if (
       changed.has('slotId') ||
       changed.has('runId') ||
@@ -89,6 +104,12 @@ export class WorkerSessionHistoryElement extends LitElement {
   }
 
   private async resubscribe(): Promise<void> {
+    if (this.snapshotOverride) {
+      this.snapshot = this.snapshotOverride;
+      this.loading = false;
+      this.error = '';
+      return;
+    }
     if (!this.isConnected || (!this.slotId && !this.runId)) return;
     const nextKey = this.makeKey();
     if (nextKey === this.subscriptionKey) return;
@@ -197,7 +218,7 @@ export class WorkerSessionHistoryElement extends LitElement {
     if (this.loading) return html`<div class="wsh-empty">Loading transcript...</div>`;
     if (this.error) return html`<div class="wsh-empty error">${this.error}</div>`;
     if (!this.snapshot) return html`<div class="wsh-empty">No transcript snapshot.</div>`;
-    if (this.snapshot.source !== 'transcript') {
+    if (!workerHistoryShowsMessages(this.snapshot.source)) {
       return html`
         <div class="wsh-empty">
           ${this.snapshot.degradedReason ?? 'Worker transcript is unavailable for this runner.'}
@@ -282,7 +303,7 @@ export class WorkerSessionHistoryElement extends LitElement {
         ${target.length > 0
           ? target.map((item) => html`<span class="wsh-meta">${item}</span>`)
           : html`<span class="wsh-meta">Worker session history</span>`}
-        <span class="wsh-source">${source}</span>
+        <span class="wsh-source">${workerHistorySourceLabel(source)}</span>
         ${this.snapshot?.truncated ? html`<span>truncated</span>` : nothing}
         <span class="wsh-spacer"></span>
         ${this.snapshot?.generatedAt

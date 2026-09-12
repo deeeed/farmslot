@@ -119,6 +119,13 @@ export type SessionReloadCapability = 'with-prompt' | 'none';
  */
 export type SessionPortability = 'machine' | 'workspace';
 
+/**
+ * Whether Farmslot copies the runner transcript at recycle for later History
+ * projection. `jsonl` is the only snapshot unit today. `none` is fail-closed:
+ * Cursor and runners without a projector stay here even if they persist other files.
+ */
+export type SessionArchiveCapability = 'jsonl' | 'none';
+
 export interface RunnerGracefulExitCapability {
   /** Literal text delivered through tmux before any resource shutdown. */
   command: string;
@@ -144,6 +151,12 @@ export interface RunnerDefinition {
   contextResetCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
   persistsSessionFiles: boolean;
+  /**
+   * Opaque recycle snapshot of the runner transcript. Declared per runner so a
+   * new entry cannot inherit Claude's copy-on-release behavior. Independent of
+   * `persistsSessionFiles`: a runner can persist files we still refuse to archive.
+   */
+  sessionArchive: SessionArchiveCapability;
   /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
   sessionReload: SessionReloadCapability;
   /**
@@ -253,6 +266,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: '/continue',
     contextResetCommand: '/clear',
     persistsSessionFiles: true,
+    sessionArchive: 'jsonl',
     sessionReload: 'with-prompt',
     // Sessions live under a cwd-slug directory, so `--resume <id>` from another
     // slot's worktree does not see this conversation.
@@ -294,6 +308,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: 'Continue the current task from where you left off.',
     contextResetCommand: null,
     persistsSessionFiles: true,
+    sessionArchive: 'jsonl',
     sessionReload: 'with-prompt',
     // `codex resume` indexes sessions by cwd; a rollout recorded in another
     // slot's worktree is not offered there.
@@ -342,6 +357,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
+    sessionArchive: 'none',
     sessionReload: 'none',
     // No persisted session reload at all; declared closed rather than left to a
     // default nobody checked.
@@ -381,6 +397,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: true,
+    sessionArchive: 'jsonl',
     sessionReload: 'with-prompt',
     // Reload resumes by id from the slot's repo directory; nothing declares that
     // id resolves from a different one.
@@ -414,6 +431,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
+    sessionArchive: 'none',
     sessionReload: 'none',
     // No persisted session reload at all.
     sessionPortability: 'workspace',
@@ -441,6 +459,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
+    sessionArchive: 'none',
     sessionReload: 'none',
     // No runner process, so nothing to carry.
     sessionPortability: 'workspace',
@@ -468,6 +487,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: null,
     contextResetCommand: null,
     persistsSessionFiles: false,
+    sessionArchive: 'none',
     sessionReload: 'none',
     // The scripted harness persists no session files.
     sessionPortability: 'workspace',
@@ -790,6 +810,11 @@ export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
   // runnerSessionPath to the run. Known built-ins carry their registry flag.
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).persistsSessionFiles;
+}
+
+export function runnerSessionArchiveKind(runnerId?: string | null): SessionArchiveCapability {
+  if (!isKnownRunner(runnerId)) return 'none';
+  return getRunnerDefinition(runnerId).sessionArchive;
 }
 
 export function runnerRetainedSessionHandoff(runnerId?: string | null): RetainedSessionHandoff {

@@ -28,6 +28,23 @@ export interface AgentContextTarget {
   target: string;
 }
 
+/** Recycle snapshot of a runner-owned transcript. Bytes live next to `.runs/`, not in this object. */
+export type RunnerSessionArchiveKind = 'jsonl';
+export type RunnerSessionArchiveStatus = 'captured' | 'missing' | 'unsupported';
+
+export interface RunnerSessionArchiveRef {
+  status: RunnerSessionArchiveStatus;
+  kind?: RunnerSessionArchiveKind;
+  runner?: string;
+  originalPath?: string;
+  /** Path under the gateway `.runs/` directory, e.g. `session-archives/<runId>/<contextId>`. */
+  relativeDir?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  capturedAt?: string;
+  reason?: string;
+}
+
 export interface AgentContext {
   id: string;
   role: AgentRole;
@@ -54,6 +71,8 @@ export interface AgentContext {
    * evidence an operator reopens the session from.
    */
   runnerSessionCapturedAt?: string;
+  /** Opaque recycle snapshot of this context's runner transcript, when the runner supports it. */
+  runnerSessionArchive?: RunnerSessionArchiveRef;
   nudgeCount?: number;
   /** Runner context-window usage percentage (0-100). See {@link AgentContextSummary.ctxPct}. */
   ctxPct?: number | null;

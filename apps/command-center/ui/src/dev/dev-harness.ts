@@ -23,6 +23,7 @@ import type {
   Run,
   SlotHealth,
   SlotStatus,
+  WorkerSessionHistorySnapshot,
 } from '@farmslot/protocol';
 import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
 import { INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1 } from '@farmslot/protocol';
@@ -51,6 +52,7 @@ import '../components/workspace/slot-workspace.js';
 import '../components/slot-view/slot-view.js';
 import '../components/slot-view/slot-history-modal.js';
 import '../components/slot-view/slot-load-run-modal.js';
+import '../components/slot-view/worker-session-history.js';
 import '../components/stream-feed/stream-feed.js';
 import '../components/runs/run-list.js';
 import '../components/runs/run-detail.js';
@@ -158,6 +160,7 @@ type DevRoute =
   | 'workspace'
   | 'slot-view'
   | 'slot-history'
+  | 'worker-session-history-archive'
   | 'slot-load-run'
   | 'recipe-provenance-matrix'
   | 'dispatch-wizard'
@@ -253,6 +256,11 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'git-changes', label: 'Git Changes', group: 'components' },
   { route: 'metro-log', label: 'Metro Log', group: 'components' },
   { route: 'slot-history', label: 'Slot History', group: 'components' },
+  {
+    route: 'worker-session-history-archive',
+    label: 'Worker History Archive',
+    group: 'components',
+  },
   { route: 'slot-load-run', label: 'Slot Load Run', group: 'components' },
   { route: 'stream-feed', label: 'Stream Feed', group: 'components' },
   { route: 'run-tag-editor', label: 'Run Tag Editor', group: 'components' },
@@ -434,6 +442,8 @@ export class DevHarness extends LitElement {
         return this.renderSlotView();
       case 'slot-history':
         return this.renderSlotHistory();
+      case 'worker-session-history-archive':
+        return this.renderWorkerSessionHistoryArchive();
       case 'slot-load-run':
         return this.renderSlotLoadRun();
       case 'recipe-provenance-matrix':
@@ -1020,6 +1030,28 @@ export class DevHarness extends LitElement {
         },
       })),
       decisions: summary.decisions ?? [],
+      agentContexts:
+        summary.runId === 'run-root'
+          ? [
+              {
+                id: 'fix-bug',
+                role: 'fix-bug',
+                label: 'Worker',
+                status: 'idle',
+                slotId: summary.slotId ?? 'runner-local-mobile-1',
+                runId: summary.runId,
+                runner: summary.metrics?.runner ?? 'claude',
+                model: summary.metrics?.model ?? 'sonnet',
+                runnerSessionId: 'claude-session-family-demo',
+                target: {
+                  session: summary.slotId ?? 'runner-local-mobile-1',
+                  window: 'dev',
+                  pane: null,
+                  target: `${summary.slotId ?? 'runner-local-mobile-1'}:dev`,
+                },
+              },
+            ]
+          : undefined,
       metrics: summary.metrics ?? { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
       createdAt: summary.createdAt,
       updatedAt: summary.updatedAt,
@@ -1676,6 +1708,44 @@ All checks passed.`;
           .fileContents=${fileContents}
           .diffContents=${diffContents}
         ></slot-view>
+      </div>
+    `;
+  }
+
+  private renderWorkerSessionHistoryArchive() {
+    const snapshot: WorkerSessionHistorySnapshot = {
+      slotId: null,
+      runId: 'run-archive-demo',
+      role: 'dev',
+      runner: 'claude',
+      model: 'opus',
+      runnerSessionId: 'sess-archive',
+      runnerSessionPath: '/tmp/gone.jsonl',
+      source: 'transcript-archive',
+      messages: [
+        {
+          id: 'claude:u1',
+          role: 'user',
+          text: 'What did the worker already try?',
+          at: '2026-09-12T11:00:00Z',
+        },
+        {
+          id: 'claude:a1',
+          role: 'assistant',
+          text: 'Inspected the file, then stopped at the recycle snapshot.',
+          at: '2026-09-12T11:00:02Z',
+        },
+      ],
+      generatedAt: '2026-09-12T12:00:00Z',
+    };
+    return html`
+      <p class="section-label">
+        Experimental History tab after recycle — live transcript gone, archive remains
+      </p>
+      <div
+        style="height: 420px; border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
+      >
+        <worker-session-history .snapshotOverride=${snapshot}></worker-session-history>
       </div>
     `;
   }

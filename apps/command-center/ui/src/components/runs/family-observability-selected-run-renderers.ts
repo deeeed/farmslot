@@ -27,6 +27,12 @@ import {
   renderFamilySummarySteps,
 } from './family-observability-run-detail-renderers.js';
 import { canReplayRunSteps } from './run-detail-model.js';
+import {
+  renderRunAgentSessions,
+  type RunSessionCopyKind,
+  type RunSessionRow,
+  type RunSessionRowState,
+} from './run-detail-session-renderers.js';
 
 interface FamilySelectedRunDetailRenderOptions {
   run: FamilyObservabilityRunSummary;
@@ -61,6 +67,8 @@ interface FamilySelectedRunDetailRenderOptions {
   gateMaximized: boolean;
   onTogglePublishGate: () => void;
   onTogglePublishGateMaximize: () => void;
+  sessionStates: Record<string, RunSessionRowState | undefined>;
+  onCopySession: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
 }
 
 export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRenderOptions) {
@@ -73,10 +81,24 @@ export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRe
     })}
     ${renderFamilyPublishGateReopen(options)}
     ${renderFamilyRunSummaryGrid({ run: options.run, runs: options.runs, prs: options.prs })}
-    ${renderFamilyRunPipelineDetail(options)} ${options.renderLedgerDiffDetail(options.run)}
-    ${renderFamilyRecipeQualityDetail(options.run)} ${renderFamilyRecipeProvenance(options.run)}
-    ${renderFamilyLearnings(options.run)} ${renderFamilyMissingData(options.run)}
+    ${renderFamilyAgentSessions(options)} ${renderFamilyRunPipelineDetail(options)}
+    ${options.renderLedgerDiffDetail(options.run)} ${renderFamilyRecipeQualityDetail(options.run)}
+    ${renderFamilyRecipeProvenance(options.run)} ${renderFamilyLearnings(options.run)}
+    ${renderFamilyMissingData(options.run)}
   `;
+}
+
+function renderFamilyAgentSessions(options: FamilySelectedRunDetailRenderOptions) {
+  if (options.fullRun) {
+    return renderRunAgentSessions(options.fullRun, {
+      states: options.sessionStates,
+      onCopy: options.onCopySession,
+    });
+  }
+  if (options.fullRunLoading) {
+    return html`<div class="detail-section muted">Loading runner sessions…</div>`;
+  }
+  return nothing;
 }
 
 function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOptions) {

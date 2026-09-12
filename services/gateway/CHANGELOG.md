@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Copy Claude, Codex, and Grok session transcripts once at slot release into `.runs/session-archives/`. History.get uses that copy when the live file is gone. Other runners do not archive.
+
 - Let a timed-out interactive handoff keep watching for another timeout period without SIGNAL.json. `continue` resets the persisted monitor window so a restart does not immediately re-hold. Worker-done handoffs still require a terminal signal.
 
 - Observe GitHub review requirements and account review history, and prevent queued reviews when requirements are satisfied or the account already reviewed the current commit.

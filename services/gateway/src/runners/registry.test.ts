@@ -79,6 +79,7 @@ import {
   runnerProcessPattern,
   runnerProcessPatternSource,
   runnerResolvesPreTaskLaunchBlockers,
+  runnerSessionArchiveKind,
   runnerSessionPortability,
   runnerSignalShowsCompletion,
   runnerSupportsEffort,
@@ -1357,6 +1358,23 @@ describe('custom runner fallback behavior', () => {
     assert.doesNotMatch('/usr/bin/node', new RegExp(pattern));
     assert.deepEqual(runnerIdsRequiringExplicitTerminationIdentity(), ['cursor']);
     assert.equal(runnerIdsSafeForUnattributedTermination().includes('cursor'), false);
+  });
+});
+
+describe('sessionArchive capability', () => {
+  it('every registered runner declares it, so nothing inherits an unchecked default', () => {
+    for (const [id, definition] of Object.entries(KNOWN_RUNNERS)) {
+      assert.ok(
+        definition.sessionArchive === 'jsonl' || definition.sessionArchive === 'none',
+        `runner '${id}' declares no session archive unit`,
+      );
+    }
+    assert.equal(runnerSessionArchiveKind('claude'), 'jsonl');
+    assert.equal(runnerSessionArchiveKind('codex'), 'jsonl');
+    assert.equal(runnerSessionArchiveKind('grok'), 'jsonl');
+    assert.equal(runnerSessionArchiveKind('cursor'), 'none');
+    assert.equal(runnerSessionArchiveKind('scripted'), 'none');
+    assert.equal(runnerSessionArchiveKind('future-runner'), 'none');
   });
 });
 

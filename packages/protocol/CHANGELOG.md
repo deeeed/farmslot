@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Snapshot a runner transcript at recycle as an opaque archive pointer, and let History name that copy `transcript-archive`. Cursor and other non-jsonl runners stay unsupported.
+
 - Allow a timed-out interactive handoff to extend monitoring by the configured timeout without a SIGNAL.json. `continue` is the action id; already-pending timeout notes still qualify.
 
 - Expose account-scoped GitHub review observations and a shared guard against unnecessary repeat reviews.
