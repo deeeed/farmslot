@@ -327,6 +327,19 @@ export const claudeNativeAdapter: NativeAdapter = {
       }
 
       if (message.type === 'result') {
+        if (message.is_error === true) {
+          const errors = Array.isArray(message.errors)
+            ? message.errors.filter((error): error is string => typeof error === 'string')
+            : [];
+          publish({
+            type: 'error',
+            text:
+              (typeof message.result === 'string' && message.result) ||
+              errors.join('\n') ||
+              'Native runner reported a failed turn',
+            data: { subtype: message.subtype },
+          });
+        }
         finishTurn({ subtype: message.subtype, isError: message.is_error });
       }
     };

@@ -34,6 +34,7 @@ import {
   fsWriteChunk,
   fsWriteFiles,
 } from './commands/fs.js';
+import { NativeNodeSessions } from './commands/native-session.js';
 import {
   getResourceWatchRuntimeStats,
   type ResourceStatusChange,
@@ -61,6 +62,7 @@ import { isDeterministicAuthRejection, resolveGatewayCredential } from './gatewa
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
 const MAX_BACKOFF = 30_000;
+const nativeSessions = new NativeNodeSessions(MACHINE_NAME);
 
 let ws: WebSocket | null = null;
 let backoff = 500;
@@ -166,6 +168,7 @@ async function authenticateThenRegister(): Promise<void> {
         pid: process.pid,
         protocolVersion: PROTOCOL_VERSION,
         capabilities: await collectCaptureCapabilities(),
+        nativeSessions: nativeSessions.declaration,
       },
     };
     ws?.send(JSON.stringify(connectFrame));
@@ -325,6 +328,10 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
 
   try {
     switch (frame.method) {
+      case 'native.session': {
+        sendResponse(frame.id, true, await nativeSessions.route(params));
+        break;
+      }
       case 'exec': {
         const hasCmd = typeof params.cmd === 'string';
         const hasArgv = Array.isArray(params.argv);

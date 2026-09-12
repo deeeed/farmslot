@@ -499,6 +499,7 @@ import {
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
+import { rememberNativeExecutionNode } from '../runners/native/execution-nodes.js';
 import { unsubscribePty } from '../runtime/pty-stream.js';
 import { resubscribeAgentScreenSessions } from '../runtime/screen-session.js';
 import { unsubscribe as unsubscribeTerminalPoll } from '../runtime/tmux-stream.js';
@@ -508,6 +509,7 @@ import {
   requireNodeSession,
 } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
+import { nativeNodeDeclaration } from '../security/native-node.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import type { ClientState } from './client-state.js';
@@ -1022,7 +1024,20 @@ async function routeAuthorizedMethod(
         protocolVersion?: string;
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
       };
-      registerNode(machine, pid, state.ws, protocolVersion, PROTOCOL_VERSION);
+      const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
+      if (
+        (p as Record<string, unknown>).nativeSessions !== undefined &&
+        state.authentication?.kind !== 'credential'
+      )
+        console.warn('[native node] declaration ignored: issued node credential required');
+      const nativeSessions = nativeNodeDeclaration(
+        (p as Record<string, unknown>).nativeSessions,
+        machine,
+        resolved.ok ? resolved.principal : undefined,
+        state.authentication?.kind === 'credential',
+      );
+      if (nativeSessions) rememberNativeExecutionNode(machine, nativeSessions);
+      registerNode(machine, pid, state.ws, protocolVersion, PROTOCOL_VERSION, nativeSessions);
       markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;
       if (protocolVersion && !versionMatch) {

@@ -106,7 +106,10 @@ export class NativeSessionManager {
     { info?: string; context?: string; pending?: string; commands: Map<string, string> }
   >();
 
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    private readonly executionNodeId = 'local',
+  ) {
     privateDirectory(root);
     for (const name of readdirSync(root).filter((name) => name.endsWith('.journal'))) {
       const path = join(root, name);
@@ -126,6 +129,8 @@ export class NativeSessionManager {
         if (entry.event) events.push(entry.event);
       }
       if (!info || !context) throw new Error('Native journal has no durable session identity');
+      if (info.executionNodeId !== executionNodeId)
+        throw new Error('Native journal belongs to another execution node');
       const record: SessionRecord = {
         info,
         context,
@@ -192,6 +197,8 @@ export class NativeSessionManager {
     ownerPrincipalId: string,
     params: NativeSessionCreateParams,
   ): Promise<NativeSessionInfo> {
+    if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
+      throw new Error('Native session targets another execution node');
     const transport = adapters[params.runner];
     if (!transport) throw new Error(`Runner has no native transport: ${params.runner}`);
     if (!isAbsolute(params.cwd) || !(await stat(params.cwd)).isDirectory())
@@ -242,8 +249,11 @@ export class NativeSessionManager {
       runner: params.runner,
       nativeSessionId: params.resumeSessionId ?? '',
       ownerPrincipalId,
-      executionNodeId: 'local',
-      accountContextId: `native-local:${ownerPrincipalId}`,
+      executionNodeId: this.executionNodeId,
+      accountContextId:
+        this.executionNodeId === 'local'
+          ? `native-local:${ownerPrincipalId}`
+          : `native-node:${JSON.stringify([this.executionNodeId, ownerPrincipalId])}`,
       cwd: params.cwd,
       ...resolved,
       model: params.model ?? previous?.info.model,

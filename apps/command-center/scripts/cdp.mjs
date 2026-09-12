@@ -327,7 +327,10 @@ async function inputInTab(hash, selector, value, select) {
   try {
     await call('Page.bringToFront');
     const target = await evaluate(`
-      control.scrollIntoView({block:'center'}); control.focus();
+      control.scrollIntoView({block:'center'});
+      // A new select action must not append to the previous keyboard-search prefix.
+      if (${select}) control.blur();
+      control.focus();
       if (${select}) {
         if (!(control instanceof HTMLSelectElement) || control.multiple) throw new Error('Expected a single native select');
         const index=Array.from(control.options).findIndex(option=>option.value===${JSON.stringify(value)} && !option.disabled);

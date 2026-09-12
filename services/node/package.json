@@ -8,10 +8,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src && node --test ../../scripts/deploy-node.test.mjs",
     "quality": "yarn typecheck && yarn test"
   },
   "dependencies": {
+    "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "ws": "^8.18.0"

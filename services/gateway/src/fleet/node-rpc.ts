@@ -15,6 +15,7 @@ const pending = new Map<
     resolve: (v: unknown) => void;
     reject: (e: Error) => void;
     timer?: ReturnType<typeof setTimeout>;
+    responseSocket?: WebSocket;
   }
 >();
 
@@ -31,9 +32,12 @@ export function handleNodeResponse(
   payload: unknown,
   errorMsg?: string,
   errorCode?: string,
+  source?: WebSocket,
 ): void {
   const entry = pending.get(id);
   if (!entry) return;
+  // Native mutations cannot accept replies from another node or a replacement connection.
+  if (entry.responseSocket && entry.responseSocket !== source) return;
   pending.delete(id);
   outputListeners.delete(id);
   if (entry.timer) clearTimeout(entry.timer);
@@ -84,7 +88,7 @@ export function sendNodeRequest(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onRequestId?: (id: string) => void },
+  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (node.ws.readyState !== WebSocket.OPEN) {
@@ -96,7 +100,12 @@ export function sendNodeRequest(
       pending.delete(id);
       reject(new NodeRpcTimeoutError(node.machine, TIMEOUT));
     }, TIMEOUT);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, {
+      resolve,
+      reject,
+      timer,
+      responseSocket: opts?.requireSameConnection ? node.ws : undefined,
+    });
     opts?.onRequestId?.(id);
     node.ws.send(JSON.stringify({ type: 'req', id, method, params }));
   });

@@ -1,20 +1,11 @@
-import {
-  Methods,
-  type NativeSessionCreateParams,
-  type NativeSessionResponse,
-} from '@farmslot/protocol';
+import { NativeSessionMethodError } from '@farmslot/agent-runtime/native/service';
+import { Methods } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { readWorkspaceText } from '../core/workspace-files.js';
-import { nativeSessionManager } from '../runners/native/manager.js';
+import { listNativeExecutions, routeNativeExecution } from '../runners/native/node.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
-import {
-  nativeCatalog,
-  nativeWorkspaceChanges,
-  nativeWorkspaceDiff,
-  nativeWorkspaceList,
-} from './native-workspace.js';
+import { nativeCatalog } from './native-workspace.js';
 
 function owner(): string {
   const originator = currentSessionOriginator();
@@ -27,124 +18,24 @@ function owner(): string {
   }
   return originator.principalId;
 }
-function string(params: Record<string, unknown>, key: string): string {
-  const value = params[key];
-  if (typeof value !== 'string' || !value.trim())
-    throw new GatewayMethodError('INVALID_PARAMS', `${key} must be a nonempty string`);
-  return value;
-}
 
 export async function nativeSessionRoute(method: string, value: unknown): Promise<unknown> {
   const principal = owner();
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new GatewayMethodError('INVALID_PARAMS', 'Expected native session parameters');
-  const p = value as Record<string, unknown>;
+  const params = value as Record<string, unknown>;
   try {
-    switch (method) {
-      case Methods.NATIVE_SESSION_CATALOG:
-        return await nativeCatalog();
-      case Methods.NATIVE_SESSION_WORKSPACE_LIST:
-      case Methods.NATIVE_SESSION_WORKSPACE_READ:
-      case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
-      case Methods.NATIVE_SESSION_WORKSPACE_DIFF: {
-        const { session } = await nativeSessionManager.read(
-          principal,
-          string(p, 'sessionId'),
-          undefined,
-          1,
-        );
-        if (method === Methods.NATIVE_SESSION_WORKSPACE_CHANGES)
-          return await nativeWorkspaceChanges(session.cwd);
-        const path = string(p, 'path');
-        if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
-          return await nativeWorkspaceList(session.cwd, path);
-        if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
-          return { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
-        return { path, content: await readWorkspaceText(session.cwd, path) };
-      }
-      case Methods.NATIVE_SESSION_CREATE: {
-        const params: NativeSessionCreateParams = {
-          runner: string(p, 'runner'),
-          cwd: string(p, 'cwd'),
-        };
-        if (p.model !== undefined) params.model = string(p, 'model');
-        if (p.mode !== undefined) {
-          if (p.mode !== 'default' && p.mode !== 'plan')
-            throw new GatewayMethodError('INVALID_PARAMS', 'Unknown native interaction mode');
-          params.mode = p.mode;
-        }
-        if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
-        return { session: await nativeSessionManager.create(principal, params) };
-      }
-      case Methods.NATIVE_SESSION_LIST:
-        return { sessions: await nativeSessionManager.list(principal) };
-      case Methods.NATIVE_SESSION_READ:
-        if (p.limit !== undefined && typeof p.limit !== 'number')
-          throw new GatewayMethodError('INVALID_PARAMS', 'limit must be an integer');
-        if (p.after !== undefined && typeof p.after !== 'number')
-          throw new GatewayMethodError('INVALID_PARAMS', 'after must be an integer');
-        return await nativeSessionManager.read(
-          principal,
-          string(p, 'sessionId'),
-          p.after as number | undefined,
-          p.limit as number | undefined,
-        );
-      case Methods.NATIVE_SESSION_SEND: {
-        const commandId = string(p, 'commandId');
-        return await nativeSessionManager.send(
-          principal,
-          string(p, 'sessionId'),
-          commandId,
-          string(p, 'text'),
-        );
-      }
-      case Methods.NATIVE_SESSION_RESPOND: {
-        const response: NativeSessionResponse = {};
-        if (p.decision !== undefined) {
-          if (p.decision !== 'approve' && p.decision !== 'deny')
-            throw new GatewayMethodError('INVALID_PARAMS', 'Unknown approval decision');
-          response.decision = p.decision;
-        }
-        if (p.answers !== undefined) {
-          if (
-            !p.answers ||
-            typeof p.answers !== 'object' ||
-            Array.isArray(p.answers) ||
-            !Object.values(p.answers).every(
-              (answers) =>
-                Array.isArray(answers) && answers.every((answer) => typeof answer === 'string'),
-            )
-          )
-            throw new GatewayMethodError(
-              'INVALID_PARAMS',
-              'answers must map question IDs to string arrays',
-            );
-          response.answers = p.answers as Record<string, string[]>;
-        }
-        if (Boolean(response.decision) === Boolean(response.answers))
-          throw new GatewayMethodError('INVALID_PARAMS', 'Supply either a decision or answers');
-        await nativeSessionManager.respond(
-          principal,
-          string(p, 'sessionId'),
-          string(p, 'requestId'),
-          response,
-        );
-        return { responded: true };
-      }
-      case Methods.NATIVE_SESSION_INTERRUPT:
-        await nativeSessionManager.interrupt(principal, string(p, 'sessionId'));
-        return { interrupted: true };
-      case Methods.NATIVE_SESSION_CLOSE:
-        await nativeSessionManager.close(principal, string(p, 'sessionId'));
-        return {
-          closed: true,
-          session: (await nativeSessionManager.read(principal, string(p, 'sessionId'))).session,
-        };
-      default:
-        throw new Error('Unknown native session method');
-    }
+    if (method === Methods.NATIVE_SESSION_CATALOG) return await nativeCatalog(principal);
+    if (method === Methods.NATIVE_SESSION_LIST && params.executionNodeId === undefined)
+      return await listNativeExecutions(principal);
+    return await routeNativeExecution(principal, method, params);
   } catch (error) {
+    if (error instanceof NativeSessionMethodError)
+      throw new GatewayMethodError(error.code, error.message);
     if (error instanceof GatewayMethodError) throw error;
+    const nodeCode = (error as NodeJS.ErrnoException).code;
+    if (nodeCode && ['INVALID_PARAMS', 'AUTH_FORBIDDEN', 'NATIVE_SESSION_ERROR'].includes(nodeCode))
+      throw new GatewayMethodError(nodeCode, (error as Error).message);
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', (error as Error).message);
   }
 }

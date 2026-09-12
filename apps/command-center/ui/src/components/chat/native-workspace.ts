@@ -22,6 +22,7 @@ export interface NativeSessionApi {
 @customElement('native-workspace')
 export class NativeWorkspace extends LitElement {
   @property() sessionId = '';
+  @property() executionNodeId = 'local';
   @property({ attribute: false }) api: NativeSessionApi = gateway;
   @state() private tab: 'files' | 'changes' = 'changes';
   @state() private directory = '.';
@@ -125,7 +126,7 @@ export class NativeWorkspace extends LitElement {
   `;
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('sessionId')) {
+    if (changed.has('sessionId') || changed.has('executionNodeId')) {
       this.revision++;
       this.directory = '.';
       this.selected = '';
@@ -140,25 +141,27 @@ export class NativeWorkspace extends LitElement {
   private async refresh() {
     const revision = ++this.revision;
     const sessionId = this.sessionId;
+    const executionNodeId = this.executionNodeId;
     this.loading = true;
     this.error = '';
     try {
       if (this.tab === 'files') {
         const result = await this.api.request<NativeWorkspaceListResult>(
           Methods.NATIVE_SESSION_WORKSPACE_LIST,
-          { sessionId, path: this.directory },
+          { sessionId, executionNodeId, path: this.directory },
         );
         if (revision !== this.revision) return;
         this.listing = result;
       } else {
         const result = await this.api.request<NativeWorkspaceChangesResult>(
           Methods.NATIVE_SESSION_WORKSPACE_CHANGES,
-          { sessionId },
+          { sessionId, executionNodeId },
         );
         if (revision !== this.revision) return;
         this.changes = result;
       }
-      if (this.selected) await this.openFile(this.selected, this.display, sessionId);
+      if (this.selected)
+        await this.openFile(this.selected, this.display, sessionId, executionNodeId);
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
     } finally {
@@ -166,7 +169,12 @@ export class NativeWorkspace extends LitElement {
     }
   }
 
-  private async openFile(path: string, display: 'source' | 'diff', sessionId = this.sessionId) {
+  private async openFile(
+    path: string,
+    display: 'source' | 'diff',
+    sessionId = this.sessionId,
+    executionNodeId = this.executionNodeId,
+  ) {
     const revision = ++this.revision;
     this.selected = path;
     this.display = display;
@@ -178,13 +186,13 @@ export class NativeWorkspace extends LitElement {
       if (display === 'source') {
         const result = await this.api.request<NativeWorkspaceReadResult>(
           Methods.NATIVE_SESSION_WORKSPACE_READ,
-          { sessionId, path },
+          { sessionId, executionNodeId, path },
         );
         if (revision === this.revision) this.source = result;
       } else {
         const result = await this.api.request<NativeWorkspaceDiffResult>(
           Methods.NATIVE_SESSION_WORKSPACE_DIFF,
-          { sessionId, path },
+          { sessionId, executionNodeId, path },
         );
         if (revision === this.revision) this.diff = result;
       }

@@ -62,6 +62,7 @@ rmSync(join(root, 'ready.json'), { force: true });
 const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
+  executionNodeId: process.env.FARMSLOT_NATIVE_EXECUTION_NODE_ID ?? 'local',
   pid: process.pid,
   token: randomBytes(32).toString('hex'),
   socket,
