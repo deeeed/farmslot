@@ -52,6 +52,7 @@ import {
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
+import { archiveRunnerSessionsForSlotRelease } from '../../runners/session-archive.js';
 import {
   RUNNER_PARK_GRACEFUL_EXIT_MAX_TIMEOUT_MS,
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
@@ -339,6 +340,24 @@ async function slotReleaseImpl(
       // sweep on the next upload, so a failed delete must not strand the slot in
       // `releasing` — every later teardown step still needs to run.
       step('attachments', `Attachment cleanup skipped: ${(err as Error).message}`);
+    }
+    const archiveRunId = params.expectedRunId ?? boundOwner;
+    if (archiveRunId) {
+      try {
+        const archive = await archiveRunnerSessionsForSlotRelease({
+          vars,
+          runId: archiveRunId,
+        });
+        step('session-archive', archive.summary);
+      } catch (err) {
+        // Recycle must finish even if the transcript copy fails. The live file is
+        // about to disappear with the slot workspace; aborting here would strand
+        // the slot in `releasing` for a best-effort operator backup.
+        step('session-archive', `Skipped: ${(err as Error).message}`);
+        console.warn(
+          `[release] session archive failed for ${params.slotId}: ${(err as Error).message}`,
+        );
+      }
     }
   } else {
     step('agent', 'Preserving agent windows for human gate');

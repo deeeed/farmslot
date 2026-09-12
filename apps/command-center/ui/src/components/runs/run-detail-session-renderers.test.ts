@@ -94,7 +94,12 @@ test('copy buttons use only the command the gateway built', () => {
 
 test('row state carries the structured liveness the gateway proved', () => {
   const state = runSessionRowStateFromResult(supported, 'reopen');
-  assert.deepEqual(state, { status: 'ready', liveness: 'dead', copied: 'reopen' });
+  assert.deepEqual(state, {
+    status: 'ready',
+    liveness: 'dead',
+    copied: 'reopen',
+    command: "CODEX_HOME=/repo/.agent/codex codex resume 'codex-session-123'",
+  });
   assert.equal(livenessLabel('dead'), 'interrupted');
   assert.equal(livenessLabel('live'), 'live');
   assert.equal(livenessLabel('unknown'), 'liveness unknown');

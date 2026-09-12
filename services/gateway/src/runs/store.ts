@@ -2,7 +2,7 @@
 // Each run persisted as .runs/{id}.json
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -106,6 +106,13 @@ export function runsDirectory(): string {
   return RUNS_DIR;
 }
 
+export const SESSION_ARCHIVES_DIRNAME = 'session-archives';
+
+/** Run-owned opaque runner transcript snapshot. Next to `.runs/`, not inside the run JSON. */
+export function runSessionArchiveDir(runId: string): string {
+  return path.join(RUNS_DIR, SESSION_ARCHIVES_DIRNAME, runId);
+}
+
 const ACTIVE_STATUSES: Set<RunStatus> = new Set([
   'created',
   'grading',
@@ -195,6 +202,7 @@ function initialAgentContextsForRun(
       target: null,
       runnerSessionId: run.metrics.runnerSessionId,
       runnerSessionPath: run.metrics.runnerSessionPath,
+      runnerSessionArchive: run.metrics.runnerSessionArchive,
       nudgeCount: run.metrics.nudgeCount,
       updatedAt: run.updatedAt,
     },
@@ -1087,6 +1095,12 @@ export async function deleteRun(id: string): Promise<boolean> {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
   } catch {
     /* file may not exist */
+  }
+  try {
+    await rm(runSessionArchiveDir(id), { recursive: true, force: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw err;
   }
   return true;
 }

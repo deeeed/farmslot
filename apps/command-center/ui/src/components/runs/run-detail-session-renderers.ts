@@ -15,6 +15,8 @@ export interface RunSessionRowState {
   status: 'idle' | 'loading' | 'ready' | 'error';
   liveness?: RunSessionLiveness;
   copied?: RunSessionCopyKind;
+  /** Exact command last copied for this row, so the operator can see what landed. */
+  command?: string;
   message?: string;
   /**
    * The gateway answered but the browser refused the clipboard. A discrete flag
@@ -85,7 +87,7 @@ export function runSessionRowStateFromResult(
   if (copyError) {
     return { status: 'error', liveness: result.liveness, message: copyError, copyBlocked: true };
   }
-  return { status: 'ready', liveness: result.liveness, copied: kind };
+  return { status: 'ready', liveness: result.liveness, copied: kind, command };
 }
 
 export function livenessLabel(liveness: RunSessionLiveness): string {
@@ -115,26 +117,31 @@ export function renderRunAgentSessions(
     <style>
       .agent-sessions {
         margin-top: 16px;
-        border: 1px solid ${colors.bgCard};
-        border-radius: 4px;
+        border: 1px solid ${colors.accent}55;
+        border-radius: 6px;
         background: ${colors.bgSurface};
-        padding: 10px 12px;
+        padding: 12px 14px;
       }
       .agent-sessions-title {
         font-size: ${fonts.sizeXs};
         text-transform: uppercase;
         letter-spacing: 0.06em;
         color: ${colors.textMuted};
-        margin-bottom: 8px;
+      }
+      .agent-sessions-hint {
+        color: ${colors.textSecondary};
+        font-size: ${fonts.sizeXs};
+        margin: 4px 0 10px;
+        line-height: 1.4;
       }
       .agent-session-row {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
-        padding: 6px 0;
+        padding: 8px 0;
         border-top: 1px solid ${colors.bgCard};
-        font-size: ${fonts.sizeXs};
+        font-size: ${fonts.sizeSm};
       }
       .agent-session-row:first-of-type {
         border-top: none;
@@ -151,20 +158,41 @@ export function renderRunAgentSessions(
       }
       .agent-session-liveness {
         font-family: ${fonts.mono};
+        font-weight: 600;
+      }
+      .agent-session-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-left: auto;
       }
       .agent-session-btn {
         background: transparent;
-        border: 1px solid ${colors.bgCardHover};
-        color: ${colors.textMuted};
+        border: 1px solid ${colors.accent}66;
+        color: ${colors.accent};
         border-radius: 4px;
         font-family: ${fonts.mono};
-        font-size: 10px;
-        padding: 2px 6px;
+        font-size: ${fonts.sizeXs};
+        padding: 6px 10px;
         cursor: pointer;
+      }
+      .agent-session-btn:hover:not(:disabled) {
+        background: ${colors.accent}18;
       }
       .agent-session-btn:disabled {
         opacity: 0.5;
         cursor: default;
+      }
+      .agent-session-copied {
+        flex-basis: 100%;
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeXs};
+        color: ${colors.textSecondary};
+        background: ${colors.bgCard};
+        border-radius: 4px;
+        padding: 6px 8px;
+        overflow-x: auto;
+        white-space: pre;
       }
       .agent-session-error {
         color: ${colors.statusFail};
@@ -173,6 +201,9 @@ export function renderRunAgentSessions(
     </style>
     <section class="agent-sessions" aria-label="Runner sessions" data-testid="run-agent-sessions">
       <div class="agent-sessions-title">Runner sessions</div>
+      <div class="agent-sessions-hint">
+        Copy a terminal command to resume this runner's history, or attach its tmux pane.
+      </div>
       ${rows.map((row) => {
         const state = ctx.states[row.contextId];
         const busy = state?.status === 'loading';
@@ -185,7 +216,10 @@ export function renderRunAgentSessions(
               >${row.label}</span
             >
             <span class="agent-session-engine">${row.runner}/${row.model}</span>
-            <span class="agent-session-id" data-testid="run-agent-session-id-${row.contextId}"
+            <span
+              class="agent-session-id"
+              title=${row.sessionId ?? ''}
+              data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
             ${state?.liveness
@@ -196,22 +230,37 @@ export function renderRunAgentSessions(
                   >${livenessLabel(state.liveness)}</span
                 >`
               : nothing}
-            <button
-              class="agent-session-btn"
-              data-testid="run-agent-session-reopen-${row.contextId}"
-              ?disabled=${busy}
-              @click=${() => ctx.onCopy(row, 'reopen')}
-            >
-              ${busy ? 'Loading…' : state?.copied === 'reopen' ? 'Copied' : 'Reopen session'}
-            </button>
-            <button
-              class="agent-session-btn"
-              data-testid="run-agent-session-attach-${row.contextId}"
-              ?disabled=${busy}
-              @click=${() => ctx.onCopy(row, 'attach')}
-            >
-              ${busy ? 'Loading…' : state?.copied === 'attach' ? 'Copied' : 'Attach tmux'}
-            </button>
+            <span class="agent-session-actions">
+              <button
+                class="agent-session-btn"
+                data-testid="run-agent-session-reopen-${row.contextId}"
+                title="Copy the command that resumes this runner session"
+                ?disabled=${busy}
+                @click=${() => ctx.onCopy(row, 'reopen')}
+              >
+                ${busy
+                  ? 'Loading…'
+                  : state?.copied === 'reopen'
+                    ? 'Copied reopen'
+                    : 'Reopen session'}
+              </button>
+              <button
+                class="agent-session-btn"
+                data-testid="run-agent-session-attach-${row.contextId}"
+                title="Copy the tmux attach command for this pane"
+                ?disabled=${busy}
+                @click=${() => ctx.onCopy(row, 'attach')}
+              >
+                ${busy ? 'Loading…' : state?.copied === 'attach' ? 'Copied attach' : 'Attach tmux'}
+              </button>
+            </span>
+            ${state?.command && state.copied
+              ? html`<code
+                  class="agent-session-copied"
+                  data-testid="run-agent-session-copied-${row.contextId}"
+                  >${state.command}</code
+                >`
+              : nothing}
             ${state?.status === 'error' && state.message
               ? html`<span
                   class="agent-session-error"

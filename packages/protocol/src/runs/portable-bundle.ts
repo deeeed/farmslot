@@ -38,6 +38,16 @@ export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile):
   }
   delete cloned.importProvenance;
   delete cloned.readOnly;
+  // Transcript snapshots stay on the exporting gateway. Bundles must not claim
+  // a local archive they do not carry, and they must not ship raw session bytes.
+  if (cloned.metrics) delete cloned.metrics.runnerSessionArchive;
+  if (cloned.agentContexts) {
+    cloned.agentContexts = cloned.agentContexts.map((ctx) => {
+      const next = { ...ctx };
+      delete next.runnerSessionArchive;
+      return next;
+    });
+  }
   return cloned;
 }
 

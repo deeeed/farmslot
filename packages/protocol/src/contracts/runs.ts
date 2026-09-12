@@ -7,6 +7,7 @@ import type {
 import type {
   AgentContext,
   AgentContextTarget,
+  RunnerSessionArchiveRef,
   SafetyTier,
   ScriptedRunnerConfig,
 } from './agents.js';
@@ -1139,6 +1140,11 @@ export interface RunMetrics {
   runner: string | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
+  /**
+   * Recycle snapshot of the primary runner transcript. Pointer only; the bytes
+   * live under `.runs/session-archives/`. Not eval evidence and not a farmrun payload.
+   */
+  runnerSessionArchive?: RunnerSessionArchiveRef;
   /**
    * Operator-local provider subscription label that actually funded this run
    * (after any in-place failover). Label only — never an email, token, or home path.

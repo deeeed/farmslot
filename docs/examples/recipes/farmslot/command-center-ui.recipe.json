@@ -86,9 +86,16 @@
       },
       "open-family-publish-gate-harness": {
         "action": "ui.navigate",
-        "next": "assert-family-reopen-control",
+        "next": "assert-family-runner-sessions",
         "target": "#dev/family-observability",
         "intent": "Open the family retrospective harness on a historical run that already has a resolved publish-gate decision."
+      },
+      "assert-family-runner-sessions": {
+        "action": "ui.wait_for",
+        "next": "assert-family-reopen-control",
+        "test_id": "run-agent-sessions",
+        "text_contains": ["Reopen session", "Attach tmux"],
+        "intent": "Verify the selected family run remounts runner-session reopen and tmux attach copy controls."
       },
       "assert-family-reopen-control": {
         "action": "ui.wait_for",
@@ -163,10 +170,23 @@
       },
       "assert-family-no-reopen-control": {
         "action": "ui.wait_for",
-        "next": "capture-recipe-workspace",
+        "next": "open-archived-history-harness",
         "test_id": "family-reopen-publish-gate",
         "expected": "absent",
         "intent": "Verify a run without a ready decision does not offer reopen."
+      },
+      "open-archived-history-harness": {
+        "action": "ui.navigate",
+        "next": "assert-archived-history",
+        "target": "#dev/worker-session-history-archive",
+        "intent": "Open the rare History path that renders a recycle snapshot after the live transcript is gone."
+      },
+      "assert-archived-history": {
+        "action": "ui.wait_for",
+        "next": "capture-recipe-workspace",
+        "test_id": "worker-session-history",
+        "text_contains": ["archived", "What did the worker already try?"],
+        "intent": "Verify the History tab shows archived source and the snapshot turns instead of an unavailable empty state."
       },
       "capture-recipe-workspace": {
         "action": "ui.screenshot",

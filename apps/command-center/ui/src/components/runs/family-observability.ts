@@ -10,6 +10,7 @@ import type {
   LLMConfigGetResult,
   RunDecision,
   RunGetResult,
+  RunSessionCommandResult,
 } from '@farmslot/protocol';
 import {
   buildRunResolveDecisionParams,
@@ -24,6 +25,7 @@ import './grade-semantic-picker.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
+import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
@@ -109,6 +111,12 @@ import {
 } from './family-observability-url-state.js';
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
+import {
+  runSessionCommandTextForKind,
+  type RunSessionCopyKind,
+  type RunSessionRow,
+  runSessionRowStateFromResult,
+} from './run-detail-session-renderers.js';
 
 const MD_CACHE_LIMIT = 50;
 const COPY_COMPARE_PROMPT = 'compare-prompt';
@@ -116,7 +124,11 @@ const COPY_COMPARE_PROMPT = 'compare-prompt';
 @customElement('family-observability')
 export class FamilyObservability extends FamilyObservabilityState {
   private _selectRun = (runId: string) => {
-    if (this.selectedRunId !== runId) this._selectedStep = null;
+    if (this.selectedRunId !== runId) {
+      this._selectedStep = null;
+      this._sessionStates = {};
+      this._sessionRequestSeq = {};
+    }
     this.selectedRunId = runId;
     void this._ensureFullRun(runId);
     if (!this.familyId || this.snapshotOverride) return;
@@ -1021,7 +1033,51 @@ export class FamilyObservability extends FamilyObservabilityState {
       gateMaximized: this._gateMaximized,
       onTogglePublishGate: this._togglePublishGate,
       onTogglePublishGateMaximize: this._togglePublishGateMaximize,
+      sessionStates: this._sessionStates,
+      onCopySession: (row, kind) => {
+        const fullRun = this._fullRuns.get(run.runId);
+        if (fullRun) void this._copyRunnerSessionCommand(fullRun.id, row, kind);
+      },
     });
+  }
+
+  private async _copyRunnerSessionCommand(
+    runId: string,
+    row: RunSessionRow,
+    kind: RunSessionCopyKind,
+  ): Promise<void> {
+    const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
+    this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
+    const requestStillCurrent = () =>
+      requestSeq === this._sessionRequestSeq[row.contextId] && this.selectedRunId === runId;
+    this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'loading' } };
+    try {
+      const result = await gateway.request<RunSessionCommandResult>(Methods.RUN_SESSION_COMMAND, {
+        runId,
+        contextId: row.contextId,
+        role: row.role,
+      });
+      const command = runSessionCommandTextForKind(result, kind);
+      let copyError: string | null = null;
+      if (command) {
+        try {
+          await copyTextToClipboard(command);
+        } catch (err) {
+          copyError = (err as Error).message;
+        }
+      }
+      if (!requestStillCurrent()) return;
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: runSessionRowStateFromResult(result, kind, copyError),
+      };
+    } catch (err) {
+      if (!requestStillCurrent()) return;
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: { status: 'error', message: (err as Error).message },
+      };
+    }
   }
 
   private _ensureMdPreview(artifact: FamilyObservabilityArtifact, url: string): void {

@@ -17,6 +17,7 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { runnerPersistsSessionFiles } from '../runners/registry.js';
+import { readRunnerSessionArchiveLines } from '../runners/session-archive.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import {
   getRunnerSessionHistoryProvider,
@@ -173,17 +174,6 @@ export async function workerSessionHistoryGet(
   let runnerSessionPath = ctx?.runnerSessionPath ?? run.metrics.runnerSessionPath ?? null;
 
   const base = { ...params, slotId, runId: run.id, role, contextId };
-  if (!slotId) {
-    return {
-      snapshot: unavailableSnapshot(base, 'Run is not associated with a slot.', {
-        runId: run.id,
-        runner,
-        model,
-        runnerSessionId,
-        runnerSessionPath,
-      }),
-    };
-  }
   if (!runner) {
     return { snapshot: unavailableSnapshot(base, 'Run has no runner metadata.', { model }) };
   }
@@ -212,69 +202,132 @@ export async function workerSessionHistoryGet(
     };
   }
 
-  if (!runnerSessionPath) {
-    const vars = await loadSlotVars(slotId);
-    const binding = await resolveRunnerSessionForRun(run, vars);
-    runnerSessionPath = binding?.runnerSessionPath ?? null;
-  }
-
-  if (!runnerSessionPath) {
+  const projectLines = (input: {
+    lines: string[];
+    path: string;
+    size: number;
+    mtimeMs?: number;
+    truncated?: boolean;
+    source: 'transcript' | 'transcript-archive';
+    degradedReason?: string;
+  }): WorkerSessionHistoryGetResult => {
+    const projection = provider.project(input.lines);
+    const limit = normalizeLimit(params.limit);
+    const messages = projection.messages.slice(-limit);
+    const malformed =
+      projection.skippedMalformedLines > 0
+        ? `Skipped ${projection.skippedMalformedLines} malformed transcript line(s).`
+        : undefined;
+    const cursor: WorkerSessionHistoryCursor = {
+      path: input.path,
+      offset: input.size,
+      mtimeMs: input.mtimeMs,
+      messageCount: projection.messages.length,
+    };
     return {
-      snapshot: unavailableSnapshot(base, 'No runner transcript path is attached to this run.', {
+      snapshot: {
+        slotId,
+        runId: run.id,
+        role,
+        contextId,
         runner,
         model,
         runnerSessionId,
-      }),
+        runnerSessionPath: input.path,
+        source: input.source,
+        messages,
+        cursor,
+        truncated: Boolean(input.truncated) || projection.messages.length > messages.length,
+        degradedReason: [input.degradedReason, malformed].filter(Boolean).join(' ') || undefined,
+        generatedAt: new Date().toISOString(),
+      },
     };
-  }
-
-  const read = await readSessionFile({
-    slotId,
-    runner,
-    sessionPath: runnerSessionPath,
-  });
-  if (!read.exists) {
-    return {
-      snapshot: unavailableSnapshot(base, 'Runner transcript file is not available on disk.', {
-        runner,
-        model,
-        runnerSessionId,
-        runnerSessionPath: read.path,
-      }),
-    };
-  }
-
-  const projection = provider.project(read.lines);
-  const limit = normalizeLimit(params.limit);
-  const messages = projection.messages.slice(-limit);
-  const cursor: WorkerSessionHistoryCursor = {
-    path: read.path,
-    offset: read.size,
-    mtimeMs: read.mtimeMs,
-    messageCount: projection.messages.length,
   };
-  const degradedReason =
-    projection.skippedMalformedLines > 0
-      ? `Skipped ${projection.skippedMalformedLines} malformed live transcript line(s).`
-      : undefined;
+
+  let liveError: string | undefined;
+  if (slotId) {
+    try {
+      if (!runnerSessionPath) {
+        const vars = await loadSlotVars(slotId);
+        const binding = await resolveRunnerSessionForRun(run, vars);
+        runnerSessionPath = binding?.runnerSessionPath ?? null;
+      }
+      if (runnerSessionPath) {
+        const read = await readSessionFile({
+          slotId,
+          runner,
+          sessionPath: runnerSessionPath,
+        });
+        if (read.exists) {
+          return projectLines({
+            lines: read.lines,
+            path: read.path,
+            size: read.size,
+            mtimeMs: read.mtimeMs,
+            truncated: read.truncated,
+            source: 'transcript',
+          });
+        }
+        liveError = 'Runner transcript file is not available on disk.';
+      }
+    } catch (err) {
+      liveError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  try {
+    const archived = await readRunnerSessionArchiveLines({ run, contextId });
+    if (archived) {
+      return projectLines({
+        lines: archived.lines,
+        path: archived.originalPath,
+        size: archived.size,
+        source: 'transcript-archive',
+        degradedReason: 'Live transcript is gone; showing the recycle snapshot.',
+      });
+    }
+  } catch (err) {
+    const archiveError = err instanceof Error ? err.message : String(err);
+    return {
+      snapshot: unavailableSnapshot(
+        base,
+        liveError ? `${liveError} Archive read failed: ${archiveError}` : archiveError,
+        {
+          runner,
+          model,
+          runnerSessionId,
+          runnerSessionPath,
+        },
+      ),
+    };
+  }
+
+  if (!slotId && !runnerSessionPath) {
+    return {
+      snapshot: unavailableSnapshot(base, 'Run is not associated with a slot.', {
+        runId: run.id,
+        runner,
+        model,
+        runnerSessionId,
+        runnerSessionPath,
+      }),
+    };
+  }
 
   return {
-    snapshot: {
-      slotId,
-      runId: run.id,
-      role,
-      contextId,
-      runner,
-      model,
-      runnerSessionId,
-      runnerSessionPath: read.path,
-      source: 'transcript',
-      messages,
-      cursor,
-      truncated: read.truncated || projection.messages.length > messages.length,
-      degradedReason,
-      generatedAt: new Date().toISOString(),
-    },
+    snapshot: unavailableSnapshot(
+      base,
+      liveError ??
+        (runnerSessionPath
+          ? 'Runner transcript file is not available on disk.'
+          : 'No runner transcript path is attached to this run.'),
+      {
+        runner,
+        model,
+        runnerSessionId,
+        runnerSessionPath,
+      },
+    ),
   };
 }
 
