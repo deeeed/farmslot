@@ -95,7 +95,11 @@ function makeSplitRun(ticket: string): Run {
       description: 'Typing then tapping Save persists everything except the final character.',
       // Authors often paste ACs as checkboxes; the task document must not turn
       // them back into live steps.
-      acceptanceCriteria: ['[ ] Tapping Save persists the full text', '- No error toast appears'],
+      acceptanceCriteria: [
+        '  [ ] Tapping Save persists the full text',
+        '- No error toast appears',
+        'Undo restores the note\n- [ ] within one tap\n  * [x] and keeps focus',
+      ],
       affectedArea: 'Notes editor',
       stepsToReproduce: [],
       screenshots: [],
@@ -133,7 +137,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /^STATUS: pending$/m);
   assert.match(
     taskDocument,
-    /## Acceptance Criteria\n\n- Tapping Save persists the full text\n- No error toast appears/,
+    /## Acceptance Criteria\n\n- Tapping Save persists the full text\n- No error toast appears\n- Undo restores the note\n {2}within one tap\n {2}and keeps focus\n/,
   );
   assert.match(taskDocument, /## Affected Area\n\nNotes editor/);
   // The addendum's {{TASK_DIR}} expands to the repo-relative task dir.

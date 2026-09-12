@@ -32,7 +32,12 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
 
   if (params.taskFile) {
     const vars = await loadSlotVars(params.slotId);
-    const effectiveMdPath = resolveExplicitTaskFile(vars.remoteRepo, params.taskFile);
+    // An explicit TASK.md (Slot View passes the worker context's task file) still
+    // resolves to the sibling CHECKLIST.md when it exists; role checklists pass through.
+    const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(
+      vars,
+      resolveExplicitTaskFile(vars.remoteRepo, params.taskFile),
+    );
     const markdown = await slotReadFile(vars, effectiveMdPath);
     const result: TaskProgressResult = {
       slotId: params.slotId,

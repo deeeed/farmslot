@@ -24,6 +24,7 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
+import { resolveTaskProgressMarkdownPathForSlot } from './progress-path.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
 
 export type TaskProgressHandler = (
@@ -235,7 +236,13 @@ export async function watchSlot(
 
   for (const context of watchContexts) {
     const key = watchKey(slotId, context?.id);
-    const contextTaskPath = resolveContextFilePath(vars.remoteRepo, context?.taskFile, taskMdPath);
+    // Watch and hash the file whose checkboxes are the steps: CHECKLIST.md when the
+    // task dir has one, otherwise the context's task file. Hashing TASK.md would
+    // freeze progress after the first update because `mark N` edits CHECKLIST.md.
+    const contextTaskPath = await resolveTaskProgressMarkdownPathForSlot(
+      vars,
+      resolveContextFilePath(vars.remoteRepo, context?.taskFile, taskMdPath),
+    );
     const contextSignalPath = resolveContextFilePath(
       vars.remoteRepo,
       context?.signalFile,

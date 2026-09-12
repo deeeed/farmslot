@@ -64,14 +64,20 @@ export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
   const normalized = items
     .map((item) =>
       item
-        .replace(/^\s*[-*]\s+/, '')
-        .replace(/^\[(?: |x|X)\]\s*/, '')
-        .trim(),
+        .split('\n')
+        .map((line) =>
+          line
+            .trim()
+            .replace(/^[-*]\s+/, '')
+            .replace(/^\[(?: |x|X)\]\s*/, '')
+            .trim(),
+        )
+        .filter(Boolean),
     )
-    .filter(Boolean);
-  return normalized.length > 0
-    ? normalized.map((item) => `- ${item}`).join('\n')
-    : '_Not specified_';
+    .filter((lines) => lines.length > 0)
+    // Continuation lines stay with their criterion, indented so they never start a list item.
+    .map(([first, ...rest]) => [`- ${first}`, ...rest.map((line) => `  ${line}`)].join('\n'));
+  return normalized.length > 0 ? normalized.join('\n') : '_Not specified_';
 }
 
 export interface TaskDocumentInput {
