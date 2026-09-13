@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.2 - 2026-09-13
+
+- Publish against `@farmslot/protocol` 0.26.0 so a consumer that also installs `@farmslot/agent-runtime` 0.9.0 resolves one protocol copy.
 - Clear selected text before typing a replacement during CDP recipe playback.
 
 ## 0.16.1 - 2026-09-09
