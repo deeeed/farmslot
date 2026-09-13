@@ -32,7 +32,7 @@ function takeValue(args, i, flag) {
   return value;
 }
 
-async function loadRuntime() {
+export async function loadRuntime() {
   if (!existsSync(distEntry)) {
     throw new Error(
       `compiled package missing at ${distEntry}; run yarn workspace @farmslot/agent-runtime build`,
@@ -58,7 +58,7 @@ function parseDomainDir(value) {
   return { domain, root: value.slice(separator + 1) };
 }
 
-function parseCatalogArgs(args, { materialize = false } = {}) {
+export function parseCatalogArgs(args, { materialize = false } = {}) {
   const opts = {
     dirs: [],
     domainDirs: [],
@@ -101,7 +101,7 @@ function parseCatalogArgs(args, { materialize = false } = {}) {
   return opts;
 }
 
-function buildSources(opts, runtime) {
+export function buildSources(opts, runtime) {
   const sources = [];
   const domainSourceIds = new Set();
   for (const [index, dir] of opts.dirs.entries()) {
@@ -328,7 +328,9 @@ async function main() {
   else usage(2);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

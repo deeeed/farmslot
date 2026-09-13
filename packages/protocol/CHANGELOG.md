@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the `{{placeholder}}` guard and renderer (`collectPlaceholderTokens`, `assertNoUnknownPlaceholders`, `renderTemplatePlaceholders`) and the readiness record contract (`sandbox.json`, `ReadinessRecord`), so a harness renders checklists and reports sandbox readiness with the same rules the control plane uses.
 - Add the `EXECUTION_CHECKLIST_DOCUMENT` constant (`CHECKLIST.md`): the task-root execution checklist the task writer renders beside the generated `TASK.md` task document.
 - Add an explicit native session ensure operation for retry-safe worker launch.
 

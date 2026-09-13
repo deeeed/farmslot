@@ -1,18 +1,16 @@
-import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { buildMarkShim } from '@farmslot/agent-runtime';
 import {
   CHECKLIST_TARGET_MANIFEST,
   type ChecklistTarget,
   checklistTargetForAgentRole as resolveChecklistTargetForRole,
   type ChecklistTargetRegistry,
   DEFAULT_CHECKLIST_TARGET_REGISTRY,
-  INTERACTIVE_CHECKLIST_MARKDOWN,
   type NestedLoopAgentRole,
   targetForChecklistBasename,
-  TASK_PROGRESS_MARKDOWN,
   taskDirRelPath,
 } from '@farmslot/protocol/checklist-target';
 
@@ -41,8 +39,14 @@ export {
   WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol/checklist-target';
 
-import { farmslotRoot, type loadSlotVars } from '../core/config.js';
+import {
+  farmslotRoot,
+  loadProjectVars,
+  type loadSlotVars,
+  type ProjectVars,
+} from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
@@ -65,13 +69,6 @@ export function checklistTargetForAgentRole(
 
 export function checklistMarkerCommand(taskDir: string, target: ChecklistTarget): string {
   return `${taskDir}/mark --checklist ${target.checklist} --signal ${target.signal}`;
-}
-
-export function defaultWorkerChecklistTarget(taskAbsDir: string): ChecklistTarget {
-  const checklist = existsSync(path.join(taskAbsDir, INTERACTIVE_CHECKLIST_MARKDOWN))
-    ? INTERACTIVE_CHECKLIST_MARKDOWN
-    : TASK_PROGRESS_MARKDOWN;
-  return targetForChecklistBasename(checklist);
 }
 
 export function slotTaskRelPath(
@@ -142,13 +139,35 @@ function farmslotDirForSlot(vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>,
   return onOperator ? farmslotRoot : REMOTE_FARMSLOT_DIR;
 }
 
+export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
+  return `${farmslotDirForSlot}/packages/agent-runtime/scripts/mark-checklist-step.cjs`.replace(
+    /^~(?=\/)/,
+    '$HOME',
+  );
+}
+
+/**
+ * The command the task's `mark` shim runs. A pack may set `vars.mark_cmd`
+ * (for example `${MM_HARNESS_BIN:-mm-harness} checklist mark`) so workers get
+ * the harness's gates; the default is the slot-synced agent-runtime engine.
+ */
+export function markCommandForSlot(
+  vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'> &
+    Parameters<typeof expandTemplate>[1],
+  projectVars?: ProjectVars,
+): string {
+  const raw = projectVars?.projectJson.vars?.mark_cmd;
+  if (typeof raw === 'string' && raw.trim()) return expandTemplate(raw, vars, projectVars);
+  return `node ${checklistMarkerHelperPath(farmslotDirForSlot(vars))}`;
+}
+
 export async function syncChecklistMarkerOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
 ): Promise<void> {
-  const { buildChecklistMarkerScript, checklistMarkerHelperPath } = await import('./writer.js');
   const markRel = taskDirRelPath(taskDir, CHECKLIST_MARKER_INPUT);
-  const content = buildChecklistMarkerScript(checklistMarkerHelperPath(farmslotDirForSlot(vars)));
+  const projectVars = await loadProjectVars(vars.projectName);
+  const content = buildMarkShim(markCommandForSlot(vars, projectVars));
   await writeTextFileOnSlot(vars, markRel, content);
   await execOnSlot(
     vars,
@@ -195,8 +214,4 @@ export async function restoreWorkerChecklistTargetFromSlot(
   if (terminal) {
     await syncTerminalContractForFlowOnSlot(vars, taskDir, terminal.flowType, terminal.mode);
   }
-}
-
-export async function writeWorkerChecklistTargetLocal(taskAbsDir: string): Promise<void> {
-  await writeChecklistTargetLocal(taskAbsDir, defaultWorkerChecklistTarget(taskAbsDir));
 }

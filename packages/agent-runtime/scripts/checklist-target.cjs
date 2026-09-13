@@ -170,8 +170,8 @@ function readManifest(taskDir) {
 function manifestModeTeachingError(taskDir, reason) {
   const manifestPath = path.join(path.resolve(taskDir), CHECKLIST_TARGET_MANIFEST);
   return (
-    `Missing or invalid ${CHECKLIST_TARGET_MANIFEST} at ${manifestPath} (${reason}). ` +
-    'The gateway writes this file at task creation and on every role switch — re-run dispatch/prepare for this run, or write the manifest manually. ' +
+    `Invalid ${CHECKLIST_TARGET_MANIFEST} at ${manifestPath} (${reason}). ` +
+    'Absent means the worker default; a role switch writes this file to point at its own checklist — re-run the role switch, fix the JSON, or remove the file. ' +
     'Escape hatch: farmslot-agent mark <task-dir> --checklist FILE.md <step> [--signal FILE.json].'
   );
 }
@@ -244,8 +244,10 @@ function parseTaskDirMarkArgs(taskDir, rawArgs, { isMarkStepToken, usage }) {
 function resolveChecklistTarget(taskDir) {
   const normalizedDir = path.resolve(taskDir);
   const manifestPath = path.join(normalizedDir, CHECKLIST_TARGET_MANIFEST);
+  // Absent means the worker default (CHECKLIST.md when present, else TASK.md).
+  // Only a role switch writes the manifest, to point at its own checklist.
   if (!fs.existsSync(manifestPath)) {
-    throw new Error(manifestModeTeachingError(taskDir, 'file not found'));
+    return defaultWorkerTarget(normalizedDir);
   }
   const fromManifest = readManifest(normalizedDir);
   if (!fromManifest) {

@@ -33,11 +33,10 @@ let result = spawnSync(process.execPath, [cli, 'contract', 'resolve', '--flow', 
 assert.equal(result.status, 0, result.stderr);
 assert.equal(JSON.parse(result.stdout).commands.complete.report, 'artifacts/pr-description.md');
 
-const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-install-mark-'));
-writeFileSync(path.join(dir, 'TASK.md'), '- [ ] Check\n');
-result = spawnSync(process.execPath, [cli, 'install-mark', dir], { encoding: 'utf8' });
+assert.ok(packageJson.exports['./scripts/task-init-cli.mjs']);
+result = spawnSync(process.execPath, [cli, 'task', 'init', '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
-assert.ok(fs.existsSync(path.join(dir, 'mark')));
+assert.match(result.stdout, /task init <task-dir>/);
 
 const templateRoot = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-template-'));
 mkdirSync(path.join(templateRoot, 'dev'));

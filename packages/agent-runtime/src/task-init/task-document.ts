@@ -1,64 +1,69 @@
-// task-document.ts — TASK.md as the task document beside the CHECKLIST.md
-// execution checklist.
+// TASK.md, the task document beside the CHECKLIST.md execution checklist.
 //
-// The execution template is rendered verbatim into CHECKLIST.md, the only file
-// whose checkboxes count as steps. TASK.md carries
-// the ticket (description, acceptance criteria, screenshots, comments), the
-// slot facts, the mark instructions, and pointers to `inputs/`. That is the
-// same shape a standalone skill run produces, so the checklist file can be the
-// same bytes on both surfaces.
+// The execution template renders verbatim into CHECKLIST.md, the only file whose
+// checkboxes count as steps. TASK.md carries the task (description, acceptance
+// criteria, screenshots, comments), the run facts, the mark instructions, and
+// pointers to `inputs/`. One builder serves every surface: a control plane passes
+// its slot facts as extra vars; a harness passes only what it knows.
 
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
-  type ArtifactRef,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
-  type Run,
+  type TemplateProvenance,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
-export const EXECUTION_TEMPLATE_INPUT = 'inputs/execution-template.json';
 export const HANDOFF_INPUT = 'inputs/handoff.json';
+export const BUG_INPUT = 'inputs/bug-input.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
 
-/** Ordered keys of the `## Task` block. Empty values are omitted for optional slot resources. */
-const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; optional?: boolean; label?: string }> = [
-  { key: 'TICKET' },
+/**
+ * Ordered keys of the `## Task` block. A key renders only when the caller set
+ * it, except the four every surface knows. Farmslot sets its slot facts; a
+ * harness sets FLOW/MODE/TEMPLATE; neither sees blank lines for the other's.
+ */
+const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; required?: boolean; label?: string }> = [
+  { key: 'TICKET', required: true },
   { key: 'TICKET_URL' },
-  { key: 'TITLE' },
-  { key: 'RUN_ID', optional: true },
-  { key: 'FAMILY_ID', optional: true },
+  { key: 'TITLE', required: true },
+  { key: 'FLOW' },
+  { key: 'MODE' },
+  { key: 'RUN_ID' },
+  { key: 'FAMILY_ID' },
   { key: 'BRANCH' },
   { key: 'PR_NUMBER' },
-  { key: 'PR_URL', optional: true },
-  { key: 'PR_BRANCH', optional: true },
-  { key: 'GH_REPO', optional: true },
-  { key: 'PR_INTEGRATION_NOTE', optional: true, label: 'PR_INTEGRATION' },
-  { key: 'REVIEW_TIER', optional: true },
-  { key: 'RECIPE_STRATEGY', optional: true },
-  { key: 'BRANCH_UPDATE_STRATEGY', optional: true },
-  { key: 'HAS_RECIPE', optional: true },
-  { key: 'RECIPE_SOURCE', optional: true },
-  { key: 'TASK_DIR' },
+  { key: 'PR_URL' },
+  { key: 'PR_BRANCH' },
+  { key: 'GH_REPO' },
+  { key: 'PR_INTEGRATION_NOTE', label: 'PR_INTEGRATION' },
+  { key: 'REVIEW_TIER' },
+  { key: 'RECIPE_STRATEGY' },
+  { key: 'BRANCH_UPDATE_STRATEGY' },
+  { key: 'HAS_RECIPE' },
+  { key: 'RECIPE_SOURCE' },
+  { key: 'TASK_DIR', required: true },
   { key: 'SESSION' },
   { key: 'REPO' },
   { key: 'PLATFORM' },
+  { key: 'DOMAIN' },
+  { key: 'TEMPLATE' },
   { key: 'SLOT_ID' },
   { key: 'RUNTIME_DIR' },
-  { key: 'WATCHER_PORT', optional: true },
-  { key: 'CDP_PORT', optional: true },
-  { key: 'IOS_SIMULATOR', optional: true },
-  { key: 'ADB_SERIAL', optional: true },
+  { key: 'WATCHER_PORT' },
+  { key: 'CDP_PORT' },
+  { key: 'IOS_SIMULATOR' },
+  { key: 'ADB_SERIAL' },
 ];
 
 /**
- * Acceptance criteria arrive as plain strings, but Jira and GitHub adapters keep
- * the author's list markers. Normalize to one bullet per criterion so TASK.md
- * never carries a live `- [ ]` box that could be mistaken for a step.
+ * Acceptance criteria arrive as plain strings, but ticket adapters keep the
+ * author's list markers. Normalize to one bullet per criterion so TASK.md never
+ * carries a live `- [ ]` box that could be mistaken for a step.
  */
 export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
   const normalized = items
@@ -82,36 +87,34 @@ export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
 
 export interface TaskDocumentInput {
   flowType: string;
+  /** One blockquote line describing the run mode; empty string for none. */
   modePreamble: string;
   vars: Record<string, string>;
   description: string;
   acceptanceCriteria: ReadonlyArray<string>;
-  affectedArea: string;
-  screenshotsMarkdown: string;
-  commentsMarkdown: string;
-  linkedTicketsMarkdown: string;
-  linkedDescriptionsMarkdown: string;
-  /** pr-complete: gateway pre-fetched PR comment summary. */
+  affectedArea?: string;
+  screenshotsMarkdown?: string;
+  commentsMarkdown?: string;
+  linkedTicketsMarkdown?: string;
+  linkedDescriptionsMarkdown?: string;
+  /** pr-complete: control-plane pre-fetched PR comment summary. */
   commentSummaryMarkdown?: string;
   /** Rendered project addendum (`templates/task-document.md`), if the project ships one. */
   addendum?: string | null;
   hasTicketData: boolean;
-  hasExecutionTemplateInput: boolean;
 }
 
 export function buildTaskDocument(input: TaskDocumentInput): string {
   const { vars } = input;
   const taskDir = vars.TASK_DIR;
   const title = vars.TITLE?.trim() || vars.TICKET || input.flowType;
-  const taskBlock = TASK_BLOCK_KEYS.filter(({ key, optional }) => !optional || vars[key]?.trim())
+  const taskBlock = TASK_BLOCK_KEYS.filter(({ key, required }) => required || vars[key]?.trim())
     .map(({ key, label }) => `${label ?? key}: ${vars[key] ?? ''}`)
     .join('\n');
 
-  const sections: string[] = [
-    `# ${input.flowType}: ${title}`,
-    '',
-    input.modePreamble,
-    '',
+  const sections: string[] = [`# ${input.flowType}: ${title}`, ''];
+  if (input.modePreamble.trim()) sections.push(input.modePreamble, '');
+  sections.push(
     '## Task',
     '',
     '```text',
@@ -126,7 +129,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '## Acceptance Criteria',
     '',
     renderAcceptanceCriteria(input.acceptanceCriteria),
-  ];
+  );
 
   if (input.affectedArea && input.affectedArea !== '_Not specified_') {
     sections.push('', '## Affected Area', '', input.affectedArea);
@@ -157,7 +160,7 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     '## Checklist',
     '',
-    `Follow \`${taskDir}/${EXECUTION_CHECKLIST_DOCUMENT}\` top to bottom. That file is the only checklist Farmslot counts.`,
+    `Follow \`${taskDir}/${EXECUTION_CHECKLIST_DOCUMENT}\` top to bottom. That file is the only checklist that counts.`,
     `Marker: \`${taskDir}/mark\`, run from the repo root. \`mark start\` once when work begins, \`mark N\` after each step (visible 1-based number), then \`mark complete --mark-last\`, \`mark no-change --reason "…"\`, or \`mark blocked --reason "…"\`.`,
     'Never hand-write `SIGNAL.json`. Do not add step checkboxes to this document; update `STATUS` above and append notes (for example `## Recipe ACs`) below.',
     '',
@@ -165,16 +168,11 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
     '',
     `Under \`${taskDir}/inputs/\`:`,
     '',
-    `- \`${path.basename(HANDOFF_INPUT)}\` — run identity, flow, and terminal report paths`,
+    `- \`${path.basename(HANDOFF_INPUT)}\` — run identity, selected checklist provenance, and terminal report paths`,
+    '- `worker-terminal-contract.json` — artifacts required before a terminal mark',
   );
-  if (input.hasExecutionTemplateInput) {
-    sections.push(
-      `- \`${path.basename(EXECUTION_TEMPLATE_INPUT)}\` — selected checklist id, source, and digests`,
-    );
-  }
-  sections.push('- `worker-terminal-contract.json` — artifacts required before a terminal mark');
   if (input.hasTicketData) {
-    sections.push('- `bug-input.json` — full ticket data as fetched');
+    sections.push(`- \`${path.basename(BUG_INPUT)}\` — full ticket data as fetched`);
   }
   sections.push('');
   return sections.join('\n');
@@ -188,20 +186,22 @@ export async function readTaskDocumentAddendum(
   return { path: addendumPath, content: await readFile(addendumPath, 'utf-8') };
 }
 
-/** Mirrors the object `execution-template materialize --provenance` writes for skill runs. */
-export function buildExecutionTemplateInput(
-  selectionReason: string,
-  executionTemplate: ExecutionTemplateReference,
-): { schemaVersion: 1; selectionReason: string; executionTemplate: ExecutionTemplateReference } {
-  return { schemaVersion: 1, selectionReason, executionTemplate };
-}
-
 export type HandoffSourceKind = 'text' | 'file' | 'github-pr' | 'github-issue' | 'jira';
 
+/** Selected checklist, as `execution-template materialize --provenance` reports it. */
+export interface HandoffExecutionTemplate extends ExecutionTemplateReference {
+  selectionReason: string;
+}
+
+/**
+ * The one task record. `@farmslot/handoff closeout` reads the identity keys;
+ * replay and eval read `executionTemplate` / `templateProvenance`; everything
+ * else ignores keys it does not know.
+ */
 export interface HandoffMetadata {
   schemaVersion: 1;
   attemptId: string;
-  surface: 'farmslot';
+  surface: string;
   project: string;
   repo?: string;
   /** Effective run domain; empty string when none — the closeout parser requires the key. */
@@ -212,14 +212,16 @@ export interface HandoffMetadata {
   taskDocument: 'TASK.md';
   report: string;
   learnings: string;
+  executionTemplate?: HandoffExecutionTemplate;
+  /** Control-plane provenance (repo revisions, selection source); never carries the reference twice. */
+  templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
 }
 
-/**
- * Same shape the recipe-cook skill's `init-template` writes, so
- * `@farmslot/handoff closeout` accepts a farm task dir unchanged.
- */
 export function buildHandoffMetadata(input: {
-  run: Pick<Run, 'id' | 'project' | 'flowType'>;
+  attemptId: string;
+  surface: string;
+  project: string;
+  flow: string;
   repo?: string;
   domain?: string;
   title: string;
@@ -228,18 +230,20 @@ export function buildHandoffMetadata(input: {
   sourceRef?: string;
   terminalContract: Pick<WorkerTerminalContractDocument, 'commands'>;
   startedAt?: string;
+  executionTemplate?: HandoffExecutionTemplate;
+  templateProvenance?: Omit<TemplateProvenance, 'executionTemplate'>;
 }): HandoffMetadata {
   const complete = input.terminalContract.commands.complete;
   const ticket = input.ticket?.trim();
   const sourceRef = input.sourceRef?.trim();
   return {
     schemaVersion: 1,
-    attemptId: input.run.id,
-    surface: 'farmslot',
-    project: input.run.project,
+    attemptId: input.attemptId,
+    surface: input.surface,
+    project: input.project,
     ...(input.repo ? { repo: input.repo } : {}),
     domain: input.domain ?? '',
-    flow: input.run.flowType,
+    flow: input.flow,
     startedAt: input.startedAt ?? new Date().toISOString(),
     task: {
       title: input.title,
@@ -250,28 +254,16 @@ export function buildHandoffMetadata(input: {
     taskDocument: 'TASK.md',
     report: complete?.report ?? 'artifacts/report.md',
     learnings: 'artifacts/learnings.md',
+    ...(input.executionTemplate ? { executionTemplate: input.executionTemplate } : {}),
+    ...(input.templateProvenance ? { templateProvenance: input.templateProvenance } : {}),
   };
 }
 
 /**
- * `owner/name` from a project's repository declaration (`repo_url` or `ci.repo`).
- * Returns undefined when the project declares neither or the value is not portable.
+ * `owner/name` from a repository URL or scp-style remote. Undefined when the
+ * value is not portable (local path, credentialed URL, odd segments).
  */
-export function portableProjectRepo(projectJson: {
-  repo_url?: unknown;
-  ci?: { repo?: unknown };
-}): string | undefined {
-  const candidates = [projectJson.repo_url, projectJson.ci?.repo].filter(
-    (value): value is string => typeof value === 'string' && value.trim().length > 0,
-  );
-  for (const candidate of candidates) {
-    const identity = repoIdentity(candidate.trim());
-    if (identity) return identity;
-  }
-  return undefined;
-}
-
-function repoIdentity(raw: string): string | undefined {
+export function portableRepoIdentity(raw: string): string | undefined {
   let pathname: string;
   try {
     const url = new URL(raw);
@@ -294,20 +286,19 @@ function repoIdentity(raw: string): string | undefined {
   return portable ? identity : undefined;
 }
 
-/** Task-dir artifacts the split layout adds, for run step outputs. */
-export function taskDocumentArtifacts(
-  taskAbsDir: string,
-  options: { includeChecklist: boolean },
-): ArtifactRef[] {
-  const artifacts: ArtifactRef[] = [];
-  if (options.includeChecklist && existsSync(path.join(taskAbsDir, EXECUTION_CHECKLIST_DOCUMENT))) {
-    artifacts.push({ path: EXECUTION_CHECKLIST_DOCUMENT, purpose: 'execution-checklist' });
+/**
+ * `owner/name` from a project's repository declaration (`repo_url` or `ci.repo`).
+ */
+export function portableProjectRepo(projectJson: {
+  repo_url?: unknown;
+  ci?: { repo?: unknown };
+}): string | undefined {
+  const candidates = [projectJson.repo_url, projectJson.ci?.repo].filter(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
+  );
+  for (const candidate of candidates) {
+    const identity = portableRepoIdentity(candidate.trim());
+    if (identity) return identity;
   }
-  if (existsSync(path.join(taskAbsDir, EXECUTION_TEMPLATE_INPUT))) {
-    artifacts.push({ path: EXECUTION_TEMPLATE_INPUT, purpose: 'execution-template' });
-  }
-  if (existsSync(path.join(taskAbsDir, HANDOFF_INPUT))) {
-    artifacts.push({ path: HANDOFF_INPUT, purpose: 'handoff-metadata' });
-  }
-  return artifacts;
+  return undefined;
 }

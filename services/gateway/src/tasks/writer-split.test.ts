@@ -54,8 +54,8 @@ await writeFile(path.join(tempProject, 'templates', 'task-document.md'), ADDENDU
 
 const { enumerateChecklistCheckboxes } = await import('@farmslot/protocol');
 const { CHECKLIST_MARKER_INPUT } = await import('./sidecars.js');
-const { EXECUTION_TEMPLATE_INPUT, HANDOFF_INPUT } = await import('./task-document.js');
-const { TEMPLATE_PROVENANCE_INPUT, writeTaskFile } = await import('./writer.js');
+const { HANDOFF_INPUT } = await import('@farmslot/agent-runtime');
+const { writeTaskFile } = await import('./writer.js');
 type Run = import('@farmslot/protocol').Run;
 
 function sha256(text: string): string {
@@ -144,40 +144,50 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /## Tooling\n\nMarker help: `[^`]+\/fix\/split-[^`]+\/mark --help`\./);
   assert.match(taskDocument, /## Checklist\n\nFollow `[^`]+\/CHECKLIST\.md` top to bottom/);
   assert.match(taskDocument, /## Inputs\n\nUnder `[^`]+\/inputs\/`:\n\n- `handoff\.json`/);
-  assert.match(taskDocument, /- `execution-template\.json`/);
+  assert.doesNotMatch(taskDocument, /execution-template\.json/);
+  assert.match(taskDocument, /- `worker-terminal-contract\.json`/);
   assert.match(taskDocument, /- `bug-input\.json`/);
   assert.match(taskDocument, /## Runtime capability proof plan/);
   assert.doesNotMatch(taskDocument, /- \[ \]/);
   assert.equal(enumerateChecklistCheckboxes(taskDocument).length, 0);
   assert.doesNotMatch(checklist, /Fully autonomous/);
 
-  // The checklist target already prefers CHECKLIST.md when it exists.
-  const manifest = JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8'));
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
+  // No manifest by default: absent means CHECKLIST.md + SIGNAL.json, and the
+  // pre-0.9 provenance twins are gone; handoff.json is the one task record.
+  await assert.rejects(readFile(path.join(taskDir, 'checklist-target.json')));
+  await assert.rejects(readFile(path.join(taskDir, 'inputs', 'execution-template.json')));
+  await assert.rejects(readFile(path.join(taskDir, 'inputs', 'template-provenance.json')));
+  await assert.rejects(readFile(path.join(taskDir, 'inputs', 'ticket-comments.json')));
   await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT));
-
-  // Provenance digests describe the checklist file, not TASK.md.
-  const provenance = JSON.parse(
-    await readFile(path.join(taskDir, TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as { contentHash: string; executionTemplate: { sha256: string; renderedSha256: string } };
-  assert.equal(provenance.contentHash, sha256(TEMPLATE_SOURCE));
-  assert.equal(provenance.executionTemplate.sha256, sha256(TEMPLATE_SOURCE));
-  assert.equal(provenance.executionTemplate.renderedSha256, sha256(checklist));
-
-  const executionTemplate = JSON.parse(
-    await readFile(path.join(taskDir, EXECUTION_TEMPLATE_INPUT), 'utf-8'),
-  ) as { schemaVersion: number; selectionReason: string; executionTemplate: { id: string } };
-  assert.equal(executionTemplate.schemaVersion, 1);
-  assert.equal(executionTemplate.selectionReason, 'single-general-candidate');
-  assert.equal(executionTemplate.executionTemplate.id, 'fix-bug/default');
-  assert.deepEqual(executionTemplate.executionTemplate, provenance.executionTemplate);
+  await readFile(path.join(taskDir, 'inputs', 'worker-terminal-contract.json'));
+  await readFile(path.join(taskDir, 'inputs', 'bug-input.json'));
 
   // handoff.json matches what the recipe-cook skill writes and what
-  // @farmslot/handoff closeout requires.
+  // @farmslot/handoff closeout requires, plus the selected checklist reference
+  // (digests describe CHECKLIST.md, not TASK.md) and the farm's provenance.
   const handoff = JSON.parse(await readFile(path.join(taskDir, HANDOFF_INPUT), 'utf-8')) as Record<
     string,
     unknown
-  >;
+  > & {
+    executionTemplate: {
+      id: string;
+      selectionReason: string;
+      sha256: string;
+      renderedSha256: string;
+    };
+    templateProvenance: { kind: string; contentHash: string; executionTemplate?: unknown };
+  };
+  assert.equal(handoff.executionTemplate.id, 'fix-bug/default');
+  assert.equal(handoff.executionTemplate.selectionReason, 'single-general-candidate');
+  assert.equal(handoff.executionTemplate.sha256, sha256(TEMPLATE_SOURCE));
+  assert.equal(handoff.executionTemplate.renderedSha256, sha256(checklist));
+  assert.equal(handoff.templateProvenance.kind, 'task-template');
+  assert.equal(handoff.templateProvenance.contentHash, sha256(TEMPLATE_SOURCE));
+  assert.equal(
+    handoff.templateProvenance.executionTemplate,
+    undefined,
+    'the reference is stored once',
+  );
   assert.equal(handoff.schemaVersion, 1);
   assert.equal(handoff.attemptId, 'run-split');
   assert.equal(handoff.surface, 'farmslot');

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add `task init` (library `taskInit` + `farmslot-agent task init`): the one producer of a task directory (`TASK.md`, `CHECKLIST.md`, `mark`, `inputs/handoff.json`, `inputs/worker-terminal-contract.json`) for control planes and harnesses alike. `handoff.json` now carries the selected checklist reference (`executionTemplate`) and, for Farmslot, `templateProvenance`; `inputs/execution-template.json` and `inputs/template-provenance.json` are no longer written. `checklist-target.json` is optional: absent means `CHECKLIST.md` + `SIGNAL.json`, and only a role switch writes it. The `mark` shim is one recorded command with a `FARMSLOT_MARK_CMD` override; `install-mark` is gone.
 - Worker-template structure lint now rejects a flow template that still carries a `## Task` block or `TASK_DIR:` line (the task writer generates TASK.md); nested-loop role checklists may keep theirs via `lintWorkerTemplateStructure(content, { roleChecklist: true })`.
 - Add idempotent native session creation with caller-reserved IDs, preserving live and terminal reservations across retries.
 

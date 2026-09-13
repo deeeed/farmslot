@@ -5,7 +5,15 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { normalizeRunner } from '@farmslot/protocol';
+import {
+  assertNoUnknownPlaceholders,
+  collectPlaceholderTokens,
+  normalizeRunner,
+} from '@farmslot/protocol';
+
+// Placeholder guard lives in @farmslot/protocol so agent-runtime renders with the
+// same rule; re-exported here for the gateway's existing imports.
+export { assertNoUnknownPlaceholders, collectPlaceholderTokens };
 
 import { farmslotRoot, type ProjectVars, type RawProjectJson, type SlotVars } from './config.js';
 
@@ -197,10 +205,6 @@ export function missingMetroPortMessage(slotVars: SlotVars): string {
 // verified below because they ARE expanded or substituted verbatim.
 
 const PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
-// Any double-brace token, valid identifier or not — a malformed name like
-// {{foo-bar}} can never be substituted, so it must fail the guard rather
-// than slip through an identifier-only scan.
-const PLACEHOLDER_TOKEN_RE = /\{\{[^{}\n]+\}\}/g;
 
 export function collectTemplatePlaceholders(text: string): Set<string> {
   const names = new Set<string>();
@@ -208,11 +212,6 @@ export function collectTemplatePlaceholders(text: string): Set<string> {
     if (match[1]) names.add(match[1]);
   }
   return names;
-}
-
-/** Full {{...}} tokens present in the text, including malformed names. */
-export function collectPlaceholderTokens(text: string): Set<string> {
-  return new Set(Array.from(text.matchAll(PLACEHOLDER_TOKEN_RE), (match) => match[0]));
 }
 
 // Every placeholder name expandTemplate() can substitute for this slot/project.
@@ -307,24 +306,6 @@ export function expandTemplateWithReservedLast(
     expanded = expanded.replaceAll(`\u0000${key}\u0000`, value);
   }
   return expanded;
-}
-
-export function assertNoUnknownPlaceholders(
-  template: string,
-  known: Iterable<string>,
-  source: string,
-): void {
-  const knownSet = known instanceof Set ? known : new Set(known);
-  const unknown = [...collectPlaceholderTokens(template)].filter((token) => {
-    const name = token.slice(2, -2);
-    return !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || !knownSet.has(name);
-  });
-  if (unknown.length > 0) {
-    throw new Error(
-      `${source} references placeholder(s) with no expansion value: ${unknown.join(', ')} — ` +
-        `supply the variable or remove the placeholder from the template`,
-    );
-  }
 }
 
 // ─── expandHook ───

@@ -292,6 +292,21 @@ test('parseTaskPath uses generated task provenance over folder naming', () => {
   });
 });
 
+test('parseTaskPath reads the flow from handoff.json before the legacy provenance file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
+  const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const taskFile = path.join(taskDir, 'TASK.md');
+  writeFileSync(taskFile, '# Task\n');
+  writeFileSync(path.join(taskDir, 'inputs/handoff.json'), JSON.stringify({ flow: 'fix-bug' }));
+  writeFileSync(
+    path.join(taskDir, 'inputs/template-provenance.json'),
+    JSON.stringify({ flowType: 'dev' }),
+  );
+
+  assert.equal(parseTaskPath(taskFile).flowType, 'fix-bug');
+});
+
 test('run create canonicalizes an absolute task file to the gateway-relative path', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
   const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -318,12 +318,25 @@ parsed = JSON.parse(
 );
 assert.equal(parsed.evidence.reportPath, scopedReport);
 
+// Absent manifest means the worker default: CHECKLIST.md when present, else TASK.md.
 const missingManifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-no-manifest-'));
 writeFileSync(path.join(missingManifestDir, 'TASK.md'), '- [ ] worker step');
 result = spawnSync(process.execPath, [helper, missingManifestDir, 'start'], { encoding: 'utf8' });
-assert.notEqual(result.status, 0, 'task-dir mark must fail without checklist-target.json');
-assert.match(result.stderr, /checklist-target\.json/);
-assert.match(result.stderr, /--checklist FILE\.md/);
+assert.equal(result.status, 0, result.stderr);
+assert.ok(existsSync(path.join(missingManifestDir, 'SIGNAL.json')));
+const defaultChecklistDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-default-checklist-'));
+writeFileSync(path.join(defaultChecklistDir, 'TASK.md'), '- [ ] never counted');
+writeFileSync(path.join(defaultChecklistDir, 'CHECKLIST.md'), '- [ ] 1. worker step');
+result = spawnSync(process.execPath, [helper, defaultChecklistDir, '1'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+assert.match(
+  readFileSync(path.join(defaultChecklistDir, 'CHECKLIST.md'), 'utf8'),
+  /- \[x\] 1\. worker step/,
+);
+assert.match(
+  readFileSync(path.join(defaultChecklistDir, 'TASK.md'), 'utf8'),
+  /- \[ \] never counted/,
+);
 
 const invalidManifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-bad-manifest-'));
 writeFileSync(path.join(invalidManifestDir, 'TASK.md'), '- [ ] worker step');
