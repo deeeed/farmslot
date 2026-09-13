@@ -80,6 +80,7 @@ const sidebars = {
         'reference/worker-template-quality',
         'reference/worker-signal-protocol',
         'reference/agent-runtime',
+        'reference/task-directory-contract',
         'reference/domains',
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',

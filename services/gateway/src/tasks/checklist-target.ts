@@ -87,7 +87,9 @@ function manifestRelPath(taskDir: string): string {
 }
 
 function serializeManifest(target: ChecklistTarget): string {
-  return `${JSON.stringify({ checklist: target.checklist }, null, 2)}\n`;
+  // Same shape the recipe-cook skill writes: the signal file is explicit so a
+  // reader never has to derive it from the checklist name.
+  return `${JSON.stringify({ checklist: target.checklist, signal: target.signal }, null, 2)}\n`;
 }
 
 export async function writeChecklistTargetLocal(

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Flow graph monitor tooltip names `CHECKLIST.md` as the file whose checkboxes drive worker progress.
 - Operate native sessions on connected execution nodes, keeping session controls, delivery receipts, and workspace views bound to the selected machine.
 
 - Add an opt-in agent workspace to Copilot with runner/model selection, resumable conversations, tool activity, approvals/questions, and embedded source and changes views.

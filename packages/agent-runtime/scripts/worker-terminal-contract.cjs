@@ -286,8 +286,11 @@ function templateBodyScope(content) {
 /**
  * Deterministic structure checks beyond terminal artifact contract.
  * @param {string} templateContent
+ * @param {{ roleChecklist?: boolean }} [options] roleChecklist: a nested-loop role
+ *   checklist (self-review, self-review-fix, ci-fix) rendered beside an existing
+ *   task dir; it may keep its own `## Task` block.
  */
-function lintWorkerTemplateStructure(templateContent) {
+function lintWorkerTemplateStructure(templateContent, options = {}) {
   /** @type {string[]} */
   const issues = [];
   if (/(?<!\{)\{TASK_DIR\}(?!\})/.test(templateContent)) {
@@ -302,8 +305,17 @@ function lintWorkerTemplateStructure(templateContent) {
     issues.push('terminal template missing `## Checklist` or `## Completion signal` section');
   }
 
-  if (!templateContent.includes('## Task') && !templateContent.includes('TASK_DIR:')) {
-    issues.push('missing `## Task` block or `TASK_DIR:` metadata');
+  // The task writer generates TASK.md (ticket block, description, acceptance
+  // criteria) and renders the flow template into CHECKLIST.md. A flow template
+  // that still carries the old `## Task` header duplicates that block inside
+  // the checklist.
+  if (
+    !options.roleChecklist &&
+    (/^## Task\s*$/m.test(templateContent) || /^TASK_DIR:\s/m.test(templateContent))
+  ) {
+    issues.push(
+      'carries a `## Task` block or `TASK_DIR:` line — the task writer generates TASK.md; keep only the checklist',
+    );
   }
 
   const scope = templateBodyScope(templateContent);

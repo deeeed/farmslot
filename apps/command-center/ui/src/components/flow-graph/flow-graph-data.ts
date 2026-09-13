@@ -270,7 +270,7 @@ const STEP_META: Record<string, StepMeta> = {
     lane: 'worker',
     label: 'Monitor',
     description:
-      'Poll runner progress via TASK.md checkboxes + SIGNAL.json. Detect stuck/idle, send nudges.',
+      'Poll runner progress via CHECKLIST.md checkboxes + SIGNAL.json. Detect stuck/idle, send nudges.',
     executor: 'worker',
   },
 

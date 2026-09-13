@@ -10,6 +10,7 @@ import { executionTemplateReference } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   enumerateChecklistCheckboxes,
+  EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
@@ -56,6 +57,17 @@ import {
   writePlanningContextInput,
 } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
+import {
+  buildExecutionTemplateInput,
+  buildHandoffMetadata,
+  buildTaskDocument,
+  EXECUTION_TEMPLATE_INPUT,
+  HANDOFF_INPUT,
+  type HandoffSourceKind,
+  portableProjectRepo,
+  readTaskDocumentAddendum,
+  TASK_DOCUMENT_ADDENDUM_TEMPLATE,
+} from './task-document.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
   readWorkerTerminalProjectConfig,
@@ -351,11 +363,14 @@ export function shouldApplyArtifactOnlyTaskPolicy(
 export function applyArtifactOnlyTaskPolicy(
   markdown: string,
   run: Pick<Run, 'completionPolicy' | 'flowType' | 'lane' | 'startRef' | 'engineState'>,
+  // Split layout: the checklist has no Task block, so BRANCH/REPO come from the
+  // task document instead of the markdown being rewritten.
+  taskBlockSource: string = markdown,
 ): string {
   if (!shouldApplyArtifactOnlyTaskPolicy(run)) return markdown;
 
-  const branch = taskBlockValue(markdown, 'BRANCH') || '<branch-from-task-block>';
-  const repo = taskBlockValue(markdown, 'REPO') || '<repo-from-task-block>';
+  const branch = taskBlockValue(taskBlockSource, 'BRANCH') || '<branch-from-task-block>';
+  const repo = taskBlockValue(taskBlockSource, 'REPO') || '<repo-from-task-block>';
   const replayBase =
     run.startRef?.resolvedSha ?? run.startRef?.requestedRef ?? 'selected reference/base';
   const harnessOverlayGlob = '`' + harnessRoot() + '/**`';
@@ -792,7 +807,14 @@ export async function writeTaskFile(
         : isLightweightInteractiveDevRun(run)
           ? '> Interactive lightweight dev — operator may steer the session; keep CHECKLIST.md and inputs/dev-intake.json current, then wait for Farmslot operator completion.'
           : '> Human-operated — pauses at HUMAN GATE steps for approval.';
-  template = template.replace(/^(#.+\n)/, `$1\n${modePreamble}\n`);
+  // The execution template becomes CHECKLIST.md untouched and the preamble moves
+  // to the TASK.md task document. Lightweight interactive dev is the one flow that
+  // keeps the template in TASK.md: its CHECKLIST.md is the operator-agreed plan
+  // written by writeInteractiveDevSidecars, and the template embeds that plan.
+  const splitChecklist = !isLightweightInteractiveDevRun(run);
+  if (!splitChecklist) {
+    template = template.replace(/^(#.+\n)/, `$1\n${modePreamble}\n`);
+  }
 
   // Build task folder — each run gets its own timestamped dir (allows comparison across runs).
   // Timestamp is MMDD-HHMMSS (seconds precision). Minute-only precision caused the E12 race
@@ -1110,11 +1132,13 @@ export async function writeTaskFile(
     // Last-resort: extract root and dependency recipes from the PR body via LLM. Only
     // runs when family inheritance produced no recipe — covers human-authored
     // PRs where farmslot has no fix-bug/dev ancestor in the family chain.
-    // Skip when the worker template doesn't reference {{RECIPE_SOURCE}} —
-    // without the provenance gate the staged recipe goes nowhere and the LLM
-    // call is wasted (e.g. projects/farmslot-farm has no recipe runner and
-    // its pr-complete.md doesn't render the placeholder).
-    if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('{{RECIPE_SOURCE}}')) {
+    // Skip when the worker template doesn't consume the provenance gate — the
+    // RECIPE_SOURCE value now lives in the TASK.md Task block, so the checklist
+    // references it by name rather than as a {{RECIPE_SOURCE}} placeholder.
+    // Without the gate the staged recipe goes nowhere and the LLM call is wasted
+    // (e.g. projects/farmslot-farm has no recipe runner and its pr-complete.md
+    // never mentions RECIPE_SOURCE).
+    if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('RECIPE_SOURCE')) {
       emit('substep', {
         name: 'pr-body-recipe-llm',
         detail: 'Extracting root + dependency recipes from PR body (LLM)',
@@ -1173,7 +1197,7 @@ export async function writeTaskFile(
 
   emit('substep', {
     name: 'render-template',
-    detail: `Rendering ${path.basename(taskAbsDir)}/TASK.md`,
+    detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
   const content = await generateTaskContent(
     template,
@@ -1181,43 +1205,90 @@ export async function writeTaskFile(
     `Worker template ${templatePath ?? templateName}`,
   );
   const taskFilePath = path.join(taskAbsDir, 'TASK.md');
-  const withInheritedContext = inheritedContext
-    ? `${content.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
-    : content;
-  const withInteractivePrCompleteHandoff =
-    run.flowType === 'pr-complete' && run.mode === 'interactive'
-      ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
-      : withInheritedContext;
-  // Related planning context is frozen into inputs/ before it is rendered, so the
-  // independent-review brief can quote the same snapshot hash the worker saw.
-  if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
-  const withRuntimeContext = appendRuntimeCapabilityAndPlanningContext(
-    withInteractivePrCompleteHandoff,
-    vars.TASK_DIR,
-    runtimeCapabilities?.providers ?? null,
-    planningContext,
-  );
-  const withPlanningContext = `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
-  const finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
+  // Gateway-owned context (family scope, PR-complete handoff, runtime capability
+  // plan, related planning context, review contract) is appended to the document
+  // the worker opens first: TASK.md in both layouts.
+  const appendTaskContext = async (base: string): Promise<string> => {
+    const withInheritedContext = inheritedContext
+      ? `${base.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
+      : base;
+    const withInteractivePrCompleteHandoff =
+      run.flowType === 'pr-complete' && run.mode === 'interactive'
+        ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
+        : withInheritedContext;
+    // Related planning context is frozen into inputs/ before it is rendered, so the
+    // independent-review brief can quote the same snapshot hash the worker saw.
+    if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
+    const withRuntimeContext = appendRuntimeCapabilityAndPlanningContext(
+      withInteractivePrCompleteHandoff,
+      vars.TASK_DIR,
+      runtimeCapabilities?.providers ?? null,
+      planningContext,
+    );
+    return `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
+  };
+
+  let finalContent: string;
+  let checklistContent: string | null = null;
+  if (splitChecklist) {
+    const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
+    const renderedAddendum = addendum
+      ? await generateTaskContent(
+          addendum.content,
+          vars,
+          `Task document addendum templates/${TASK_DOCUMENT_ADDENDUM_TEMPLATE}`,
+        )
+      : null;
+    const taskDocument = buildTaskDocument({
+      flowType: run.flowType,
+      modePreamble,
+      vars,
+      description,
+      acceptanceCriteria: ticket.acceptanceCriteria,
+      affectedArea: ticket.affectedArea || '',
+      screenshotsMarkdown: screenshotsMd,
+      commentsMarkdown: vars.COMMENTS,
+      linkedTicketsMarkdown: vars.LINKED_TICKETS,
+      linkedDescriptionsMarkdown: vars.LINKED_DESCRIPTIONS,
+      commentSummaryMarkdown: vars.COMMENT_SUMMARY,
+      addendum: renderedAddendum,
+      hasTicketData: Boolean(run.ticketData),
+      hasExecutionTemplateInput: Boolean(configuredTemplate),
+    });
+    // Artifact-only replays neutralize publication steps inside the checklist
+    // (BRANCH/REPO for the rewritten snippets come from the task document) and
+    // put the replay guardrails at the top of the task document the worker
+    // opens first.
+    checklistContent = applyArtifactOnlyTaskPolicy(content, run, taskDocument);
+    finalContent = applyArtifactOnlyTaskPolicy(await appendTaskContext(taskDocument), run);
+  } else {
+    const withPlanningContext = await appendTaskContext(content);
+    finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
+  }
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);
   }
+  const enumeratedChecklist = checklistContent ?? finalContent;
   if (configuredTemplate) {
     templateProvenance.executionTemplate = executionTemplateReference(
       configuredTemplate.entry,
-      finalContent,
+      enumeratedChecklist,
     );
   }
   // Warn (not fail) so a template bug in one farm pack cannot brick dispatch;
   // the log line names the template so the pack can be fixed.
-  const numberingMismatches = checklistNumberingMismatches(finalContent);
+  const numberingMismatches = checklistNumberingMismatches(enumeratedChecklist);
   if (numberingMismatches.length > 0) {
     console.warn(
       `[task-writer] checklist label numbering diverges from step positions in ${templatePath ?? templateName} (${numberingMismatches.join('; ')}) — 'mark N' targets positions; renumber the template labels`,
     );
   }
   await writeFile(taskFilePath, finalContent, 'utf-8');
+  if (checklistContent !== null) {
+    await writeFile(path.join(taskAbsDir, EXECUTION_CHECKLIST_DOCUMENT), checklistContent, 'utf-8');
+  }
   await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
+  // Prefers CHECKLIST.md when the split layout wrote it, TASK.md otherwise.
   await writeWorkerChecklistTargetLocal(taskAbsDir);
 
   // Write template provenance as inputs/template-provenance.json
@@ -1226,6 +1297,22 @@ export async function writeTaskFile(
     `${JSON.stringify(templateProvenance, null, 2)}\n`,
     'utf-8',
   );
+  // Portable twin of the skill-side materialize provenance, so a farm task dir
+  // and a skill task dir describe the selected checklist with the same file.
+  if (configuredTemplate && templateProvenance.executionTemplate) {
+    await writeFile(
+      path.join(taskAbsDir, EXECUTION_TEMPLATE_INPUT),
+      `${JSON.stringify(
+        buildExecutionTemplateInput(
+          configuredTemplate.reason,
+          templateProvenance.executionTemplate,
+        ),
+        null,
+        2,
+      )}\n`,
+      'utf-8',
+    );
+  }
 
   const workerTerminalConfig = readWorkerTerminalProjectConfig(
     projectVars.projectJson as Record<string, unknown>,
@@ -1236,6 +1323,39 @@ export async function writeTaskFile(
   await writeFile(
     path.join(taskAbsDir, WORKER_TERMINAL_CONTRACT_INPUT),
     `${JSON.stringify(terminalContract, null, 2)}\n`,
+    'utf-8',
+  );
+
+  // Run identity in the shape the recipe-cook skill writes, so `handoff closeout`
+  // and any other task-dir consumer see one contract on both surfaces.
+  const isPrFlow =
+    run.flowType === 'review-pr' ||
+    run.flowType === 'pr-complete' ||
+    run.flowType === 'update-branch';
+  const handoffSourceKind: HandoffSourceKind = ticket.jiraKey
+    ? 'jira'
+    : ticket.githubIssue
+      ? 'github-issue'
+      : isPrFlow
+        ? 'github-pr'
+        : 'text';
+  await writeFile(
+    path.join(taskAbsDir, HANDOFF_INPUT),
+    `${JSON.stringify(
+      buildHandoffMetadata({
+        run,
+        repo: portableProjectRepo(projectVars.projectJson as Record<string, unknown>),
+        domain: effectiveDomain ?? undefined,
+        title: ticket.title,
+        sourceKind: handoffSourceKind,
+        ticket: ticketRef,
+        sourceRef: ticketUrl || vars.PR_URL || undefined,
+        terminalContract,
+        startedAt: templateProvenance.renderedAt,
+      }),
+      null,
+      2,
+    )}\n`,
     'utf-8',
   );
 

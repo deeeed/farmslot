@@ -21,7 +21,7 @@ See [Protocol boundaries](../architecture/protocol-boundaries.md) for the wider 
 
 A runtime-compatible task directory contains:
 
-- `TASK.md` or `CHECKLIST.md` with `- [ ]` checklist items;
+- `CHECKLIST.md` with `- [ ]` checklist items (the execution checklist) beside `TASK.md`, the task document that holds the ticket and acceptance criteria and is never enumerated (see [Task directory contract](task-directory-contract.md));
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
 - `checklist-target.json`, written by the gateway at task creation or role switch, naming the checklist and signal file the task-local `mark` resolves to;

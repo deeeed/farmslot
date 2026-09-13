@@ -35,6 +35,7 @@ import {
 import { resolvePrepareProfile } from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
+import { taskDocumentArtifacts } from '../tasks/task-document.js';
 import {
   PREVIOUS_REVIEW_JSON_INPUT,
   PREVIOUS_REVIEW_MD_INPUT,
@@ -477,6 +478,9 @@ export async function executeWriteTaskStep(
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       { path: TEMPLATE_PROVENANCE_INPUT, purpose: 'template-provenance' },
+      ...taskDocumentArtifacts(path.dirname(current.taskFile), {
+        includeChecklist: !isLightweightInteractiveDevRun(current),
+      }),
     ];
     const inputArtifacts = await captureReviewInputArtifactsForRun(current);
     artifacts.push(...inputArtifacts);
@@ -663,6 +667,11 @@ export async function executeWriteTaskStep(
         { path: 'CHECKLIST.md', purpose: 'interactive-checklist' },
       );
     }
+    artifacts.push(
+      ...taskDocumentArtifacts(path.dirname(taskFilePath), {
+        includeChecklist: !isLightweightInteractiveDevRun(afterWrite),
+      }),
+    );
     if (afterWrite.repeatReviewContext?.contextMode === 'reuse') {
       artifacts.push(
         { path: PREVIOUS_REVIEW_JSON_INPUT, purpose: 'previous-review-context' },

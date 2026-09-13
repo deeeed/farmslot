@@ -30,6 +30,13 @@ export interface ExecutionTemplateDefault {
   templateId: string;
 }
 
+/**
+ * Task-root file that holds the execution checklist. The task writer renders the
+ * selected execution template into it verbatim; `TASK.md` is the task document
+ * (ticket, acceptance criteria, pointers) and is never enumerated for steps.
+ */
+export const EXECUTION_CHECKLIST_DOCUMENT = 'CHECKLIST.md';
+
 export interface ProjectExecutionTemplatesConfig {
   sources?: ConfiguredExecutionTemplateSource[];
   defaults?: ExecutionTemplateDefault[];
