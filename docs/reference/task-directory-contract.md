@@ -78,29 +78,29 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 `inputs/handoff.json` is the run's identity for closeout and learning packages:
 
-| Field          | Farmslot value                                                                        | Skill value                          |
-| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------ |
-| `attemptId`    | run id                                                                                | random UUID                          |
-| `surface`      | `farmslot`                                                                            | `skill`                              |
-| `project`      | project name                                                                          | checkout basename                    |
-| `repo`         | `owner/name` from `repo_url` or `ci.repo`                                             | `owner/name` from the git remote     |
-| `domain`       | effective run domain, when any                                                        | `--domain`, when any                 |
-| `flow`         | flow type                                                                             | task kind                            |
-| `task`         | title, `sourceKind` (`jira`, `github-issue`, `github-pr`, `text`), ticket, source URL | title, `text` or `file`, ticket, ref |
-| `taskDocument` | `TASK.md`                                                                             | `TASK.md`                            |
-| `report`       | the terminal contract's `complete.report` (`pr-description.md` for dev / fix-bug)     | `artifacts/report.md`                |
-| `learnings`    | `artifacts/learnings.md`                                                              | `artifacts/learnings.md`             |
+| Field          | Farmslot value                                                                              | Skill value                                   |
+| -------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `attemptId`    | run id                                                                                      | random UUID                                   |
+| `surface`      | `farmslot`                                                                                  | `skill`                                       |
+| `project`      | project name                                                                                | checkout basename                             |
+| `repo`         | `owner/name` from `repo_url` or `ci.repo`                                                   | `owner/name` from the git remote              |
+| `domain`       | effective run domain, when any                                                              | `--domain`, when any                          |
+| `flow`         | flow type                                                                                   | task kind                                     |
+| `task`         | title, `sourceKind` (`jira`, `github-issue`, `github-pr`, `text`), ticket, source URL       | title, `text` or `file`, ticket, ref          |
+| `taskDocument` | `TASK.md`                                                                                   | `TASK.md`                                     |
+| `report`       | the terminal contract's `complete.report` (`artifacts/pr-description.md` for dev / fix-bug) | `artifacts/pr-description.md` (dev / fix-bug) |
+| `learnings`    | `artifacts/learnings.md`                                                                    | `artifacts/learnings.md`                      |
 
-## Outcome file and PR body are two stages
+## Outcome file: one name on both surfaces
 
-The worker's outcome artifact proves the work; the PR body presents it. Both surfaces keep those apart, and the file names follow the stage, not the surface:
+dev and fix-bug workers finish with `artifacts/pr-description.md` whether Farmslot dispatched the run or an engineer ran the skill. It is the PR body in the repository's PR-template shape and carries the proof summary (what changed, root cause, validation, evidence paths). Most runs want a PR, and the file is usable before anyone decides to open one.
 
-| Stage                                                | Farmslot dev / fix-bug                                                                                             | Skill dev / fix-bug                                                                                                              |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Worker outcome (terminal contract `complete.report`) | `artifacts/pr-description.md` — the PR body in the repository's PR-template shape, so it is also the proof summary | `artifacts/report.md` — the claim-to-evidence report                                                                             |
-| Publication input                                    | the same `artifacts/pr-description.md`, published by the gateway after the human gate                              | `pr-package/pr-desc.md`, generated by the evidence packaging step from `report.md`, the repository PR template, and the evidence |
+| Stage                                                | Farmslot                                                                                                | Skill                                                                                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker outcome (terminal contract `complete.report`) | `artifacts/pr-description.md`                                                                           | `artifacts/pr-description.md`                                                                                                             |
+| Publication                                          | the gateway fills the evidence section from `evidence-manifest.json` and publishes after the human gate | the evidence packaging step adds the evidence images and artifact index into `pr-package/pr-desc.md`, then a PR is opened only on request |
 
-The farm collapses the two stages into one file because the gateway publishes what the worker wrote; the skill keeps them separate because publishing is opt-in and happens later. Neither surface writes both `report.md` and `pr-description.md` for the same run. `inputs/handoff.json` `report` always names the worker outcome for that surface, so closeout and learning packages read the right file without knowing which surface produced it.
+`review-pr` writes `artifacts/report.md` (with its QA artifacts) on both surfaces; `no-change` writes `artifacts/no-change-report.md`. `inputs/handoff.json` `report` names the outcome file, so closeout and learning packages read the same file wherever the run happened.
 
 ## What travels to the slot
 
