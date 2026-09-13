@@ -29,6 +29,7 @@ import {
   slotWriteFile,
   slotWriteFiles,
   updateSlotStatus,
+  withMachineEnv,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -251,13 +252,16 @@ async function slotPrepareInner(
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
   const applyCommandEnv = (command: string) =>
-    applyProjectCommandEnv(projectJson, command, {
-      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
-      expandDomainValue: (value) =>
-        expandTemplate(value, vars, projectVars, {
-          domain: effectiveDomain ?? '',
-        }),
-    });
+    withMachineEnv(
+      applyProjectCommandEnv(projectJson, command, {
+        ...(effectiveDomain ? { domain: effectiveDomain } : {}),
+        expandDomainValue: (value) =>
+          expandTemplate(value, vars, projectVars, {
+            domain: effectiveDomain ?? '',
+          }),
+      }),
+      vars,
+    );
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')

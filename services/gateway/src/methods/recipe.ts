@@ -49,6 +49,7 @@ import {
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { isPathInside } from '../core/path.js';
+import { withMachineEnv } from '../core/project-env.js';
 import {
   isShellHomePath,
   normalizeRemotePath,
@@ -1042,7 +1043,10 @@ async function buildRecipeExecutionCommand(
     recipeCmd,
     recipeRunOptionsForProject(projectVars.projectJson, { playbackSlowMs, recordVideo }),
   );
-  recipeCmd = withTaskRecipeTrustEnvironment(recipeCmd, slotVars.remoteRepo, workerTaskDir);
+  recipeCmd = withMachineEnv(
+    withTaskRecipeTrustEnvironment(recipeCmd, slotVars.remoteRepo, workerTaskDir),
+    slotVars,
+  );
   return {
     recipePath: slotRecipePath,
     artifactRoot: slotRecipeRunArtifactsDir,

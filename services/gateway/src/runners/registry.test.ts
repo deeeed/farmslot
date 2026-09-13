@@ -1471,6 +1471,20 @@ describe('buildLaunchCommand', () => {
   const TASK_FILE = `${TASK_DIR}/TASK.md`;
   const PROMPT = 'Read TASK.md and execute.';
 
+  it('exports the machine pool env before every runner launch and reload', () => {
+    const vars = makeVars({ dispatchCmd: '', machineEnv: { MM_HARNESS_BIN: '/opt/mm-harness' } });
+    const launch = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { taskDir: TASK_DIR });
+    assert.match(launch, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    const reload = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'sess-1', {
+      taskDir: TASK_DIR,
+    });
+    assert.match(reload, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    assert.doesNotMatch(
+      buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'sonnet', PROMPT),
+      /^export /u,
+    );
+  });
+
   it('derives recipe provenance scope from a task file when taskDir is omitted', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {

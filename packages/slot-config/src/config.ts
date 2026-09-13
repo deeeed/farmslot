@@ -109,6 +109,12 @@ export interface RawPoolJson {
   recycle_cmd?: string;
   /** Default domain overlay for dispatches from this machine; slot- and task-level domain override it. */
   domain?: string;
+  /**
+   * Environment exported into every shell Farmslot runs on this machine: runner
+   * launches, prepare hooks, recipe runs. Machine-specific tool locations live
+   * here (for example a project harness binary), never in project.json.
+   */
+  env?: Record<string, string>;
   slots: RawPoolSlot[];
 }
 
@@ -155,6 +161,8 @@ export interface SlotVars {
   projectName: string;
   /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
   domain?: string;
+  /** Validated `pool.env`: exported into every shell Farmslot runs on this machine. */
+  machineEnv?: Record<string, string>;
   // Resource-derived (flattened from slot.resources)
   resourceVars: Record<string, string>;
 }
@@ -665,6 +673,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     }
   }
   const projectName = slot.project || pool.project || '';
+  const machineEnv = validateMachineEnv(pool.env, machine);
 
   // Flatten resources into resourceVars
   const resourceVars: Record<string, string> = {};
@@ -715,8 +724,29 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     remoteRepo,
     projectName,
     domain: slot.domain ?? pool.domain,
+    machineEnv,
     resourceVars,
   };
+}
+
+// Values ship verbatim into shell exports on the machine, so reject anything
+// that is not a plain string map and any name the shell would refuse.
+function validateMachineEnv(raw: unknown, machine: string): Record<string, string> {
+  if (raw === undefined) return {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`pool ${machine}: env must be an object of string values`);
+  }
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (!ENV_NAME_RE.test(name)) {
+      throw new Error(`pool ${machine}: env name '${name}' is not a valid shell variable name`);
+    }
+    if (typeof value !== 'string') {
+      throw new Error(`pool ${machine}: env.${name} must be a string`);
+    }
+    env[name] = value;
+  }
+  return env;
 }
 
 // ─── loadProjectVars ───
