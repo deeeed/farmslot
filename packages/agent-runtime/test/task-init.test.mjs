@@ -244,4 +244,28 @@ function init(taskDir, templateRoot, extra = []) {
   assert.match(readFileSync(path.join(work, 'task', 'TASK.md'), 'utf8'), /From the file\./);
 }
 
+// 5. --addendum-file renders into TASK.md, and a task dir with spaces still marks.
+{
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot task init spaces-'));
+  const taskDir = path.join(work, 'my task');
+  writeFileSync(
+    path.join(work, 'addendum.md'),
+    '## Tooling\n\nMarker help: `{{TASK_DIR}}/mark --help`.\n',
+  );
+  const result = init(taskDir, catalog(PLAIN_TEMPLATE), [
+    '--addendum-file',
+    path.join(work, 'addendum.md'),
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  const task = readFileSync(path.join(taskDir, 'TASK.md'), 'utf8');
+  assert.match(task, /## Tooling\n\nMarker help: `.*my task\/mark --help`\./);
+  assert.ok(
+    task.indexOf('## Tooling') < task.indexOf('## Checklist'),
+    'addendum precedes the checklist pointer',
+  );
+  const mark = spawnSync(path.join(taskDir, 'mark'), ['start'], { encoding: 'utf8' });
+  assert.equal(mark.status, 0, mark.stderr);
+  assert.ok(existsSync(path.join(taskDir, 'SIGNAL.json')), 'default engine path survives spaces');
+}
+
 process.stdout.write('agent-runtime task init tests: ok\n');

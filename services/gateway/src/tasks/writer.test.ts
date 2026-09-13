@@ -564,7 +564,7 @@ test('mark shim records the slot-synced engine and honours FARMSLOT_MARK_CMD', a
   // One recorded default (the operator checkout's engine for a local slot), one env override.
   assert.match(
     marker,
-    /exec \$\{FARMSLOT_MARK_CMD:-node [^}]*packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs\} "\$DIR" "\$@"/,
+    /exec \$\{FARMSLOT_MARK_CMD:-node "[^}]*packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs"\} "\$DIR" "\$@"/,
   );
   assert.doesNotMatch(marker, /FARMSLOT_AGENT_BIN|command -v farmslot-agent|exit 127/);
 

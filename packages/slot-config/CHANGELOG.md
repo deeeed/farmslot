@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- `collectPlaceholderTokens` and `assertNoUnknownPlaceholders` now live in `@farmslot/protocol` and are re-exported here unchanged.
 - Estimate GPT-6 Astra session cost using its published input and output token rates.
 
 - feat(runtime): accept `runtime_capabilities.host_pressure_admission` — a required `mode` (`off` |

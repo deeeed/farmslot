@@ -20,9 +20,17 @@ export const MARK_COMMAND_ENV = 'FARMSLOT_MARK_CMD';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+/**
+ * Quote one word for the shim's default command: double quotes keep spaces
+ * together while `$HOME` (a remote slot's home) still expands.
+ */
+export function quoteMarkCommandWord(word: string): string {
+  return `"${word.replace(/(["\\`])/g, '\\$1')}"`;
+}
+
 /** Generic default: this package's mark engine. A control plane or harness passes its own. */
 export function defaultMarkCommand(): string {
-  return `node ${path.join(packageRoot, 'scripts', 'mark-checklist-step.cjs')}`;
+  return `node ${quoteMarkCommandWord(path.join(packageRoot, 'scripts', 'mark-checklist-step.cjs'))}`;
 }
 
 /**

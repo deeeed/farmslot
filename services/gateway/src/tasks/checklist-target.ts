@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { buildMarkShim } from '@farmslot/agent-runtime';
+import { buildMarkShim, quoteMarkCommandWord } from '@farmslot/agent-runtime';
 import {
   CHECKLIST_TARGET_MANIFEST,
   type ChecklistTarget,
@@ -158,7 +158,7 @@ export function markCommandForSlot(
 ): string {
   const raw = projectVars?.projectJson.vars?.mark_cmd;
   if (typeof raw === 'string' && raw.trim()) return expandTemplate(raw, vars, projectVars);
-  return `node ${checklistMarkerHelperPath(farmslotDirForSlot(vars))}`;
+  return `node ${quoteMarkCommandWord(checklistMarkerHelperPath(farmslotDirForSlot(vars)))}`;
 }
 
 export async function syncChecklistMarkerOnSlot(

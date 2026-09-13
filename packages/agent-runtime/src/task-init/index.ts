@@ -37,6 +37,8 @@ import { writeTaskDir, type WrittenTaskDir } from './write.js';
 
 export * from './task-document.js';
 export * from './write.js';
+// The renderer lives in protocol; re-exported so CLI wrappers reach it through the runtime entry.
+export { renderTemplatePlaceholders } from '@farmslot/protocol';
 
 const require = createRequire(import.meta.url);
 
