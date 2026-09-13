@@ -1,56 +1,10 @@
-# Worker: Feature — {{TICKET_ID}}
-
-> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | {{TASK_DIR}}/mark no-change --reason "…" | {{TASK_DIR}}/mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
-
----
+# Feature checklist
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps in a single uninterrupted run.**
 
 **Publication model:** keep the workspace local-first. Do not run `git push`, `gh pr create`,
 `gh pr edit`, or `gh pr comment`. The gateway will prepare a validated workspace package for
 human approval, optional independent review, and CI only after publication.
-
-## Task
-
-```text
-TICKET: {{TICKET_ID}}
-RUN_ID: {{RUN_ID}}
-FAMILY_ID: {{FAMILY_ID}}
-TICKET_URL: {{TICKET_URL}}
-TITLE: {{TICKET_TITLE}}
-BRANCH: {{BRANCH}}
-TASK_DIR: {{TASK_DIR}}
-SESSION: {{SESSION}}
-REPO: {{REPO}}
-PLATFORM: {{PLATFORM}}
-CDP_PORT: {{CDP_PORT}}
-WATCHER_PORT: {{WATCHER_PORT}}
-RUNTIME_DIR: {{RUNTIME_DIR}}
-SLOT: {{SLOT}}
-STATUS: pending
-```
-
-## Description
-
-{{DESCRIPTION}}
-
-## Acceptance Criteria
-
-{{ACCEPTANCE_CRITERIA}}
-
-### Recipe tooling
-
-Resolve once, then reuse:
-
-```bash
-cd {{REPO}}
-RUNNER="node {{recipe_runner_resolve_cmd}}"
-MANIFEST="{{recipe_manifest_path}}"
-WRAPPER="{{recipe_validate_wrapper}}"
-```
-
-Read `{{recipe_quality_path}}` before writing any recipe.
 
 ### Repo boundaries — where proof artifacts live
 
@@ -68,7 +22,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
   Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
-- [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
+- [ ] **3. Update status** — set `STATUS: working` in TASK.md, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
   - **`command-center` only when listed:**
     ```bash
@@ -188,7 +142,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **23. Signal completion** — set `STATUS: done`, then:
+- [ ] **23. Signal completion** — set `STATUS: done` in TASK.md, then:
   ```bash
   {{TASK_DIR}}/mark complete --mark-last
   ```

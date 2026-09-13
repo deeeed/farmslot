@@ -1,6 +1,7 @@
 // methods/task.ts — Task progress parsed from the task checklist markdown file.
-// Interactive lightweight dev stores checkboxes in CHECKLIST.md; the generated
-// `mark` helper prefers that file too. Autonomous templates keep progress in TASK.md.
+// Every flow stores checklist progress in CHECKLIST.md (the execution checklist);
+// TASK.md is the task document and is never enumerated. The progress-path
+// resolver falls back to TASK.md only for task dirs written before the split.
 
 import path from 'node:path';
 
@@ -31,7 +32,12 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
 
   if (params.taskFile) {
     const vars = await loadSlotVars(params.slotId);
-    const effectiveMdPath = resolveExplicitTaskFile(vars.remoteRepo, params.taskFile);
+    // An explicit TASK.md (Slot View passes the worker context's task file) still
+    // resolves to the sibling CHECKLIST.md when it exists; role checklists pass through.
+    const effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(
+      vars,
+      resolveExplicitTaskFile(vars.remoteRepo, params.taskFile),
+    );
     const markdown = await slotReadFile(vars, effectiveMdPath);
     const result: TaskProgressResult = {
       slotId: params.slotId,

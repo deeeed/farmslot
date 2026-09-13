@@ -10,12 +10,12 @@ For the short worker checklist, see [Finish a worker run](worker-run-finish.md).
 
 ## Every terminal run
 
-| Artifact                   | Required                                                                                                                                                | Purpose                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `artifacts/learnings.md`   | **Contribution flows** (unless `./mark --skip-learnings`); reviewer flows (self-review, self-review-fix) require their feedback/report artifact instead | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant |
-| Flow outcome file          | **Yes** (see table below)                                                                                                                               | What happened: fix summary, review, PR body, merge notes, or no-change investigation         |
-| `SIGNAL.json`              | **Yes**                                                                                                                                                 | Written only by `./mark` — never hand-edited                                                 |
-| `CHECKLIST.md` / `TASK.md` | **Yes**                                                                                                                                                 | Every box `[x]` when using `--mark-last`                                                     |
+| Artifact                   | Required                                                                                                                                                | Purpose                                                                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `artifacts/learnings.md`   | **Contribution flows** (unless `./mark --skip-learnings`); reviewer flows (self-review, self-review-fix) require their feedback/report artifact instead | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant                                                                       |
+| Flow outcome file          | **Yes** (see table below)                                                                                                                               | What happened: fix summary, review, PR body, merge notes, or no-change investigation                                                                               |
+| `SIGNAL.json`              | **Yes**                                                                                                                                                 | Written only by `./mark` — never hand-edited                                                                                                                       |
+| `CHECKLIST.md` / `TASK.md` | **Yes**                                                                                                                                                 | Every box `[x]` when using `--mark-last`; the file named by `checklist-target.json` is the one counted (see [Task directory contract](task-directory-contract.md)) |
 
 ## Outcome file by flow
 
@@ -36,9 +36,9 @@ PR-producing flows use **`pr-description.md`** as the single outcome artifact (i
 Recipe-authoring skills such as `recipe-dev` and `recipe-fix-ticket`, run from your own skills repository checkout, typically **do not** open a PR automatically. They use:
 
 - `artifacts/learnings.md` — always
-- `artifacts/report.md` — short run summary for the human reviewer (no `pr-description.md` unless you later open a PR with your skills repository's PR-evidence skill)
+- `artifacts/pr-description.md` — the same outcome file a Farmslot-dispatched run writes: PR body in the repository PR-template shape plus the proof summary. Your skills repository's PR-evidence step packages it (evidence images, artifact index) when you decide to open a PR.
 
-When the same run is later imported into Farmslot or promoted to a farm worker flow, rename or copy into `pr-description.md` if publishing.
+The same task directory is therefore publishable from either surface without renaming anything.
 
 ## Recipe runs (conditional)
 

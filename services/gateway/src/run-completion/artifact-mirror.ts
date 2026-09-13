@@ -285,13 +285,14 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   invalidateArtifactTextCache(workerArtifactsDir, run.slotId);
   invalidateLiveRecipeContextMemo(run.id);
 
-  // Copy TASK.md back (worker may have updated checkboxes)
-  const workerTask = path.join(workerTaskDir, 'TASK.md');
-  if (await slotFileExists(vars, workerTask)) {
-    await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'), {
+  // Copy TASK.md and CHECKLIST.md back (worker may have updated status or checkboxes)
+  for (const document of ['TASK.md', 'CHECKLIST.md']) {
+    const workerDocument = path.join(workerTaskDir, document);
+    if (!(await slotFileExists(vars, workerDocument))) continue;
+    await slotCopyFile(vars, workerDocument, path.join(taskDir, `${document}.worker`), {
       phase: 'mirror',
       ...transferMeta,
-      label: 'TASK.md.worker',
+      label: `${document}.worker`,
     });
   }
   return copied;

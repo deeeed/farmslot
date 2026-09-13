@@ -52,5 +52,6 @@ test('writeWorkerChecklistTargetLocal prefers CHECKLIST.md when present', async 
   const manifest = JSON.parse(readFileSync(path.join(dir, CHECKLIST_TARGET_MANIFEST), 'utf-8'));
   assert.deepEqual(manifest, {
     checklist: 'CHECKLIST.md',
+    signal: 'SIGNAL.json',
   });
 });

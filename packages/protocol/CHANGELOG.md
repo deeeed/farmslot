@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the `EXECUTION_CHECKLIST_DOCUMENT` constant (`CHECKLIST.md`): the task-root execution checklist the task writer renders beside the generated `TASK.md` task document.
 - Add an explicit native session ensure operation for retry-safe worker launch.
 
 - Add explicit execution-node selection and native node ownership declarations for structured sessions.

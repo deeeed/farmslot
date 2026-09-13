@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Worker-template structure lint now rejects a flow template that still carries a `## Task` block or `TASK_DIR:` line (the task writer generates TASK.md); nested-loop role checklists may keep theirs via `lintWorkerTemplateStructure(content, { roleChecklist: true })`.
 - Add idempotent native session creation with caller-reserved IDs, preserving live and terminal reservations across retries.
 
 - Share native session and bounded workspace operations with execution nodes, with node identity pinned to each host and journal.

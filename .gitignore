@@ -77,6 +77,7 @@ projects/farmslot-farm/*
 !projects/farmslot-farm/project.json
 !projects/farmslot-farm/templates/
 projects/farmslot-farm/templates/*
+!projects/farmslot-farm/templates/task-document.md
 !projects/farmslot-farm/templates/worker/
 projects/farmslot-farm/templates/worker/*
 !projects/farmslot-farm/templates/prompts/
@@ -163,3 +164,6 @@ pool/*.bak.*
 
 .pr-source-checkpoints.json
 /.pr-source-checkpoints.json.*.tmp
+
+# Root-level test byproducts (dispatch pressure tests write here)
+/artifacts/

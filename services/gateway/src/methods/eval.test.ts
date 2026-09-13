@@ -495,7 +495,9 @@ test('evalTrialStart creates a new eval-family candidate without original parent
     path.join(candidateDir, 'inputs', 'candidate-template.md'),
     'utf-8',
   );
-  assert.match(templateInput, /Worker/i);
+  // The candidate template is the execution checklist (no ticket header anymore).
+  assert.match(templateInput, /^# .+checklist/im);
+  assert.match(templateInput, /## Checklist/);
   assert.equal(typeof result.candidatePackage.templateProvenance?.contentHash, 'string');
 });
 
