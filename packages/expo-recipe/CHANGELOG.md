@@ -4,6 +4,12 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.9.1 - 2026-09-13
+
+- Publish against `@farmslot/protocol` 0.26.0 so a consumer that also installs `@farmslot/agent-runtime` 0.9.0 resolves one protocol copy.
+
 ## 0.9.0 - 2026-09-07
 
 - Expose transport-owned `open()` so native consumers can inspect before interacting without reopening the same session; pair it with `close()`.
