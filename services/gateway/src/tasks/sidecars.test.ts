@@ -18,7 +18,7 @@ test('copyPreparedTaskRootSidecars copies CHECKLIST.md beside the marker when pr
   });
   await writeFile(
     path.join(taskDir, CHECKLIST_TARGET_MANIFEST),
-    `${JSON.stringify({ checklist: 'CHECKLIST.md' }, null, 2)}\n`,
+    `${JSON.stringify({ checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' }, null, 2)}\n`,
     'utf-8',
   );
   await writeFile(path.join(taskDir, INTERACTIVE_CHECKLIST_MARKDOWN), '- [ ] 1. Step\n', 'utf-8');
