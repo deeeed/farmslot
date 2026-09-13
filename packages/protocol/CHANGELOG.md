@@ -4,35 +4,26 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.26.0 - 2026-09-13
+
 - Add the `{{placeholder}}` guard and renderer (`collectPlaceholderTokens`, `assertNoUnknownPlaceholders`, `renderTemplatePlaceholders`) and the readiness record contract (`sandbox.json`, `ReadinessRecord`), so a harness renders checklists and reports sandbox readiness with the same rules the control plane uses.
 - Add the `EXECUTION_CHECKLIST_DOCUMENT` constant (`CHECKLIST.md`): the task-root execution checklist the task writer renders beside the generated `TASK.md` task document.
 - Add an explicit native session ensure operation for retry-safe worker launch.
-
 - Add explicit execution-node selection and native node ownership declarations for structured sessions.
-
 - Add owned agent workspace catalog and read-only file/change RPC contracts, proposed tool details for approvals, durable prompt submission events, and explicit reasons for unavailable recovery.
-
 - Add opt-in native runner session commands and structured events for conversation, tools, approvals, interruption, and resume, with process generations, bounded replay, and durable command outcomes across reconnects.
 - Snapshot a runner transcript at recycle as an opaque archive pointer, and let History name that copy `transcript-archive`. Cursor and other non-jsonl runners stay unsupported.
-
 - Allow a timed-out interactive handoff to extend monitoring by the configured timeout without a SIGNAL.json. `continue` is the action id; already-pending timeout notes still qualify.
-
 - Expose account-scoped GitHub review observations and a shared guard against unnecessary repeat reviews.
-
 - Include optional author and review title metadata in PR status and review intent contracts.
-
 - Expose active PR-owning runs and slots alongside monitoring state without changing saved subscription lifecycles.
-
 - Allow trigger rules to configure the polling interval of newly enrolled PR monitors independently of discovery.
 - Add gateway GitHub account inventory and API resource/timestamp metadata for quota observations.
-
 - Add persistent PR subscriptions, team trigger rules with saved source progress and Project/view filter bindings and durable notification/enrollment receipts, recipient-scoped push registration and automated review policies for slot/model/effort selection, live QA and saved reviewer sessions.
-
 - Preserve the last actionable CI feedback fingerprint across gateway restarts for no-progress timeouts.
-
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.25.0 - 2026-09-08
 
