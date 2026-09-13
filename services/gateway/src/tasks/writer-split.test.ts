@@ -153,7 +153,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
 
   // The checklist target already prefers CHECKLIST.md when it exists.
   const manifest = JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8'));
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md' });
+  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
   await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT));
 
   // Provenance digests describe the checklist file, not TASK.md.

@@ -137,5 +137,5 @@ test('runReplayStep restores worker checklist-target when replaying from self-re
   const manifest = JSON.parse(
     await readFile(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST), 'utf-8'),
   );
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md' });
+  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
 });

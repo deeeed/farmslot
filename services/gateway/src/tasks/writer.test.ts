@@ -537,7 +537,7 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   const manifest = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'checklist-target.json'), 'utf-8'),
   );
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md' });
+  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
   // handoff.json describes the run in the shape a skill task dir uses.
   const handoff = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'inputs', 'handoff.json'), 'utf-8'),
