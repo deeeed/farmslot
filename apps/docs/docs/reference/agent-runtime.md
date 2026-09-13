@@ -24,7 +24,7 @@ A runtime-compatible task directory contains:
 - `CHECKLIST.md` with `- [ ]` checklist items (the execution checklist) beside `TASK.md`, the task document that holds the ticket and acceptance criteria and is never enumerated (see [Task directory contract](task-directory-contract.md));
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
-- `checklist-target.json`, written by the gateway at task creation or role switch, naming the checklist and signal file the task-local `mark` resolves to;
+- optionally `checklist-target.json`, written by a role switch to point `mark` at another checklist; absent means `CHECKLIST.md` + `SIGNAL.json`;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;
 - `mark`, a task-local executable shim written by `task init` (gateway or `farmslot-agent task init`).
 
