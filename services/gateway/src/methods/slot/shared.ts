@@ -30,6 +30,8 @@ export interface PrepareCommandError extends Error {
   failedLogPath?: string;
   failedPhase?: string;
   relatedLogs?: string[];
+  /** Set when the harness readiness record could not be persisted after a failed preflight; the preflight error stays primary. */
+  readinessError?: unknown;
 }
 
 export interface CheckStep {

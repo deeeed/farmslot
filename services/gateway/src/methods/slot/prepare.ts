@@ -7,6 +7,8 @@ import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 import {
   DEFAULT_BRANCH,
   type PreparePhase,
+  READINESS_RECORD,
+  type ReadinessRecord,
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
@@ -266,6 +268,34 @@ async function slotPrepareInner(
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')
     : path.join(farmslotRuntimeLogDir, `prepare-${params.slotId}`);
   const phaseLog = (name: string) => path.join(prepareLogDir, `${sanitizePhaseName(name)}.log`);
+
+  // The harness readiness record (`sandbox.json`, written by `mm-harness
+  // prepare` at the end of a preflight) lives in the slot runtime dir. Persist
+  // what it says on the slot status whether the preflight passed or failed, so
+  // a failed prepare never leaves an older green record visible. Absent means
+  // the harness wrote none for this checkout; a malformed one must surface.
+  const persistReadiness = async (): Promise<ReadinessRecord | null> => {
+    const readinessPath = path.posix.join(vars.remoteRepo, runtimeDir, READINESS_RECORD);
+    let readiness: ReadinessRecord | null = null;
+    if (await slotFileExists(vars, readinessPath)) {
+      const parsed: unknown = JSON.parse(await slotReadFile(vars, readinessPath));
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        (parsed as { schemaVersion?: unknown }).schemaVersion !== 1 ||
+        !Array.isArray((parsed as { steps?: unknown }).steps)
+      ) {
+        throw new Error(`${readinessPath} is not a schemaVersion 1 readiness record`);
+      }
+      readiness = parsed as ReadinessRecord;
+      step(
+        'health',
+        `Harness readiness record: ${readiness.ready ? 'ready' : 'not ready'} (${readiness.harness.name}@${readiness.harness.version})`,
+      );
+    }
+    await updateSlotStatus(params.slotId, { readiness });
+    return readiness;
+  };
 
   const step = stream.step.bind(stream);
 
@@ -1373,6 +1403,16 @@ async function slotPrepareInner(
       err.failedCommand = preflightHook;
       err.failedLogPath = preflightLogPath;
       err.failedPhase = currentPreflightPhase || undefined;
+      // The preflight failure is the error the operator needs; a record that
+      // cannot be read on top of it rides along instead of replacing it.
+      try {
+        await persistReadiness();
+      } catch (readinessError) {
+        err.readinessError = readinessError;
+        console.log(
+          `[prepare] readiness record not persisted after the failed preflight: ${readinessError instanceof Error ? readinessError.message : String(readinessError)}`,
+        );
+      }
       err.relatedLogs = [
         path.join(vars.remoteRepo, runtimeDir, 'metro.log'),
         ...(vars.platform === 'ios'
@@ -1446,6 +1486,8 @@ async function slotPrepareInner(
   if (params.bindRunId) {
     await bindRunToSlot(params, vars, step);
   }
+
+  await persistReadiness();
 
   // Keep the cached slot.branch truthful: prepare just put HEAD on `branch`, so
   // persist it. Otherwise the cache only refreshes on a full deep slot-check and

@@ -12,6 +12,7 @@ import {
   type FleetSummary,
   type PoolConfig,
   type ProjectConfig,
+  type ReadinessRecord,
   type ResourceRollup,
   type SafetyTier,
   SLOT_LIFECYCLE,
@@ -342,6 +343,8 @@ interface RawSlot {
   session?: string;
   repo?: string;
   linked_worktree?: boolean;
+  /** Harness readiness record the last prepare read from the runtime dir; null when it found none. */
+  readiness?: ReadinessRecord | null;
   agent?: string;
   enabled?: boolean;
   mode?: string;
@@ -452,6 +455,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     session: raw.session,
     repo: raw.repo,
     linkedWorktree: raw.linked_worktree ?? false,
+    ...(raw.readiness !== undefined ? { readiness: raw.readiness } : {}),
     agent: (raw.agent as SlotStatus['agent']) ?? 'idle',
     enabled: raw.enabled ?? true,
     dispatchable: raw.dispatchable ?? false,

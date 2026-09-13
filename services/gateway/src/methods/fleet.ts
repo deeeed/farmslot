@@ -11,6 +11,7 @@ import {
   type FleetStatusParams,
   type FleetStatusResult,
   isSlotFreedByPark,
+  type ReadinessRecord,
   type Run,
   type RunStatus,
 } from '@farmslot/protocol';
@@ -144,6 +145,7 @@ interface PreviousSlotStatus {
   model?: string | null;
   slot_epoch?: unknown;
   handoff_run_id?: unknown;
+  readiness?: ReadinessRecord | null;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -476,6 +478,9 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     completed_at: prev.completed_at ?? null,
     runner: prev.runner ?? null,
     model: prev.model ?? null,
+    // Written by prepare, read from the slot runtime dir; a probe refresh knows
+    // nothing about it and must not erase it.
+    ...(prev.readiness !== undefined ? { readiness: prev.readiness } : {}),
     ...(r.resources ? { resources: r.resources } : {}),
   };
 }

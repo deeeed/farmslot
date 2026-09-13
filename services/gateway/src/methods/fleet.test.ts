@@ -555,6 +555,54 @@ test('buildRefreshSlotRow carries the handoff reservation and epoch through a re
   assert.equal(row.current_run_id, 'prior-owner', 'ownership survives refresh');
 });
 
+test('buildRefreshSlotRow carries the harness readiness record through a refresh', () => {
+  const probe = {
+    slot: 'macwork-mm-4',
+    machine: 'macwork',
+    platform: 'ios',
+    project: 'metamask-mobile-farm',
+    ssh: 'LOCAL',
+    dev: 'sim:OK',
+    devserver: 'OK',
+    device: 'mm-4',
+    cdp: 'OFF',
+    fixtures: '7/10',
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: true,
+  };
+  const readiness = {
+    schemaVersion: 1 as const,
+    harness: {
+      name: 'mm-harness',
+      version: '0.51.4',
+      source: 'pool env',
+      executable: '/x/mm-harness',
+    },
+    platform: 'mobile',
+    steps: [{ id: 'verify', command: 'mm-harness verify', status: 'pass' as const, exitCode: 0 }],
+    ready: true,
+    recordedAt: '2026-09-14T00:00:00Z',
+  };
+  assert.deepEqual(
+    buildRefreshSlotRow(probe, { lifecycle: 'ready', readiness }).readiness,
+    readiness,
+    'a probe refresh keeps the record prepare wrote',
+  );
+  assert.equal(
+    buildRefreshSlotRow(probe, { lifecycle: 'ready', readiness: null }).readiness,
+    null,
+    'an explicit null (harness wrote none) survives too',
+  );
+  assert.equal(
+    'readiness' in buildRefreshSlotRow(probe, { lifecycle: 'ready' }),
+    false,
+    'a slot that never had a record does not grow the key',
+  );
+});
+
 test('fleet refresh leaves the slot free when a gate park released its ownership', () => {
   const gateParkedRun: Run = {
     ...makeRun({
