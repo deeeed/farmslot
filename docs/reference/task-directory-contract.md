@@ -54,13 +54,12 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 
 ## Provenance
 
-`inputs/execution-template.json` is portable and identical in shape on both surfaces:
+The selected checklist travels inside `inputs/handoff.json` as `executionTemplate`, identical in shape on both surfaces:
 
 ```json
 {
-  "schemaVersion": 1,
-  "selectionReason": "configured-default",
   "executionTemplate": {
+    "selectionReason": "configured-default",
     "id": "fix-bug/autonomous.mobile",
     "sourceId": "package:example-checklists",
     "flow": "fix-bug",
@@ -74,7 +73,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 }
 ```
 
-`sha256` is the template source. `renderedSha256` is the checklist file as written. For a placeholder-free template they are equal, and equal to a skill-side materialization of the same id. `inputs/template-provenance.json` wraps the same reference with Farmslot-specific fields (project repository revision, selection source, render time) for the run record.
+`sha256` is the template source. `renderedSha256` is the checklist file as written. For a placeholder-free template they are equal, and equal to a skill-side materialization of the same id. Farmslot adds `templateProvenance` beside it (project repository revision, selection source, render time) for the run record; the reference is never stored twice. Task dirs written before 0.9 keep `inputs/template-provenance.json`; readers fall back to it for one release.
 
 ## Handoff metadata
 
@@ -115,27 +114,24 @@ Both surfaces produce the same task directory. Without the control plane (an eng
 | Gateway-owned             | the gateway, on the orchestrator copy     | `diff.txt`, `diff.txt.previous.*`, `diff-stat.json`, `session-metrics.json`, `workflow.mmd`, `pr-package.json`, `pr-package.md`, `publication-gate-<slug>.md` (slug: letters, digits, dashes), and per review round `<n>` (digits): `self-review-<n>/`, `self-review-<n>.json`, `self-review-<n>.md`, `independent-review-<n>/`, `independent-review-<n>.json`, `independent-review-<n>.md`, `review-loop-<n>/` | Farmslot only                                                                                              |
 | Review-loop outputs       | reviewer roles on the slot, change ledger | `review-feedback.<context>.md`, `review-result.<context>.json`, `iteration-diff*.{json,txt}`                                                                                                                                                                                                                                                                                                                    | Farmslot only                                                                                              |
 
-The gateway-owned row is exactly what `isGatewayOwnedArtifactMirrorEntry` in `services/gateway/src/core/artifact-copy-policy.ts` recognises: those files are never mirrored back from the slot and never count as worker evidence. Review-loop outputs are mirrored like worker files but belong to the control plane. Under `inputs/`, `template-provenance.json`, `runtime-capability-catalog.json`, and the planning and inherited context files are Farmslot-only as well. A new gateway feature adds a name to one of these rows; it does not reuse a worker name.
+The gateway-owned row is exactly what `isGatewayOwnedArtifactMirrorEntry` in `services/gateway/src/core/artifact-copy-policy.ts` recognises: those files are never mirrored back from the slot and never count as worker evidence. Review-loop outputs are mirrored like worker files but belong to the control plane. Under `inputs/`, `runtime-capability-catalog.json` and the planning and inherited context files are Farmslot-only as well. A new gateway feature adds a name to one of these rows; it does not reuse a worker name.
 
 Shared `inputs/` names: `bug-input.json` for the ticket as fetched and `assets/` for its attachments, on both surfaces. Task directory paths still differ (`temp/tasks/<flow>/<slug>-<stamp>` on the farm, `temp/tasks/recipe-cook/<stamp>-<slug>` for the skill); nothing reads the path, so it stays a naming difference.
 
 ## Simplification ledger
 
-Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected. Shipped 2026-09-13: manifest optional, provenance folded into `handoff.json`, `ticket-comments.json` removed, one task-dir producer.
+Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected. Shipped 2026-09-13: one task-dir producer; provenance folded into `handoff.json`; `ticket-comments.json` removed; `checklist-target.json` optional for readers (the gateway still writes the default-valued file for one release so nodes on an older `mark` engine keep working; the write goes next release).
 
-| Candidate                                                          | Today                                                                                                            | Simpler default                                                                                                                                                                                                                                | State                                   |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| `checklist-target.json` on every task                              | both writers emit `{checklist, signal}`                                                                          | absent means `CHECKLIST.md` + `SIGNAL.json`; the gateway writer already picks `CHECKLIST.md` when present, but `mark` fails closed without the file, so the default moves into `mark`; write the file only when a role switch points elsewhere | candidate                               |
-| `inputs/template-provenance.json` beside `execution-template.json` | two provenance records on the farm                                                                               | replay reads `execution-template.json`; the repo revision moves to the run record                                                                                                                                                              | candidate                               |
-| `inputs/ticket-comments.json`                                      | JSON copy of comments already summarised in `TASK.md`                                                            | fold into `bug-input.json`                                                                                                                                                                                                                     | candidate                               |
-| two naming schemes for review outputs                              | `review-feedback.<context>.md` / `review-result.<context>.json` and `self-review-N.*` / `independent-review-N.*` | one scheme, one row in the layers table                                                                                                                                                                                                        | candidate                               |
-| harness identity                                                   | PATH resolve through the pack's `recipe_runner_resolve_cmd` on the farm, task-local lock on the skill            | one preparation step both surfaces run, which also writes the readiness records                                                                                                                                                                | decision open                           |
-| farm `defaults` pinning farm copies of dev / fix-bug / review-pr   | three near-copies of the skill templates                                                                         | delete them so the catalog default (skills package) wins                                                                                                                                                                                       | deferred until the five-label inventory |
-| task directory path                                                | `<flow>/<slug>-<stamp>` vs `recipe-cook/<stamp>-<slug>`                                                          | leave; nothing reads it                                                                                                                                                                                                                        | rejected                                |
+| Candidate                                                        | Today                                                                                                            | Simpler default                                                                 | State                                   |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------- |
+| two naming schemes for review outputs                            | `review-feedback.<context>.md` / `review-result.<context>.json` and `self-review-N.*` / `independent-review-N.*` | one scheme, one row in the layers table                                         | candidate                               |
+| harness identity                                                 | PATH resolve through the pack's `recipe_runner_resolve_cmd` on the farm, task-local lock on the skill            | one preparation step both surfaces run, which also writes the readiness records | decision open                           |
+| farm `defaults` pinning farm copies of dev / fix-bug / review-pr | three near-copies of the skill templates                                                                         | delete them so the catalog default (skills package) wins                        | deferred until the five-label inventory |
+| task directory path                                              | `<flow>/<slug>-<stamp>` vs `recipe-cook/<stamp>-<slug>`                                                          | leave; nothing reads it                                                         | rejected                                |
 
 ## What travels to the slot
 
-Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `checklist-target.json`, `CHECKLIST.md` when present), then `assets/`, `inputs/`, and `artifacts/`. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`.
+Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, and `artifacts/`. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`.
 
 ## Project addendum
 

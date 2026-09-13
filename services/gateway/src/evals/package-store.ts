@@ -538,7 +538,9 @@ async function readTemplateProvenance(taskDir: string): Promise<TemplateProvenan
     ...(provenance.executionTemplate ? { executionTemplate: provenance.executionTemplate } : {}),
   };
   if (!isTemplateProvenanceRecord(parsed))
-    throw new Error(`Invalid template provenance in ${path.join(taskDir, 'inputs/handoff.json')}`);
+    throw new Error(
+      `Invalid template provenance under ${path.join(taskDir, 'inputs')} (handoff.json or the legacy template-provenance.json)`,
+    );
   return parsed;
 }
 

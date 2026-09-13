@@ -198,7 +198,10 @@ export function parseTaskPath(taskFile: string): {
   const ticketFolder = parts[4];
   // handoff.json is the task record; the pre-0.9 provenance file is read as a fallback.
   const handoff = readTaskJson(resolvedTaskFile, 'inputs/handoff.json');
-  const provenance = readTaskJson(resolvedTaskFile, 'inputs/template-provenance.json');
+  const provenance =
+    typeof handoff?.flow === 'string'
+      ? null
+      : readTaskJson(resolvedTaskFile, 'inputs/template-provenance.json');
   const ticketData = readTaskJson(resolvedTaskFile, 'inputs/bug-input.json');
   const flowType =
     typeof handoff?.flow === 'string'

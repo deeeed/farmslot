@@ -26,7 +26,7 @@ A runtime-compatible task directory contains:
 - `SIGNAL.json`, written by `mark` only;
 - `checklist-target.json`, written by the gateway at task creation or role switch, naming the checklist and signal file the task-local `mark` resolves to;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;
-- `mark`, a task-local executable shim installed by the gateway or `farmslot-agent install-mark`.
+- `mark`, a task-local executable shim written by `task init` (gateway or `farmslot-agent task init`).
 
 Agents should use the task-local shim:
 
@@ -43,7 +43,7 @@ For the terminal status shape see [Worker signal protocol](worker-signal-protoco
 ## CLI
 
 ```bash
-farmslot-agent install-mark <task-dir>
+farmslot-agent task init <task-dir> --flow <flow> --run-mode <mode> --platform <p> --template <id> --package-templates <catalog> --title "…"
 farmslot-agent mark <task-dir> complete --mark-last
 farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
@@ -54,7 +54,7 @@ farmslot-agent execution-template <list|materialize|lint|new> [options]
 
 `mark` takes a **task directory**, not individual file paths — its first argument must be an existing directory or the command exits with the usage error. In task-dir mode it resolves which checklist and signal file to use from `checklist-target.json`, which the gateway writes at task creation or role switch. Outside a gateway-managed task, pass `--checklist` to select the checklist explicitly; the signal filename is then derived from it (`TASK.md` yields `SIGNAL.json`, other checklists get a role-scoped signal), and no `checklist-target.json` is needed.
 
-`install-mark` writes only the task-local `mark` shim into the directory, so the shim can be invoked as `./mark <step>` from inside the task. It does not write `checklist-target.json` and does not accept checklist or signal overrides, so a directory bootstrapped this way needs either a gateway-written manifest or an explicit `--checklist` on each call.
+`task init` writes the whole task directory: `TASK.md`, `CHECKLIST.md`, the task-local `mark` shim, `inputs/handoff.json`, and `inputs/worker-terminal-contract.json`. It does not write `checklist-target.json`: absent means `CHECKLIST.md` + `SIGNAL.json`, and only a role switch writes the manifest to point elsewhere. `./mark <step>` therefore works from inside the task without overrides.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 

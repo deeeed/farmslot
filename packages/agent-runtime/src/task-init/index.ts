@@ -93,7 +93,7 @@ export interface TaskInitSpec {
   /** Extra `{{PLACEHOLDER}}` values for the checklist and task block. */
   vars?: Record<string, string>;
   modePreamble?: string;
-  /** Pre-rendered addendum markdown inserted before the checklist pointer. */
+  /** Addendum template inserted before the checklist pointer; rendered with the same vars as the checklist. */
   addendum?: string | null;
   markCommand?: string;
   terminalContract?: WorkerTerminalContractDocument;
@@ -168,7 +168,9 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     vars,
     description: spec.task.description ?? '',
     acceptanceCriteria: spec.task.acceptanceCriteria ?? [],
-    addendum: spec.addendum ?? null,
+    addendum: spec.addendum
+      ? renderTemplatePlaceholders(spec.addendum, vars, 'Task document addendum')
+      : null,
     hasTicketData: spec.bugInput !== undefined,
   });
 

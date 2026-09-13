@@ -250,7 +250,7 @@ function init(taskDir, templateRoot, extra = []) {
   const taskDir = path.join(work, 'my task');
   writeFileSync(
     path.join(work, 'addendum.md'),
-    '## Tooling\n\nMarker help: `{{TASK_DIR}}/mark --help`.\n',
+    '## Tooling\n\nMarker help: `{{TASK_DIR}}/mark --help` for {{TICKET}} ({{FLOW}}).\n',
   );
   const result = init(taskDir, catalog(PLAIN_TEMPLATE), [
     '--addendum-file',
@@ -258,7 +258,7 @@ function init(taskDir, templateRoot, extra = []) {
   ]);
   assert.equal(result.status, 0, result.stderr);
   const task = readFileSync(path.join(taskDir, 'TASK.md'), 'utf8');
-  assert.match(task, /## Tooling\n\nMarker help: `.*my task\/mark --help`\./);
+  assert.match(task, /## Tooling\n\nMarker help: `.*my task\/mark --help` for TAT-1 \(fix-bug\)\./);
   assert.ok(
     task.indexOf('## Tooling') < task.indexOf('## Checklist'),
     'addendum precedes the checklist pointer',
@@ -266,6 +266,19 @@ function init(taskDir, templateRoot, extra = []) {
   const mark = spawnSync(path.join(taskDir, 'mark'), ['start'], { encoding: 'utf8' });
   assert.equal(mark.status, 0, mark.stderr);
   assert.ok(existsSync(path.join(taskDir, 'SIGNAL.json')), 'default engine path survives spaces');
+}
+
+// 6. The task dir is the first positional; a flag value is never mistaken for it.
+{
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-task-init-order-'));
+  const r = spawnSync(
+    process.execPath,
+    [cli, 'task', 'init', '--flow', 'fix-bug', path.join(work, 'x')],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /unknown option|requires <task-dir>/);
+  assert.ok(!existsSync(path.join(work, 'x', 'TASK.md')));
 }
 
 process.stdout.write('agent-runtime task init tests: ok\n');

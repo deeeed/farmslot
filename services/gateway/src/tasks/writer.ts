@@ -1332,6 +1332,9 @@ export async function writeTaskFile(
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    // Transition for one release: nodes still on agent-runtime < 0.9 fail closed
+    // without the manifest. Drop once every node runs the 0.9 engine.
+    writeChecklistManifest: true,
   });
 
   // Download Jira image attachments to assets/

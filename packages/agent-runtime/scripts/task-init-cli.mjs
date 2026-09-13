@@ -54,6 +54,8 @@ function parseArgs(args) {
     json: false,
   };
   const catalogArgs = [];
+  // The task dir is the first positional, before any flag, as the usage line says.
+  if (args[0] && !args[0].startsWith('-')) opts.taskDir = args.shift();
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--template') opts.template = takeValue(args, i++, arg);
@@ -79,7 +81,6 @@ function parseArgs(args) {
       opts.json = true;
       catalogArgs.push(arg);
     } else if (arg === '-h' || arg === '--help') usage(0);
-    else if (!arg.startsWith('-') && !opts.taskDir) opts.taskDir = arg;
     else catalogArgs.push(arg);
   }
   if (!opts.taskDir) throw new Error('task init requires <task-dir>');
@@ -119,13 +120,9 @@ async function main() {
   const project =
     opts.project ??
     (repo ? repo.split('/').pop() : path.basename(toplevel || process.cwd())).toLowerCase();
-  const addendum = opts.addendumFile
-    ? runtime.renderTemplatePlaceholders(
-        readFileSync(path.resolve(opts.addendumFile), 'utf8'),
-        { TASK_DIR: opts.taskDirLabel ?? opts.taskDir, ...opts.vars },
-        `Task document addendum ${opts.addendumFile}`,
-      )
-    : null;
+  // Rendered inside taskInit with the same vars as the checklist, so an addendum
+  // that works on the farm works here.
+  const addendum = opts.addendumFile ? readFileSync(path.resolve(opts.addendumFile), 'utf8') : null;
 
   const result = await runtime.taskInit({
     taskDir: path.resolve(opts.taskDir),

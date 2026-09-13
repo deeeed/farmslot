@@ -40,6 +40,8 @@ const ADDENDUM_SOURCE = ['## Tooling', '', 'Marker help: `{{TASK_DIR}}/mark --he
 await mkdir(path.join(tempProject, 'templates', 'worker'), { recursive: true });
 const projectJson = JSON.parse(await readFile(realProjectJson, 'utf-8')) as Record<string, unknown>;
 projectJson.execution_templates = { sources: [] };
+// A pack may route the mark shim through its harness; the value is expanded like any project var.
+projectJson.vars = { mark_cmd: 'mmh checklist mark' };
 await writeFile(
   path.join(tempProject, 'project.json'),
   `${JSON.stringify(projectJson, null, 2)}\n`,
@@ -152,9 +154,21 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.equal(enumerateChecklistCheckboxes(taskDocument).length, 0);
   assert.doesNotMatch(checklist, /Fully autonomous/);
 
-  // No manifest by default: absent means CHECKLIST.md + SIGNAL.json, and the
-  // pre-0.9 provenance twins are gone; handoff.json is the one task record.
-  await assert.rejects(readFile(path.join(taskDir, 'checklist-target.json')));
+  // The pre-0.9 provenance twins are gone; handoff.json is the one task record.
+  // The manifest is still written for one release (equal to the default) so
+  // nodes on an older mark engine keep working; absent means the same target.
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8')),
+    {
+      checklist: 'CHECKLIST.md',
+      signal: 'SIGNAL.json',
+    },
+  );
+  // The pack's mark_cmd becomes the shim's recorded command.
+  assert.match(
+    await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), 'utf-8'),
+    /exec \$\{FARMSLOT_MARK_CMD:-mmh checklist mark\} "\$DIR" "\$@"/,
+  );
   await assert.rejects(readFile(path.join(taskDir, 'inputs', 'execution-template.json')));
   await assert.rejects(readFile(path.join(taskDir, 'inputs', 'template-provenance.json')));
   await assert.rejects(readFile(path.join(taskDir, 'inputs', 'ticket-comments.json')));

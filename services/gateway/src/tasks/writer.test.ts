@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  DEFAULT_DEV_INTERACTIVE_PROFILE,
   PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type Run,
@@ -540,8 +541,9 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
-  // No manifest: absent means CHECKLIST.md + SIGNAL.json; only a role switch writes it.
-  await assert.rejects(access(path.join(path.dirname(taskA), 'checklist-target.json')));
+  // Transition: the manifest is still written (equal to the default) until every
+  // node runs the 0.9 mark engine; absent means the same target.
+  await access(path.join(path.dirname(taskA), 'checklist-target.json'));
   // handoff.json describes the run in the shape a skill task dir uses.
   const handoff = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'inputs', 'handoff.json'), 'utf-8'),
@@ -871,6 +873,39 @@ test('interactive checklist is an execution plan, never the acceptance criteria'
   assert.ok(checklist.length > 0);
   assert.match(checklist.join('\n'), /approach\.md/);
   assert.match(checklist.join('\n'), /HUMAN GATE/);
+});
+
+test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the template in TASK.md', async (t) => {
+  const run = makeRun(`PROJ-${Date.now()}`, 'lightweight-interactive');
+  run.flowType = 'dev';
+  run.mode = 'interactive';
+  run.devInteractiveProfile = DEFAULT_DEV_INTERACTIVE_PROFILE;
+  run.engineState = {
+    ...(run.engineState ?? {}),
+    interactiveDev: { checklist: ['Do the one thing', 'Then stop'] },
+  } as Run['engineState'];
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+
+  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  const taskDir = path.dirname(taskPath);
+  // The producer must not overwrite the operator-agreed plan the sidecar wrote.
+  const checklist = await readFile(path.join(taskDir, 'CHECKLIST.md'), 'utf-8');
+  assert.match(checklist, /^- \[ \] Do the one thing$/m);
+  assert.match(checklist, /^- \[ \] Then stop$/m);
+  assert.doesNotMatch(checklist, /Worker: Interactive Dev/);
+  const rendered = await readFile(taskPath, 'utf-8');
+  assert.match(rendered, /Worker: Interactive Dev/);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8')),
+    {
+      checklist: 'CHECKLIST.md',
+      signal: 'SIGNAL.json',
+    },
+  );
+  await access(path.join(taskDir, 'inputs', 'dev-intake.json'));
 });
 
 test('an explicitly configured interactive checklist still wins', () => {
