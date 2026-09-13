@@ -1403,7 +1403,16 @@ async function slotPrepareInner(
       err.failedCommand = preflightHook;
       err.failedLogPath = preflightLogPath;
       err.failedPhase = currentPreflightPhase || undefined;
-      await persistReadiness();
+      // The preflight failure is the error the operator needs; a record that
+      // cannot be read on top of it rides along instead of replacing it.
+      try {
+        await persistReadiness();
+      } catch (readinessError) {
+        err.readinessError = readinessError;
+        console.log(
+          `[prepare] readiness record not persisted after the failed preflight: ${readinessError instanceof Error ? readinessError.message : String(readinessError)}`,
+        );
+      }
       err.relatedLogs = [
         path.join(vars.remoteRepo, runtimeDir, 'metro.log'),
         ...(vars.platform === 'ios'
