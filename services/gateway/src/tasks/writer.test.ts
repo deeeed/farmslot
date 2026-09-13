@@ -2,12 +2,13 @@
 // `projects/<project>/templates/worker/` directory.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
+  DEFAULT_DEV_INTERACTIVE_PROFILE,
   PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type Run,
@@ -23,14 +24,20 @@ process.env.FARMSLOT_DEMO_POOL = '1';
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
+
+// Template provenance now rides in inputs/handoff.json beside the run identity.
+async function readProvenance(taskPath: string): Promise<Record<string, unknown>> {
+  const handoff = JSON.parse(
+    await readFile(path.join(path.dirname(taskPath), 'inputs', 'handoff.json'), 'utf-8'),
+  ) as { templateProvenance: Record<string, unknown> };
+  return handoff.templateProvenance;
+}
 import {
   appendRuntimeCapabilityAndPlanningContext,
   applyArtifactOnlyTaskPolicy,
-  buildChecklistMarkerScript,
   buildTaskFolderPrefix,
   buildTemplateProvenance,
   checklistForInteractiveDev,
-  checklistMarkerHelperPath,
   checklistNumberingMismatches,
   COMMENT_SUMMARY_MAX_ROWS,
   type CommentRow,
@@ -42,7 +49,6 @@ import {
   PREVIOUS_REVIEW_MD_INPUT,
   renderCommentSummary,
   STATIC_REVIEW_INSTRUCTIONS_DIR,
-  TEMPLATE_PROVENANCE_INPUT,
   writePreviousReviewInputs,
   writeStaticReviewInstructionInputs,
   writeTaskFile,
@@ -97,6 +103,19 @@ test('runtime proof planning precedes acquisition guidance and retains related p
   assert.match(task, /`browser-cdp` — Browser \/ CDP; high cost; exclusive/);
   assert.match(task, /MANUAL-000072.*Roadmap delivery\/planning lineage/);
   assert.match(task, /inputs\/runtime-capability-catalog\.json/);
+});
+
+test('a project without capability providers is told the prepared runtime is the proof resource', () => {
+  const task = appendRuntimeCapabilityAndPlanningContext('# T\n', 'temp/tasks/fix/x', null, null);
+  assert.match(task, /## Runtime capability proof plan/);
+  assert.match(task, /nothing to lease/);
+  assert.match(task, /prepared runtime is the authorized proof resource/);
+  assert.doesNotMatch(task, /runtime\.capability\.acquire/);
+  assert.doesNotMatch(task, /runtime\.capability\.list/);
+  assert.match(task, /temp\/tasks\/fix\/x\/inputs\/runtime-capability-catalog\.json/);
+  assert(task.indexOf('Runtime capability proof plan') < task.indexOf('Related planning context'));
+  const empty = appendRuntimeCapabilityAndPlanningContext('# T\n', 'temp/tasks/fix/x', {}, null);
+  assert.match(empty, /nothing to lease/);
 });
 
 test('writePreviousReviewInputs freezes reusable review context as JSON and a concise brief', async (t) => {
@@ -528,16 +547,16 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.notEqual(taskA, taskB);
   assert.match(taskA, /claude-/);
   assert.match(taskB, /codex-/);
-  const provenance = JSON.parse(
-    await readFile(path.join(path.dirname(taskA), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as { contentHash?: string; templateName?: string };
+  const provenance = (await readProvenance(taskA)) as {
+    contentHash?: string;
+    templateName?: string;
+  };
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
-  const manifest = JSON.parse(
-    await readFile(path.join(path.dirname(taskA), 'checklist-target.json'), 'utf-8'),
-  );
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
+  // Transition: the manifest is still written (equal to the default) until every
+  // node runs the 0.9 mark engine; absent means the same target.
+  await access(path.join(path.dirname(taskA), 'checklist-target.json'));
   // handoff.json describes the run in the shape a skill task dir uses.
   const handoff = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'inputs', 'handoff.json'), 'utf-8'),
@@ -548,121 +567,38 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(handoff.task.sourceKind, 'text');
 });
 
-test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
-  assert.equal(
-    checklistMarkerHelperPath('~/farmslot-node'),
-    '$HOME/farmslot-node/packages/agent-runtime/scripts/mark-checklist-step.cjs',
-  );
-});
-
-test('mark wrapper resolves the published bin with a recorded-path fallback', async (t) => {
+test('mark shim records the slot-synced engine and honours FARMSLOT_MARK_CMD', async (t) => {
   let taskFile = '';
   t.after(async () => {
     if (taskFile) await rm(path.dirname(taskFile), { recursive: true, force: true });
   });
   taskFile = await writeTaskFile(makeRun('MARK-1234', 'claude'));
-  const marker = await readFile(path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT), 'utf-8');
-  // Ladder: env override → recorded slot-synced path → PATH → teach.
-  assert.match(marker, /FARMSLOT_AGENT_BIN/);
-  // The env rung requires the override to be executable so a bad value falls
-  // through the ladder instead of hard-dying under `set -euo pipefail`.
+  const markPath = path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT);
+  const marker = await readFile(markPath, 'utf-8');
+  assert.equal((await stat(markPath)).mode & 0o755, 0o755);
+  // One recorded default (the operator checkout's engine for a local slot), one env override.
   assert.match(
     marker,
-    /\[ -n "\$\{FARMSLOT_AGENT_BIN:-\}" \] && \[ -x "\$\{FARMSLOT_AGENT_BIN\}" \]/,
+    /exec \$\{FARMSLOT_MARK_CMD:-node "[^}]*packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs"\} "\$DIR" "\$@"/,
   );
-  assert.match(marker, /exec "\$FARMSLOT_AGENT_BIN" mark "\$DIR"/);
-  assert.match(marker, /command -v farmslot-agent/);
-  assert.match(marker, /exec farmslot-agent mark "\$DIR"/);
-  // Recorded dev/checkout fallback keeps the pre-publish behaviour identical.
-  assert.match(marker, /exec node "\$RECORDED" "\$DIR"/);
-  assert.match(marker, /packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/);
-  // Unresolved bin teaches the escape and exits non-zero.
-  assert.match(marker, /Next: install it .*farmslot-agent.* on PATH.*FARMSLOT_AGENT_BIN/s);
-  assert.match(marker, /exit 127/);
-});
+  assert.doesNotMatch(marker, /FARMSLOT_AGENT_BIN|command -v farmslot-agent|exit 127/);
 
-test('generated mark wrapper executes the right ladder rung', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'markwrap-'));
-  t.after(async () => rm(dir, { recursive: true, force: true }));
-
-  const recordFile = path.join(dir, 'record.txt');
-  const readRecord = async () => {
-    try {
-      return await readFile(recordFile, 'utf-8');
-    } catch {
-      return '';
-    }
-  };
-  const writeStubBin = async (file: string, tag: string) => {
-    await writeFile(
-      file,
-      `#!/usr/bin/env bash\nprintf '${tag} %s\\n' "$*" >> ${JSON.stringify(recordFile)}\n`,
-      'utf-8',
-    );
-    await chmod(file, 0o755);
-  };
-
-  // env rung stub, and a PATH-only stub named `farmslot-agent` in its own dir so
-  // it is reachable only when that dir is on PATH.
-  const envStub = path.join(dir, 'env-agent');
-  await writeStubBin(envStub, 'ENV');
-  const pathbin = path.join(dir, 'bin');
-  await mkdir(pathbin, { recursive: true });
-  await writeStubBin(path.join(pathbin, 'farmslot-agent'), 'PATH');
-  // recorded-rung stub: a .cjs the wrapper runs via `node`.
-  const recordedCjs = path.join(dir, 'recorded.cjs');
-  await writeFile(
-    recordedCjs,
-    `require('node:fs').appendFileSync(${JSON.stringify(recordFile)}, 'CJS ' + process.argv.slice(2).join(' ') + '\\n');\n`,
-    'utf-8',
+  const stub = path.join(dir, 'stub.sh');
+  // "$3" is the task dir: the override is the whole command line, so
+  // `checklist mark` precede the shim's own "$DIR" "$@".
+  await writeFile(stub, '#!/usr/bin/env bash\nprintf "%s\\n" "$*" > "$3/stub.out"\n', {
+    mode: 0o755,
+  });
+  const r = spawnSync('bash', [markPath, 'N'], {
+    encoding: 'utf-8',
+    env: { ...process.env, FARMSLOT_MARK_CMD: `${stub} checklist mark` },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(
+    await readFile(path.join(path.dirname(taskFile), 'stub.out'), 'utf-8'),
+    `checklist mark ${path.dirname(taskFile)} N\n`,
   );
-
-  const markPath = path.join(dir, 'mark');
-  await writeFile(markPath, buildChecklistMarkerScript(recordedCjs), 'utf-8');
-  await chmod(markPath, 0o755);
-  await writeFile(path.join(dir, 'TASK.md'), '- [ ] step\n', 'utf-8');
-
-  const nodeDir = path.dirname(process.execPath);
-  const cleanPath = `${nodeDir}:/usr/bin:/bin`; // node available, no farmslot-agent
-  const withPathBin = `${pathbin}:${cleanPath}`; // farmslot-agent resolvable via PATH
-  const run = (env: Record<string, string>) =>
-    spawnSync('bash', [markPath, 'N'], {
-      cwd: dir,
-      encoding: 'utf-8',
-      env: { HOME: process.env.HOME ?? '', ...env },
-    });
-
-  // 1. env rung wins even when the PATH bin is present.
-  let r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: envStub });
-  assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^ENV mark .* N$/m);
-  await rm(recordFile, { force: true });
-
-  // 2. a non-executable override falls through to the recorded rung.
-  const badBin = path.join(dir, 'not-exec');
-  await writeFile(badBin, 'nope', 'utf-8'); // deliberately not chmod +x
-  r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: badBin });
-  assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^CJS .* N$/m);
-  await rm(recordFile, { force: true });
-
-  // 3. The recorded slot-synced helper wins over a possibly stale PATH bin.
-  r = run({ PATH: withPathBin });
-  assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^CJS .* N$/m);
-  await rm(recordFile, { force: true });
-
-  // 4. PATH is the fallback when the recorded helper is unavailable.
-  await rm(recordedCjs, { force: true });
-  r = run({ PATH: withPathBin });
-  assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^PATH mark /m);
-  await rm(recordFile, { force: true });
-
-  // 5. nothing resolves → teach + exit 127.
-  r = run({ PATH: cleanPath });
-  assert.equal(r.status, 127);
-  assert.match(r.stderr, /Next: install it/);
 });
 
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {
@@ -795,9 +731,11 @@ test('writeTaskFile renders selected template variant and leaves source template
 
   const rendered = await readFile(taskPath, 'utf-8');
   const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
-  const provenance = JSON.parse(
-    await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as { templateName?: string; templateVariant?: string | null; templateIsDefault?: boolean };
+  const provenance = (await readProvenance(taskPath)) as {
+    templateName?: string;
+    templateVariant?: string | null;
+    templateIsDefault?: boolean;
+  };
   // The template renders into CHECKLIST.md; TASK.md is the generated task document.
   assert.match(checklist, /Template version marker: PROJ-/);
   assert.match(checklist, new RegExp(`"ownerFamilyId":"${run.familyId}"`));
@@ -819,9 +757,7 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
   taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
-  const provenance = JSON.parse(
-    await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as {
+  const provenance = (await readProvenance(taskPath)) as {
     templateName?: string;
     templateSelectionSource?: string;
     templateSelectionReason?: string;
@@ -869,9 +805,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
   taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
-  const provenance = JSON.parse(
-    await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as {
+  const provenance = (await readProvenance(taskPath)) as {
     templateName?: string;
     templateSelectionSource?: string;
     templateSelectionReason?: string;
@@ -905,9 +839,7 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
   taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
 
   const rendered = await readFile(taskPath, 'utf-8');
-  const provenance = JSON.parse(
-    await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
-  ) as {
+  const provenance = (await readProvenance(taskPath)) as {
     templateName?: string;
     templateSelectionSource?: string;
     templateSelectionReason?: string;
@@ -954,6 +886,39 @@ test('interactive checklist is an execution plan, never the acceptance criteria'
   assert.ok(checklist.length > 0);
   assert.match(checklist.join('\n'), /approach\.md/);
   assert.match(checklist.join('\n'), /HUMAN GATE/);
+});
+
+test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the template in TASK.md', async (t) => {
+  const run = makeRun(`PROJ-${Date.now()}`, 'lightweight-interactive');
+  run.flowType = 'dev';
+  run.mode = 'interactive';
+  run.devInteractiveProfile = DEFAULT_DEV_INTERACTIVE_PROFILE;
+  run.engineState = {
+    ...(run.engineState ?? {}),
+    interactiveDev: { checklist: ['Do the one thing', 'Then stop'] },
+  } as Run['engineState'];
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+  });
+
+  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+  const taskDir = path.dirname(taskPath);
+  // The producer must not overwrite the operator-agreed plan the sidecar wrote.
+  const checklist = await readFile(path.join(taskDir, 'CHECKLIST.md'), 'utf-8');
+  assert.match(checklist, /^- \[ \] Do the one thing$/m);
+  assert.match(checklist, /^- \[ \] Then stop$/m);
+  assert.doesNotMatch(checklist, /Worker: Interactive Dev/);
+  const rendered = await readFile(taskPath, 'utf-8');
+  assert.match(rendered, /Worker: Interactive Dev/);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8')),
+    {
+      checklist: 'CHECKLIST.md',
+      signal: 'SIGNAL.json',
+    },
+  );
+  await access(path.join(taskDir, 'inputs', 'dev-intake.json'));
 });
 
 test('an explicitly configured interactive checklist still wins', () => {

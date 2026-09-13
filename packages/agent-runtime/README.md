@@ -18,8 +18,8 @@ It does not execute recipes. Recipe graph execution belongs in
 ## CLI
 
 ```bash
-farmslot-agent install-mark <task-dir> --task TASK.md --signal SIGNAL.json
-farmslot-agent mark <task-md> <signal-json> complete --mark-last
+farmslot-agent task init <task-dir> --flow fix-bug --run-mode autonomous --platform mobile --template fix-bug/autonomous.mobile --package-templates <catalog> --title "…" --task-text "…"
+farmslot-agent mark <task-dir> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug

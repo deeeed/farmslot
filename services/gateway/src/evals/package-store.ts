@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { readTaskProvenance } from '@farmslot/agent-runtime';
 import {
   type EvalEvidenceRequirement,
   type EvalExperimentManifest,
@@ -23,7 +24,6 @@ import {
 } from '@farmslot/protocol';
 
 import { inferArtifactPurpose } from '../core/index.js';
-import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
 export const EXPERIMENT_MANIFEST_FILENAME = 'experiment-manifest.json';
 export const RESULT_PACKAGE_DIR = 'packages';
@@ -531,11 +531,16 @@ function portableTemplateProvenance(provenance: TemplateProvenance): PortableTem
 }
 
 async function readTemplateProvenance(taskDir: string): Promise<TemplateProvenance | null> {
-  const provenancePath = path.join(taskDir, TEMPLATE_PROVENANCE_INPUT);
-  if (!(await fileExists(provenancePath))) return null;
-  const parsed = JSON.parse(await readFile(provenancePath, 'utf-8')) as unknown;
+  const provenance = readTaskProvenance(taskDir);
+  if (!provenance?.templateProvenance) return null;
+  const parsed: unknown = {
+    ...provenance.templateProvenance,
+    ...(provenance.executionTemplate ? { executionTemplate: provenance.executionTemplate } : {}),
+  };
   if (!isTemplateProvenanceRecord(parsed))
-    throw new Error(`Invalid template provenance artifact: ${provenancePath}`);
+    throw new Error(
+      `Invalid template provenance under ${path.join(taskDir, 'inputs')} (handoff.json or the legacy template-provenance.json)`,
+    );
   return parsed;
 }
 

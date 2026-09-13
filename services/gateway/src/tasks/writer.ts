@@ -2,11 +2,20 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { executionTemplateReference } from '@farmslot/agent-runtime';
+import {
+  buildHandoffMetadata,
+  buildTaskDocument,
+  executionTemplateReference,
+  type HandoffSourceKind,
+  portableProjectRepo,
+  readTaskDocumentAddendum,
+  TASK_DOCUMENT_ADDENDUM_TEMPLATE,
+  writeTaskDir,
+} from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   enumerateChecklistCheckboxes,
@@ -15,13 +24,13 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
+  renderTemplatePlaceholders,
   type RepeatReviewContext,
   reviewSessionIntentForContext,
   type Run,
   type TaskSchema,
   type TaskSchemaPhase,
   type TemplateProvenance,
-  WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 import { normalizeRawRuntimeCapabilities, resolveEffectiveDomain } from '@farmslot/slot-config';
 
@@ -35,7 +44,6 @@ import {
 import {
   buildSmartBranch,
   flowDir as computeFlowDir,
-  generateTaskContent,
   ticketSlug as computeTicketSlug,
 } from '../intelligence/engine.js';
 import { getPRRawData, parseJsonLines } from '../methods/pr/raw-cache.js';
@@ -46,7 +54,7 @@ import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
 } from './artifact-only-guard.js';
-import { writeWorkerChecklistTargetLocal } from './checklist-target.js';
+import { markCommandForSlot } from './checklist-target.js';
 import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
@@ -56,18 +64,6 @@ import {
   resolveRunPlanningContext,
   writePlanningContextInput,
 } from './planning-context.js';
-import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
-import {
-  buildExecutionTemplateInput,
-  buildHandoffMetadata,
-  buildTaskDocument,
-  EXECUTION_TEMPLATE_INPUT,
-  HANDOFF_INPUT,
-  type HandoffSourceKind,
-  portableProjectRepo,
-  readTaskDocumentAddendum,
-  TASK_DOCUMENT_ADDENDUM_TEMPLATE,
-} from './task-document.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
   readWorkerTerminalProjectConfig,
@@ -80,6 +76,7 @@ const localHostname = os.hostname().replace(/\.local$/, '');
 
 export { FLOW_TO_TEMPLATE } from './worker-template-options.js';
 
+/** Pre-0.9 provenance file; still read as a fallback and written into eval candidate dirs. */
 export const TEMPLATE_PROVENANCE_INPUT = 'inputs/template-provenance.json';
 export const PREVIOUS_REVIEW_JSON_INPUT = 'inputs/previous-review.json';
 export const PREVIOUS_REVIEW_MD_INPUT = 'inputs/previous-review.md';
@@ -91,14 +88,27 @@ export function buildRuntimeCapabilityTaskSection(
   providers: NonNullable<ReturnType<typeof normalizeRawRuntimeCapabilities>>['providers'] | null,
 ): string {
   const entries = Object.entries(providers ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  const catalog = entries.length
-    ? entries
-        .map(
-          ([id, provider]) =>
-            `- \`${id}\` — ${provider.label}; ${provider.cost.class} cost; ${provider.sharePolicy}; dependencies: ${provider.dependencies?.length ? provider.dependencies.map((dependency) => `\`${dependency}\``).join(', ') : 'none'}.`,
-        )
-        .join('\n')
-    : '- None configured. State-only proof must proceed without a browser, Metro, Companion, simulator, or device hard gate.';
+  // A project without capability providers has nothing to lease: the runtime
+  // preparation verified (see sandbox.json when the harness wrote one) is the
+  // proof resource. Telling such a worker to discover and acquire leases sent
+  // real runs into a dead end (no provider, no lease, so no launch).
+  if (entries.length === 0) {
+    return `
+## Runtime capability proof plan
+
+No runtime capability providers are configured for this project, so there is nothing to lease:
+the prepared runtime is the authorized proof resource. Launch, capture, and verify through the
+harness's own commands; do not call \`runtime.capability.*\` actions. Still map each executable
+acceptance criterion to \`state\`, \`visual\`, or \`mixed\` proof before the first proof step. The
+frozen dispatch-time catalog is at \`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INPUT}\`.
+`;
+  }
+  const catalog = entries
+    .map(
+      ([id, provider]) =>
+        `- \`${id}\` — ${provider.label}; ${provider.cost.class} cost; ${provider.sharePolicy}; dependencies: ${provider.dependencies?.length ? provider.dependencies.map((dependency) => `\`${dependency}\``).join(', ') : 'none'}.`,
+    )
+    .join('\n');
   return `
 ## Runtime capability proof plan
 
@@ -1199,7 +1209,7 @@ export async function writeTaskFile(
     name: 'render-template',
     detail: `Rendering ${path.basename(taskAbsDir)}/${splitChecklist ? EXECUTION_CHECKLIST_DOCUMENT : 'TASK.md'}`,
   });
-  const content = await generateTaskContent(
+  const content = renderTemplatePlaceholders(
     template,
     vars,
     `Worker template ${templatePath ?? templateName}`,
@@ -1233,7 +1243,7 @@ export async function writeTaskFile(
   if (splitChecklist) {
     const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
     const renderedAddendum = addendum
-      ? await generateTaskContent(
+      ? renderTemplatePlaceholders(
           addendum.content,
           vars,
           `Task document addendum templates/${TASK_DOCUMENT_ADDENDUM_TEMPLATE}`,
@@ -1253,7 +1263,6 @@ export async function writeTaskFile(
       commentSummaryMarkdown: vars.COMMENT_SUMMARY,
       addendum: renderedAddendum,
       hasTicketData: Boolean(run.ticketData),
-      hasExecutionTemplateInput: Boolean(configuredTemplate),
     });
     // Artifact-only replays neutralize publication steps inside the checklist
     // (BRANCH/REPO for the rewritten snippets come from the task document) and
@@ -1283,51 +1292,17 @@ export async function writeTaskFile(
       `[task-writer] checklist label numbering diverges from step positions in ${templatePath ?? templateName} (${numberingMismatches.join('; ')}) — 'mark N' targets positions; renumber the template labels`,
     );
   }
-  await writeFile(taskFilePath, finalContent, 'utf-8');
-  if (checklistContent !== null) {
-    await writeFile(path.join(taskAbsDir, EXECUTION_CHECKLIST_DOCUMENT), checklistContent, 'utf-8');
-  }
-  await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
-  // Prefers CHECKLIST.md when the split layout wrote it, TASK.md otherwise.
-  await writeWorkerChecklistTargetLocal(taskAbsDir);
-
-  // Write template provenance as inputs/template-provenance.json
-  await writeFile(
-    path.join(taskAbsDir, TEMPLATE_PROVENANCE_INPUT),
-    `${JSON.stringify(templateProvenance, null, 2)}\n`,
-    'utf-8',
-  );
-  // Portable twin of the skill-side materialize provenance, so a farm task dir
-  // and a skill task dir describe the selected checklist with the same file.
-  if (configuredTemplate && templateProvenance.executionTemplate) {
-    await writeFile(
-      path.join(taskAbsDir, EXECUTION_TEMPLATE_INPUT),
-      `${JSON.stringify(
-        buildExecutionTemplateInput(
-          configuredTemplate.reason,
-          templateProvenance.executionTemplate,
-        ),
-        null,
-        2,
-      )}\n`,
-      'utf-8',
-    );
-  }
-
   const workerTerminalConfig = readWorkerTerminalProjectConfig(
     projectVars.projectJson as Record<string, unknown>,
   );
   const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
     mode: run.mode ?? undefined,
   });
-  await writeFile(
-    path.join(taskAbsDir, WORKER_TERMINAL_CONTRACT_INPUT),
-    `${JSON.stringify(terminalContract, null, 2)}\n`,
-    'utf-8',
-  );
 
   // Run identity in the shape the recipe-cook skill writes, so `handoff closeout`
-  // and any other task-dir consumer see one contract on both surfaces.
+  // and any other task-dir consumer see one contract on both surfaces. The
+  // selected checklist reference and the farm's template provenance ride along
+  // in the same record; the reference is never stored twice.
   const isPrFlow =
     run.flowType === 'review-pr' ||
     run.flowType === 'pr-complete' ||
@@ -1339,43 +1314,42 @@ export async function writeTaskFile(
       : isPrFlow
         ? 'github-pr'
         : 'text';
-  await writeFile(
-    path.join(taskAbsDir, HANDOFF_INPUT),
-    `${JSON.stringify(
-      buildHandoffMetadata({
-        run,
-        repo: portableProjectRepo(projectVars.projectJson as Record<string, unknown>),
-        domain: effectiveDomain ?? undefined,
-        title: ticket.title,
-        sourceKind: handoffSourceKind,
-        ticket: ticketRef,
-        sourceRef: ticketUrl || vars.PR_URL || undefined,
-        terminalContract,
-        startedAt: templateProvenance.renderedAt,
-      }),
-      null,
-      2,
-    )}\n`,
-    'utf-8',
-  );
+  const { executionTemplate: selectedReference, ...portableProvenance } = templateProvenance;
+  const handoff = buildHandoffMetadata({
+    attemptId: run.id,
+    surface: 'farmslot',
+    project: run.project,
+    flow: run.flowType,
+    repo: portableProjectRepo(projectVars.projectJson as Record<string, unknown>),
+    domain: effectiveDomain ?? undefined,
+    title: ticket.title,
+    sourceKind: handoffSourceKind,
+    ticket: ticketRef,
+    sourceRef: ticketUrl || vars.PR_URL || undefined,
+    terminalContract,
+    startedAt: templateProvenance.renderedAt,
+    ...(configuredTemplate && selectedReference
+      ? { executionTemplate: { selectionReason: configuredTemplate.reason, ...selectedReference } }
+      : {}),
+    templateProvenance: portableProvenance,
+  });
 
-  // Write ticket data as inputs/bug-input.json
-  if (run.ticketData) {
-    await writeFile(
-      path.join(taskAbsDir, 'inputs', 'bug-input.json'),
-      JSON.stringify(run.ticketData, null, 2),
-      'utf-8',
-    );
-  }
-
-  // Write ticket comments as inputs/ticket-comments.json
-  if (run.ticketData?.comments && run.ticketData.comments.length > 0) {
-    await writeFile(
-      path.join(taskAbsDir, 'inputs', 'ticket-comments.json'),
-      JSON.stringify(run.ticketData.comments, null, 2),
-      'utf-8',
-    );
-  }
+  // The task dir itself comes from the shared producer: TASK.md, CHECKLIST.md
+  // (split layout), the mark shim, handoff.json, the terminal contract, and the
+  // ticket as fetched. checklist-target.json is only a one-release compatibility
+  // write (see writeChecklistManifest); absent means the worker default.
+  await writeTaskDir({
+    taskDir: taskAbsDir,
+    taskMarkdown: finalContent,
+    checklistMarkdown: checklistContent,
+    markCommand: markCommandForSlot(slotVars, projectVars),
+    handoff,
+    terminalContract,
+    bugInput: run.ticketData ?? undefined,
+    // Transition for one release: nodes still on agent-runtime < 0.9 fail closed
+    // without the manifest. Drop once every node runs the 0.9 engine.
+    writeChecklistManifest: true,
+  });
 
   // Download Jira image attachments to assets/
   if (run.ticketData?.jiraKey && run.ticketData.screenshots.length > 0) {
@@ -1400,52 +1374,6 @@ export async function writeTaskFile(
 
   console.log(`[task-writer] wrote ${taskFilePath}`);
   return taskFilePath;
-}
-
-export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
-  return `${farmslotDirForSlot}/packages/agent-runtime/scripts/mark-checklist-step.cjs`.replace(
-    /^~(?=\/)/,
-    '$HOME',
-  );
-}
-
-/**
- * Build the task-local `mark` wrapper script.
- *
- * Resolves the published @farmslot/agent-runtime bin at run time, mirroring the
- * harness runner shim ladder (env override → recorded install path → PATH →
- * teach). The recorded path is the slot-synced helper selected by the gateway,
- * so it must win over a possibly stale global `farmslot-agent`. The env rung
- * requires the override to be executable so a bad operator value falls through
- * the ladder to the teach instead of hard-dying under `set -euo pipefail`.
- */
-export function buildChecklistMarkerScript(helperPath: string): string {
-  return [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
-    'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-    'if [ -n "${FARMSLOT_AGENT_BIN:-}" ] && [ -x "${FARMSLOT_AGENT_BIN}" ]; then',
-    '  exec "$FARMSLOT_AGENT_BIN" mark "$DIR" "$@"',
-    'fi',
-    `RECORDED=${JSON.stringify(helperPath)}`,
-    'if [ -f "$RECORDED" ]; then',
-    '  exec node "$RECORDED" "$DIR" "$@"',
-    'fi',
-    'if command -v farmslot-agent >/dev/null 2>&1; then',
-    '  exec farmslot-agent mark "$DIR" "$@"',
-    'fi',
-    'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
-    'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',
-    'exit 127',
-    '',
-  ].join('\n');
-}
-
-async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: string): Promise<void> {
-  const markerPath = path.join(taskAbsDir, CHECKLIST_MARKER_INPUT);
-  const helperPath = checklistMarkerHelperPath(farmslotDirForSlot);
-  await writeFile(markerPath, buildChecklistMarkerScript(helperPath), 'utf-8');
-  await chmod(markerPath, 0o755);
 }
 
 /**

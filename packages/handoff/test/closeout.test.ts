@@ -109,6 +109,20 @@ function scenario(
     taskDocument: 'CHECKLIST.md',
     report: 'artifacts/report.md',
     learnings: 'artifacts/learnings.md',
+    // The task record also carries the selected checklist and control-plane
+    // provenance; closeout must ignore keys it does not read.
+    executionTemplate: {
+      selectionReason: 'explicit',
+      id: 'fix-bug/autonomous.mobile',
+      sourceId: 'package:consensys-recipe-cook',
+      flow: 'fix-bug',
+      platforms: ['mobile'],
+      labels: [],
+      relativePath: 'fix-bug/autonomous.mobile.md',
+      sha256: 'a'.repeat(64),
+      renderedSha256: 'a'.repeat(64),
+    },
+    templateProvenance: { kind: 'task-template', contentHash: 'a'.repeat(64) },
   };
   writeFileSync(
     path.join(taskDir, 'inputs/handoff.json'),

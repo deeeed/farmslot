@@ -19,7 +19,7 @@ A runtime-compatible task directory contains:
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;
-- `mark`, a task-local executable shim installed by the gateway or `farmslot-agent install-mark`.
+- `mark`, a task-local executable shim written by `task init` (gateway or `farmslot-agent task init`).
 
 Agents should use the task-local shim:
 
@@ -34,7 +34,7 @@ Do not hand-write `SIGNAL.json`. The runtime preserves pass-through fields, reco
 ## CLI
 
 ```bash
-farmslot-agent install-mark <task-dir> --task TASK.md --signal SIGNAL.json
+farmslot-agent task init <task-dir> --flow <flow> --run-mode <mode> --platform <p> --template <id> --package-templates <catalog> --title "…"
 farmslot-agent mark <task-md> <signal-json> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json

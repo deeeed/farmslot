@@ -31,7 +31,7 @@ const {
   resolveWorkerTerminalContract,
   lintWorkerTemplateAgainstContract,
   templateUsesTerminalMark,
-} = require('../../../../scripts/quality/worker-terminal-contract.cjs') as {
+} = require('@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs') as {
   resolveWorkerTerminalContract: (
     config: WorkerTerminalProjectConfig | null | undefined,
     flowType: string,

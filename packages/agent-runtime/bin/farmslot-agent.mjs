@@ -15,7 +15,7 @@ function usage(exitCode = 0) {
     'Commands:',
     '  mark <task-md> <signal-json> <args...>',
     '  artifact-check <task-dir> [args...]',
-    '  install-mark <task-dir> [--task TASK.md] [--signal SIGNAL.json]',
+    '  task init <task-dir> --flow f --run-mode m --platform p --template id --title t [options]',
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
     '    (flags override top-level input fields; training fields are merged)',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',
@@ -382,46 +382,6 @@ async function buildRecipeQuality(args) {
   }
 }
 
-function parseInstallMarkArgs(args) {
-  const parsed = { taskDir: args[0], task: 'TASK.md', signal: 'SIGNAL.json' };
-  for (let i = 1; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === '--task') {
-      parsed.task = args[++i] || parsed.task;
-    } else if (arg.startsWith('--task=')) {
-      parsed.task = arg.slice('--task='.length);
-    } else if (arg === '--signal') {
-      parsed.signal = args[++i] || parsed.signal;
-    } else if (arg.startsWith('--signal=')) {
-      parsed.signal = arg.slice('--signal='.length);
-    } else {
-      usage(2);
-    }
-  }
-  if (!parsed.taskDir) usage(2);
-  return parsed;
-}
-
-function installMark(args) {
-  const parsed = parseInstallMarkArgs(args);
-  const taskDir = path.resolve(parsed.taskDir);
-  mkdirSync(taskDir, { recursive: true });
-  const markPath = path.join(taskDir, 'mark');
-  const binPath = path.join(packageRoot, 'bin', 'farmslot-agent.mjs');
-  writeFileSync(
-    markPath,
-    [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-      `node ${JSON.stringify(binPath)} mark "$DIR" "$@"`,
-      '',
-    ].join('\n'),
-    { mode: 0o755 },
-  );
-  console.log(`installed ${markPath}`);
-}
-
 function parseContractResolveArgs(args) {
   const parsed = { flow: null, mode: null, projectConfig: null };
   for (let i = 0; i < args.length; i += 1) {
@@ -465,8 +425,8 @@ async function main() {
       path.join(packageRoot, 'scripts', 'check-task-artifact-contract.mjs'),
       [subcommand, ...rest].filter((arg) => arg !== undefined),
     );
-  } else if (command === 'install-mark') {
-    installMark([subcommand, ...rest].filter((arg) => arg !== undefined));
+  } else if (command === 'task' && subcommand === 'init') {
+    runNode(path.join(packageRoot, 'scripts', 'task-init-cli.mjs'), rest);
   } else if (command === 'contract' && subcommand === 'resolve') {
     resolveContract(rest);
   } else if (command === 'recipe-quality' && subcommand === 'build') {

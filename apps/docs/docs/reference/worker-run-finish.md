@@ -39,14 +39,13 @@ The finish contract is **not Farmslot-specific**. It is a small, portable conven
 
 ```bash
 # Standalone (skills-only) — no gateway, no slot
-mkdir -p temp/tasks/my-task/artifacts
-# write TASK.md with `- [ ]` steps, then install the task-local shim
-farmslot-agent install-mark temp/tasks/my-task
+farmslot-agent task init temp/tasks/my-task --flow fix-bug --run-mode autonomous --platform mobile \
+  --template fix-bug/autonomous.mobile --package-templates <catalog> --title "…" --task-text "…"
 cd temp/tasks/my-task
-# no gateway means no checklist-target.json, so name the checklist explicitly
-./mark --checklist TASK.md start
-./mark --checklist TASK.md 1
-./mark --checklist TASK.md complete --mark-last
+# CHECKLIST.md is the checklist; no manifest is needed
+./mark start
+./mark 1
+./mark complete --mark-last
 ```
 
 ```bash

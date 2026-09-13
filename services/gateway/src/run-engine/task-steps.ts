@@ -1,12 +1,13 @@
 // task-steps.ts — GRADE and WRITE_TASK run-engine step owners.
 
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { HANDOFF_INPUT, readTaskProvenance } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   Events,
+  EXECUTION_CHECKLIST_DOCUMENT,
   isLightweightInteractiveDevRun,
   parseGitHubRef,
   PipelineSteps,
@@ -35,12 +36,10 @@ import {
 import { resolvePrepareProfile } from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
-import { taskDocumentArtifacts } from '../tasks/task-document.js';
 import {
   PREVIOUS_REVIEW_JSON_INPUT,
   PREVIOUS_REVIEW_MD_INPUT,
   TaskCollisionError,
-  TEMPLATE_PROVENANCE_INPUT,
   writeTaskFile,
 } from '../tasks/writer.js';
 
@@ -120,13 +119,32 @@ export function prepareProfileDecisionLabel(
 async function readTemplateProvenanceForTask(
   taskFilePath: string,
 ): Promise<TemplateProvenance | null> {
-  const provenancePath = path.join(path.dirname(taskFilePath), TEMPLATE_PROVENANCE_INPUT);
-  if (!existsSync(provenancePath)) return null;
-  const parsed = JSON.parse(await readFile(provenancePath, 'utf-8')) as TemplateProvenance;
-  if (parsed?.kind !== 'task-template' || typeof parsed.contentHash !== 'string') {
-    throw new Error(`Invalid template provenance artifact: ${provenancePath}`);
+  const taskDir = path.dirname(taskFilePath);
+  const provenance = readTaskProvenance(taskDir);
+  if (!provenance?.templateProvenance) return null;
+  const parsed = {
+    ...provenance.templateProvenance,
+    ...(provenance.executionTemplate ? { executionTemplate: provenance.executionTemplate } : {}),
+  } as TemplateProvenance;
+  if (parsed.kind !== 'task-template' || typeof parsed.contentHash !== 'string') {
+    throw new Error(`Invalid template provenance in ${path.join(taskDir, HANDOFF_INPUT)}`);
   }
   return parsed;
+}
+
+/** Task-dir files the shared producer writes, for run step outputs. */
+function taskDocumentArtifacts(
+  taskDir: string,
+  options: { includeChecklist: boolean },
+): ArtifactRef[] {
+  const artifacts: ArtifactRef[] = [];
+  if (options.includeChecklist && existsSync(path.join(taskDir, EXECUTION_CHECKLIST_DOCUMENT))) {
+    artifacts.push({ path: EXECUTION_CHECKLIST_DOCUMENT, purpose: 'execution-checklist' });
+  }
+  if (existsSync(path.join(taskDir, HANDOFF_INPUT))) {
+    artifacts.push({ path: HANDOFF_INPUT, purpose: 'handoff-metadata' });
+  }
+  return artifacts;
 }
 
 async function resolveRecipeStrategy(
@@ -477,7 +495,6 @@ export async function executeWriteTaskStep(
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
-      { path: TEMPLATE_PROVENANCE_INPUT, purpose: 'template-provenance' },
       ...taskDocumentArtifacts(path.dirname(current.taskFile), {
         includeChecklist: !isLightweightInteractiveDevRun(current),
       }),
@@ -657,7 +674,6 @@ export async function executeWriteTaskStep(
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
-      { path: TEMPLATE_PROVENANCE_INPUT, purpose: 'template-provenance' },
     ];
     if (afterWrite.ticketData)
       artifacts.push({ path: 'inputs/bug-input.json', purpose: 'ticket-data' });
