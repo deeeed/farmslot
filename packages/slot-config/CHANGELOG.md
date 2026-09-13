@@ -4,7 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
-- Pool files accept a machine-level `env` map (validated shell variable names, string values), surfaced as `machineEnv` on slot vars. Farmslot exports it into every shell it runs on that machine, so machine-specific tool locations such as a project harness binary stay out of `project.json`.
+- Pool files accept a machine-level `env` map (validated shell variable names, string values), surfaced as `machineEnv` on slot vars. The gateway exports it into every shell it runs on that machine (it wins over the project's `command_env`), so machine-specific tool locations such as a project harness binary stay out of `project.json`.
 - `collectPlaceholderTokens` and `assertNoUnknownPlaceholders` now live in `@farmslot/protocol` and are re-exported here unchanged.
 - Estimate GPT-6 Astra session cost using its published input and output token rates.
 

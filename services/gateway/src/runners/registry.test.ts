@@ -1479,6 +1479,10 @@ describe('buildLaunchCommand', () => {
       taskDir: TASK_DIR,
     });
     assert.match(reload, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    const codexReload = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5.5', 'sess-2', {
+      taskDir: TASK_DIR,
+    });
+    assert.match(codexReload, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
     assert.doesNotMatch(
       buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'sonnet', PROMPT),
       /^export /u,

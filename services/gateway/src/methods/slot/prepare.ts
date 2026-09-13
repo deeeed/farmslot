@@ -251,17 +251,16 @@ async function slotPrepareInner(
   let resolvedStartRef: StartRefResolution | undefined;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
+  // Project command_env first, then the machine's pool env: pool overrides
+  // project, the same precedence dispatch applies around the runner launch.
   const applyCommandEnv = (command: string) =>
-    withMachineEnv(
-      applyProjectCommandEnv(projectJson, command, {
-        ...(effectiveDomain ? { domain: effectiveDomain } : {}),
-        expandDomainValue: (value) =>
-          expandTemplate(value, vars, projectVars, {
-            domain: effectiveDomain ?? '',
-          }),
-      }),
-      vars,
-    );
+    applyProjectCommandEnv(projectJson, withMachineEnv(command, vars), {
+      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, vars, projectVars, {
+          domain: effectiveDomain ?? '',
+        }),
+    });
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')
@@ -1405,7 +1404,11 @@ async function slotPrepareInner(
   if (healthHook) {
     step('health', 'Verifying health...');
     const parseCmd = getProjectField(projectJson, 'health.parse_health');
-    let healthValue = await runHealthCheck(vars, withProfileEnv(healthHook), parseCmd);
+    let healthValue = await runHealthCheck(
+      vars,
+      withProfileEnv(applyCommandEnv(healthHook)),
+      parseCmd,
+    );
 
     if (readyIndicator && healthValue !== readyIndicator) {
       // Try unlock
@@ -1414,10 +1417,14 @@ async function slotPrepareInner(
         step('health', 'Trying unlock...');
         await execOnSlot(
           vars,
-          `cd ${shellQuote(vars.remoteRepo)} && ${withProfileEnv(unlockHook)} 2>&1`,
+          `cd ${shellQuote(vars.remoteRepo)} && ${withProfileEnv(applyCommandEnv(unlockHook))} 2>&1`,
         );
         await new Promise((r) => setTimeout(r, 3000));
-        healthValue = await runHealthCheck(vars, withProfileEnv(healthHook), parseCmd);
+        healthValue = await runHealthCheck(
+          vars,
+          withProfileEnv(applyCommandEnv(healthHook)),
+          parseCmd,
+        );
       }
       if (readyIndicator && healthValue !== readyIndicator) {
         const err: PrepareCommandError = new Error(

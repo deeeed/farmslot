@@ -110,9 +110,10 @@ export interface RawPoolJson {
   /** Default domain overlay for dispatches from this machine; slot- and task-level domain override it. */
   domain?: string;
   /**
-   * Environment exported into every shell Farmslot runs on this machine: runner
-   * launches, prepare hooks, recipe runs. Machine-specific tool locations live
-   * here (for example a project harness binary), never in project.json.
+   * Environment the gateway exports into every shell it runs on this machine:
+   * runner launches and reloads, prepare hooks, recipe runs. Wins over the
+   * project's command_env. Machine-specific tool locations live here (for
+   * example a project harness binary), never in project.json.
    */
   env?: Record<string, string>;
   slots: RawPoolSlot[];
@@ -161,7 +162,7 @@ export interface SlotVars {
   projectName: string;
   /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
   domain?: string;
-  /** Validated `pool.env`: exported into every shell Farmslot runs on this machine. */
+  /** Validated `pool.env`: exported into every shell the gateway runs on this machine. */
   machineEnv?: Record<string, string>;
   // Resource-derived (flattened from slot.resources)
   resourceVars: Record<string, string>;
@@ -736,7 +737,6 @@ function validateMachineEnv(raw: unknown, machine: string): Record<string, strin
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`pool ${machine}: env must be an object of string values`);
   }
-  const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(raw)) {
     if (!ENV_NAME_RE.test(name)) {
       throw new Error(`pool ${machine}: env name '${name}' is not a valid shell variable name`);
@@ -744,9 +744,11 @@ function validateMachineEnv(raw: unknown, machine: string): Record<string, strin
     if (typeof value !== 'string') {
       throw new Error(`pool ${machine}: env.${name} must be a string`);
     }
-    env[name] = value;
+    if (value.includes('\0')) {
+      throw new Error(`pool ${machine}: env.${name} must not contain a NUL byte`);
+    }
   }
-  return env;
+  return Object.fromEntries(Object.entries(raw)) as Record<string, string>;
 }
 
 // ─── loadProjectVars ───

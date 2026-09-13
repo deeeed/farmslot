@@ -154,8 +154,9 @@ Create `pool/<machine>.json`:
 }
 ```
 
-`env` is exported into every shell Farmslot runs on that machine (runner launches, prepare
-hooks, recipe runs). Put machine-specific tool locations there; `project.json` stays portable.
+`env` is exported into every shell the gateway runs on that machine (runner launches and
+reloads, prepare hooks, recipe runs) and wins over a project's `command_env`. Put
+machine-specific tool locations there; `project.json` stays portable.
 
 ## Development (multi-worktree)
 
