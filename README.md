@@ -155,8 +155,9 @@ Create `pool/<machine>.json`:
 ```
 
 `env` is exported by the gateway into the shells it runs on that machine for runner launches
-and reloads, prepare hooks and probes, and recipe runs, and wins over a project's
-`command_env`. Put machine-specific tool locations there; `project.json` stays portable.
+and reloads, the prepare install, preflight, health, and unlock hooks (and the profile
+`health_ok` probe), and recipe runs; it wins over a project's `command_env`. Put
+machine-specific tool locations there; `project.json` stays portable.
 
 ## Development (multi-worktree)
 

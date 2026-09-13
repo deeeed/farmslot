@@ -90,7 +90,7 @@
     },
     "env": {
       "type": "object",
-      "description": "Environment the gateway exports into the shells it runs on this machine for runner launches and reloads, prepare hooks and probes, and recipe runs; wins over the project command_env. Put machine-specific tool locations here, for example a project harness binary.",
+      "description": "Environment the gateway exports into the shells it runs on this machine for runner launches and reloads, the prepare install, preflight, health, and unlock hooks (and the profile health_ok probe), and recipe runs; wins over the project command_env. Put machine-specific tool locations here, for example a project harness binary.",
       "additionalProperties": { "type": "string" },
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
       "examples": [{ "MM_HARNESS_BIN": "/Users/me/dev/metamask-harness/bin/mm-harness" }]
