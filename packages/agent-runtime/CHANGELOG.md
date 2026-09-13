@@ -2,17 +2,17 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.9.0 - 2026-09-13
+
 - Add `task init` (library `taskInit` + `farmslot-agent task init`): the one producer of a task directory (`TASK.md`, `CHECKLIST.md`, `mark`, `inputs/handoff.json`, `inputs/worker-terminal-contract.json`) for control planes and harnesses alike. `handoff.json` now carries the selected checklist reference (`executionTemplate`) and, for Farmslot, `templateProvenance`; `inputs/execution-template.json` and `inputs/template-provenance.json` are no longer written. `checklist-target.json` is optional: absent means `CHECKLIST.md` + `SIGNAL.json`; `task init` never writes it, role switches do, and a control plane may write the default-valued file during a transition. The `mark` shim is one recorded command with a `FARMSLOT_MARK_CMD` override; `install-mark` is gone. `TASK.md` renders a `## Task` key only when it has a value (no more blank `PR_NUMBER:` / `TICKET_URL:` lines), and its checklist sentence no longer names Farmslot.
 - Worker-template structure lint now rejects a flow template that still carries a `## Task` block or `TASK_DIR:` line (the task writer generates TASK.md); nested-loop role checklists may keep theirs via `lintWorkerTemplateStructure(content, { roleChecklist: true })`.
 - Add idempotent native session creation with caller-reserved IDs, preserving live and terminal reservations across retries.
-
 - Share native session and bounded workspace operations with execution nodes, with node identity pinned to each host and journal.
 - Preserve native failed-turn diagnostics so clients can show login and provider errors.
-
 - Add a supervised native session host with private local IPC, durable prompts and command receipts, event replay, and explicit saved-conversation recovery. Disable recovery for older Claude histories affected by documented native history-loss bugs.
 - Include the proposed file changes from native tool events with permission requests so clients can display the action before approval.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.1 - 2026-08-14
 

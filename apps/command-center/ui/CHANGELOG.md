@@ -4,43 +4,29 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.0 - 2026-09-13
+
 - Flow graph monitor tooltip names `CHECKLIST.md` as the file whose checkboxes drive worker progress.
 - Operate native sessions on connected execution nodes, keeping session controls, delivery receipts, and workspace views bound to the selected machine.
-
 - Add an opt-in agent workspace to Copilot with runner/model selection, resumable conversations, tool activity, approvals/questions, and embedded source and changes views.
-
 - Make runner-session reopen and tmux-attach copy controls more visible on run detail, and show them on the family selected-run so any family member can copy the same commands.
-
 - On the experimental History tab, show a recycle snapshot of the runner transcript when the live session file is gone. This is a rare review path, not a new panel.
-
 - On family run history, reopen the publish-gate workspace for a selected run that had one, including done and cancelled runs. Maximize it for review. The link keeps `gate=1` or `gate=max` so a screenshot can return to the same panel.
-
 - On a timed-out interactive handoff, offer Extend monitoring for another timeout period without SIGNAL.json. A blocked run with a live monitor keeps the existing worker checklist panel.
-
 - Show GitHub review requirements separately from run setup, suppress duplicate review starts by default with an explicit Review anyway override, group the review queue by status, and toggle PR details by clicking the selected row.
-
 - Show the PR author in the PR list and selected detail header.
-
 - Unify tracked PRs, monitoring, and review candidates around one full-width list with a closable right-side detail overlay, URL-restored sections and mobile navigation; separate automation settings and distinguish teams from rules.
-
 - Show ongoing PR work and its slot on monitor cards, with check and repair controls disabled until the active run ends.
-
 - Make monitored PRs compact and expandable, improve text contrast and PR boundaries, show check schedules, and explain alert and agent-repair actions.
-
 - Configure how often rule-created monitors check each PR, separately from matching-PR discovery.
 - Reuse searchable shared choices and slot dialogs across PR configuration, and restore team/rule drafts and editor navigation from private browser draft links.
-
 - Simplify PR team setup with existing farm selection, Project URLs, configured gateway accounts, and collapsed advanced settings; explain teams versus rules, keep forms within mobile widths, and pause dashboard polling while editing.
-
 - Add persistent PR monitoring, direct review/QA intake and project publication policies, with team/rule editing, Project/view filter mapping and notification acknowledgement, inherited slot/model and saved-reviewer controls, and visible queue/provider status.
-
 - Keep browser recipes on the configured Command Center origin and activate that tab before sending input.
-
 - Hide the CI polling countdown and check-now button while an operator decision is pending.
-
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-09-08
 

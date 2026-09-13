@@ -4,38 +4,29 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.0 - 2026-09-13
+
 - Task documents for projects without runtime capability providers no longer instruct the worker to discover and acquire leases; they name the prepared runtime as the proof resource. Real runs on the MetaMask packs (no providers) had blocked on the lease instructions.
 - The task writer composes the shared task-dir producer from `@farmslot/agent-runtime` (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps. Per task dir: `inputs/handoff.json` now carries the selected checklist reference and the farm's template provenance (`inputs/execution-template.json`, `inputs/template-provenance.json`, `inputs/ticket-comments.json` are no longer written; comments stay in `bug-input.json`); `checklist-target.json` is optional for readers (absent means `CHECKLIST.md` + `SIGNAL.json`; role switches write it) and the gateway keeps writing the default-valued file for one release so slots on an older `mark` engine keep working; the `mark` shim runs one recorded command, overridable with `FARMSLOT_MARK_CMD`, and a project may set `vars.mark_cmd` (for example `${MM_HARNESS_BIN:-mm-harness} checklist mark`) so workers get the harness's gates. Nodes must be redeployed before gateways restart so their `mark` engine accepts the manifest-less layout.
 - Split the worker task directory into a task document and an execution checklist: the selected template renders verbatim into `CHECKLIST.md` (the only enumerated checklist, so acceptance criteria can never shift step numbers) and the gateway generates `TASK.md` with the ticket, acceptance criteria, mark instructions, and pointers to `inputs/`. Every task dir now also gets `inputs/handoff.json`, matching the recipe-cook skill's task layout. `CHECKLIST.md` travels to the slot with the other task-root sidecars and is mirrored back at completion. Worker templates no longer carry the ticket header; lightweight interactive dev keeps its plan/context pairing.
 - Route idempotent native session creation while enforcing the caller's reserved session identity.
-
 - Route native sessions to authenticated execution nodes with matching profile ownership and connection-bound replies.
-
 - Expose configured local agent workspace choices and bounded source and Git changes reads, with capped lists and clear errors for oversized diffs.
 - Fix terminal Copilot bootstrap when the runner starts with a suggested prompt, using exact launch acknowledgement without duplicate sends.
-
 - Add experimental Codex and Claude native sessions through authenticated gateway RPC, with runner-owned login and structured events. A supervised host keeps work running through gateway restarts and preserves command deduplication, approval ownership, and explicit recovery.
 - Copy Claude, Codex, and Grok session transcripts once at slot release into `.runs/session-archives/`. History.get uses that copy when the live file is gone. Other runners do not archive.
-
 - Let a timed-out interactive handoff keep watching for another timeout period without SIGNAL.json. `continue` resets the persisted monitor window so a restart does not immediately re-hold. Worker-done handoffs still require a terminal signal.
-
 - Observe GitHub review requirements and account review history, and prevent queued reviews when requirements are satisfied or the account already reviewed the current commit.
-
 - Retain review candidate titles and authors from discovery and include authors in existing PR status reads.
-
 - Suspend PR checks and new repair planning while an active run owns the PR; discard competing observations and preserve manual pause settings.
-
 - Use smaller GitHub repository pages so PR discovery can resume past provider timeouts on large repositories.
-
 - Preserve rule-selected PR monitoring intervals through enrollment and restarts; existing subscriptions keep their settings.
 - Expose verified gateway GitHub account identities without credentials, verify new account bindings, and apply the GraphQL reserve to legacy dashboard reads while retaining confirmed PR data on quota holds and keeping quota observations current.
-
 - Add persistent PR monitoring, opt-in publication enrollment and queued repair/review work, with resumable source scans, repository-scoped webhook routing, Project/view filter import, durable rule attention, recipient-scoped push delivery and monitor enrollment, explicit execution policies and saved reviewer sessions for follow-up rounds.
-
 - Broadcast operator run changes to every connected client so completing a run from another tab or the CLI immediately updates its displayed status.
-
 - Show a CI timeout decision when repeated failures make no progress, including failures already handled by a fix attempt.
-
 - Keep interactive development runs awaiting operator action when a worker reports a blocker or failure, preserving its findings instead of entering failure cleanup.
 - Default Codex to GPT-6 Astra with high effort and support all six effort levels, including max and ultra.
 

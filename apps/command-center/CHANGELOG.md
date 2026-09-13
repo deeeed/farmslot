@@ -4,13 +4,13 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Validate native workspaces across execution nodes, with reliable sequential selections and full page reload checks.
-
-- Add CDP text-entry, native-select, and browser-resize controls for validation of agent workspaces.
-
-- Support PR automation validation through live gateway assertions in browser recipes.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.11.0 - 2026-09-13
+
+- Validate native workspaces across execution nodes, with reliable sequential selections and full page reload checks.
+- Add CDP text-entry, native-select, and browser-resize controls for validation of agent workspaces.
+- Support PR automation validation through live gateway assertions in browser recipes.
 
 ## 0.10.0 - 2026-09-08
 
