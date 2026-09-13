@@ -45,7 +45,7 @@ cd temp/tasks/my-task
 # CHECKLIST.md is the checklist; no manifest is needed
 ./mark start
 ./mark 1
-./mark --checklist TASK.md complete --mark-last
+./mark complete --mark-last
 ```
 
 ```bash

@@ -1323,7 +1323,8 @@ export async function writeTaskFile(
 
   // The task dir itself comes from the shared producer: TASK.md, CHECKLIST.md
   // (split layout), the mark shim, handoff.json, the terminal contract, and the
-  // ticket as fetched. No checklist-target.json: absent means the worker default.
+  // ticket as fetched. checklist-target.json is only a one-release compatibility
+  // write (see writeChecklistManifest); absent means the worker default.
   await writeTaskDir({
     taskDir: taskAbsDir,
     taskMarkdown: finalContent,
