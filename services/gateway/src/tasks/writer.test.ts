@@ -105,6 +105,19 @@ test('runtime proof planning precedes acquisition guidance and retains related p
   assert.match(task, /inputs\/runtime-capability-catalog\.json/);
 });
 
+test('a project without capability providers is told the prepared runtime is the proof resource', () => {
+  const task = appendRuntimeCapabilityAndPlanningContext('# T\n', 'temp/tasks/fix/x', null, null);
+  assert.match(task, /## Runtime capability proof plan/);
+  assert.match(task, /nothing to lease/);
+  assert.match(task, /prepared runtime is the authorized proof resource/);
+  assert.doesNotMatch(task, /runtime\.capability\.acquire/);
+  assert.doesNotMatch(task, /runtime\.capability\.list/);
+  assert.match(task, /temp\/tasks\/fix\/x\/inputs\/runtime-capability-catalog\.json/);
+  assert(task.indexOf('Runtime capability proof plan') < task.indexOf('Related planning context'));
+  const empty = appendRuntimeCapabilityAndPlanningContext('# T\n', 'temp/tasks/fix/x', {}, null);
+  assert.match(empty, /nothing to lease/);
+});
+
 test('writePreviousReviewInputs freezes reusable review context as JSON and a concise brief', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'previous-review-inputs-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

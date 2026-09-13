@@ -88,14 +88,27 @@ export function buildRuntimeCapabilityTaskSection(
   providers: NonNullable<ReturnType<typeof normalizeRawRuntimeCapabilities>>['providers'] | null,
 ): string {
   const entries = Object.entries(providers ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  const catalog = entries.length
-    ? entries
-        .map(
-          ([id, provider]) =>
-            `- \`${id}\` — ${provider.label}; ${provider.cost.class} cost; ${provider.sharePolicy}; dependencies: ${provider.dependencies?.length ? provider.dependencies.map((dependency) => `\`${dependency}\``).join(', ') : 'none'}.`,
-        )
-        .join('\n')
-    : '- None configured. State-only proof must proceed without a browser, Metro, Companion, simulator, or device hard gate.';
+  // A project without capability providers has nothing to lease: the runtime
+  // preparation verified (see sandbox.json when the harness wrote one) is the
+  // proof resource. Telling such a worker to discover and acquire leases sent
+  // real runs into a dead end (no provider, no lease, so no launch).
+  if (entries.length === 0) {
+    return `
+## Runtime capability proof plan
+
+No runtime capability providers are configured for this project, so there is nothing to lease:
+the prepared runtime is the authorized proof resource. Launch, capture, and verify through the
+harness's own commands; do not call \`runtime.capability.*\` actions. Still map each executable
+acceptance criterion to \`state\`, \`visual\`, or \`mixed\` proof before the first proof step. The
+frozen dispatch-time catalog is at \`${taskDir}/${RUNTIME_CAPABILITY_CATALOG_INPUT}\`.
+`;
+  }
+  const catalog = entries
+    .map(
+      ([id, provider]) =>
+        `- \`${id}\` — ${provider.label}; ${provider.cost.class} cost; ${provider.sharePolicy}; dependencies: ${provider.dependencies?.length ? provider.dependencies.map((dependency) => `\`${dependency}\``).join(', ') : 'none'}.`,
+    )
+    .join('\n');
   return `
 ## Runtime capability proof plan
 
