@@ -93,13 +93,14 @@ export function applyProjectCommandEnv(
 export function buildMachineEnvPrefix(machineEnv: Record<string, string> | undefined): string {
   return Object.entries(machineEnv ?? {})
     .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
-    .join('; ');
+    .join(' && ');
 }
 
+/** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */
 export function withMachineEnv(
   command: string,
   vars: { machineEnv?: Record<string, string> },
 ): string {
   const prefix = buildMachineEnvPrefix(vars.machineEnv);
-  return prefix ? `${prefix}; ${command}` : command;
+  return prefix ? `${prefix} && ${command}` : command;
 }

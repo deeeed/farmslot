@@ -1474,15 +1474,15 @@ describe('buildLaunchCommand', () => {
   it('exports the machine pool env before every runner launch and reload', () => {
     const vars = makeVars({ dispatchCmd: '', machineEnv: { MM_HARNESS_BIN: '/opt/mm-harness' } });
     const launch = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { taskDir: TASK_DIR });
-    assert.match(launch, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    assert.match(launch, /^export MM_HARNESS_BIN='\/opt\/mm-harness' && if \[ -f /u);
     const reload = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'sess-1', {
       taskDir: TASK_DIR,
     });
-    assert.match(reload, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    assert.match(reload, /^export MM_HARNESS_BIN='\/opt\/mm-harness' && if \[ -f /u);
     const codexReload = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5.5', 'sess-2', {
       taskDir: TASK_DIR,
     });
-    assert.match(codexReload, /^export MM_HARNESS_BIN='\/opt\/mm-harness'; if \[ -f /u);
+    assert.match(codexReload, /^export MM_HARNESS_BIN='\/opt\/mm-harness' && if \[ -f /u);
     assert.doesNotMatch(
       buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'sonnet', PROMPT),
       /^export /u,

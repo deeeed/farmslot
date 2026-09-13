@@ -3,6 +3,7 @@
 import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@farmslot/protocol';
 
 import {
+  applyProjectCommandEnv,
   execOnSlot,
   expandHook,
   expandTemplate,
@@ -10,6 +11,7 @@ import {
   type ProjectVars,
   type RawProjectJson,
   type SlotVars,
+  withMachineEnv,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
@@ -316,9 +318,14 @@ export async function checkPrepareRequirement(
       }
       const parseCmd = getProjectField(projectJson, 'health.parse_health');
       const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
-      const value = await runHealthCheck(vars, healthHook, parseCmd, {
-        logPrefix: 'prepare-profile',
-      });
+      // Same shell environment as the prepare's own health phase: project
+      // command_env, then the machine's pool env.
+      const value = await runHealthCheck(
+        vars,
+        applyProjectCommandEnv(projectJson, withMachineEnv(healthHook, vars)),
+        parseCmd,
+        { logPrefix: 'prepare-profile' },
+      );
       if (value && (!readyIndicator || value === readyIndicator)) {
         return { requirement, ok: true, detail: `health ${value}` };
       }

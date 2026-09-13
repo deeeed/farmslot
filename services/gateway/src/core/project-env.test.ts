@@ -84,11 +84,11 @@ test('invalid domain environment names fail before command construction', () => 
 test('machine env exports pool.env values, quoted, ahead of the command', () => {
   assert.equal(
     buildMachineEnvPrefix({ MM_HARNESS_BIN: "/Users/me/it's/mm-harness", OTHER: 'x' }),
-    "export MM_HARNESS_BIN='/Users/me/it'\\''s/mm-harness'; export OTHER='x'",
+    "export MM_HARNESS_BIN='/Users/me/it'\\''s/mm-harness' && export OTHER='x'",
   );
   assert.equal(
     withMachineEnv('cd /repo && claude', { machineEnv: { MM_HARNESS_BIN: '/opt/mm-harness' } }),
-    "export MM_HARNESS_BIN='/opt/mm-harness'; cd /repo && claude",
+    "export MM_HARNESS_BIN='/opt/mm-harness' && cd /repo && claude",
   );
   assert.equal(withMachineEnv('cd /repo && claude', {}), 'cd /repo && claude');
   assert.equal(withMachineEnv('cd /repo && claude', { machineEnv: {} }), 'cd /repo && claude');
