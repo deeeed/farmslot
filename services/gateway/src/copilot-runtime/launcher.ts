@@ -22,6 +22,7 @@ import {
   isKnownRunner,
   normalizeRunner,
   runnerDefaultModel,
+  runnerSupportsInitialPromptArg,
 } from '../runners/registry.js';
 
 import type { CopilotRuntimeStore } from './session-store.js';
@@ -168,18 +169,21 @@ export function buildCopilotLaunch(input: {
   bootstrapPrompt: string;
   store: CopilotRuntimeStore;
   runtimeDir?: string;
-}): { command: string; commandHash: string; vars: SlotVars } {
+}): { command: string; commandHash: string; vars: SlotVars; bootstrapOnLaunch?: boolean } {
   const vars = createCopilotRunnerVars(input.checkout);
   const runtimeDir = input.runtimeDir ?? '.agent';
+  const bootstrapOnLaunch = runnerSupportsInitialPromptArg(input.runner);
   const command = buildLaunchCommand(vars, input.runner, input.model, input.bootstrapPrompt, {
     repo: input.checkout,
     safetyTier: input.safetyTier,
     runtimeDir,
+    initialPromptOnLaunch: bootstrapOnLaunch,
   });
   if (!command.trim()) throw new Error(`Runner '${input.runner}' produced no launch command`);
   return {
     command,
     commandHash: createHash('sha256').update(command).digest('hex'),
     vars,
+    bootstrapOnLaunch,
   };
 }

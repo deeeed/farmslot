@@ -9,7 +9,12 @@
 //   node scripts/cdp.mjs goto <hash|url> [--new]      Navigate a reused Command Center tab.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
+//   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
+//   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
+//   node scripts/cdp.mjs select <hash> <selector> <value> Choose a native select option by keyboard.
+//   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
+//   node scripts/cdp.mjs close <hash>                 Close a matching tab.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
 //
 // Env:
@@ -264,6 +269,21 @@ async function evalInTab(hash, expr) {
   return r.result?.value;
 }
 
+async function viewportTab(hash, width, height) {
+  if (![width, height].every((value) => Number.isSafeInteger(value) && value > 0))
+    die('Use positive viewport dimensions');
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  try {
+    const { windowId } = await call('Browser.getWindowForTarget', { targetId: tab.id });
+    await call('Browser.setContentsSize', { windowId, width, height });
+    return { width, height };
+  } finally {
+    close();
+  }
+}
+
 async function screenshotTab(hash, outputPath) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash || '(any)'}`, 2);
@@ -282,6 +302,75 @@ async function screenshotTab(hash, outputPath) {
   close();
   writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
   return { path: outputPath };
+}
+
+async function inputInTab(hash, selector, value, select) {
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  const resolveControl = `let root=document, control;
+    for (const part of ${JSON.stringify(selector)}.split('>>>')) {
+      control=root?.querySelector(part.trim()); root=control?.shadowRoot;
+    }
+    if (!control || control.disabled || !control.getClientRects().length) throw new Error('Input control is missing, hidden, or disabled');`;
+  const evaluate = async (body) => {
+    const result = await call('Runtime.evaluate', {
+      expression: `(()=>{${resolveControl}${body}})()`,
+      returnByValue: true,
+    });
+    if (result.exceptionDetails)
+      throw new Error(
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+      );
+    return result.result?.value;
+  };
+  try {
+    await call('Page.bringToFront');
+    const target = await evaluate(`
+      control.scrollIntoView({block:'center'});
+      // A new select action must not append to the previous keyboard-search prefix.
+      if (${select}) control.blur();
+      control.focus();
+      if (${select}) {
+        if (!(control instanceof HTMLSelectElement) || control.multiple) throw new Error('Expected a single native select');
+        const index=Array.from(control.options).findIndex(option=>option.value===${JSON.stringify(value)} && !option.disabled);
+        if(index<0) throw new Error('Requested option unavailable');
+        return control.options[index].label;
+      }
+      if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) || control.readOnly) throw new Error('Expected an editable text control');
+      return -1;`);
+    if (select) {
+      // Native selects implement incremental keyboard search through character events.
+      for (const character of target) {
+        await call('Input.dispatchKeyEvent', {
+          type: 'char',
+          text: character,
+          unmodifiedText: character,
+        });
+      }
+    } else {
+      await call('Input.dispatchKeyEvent', {
+        type: 'rawKeyDown',
+        key: 'a',
+        code: 'KeyA',
+        windowsVirtualKeyCode: 65,
+        commands: ['selectAll'],
+      });
+      await call('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'a',
+        code: 'KeyA',
+        windowsVirtualKeyCode: 65,
+      });
+      await call('Input.insertText', { text: value });
+    }
+    await sleep(100);
+    const matches = await evaluate(`return control.value===${JSON.stringify(value)};`);
+    if (!matches) throw new Error('Browser input did not produce the requested value');
+    return select ? { selected: true } : { filled: true };
+  } finally {
+    close();
+  }
 }
 
 async function loginInTab(hash) {
@@ -480,6 +569,16 @@ try {
       writeFileSync(outPath, `${rendered}\n`);
       console.error(`[cdp] wrote ${outPath}`);
     }
+  } else if (cmd === 'close') {
+    const [hash] = rest;
+    if (!hash || hash === '-') die('usage: cdp.mjs close <hash>');
+    const tab = await findTab(hash);
+    if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+    const response = await fetch(
+      `http://${CDP_HOST}:${CDP_PORT}/json/close/${encodeURIComponent(tab.id)}`,
+    );
+    if (!response.ok) die(`CDP could not close tab (status ${response.status})`, 2);
+    console.log(JSON.stringify({ closed: tab.id }));
   } else if (cmd === 'focus') {
     const [hash] = rest;
     if (!hash) die('usage: cdp.mjs focus <hash|-|route>');
@@ -489,6 +588,16 @@ try {
     if (!hash) die('usage: cdp.mjs login <hash>');
     const result = await loginInTab(hash);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'fill' || cmd === 'select') {
+    const [hash, selector, value] = rest;
+    if (!hash || !selector || value === undefined)
+      die(`usage: cdp.mjs ${cmd} <hash> <selector> <value>`);
+    console.log(JSON.stringify(await inputInTab(hash, selector, value, cmd === 'select'), null, 2));
+  } else if (cmd === 'viewport') {
+    const [hash, width, height] = rest;
+    if (!hash || width === undefined || height === undefined)
+      die('usage: cdp.mjs viewport <hash> <width> <height>');
+    console.log(JSON.stringify(await viewportTab(hash, Number(width), Number(height)), null, 2));
   } else if (cmd === 'screenshot') {
     const [hash, outputPath] = rest;
     if (!hash || !outputPath) die('usage: cdp.mjs screenshot <hash|-|route> <output.png>');
@@ -500,7 +609,9 @@ try {
     const result = await gatewayRpc(method, paramsJson);
     console.log(JSON.stringify(result, null, 2));
   } else {
-    die('usage: cdp.mjs <tabs | goto | eval | focus | login | screenshot | gateway> ...');
+    die(
+      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | fill | select | viewport | screenshot | gateway> ...',
+    );
   }
 } catch (err) {
   die(`cdp.mjs: ${err.message}`, 2);

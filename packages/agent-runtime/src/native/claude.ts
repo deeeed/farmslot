@@ -7,6 +7,14 @@ import type { NativeAdapter, NativeEventInput } from './types.js';
 
 type JsonRecord = Record<string, unknown>;
 
+/** Upstream fixed hook-history loss in 2.1.83 and interrupted-tool resume in 2.1.265. */
+export function claudeResumeUnavailableReason(version: string): string | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:\s|$)/.exec(version.trim());
+  const [major, minor, patch] = match ? match.slice(1).map(Number) : [];
+  if (major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 265)))) return;
+  return 'Saved-session recovery requires a session started with Claude Code 2.1.265 or newer. Earlier versions can lose message/tool history; update the native runner and start a new session.';
+}
+
 function record(value: unknown): JsonRecord {
   return value !== null && typeof value === 'object' ? (value as JsonRecord) : {};
 }
@@ -48,6 +56,7 @@ function toolResultBlocks(content: unknown): JsonRecord[] {
  * Claude's agent loop or authentication through an SDK.
  */
 export const claudeNativeAdapter: NativeAdapter = {
+  resumeUnavailableReason: claudeResumeUnavailableReason,
   capabilities: {
     modes: ['default'],
     streaming: true,
@@ -318,6 +327,19 @@ export const claudeNativeAdapter: NativeAdapter = {
       }
 
       if (message.type === 'result') {
+        if (message.is_error === true) {
+          const errors = Array.isArray(message.errors)
+            ? message.errors.filter((error): error is string => typeof error === 'string')
+            : [];
+          publish({
+            type: 'error',
+            text:
+              (typeof message.result === 'string' && message.result) ||
+              errors.join('\n') ||
+              'Native runner reported a failed turn',
+            data: { subtype: message.subtype },
+          });
+        }
         finishTurn({ subtype: message.subtype, isError: message.is_error });
       }
     };

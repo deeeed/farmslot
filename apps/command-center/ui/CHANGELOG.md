@@ -5,6 +5,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Flow graph monitor tooltip names `CHECKLIST.md` as the file whose checkboxes drive worker progress.
+- Operate native sessions on connected execution nodes, keeping session controls, delivery receipts, and workspace views bound to the selected machine.
+
+- Add an opt-in agent workspace to Copilot with runner/model selection, resumable conversations, tool activity, approvals/questions, and embedded source and changes views.
+
 - Make runner-session reopen and tmux-attach copy controls more visible on run detail, and show them on the family selected-run so any family member can copy the same commands.
 
 - On the experimental History tab, show a recycle snapshot of the runner transcript when the live session file is gone. This is a rare review path, not a new panel.

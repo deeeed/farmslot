@@ -1,6 +1,8 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
+import type { NativeRunnerOption } from '@farmslot/protocol';
+
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   DEFAULT_MODEL,
@@ -24,6 +26,7 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) allowDefault = false;
   @property({ type: Boolean }) showEffort = true;
+  @property({ attribute: false }) catalog?: NativeRunnerOption[];
 
   static styles = css`
     :host {
@@ -97,10 +100,13 @@ export class RunnerModelEffortPicker extends LitElement {
   `;
 
   private runnerOptions(): string[] {
-    return this.allowDefault ? ['', ...RUNNER_OPTIONS] : [...RUNNER_OPTIONS];
+    const runners = this.catalog?.map((option) => option.runner) ?? RUNNER_OPTIONS;
+    return this.allowDefault ? ['', ...runners] : [...runners];
   }
 
   private modelOptions(): string[] {
+    if (this.catalog)
+      return this.catalog.find((option) => option.runner === this.runner)?.models ?? [];
     if (!this.runner) return this.model ? [this.model] : [];
     return [...new Set([...(MODELS_BY_RUNNER[this.runner] ?? []), this.model].filter(Boolean))];
   }
@@ -129,10 +135,13 @@ export class RunnerModelEffortPicker extends LitElement {
       this.emitChange({ runner: '', model: '', effort: '' });
       return;
     }
-    const models = MODELS_BY_RUNNER[runner] ?? [];
+    const option = this.catalog?.find((entry) => entry.runner === runner);
+    const models = option?.models ?? MODELS_BY_RUNNER[runner] ?? [];
     this.emitChange({
       runner,
-      model: models.includes(this.model) ? this.model : (DEFAULT_MODEL[runner] ?? models[0] ?? ''),
+      model: models.includes(this.model)
+        ? this.model
+        : (option?.defaultModel ?? DEFAULT_MODEL[runner] ?? models[0] ?? ''),
       effort: '',
     });
   }
@@ -199,12 +208,12 @@ export class RunnerModelEffortPicker extends LitElement {
                 )}
               </div>`
             : html`<div class="hint">Choose a runner to set a model.</div>`}
-          ${this.runner === 'cursor'
+          ${!this.catalog && this.runner === 'cursor'
             ? html`<div class="hint">
                 Curated Cursor models (Composer + Grok-on-Cursor). Custom or gateway/admin dispatch
                 may pass any account-available model.
               </div>`
-            : this.runner === 'claude' && this.model === 'fable'
+            : !this.catalog && this.runner === 'claude' && this.model === 'fable'
               ? html`<div class="hint warning">
                   Fable is a heavyweight Claude model; select it only for very complex tasks.
                 </div>`

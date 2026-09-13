@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import type {
   NativeCommandReceipt,
   NativeSessionCreateParams,
+  NativeSessionEnsureParams,
   NativeSessionEvent,
   NativeSessionInfo,
   NativeSessionResponse,
@@ -91,6 +92,8 @@ interface SessionRecord {
   events: NativeSessionEvent[];
   adapter?: NativeAdapterSession;
   startup?: Promise<NativeAdapterSession>;
+  /** An uncertain initial journal write cannot become a successful retry in this host. */
+  reservationError?: Error;
   // Retain receipts for the session lifetime so old command IDs stay idempotent.
   commands: Map<string, StoredCommand>;
   pendingRequests: Map<string, NativeSessionEvent>;
@@ -106,7 +109,10 @@ export class NativeSessionManager {
     { info?: string; context?: string; pending?: string; commands: Map<string, string> }
   >();
 
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    private readonly executionNodeId = 'local',
+  ) {
     privateDirectory(root);
     for (const name of readdirSync(root).filter((name) => name.endsWith('.journal'))) {
       const path = join(root, name);
@@ -126,6 +132,8 @@ export class NativeSessionManager {
         if (entry.event) events.push(entry.event);
       }
       if (!info || !context) throw new Error('Native journal has no durable session identity');
+      if (info.executionNodeId !== executionNodeId)
+        throw new Error('Native journal belongs to another execution node');
       const record: SessionRecord = {
         info,
         context,
@@ -188,10 +196,32 @@ export class NativeSessionManager {
       previous.commands.set(command.commandId, JSON.stringify(command));
     this.persisted.set(record, { info, context, pending, commands: previous.commands });
   }
-  async create(
+  create(owner: string, params: NativeSessionCreateParams): Promise<NativeSessionInfo> {
+    return this.start(owner, params);
+  }
+
+  async ensure(owner: string, params: NativeSessionEnsureParams): Promise<NativeSessionInfo> {
+    if (
+      typeof params.sessionId !== 'string' ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(params.sessionId)
+    )
+      throw new Error('Reserved sessionId must be a lowercase UUID');
+    if ('resumeSessionId' in params && params.resumeSessionId !== undefined)
+      throw new Error('Reserved sessionId is for initial creation, not resume');
+    return this.start(owner, params, params.sessionId);
+  }
+
+  private async start(
     ownerPrincipalId: string,
     params: NativeSessionCreateParams,
+    reservedId?: string,
   ): Promise<NativeSessionInfo> {
+    if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
+      throw new Error('Native session targets another execution node');
+    if (reservedId !== undefined) {
+      const existing = this.existingCreation(ownerPrincipalId, params, reservedId);
+      if (existing) return this.createdSession(existing);
+    }
     const transport = adapters[params.runner];
     if (!transport) throw new Error(`Runner has no native transport: ${params.runner}`);
     if (!isAbsolute(params.cwd) || !(await stat(params.cwd)).isDirectory())
@@ -208,6 +238,8 @@ export class NativeSessionManager {
         );
       if (!previous || previous.info.ownerPrincipalId !== ownerPrincipalId)
         throw new Error('Resume requires an owned native session');
+      const unavailable = transport.adapter.resumeUnavailableReason?.(previous.info.version);
+      if (unavailable) throw new Error(unavailable);
       if (!['closed', 'failed'].includes(previous.info.state))
         throw new Error('Close the current native input owner before resuming');
       if (previous.info.processPid && !previous.info.processStopped)
@@ -221,6 +253,11 @@ export class NativeSessionManager {
     if (!transport.adapter.capabilities.modes.includes(mode))
       throw new Error('Native runner does not support this interaction mode');
     const resolved = await resolveNativeExecutable(transport.binary, params.cwd);
+    const unavailable = transport.adapter.resumeUnavailableReason?.(resolved.version);
+    if (params.resumeSessionId && unavailable) throw new Error(unavailable);
+    // Validation above awaits filesystem/process probes. Recheck synchronously before reservation.
+    const existing = this.existingCreation(ownerPrincipalId, params, reservedId);
+    if (existing) return this.createdSession(existing);
     // Reserve before starting the child, so simultaneous resume calls cannot create two input owners.
     if (
       params.resumeSessionId &&
@@ -232,14 +269,17 @@ export class NativeSessionManager {
     )
       throw new Error('Native session already has an input owner');
     const info: NativeSessionInfo = {
-      id: previous?.info.id ?? randomUUID(),
+      id: previous?.info.id ?? reservedId ?? randomUUID(),
       generation: randomUUID(),
       hostPid: process.pid,
       runner: params.runner,
       nativeSessionId: params.resumeSessionId ?? '',
       ownerPrincipalId,
-      executionNodeId: 'local',
-      accountContextId: `native-local:${ownerPrincipalId}`,
+      executionNodeId: this.executionNodeId,
+      accountContextId:
+        this.executionNodeId === 'local'
+          ? `native-local:${ownerPrincipalId}`
+          : `native-node:${JSON.stringify([this.executionNodeId, ownerPrincipalId])}`,
       cwd: params.cwd,
       ...resolved,
       model: params.model ?? previous?.info.model,
@@ -261,7 +301,14 @@ export class NativeSessionManager {
       const saved = this.persisted.get(previous);
       if (saved) this.persisted.set(record, saved);
     }
-    this.persist(record);
+    try {
+      this.persist(record);
+    } catch (error) {
+      record.reservationError = error as Error;
+      info.state = 'failed';
+      info.recovery = 'Initial session reservation could not be persisted; no runner was launched.';
+      throw error;
+    }
     try {
       record.startup = transport.adapter.start(
         {
@@ -284,12 +331,38 @@ export class NativeSessionManager {
       if (record.adapter.capabilities) info.capabilities = { ...record.adapter.capabilities };
       if (info.state === 'starting') info.state = 'idle';
       this.persist(record);
-      return { ...info };
+      return this.snapshot(record);
     } catch (error) {
       info.state = 'failed';
       this.append(record, { type: 'error', text: (error as Error).message });
       throw error;
     }
+  }
+
+  private existingCreation(
+    owner: string,
+    params: NativeSessionCreateParams,
+    reservedId?: string,
+  ): SessionRecord | undefined {
+    const record = reservedId ? this.sessions.get(reservedId) : undefined;
+    if (!record) return undefined;
+    if (record.info.ownerPrincipalId !== owner)
+      throw new Error('Reserved sessionId belongs to another owner');
+    for (const field of ['runner', 'cwd', 'model', 'mode'] as const) {
+      const requested = field === 'mode' ? (params.mode ?? 'default') : params[field];
+      if (record.info[field] !== requested)
+        throw new Error(`Reserved sessionId launch configuration differs: ${field}`);
+    }
+    if (JSON.stringify(record.context) !== JSON.stringify(executionContext()))
+      throw new Error('Reserved sessionId launch configuration differs: account execution context');
+    return record;
+  }
+
+  private async createdSession(record: SessionRecord): Promise<NativeSessionInfo> {
+    if (record.reservationError) throw record.reservationError;
+    if (record.info.state === 'starting' && record.startup) await record.startup;
+    // Failed/closed reservations remain explicit. A retry cannot create a replacement process.
+    return this.snapshot(record);
   }
 
   private append(record: SessionRecord, event: NativeEventInput): void {
@@ -356,10 +429,22 @@ export class NativeSessionManager {
       throw new Error('Native session not found for this principal');
     return record;
   }
+  private snapshot(record: SessionRecord): NativeSessionInfo {
+    const unavailable = adapters[record.info.runner]?.adapter.resumeUnavailableReason?.(
+      record.info.version,
+    );
+    return {
+      ...record.info,
+      capabilities: {
+        ...record.info.capabilities,
+        ...(unavailable ? { resume: false, resumeUnavailableReason: unavailable } : {}),
+      },
+    };
+  }
   list(owner: string): NativeSessionInfo[] {
     return [...this.sessions.values()]
       .filter((record) => record.info.ownerPrincipalId === owner)
-      .map((record) => ({ ...record.info }));
+      .map((record) => this.snapshot(record));
   }
   read(owner: string, id: string, after = 0, limit = 200) {
     const record = this.owned(owner, id);
@@ -376,7 +461,7 @@ export class NativeSessionManager {
       bytes += size;
     }
     return {
-      session: { ...record.info },
+      session: this.snapshot(record),
       events,
       cursor: after + events.length,
       hasMore: after + events.length < record.events.length,
@@ -420,17 +505,15 @@ export class NativeSessionManager {
       text,
       commandId,
       generation: record.info.generation,
-      state: 'pending',
-      submitted: false,
+      // Reserve uncertainty and the visible prompt together before touching stdin.
+      state: 'unknown',
+      submitted: true,
       accepted: false,
     };
     record.commands.set(commandId, command);
-    this.persist(record);
     try {
-      // Persist uncertainty before touching stdin. A crash here must never trigger a resend.
-      command.state = 'unknown';
-      command.submitted = true;
-      this.persist(record);
+      // A crash after this durable reservation must never trigger a resend.
+      this.append(record, { type: 'command.submitted', commandId, text });
       await record.adapter.send(text, commandId);
       return {
         submitted: command.submitted,

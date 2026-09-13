@@ -5,6 +5,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the `EXECUTION_CHECKLIST_DOCUMENT` constant (`CHECKLIST.md`): the task-root execution checklist the task writer renders beside the generated `TASK.md` task document.
+- Add an explicit native session ensure operation for retry-safe worker launch.
+
+- Add explicit execution-node selection and native node ownership declarations for structured sessions.
+
+- Add owned agent workspace catalog and read-only file/change RPC contracts, proposed tool details for approvals, durable prompt submission events, and explicit reasons for unavailable recovery.
+
 - Add opt-in native runner session commands and structured events for conversation, tools, approvals, interruption, and resume, with process generations, bounded replay, and durable command outcomes across reconnects.
 - Snapshot a runner transcript at recycle as an opaque archive pointer, and let History name that copy `transcript-archive`. Cursor and other non-jsonl runners stay unsupported.
 

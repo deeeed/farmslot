@@ -176,13 +176,19 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `machine.pause.preview`                 | machine          | lifecycle     | —      | —      | Machine Pause Preview gateway method.                 |
 | `machine.pause.restore`                 | machine          | lifecycle     | —      | —      | Machine Pause Restore gateway method.                 |
 | `machine.pause.status`                  | machine          | lifecycle     | —      | —      | Machine Pause Status gateway method.                  |
+| `native.session.catalog`                | native           | bounded-write | —      | —      | Native Session Catalog gateway method.                |
 | `native.session.close`                  | native           | bounded-write | —      | —      | Native Session Close gateway method.                  |
 | `native.session.create`                 | native           | bounded-write | —      | —      | Native Session Create gateway method.                 |
+| `native.session.ensure`                 | native           | bounded-write | —      | —      | Native Session Ensure gateway method.                 |
 | `native.session.interrupt`              | native           | bounded-write | —      | —      | Native Session Interrupt gateway method.              |
 | `native.session.list`                   | native           | read-only     | —      | —      | Native Session List gateway method.                   |
 | `native.session.read`                   | native           | read-only     | —      | —      | Native Session Read gateway method.                   |
 | `native.session.respond`                | native           | bounded-write | —      | —      | Native Session Respond gateway method.                |
 | `native.session.send`                   | native           | bounded-write | —      | —      | Native Session Send gateway method.                   |
+| `native.session.workspace.changes`      | native           | bounded-write | —      | —      | Native Session Workspace Changes gateway method.      |
+| `native.session.workspace.diff`         | native           | bounded-write | —      | —      | Native Session Workspace Diff gateway method.         |
+| `native.session.workspace.list`         | native           | read-only     | —      | —      | Native Session Workspace List gateway method.         |
+| `native.session.workspace.read`         | native           | read-only     | —      | —      | Native Session Workspace Read gateway method.         |
 | `node.health`                           | node             | bounded-write | —      | —      | Node Health gateway method.                           |
 | `node.health.all`                       | node             | bounded-write | —      | —      | Node Health All gateway method.                       |
 | `nodes.deploy`                          | nodes            | bounded-write | —      | —      | Nodes Deploy gateway method.                          |

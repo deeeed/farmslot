@@ -3,7 +3,13 @@
 ## Unreleased
 
 - Worker-template structure lint now rejects a flow template that still carries a `## Task` block or `TASK_DIR:` line (the task writer generates TASK.md); nested-loop role checklists may keep theirs via `lintWorkerTemplateStructure(content, { roleChecklist: true })`.
-- Add a supervised native session host with private local IPC, durable command receipts and event replay, and explicit saved-conversation recovery for gateway and node clients.
+- Add idempotent native session creation with caller-reserved IDs, preserving live and terminal reservations across retries.
+
+- Share native session and bounded workspace operations with execution nodes, with node identity pinned to each host and journal.
+- Preserve native failed-turn diagnostics so clients can show login and provider errors.
+
+- Add a supervised native session host with private local IPC, durable prompts and command receipts, event replay, and explicit saved-conversation recovery. Disable recovery for older Claude histories affected by documented native history-loss bugs.
+- Include the proposed file changes from native tool events with permission requests so clients can display the action before approval.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

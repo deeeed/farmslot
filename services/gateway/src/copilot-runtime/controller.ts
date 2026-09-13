@@ -35,6 +35,7 @@ import { getActiveResources } from '../fleet/resource-manager.js';
 import { getCachedFleet } from '../fleet/state.js';
 import { resolveTmuxTargetWorker } from '../refinement/session.js';
 import { RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { writeRunnerPromptSentinel } from '../runners/observability-sentinel.js';
 import {
   interruptRunnerTurn,
   runnerNeedsPostLaunchPrompt,
@@ -88,6 +89,7 @@ export interface CopilotRuntimeControllerOptions {
   buildBootstrap?: typeof buildLiveCopilotBootstrapBrief;
   buildLaunch?: typeof buildCopilotLaunch;
   sendInstruction?: typeof sendRunnerInstructionSafely;
+  prepareInstruction?: typeof writeRunnerPromptSentinel;
   interrupt?: typeof interruptRunnerTurn;
   workload?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   resolveRuntimeDir?: () => Promise<string>;
@@ -104,6 +106,7 @@ export class CopilotRuntimeController {
   private readonly buildBootstrap: typeof buildLiveCopilotBootstrapBrief;
   private readonly buildLaunch: typeof buildCopilotLaunch;
   private readonly sendInstruction: typeof sendRunnerInstructionSafely;
+  private readonly prepareInstruction: typeof writeRunnerPromptSentinel;
   private readonly interrupt: typeof interruptRunnerTurn;
   private readonly workloadOverride?: (copilotRunning: boolean) => CopilotWorkloadSnapshot;
   private readonly resolveRuntimeDir: () => Promise<string>;
@@ -125,6 +128,7 @@ export class CopilotRuntimeController {
     this.buildBootstrap = options.buildBootstrap ?? buildLiveCopilotBootstrapBrief;
     this.buildLaunch = options.buildLaunch ?? buildCopilotLaunch;
     this.sendInstruction = options.sendInstruction ?? sendRunnerInstructionSafely;
+    this.prepareInstruction = options.prepareInstruction ?? writeRunnerPromptSentinel;
     this.interrupt = options.interrupt ?? interruptRunnerTurn;
     this.workloadOverride = options.workload;
     this.resolveRuntimeDir =
@@ -405,12 +409,15 @@ export class CopilotRuntimeController {
       store: this.store,
       runtimeDir: await this.resolveRuntimeDir(),
     });
+    const prepared = launch.bootstrapOnLaunch
+      ? await this.prepareInstruction(launch.vars, bootstrapPrompt)
+      : undefined;
     const launched = await this.tmux.launch(COPILOT_TMUX_SESSION, this.checkout, launch.command);
     this.persisted.paneId = launched.paneId;
     this.persisted.launchCommandHash = launch.commandHash;
     await this.tmux.configureTranscript(COPILOT_TMUX_TARGET, this.store.rawTranscriptPath);
 
-    if (runnerNeedsPostLaunchPrompt(runner)) {
+    if (launch.bootstrapOnLaunch || runnerNeedsPostLaunchPrompt(runner)) {
       const accepted = await this.sendInstruction(
         launch.vars,
         COPILOT_TMUX_TARGET,
@@ -418,6 +425,7 @@ export class CopilotRuntimeController {
         bootstrapPrompt,
         'copilot-bootstrap',
         RUNNER_LAUNCH_READY_TIMEOUT_MS,
+        prepared ? { observeOnly: true, acceptanceSinceMs: prepared.sentAt } : undefined,
       );
       this.persisted.session.lastDelivery = this.delivery(
         accepted ? 'accepted' : 'deferred',

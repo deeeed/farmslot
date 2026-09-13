@@ -13,11 +13,17 @@ import * as interactionSmoke from './interaction-smoke.mjs';
 import * as machinePauseRestoreSmoke from './machine-pause-restore-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
 import * as monitorStuckSmoke from './monitor-stuck-smoke.mjs';
+import * as nativeCopilotWorkspace from './native-copilot-workspace.mjs';
+import * as nativeNodeBrokerSmoke from './native-node-broker-smoke.mjs';
+import * as nativeNodeInventory from './native-node-inventory.mjs';
 import * as nativeSessionAuthorizationSmoke from './native-session-authorization-smoke.mjs';
 import * as nativeSessionCleanupIsolation from './native-session-cleanup-isolation.mjs';
 import * as nativeSessionDurability from './native-session-durability.mjs';
+import * as nativeSessionEnsure from './native-session-ensure.mjs';
+import * as nativeSessionErrorSmoke from './native-session-error-smoke.mjs';
 import * as nativeSessionSmoke from './native-session-smoke.mjs';
 import * as nativeSessionStartupClose from './native-session-startup-close.mjs';
+import * as nativeWorkspaceSmoke from './native-workspace-smoke.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
 import * as resourcePostureSmoke from './resource-posture-smoke.mjs';
@@ -59,7 +65,13 @@ export const SCENARIOS = {
   'budget-guard-smoke': budgetGuardSmoke,
   'mode-switch': modeSwitch,
   'monitor-stuck-smoke': monitorStuckSmoke,
+  'native-copilot-workspace': nativeCopilotWorkspace,
+  'native-node-broker-smoke': nativeNodeBrokerSmoke,
+  'native-node-inventory': nativeNodeInventory,
+  'native-workspace-smoke': nativeWorkspaceSmoke,
   'native-session-durability': nativeSessionDurability,
+  'native-session-error-smoke': nativeSessionErrorSmoke,
+  'native-session-ensure': nativeSessionEnsure,
   'native-session-cleanup-isolation': nativeSessionCleanupIsolation,
   'native-session-smoke': nativeSessionSmoke,
   'native-session-authorization-smoke': nativeSessionAuthorizationSmoke,

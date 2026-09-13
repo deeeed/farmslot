@@ -1,5 +1,7 @@
 import type { WebSocket } from 'ws';
 
+import type { NativeExecutionNodeDeclaration, NodeInfo } from '@farmslot/protocol';
+
 export interface ConnectedNode {
   machine: string;
   pid: number;
@@ -7,6 +9,7 @@ export interface ConnectedNode {
   protocolVersion?: string;
   versionMatch?: boolean;
   ws: WebSocket;
+  nativeSessions?: NativeExecutionNodeDeclaration;
 }
 
 const nodes = new Map<string, ConnectedNode>();
@@ -17,6 +20,7 @@ export function registerNode(
   ws: WebSocket,
   protocolVersion?: string,
   gatewayProtocolVersion?: string,
+  nativeSessions?: NativeExecutionNodeDeclaration,
 ): void {
   const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
@@ -26,6 +30,7 @@ export function registerNode(
     protocolVersion,
     versionMatch: protocolVersion != null ? versionMatch : undefined,
     ws,
+    nativeSessions,
   });
 }
 
@@ -43,9 +48,13 @@ export function getNode(machine: string): ConnectedNode | undefined {
   return nodes.get(machine);
 }
 
-export function getAllNodes(): Array<Omit<ConnectedNode, 'ws'> & { uptime: number }> {
-  return Array.from(nodes.values()).map(({ ws: _ws, ...rest }) => ({
-    ...rest,
-    uptime: (Date.now() - new Date(rest.connectedAt).getTime()) / 1000,
+export function getAllNodes(): NodeInfo[] {
+  return Array.from(nodes.values()).map((node) => ({
+    machine: node.machine,
+    pid: node.pid,
+    connectedAt: node.connectedAt,
+    protocolVersion: node.protocolVersion,
+    versionMatch: node.versionMatch,
+    uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

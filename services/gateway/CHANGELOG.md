@@ -5,6 +5,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Split the worker task directory into a task document and an execution checklist: the selected template renders verbatim into `CHECKLIST.md` (the only enumerated checklist, so acceptance criteria can never shift step numbers) and the gateway generates `TASK.md` with the ticket, acceptance criteria, mark instructions, and pointers to `inputs/`. Every task dir now also gets `inputs/handoff.json` and, for configured catalogs, `inputs/execution-template.json`, matching the recipe-cook skill's task layout; `checklist-target.json` names the signal file too, as the skill does. `CHECKLIST.md` travels to the slot with the other task-root sidecars and is mirrored back at completion. Worker templates no longer carry the ticket header; lightweight interactive dev keeps its plan/context pairing.
+- Route idempotent native session creation while enforcing the caller's reserved session identity.
+
+- Route native sessions to authenticated execution nodes with matching profile ownership and connection-bound replies.
+
+- Expose configured local agent workspace choices and bounded source and Git changes reads, with capped lists and clear errors for oversized diffs.
+- Fix terminal Copilot bootstrap when the runner starts with a suggested prompt, using exact launch acknowledgement without duplicate sends.
+
 - Add experimental Codex and Claude native sessions through authenticated gateway RPC, with runner-owned login and structured events. A supervised host keeps work running through gateway restarts and preserves command deduplication, approval ownership, and explicit recovery.
 - Copy Claude, Codex, and Grok session transcripts once at slot release into `.runs/session-archives/`. History.get uses that copy when the live file is gone. Other runners do not archive.
 

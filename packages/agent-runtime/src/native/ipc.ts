@@ -2,15 +2,22 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 
-import type { NativeSessionCreateParams, NativeSessionResponse } from '@farmslot/protocol';
+import type {
+  NativeSessionCreateParams,
+  NativeSessionEnsureParams,
+  NativeSessionResponse,
+} from '@farmslot/protocol';
 
 export interface HostIdentity {
+  executionNodeId?: string;
+  supportsEnsure?: boolean;
   pid: number;
   token: string;
   socket: string;
 }
 export type HostRequest =
   | { method: 'create'; owner: string; params: NativeSessionCreateParams }
+  | { method: 'ensure'; owner: string; params: NativeSessionEnsureParams }
   | { method: 'list'; owner: string }
   | { method: 'read'; owner: string; id: string; after?: number; limit?: number }
   | { method: 'send'; owner: string; id: string; commandId: string; text: string }
@@ -49,18 +56,22 @@ export function decodeRequest(value: unknown): HostRequest {
   const owner = string(p, 'owner');
   const method = p.method;
   if (method === 'list') return { method, owner };
-  if (method === 'create') {
+  if (method === 'create' || method === 'ensure') {
     const v = object(p.params);
     const params: NativeSessionCreateParams = {
       runner: string(v, 'runner'),
       cwd: string(v, 'cwd'),
     };
     if (v.model !== undefined) params.model = string(v, 'model');
-    if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
     if (v.mode !== undefined) {
       if (v.mode !== 'default' && v.mode !== 'plan') throw new Error('Invalid native mode');
       params.mode = v.mode;
     }
+    if (method === 'ensure') {
+      if (v.resumeSessionId !== undefined) throw new Error('Reserved sessionId is not for resume');
+      return { method, owner, params: { ...params, sessionId: string(v, 'sessionId') } };
+    }
+    if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
     return { method, owner, params };
   }
   const id = string(p, 'id');

@@ -18,7 +18,10 @@ await new Promise<void>((resolve, reject) => {
 });
 const root = process.argv[2]!;
 const identity = readJson<HostIdentity>(join(root, 'host.json'));
-const manager = new NativeSessionManager(join(root, 'sessions'));
+const manager = new NativeSessionManager(
+  join(root, 'sessions'),
+  identity.executionNodeId ?? 'local',
+);
 const server = createServer({ allowHalfOpen: true }, (socket) => {
   socket.setEncoding('utf8');
   socket.setTimeout(50_000, () => socket.destroy());
@@ -42,6 +45,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         switch (p.method) {
           case 'create':
             value = await manager.create(p.owner, p.params);
+            break;
+          case 'ensure':
+            value = await manager.ensure(p.owner, p.params);
             break;
           case 'list':
             value = manager.list(p.owner);

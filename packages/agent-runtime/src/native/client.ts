@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   NativeSessionCreateParams,
+  NativeSessionEnsureParams,
   NativeSessionInfo,
   NativeSessionReadResult,
   NativeSessionResponse,
@@ -21,6 +22,7 @@ export class NativeSessionClient {
   private starting?: Promise<HostIdentity>;
   constructor(
     root = process.env.FARMSLOT_NATIVE_STATE_DIR ?? join(farmslotHome(), 'native-sessions'),
+    readonly executionNodeId = 'local',
   ) {
     this.root = resolve(root);
   }
@@ -29,6 +31,7 @@ export class NativeSessionClient {
     const path = join(this.root, 'host.json');
     if (existsSync(path)) {
       const host = readJson<HostIdentity>(path);
+      this.assertHostNode(host);
       if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
         return host;
     }
@@ -40,6 +43,10 @@ export class NativeSessionClient {
       this.starting = undefined;
     }
   }
+  private assertHostNode(host: HostIdentity) {
+    if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
+      throw new Error('Native state directory belongs to another execution node');
+  }
   private async start(): Promise<HostIdentity> {
     privateDirectory(this.root);
     const source = import.meta.url.endsWith('.ts');
@@ -48,7 +55,11 @@ export class NativeSessionClient {
       ? ['--import', import.meta.resolve('tsx'), entry, this.root]
       : [entry, this.root];
     const log = openSync(join(this.root, 'host.log'), 'a', 0o600);
-    const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', log, log] });
+    const child = spawn(process.execPath, args, {
+      detached: true,
+      stdio: ['ignore', log, log],
+      env: { ...process.env, FARMSLOT_NATIVE_EXECUTION_NODE_ID: this.executionNodeId },
+    });
     closeSync(log);
     child.unref();
     let spawnError: Error | undefined;
@@ -61,6 +72,7 @@ export class NativeSessionClient {
       const path = join(this.root, 'host.json');
       if (existsSync(path)) {
         const host = readJson<HostIdentity>(path);
+        this.assertHostNode(host);
         if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
           return host;
       }
@@ -71,10 +83,22 @@ export class NativeSessionClient {
     );
   }
   private async call<T>(request: HostRequest): Promise<T> {
-    return requestHost<T>(await this.host(), request);
+    const host = await this.host();
+    if (request.method === 'ensure' && !host.supportsEnsure)
+      throw new Error(
+        'Native host upgrade required for idempotent creation; existing sessions remain available',
+      );
+    return requestHost<T>(host, request);
   }
   create(owner: string, params: NativeSessionCreateParams) {
+    if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
+      throw new Error('Native session targets another execution node');
     return this.call<NativeSessionInfo>({ method: 'create', owner, params });
+  }
+  ensure(owner: string, params: NativeSessionEnsureParams) {
+    if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
+      throw new Error('Native session targets another execution node');
+    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params });
   }
   list(owner: string) {
     return this.call<NativeSessionInfo[]>({ method: 'list', owner });
