@@ -141,6 +141,7 @@ Create `pool/<machine>.json`:
   "host": "my-server.local",
   "ssh_user": "deploy",
   "dispatch_cmd": "cd {repo} && {claude_path} --dangerously-skip-permissions",
+  "env": { "MY_APP_HARNESS_BIN": "/home/deploy/.local/bin/my-app-harness" },
   "slots": [
     {
       "id": "my-server-1",
@@ -152,6 +153,11 @@ Create `pool/<machine>.json`:
   ]
 }
 ```
+
+`env` is exported by the gateway into the shells it runs on that machine for runner launches
+and reloads, the prepare install, preflight, health, and unlock hooks (and the profile
+`health_ok` probe), and recipe runs; it wins over a project's `command_env`. Put
+machine-specific tool locations there; `project.json` stays portable.
 
 ## Development (multi-worktree)
 

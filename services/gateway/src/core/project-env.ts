@@ -83,3 +83,24 @@ export function applyProjectCommandEnv(
   const prefix = buildProjectCommandEnvPrefix(projectJson, options);
   return prefix ? `${prefix} && ${command}` : command;
 }
+
+/**
+ * `export` prefix for a machine's pool `env`. Applied to every shell Farmslot
+ * runs on that machine (runner launches, prepare hooks, recipe runs) so a
+ * machine-specific tool location reaches the worker the same way on a local
+ * and an SSH slot. Names were validated when the pool loaded.
+ */
+export function buildMachineEnvPrefix(machineEnv: Record<string, string> | undefined): string {
+  return Object.entries(machineEnv ?? {})
+    .map(([name, value]) => `export ${name}=${shellQuote(value)}`)
+    .join(' && ');
+}
+
+/** `&&`-joined so a guard before the command (for example `cd repo &&`) still gates it. */
+export function withMachineEnv(
+  command: string,
+  vars: { machineEnv?: Record<string, string> },
+): string {
+  const prefix = buildMachineEnvPrefix(vars.machineEnv);
+  return prefix ? `${prefix} && ${command}` : command;
+}

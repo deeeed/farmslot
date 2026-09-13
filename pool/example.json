@@ -13,6 +13,9 @@
   "grok_path": "/usr/local/bin/grok",
   "dispatch_cmd": "cd {repo} && {claude_path} {safety_flags}",
   "recycle_cmd": "adb -s {adb_serial} shell pm clear com.example.app",
+  "env": {
+    "MY_APP_HARNESS_BIN": "/home/deploy/.local/bin/my-app-harness"
+  },
   "tmux_workers": {
     "include": [
       {

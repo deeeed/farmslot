@@ -12,6 +12,7 @@ import {
 
 import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd, quoteRunnerArgValue } from '../core/hooks.js';
+import { withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -253,14 +254,17 @@ export function buildRunnerSessionReloadCommand(
     const settingsFallback = buildClaudeObservabilityFallbackCommand(
       claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     );
-    return withTaskRecipeTrustEnvironment(
-      withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
-        installCommand,
-        settingsFallback,
+    return withMachineEnv(
+      withTaskRecipeTrustEnvironment(
+        withRunnerObservabilityInstall(
+          `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
+          installCommand,
+          settingsFallback,
+        ),
+        repo,
+        opts.taskDir,
       ),
-      repo,
-      opts.taskDir,
+      vars,
     );
   }
 
@@ -278,15 +282,18 @@ export function buildRunnerSessionReloadCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent');
-    return withTaskRecipeTrustEnvironment(
-      withRunnerObservabilityInstall(
-        `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
-          vars.codexPath,
-        )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
-        installCommand,
+    return withMachineEnv(
+      withTaskRecipeTrustEnvironment(
+        withRunnerObservabilityInstall(
+          `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
+            vars.codexPath,
+          )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+          installCommand,
+        ),
+        repo,
+        opts.taskDir,
       ),
-      repo,
-      opts.taskDir,
+      vars,
     );
   }
 
@@ -295,12 +302,15 @@ export function buildRunnerSessionReloadCommand(
     const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
-    return withTaskRecipeTrustEnvironment(
-      `cd ${shellQuote(repo)} && ${resolveGrokBinary(
-        vars.grokPath,
-      )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
-      repo,
-      opts.taskDir,
+    return withMachineEnv(
+      withTaskRecipeTrustEnvironment(
+        `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+          vars.grokPath,
+        )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+        repo,
+        opts.taskDir,
+      ),
+      vars,
     );
   }
 
@@ -536,10 +546,13 @@ export function buildLaunchCommand(
     opts.initialPromptOnLaunch || !runnerNeedsPostLaunchPrompt(runner) ? prompt : '';
 
   const withRecipeTrust = (command: string): string =>
-    withTaskRecipeTrustEnvironment(
-      command,
-      repo,
-      opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
+    withMachineEnv(
+      withTaskRecipeTrustEnvironment(
+        command,
+        repo,
+        opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
+      ),
+      vars,
     );
 
   // none runner: no launch command (silent sentinel; callers decide what to do).

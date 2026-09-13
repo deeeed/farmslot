@@ -88,6 +88,13 @@
       "description": "Shell command to recycle app state (e.g., clear app data). Overrides project hooks.recycle when set.",
       "examples": ["bash scripts/reset-app.sh --device {adb_serial}"]
     },
+    "env": {
+      "type": "object",
+      "description": "Environment the gateway exports into the shells it runs on this machine for runner launches and reloads, the prepare install, preflight, health, and unlock hooks (and the profile health_ok probe), and recipe runs; wins over the project command_env. Put machine-specific tool locations here, for example a project harness binary.",
+      "additionalProperties": { "type": "string" },
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "examples": [{ "MM_HARNESS_BIN": "/Users/me/dev/metamask-harness/bin/mm-harness" }]
+    },
     "domain": {
       "type": "string",
       "description": "Default domain overlay for dispatches from this machine. Slot-level domain and task-level domain override it; used for fixture compose (DOMAIN), {{domain}} substitution, and domain template variants.",

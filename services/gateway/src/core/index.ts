@@ -49,7 +49,12 @@ export {
 } from './hooks.js';
 export { GatewayMethodError } from './method-error.js';
 export { isPathInside } from './path.js';
-export { applyProjectCommandEnv, buildProjectCommandEnvPrefix } from './project-env.js';
+export {
+  applyProjectCommandEnv,
+  buildMachineEnvPrefix,
+  buildProjectCommandEnvPrefix,
+  withMachineEnv,
+} from './project-env.js';
 export { loadPromptTemplate } from './prompt-templates.js';
 export type { LatestValidRecipeRunPointer } from './recipe-artifacts.js';
 export { inferArtifactPurpose, sanitizeLatestValidRecipeRunPointer } from './recipe-artifacts.js';

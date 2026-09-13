@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Runner launches and reloads, prepare hooks (install, preflight, health, unlock), and recipe runs export the machine's pool `env` (after the project's `command_env`, so pool wins), so a worker's `mark` (for example `${MM_HARNESS_BIN:-mm-harness} checklist mark`) resolves the harness the operator configured for that machine instead of whatever is on the tmux shell's PATH.
 
 ## 0.11.0 - 2026-09-13
 
