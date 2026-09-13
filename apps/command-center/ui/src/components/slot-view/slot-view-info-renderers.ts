@@ -1,5 +1,7 @@
 import { html, nothing } from 'lit';
 
+import type { SlotStatus } from '@farmslot/protocol';
+
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { flowColor, flowLabel, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
@@ -78,6 +80,7 @@ export function renderSlotViewSidebarInfo(view: SlotView) {
           `
         : ''}
     </div>
+    ${renderSlotReadiness(slot.readiness)}
     <!-- Health dots -->
     ${view._checks.length > 0
       ? html`
@@ -275,5 +278,57 @@ export function renderSlotViewInfoPanel(view: SlotView) {
             : nothing}
         `
       : ''}
+  `;
+}
+
+const READINESS_DOT: Record<string, string> = {
+  pass: colors.statusOk,
+  fail: colors.statusFail,
+  skipped: colors.textMuted,
+};
+
+/**
+ * The harness readiness record the last prepare read from the slot runtime
+ * dir. Absent means no prepare has recorded one yet; null means the harness
+ * wrote none.
+ */
+export function renderSlotReadiness(readiness: SlotStatus['readiness']) {
+  if (readiness === undefined) return nothing;
+  if (readiness === null) {
+    return html`
+      <div class="sv-readiness" style="margin: ${spacing.sm} 0; font-size: ${fonts.sizeXs}">
+        <span class="sv-info-key">Readiness</span>
+        <span class="sv-info-val" style="color: ${colors.textMuted}">no harness record</span>
+      </div>
+    `;
+  }
+  return html`
+    <div class="sv-readiness" style="margin: ${spacing.sm} 0; font-size: ${fonts.sizeXs}">
+      <div style="display: flex; gap: ${spacing.xs}; align-items: baseline">
+        <span class="sv-info-key">Readiness</span>
+        <span
+          class="sv-readiness-verdict"
+          style="color: ${readiness.ready ? colors.statusOk : colors.statusFail}; font-weight: 600"
+          >${readiness.ready ? 'ready' : 'not ready'}</span
+        >
+        <span class="sv-readiness-harness" style="color: ${colors.textMuted}"
+          >${readiness.harness.name}@${readiness.harness.version}</span
+        >
+      </div>
+      <div class="sv-check-list">
+        ${readiness.steps.map(
+          (step) => html`
+            <div class="sv-check-item">
+              <span
+                class="sv-check-dot"
+                style="background:${READINESS_DOT[step.status] ?? colors.textMuted}"
+              ></span>
+              <span class="sv-check-name">${step.id}</span>
+              <span class="sv-check-detail">${step.reason ?? step.status}</span>
+            </div>
+          `,
+        )}
+      </div>
+    </div>
   `;
 }

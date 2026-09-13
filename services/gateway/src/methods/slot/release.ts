@@ -584,6 +584,7 @@ async function slotReleaseImpl(
         current_family_id: null,
         current_lane: null,
         current_variant: null,
+        readiness: null,
       }))
     ) {
       complete(0);

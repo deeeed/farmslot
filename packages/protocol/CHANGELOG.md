@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `SlotStatus.readiness` carries the harness readiness record (`ReadinessRecord`, the `sandbox.json` that `mm-harness prepare` writes) the last prepare read from the slot runtime dir; `null` when that prepare found none.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.26.0 - 2026-09-13

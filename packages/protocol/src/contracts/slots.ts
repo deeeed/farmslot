@@ -1,6 +1,7 @@
 import type { RecipeRuntimeCapabilityDeclaration } from '../recipe/common.js';
 
 import type { AgentContextSummary, SlotAgent } from './agents.js';
+import type { ReadinessRecord } from './readiness.js';
 import type { ResourceRollup, ResourceWatchRuntimeStats } from './resources.js';
 import type { RunLane } from './runs.js';
 
@@ -108,6 +109,12 @@ export interface SlotStatus {
   hostLoad?: { cpuPercent: number; memoryPercent: number; diskPercent: number; headroom: string };
   /** Composite coherence verdict across all watched resources. Computed by gateway in fleet-state builder. */
   resourceRollup?: ResourceRollup;
+  /**
+   * Harness readiness record the last prepare read from the slot's runtime dir
+   * (`sandbox.json`, written by `mm-harness prepare`). `null` when that prepare
+   * found none; absent when no prepare has run since the field existed.
+   */
+  readiness?: ReadinessRecord | null;
   /** PR health for held slots (populated by CI monitor) */
   prHealth?: {
     pr: number;

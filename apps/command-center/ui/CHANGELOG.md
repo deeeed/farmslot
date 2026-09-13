@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Slot view shows the harness readiness record from the last prepare: verdict, harness name and version, and one dot per readiness step (pass, fail, skipped).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.11.0 - 2026-09-13
