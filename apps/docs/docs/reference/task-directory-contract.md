@@ -108,7 +108,7 @@ dev and fix-bug workers finish with `artifacts/pr-description.md` whether Farmsl
 
 ## Layers: shared spec, control plane on top
 
-Both surfaces produce the same task directory. Farmslot adds gateway-owned files beside it and never renames a shared one. Four layers:
+Both surfaces produce the same task directory. Without the control plane (an engineer running the skill) the first two layers exist; with it (Farmslot) the last two are added beside them, and no shared file is renamed.
 
 | Layer                     | Producer                                  | Files                                                                                                                                                                                                                                                                                      | Surfaces                                                                                                   |
 | ------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
@@ -120,6 +120,20 @@ Both surfaces produce the same task directory. Farmslot adds gateway-owned files
 The gateway-owned row is exactly what `isGatewayOwnedArtifactMirrorEntry` in `services/gateway/src/core/artifact-copy-policy.ts` recognises: those files are never mirrored back from the slot and never count as worker evidence. Review-loop outputs are mirrored like worker files but belong to the control plane. Under `inputs/`, `template-provenance.json`, `runtime-capability-catalog.json`, and the planning and inherited context files are Farmslot-only as well. A new gateway feature adds a name to one of these rows; it does not reuse a worker name.
 
 Shared `inputs/` names: `bug-input.json` for the ticket as fetched and `assets/` for its attachments, on both surfaces. Task directory paths still differ (`temp/tasks/<flow>/<slug>-<stamp>` on the farm, `temp/tasks/recipe-cook/<stamp>-<slug>` for the skill); nothing reads the path, so it stays a naming difference.
+
+## Simplification ledger
+
+Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected.
+
+| Candidate                                                          | Today                                                                                                            | Simpler default                                                                                                                              | State                                   |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `checklist-target.json` on every task                              | both writers emit `{checklist, signal}`                                                                          | absent means `CHECKLIST.md` + `SIGNAL.json` (the resolver already defaults to that); write the file only when a role switch points elsewhere | candidate                               |
+| `inputs/template-provenance.json` beside `execution-template.json` | two provenance records on the farm                                                                               | replay reads `execution-template.json`; the repo revision moves to the run record                                                            | candidate                               |
+| `inputs/ticket-comments.json`                                      | JSON copy of comments already summarised in `TASK.md`                                                            | fold into `bug-input.json`                                                                                                                   | candidate                               |
+| two naming schemes for review outputs                              | `review-feedback.<context>.md` / `review-result.<context>.json` and `self-review-N.*` / `independent-review-N.*` | one scheme, one row in the layers table                                                                                                      | candidate                               |
+| harness identity                                                   | PATH resolve through the pack's `recipe_runner_resolve_cmd` on the farm, task-local lock on the skill            | one preparation step both surfaces run, which also writes the readiness records                                                              | decision open                           |
+| farm `defaults` pinning farm copies of dev / fix-bug / review-pr   | three near-copies of the skill templates                                                                         | delete them so the catalog default (skills package) wins                                                                                     | deferred until the five-label inventory |
+| task directory path                                                | `<flow>/<slug>-<stamp>` vs `recipe-cook/<stamp>-<slug>`                                                          | leave; nothing reads it                                                                                                                      | rejected                                |
 
 ## What travels to the slot
 
