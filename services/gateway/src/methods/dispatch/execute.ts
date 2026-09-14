@@ -129,6 +129,7 @@ export {
   resolvePrRef,
   validateTicketRef,
 } from './ticket-ref.js';
+import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 
 /**
  * Wait between the pre-clear (C-c C-u) and post-clear in the launch prelude
@@ -1451,6 +1452,8 @@ export async function dispatchExecute(
     );
   }
 
+  // Launch from the bundle that matches this gateway's tree (hooks + runner installer).
+  await ensureNodeSupportBundle(vars, projectVars?.runtimeDir ?? '.agent', { projectVars });
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
