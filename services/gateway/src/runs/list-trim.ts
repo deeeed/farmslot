@@ -13,6 +13,16 @@ import type { Run, RunDecision, RunDecisionPayload } from '@farmslot/protocol';
 /** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
 
+/** UTF-8 size of `text`; what the wire carries, not the UTF-16 length. */
+function utf8ByteLength(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
 export function trimDecisionForList(decision: RunDecision): RunDecision {
   if (!decision.payload) return decision;
   // A list row's payload is the same shape with some keys left out; Partial is
@@ -23,7 +33,7 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
     const value = kept[key];
     if (
       value !== undefined &&
-      Buffer.byteLength(JSON.stringify(value), 'utf8') > RUN_LIST_PAYLOAD_VALUE_LIMIT
+      utf8ByteLength(JSON.stringify(value)) > RUN_LIST_PAYLOAD_VALUE_LIMIT
     ) {
       delete kept[key];
       trimmed.push(key);
