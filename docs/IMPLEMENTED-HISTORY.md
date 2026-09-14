@@ -19,6 +19,16 @@ This summary is reconstructed from:
 
 ## Shipped History Summary
 
+### Native structured runner transports
+
+The approved [ADR-057](adr/057-structured-runner-transports.md) rollout completed on 2026-09-14. Existing tmux workflows remain available alongside opt-in native sessions.
+
+- PRs #615 and #616 shipped gateway adapters, process supervision, durable events, replay, and recovery.
+- PR #618 shipped native Copilot and workspace views in Command Center; PRs #619 and #620 shipped remote-node foundations.
+- [PR #635](https://github.com/deeeed/farmslot/pull/635), merged as `016bd1ea`, completed native workers, retained reviewers, task-scoped history, cross-slot parking, Companion controls, Cursor/Grok standalone sessions, trusted-operator profiles, and explicit load-balancer intelligence.
+
+Final independent review approved the exact merged tree and all required CI passed. Real gateway, browser, and device validation covered normal flows and removed-fix/restored checks. Cross-slot restore requires the same execution node and compatible Git worktrees. The load-balancer path was validated; additional Codex profile-switch validation was deferred. PI runtime replacement, a wholesale T3 UI import, arbitrary live TUI takeover, and OpenCode were excluded.
+
 ### 1. Core Farmslot foundations shipped first
 
 Farmslot first became a reusable platform by shipping the project-agnostic framework, project-config-driven setup, source-agnostic issue ingestion, and standalone scoring flow.
@@ -192,9 +202,9 @@ Mobile is part of the implemented product, not just a placeholder. The canonical
 - ADR-033 records the V1/M8 implementation of registered-node tmux worker discovery/control, including arbitrary node panes that do not map to Farmslot runs.
 - The canonical mobile PRD establishes the mobile app as a companion to the shared gateway-backed product rather than a separate product line.
 
-### 5. Runner-neutral execution: contract shipped, second-runner bring-up still open
+### 5. Runner-neutral execution and native transports are shipped
 
-Farmslot has the tmux-based, operator-attachable execution style, the unified launch entry point (`buildLaunchCommand` in `services/gateway/src/runners/launch-command.ts`), the first-class `SafetyTier` model on Run (per-run override, family inheritance), and a capability-based runner registry pattern (`RunnerStatusProvider`, `runnerSupportsTmuxNudges`). ADR-032 adds hook-based `RunnerObservability` for `event-driven` runners with obs-first safe-send, and its Phase 3A/3B pane-regex retirement (PRs #344/#345) made Claude send decisions hook-only. The shared contract is in production. What remains open is the shared-monitor pane-branch hook migration, the rules-shim layer (`.cursor/rules/<name>/RULE.md`, `.agents/skills/<name>/SKILL.md`), optional session resume on relaunch, and OpenCode bring-up — deferred until production pain or a second non-Claude runner need appears.
+Farmslot has the tmux-based, operator-attachable execution style, the unified launch entry point (`buildLaunchCommand` in `services/gateway/src/runners/launch-command.ts`), the first-class `SafetyTier` model on Run (per-run override, family inheritance), and a capability-based runner registry pattern (`RunnerStatusProvider`, `runnerSupportsTmuxNudges`). ADR-032 adds hook-based `RunnerObservability` for `event-driven` runners with obs-first safe-send, and its Phase 3A/3B pane-regex retirement (PRs #344/#345) made Claude send decisions hook-only. The shared contract and the [native transport rollout](#native-structured-runner-transports) are in production, including native saved-session recovery. Shared-monitor follow-through and the rules-shim layer remain separate work. OpenCode was excluded from the approved native rollout.
 
 **Evidence**
 
@@ -202,8 +212,8 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 - `47fd062` — runner status behind a typed provider interface (`RunnerStatusProvider` registry pattern enforced by `apps/command-center/CLAUDE.md`).
 - `e4cbcb4` through `91674d9` / PRs #81–#84 — ADR-032 hook installers, runner-validation harness, obs-first `sendRunnerInstructionSafely`, and hook-path timeout.
 - Codex exec-mode validated on live slots (per ADR-023 status updates).
-- ADR-023 §4 marks the rules-shim layer deferred until a second non-Claude runner reaches production.
-- `docs/ROADMAP.md` still tracks runner-neutral expansion as deferred strategic follow-up after the active evaluation-hardening lane.
+- ADR-023 §4 records the original rules-shim deferral; the native rollout did not implement that layer.
+- The [completed native rollout](#native-structured-runner-transports) records the shipped adapters, clients, worker lifecycle and account setup through PR #635; [ROADMAP.md](ROADMAP.md) retains the separate follow-through scope.
 
 ## Crosswalk Notes for Historical Truth
 
@@ -214,7 +224,9 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 - `docs/adr/README.md` is helpful as an index, but it is not a complete inventory because ADR-026, ADR-027, and ADR-028 exist outside its current table.
 - This file intentionally summarizes history; it does not override raw ADR text or archived milestone records.
 
-## Current Historical Interpretation
+## Historical interpretation as of 2026-07-20
+
+This dated snapshot predates the [native transport rollout](#native-structured-runner-transports) completed on 2026-09-14.
 
 As of 2026-07-20 (through PR #361, the recipe source trust model; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md) for ADR-level shipped-vs-open detail):
 
