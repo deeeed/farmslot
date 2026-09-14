@@ -174,10 +174,12 @@ export async function buildDraftPrBody(
   // The pack's renderer (when declared) turns the authored prose plus the
   // recipe and run artifacts into pr-body.md; that rendered body is published.
   // Without a renderer the authored file is the body, as before.
-  await renderPrBodyArtifact(run, baseBranch);
-  const existing =
-    (await readTaskArtifactText(run, PR_BODY_ARTIFACT)) ??
-    (await readTaskArtifactText(run, PR_PROSE_ARTIFACT));
+  const render = await renderPrBodyArtifact(run, baseBranch);
+  const existing = render.rendered
+    ? ((await readTaskArtifactText(run, PR_BODY_ARTIFACT)) ??
+      (await readTaskArtifactText(run, PR_PROSE_ARTIFACT)))
+    : ((await readTaskArtifactText(run, PR_PROSE_ARTIFACT)) ??
+      (await readTaskArtifactText(run, PR_BODY_ARTIFACT)));
   if (existing?.trim()) {
     return applyLocalEvidencePreview(run, stripExecutionPreamble(existing), artifacts);
   }

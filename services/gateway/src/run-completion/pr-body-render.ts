@@ -17,7 +17,7 @@ import path from 'node:path';
 import type { Run } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
-import { execLocal, type ExecResult } from '../core/exec.js';
+import { execLocal, type ExecResult, isLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { shellQuote } from '../core/tmux.js';
@@ -61,9 +61,13 @@ async function resolvePackRenderer(run: Run): Promise<PrBodyRenderer | PrBodyRen
   const projectVars = await loadProjectVars(vars.projectName);
   const raw = projectVars.projectJson.vars?.pr_body_cmd;
   if (typeof raw !== 'string' || !raw.trim()) return 'no-command';
+  // The renderer runs on the gateway host, so a remote slot's machine env (for
+  // example a remote MM_HARNESS_BIN path) must not be applied; the host's PATH
+  // resolves the harness there.
+  const local = isLocal(vars.host, vars.machine);
   return {
     command: expandTemplate(raw, vars, projectVars),
-    ...(vars.machineEnv ? { machineEnv: vars.machineEnv } : {}),
+    ...(local && vars.machineEnv ? { machineEnv: vars.machineEnv } : {}),
   };
 }
 
