@@ -289,49 +289,66 @@ test('installed hook writes JSONL records and atomic per-session and per-pane sn
   assert.equal(paneState.tmuxPane, '%1');
 });
 
+function installGrokTrust(repo, env) {
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'grok',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'install-test',
+    ],
+    { stdio: 'pipe', env: { ...process.env, GROK_HOME: '', ...env } },
+  );
+}
+
 test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and stays idempotent', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-'));
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-'));
+  // `#` and `]` inside the quoted key are content, not TOML syntax; a re-install
+  // must still recognise the entry it wrote.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok repo #] "q"-'));
   const trustedPath = path.join(home, '.grok', 'trusted_folders.toml');
   fs.mkdirSync(path.dirname(trustedPath), { recursive: true });
   fs.writeFileSync(
     trustedPath,
     '[folders."/Users/someone/dev/other"]\ntrusted = true\ndecided_at = 1788418308\n',
   );
-  const run = () =>
-    execFileSync(
-      process.execPath,
-      [
-        INSTALLER,
-        '--runner',
-        'grok',
-        '--repo',
-        repo,
-        '--runtime-dir',
-        '.agent',
-        '--slot-id',
-        'install-test',
-      ],
-      { stdio: 'pipe', env: { ...process.env, HOME: home } },
-    );
-  run();
+  installGrokTrust(repo, { HOME: home });
   const first = fs.readFileSync(trustedPath, 'utf8');
   assert.match(
     first,
     /^\[folders\."\/Users\/someone\/dev\/other"\]\ntrusted = true\ndecided_at = 1788418308\n/,
   );
   const realRepo = fs.realpathSync(repo);
-  assert.ok(first.includes(`[folders."${realRepo}"]\ntrusted = true\ndecided_at = `), first);
+  assert.ok(
+    first.includes(`[folders."${realRepo.replace(/"/g, '\\"')}"]\ntrusted = true\ndecided_at = `),
+    first,
+  );
   assert.ok(
     !fs.existsSync(path.join(repo, '.agent')),
     'grok install writes nothing into the checkout',
   );
-  run();
+  installGrokTrust(repo, { HOME: home });
   assert.equal(
     fs.readFileSync(trustedPath, 'utf8'),
     first,
     'second install leaves the file unchanged',
   );
+});
+
+test('grok install honours GROK_HOME and creates the trust store when absent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-unused-'));
+  const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-override-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-'));
+  installGrokTrust(repo, { HOME: home, GROK_HOME: grokHome });
+  assert.ok(!fs.existsSync(path.join(home, '.grok')), 'HOME is untouched when GROK_HOME is set');
+  const content = fs.readFileSync(path.join(grokHome, 'trusted_folders.toml'), 'utf8');
+  assert.ok(content.includes(`[folders."${fs.realpathSync(repo)}"]\ntrusted = true\n`), content);
 });
 
 test('codex install keeps project hooks and config clean while isolating managed hooks', () => {

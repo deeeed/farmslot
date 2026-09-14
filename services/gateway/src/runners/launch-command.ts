@@ -30,6 +30,7 @@ import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
   claudeObservabilitySettingsPath,
+  withRequiredRunnerInstall,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
 
@@ -76,6 +77,22 @@ const RECIPE_SOURCE_ENV_NAMES = [
   'FARMSLOT_RECIPE_APPROVE_PLAN',
 ] as const;
 
+export function taskRecipeTrustEnvironment(inherited: boolean): {
+  unset: string[];
+  set: Record<string, string>;
+} {
+  return inherited
+    ? {
+        unset: ['FARMSLOT_RECIPE_SOURCE_DIGEST', 'FARMSLOT_RECIPE_APPROVE_PLAN'],
+        set: {
+          FARMSLOT_RECIPE_SOURCE_TRUST: 'untrusted',
+          FARMSLOT_RECIPE_SOURCE_KIND: 'task',
+          FARMSLOT_RECIPE_SOURCE_NAME: 'task-inherited',
+        },
+      }
+    : { unset: [...RECIPE_SOURCE_ENV_NAMES], set: {} };
+}
+
 /**
  * Mark agent commands spawned for a task containing caller-untrusted recipe
  * input. The source sidecar is written by the gateway, not by recipe content.
@@ -87,15 +104,14 @@ export function withTaskRecipeTrustEnvironment(
   repo: string,
   taskDir?: string,
 ): string {
-  const clear = `unset ${RECIPE_SOURCE_ENV_NAMES.join(' ')}`;
+  const clear = `unset ${taskRecipeTrustEnvironment(false).unset.join(' ')}`;
   if (!taskDir) return `${clear}; ${command}`;
   const taskRoot = path.posix.isAbsolute(taskDir) ? taskDir : path.posix.join(repo, taskDir);
   const sidecar = path.posix.join(taskRoot, 'inputs/inherited/recipe-source.json');
+  const inherited = taskRecipeTrustEnvironment(true);
   const mark = [
-    'unset FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN',
-    'export FARMSLOT_RECIPE_SOURCE_TRUST=untrusted',
-    'export FARMSLOT_RECIPE_SOURCE_KIND=task',
-    'export FARMSLOT_RECIPE_SOURCE_NAME=task-inherited',
+    `unset ${inherited.unset.join(' ')}`,
+    ...Object.entries(inherited.set).map(([name, value]) => `export ${name}=${value}`),
   ].join('; ');
   return `if [ -f ${shellExpressionForRemotePath(sidecar)} ]; then ${mark}; else ${clear}; fi; ${command}`;
 }
@@ -310,7 +326,7 @@ export function buildRunnerSessionReloadCommand(
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        withRunnerObservabilityInstall(
+        withRequiredRunnerInstall(
           `cd ${shellQuote(repo)} && ${resolveGrokBinary(
             vars.grokPath,
           )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
@@ -751,7 +767,8 @@ export function buildLaunchCommand(
 
   // Grok Build CLI: same interactive contract as Cursor. Launch the TUI first
   // and deliver the task prompt after the composer is ready. The install step
-  // seeds Grok's directory-trust record so the trust prompt never appears.
+  // seeds Grok's directory-trust record so the trust prompt never appears; if
+  // it cannot, the launch stops there rather than stalling on the prompt.
   if (runner === 'grok') {
     const installCommand = buildRunnerObservabilityInstallCommand(
       vars,
@@ -760,10 +777,10 @@ export function buildLaunchCommand(
       opts.runtimeDir,
     );
     if (cmdIsRunnerAware) {
-      return withRecipeTrust(withRunnerObservabilityInstall(expanded, installCommand));
+      return withRecipeTrust(withRequiredRunnerInstall(expanded, installCommand));
     }
     return withRecipeTrust(
-      withRunnerObservabilityInstall(
+      withRequiredRunnerInstall(
         buildGrokLaunch({
           binary: resolveGrokBinary(vars.grokPath),
           model,

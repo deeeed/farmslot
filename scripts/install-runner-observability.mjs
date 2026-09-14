@@ -307,7 +307,21 @@ function versionForCodexTomlIdentity(value) {
 }
 
 function escapeTomlBasicString(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(
+      /[\u0000-\u001f\u007f]/g,
+      (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
+}
+
+function unescapeTomlBasicString(value) {
+  return value.replace(/\\(u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8})|.)/g, (match, body, u4, u8) => {
+    if (u4) return String.fromCodePoint(parseInt(u4, 16));
+    if (u8) return String.fromCodePoint(parseInt(u8, 16));
+    return { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' }[body] ?? match;
+  });
 }
 
 function normalizedCommandHookIdentity(eventName, entry, hook) {
@@ -420,7 +434,7 @@ function stripCodexHomeInstallerSections(
   providerIds = [],
   { replaceRootProvider = false } = {},
 ) {
-  const canonicalRepoPath = canonicalCodexPath(repoPath);
+  const canonicalRepoPath = realRepoPath(repoPath);
   const projectSection = `projects."${escapeTomlBasicString(canonicalRepoPath)}"`;
   const managedIds = [...new Set(providerIds.filter(Boolean))];
   const withoutSections = stripTomlSections(content, (section) => {
@@ -647,7 +661,7 @@ function restoreLegacyCodexHooksFeature(currentContent, backupContent) {
   return currentLines.join('\n');
 }
 
-function canonicalCodexPath(filePath) {
+function realRepoPath(filePath) {
   try {
     return fs.realpathSync(path.resolve(filePath));
   } catch {
@@ -743,7 +757,7 @@ async function bootstrapCodexHome({
   const codexHomeHooksPath = path.join(codexHomeDir, 'hooks.json');
   fs.copyFileSync(absoluteHooksPath, codexHomeHooksPath);
   // Codex with CODEX_HOME reads hooks from codex-home; trusted_hash keys must use that path.
-  const trustHooksPath = canonicalCodexPath(codexHomeHooksPath);
+  const trustHooksPath = realRepoPath(codexHomeHooksPath);
   const trustToml = buildCodexHookTrustToml(trustHooksPath, hooks);
   const configPath = path.join(codexHomeDir, 'config.toml');
   // Never read or write through a symlink. A stale codex-home/config.toml symlinked to
@@ -776,7 +790,7 @@ async function bootstrapCodexHome({
   if (routing) {
     content = injectOperatorCodexRouting(content, routing);
   }
-  const canonicalRepoPath = canonicalCodexPath(repoPath);
+  const canonicalRepoPath = realRepoPath(repoPath);
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
   const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
@@ -1206,14 +1220,16 @@ async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, a
 
 const GROK_TRUSTED_FOLDERS_FILE = 'trusted_folders.toml';
 
+// Grok writes one `[folders."<path>"]` table per decision; the key is a TOML
+// basic string, so the path is read back through the string grammar (quotes,
+// `]`, `#` and control characters inside it are content, not syntax).
+const GROK_TRUSTED_FOLDER_HEADER = /^\s*\[\s*folders\s*\.\s*"((?:[^"\\]|\\.)*)"\s*\]\s*(?:#.*)?$/;
+
 function grokTrustedFolderPaths(content) {
-  const lines = content.split('\n');
   const trusted = new Set();
-  for (const index of tomlSectionHeaderIndexes(lines)) {
-    const header = lines[index].trim().replace(/\s*#.*$/, '');
-    const inner = header.slice(1, -1);
-    const parts = tomlDottedParts(inner);
-    if (parts.length === 2 && parts[0] === 'folders') trusted.add(parts[1]);
+  for (const line of content.split('\n')) {
+    const match = line.match(GROK_TRUSTED_FOLDER_HEADER);
+    if (match) trusted.add(unescapeTomlBasicString(match[1]));
   }
   return trusted;
 }
@@ -1231,7 +1247,7 @@ function installGrok({ repo }) {
   const trustedPath = path.join(grokDir, GROK_TRUSTED_FOLDERS_FILE);
   const content = fs.existsSync(trustedPath) ? fs.readFileSync(trustedPath, 'utf8') : '';
   const trusted = grokTrustedFolderPaths(content);
-  const wanted = [...new Set([path.resolve(repo), canonicalCodexPath(repo)])];
+  const wanted = [...new Set([path.resolve(repo), realRepoPath(repo)])];
   const missing = wanted.filter((folder) => !trusted.has(folder));
   if (missing.length === 0) return { trustedPath, added: [] };
   const decidedAt = Math.floor(Date.now() / 1000);

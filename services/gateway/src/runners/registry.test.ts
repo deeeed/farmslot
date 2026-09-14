@@ -1970,7 +1970,11 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
-      assert.ok(cmd.endsWith(`cd '/tmp/repo' && grok --effort xhigh --model grok-4.6`));
+      assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
+      assert.match(
+        cmd,
+        /--slot-id '[^']*'\) && cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.6$/,
+      );
     });
 
     it('falls back to inline Grok launcher with grok-4.6 and xhigh effort', () => {
@@ -2167,6 +2171,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     });
     assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
     assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
+    assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
     assert.ok(
       cmd.endsWith(
         `cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
