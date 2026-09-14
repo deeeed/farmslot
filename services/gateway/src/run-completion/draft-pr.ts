@@ -13,6 +13,7 @@ import {
   evidenceManifestArtifactPaths,
 } from './evidence-manifest.js';
 import { evidenceKeyVariants } from './evidence-paths.js';
+import { PR_BODY_ARTIFACT, PR_PROSE_ARTIFACT, renderPrBodyArtifact } from './pr-body-render.js';
 import { readEvidenceManifest, replaceMarkdownSection } from './publication-artifacts.js';
 import { readTaskArtifactText } from './retrospective.js';
 
@@ -168,10 +169,15 @@ export async function buildDraftPrBody(
   run: Run,
   report: string | null,
   artifacts: ArtifactRef[],
+  baseBranch?: string,
 ): Promise<string> {
+  // The pack's renderer (when declared) turns the authored prose plus the
+  // recipe and run artifacts into pr-body.md; that rendered body is published.
+  // Without a renderer the authored file is the body, as before.
+  await renderPrBodyArtifact(run, baseBranch);
   const existing =
-    (await readTaskArtifactText(run, 'pr-description.md')) ??
-    (await readTaskArtifactText(run, 'pr-body.md'));
+    (await readTaskArtifactText(run, PR_BODY_ARTIFACT)) ??
+    (await readTaskArtifactText(run, PR_PROSE_ARTIFACT));
   if (existing?.trim()) {
     return applyLocalEvidencePreview(run, stripExecutionPreamble(existing), artifacts);
   }

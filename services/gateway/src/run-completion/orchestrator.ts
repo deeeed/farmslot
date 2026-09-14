@@ -354,6 +354,19 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   }
 }
 
+async function resolveRunBaseBranch(run: Run): Promise<string> {
+  if (!run.slotId) return DEFAULT_BRANCH;
+  try {
+    const vars = await loadSlotVars(run.slotId);
+    const projectVars = await loadProjectVars(vars.projectName);
+    return getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
+  } catch (error) {
+    // A removed slot must not block the freshness check; the default branch is the fallback.
+    if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return DEFAULT_BRANCH;
+    throw error;
+  }
+}
+
 export async function assertReadyGatePackageInputsCurrent(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
@@ -372,7 +385,12 @@ export async function assertReadyGatePackageInputsCurrent(
   const mismatches: string[] = [];
 
   if (buildDraftPrTitle(current) !== preparedPackage.draftTitle) mismatches.push('draft title');
-  if ((await buildDraftPrBody(current, report, artifacts)) !== preparedPackage.draftBody) {
+  // Re-render with the same base branch the package used, so a rendered body
+  // compares equal when nothing changed.
+  const baseBranch = await resolveRunBaseBranch(current);
+  if (
+    (await buildDraftPrBody(current, report, artifacts, baseBranch)) !== preparedPackage.draftBody
+  ) {
     mismatches.push('draft body');
   }
   if (
@@ -653,7 +671,7 @@ export async function prepareCompletionPackage(
   const draftBodyArtifacts = evidenceManifest.length
     ? evidenceManifest
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
-  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
+  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts, baseBranch);
   try {
     await assertRunPrBodyMatchesTemplate(run, draftBody, baseBranch);
   } catch (error) {
