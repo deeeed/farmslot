@@ -93,6 +93,68 @@ export function assertPrBodyMatchesTemplate(body: string, template: RepositoryPr
   );
 }
 
+export interface ConformedPrBody {
+  body: string;
+  /** Template sections the body lacked; appended from the template, in template order. */
+  added: string[];
+  /** Template sections present but not in template order; left where the author put them. */
+  outOfOrder: string[];
+}
+
+/** The template's own text for one level-two section, heading included. */
+function templateSection(template: string, heading: string): string {
+  const lines = template.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === heading);
+  if (start < 0) return `${heading}\n`;
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^\s{0,3}##(?!#)\s+\S/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return `${lines.slice(start, end).join('\n').trimEnd()}\n`;
+}
+
+/**
+ * Make `body` carry every section the repository template requires. A missing
+ * section is appended from the template itself (its heading and boilerplate),
+ * so the PR is created and reviewers see what the author left out, instead of
+ * the run failing on prose formatting. Order problems are reported, not fixed.
+ */
+export function conformPrBodyToTemplate(
+  body: string,
+  template: RepositoryPrTemplate,
+): ConformedPrBody {
+  const required = levelTwoHeadings(template.body);
+  const actual = levelTwoHeadings(body);
+  let cursor = 0;
+  const added: string[] = [];
+  const outOfOrder: string[] = [];
+  for (const heading of required) {
+    const next = actual.indexOf(heading, cursor);
+    if (next >= 0) cursor = next + 1;
+    else if (actual.includes(heading)) outOfOrder.push(heading);
+    else added.push(heading);
+  }
+  if (added.length === 0) return { body, added, outOfOrder };
+  const sections = added.map((heading) => templateSection(template.body, heading));
+  return {
+    body: `${body.trimEnd()}\n\n${sections.join('\n')}`,
+    added,
+    outOfOrder,
+  };
+}
+
+export async function conformRunPrBodyToTemplate(
+  run: Run,
+  body: string,
+  baseBranch?: string,
+): Promise<ConformedPrBody> {
+  const template = await readRepositoryPrTemplate(run, baseBranch);
+  return template ? conformPrBodyToTemplate(body, template) : { body, added: [], outOfOrder: [] };
+}
+
 export async function readRepositoryPrTemplate(
   run: Run,
   baseBranch = 'main',

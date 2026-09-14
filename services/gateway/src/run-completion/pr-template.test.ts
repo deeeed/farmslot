@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertPrBodyMatchesTemplate, levelTwoHeadings } from './pr-template.js';
+import {
+  assertPrBodyMatchesTemplate,
+  conformPrBodyToTemplate,
+  levelTwoHeadings,
+} from './pr-template.js';
 
 const template = {
   path: '.github/pull-request-template.md',
@@ -89,4 +93,62 @@ test('PR template validation rejects canonical sections in the wrong order', () 
   ].join('\n');
 
   assert.throws(() => assertPrBodyMatchesTemplate(body, template), /out of order/);
+});
+
+test('a body missing template sections gets them appended from the template instead of failing', () => {
+  const template = {
+    path: '.github/pull-request-template.md',
+    body: [
+      '## **Description**',
+      '',
+      '<!-- what -->',
+      '',
+      '## **Pre-merge author checklist**',
+      '',
+      "- [ ] I've followed the guidelines",
+      '',
+      '## **Pre-merge reviewer checklist**',
+      '',
+      "- [ ] I've manually tested",
+      '',
+    ].join('\n'),
+  };
+  const body = '## **Description**\n\nAdds it.\n';
+  const conformed = conformPrBodyToTemplate(body, template);
+  assert.deepEqual(conformed.added, [
+    '## **Pre-merge author checklist**',
+    '## **Pre-merge reviewer checklist**',
+  ]);
+  assert.deepEqual(conformed.outOfOrder, []);
+  assert.equal(
+    conformed.body,
+    [
+      '## **Description**',
+      '',
+      'Adds it.',
+      '',
+      '## **Pre-merge author checklist**',
+      '',
+      "- [ ] I've followed the guidelines",
+      '',
+      '## **Pre-merge reviewer checklist**',
+      '',
+      "- [ ] I've manually tested",
+      '',
+    ].join('\n'),
+  );
+  assert.doesNotThrow(() => assertPrBodyMatchesTemplate(conformed.body, template));
+  // A conforming body is returned untouched.
+  const complete = conformPrBodyToTemplate(conformed.body, template);
+  assert.equal(complete.body, conformed.body);
+  assert.deepEqual(complete.added, []);
+});
+
+test('sections in the wrong order are reported but the body is left as the author wrote it', () => {
+  const template = { path: 't.md', body: '## A\n\n## B\n' };
+  const body = '## B\n\nb\n\n## A\n\na\n';
+  const conformed = conformPrBodyToTemplate(body, template);
+  assert.equal(conformed.body, body);
+  assert.deepEqual(conformed.outOfOrder, ['## B']);
+  assert.deepEqual(conformed.added, []);
 });

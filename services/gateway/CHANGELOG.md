@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The PR description's shape no longer fails a run at `complete`: sections the worker left out of `artifacts/pr-description.md` are appended from the repository PR template (heading and boilerplate) and the PR is created; the completion log names what was added.
+
 - A chained pr-complete that blocks because the slot's live retained worker would not accept the handoff no longer tears that worker down on the way out; it only drops its reservation and leaves the slot for the operator. The inline CI fix also keeps waiting while the runner hook still reports the worker busy after a gateway-restart recovery, instead of declaring the turn inactive and chaining a conflicting follow-up.
 
 - Grok Build launches seed the checkout into `~/.grok/trusted_folders.toml` on the slot host before the TUI starts, so a fresh slot no longer stalls on the "Do you trust the contents of this directory?" prompt (the launch used to fail after 120s with the prompt unanswered).

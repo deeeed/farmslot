@@ -67,7 +67,7 @@ import {
 } from './pr-publication.js';
 import {
   assertPrBodyMatchesTemplate,
-  assertRunPrBodyMatchesTemplate,
+  conformRunPrBodyToTemplate,
   readGitHubPrTemplate,
 } from './pr-template.js';
 import {
@@ -653,9 +653,21 @@ export async function prepareCompletionPackage(
   const draftBodyArtifacts = evidenceManifest.length
     ? evidenceManifest
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
-  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
+  let draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
+  // The PR description's shape never fails a run: sections the author left
+  // out are appended from the repository template and the PR still goes up.
   try {
-    await assertRunPrBodyMatchesTemplate(run, draftBody, baseBranch);
+    const conformed = await conformRunPrBodyToTemplate(run, draftBody, baseBranch);
+    draftBody = conformed.body;
+    if (conformed.added.length > 0 || conformed.outOfOrder.length > 0) {
+      console.warn(
+        `[run-completion] run ${run.id.slice(0, 8)} — PR body completed from the repository template` +
+          (conformed.added.length > 0 ? `; added ${conformed.added.join(', ')}` : '') +
+          (conformed.outOfOrder.length > 0
+            ? `; out of order ${conformed.outOfOrder.join(', ')}`
+            : ''),
+      );
+    }
   } catch (error) {
     if (
       !(options?.headSha && error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND')
