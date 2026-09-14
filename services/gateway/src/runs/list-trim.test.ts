@@ -55,3 +55,15 @@ test('trimRunForList copies instead of mutating the stored run', () => {
   const noop = { id: 'r2', decisions: [decision({ kind: 'ready' })] } as unknown as Run;
   assert.equal(trimRunForList(noop), noop);
 });
+
+test('the limit is measured in UTF-8 bytes, not string length', () => {
+  // 1,000 three-byte characters: 1,002 JSON characters, 3,002 JSON bytes.
+  const wide = '\u4e2d'.repeat(1000);
+  const trimmed = trimDecisionForList(decision({ kind: 'review', reviewMd: wide }));
+  assert.deepEqual(trimmed.payloadTrimmed, ['reviewMd']);
+  const narrow = 'x'.repeat(RUN_LIST_PAYLOAD_VALUE_LIMIT - 2);
+  assert.equal(
+    trimDecisionForList(decision({ kind: 'review', reviewMd: narrow })).payloadTrimmed,
+    undefined,
+  );
+});

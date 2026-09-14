@@ -577,3 +577,27 @@ export function mergeTrimmedDecisions(shared: Run, direct: Run | null): Run {
     }),
   };
 }
+
+/** How long the run page waits before retrying a failed direct fetch of a trimmed row. */
+export const TRIMMED_RUN_FETCH_RETRY_MS = 5_000;
+
+/**
+ * Whether the run page should fetch the full run behind a trimmed list row:
+ * no direct copy yet, or the row moved past the copy. A failed fetch is
+ * retried after TRIMMED_RUN_FETCH_RETRY_MS instead of pausing the page for
+ * good; an in-flight fetch is never doubled.
+ */
+export function shouldFetchTrimmedRun(params: {
+  sharedRun: Pick<Run, 'decisions' | 'updatedAt'> | null;
+  directRun: Pick<Run, 'updatedAt'> | null;
+  refreshing: boolean;
+  failedAt: number | null;
+  now: number;
+}): boolean {
+  if (!params.sharedRun || params.refreshing) return false;
+  if (!runHasTrimmedDecisions(params.sharedRun)) return false;
+  if (params.failedAt !== null && params.now - params.failedAt < TRIMMED_RUN_FETCH_RETRY_MS) {
+    return false;
+  }
+  return !params.directRun || params.directRun.updatedAt < params.sharedRun.updatedAt;
+}

@@ -76,6 +76,7 @@ import {
   runFamilyPrStatus,
   runHasTrimmedDecisions,
   shouldAcceptTaskProgressUpdate,
+  shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
 } from './run-detail-model.js';
 import {
@@ -323,15 +324,18 @@ export class RunDetail extends RunDetailState {
     if (wasHydrating && !this._hydrating && !sharedRun && this._directRun?.id === this.runId) {
       void this.fetchRun(this.runId);
     }
-    // The list row's payloads are trimmed: fetch the full run once, and again
-    // whenever the row moved past the copy we hold.
+    // The list row's payloads are trimmed: fetch the full run once, again
+    // whenever the row moves past the copy we hold, and after a failure once
+    // the retry window has passed (the clock tick re-enters syncRun).
     if (
-      sharedRun &&
-      sharedTrimmed &&
       this.runId &&
-      !this._directRunRefreshing &&
-      !this._directRunRefreshFailed &&
-      (!directRun || directRun.updatedAt < sharedRun.updatedAt)
+      shouldFetchTrimmedRun({
+        sharedRun,
+        directRun,
+        refreshing: this._directRunRefreshing,
+        failedAt: this._directRunFailedAt,
+        now: Date.now(),
+      })
     ) {
       void this.fetchRun(this.runId);
     }
@@ -624,6 +628,7 @@ export class RunDetail extends RunDetailState {
         this._directRun = res.run;
         this.run = res.run;
         this._directRunRefreshFailed = false;
+        this._directRunFailedAt = null;
         this._directRunUnavailable = false;
         void this.fetchSiblings(res.run);
         void this._refreshRecipeRunsForRun(res.run);
@@ -637,6 +642,7 @@ export class RunDetail extends RunDetailState {
         this._markDirectRunUnavailable(runId);
       } else {
         this._directRunRefreshFailed = true;
+        this._directRunFailedAt = Date.now();
       }
     } finally {
       if (requestStillCurrent()) this._directRunRefreshing = false;

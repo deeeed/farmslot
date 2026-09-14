@@ -10,7 +10,7 @@
 
 import type { Run, RunDecision, RunDecisionPayload } from '@farmslot/protocol';
 
-/** JSON size above which a single decision payload value is left out of run.list. */
+/** JSON size in UTF-8 bytes above which a single decision payload value is left out of run.list. */
 export const RUN_LIST_PAYLOAD_VALUE_LIMIT = 2048;
 
 export function trimDecisionForList(decision: RunDecision): RunDecision {
@@ -21,7 +21,10 @@ export function trimDecisionForList(decision: RunDecision): RunDecision {
   const trimmed: string[] = [];
   for (const key of Object.keys(kept) as Array<keyof RunDecisionPayload>) {
     const value = kept[key];
-    if (value !== undefined && JSON.stringify(value).length > RUN_LIST_PAYLOAD_VALUE_LIMIT) {
+    if (
+      value !== undefined &&
+      Buffer.byteLength(JSON.stringify(value), 'utf8') > RUN_LIST_PAYLOAD_VALUE_LIMIT
+    ) {
       delete kept[key];
       trimmed.push(key);
     }

@@ -34,7 +34,9 @@ import {
   runFamilyPrStatus,
   runHasTrimmedDecisions,
   shouldAcceptTaskProgressUpdate,
+  shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
+  TRIMMED_RUN_FETCH_RETRY_MS,
 } from './run-detail-model.js';
 
 test('interactive completion hold is distinct from a resumable pause', () => {
@@ -588,4 +590,59 @@ test('a list row with trimmed decision payloads takes them from the direct run c
   // No direct copy (or a different run) leaves the row as-is.
   assert.equal(mergeTrimmedDecisions(shared, null), shared);
   assert.equal(mergeTrimmedDecisions(shared, { ...direct, id: 'other' } as Run), shared);
+});
+
+test('a trimmed row is fetched once, again when it moves on, and retried after a failure window', () => {
+  const trimmedRow = (updatedAt: string) =>
+    ({
+      updatedAt,
+      decisions: [{ id: 'd1', payload: {}, payloadTrimmed: ['reviewMd'] }],
+    }) as unknown as Run;
+  const fullRow = { updatedAt: 't1', decisions: [{ id: 'd1', payload: {} }] } as unknown as Run;
+  const base = { refreshing: false, failedAt: null, now: 100_000 };
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t1'), directRun: null }),
+    true,
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t1'), directRun: { updatedAt: 't1' } }),
+    false,
+    'the copy is current',
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t2'), directRun: { updatedAt: 't1' } }),
+    true,
+    'the row moved past the copy',
+  );
+  assert.equal(shouldFetchTrimmedRun({ ...base, sharedRun: fullRow, directRun: null }), false);
+  assert.equal(shouldFetchTrimmedRun({ ...base, sharedRun: null, directRun: null }), false);
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      refreshing: true,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    false,
+    'never doubles an in-flight fetch',
+  );
+  // A failed fetch is retried once the window has passed, not on every tick.
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      failedAt: 100_000 - TRIMMED_RUN_FETCH_RETRY_MS + 1,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      failedAt: 100_000 - TRIMMED_RUN_FETCH_RETRY_MS,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    true,
+  );
 });

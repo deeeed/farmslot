@@ -1,5 +1,7 @@
 import { isTerminalRunStatus, type Run, type RunStatus } from '@farmslot/protocol';
 
+import { runHasTrimmedDecisions } from '../runs/run-detail-model.js';
+
 export type SlotViewLinkedRunSource = 'cache' | 'rpc';
 
 export function isSlotViewTerminalRunStatus(status: string | null | undefined): boolean {
@@ -58,4 +60,17 @@ export function slotViewLinkedRunTransition(params: {
     shouldRefreshMonitoringProgress:
       params.nextRunStatus === 'monitoring' && params.prevRunStatus !== 'monitoring',
   };
+}
+
+/**
+ * A pinned run must come from run.get when the state cache has no row for it
+ * or only a run.list row with trimmed decision payloads: the slot view renders
+ * the recipe and review panels from those payloads.
+ */
+export function slotViewNeedsDirectRunFetch(
+  requestedRunId: string | null,
+  cachedRun: Pick<Run, 'decisions'> | null,
+): boolean {
+  if (!requestedRunId) return false;
+  return !cachedRun || runHasTrimmedDecisions(cachedRun);
 }
