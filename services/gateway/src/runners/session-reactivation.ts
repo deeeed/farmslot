@@ -236,9 +236,9 @@ async function relaunchRunnerWithArgvPrompt(
     };
   }
 
+  await ensureNodeSupportBundle(options.vars, options.runtimeDir ?? '.agent');
   const launchedAt = Date.now();
   const deadline = launchedAt + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
-  await ensureNodeSupportBundle(options.vars, options.runtimeDir ?? '.agent');
   const launchCommand = buildLaunchCommand(
     options.vars,
     runner,

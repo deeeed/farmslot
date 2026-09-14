@@ -48,7 +48,6 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import {} from '../../runners/runner-observability.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -296,7 +295,11 @@ async function slotPrepareInner(
   const materializeHookSupport = async () => {
     if (!projectVars || hookSupportChecked) return;
     hookSupportChecked = true;
-    const state = await ensureNodeSupportBundle(vars, runtimeDir, { step, projectVars });
+    const state = await ensureNodeSupportBundle(vars, runtimeDir, {
+      step,
+      projectVars,
+      verify: 'full',
+    });
     hookSupportDir = state?.supportDir;
   };
 

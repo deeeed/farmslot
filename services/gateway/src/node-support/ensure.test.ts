@@ -3,11 +3,7 @@ import test from 'node:test';
 
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/index.js';
 
-import {
-  ensureNodeSupportBundle,
-  type NodeSupportIo,
-  resetNodeSupportBundleCache,
-} from './ensure.js';
+import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 
 const projectVars = {
   projectName: 'ensure-test',
@@ -32,7 +28,10 @@ interface Recorded {
   manifests: string[];
 }
 
-function fakeIo(opts: { remoteManifestHash: string | null }): { io: NodeSupportIo; rec: Recorded } {
+function fakeIo(opts: { remoteManifestHash: string | null }): {
+  io: NodeSupportIo;
+  rec: Recorded;
+} {
   const rec: Recorded = { execs: [], written: [], manifests: [] };
   const io: NodeSupportIo = {
     exec: async (_vars, cmd) => {
@@ -46,10 +45,10 @@ function fakeIo(opts: { remoteManifestHash: string | null }): { io: NodeSupportI
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     },
-    fileExists: async () => opts.remoteManifestHash !== null,
+    // The manifest exists once the node held one or this fake published one.
+    fileExists: async () => opts.remoteManifestHash !== null || rec.manifests.length > 0,
     readFile: async (_vars, filePath) => {
       if (filePath.endsWith('manifest.json')) {
-        // After a publish the manifest on the node is the one this call wrote.
         const published = rec.manifests.at(-1);
         return published ?? JSON.stringify({ hash: opts.remoteManifestHash });
       }
@@ -74,10 +73,11 @@ const kind = (cmd: string) =>
         ? 'publish'
         : cmd.startsWith('rm -rf')
           ? 'discard'
-          : 'other';
+          : cmd.startsWith('[ -f ') && cmd.includes('install-runner-observability.mjs')
+            ? 'presence'
+            : 'other';
 
 test('a local slot uses the checkout directly and touches no node', async () => {
-  resetNodeSupportBundleCache();
   const { io, rec } = fakeIo({ remoteManifestHash: null });
   const state = await ensureNodeSupportBundle(
     { ...remoteVars(), host: 'localhost', machine: 'local' } as SlotVars,
@@ -89,8 +89,7 @@ test('a local slot uses the checkout directly and touches no node', async () => 
   assert.equal(rec.written.length, 0);
 });
 
-test('a slot on a stale bundle gets the current bundle published and selected, then cached', async () => {
-  resetNodeSupportBundleCache();
+test('a slot on a stale bundle gets the current bundle published and selected; later launches only re-check and repoint', async () => {
   const { io, rec } = fakeIo({ remoteManifestHash: null });
   const state = await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
   assert.ok(state?.hash, 'a remote slot gets a content hash');
@@ -104,57 +103,62 @@ test('a slot on a stale bundle gets the current bundle published and selected, t
   };
   assert.equal(manifest.hash, state.hash);
   assert.ok(manifest.paths.includes('scripts/install-runner-observability.mjs'));
-  assert.equal(
-    manifest.fileCount,
-    3,
-    'a project without hooks bundles only the runner installer files',
-  );
+  assert.equal(manifest.fileCount, 3, 'a project without hooks bundles only the installer files');
   // The slot's pointer is the last write and names the published bundle.
   const selection = rec.written.at(-1)!;
   assert.equal(selection.base, '/Users/deeeed/dev/x/.agent/.observability');
   assert.deepEqual(selection.paths, ['node-support-hash']);
 
-  // Same process, same slot: nothing to do.
+  // Next launch on the same slot: one presence check, pointer rewritten, no publish.
   const again = await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
   assert.equal(again?.published, false);
-  assert.equal(rec.execs.length, 4, 'no further node commands');
-  assert.equal(rec.written.length, 2, 'no further writes');
-
-  // Same machine, another slot: bundle known, only the pointer is written.
-  await ensureNodeSupportBundle(remoteVars('macpro-x-2'), '.agent', { projectVars, io });
-  assert.equal(rec.execs.length, 4);
-  assert.equal(rec.written.at(-1)!.base, '/Users/deeeed/dev/x/.agent/.observability');
+  assert.deepEqual(rec.execs.slice(4).map(kind), ['presence']);
+  assert.equal(rec.written.length, 3, 'the pointer is written on every launch');
+  assert.deepEqual(rec.written.at(-1)!.paths, ['node-support-hash']);
 });
 
-test('a slot whose node already holds the current bundle is verified once and only repointed', async () => {
-  resetNodeSupportBundleCache();
+test('a slot whose node already holds the current bundle is checked and repointed, never republished', async () => {
   const probe = fakeIo({ remoteManifestHash: null });
   const current = await ensureNodeSupportBundle(remoteVars(), '.agent', {
     projectVars,
     io: probe.io,
   });
-  resetNodeSupportBundleCache();
   const { io, rec } = fakeIo({ remoteManifestHash: current!.hash });
   const state = await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io });
   assert.equal(state?.published, false);
-  assert.deepEqual(rec.execs.map(kind), ['verify']);
+  assert.deepEqual(rec.execs.map(kind), ['presence']);
   assert.equal(rec.written.length, 1);
   assert.deepEqual(rec.written[0].paths, ['node-support-hash']);
+  // Prepare asks for the full checksum verification.
+  await ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io, verify: 'full' });
+  assert.deepEqual(rec.execs.slice(1).map(kind), ['verify']);
 });
 
-test('a corrupt current bundle is reported, not selected', async () => {
-  resetNodeSupportBundleCache();
+test('a bundle whose files are gone is reported and never selected', async () => {
   const probe = fakeIo({ remoteManifestHash: null });
   const current = await ensureNodeSupportBundle(remoteVars(), '.agent', {
     projectVars,
     io: probe.io,
   });
-  resetNodeSupportBundleCache();
   const { io, rec } = fakeIo({ remoteManifestHash: current!.hash });
-  io.exec = async () => ({ exitCode: 1, stdout: '', stderr: 'mismatch' });
+  io.exec = async () => ({ exitCode: 1, stdout: '', stderr: 'missing' });
   await assert.rejects(
     ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io }),
     /Node support bundle corrupt/,
   );
   assert.equal(rec.written.length, 0);
+});
+
+test('a failed upload discards the incoming dir and aborts the launch', async () => {
+  const { io, rec } = fakeIo({ remoteManifestHash: null });
+  io.writeFiles = async (_vars, baseDir) => {
+    if (baseDir.includes('.incoming')) throw new Error('scp died');
+    rec.written.push({ base: baseDir, paths: [] });
+  };
+  await assert.rejects(
+    ensureNodeSupportBundle(remoteVars(), '.agent', { projectVars, io }),
+    /scp died/,
+  );
+  assert.deepEqual(rec.execs.map(kind), ['incoming', 'discard']);
+  assert.equal(rec.written.length, 0, 'no pointer is written for an unpublished bundle');
 });

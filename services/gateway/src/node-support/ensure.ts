@@ -68,17 +68,6 @@ const defaultIo: NodeSupportIo = {
   writeFiles: slotWriteFiles,
 };
 
-/** Bundles this process has already verified on a machine (machine|hash). */
-const verifiedBundles = new Set<string>();
-/** Slots this process has already pointed at a bundle (slot|hash). */
-const selectedBundles = new Set<string>();
-
-/** Test seam: forget what this process has verified and selected. */
-export function resetNodeSupportBundleCache(): void {
-  verifiedBundles.clear();
-  selectedBundles.clear();
-}
-
 function pathWithin(rootPath: string, candidatePath: string): boolean {
   const relative = path.relative(rootPath, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -87,9 +76,11 @@ function pathWithin(rootPath: string, candidatePath: string): boolean {
 async function loadProjectVarsIfAny(projectName: string): Promise<ProjectVars | undefined> {
   try {
     return await loadProjectVars(projectName);
-  } catch {
+  } catch (error) {
     // A slot without project config has no hooks or installer to bundle; the
-    // caller's launch falls back to the node install as before.
+    // caller's launch falls back to the node install as before. Anything other
+    // than a missing config is a real problem and must not be silent.
+    if (!/not found/i.test((error as Error).message)) throw error;
     return undefined;
   }
 }
@@ -102,10 +93,21 @@ async function loadProjectVarsIfAny(projectName: string): Promise<ProjectVars | 
 export async function ensureNodeSupportBundle(
   vars: SlotVars,
   runtimeDir: string,
-  options: { step?: NodeSupportStep; projectVars?: ProjectVars; io?: NodeSupportIo } = {},
+  options: {
+    step?: NodeSupportStep;
+    projectVars?: ProjectVars;
+    io?: NodeSupportIo;
+    /**
+     * `full` re-checks every bundled file's checksum (prepare). `presence`, the
+     * launch default, checks that the manifest and the runner installer files
+     * exist; a matching manifest over missing files is reported, never used.
+     */
+    verify?: 'full' | 'presence';
+  } = {},
 ): Promise<NodeSupportBundleState | null> {
   const step = options.step ?? (() => {});
   const io = options.io ?? defaultIo;
+  const verifyMode = options.verify ?? 'presence';
   const projectVars = options.projectVars ?? (await loadProjectVarsIfAny(vars.projectName));
   if (!projectVars) return null;
   const { paths: hookSupportPaths } = resolveNodeSupportPaths(
@@ -157,11 +159,10 @@ export async function ensureNodeSupportBundle(
   };
   const supportDir = path.posix.join(REMOTE_SUPPORT_ROOT, manifest.hash);
   const manifestPath = path.posix.join(supportDir, 'manifest.json');
-  const machineKey = `${vars.machine}|${manifest.hash}`;
-  const slotKey = `${vars.slotId}|${manifest.hash}`;
 
+  // Always rewritten: another gateway or a prepare may have repointed the slot
+  // since this process last looked, and the write is one small file.
   const persistSelection = async (how: 'published' | 'current') => {
-    if (selectedBundles.has(slotKey)) return;
     await io.writeFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
       {
         path: NODE_SUPPORT_HASH_FILENAME,
@@ -169,30 +170,39 @@ export async function ensureNodeSupportBundle(
         mode: 0o644,
       },
     ]);
-    selectedBundles.add(slotKey);
     console.log(
       `[node-support] ${vars.slotId} now on bundle ${manifest.hash.slice(0, 8)} (${how}, ${files.length} files)`,
     );
   };
-  const verify = async (dir: string, manifestFile: string): Promise<boolean> => {
+  const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
     const result = await io.exec(
       vars,
       buildNodeSupportVerifyCommand({ manifestPath: manifestFile, supportDir: dir, files }),
     );
     return result.exitCode === 0;
   };
+  const verifyPresence = async (dir: string, manifestFile: string): Promise<boolean> => {
+    const required = [
+      manifestFile,
+      ...RUNNER_OBSERVABILITY_SUPPORT_PATHS.map((relativePath) =>
+        path.posix.join(dir, relativePath),
+      ),
+    ];
+    const result = await io.exec(
+      vars,
+      required.map((file) => `[ -f ${shellExpressionForRemotePath(file)} ]`).join(' && '),
+    );
+    return result.exitCode === 0;
+  };
+  const verifyCurrent = (dir: string, manifestFile: string) =>
+    verifyMode === 'full' ? verifyChecksums(dir, manifestFile) : verifyPresence(dir, manifestFile);
 
-  if (verifiedBundles.has(machineKey)) {
-    await persistSelection('current');
-    return { supportDir, hash: manifest.hash, published: false };
-  }
   if (await io.fileExists(vars, manifestPath)) {
     const current = JSON.parse(await io.readFile(vars, manifestPath)) as { hash?: string };
     if (current.hash === manifest.hash) {
-      if (!(await verify(supportDir, manifestPath))) {
+      if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
-      verifiedBundles.add(machineKey);
       await persistSelection('current');
       step('support', `Node support bundle current (${files.length} files)`);
       return { supportDir, hash: manifest.hash, published: false };
@@ -235,7 +245,7 @@ export async function ensureNodeSupportBundle(
     await discardIncoming();
     throw error;
   }
-  if (!(await verify(incomingDir, path.posix.join(incomingDir, 'manifest.json')))) {
+  if (!(await verifyChecksums(incomingDir, path.posix.join(incomingDir, 'manifest.json')))) {
     await discardIncoming();
     throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
   }
@@ -258,10 +268,9 @@ export async function ensureNodeSupportBundle(
   if (published.hash !== manifest.hash) {
     throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
   }
-  if (!(await verify(supportDir, manifestPath))) {
+  if (!(await verifyChecksums(supportDir, manifestPath))) {
     throw new Error(`Node support publish verification failed for ${manifest.hash}`);
   }
-  verifiedBundles.add(machineKey);
   await persistSelection('published');
   step('support', `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`);
   return { supportDir, hash: manifest.hash, published: true };
