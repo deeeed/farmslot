@@ -20,12 +20,25 @@ export interface RepositoryPrTemplate {
   body: string;
 }
 
-export function levelTwoHeadings(markdown: string): string[] {
-  const headings: string[] = [];
+export interface LevelTwoHeadingLine {
+  heading: string;
+  /** Zero-based line index in the markdown split on \r?\n. */
+  line: number;
+}
+
+/**
+ * Level-two headings with their line positions, ignoring headings inside
+ * fenced blocks and HTML comments. Every reader of template structure
+ * (validation, section extraction) goes through this one parser.
+ */
+export function levelTwoHeadingLines(markdown: string): LevelTwoHeadingLine[] {
+  const headings: LevelTwoHeadingLine[] = [];
   let fence: { character: string; length: number } | null = null;
   let inHtmlComment = false;
 
-  for (const rawLine of markdown.split(/\r?\n/)) {
+  const rawLines = markdown.split(/\r?\n/);
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const rawLine = rawLines[index];
     let line = rawLine;
     if (inHtmlComment) {
       const close = line.indexOf('-->');
@@ -56,10 +69,14 @@ export function levelTwoHeadings(markdown: string): string[] {
       continue;
     }
     if (fence) continue;
-    if (/^\s{0,3}##(?!#)\s+\S/.test(line)) headings.push(line.trim());
+    if (/^\s{0,3}##(?!#)\s+\S/.test(line)) headings.push({ heading: line.trim(), line: index });
   }
 
   return headings;
+}
+
+export function levelTwoHeadings(markdown: string): string[] {
+  return levelTwoHeadingLines(markdown).map((entry) => entry.heading);
 }
 
 export function assertPrBodyMatchesTemplate(body: string, template: RepositoryPrTemplate): void {
@@ -101,18 +118,18 @@ export interface ConformedPrBody {
   outOfOrder: string[];
 }
 
-/** The template's own text for one level-two section, heading included. */
+/**
+ * The template's own text for one level-two section, heading included: from
+ * the heading line to the line before the next real heading, so a fenced or
+ * commented `##` inside the boilerplate stays part of the section.
+ */
 function templateSection(template: string, heading: string): string {
   const lines = template.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === heading);
-  if (start < 0) return `${heading}\n`;
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (/^\s{0,3}##(?!#)\s+\S/.test(lines[index])) {
-      end = index;
-      break;
-    }
-  }
+  const headings = levelTwoHeadingLines(template);
+  const position = headings.findIndex((entry) => entry.heading === heading);
+  if (position < 0) return `${heading}\n`;
+  const start = headings[position].line;
+  const end = headings[position + 1]?.line ?? lines.length;
   return `${lines.slice(start, end).join('\n').trimEnd()}\n`;
 }
 
@@ -192,15 +209,6 @@ export async function readRepositoryPrTemplate(
     path: result.stdout.slice(0, newline).trim(),
     body: result.stdout.slice(newline + 1),
   };
-}
-
-export async function assertRunPrBodyMatchesTemplate(
-  run: Run,
-  body: string,
-  baseBranch?: string,
-): Promise<void> {
-  const template = await readRepositoryPrTemplate(run, baseBranch);
-  if (template) assertPrBodyMatchesTemplate(body, template);
 }
 
 export async function readGitHubPrTemplate(

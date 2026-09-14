@@ -152,3 +152,43 @@ test('sections in the wrong order are reported but the body is left as the autho
   assert.deepEqual(conformed.outOfOrder, ['## B']);
   assert.deepEqual(conformed.added, []);
 });
+
+test('a section is extracted through the same fence and comment rules as validation', () => {
+  const template = {
+    path: 't.md',
+    body: [
+      '## A',
+      '',
+      '<!-- ## A (not a heading) -->',
+      'Example:',
+      '```md',
+      '## Example inside a fence',
+      '```',
+      '',
+      '## B',
+      '',
+      'b text',
+      '',
+    ].join('\n'),
+  };
+  const conformed = conformPrBodyToTemplate('## B\n\nmine\n', template);
+  assert.deepEqual(conformed.added, ['## A']);
+  assert.deepEqual(conformed.outOfOrder, []);
+  assert.ok(
+    conformed.body.endsWith(
+      [
+        '## A',
+        '',
+        '<!-- ## A (not a heading) -->',
+        'Example:',
+        '```md',
+        '## Example inside a fence',
+        '```',
+        '',
+      ].join('\n'),
+    ),
+    conformed.body,
+  );
+  // The appended section keeps its closing fence, so later sections stay visible.
+  assert.deepEqual(levelTwoHeadings(conformed.body), ['## B', '## A']);
+});
