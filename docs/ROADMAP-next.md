@@ -1,8 +1,8 @@
 # Farmslot Near-Term Roadmap
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-12, approved structured runner transports
-**Stale by:** 2026-10-12
+**Last updated:** 2026-09-14, structured runner transports completed
+**Stale by:** 2026-10-14
 
 This is the canonical near-term execution roadmap for Farmslot after the dispatch comparison, bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev work, shared dispatch queue/eval caps, worker-template selection, backlog intake, and dev publication gating. Use it with [ROADMAP.md](ROADMAP.md), [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), and the canonical chunk PRDs.
 
@@ -49,23 +49,19 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 ## Structured runner transports
 
-**Status:** All phases approved. G001 gateway adapters and G002 local session durability shipped in PRs #615 and #616. G003 Command Center integration shipped in PR #618. G004 worker, node and Companion integration is current.
+**Status:** Complete, 2026-09-14. PR #635 closes G004 worker/node/Companion adoption, G005 additional runners/account setup, and G006 final integration and review. All six goal tasks are complete.
 
-Add opt-in native runner sessions while retaining tmux defaults. The shared runner layer owns commands, events, session identity, and capabilities for both modes. Native runners keep their tools and authentication. Scope and gates are defined in [ADR-057](adr/057-structured-runner-transports.md) and the [runner execution PRD](PRD-runner-execution-canonical.md#6-native-structured-sessions).
+1. **Shipped, G001, PR #615:** Codex and Claude native gateway adapters with capability-gated permissions, interruption, follow-up context, and saved-session resume.
+2. **Shipped, G002, PR #616:** process supervision, durable events, replay, duplicate command protection, and owner-bound pending requests.
+3. **Shipped, G003, PR #618:** opt-in native Copilot, streamed conversations, tools, approvals/questions, recovery, and source/diff views in Command Center.
+4. **Shipped, G004, PRs #619, #620 and #635:** remote node execution, native workers, retained reviewers, task-scoped history, Companion controls, and same-node cross-slot parking with conversation continuity and recovery-race validation.
+5. **Shipped, G005, PR #635:** Cursor and Grok standalone adapters, native account setup, and optional configuration profiles for one trusted operator per OS user. Each product user owns their execution node.
 
-1. **Shipped, G001, PR #615:** Codex and Claude native gateway adapters with capability-gated permissions, interruption, follow-up context, and saved-session resume. Live gateway validation is recorded; the local legacy interactive authentication limitation remains explicit in validation evidence.
-2. **Shipped, G002, PR #616:** local process supervision, durable events, replay, duplicate command protection, and owner-bound pending requests, with live gateway recovery and process-failure validation. Remote-node integration remains phase 4.
-3. **Shipped, G003, PR #618:** deliver opt-in native Copilot within the existing chat flow, retaining regular runner/model selection and terminal access. Add streamed conversation, expandable tools, composer approvals/questions, Stop and recovery controls, plus read-only Files/Changes beside the transcript on wide screens and tabs on narrow screens. Adapt T3 interaction patterns to Farmslot under [DESIGN.md](../DESIGN.md); workspace Git changes must not imply turn checkpoints. Prove complete tasks, actual source/diff changes, and pending-request refresh/reconnect through real browser controls.
-4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion, including native parking restore into another eligible slot. Preserve saved conversation identity and prove source cleanup, destination reservation, relocation, and recovery races. Reconcile live and archived session identity before integration.
-5. Add Grok and Cursor, then native installation/login flows for user-owned accounts. Several profiles under one OS user belong to one trusted operator; each product user owns their execution node. Prove profile-directory binding, owner routing, and conversation continuity across ordinary login rotation.
+New Copilot and gateway-intelligence defaults use Astra/low while preserving explicit settings and active conversations. Native, terminal, and PI intelligence paths were validated through the configured load-balancer route. Additional Codex profile-switch validation was deferred.
 
-Set new Copilot and gateway-intelligence defaults to Codex Astra with low effort, validating backend support and preserving active conversations and explicit settings.
+Final review approved the exact revision, all required CI passed, and live gateway/browser/Companion checks covered the rollout and review fixes. Existing tmux workflows remain available. See [shipped history](IMPLEMENTED-HISTORY.md#native-structured-runner-transports), [ADR-057](adr/057-structured-runner-transports.md), and the [runner execution PRD](PRD-runner-execution-canonical.md#6-native-structured-sessions).
 
-Finish the remaining scope in one reviewed PR. Refresh from latest main before implementation batches and final validation/review; preserve existing tmux workflows throughout.
-
-The first UI release was restricted to one pinned principal in a trusted local execution context. Phase 5 extends owner-bound access to user-owned nodes under [ADR-057's trusted operator scope](adr/057-structured-runner-transports.md#trusted-operator-profile-scope); it does not isolate mutually untrusted users sharing an OS account.
-
-Record bounded subscription and billing observations separately from protocol success. Missing provider evidence remains unknown. PI runtime replacement, whole T3 UI import, and arbitrary live TUI takeover stay outside this rollout.
+PI runtime replacement, wholesale T3 UI import, arbitrary live TUI takeover, and OpenCode were outside this delivery. Protocol success does not establish subscription billing or isolation between mutually untrusted users on one OS account.
 
 ## Decision: What Lands Next
 

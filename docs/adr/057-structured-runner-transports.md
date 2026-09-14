@@ -1,6 +1,6 @@
 # ADR-057: Structured runner transports
 
-**Status:** Accepted; local adapters, durability and Command Center shipped; worker/node integration in progress
+**Status:** Accepted; approved rollout shipped through PR #635 on 2026-09-14
 **Date:** 2026-09-12
 **Scope:** [Runner execution PRD](../PRD-runner-execution-canonical.md), [near-term roadmap](../ROADMAP-next.md)
 **Related:** [ADR-023](023-runner-agnostic-tui-execution.md), [ADR-032](032-runner-observability-via-hooks.md), [ADR-047](047-worker-session-history-panel.md), [ADR-051](051-principal-and-credential-model.md)
@@ -80,7 +80,7 @@ recovery is therefore gated to sessions started with 2.1.265 or newer. Older
 sessions remain readable/closeable and expose the unsupported capability. Test
 tool-result and assistant-message context, not only tokens from user prompts.
 
-G001 shipped in PR #615 with local Codex and Claude adapters. G002 shipped in PR #616 with process supervision, durable events, replay, and recovery. G003 Command Center integration shipped in PR #618. The remaining delivery adds native workers, retained reviewers, cross-slot parking, Companion, Cursor/Grok standalone adapters, and trusted-operator profiles. Execution remains bound to the local profile owner or an assigned node owner; these capabilities do not establish isolation between untrusted users sharing an OS account or prove subscription billing.
+G001 shipped in PR #615 with local Codex and Claude adapters. G002 shipped in PR #616 with process supervision, durable events, replay, and recovery. G003 Command Center integration shipped in PR #618. Remote node foundations shipped in PRs #619 and #620. PR #635 completed native workers, retained reviewers, cross-slot parking, Companion, Cursor/Grok standalone adapters, trusted-operator profiles, and the final integration review. Native, terminal, and PI intelligence load-balancer paths were validated; additional Codex profile-switch validation was deferred. Execution remains bound to the local profile owner or an assigned node owner; these capabilities do not establish isolation between untrusted users sharing an OS account or prove subscription billing.
 
 | Phase | Deliverable                                         | Required proof                                                                                                                                                              |
 | ----- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

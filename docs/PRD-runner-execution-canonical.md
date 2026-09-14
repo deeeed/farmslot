@@ -19,12 +19,9 @@ An operator should be able to supervise different agent runners through one Farm
 
 ## Canonical Current State
 
-- Runner-agnostic execution is a declared Farmslot product capability with open roadmap work.
-- Existing runner support and tmux-based supervision provide the starting point, but the fully generalized contract is not complete yet.
-- Other product chunks already depend on this capability being normalized instead of remaining ad hoc.
-- Native structured transports are approved under [ADR-057](adr/057-structured-runner-transports.md). Codex and Claude gateway adapters shipped in PR #615; local supervision, durable events, and recovery shipped in PR #616 with live gateway validation. Protocol initialization alone does not establish support.
-- G003 adds the Command Center conversation and workspace interface. Workers, remote nodes, retained reviewers, Companion, additional runners, and user-owned account setup remain later approved phases.
-- The first implementation is experimental under one pinned principal. User-owned execution profiles and proven isolation are later rollout gates, not initial multi-tenant guarantees.
+- Runner-neutral tmux supervision and the approved native transport rollout are shipped. Further runner expansion and rules shims remain separate roadmap work.
+- The approved native structured transport rollout is shipped under [ADR-057](adr/057-structured-runner-transports.md). PRs #615 and #616 delivered adapters and durable sessions, #618 delivered Command Center, #619 and #620 delivered remote foundations, and #635 completed workers, retained reviewers, parking, Companion, additional standalone runners, and account setup.
+- Profiles select native configuration directories for one trusted operator per OS user; each product user owns their execution node. This is not isolation between mutually untrusted users sharing an OS account. Current validation and deferred scope are recorded in the [completed rollout](ROADMAP-next.md#structured-runner-transports).
 
 ## Requirements
 

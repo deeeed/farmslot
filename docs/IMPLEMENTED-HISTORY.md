@@ -19,6 +19,16 @@ This summary is reconstructed from:
 
 ## Shipped History Summary
 
+### Native structured runner transports
+
+The approved [ADR-057](adr/057-structured-runner-transports.md) rollout completed on 2026-09-14. Existing tmux workflows remain available alongside opt-in native sessions.
+
+- PRs #615 and #616 shipped gateway adapters, process supervision, durable events, replay, and recovery.
+- PR #618 shipped native Copilot and workspace views in Command Center; PRs #619 and #620 shipped remote-node foundations.
+- [PR #635](https://github.com/deeeed/farmslot/pull/635), merged as `016bd1ea`, completed native workers, retained reviewers, task-scoped history, cross-slot parking, Companion controls, Cursor/Grok standalone sessions, trusted-operator profiles, and explicit load-balancer intelligence.
+
+Final independent review approved the exact merged tree and all required CI passed. Real gateway, browser, and device validation covered normal flows and removed-fix/restored checks. Cross-slot restore requires the same execution node and compatible Git worktrees. The load-balancer path was validated; additional Codex profile-switch validation was deferred. PI runtime replacement, a wholesale T3 UI import, arbitrary live TUI takeover, and OpenCode were excluded.
+
 ### 1. Core Farmslot foundations shipped first
 
 Farmslot first became a reusable platform by shipping the project-agnostic framework, project-config-driven setup, source-agnostic issue ingestion, and standalone scoring flow.
