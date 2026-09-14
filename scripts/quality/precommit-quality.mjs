@@ -59,8 +59,19 @@ function hasTrackedUnstagedChanges() {
   return false;
 }
 
+function currentStashRef() {
+  const result = spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/stash'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return exitCodeFor(result) === 0 ? result.stdout.trim() : null;
+}
+
 /** Stash tracked unstaged edits only — not --include-untracked (stashing node_modules breaks ESLint). */
 function stashTrackedUnstagedKeepingIndex() {
+  const before = currentStashRef();
   const args = [
     'stash',
     'push',
@@ -76,7 +87,10 @@ function stashTrackedUnstagedKeepingIndex() {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const status = exitCodeFor(result);
-  if (status === 0) return true;
+  // `git stash push --quiet` exits 0 even when there is nothing to save. Only a
+  // new refs/stash entry proves this hook stashed something; otherwise the later
+  // `git stash pop` would pop whatever entry the operator had parked on top.
+  if (status === 0) return currentStashRef() !== before;
   const msg = `${result.stderr ?? ''}${result.stdout ?? ''}`;
   if (status === 1 && /No local changes to save/i.test(msg)) return false;
   process.stdout.write(result.stdout ?? '');
