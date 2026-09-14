@@ -378,10 +378,17 @@ export async function executeFinalizeStep(
 
   // 6. The round addressed the reviewers' threads; put the PR back in the
   // queue of everyone whose verdict is still CHANGES_REQUESTED. Only for
-  // rounds that update the farm's own PR, never for review-pr runs, which
-  // review someone else's.
+  // rounds that update the farm's own PR (never review-pr, which reviews
+  // someone else's) and only when the round changed code: an already-fixed
+  // or not-reproducible disposition mutates nothing on the PR.
   let reviewRerequested: string[] = [];
-  if (!artifactOnly && ciRepo && prNumber && REREQUEST_REVIEW_FLOWS.has(current.flowType)) {
+  if (
+    !artifactOnly &&
+    !noCodeDisposition &&
+    ciRepo &&
+    prNumber &&
+    REREQUEST_REVIEW_FLOWS.has(current.flowType)
+  ) {
     emitWithBroadcast('substep', {
       name: 'rerequest-review',
       detail: `Re-requesting reviewers who asked for changes on PR #${prNumber}`,

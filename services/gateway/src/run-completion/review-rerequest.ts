@@ -29,9 +29,13 @@ export function reviewersToRerequest(
   for (const review of reviews) {
     if (!review.author || review.author === prAuthor) continue;
     if (review.author.endsWith('[bot]')) continue;
-    if (review.state === 'PENDING') continue;
+    // A plain comment neither grants nor clears a verdict on GitHub; only
+    // APPROVED and DISMISSED (or a fresh CHANGES_REQUESTED) move it.
+    if (review.state === 'PENDING' || review.state === 'COMMENTED') continue;
     const previous = latest.get(review.author);
-    if (!previous || review.submittedAt >= previous.submittedAt) latest.set(review.author, review);
+    if (!previous || Date.parse(review.submittedAt) >= Date.parse(previous.submittedAt)) {
+      latest.set(review.author, review);
+    }
   }
   return [...latest.entries()]
     .filter(([, review]) => review.state === 'CHANGES_REQUESTED')
@@ -45,20 +49,24 @@ interface GhReview {
   submitted_at?: string;
 }
 
-export async function listPrReviews(ciRepo: string, prNumber: number): Promise<PrReviewSummary[]> {
-  const result = await ghRequest(
-    ['api', `repos/${ciRepo}/pulls/${prNumber}/reviews?per_page=100`, '--paginate'],
-    { force: true },
-  );
-  const rows = result.stdout
-    .trim()
-    .split(/\n(?=\[)/)
-    .flatMap((chunk) => (chunk.trim() ? (JSON.parse(chunk) as GhReview[]) : []));
-  return rows.map((row) => ({
+/** `gh api --paginate --slurp` returns one JSON array per page; flatten them. */
+export function parseReviewPages(stdout: string): PrReviewSummary[] {
+  const pages = JSON.parse(stdout) as GhReview[][];
+  return pages.flat().map((row) => ({
+    // Bots are tagged here and filtered in reviewersToRerequest; the two are
+    // one contract (GitHub marks apps with user.type, not with a login suffix).
     author: row.user?.type === 'Bot' ? `${row.user?.login ?? ''}[bot]` : (row.user?.login ?? ''),
     state: row.state ?? '',
     submittedAt: row.submitted_at ?? '',
   }));
+}
+
+export async function listPrReviews(ciRepo: string, prNumber: number): Promise<PrReviewSummary[]> {
+  const result = await ghRequest(
+    ['api', `repos/${ciRepo}/pulls/${prNumber}/reviews?per_page=100`, '--paginate', '--slurp'],
+    { force: true },
+  );
+  return parseReviewPages(result.stdout);
 }
 
 export async function prAuthorLogin(ciRepo: string, prNumber: number): Promise<string | null> {
@@ -71,8 +79,9 @@ export async function prAuthorLogin(ciRepo: string, prNumber: number): Promise<s
 
 /**
  * Re-request review from every reviewer whose verdict is still
- * CHANGES_REQUESTED. Returns the logins re-requested; never throws, a
- * failed re-request is logged and leaves the PR as it was.
+ * CHANGES_REQUESTED. Returns the logins re-requested; never throws: a
+ * failed lookup or re-request is logged and leaves the PR as it was, since
+ * this is a courtesy to reviewers and not part of the round's own work.
  */
 export async function rerequestChangesRequestedReviewers(
   ciRepo: string,
@@ -86,20 +95,36 @@ export async function rerequestChangesRequestedReviewers(
     ]);
     const reviewers = reviewersToRerequest(reviews, author);
     if (reviewers.length === 0) return [];
-    await ghRequest(
-      [
-        'api',
-        '-X',
-        'POST',
-        `repos/${ciRepo}/pulls/${prNumber}/requested_reviewers`,
-        ...reviewers.flatMap((login) => ['-f', `reviewers[]=${login}`]),
-      ],
-      { force: true },
-    );
-    console.log(
-      `${logPrefix} re-requested review on ${ciRepo}#${prNumber} from ${reviewers.join(', ')}`,
-    );
-    return reviewers;
+    // One request per reviewer: GitHub rejects the whole batch when a single
+    // login cannot be requested (no repository access), which would silence
+    // every eligible reviewer along with it.
+    const requested: string[] = [];
+    for (const login of reviewers) {
+      try {
+        await ghRequest(
+          [
+            'api',
+            '-X',
+            'POST',
+            `repos/${ciRepo}/pulls/${prNumber}/requested_reviewers`,
+            '-f',
+            `reviewers[]=${login}`,
+          ],
+          { force: true },
+        );
+        requested.push(login);
+      } catch (error) {
+        console.warn(
+          `${logPrefix} could not re-request ${login} on ${ciRepo}#${prNumber}: ${(error as Error).message}`,
+        );
+      }
+    }
+    if (requested.length > 0) {
+      console.log(
+        `${logPrefix} re-requested review on ${ciRepo}#${prNumber} from ${requested.join(', ')}`,
+      );
+    }
+    return requested;
   } catch (error) {
     console.warn(
       `${logPrefix} could not re-request review on ${ciRepo}#${prNumber}: ${(error as Error).message}`,
