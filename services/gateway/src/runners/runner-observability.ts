@@ -94,3 +94,14 @@ export function withRunnerObservabilityInstall(
 ): string {
   return `(${installCommand} || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && (${fallbackCommand}) && ${launchCommand}`;
 }
+
+/**
+ * Like withRunnerObservabilityInstall, but the install step is load-bearing:
+ * when it fails the runner must not start (the installer's error is the last
+ * pane output, so launch detection reports it instead of a ready timeout).
+ */
+export function withRequiredRunnerInstall(launchCommand: string, installCommand: string): string {
+  // The launch is grouped so a `;` inside a pool dispatch_cmd cannot detach
+  // the runner from the install result.
+  return `(${installCommand}) && { ${launchCommand}; }`;
+}
