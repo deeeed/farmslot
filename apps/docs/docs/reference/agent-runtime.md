@@ -54,7 +54,7 @@ farmslot-agent execution-template <list|materialize|lint|new> [options]
 
 `mark` takes a **task directory**, not individual file paths — its first argument must be an existing directory or the command exits with the usage error. In task-dir mode it marks `CHECKLIST.md` (or `TASK.md` when there is no `CHECKLIST.md`) and writes `SIGNAL.json`, unless a `checklist-target.json` written by a role switch points elsewhere. `--checklist` selects another checklist explicitly; the signal filename is then derived from it (other checklists get a role-scoped signal).
 
-`task init` writes the whole task directory: `TASK.md`, `CHECKLIST.md`, the task-local `mark` shim, `inputs/handoff.json`, and `inputs/worker-terminal-contract.json`. It does not write `checklist-target.json`: absent means `CHECKLIST.md` + `SIGNAL.json`, and only a role switch writes the manifest to point elsewhere (the Farmslot gateway still writes the default-valued file for one release so slots on an older `mark` engine keep working). `./mark <step>` therefore works from inside the task without overrides.
+`task init` writes the whole task directory: `TASK.md`, `CHECKLIST.md`, the task-local `mark` shim, `inputs/handoff.json`, and `inputs/worker-terminal-contract.json`. It does not write `checklist-target.json`: absent means `CHECKLIST.md` + `SIGNAL.json`, and only a role switch writes the manifest to point elsewhere. `./mark <step>` therefore works from inside the task without overrides.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 

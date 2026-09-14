@@ -1,13 +1,11 @@
 // The task-dir writer: the only code that lays out a task directory. A control
 // plane and a harness both call it, so the two surfaces cannot drift.
 
-import { existsSync } from 'node:fs';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CHECKLIST_TARGET_MANIFEST,
   EXECUTION_CHECKLIST_DOCUMENT,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerTerminalContractDocument,
@@ -61,12 +59,6 @@ export interface WriteTaskDirInput {
   terminalContract: WorkerTerminalContractDocument;
   /** Ticket data as fetched, written to inputs/bug-input.json when present. */
   bugInput?: unknown;
-  /**
-   * Transition only: also write `checklist-target.json` with the default target so
-   * a mark engine older than 0.9 (which fails closed without it) keeps working on
-   * slots not yet redeployed. Absent means the same thing. Remove next release.
-   */
-  writeChecklistManifest?: boolean;
 }
 
 export interface WrittenTaskDir {
@@ -106,17 +98,6 @@ export async function writeTaskDir(input: WriteTaskDirInput): Promise<WrittenTas
     `${JSON.stringify(input.terminalContract, null, 2)}\n`,
     'utf-8',
   );
-
-  if (input.writeChecklistManifest) {
-    const checklistName = existsSync(path.join(taskDir, EXECUTION_CHECKLIST_DOCUMENT))
-      ? EXECUTION_CHECKLIST_DOCUMENT
-      : TASK_DOCUMENT;
-    await writeFile(
-      path.join(taskDir, CHECKLIST_TARGET_MANIFEST),
-      `${JSON.stringify({ checklist: checklistName, signal: 'SIGNAL.json' }, null, 2)}\n`,
-      'utf-8',
-    );
-  }
 
   let bugInput: string | null = null;
   if (input.bugInput !== undefined) {

@@ -194,6 +194,18 @@ export async function restoreWorkerChecklistTargetOnSlot(
   const checklist = preferInteractiveChecklist
     ? registry.interactiveChecklist
     : registry.workerTask;
+  // The worker target is what the mark engine derives when no manifest exists
+  // (CHECKLIST.md when present, else TASK.md; SIGNAL.json). Restoring it means
+  // removing the role switch's manifest, not writing the default back.
+  if (registry === DEFAULT_CHECKLIST_TARGET_REGISTRY) {
+    await execOnSlot(
+      vars,
+      `rm -f ${shellQuote(`${vars.remoteRepo}/${manifestRelPath(taskDir)}`)}`,
+      vars.remoteRepo,
+    );
+    await syncChecklistMarkerOnSlot(vars, taskDir);
+    return;
+  }
   await syncChecklistTargetOnSlot(vars, taskDir, checklist);
 }
 

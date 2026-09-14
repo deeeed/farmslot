@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Task dirs no longer carry a default-valued `checklist-target.json`; the one-release compatibility write is gone now that every node runs the 0.9 `mark` engine (absent means `CHECKLIST.md` + `SIGNAL.json`; role switches still write one).
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.0 - 2026-09-13

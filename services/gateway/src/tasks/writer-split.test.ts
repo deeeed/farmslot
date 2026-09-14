@@ -4,7 +4,7 @@
 // placeholder-free fixture template, so CHECKLIST.md can be compared byte for byte.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -155,15 +155,8 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.doesNotMatch(checklist, /Fully autonomous/);
 
   // The pre-0.9 provenance twins are gone; handoff.json is the one task record.
-  // The manifest is still written for one release (equal to the default) so
-  // nodes on an older mark engine keep working; absent means the same target.
-  assert.deepEqual(
-    JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8')),
-    {
-      checklist: 'CHECKLIST.md',
-      signal: 'SIGNAL.json',
-    },
-  );
+  // No manifest either: absent means CHECKLIST.md + SIGNAL.json.
+  await assert.rejects(access(path.join(taskDir, 'checklist-target.json')));
   // The pack's mark_cmd becomes the shim's recorded command.
   assert.match(
     await readFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), 'utf-8'),

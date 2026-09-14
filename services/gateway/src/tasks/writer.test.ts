@@ -554,9 +554,8 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
-  // Transition: the manifest is still written (equal to the default) until every
-  // node runs the 0.9 mark engine; absent means the same target.
-  await access(path.join(path.dirname(taskA), 'checklist-target.json'));
+  // No manifest: absent means CHECKLIST.md + SIGNAL.json; only a role switch writes one.
+  await assert.rejects(access(path.join(path.dirname(taskA), 'checklist-target.json')));
   // handoff.json describes the run in the shape a skill task dir uses.
   const handoff = JSON.parse(
     await readFile(path.join(path.dirname(taskA), 'inputs', 'handoff.json'), 'utf-8'),
@@ -911,13 +910,7 @@ test('lightweight interactive dev keeps the sidecar plan as CHECKLIST.md and the
   assert.doesNotMatch(checklist, /Worker: Interactive Dev/);
   const rendered = await readFile(taskPath, 'utf-8');
   assert.match(rendered, /Worker: Interactive Dev/);
-  assert.deepEqual(
-    JSON.parse(await readFile(path.join(taskDir, 'checklist-target.json'), 'utf-8')),
-    {
-      checklist: 'CHECKLIST.md',
-      signal: 'SIGNAL.json',
-    },
-  );
+  await assert.rejects(access(path.join(taskDir, 'checklist-target.json')));
   await access(path.join(taskDir, 'inputs', 'dev-intake.json'));
 });
 
