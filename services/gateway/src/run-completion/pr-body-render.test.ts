@@ -146,3 +146,48 @@ test('renderPrBodyArtifact passes an empty template when the repository has none
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('renderPrBodyArtifact falls back to stderr, then stdout, then the exit code for a non-JSON failure', async () => {
+  const root = await makeTaskDir();
+  try {
+    const calls: string[] = [];
+    const failing = (result: ExecResult) =>
+      renderPrBodyArtifact(
+        makeRun({ taskFile: path.join(root, 'task.md'), slotId: 'macwork-mmdev-1' }),
+        'main',
+        deps({ calls, exec: async () => result }),
+      );
+    await assert.rejects(
+      failing({ exitCode: 2, stdout: '', stderr: 'usage: bad flag\n' }),
+      /PR body render failed: usage: bad flag$/,
+    );
+    await assert.rejects(
+      failing({ exitCode: 2, stdout: 'plain text\n', stderr: '' }),
+      /PR body render failed: plain text$/,
+    );
+    await assert.rejects(
+      failing({ exitCode: 3, stdout: '', stderr: '' }),
+      /PR body render failed: exit 3$/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('renderPrBodyArtifact skips a run without a slot through the real pack lookup', async () => {
+  const root = await makeTaskDir();
+  try {
+    assert.deepEqual(
+      await renderPrBodyArtifact(
+        makeRun({ taskFile: path.join(root, 'task.md'), slotId: null }),
+        'main',
+      ),
+      {
+        rendered: false,
+        reason: 'no-slot',
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
