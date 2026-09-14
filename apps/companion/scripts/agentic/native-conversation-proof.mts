@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { createAgentDeviceClient } from 'agent-device';
+
 import { Methods, type NativeSessionInfo, type NativeSessionReadResult } from '@farmslot/protocol';
 
 import { GatewayClient } from '../../../../packages/cli/src/gateway-client.js';
@@ -71,7 +73,7 @@ const evidence = (label: string, page: NativeSessionReadResult) => {
   writeFileSync(join(state.evidence, `${label}.json`), `${JSON.stringify(page, null, 2)}\n`);
 };
 try {
-  if (phase === 'setup') {
+  if (phase === 'setup' || phase === 'setup-question') {
     assert(!existsSync(stateFile), 'Use a new proof state path; do not overwrite a live session');
     const fixture = mkdtempSync(join(tmpdir(), 'farmslot-companion-native-'));
     const cwd = join(fixture, 'repo');
@@ -86,6 +88,7 @@ try {
       },
     );
     assert(session.capabilities.approvals && session.capabilities.interrupt);
+    if (phase === 'setup-question') assert(session.capabilities.questions);
     state = {
       fixture,
       cwd,
@@ -115,6 +118,80 @@ try {
     state.requestId = pending.request!.id;
     save();
     evidence(`${decision}-pending`, page);
+  } else if (phase === 'setup-question') {
+    await send(
+      'Use AskUserQuestion to ask exactly one question: Which folder should I use? Offer exactly two suggestions: Blue folder and Green folder. Wait for the answer, then repeat the answer exactly. Do not use other tools or change any files.',
+    );
+    const page = await wait(
+      (value) => value.pendingRequests.some((request) => request.type === 'question.requested'),
+      'question with suggested answers',
+    );
+    const pending = page.pendingRequests.find((request) => request.type === 'question.requested')!;
+    assert.equal(pending.request?.questions?.length, 1);
+    assert(pending.request.questions[0].options.length > 0);
+    state.requestId = pending.request.id;
+    save();
+    evidence('question-pending', page);
+  } else if (phase === 'approval-disclosure') {
+    const page = await read();
+    const pending = page.pendingRequests.find((request) => request.request?.id === state.requestId);
+    assert(pending?.data, 'This proof requires structured native approval data');
+    const device = createAgentDeviceClient({
+      stateDir: process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR,
+    });
+    const active = (await device.sessions.list()).find(
+      (session) => session.device.id === process.env.IOS_SIMULATOR,
+    );
+    assert(active, 'The recipe must own the private simulator before inspecting approval details');
+    const observed = await device.capture.snapshot({
+      session: active.name,
+      platform: 'ios',
+      udid: process.env.IOS_SIMULATOR,
+      interactiveOnly: false,
+      forceFull: true,
+    });
+    assert(
+      observed.nodes.some(
+        (node) =>
+          node.identifier === 'companion-native-identity' && node.label?.includes(state.sessionId),
+      ),
+    );
+    assert(
+      observed.nodes.some(
+        (node) => node.identifier === `companion-native-request-${state.requestId}`,
+      ),
+    );
+    assert(
+      observed.nodes.some(
+        (node) =>
+          node.identifier === 'companion-native-approval-details' &&
+          node.label === JSON.stringify(pending.data, null, 2),
+      ),
+      'Companion must disclose all structured data for the exact pending approval',
+    );
+    evidence(phase, page);
+  } else if (phase === 'answered') {
+    const page = await wait(
+      (value) =>
+        value.events.some(
+          (event) => event.type === 'turn.completed' && event.commandId === state.commandId,
+        ),
+      'custom answer received by the runner',
+    );
+    assert(
+      page.events.some(
+        (event) => event.type === 'approval.resolved' && event.request?.id === state.requestId,
+      ),
+    );
+    const text = page.events
+      .filter((event) => event.commandId === state.commandId && event.type === 'text.delta')
+      .map((event) => event.text)
+      .join('');
+    assert(
+      text.includes('Use the amber folder instead'),
+      'Runner did not receive the custom answer',
+    );
+    evidence(phase, page);
   } else if (phase === 'open') {
     assert(process.env.IOS_SIMULATOR, 'Set the private IOS_SIMULATOR');
     execFileSync('xcrun', [

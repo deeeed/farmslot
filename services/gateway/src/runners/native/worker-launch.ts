@@ -12,6 +12,7 @@ import {
 } from '../../core/index.js';
 import { resolveProjectCommandEnv } from '../../core/project-env.js';
 import { shellQuote } from '../../core/tmux.js';
+import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   resolveCodexBinary,
   resolveRunnerEffort,
@@ -105,10 +106,18 @@ export async function prepareNativeWorkerLaunch(input: {
     const installRepo = input.stateDirectory ?? vars.remoteRepo;
     const runtimeDir = input.stateDirectory ? '.' : legacyRuntimeDir;
     if (input.prepareAccount) {
+      const support = await ensureNodeSupportBundle(
+        vars,
+        input.projectVars?.runtimeDir ?? '.agent',
+        {
+          projectVars: input.projectVars,
+        },
+      );
       const installed = await execOnSlot(
         vars,
         buildRunnerObservabilityInstallCommand(vars, runner, installRepo, runtimeDir, {
           accountLabel: launchAccountLabel,
+          supportDir: support?.supportDir,
         }),
       );
       if (installed.exitCode !== 0)

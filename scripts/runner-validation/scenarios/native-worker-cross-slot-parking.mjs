@@ -166,7 +166,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.ok(runId, 'Supply an existing private native worker held at a publication gate');
-    assert.ok(['park', 'restore', 'archive-checks', 'cancel-deferred'].includes(stage));
+    assert.ok(
+      ['park', 'restore', 'same-slot-archive', 'archive-checks', 'cancel-deferred'].includes(stage),
+    );
     const before = rpc('run.get', { runId }).run;
     assert.equal(before.transport, 'native');
     const context = before.agentContexts.find(
@@ -215,6 +217,61 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
       assert.equal(read().session.processStopped, true);
       assert.notEqual(slots().find((item) => item.slot === originalSlotId).currentRunId, runId);
       report.checks.push('gate choice stopped worker and preserved branch before releasing slot');
+    } else if (stage === 'same-slot-archive') {
+      assert.equal(before.park.slotDisposition, 'freed');
+      assert.equal(original.currentRunId, null, 'Release any successor before same-slot recovery');
+      const handle = before.park.recoveryHandle;
+      assert.ok(handle.taskBundle);
+      assert.equal(handle.relocation, undefined);
+      const archive = checkedArchive(before);
+      const task = privatePath(path.join(original.repo, handle.taskBundle.relativeDirectory));
+      const checklist = fs.readFileSync(path.join(archive, 'CHECKLIST.md'), 'utf8');
+      assert.ok(fs.existsSync(task), 'Task must still exist before retention cleanup');
+      // Age real storage, then let the production cleanup RPC remove it.
+      fs.utimesSync(task, new Date('2000-01-01'), new Date('2000-01-01'));
+      const cleanup = rpc('slot.cleanup', { slotId: originalSlotId, reason: 'manual' });
+      assert.ok(cleanup.storageDeleted?.includes(task), JSON.stringify(cleanup));
+      assert.equal(fs.existsSync(task), false);
+      const selector = { kind: 'include', runIds: [runId] };
+      const preview = rpc('machine.pause.restore', { machine: original.machine, selector });
+      const entry = preview.runs.find((item) => item.runId === runId);
+      assert.equal(entry.eligibility.eligible, true, entry.eligibility.reason);
+      assert.equal(entry.restoreTarget.slotId, originalSlotId);
+      const params = {
+        machine: original.machine,
+        selector,
+        execute: true,
+        previewId: preview.previewId,
+        reviewedTargets: [{ runId, generation: entry.generation }],
+        operationId: `native-same-slot-${randomUUID()}`,
+      };
+      const restored = rpc('machine.pause.restore', params, timeoutMs);
+      assert.equal(restored.ok, true, JSON.stringify(restored.records));
+      assert.equal(fs.readFileSync(path.join(task, 'CHECKLIST.md'), 'utf8'), checklist);
+      assert.equal(
+        fs.readFileSync(path.join(task, 'TASK.md'), 'utf8'),
+        fs.readFileSync(path.join(archive, 'TASK.md'), 'utf8'),
+      );
+      assert.ok(fs.existsSync(path.join(task, 'mark')));
+      const after = rpc('run.get', { runId }).run;
+      const proof = after.park.recoveryProof;
+      const snapshot = read();
+      assert.equal(after.slotId, originalSlotId);
+      assert.equal(snapshot.session.nativeSessionId, context.runnerSessionId);
+      assert.equal(snapshot.session.workerLeaseId, binding.leaseId);
+      assert.notEqual(snapshot.session.generation, handle.generation);
+      assert.equal(
+        snapshot.commands.filter(
+          (command) => command.commandId === proof.acknowledgement.turnToken && command.accepted,
+        ).length,
+        1,
+      );
+      assert.equal(rpc('machine.pause.restore', params, timeoutMs).ok, true);
+      report.checks.push(
+        'Production retention cleanup removed parked task; original-slot restore recovered its exact documents, helpers, conversation and one continuation',
+      );
+      report.cleanup = cleanup;
+      report.restored = after.park;
     } else {
       const successorId = process.env.FARMSLOT_NATIVE_REHOME_SUCCESSOR_RUN_ID;
       assert.ok(successorId, 'Supply the independently dispatched terminal successor run ID');

@@ -238,7 +238,14 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMCallResult> {
       resolvedModel,
       auth.apiKey,
       auth.source,
-      { ...opts, reasoning: opts.reasoning ?? cfg.intelligenceEffort },
+      {
+        ...opts,
+        reasoning:
+          opts.reasoning ??
+          (provider === 'openai-codex' || provider === CODEX_LB_PROVIDER
+            ? cfg.intelligenceEffort
+            : undefined),
+      },
       maxTokens,
     );
   }
@@ -449,7 +456,14 @@ export async function callLLMChat(opts: LLMChatOptions): Promise<LLMCallResult> 
       resolvedModel,
       auth.apiKey,
       auth.source,
-      { ...opts, reasoning: opts.reasoning ?? cfg.copilotEffort },
+      {
+        ...opts,
+        reasoning:
+          opts.reasoning ??
+          (provider === 'openai-codex' || provider === CODEX_LB_PROVIDER
+            ? cfg.copilotEffort
+            : undefined),
+      },
       maxTokens,
     );
   }

@@ -64,6 +64,7 @@ import {
   gatewayWorkspaceAccess,
   isNodeSubjectSession,
 } from './security/authorization.js';
+import { nativeOwnerCanUseWorkers } from './security/native-owner.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
@@ -674,6 +675,7 @@ async function handleMessage(
   const requestCredential =
     state.authentication?.kind === 'credential' ? state.authentication.credentialId : undefined;
   const requestClientKind = state.clientKind;
+  let requestAllowsWorkers = false;
   const nativeResponseRefusal = () => {
     if (!frame.method.startsWith('native.')) return undefined;
     const changed =
@@ -684,7 +686,9 @@ async function handleMessage(
       if (changed || state.clientKind !== requestClientKind)
         throw new GatewayAuthError('Native request identity changed');
       requireAuthenticatedSession(authRuntime, state);
-      authorizeGatewayMethod(authRuntime, state, frame.method);
+      const principal = authorizeGatewayMethod(authRuntime, state, frame.method);
+      if (requestAllowsWorkers && !nativeOwnerCanUseWorkers(principal))
+        throw new GatewayAuthError('Native worker authority changed');
       return undefined;
     } catch {
       // Revoked or unresolvable authority cannot receive even a delayed error's
@@ -700,6 +704,11 @@ async function handleMessage(
   };
 
   try {
+    // Inventory and delayed errors can include worker details even without a worker selector.
+    if (frame.method.startsWith('native.'))
+      requestAllowsWorkers = nativeOwnerCanUseWorkers(
+        authorizeGatewayMethod(authRuntime, state, frame.method),
+      );
     const result = await routeMethod(frame.method, frame.params, {
       authRuntime,
       broadcast,

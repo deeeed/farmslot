@@ -57,13 +57,13 @@ Add opt-in native runner sessions while retaining tmux defaults. The shared runn
 2. **Shipped, G002, PR #616:** local process supervision, durable events, replay, duplicate command protection, and owner-bound pending requests, with live gateway recovery and process-failure validation. Remote-node integration remains phase 4.
 3. **Shipped, G003, PR #618:** deliver opt-in native Copilot within the existing chat flow, retaining regular runner/model selection and terminal access. Add streamed conversation, expandable tools, composer approvals/questions, Stop and recovery controls, plus read-only Files/Changes beside the transcript on wide screens and tabs on narrow screens. Adapt T3 interaction patterns to Farmslot under [DESIGN.md](../DESIGN.md); workspace Git changes must not imply turn checkpoints. Prove complete tasks, actual source/diff changes, and pending-request refresh/reconnect through real browser controls.
 4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion, including native parking restore into another eligible slot. Preserve saved conversation identity and prove source cleanup, destination reservation, relocation, and recovery races. Reconcile live and archived session identity before integration.
-5. Add Grok and Cursor, then native installation/login flows for user-owned accounts, including several profiles under a shared OS user. Prove each declared capability and credential, process, filesystem, and session isolation before enabling shared deployments. Separate OS users or nodes are not prerequisites.
+5. Add Grok and Cursor, then native installation/login flows for user-owned accounts. Several profiles under one OS user belong to one trusted operator; each product user owns their execution node. Prove profile-directory binding, owner routing, and conversation continuity across ordinary login rotation.
 
 Set new Copilot and gateway-intelligence defaults to Codex Astra with low effort, validating backend support and preserving active conversations and explicit settings.
 
 Finish the remaining scope in one reviewed PR. Refresh from latest main before implementation batches and final validation/review; preserve existing tmux workflows throughout.
 
-The first UI release remains restricted to one pinned principal in a trusted local execution context. Shared user accounts require the phase 5 isolation gates.
+The first UI release was restricted to one pinned principal in a trusted local execution context. Phase 5 extends owner-bound access to user-owned nodes under [ADR-057's trusted operator scope](adr/057-structured-runner-transports.md#trusted-operator-profile-scope); it does not isolate mutually untrusted users sharing an OS account.
 
 Record bounded subscription and billing observations separately from protocol success. Missing provider evidence remains unknown. PI runtime replacement, whole T3 UI import, and arbitrary live TUI takeover stay outside this rollout.
 

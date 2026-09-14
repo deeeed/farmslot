@@ -7,7 +7,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".
 - The PR description's shape no longer fails a run at `complete`: sections the worker left out of `artifacts/pr-description.md` are appended from the repository PR template (heading and boilerplate) and the PR is created; the completion log names what was added.
 - Every runner launch on a remote slot (dispatch, self-review, inline CI fix, retained-session resume and recovery) first syncs the slot's node support bundle with the gateway's tree; prepare is no longer the only writer, so a gateway-side change to `scripts/` (such as the runner installer) can no longer strand a previously prepared slot on a bundle that cannot launch its runner.
-- Gateway intelligence can use an explicit local load-balancer provider with Astra/low defaults, an environment-provided client key, and no automatic provider fallback.
+- Gateway intelligence can use an explicit local load-balancer provider with Astra/low defaults, an environment-provided client key, and no automatic provider fallback. Other providers retain their existing reasoning defaults.
 
 - A chained pr-complete that blocks because the slot's live retained worker would not accept the handoff no longer tears that worker down on the way out; it only drops its reservation and leaves the slot for the operator. The inline CI fix also keeps waiting while the runner hook still reports the worker busy after a gateway-restart recovery, instead of declaring the turn inactive and chaining a conflicting follow-up.
 
@@ -21,7 +21,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Bind native node ownership to issued principals, reject competing machine claims and recheck credential authority around remote native requests. Authentication tells clients whether to open the farm or an owner-only native workspace.
 - Add opt-in native workers and retained reviewers with leased input, task handoff, explicit completion signals, task-scoped history and recovery across gateway and runner restarts. Queued tasks preserve their creator’s ownership. Native workers can release resources while parked and restore their saved conversation in an eligible sibling worktree, preserving the task and leaving the original slot available.
 - Offer standalone native conversations for additional installed runners while retaining their terminal workflows.
-- Select optional node-local runner configurations for conversations and workers, preserving the selection through task handoff, same-runner reviews, recovery and parking without tying conversation history to a subscription login.
+- Select optional node-local runner configurations for conversations and workers, preserving the selection through task handoff, same-runner reviews, recovery and parking without tying conversation history to a subscription login. Default accounts remain usable when only native profiles are configured.
 
 ## 0.12.0 - 2026-09-13
 

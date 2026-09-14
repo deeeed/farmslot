@@ -8,6 +8,10 @@ const root = view?.shadowRoot;
 return {
   runId: view?.worker?.runId,
   contextId: view?.worker?.contextId,
+  sessionId: view?.worker?.binding.sessionId,
+  executionNodeId: view?.worker?.binding.executionNodeId,
+  leaseId: view?.worker?.binding.leaseId,
+  generation: view?.worker?.binding.generation,
   status: root?.querySelector('.status[data-state]')?.textContent.trim(),
   inputDisabled: root?.querySelector('textarea')?.disabled,
   sendDisabled: root?.querySelector('[data-testid=native-send]')?.disabled,

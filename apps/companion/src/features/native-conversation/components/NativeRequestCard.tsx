@@ -17,9 +17,16 @@ export function NativeRequestCard({
   respond: (requestId: string, response: NativeSessionResponse) => void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const request = event.request;
   if (!request) return null;
   const questions = request.questions ?? [];
+  const submittedAnswers = Object.fromEntries(
+    questions.map((question) => {
+      const custom = customAnswers[question.id]?.trim();
+      return [question.id, custom ? [custom] : (answers[question.id] ?? [])];
+    }),
+  );
   const locked = disabled || attempted || event.responseState === 'unknown';
   return (
     <View style={styles.card} testID={`companion-native-request-${request.id}`}>
@@ -36,6 +43,16 @@ export function NativeRequestCard({
           </Text>
         </ScrollView>
       ) : null}
+      {event.type === 'approval.requested' && event.data ? (
+        <View>
+          <Text style={styles.heading}>Action details</Text>
+          <ScrollView style={styles.detail} nestedScrollEnabled>
+            <Text selectable testID="companion-native-approval-details" style={styles.code}>
+              {JSON.stringify(event.data, null, 2)}
+            </Text>
+          </ScrollView>
+        </View>
+      ) : null}
       {attempted || event.responseState === 'unknown' ? (
         <Text style={styles.muted}>
           Response submitted. Waiting for the runner to confirm; refresh to reconcile.
@@ -43,7 +60,7 @@ export function NativeRequestCard({
       ) : null}
       {event.type === 'question.requested' ? (
         <>
-          {questions.map((question) => (
+          {questions.map((question, index) => (
             <View key={question.id} style={styles.card}>
               <Text style={styles.text}>{question.prompt}</Text>
               {question.options.map((option) => {
@@ -73,17 +90,18 @@ export function NativeRequestCard({
                   </Pressable>
                 );
               })}
-              {!question.options.length ? (
-                <TextInput
-                  accessibilityLabel={question.prompt}
-                  editable={!locked}
-                  style={styles.input}
-                  value={answers[question.id]?.[0] ?? ''}
-                  onChangeText={(value) =>
-                    setAnswers((current) => ({ ...current, [question.id]: [value] }))
-                  }
-                />
-              ) : null}
+              <TextInput
+                testID={`companion-native-custom-answer-${index}`}
+                accessibilityLabel={`Custom answer: ${question.prompt}`}
+                placeholder="Custom answer"
+                placeholderTextColor="#888"
+                editable={!locked}
+                style={styles.input}
+                value={customAnswers[question.id] ?? ''}
+                onChangeText={(value) =>
+                  setCustomAnswers((current) => ({ ...current, [question.id]: value }))
+                }
+              />
             </View>
           ))}
           <Pressable
@@ -92,10 +110,12 @@ export function NativeRequestCard({
             disabled={
               locked ||
               !questions.length ||
-              questions.some((question) => !answers[question.id]?.some((value) => value.trim()))
+              questions.some(
+                (question) => !submittedAnswers[question.id]?.some((value) => value.trim()),
+              )
             }
             style={[styles.button, locked && styles.disabled]}
-            onPress={() => respond(request.id, { answers })}
+            onPress={() => respond(request.id, { answers: submittedAnswers })}
           >
             <Text style={styles.buttonText}>Send answers</Text>
           </Pressable>

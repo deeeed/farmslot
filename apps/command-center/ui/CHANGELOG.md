@@ -12,7 +12,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - Give enrolled native-only accounts a conversation workspace without farm navigation or background farm requests; clear prior account views on reconnect or credential changes.
 
-- Dispatch or queue native workers and use a task-bound conversation with tools, files and diffs. Keep transferred task history separate from the successor’s messages and controls. Resume stopped workers from decisions while preserving conversation and task progress, and keep controls reachable on long run pages.
+- Dispatch or queue native workers and use a task-bound conversation with tools, files and diffs. Open previous worker attempts from Run Detail and keep their history separate from the successor’s messages and controls. Resume stopped workers from decisions while preserving conversation and task progress, and keep controls reachable on long run pages.
 
 ## 0.12.0 - 2026-09-13
 

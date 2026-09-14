@@ -50,13 +50,21 @@ Account context comes from authorized execution context, not an arbitrary client
 
 Native node execution requires an issued node credential bound to the exact machine and `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` set on that node. `deploy-node.sh` carries this opt-in into its service environment. The node keeps native journals under its own Farmslot home and retains runner installation and login locally. Session and workspace requests include `executionNodeId`; omission continues to select the gateway host. Replacing a node connection cannot answer requests sent to the previous connection, and a missing node never redirects a session to the gateway host.
 
-The first implementation is experimental and restricted to a pinned principal in a single trusted operator context. The account-setup phase adds user-owned execution profiles, including several profiles under a shared OS user without requiring separate OS accounts or nodes. Shared deployments require principal authorization and execution isolation consistent with ADR-051. Separate account labels under one unrestricted OS user do not establish a security boundary. Do not advertise multi-user account isolation until process, filesystem, and credential access checks prove that boundary.
+The first implementation was restricted to a pinned principal in a single trusted operator context. The account-setup phase adds optional profiles belonging to one trusted operator under one OS user. Each product user owns their execution node. Prove profile-directory binding, owner routing, and conversation continuity across ordinary login rotation. Profile directories do not isolate mutually untrusted users sharing an OS account.
 
 Successful inference establishes access at the time of the request. Subscription entitlement, permitted automation, quotas, and billing require separate provider-specific evidence. Compare equivalent native TUI and structured tasks using provider usage records where available. Mark unavailable or delayed billing evidence explicitly. Initialization and estimated token cost cannot establish subscription economics.
+
+### Workspace boundaries
+
+Codex `sandboxed` and `full-auto` sessions may write the workspace and its Git common directory. For linked worktrees this includes the primary checkout's shared Git metadata, including HEAD, index, refs, and other worktree metadata. The tier does not isolate repository metadata between the trusted operator's worktrees.
+
+Pool machine environment values are part of the native worker's `launchDigest`. Changing one, including rotating a configured load-balancer key, invalidates recovery, retained handoff, and parking restore for the old launch. Finish those tasks before changing the environment, or restart them explicitly with the new configuration.
 
 ### Parking portability
 
 Native worker parking must support restoring the saved conversation into another eligible slot in this delivery. The runner layer owns any supported workspace relocation and records the destination identity. Prove source process cleanup, destination reservation, owner continuity, and retry/cancellation behavior before exposing restore. Do not satisfy portability by starting an unrelated conversation.
+
+Parking preserves the full task bundle, including artifacts, with a 64 MiB file-content limit and no symlinks or special files. Oversized or unsupported bundles refuse parking; artifacts are not silently omitted. The separate artifact mirror does not replace files a resumed worker may still need.
 
 ### Client integration and code reuse
 

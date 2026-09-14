@@ -21,6 +21,17 @@ export async function runScenario({ outDir, timeoutMs, explicit, prior: provided
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.equal(process.env.FARMSLOT_CDP_PORT, '19323');
+    if (process.env.FARMSLOT_NATIVE_ARCHIVED_RUN_ID) {
+      await verifyArchivedAttempts({
+        runId: process.env.FARMSLOT_NATIVE_ARCHIVED_RUN_ID,
+        outDir,
+        timeoutMs,
+        report,
+      });
+      report.pass = true;
+      const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
+      return { scenario: SCENARIO_ID, runner: report.runner, pass: true, outPath, report };
+    }
     let prior = provided;
     if (!prior) {
       const input = process.env.FARMSLOT_NATIVE_HISTORY_REPORT;
@@ -227,4 +238,92 @@ export async function runScenario({ outDir, timeoutMs, explicit, prior: provided
   }
   const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
   return { scenario: SCENARIO_ID, runner: report.runner, pass: report.pass, outPath, report };
+}
+
+/** Uses a real rerun's archived bindings; no session or run state is injected. */
+async function verifyArchivedAttempts({ runId, outDir, timeoutMs, report }) {
+  const run = rpc('run.get', { runId }).run;
+  assert.equal(run.transport, 'native');
+  const attempts = run.agentContexts.flatMap((context) =>
+    (context.nativeSessionHistory ?? []).map((binding) => ({ context, binding })),
+  );
+  assert(attempts.length, 'Rerun a native task first so nativeSessionHistory contains an attempt');
+  report.runner = run.metrics.runner;
+  report.runId = runId;
+  const route = `run/${runId}`;
+  const cdp = (...args) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [path.join(ROOT, 'apps/command-center/scripts/cdp.mjs'), ...args],
+        { cwd: ROOT, encoding: 'utf8', timeout: 30000 },
+      ),
+    );
+  cdp('goto', route);
+  await wait(
+    () =>
+      cdp(
+        'eval',
+        route,
+        'return !!document.querySelector("run-detail")?.shadowRoot?.querySelector("native-worker-history")?.shadowRoot?.querySelector("select");',
+      ),
+    Boolean,
+    timeoutMs,
+  );
+  report.archivedAttempts = [];
+  for (const { context, binding } of attempts) {
+    const before = readPinnedWorkerHistory(runId, context.id, binding.leaseId);
+    const key = JSON.stringify([
+      JSON.stringify([
+        runId,
+        context.id,
+        binding.sessionId,
+        binding.executionNodeId,
+        binding.leaseId,
+      ]),
+      binding.generation,
+    ]);
+    cdp(
+      'select',
+      route,
+      'run-detail >>> native-worker-history >>> [data-testid=native-worker-history-select]',
+      key,
+    );
+    const view = await wait(
+      () =>
+        cdp(
+          'eval',
+          route,
+          '--file',
+          path.join(ROOT, 'apps/command-center/scripts/probes/native-worker-history.js'),
+        ),
+      (value) =>
+        value?.sessionId === binding.sessionId &&
+        value.leaseId === binding.leaseId &&
+        value.status === 'Task history' &&
+        value.entries.length,
+      timeoutMs,
+    );
+    assert.equal(view.runId, runId);
+    assert.equal(view.contextId, context.id);
+    assert.equal(view.generation, binding.generation);
+    assert.equal(view.executionNodeId, binding.executionNodeId);
+    assert.deepEqual(view.errors, []);
+    assert.equal(view.pending, 0);
+    assert.equal(view.workspaceMounted, false);
+    assert.equal(view.workspaceToggle, false);
+    for (const name of ['inputDisabled', 'sendDisabled', 'stopDisabled', 'closeDisabled'])
+      assert.equal(view[name], true, name);
+    assert(
+      view.entries.every(
+        (entry) => entry.sequence > before.scope.startAfter && entry.sequence <= before.scope.endAt,
+      ),
+    );
+    assert.deepEqual(readPinnedWorkerHistory(runId, context.id, binding.leaseId), before);
+    report.archivedAttempts.push(view);
+  }
+  cdp('screenshot', route, path.join(outDir, 'archived-attempt.png'));
+  report.checks.push(
+    'Run Detail opens each real archived attempt with its exact lease and generation, a bounded transcript and all mutation controls disabled',
+  );
 }

@@ -256,6 +256,8 @@ export interface LLMConfigSetParams {
   copilotModel?: string;
   intelligenceModel?: string;
   improvementModel?: string;
+  copilotEffort?: LLMReasoningEffort;
+  intelligenceEffort?: LLMReasoningEffort;
 }
 
 export interface LLMConfigSetResult {

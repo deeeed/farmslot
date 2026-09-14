@@ -6,7 +6,7 @@
 - Keep native worker state outside recyclable workspaces and support saved-conversation relocation across eligible sibling worktrees. Native sandboxed Git operations can write their repository metadata.
 
 - Supervise leased worker sessions with duplicate-safe task delivery, retained conversation transfer, saved-session recovery, task-scoped history and verified process cleanup, including shutdown races where fresh OS checks confirm the processes have exited. Share asynchronous process scans and fail ownership checks when a census exceeds its deadline.
-- Manage optional node-local native configuration profiles, retain native credential storage for default directories, and preserve session bindings across login rotation and recovery.
+- Manage optional node-local native configuration profiles, retain native credential storage for default directories, and preserve session bindings across login rotation and recovery. Worker environments exclude node and gateway access credentials.
 - Add standalone native conversations for Cursor and Grok through their installed runners and native login, with streaming, permissions, interruption and saved-session resume.
 
 ## 0.9.0 - 2026-09-13

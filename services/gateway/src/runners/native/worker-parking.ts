@@ -365,7 +365,7 @@ export async function reloadNativeWorkerForPark(
   };
   assertCurrent();
   const before = await inspectNativeParkHandle(initial, handle, 'stopped-or-live');
-  if (handle.relocation && before.session.generation === handle.generation) {
+  if (handle.taskBundle && before.session.generation === handle.generation) {
     await nativeParkTaskArchive({
       runSlotId: handle.slotId,
       handle,

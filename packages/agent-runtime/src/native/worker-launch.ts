@@ -152,5 +152,9 @@ export function nativeWorkerEnvironment(launch: NativeWorkerLaunch): NodeJS.Proc
   const shims = join(env.ASDF_DATA_DIR ?? join(env.HOME ?? homedir(), '.asdf'), 'shims');
   if (existsSync(shims)) env.PATH = `${shims}${delimiter}${env.PATH ?? ''}`;
   delete env.CLAUDECODE;
+  // Workers do not need control-plane credentials, including configured overrides.
+  delete env.FARMSLOT_NODE_TOKEN;
+  delete env.FARMSLOT_GATEWAY_TOKEN;
+  delete env.FARMSLOT_GATEWAY_PASSWORD;
   return env;
 }

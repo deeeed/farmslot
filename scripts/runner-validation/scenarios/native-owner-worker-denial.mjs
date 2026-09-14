@@ -13,6 +13,7 @@ export const RUNNER_AGNOSTIC = true;
 /** Use a real stopped worker; a separate administrator always restores the owner's role. */
 export async function runScenario({ explicit, outDir }) {
   if (!explicit) return { scenario: SCENARIO_ID, runner: 'native', pass: true, skipped: true };
+  if (process.env.FARMSLOT_NATIVE_DENIAL_UNCLAIMED_RUN_ID) return unclaimedSlotScenario(outDir);
   const report = { runner: 'native', checks: [], pass: false, inferenceExpected: false };
   const clients = [];
   let admin;
@@ -163,6 +164,62 @@ export async function runScenario({ explicit, outDir }) {
       report.pass = false;
       report.cleanupError = error.message;
     }
+    for (const client of clients) client.ws.close();
+  }
+  const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
+  return { scenario: SCENARIO_ID, runner: report.runner, pass: report.pass, outPath, report };
+}
+
+/** The caller supplies a real run paused before FIND_SLOT claims its requested slot. */
+async function unclaimedSlotScenario(outDir) {
+  const report = { runner: 'native', checks: [], pass: false, inferenceExpected: false };
+  const clients = [];
+  try {
+    assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
+    const owner = await connect(process.env.FARMSLOT_GATEWAY_TOKEN, 'ui');
+    clients.push(owner);
+    const admin = await connect(process.env.FARMSLOT_NATIVE_DENIAL_ADMIN_TOKEN, 'ui');
+    clients.push(admin);
+    assert.notEqual(owner.principalId, admin.principalId);
+    const runId = process.env.FARMSLOT_NATIVE_DENIAL_UNCLAIMED_RUN_ID;
+    const readRun = async () => {
+      const response = await owner.request(Methods.RUN_GET, { runId });
+      assert.equal(response.ok, true, response.error?.message);
+      return response.payload.run;
+    };
+    const before = await readRun();
+    assert.equal(before.transport, 'native');
+    assert.equal(before.nativeOwnerPrincipalId, owner.principalId);
+    assert.ok(['created', 'slot-finding'].includes(before.status));
+    assert.ok(before.slotId);
+    assert.ok(!before.agentContexts?.some((context) => context.nativeSession));
+    const fleet = await admin.request(Methods.FLEET_STATUS, {});
+    assert.equal(fleet.ok, true, fleet.error?.message);
+    const slot = fleet.payload.fleet.slots.find((item) => item.slot === before.slotId);
+    assert.ok(slot);
+    assert.notEqual(slot.currentRunId, runId);
+    // The mismatched expected owner makes release a read-only no-op after authorization.
+    const released = await admin.request(Methods.SLOT_RELEASE, {
+      slotId: before.slotId,
+      expectedRunId: randomUUID(),
+    });
+    assert.equal(released.ok, true, released.error?.message);
+    assert.equal(released.payload.released, false);
+    const after = await readRun();
+    assert.equal(after.status, before.status);
+    assert.equal(after.slotId, before.slotId);
+    assert.deepEqual(after.agentContexts, before.agentContexts);
+    const denied = await admin.request(Methods.RUN_GET, { runId });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.error.code, 'AUTH_FORBIDDEN');
+    report.runId = runId;
+    report.checks.push(
+      'A requested but unclaimed native slot permits another admin slot access; the native run itself remains owner-only and unchanged',
+    );
+    report.pass = true;
+  } catch (error) {
+    report.error = error.message;
+  } finally {
     for (const client of clients) client.ws.close();
   }
   const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);

@@ -20,6 +20,7 @@ export async function runScenario({ outDir, explicit }) {
   const credentials = [];
   let admin;
   const fault = process.env.FARMSLOT_NATIVE_AUTH_CLOSE_FAULT;
+  const revokeRole = process.env.FARMSLOT_NATIVE_AUTH_REVOKE_ROLE === '1';
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
     assert.ok(
@@ -51,6 +52,14 @@ export async function runScenario({ outDir, explicit }) {
       credentials.push(issued.credential.id);
       return issued;
     };
+    const ownerId = revokeRole
+      ? (
+          await ok('principal.create', {
+            subject: { type: 'person', displayName: 'Private native role-reduction proof' },
+            roles: [{ role: 'admin', scope: { kind: 'global' } }],
+          })
+        ).principal.id
+      : admin.principalId;
     const machine = `native-revocation-${randomUUID()}`;
     const principal = (
       await ok('principal.create', {
@@ -58,17 +67,23 @@ export async function runScenario({ outDir, explicit }) {
           type: 'node',
           machine,
           displayName: machine,
-          nativeOwnerPrincipalId: admin.principalId,
+          nativeOwnerPrincipalId: ownerId,
         },
         roles: [],
       })
     ).principal;
     const nodeCredential = await issue(principal.id);
-    let heldRequest;
+    const heldRequests = [];
+    let hold = false;
+    const sessionId = randomUUID();
+    const inventory = {
+      sessions: [
+        { id: sessionId, ownerPrincipalId: ownerId, executionNodeId: machine, workerManaged: true },
+      ],
+    };
     const node = await connect(nodeCredential.secret, 'node', (frame, ws) => {
-      if (frame.params?.method === 'native.session.read') heldRequest = { frame, ws };
-      else
-        ws.send(JSON.stringify({ type: 'res', id: frame.id, ok: true, payload: { sessions: [] } }));
+      if (hold) heldRequests.push({ frame, ws });
+      else ws.send(JSON.stringify({ type: 'res', id: frame.id, ok: true, payload: inventory }));
     });
     clients.push(node);
     assert.equal(
@@ -76,12 +91,12 @@ export async function runScenario({ outDir, explicit }) {
         await node.request('node.connect', {
           machine,
           pid: process.pid,
-          nativeSessions: { ownerPrincipalId: admin.principalId },
+          nativeSessions: { ownerPrincipalId: ownerId },
         })
       ).ok,
       true,
     );
-    const issued = await issue(admin.principalId);
+    const issued = await issue(ownerId);
     const caller = await connect(
       issued.secret,
       'ui',
@@ -90,43 +105,100 @@ export async function runScenario({ outDir, explicit }) {
       clientName,
     );
     clients.push(caller);
-    const sessionId = randomUUID();
-    const pending = caller
-      .request('native.session.read', { executionNodeId: machine, sessionId })
-      .then(
+    if (revokeRole) {
+      for (const params of [{ executionNodeId: machine }, {}]) {
+        const baseline = await caller.request('native.session.list', params);
+        assert.equal(baseline.ok, true, baseline.error?.message);
+        assert.ok(
+          baseline.payload.sessions.some(
+            (session) => session.id === sessionId && session.workerManaged,
+          ),
+        );
+      }
+    }
+    hold = true;
+    const requests = [
+      ['native.session.read', { executionNodeId: machine, sessionId }],
+      ...(revokeRole
+        ? [
+            ['native.session.read', { executionNodeId: machine, sessionId: 'private-error' }],
+            ['native.session.list', { executionNodeId: machine }],
+            ['native.session.list', {}],
+          ]
+        : []),
+    ];
+    const pending = requests.map(([method, params]) =>
+      caller.request(method, params).then(
         (response) => ({ response }),
         (error) => ({ error: error.message }),
-      );
-    await wait(() => heldRequest, Boolean, 10000);
-    await ok('credential.revoke', { credentialId: issued.credential.id });
+      ),
+    );
+    await wait(
+      () => heldRequests.length,
+      (count) => count === requests.length,
+      10000,
+    );
+    if (revokeRole)
+      await ok('principal.revokeRole', {
+        principalId: ownerId,
+        role: 'admin',
+        scope: { kind: 'global' },
+      });
+    else await ok('credential.revoke', { credentialId: issued.credential.id });
     await wait(() => fs.existsSync(`${fault}.held`), Boolean, 10000);
+    if (revokeRole) {
+      const retained = await caller.request('native.session.catalog', {});
+      assert.equal(retained.ok, true, retained.error?.message);
+      assert.ok(retained.payload.runners.every((runner) => !runner.supportsWorkers));
+    }
     const marker = `private-response-${randomUUID()}`;
-    heldRequest.ws.send(
-      JSON.stringify({
-        type: 'res',
-        id: heldRequest.frame.id,
-        ok: true,
-        payload: {
-          session: { id: sessionId, ownerPrincipalId: admin.principalId, executionNodeId: machine },
-          privateMarker: marker,
-        },
-      }),
-    );
-    const result = await pending;
-    assert.equal(
-      result.error,
-      undefined,
-      'A closed/failed transport does not prove the native response fence',
-    );
-    report.responseAccepted = result.response.ok;
-    assert.equal(result.response.ok, false, 'A revoked client received a delayed native response');
-    assert.equal(result.response.error.code, 'AUTH_FORBIDDEN');
-    assert.ok(
-      !JSON.stringify(result.response).includes(marker),
-      'Private native payload crossed revocation',
-    );
+    for (const heldRequest of heldRequests) {
+      const privateError = heldRequest.frame.params.params.sessionId === 'private-error';
+      heldRequest.ws.send(
+        JSON.stringify({
+          type: 'res',
+          id: heldRequest.frame.id,
+          ok: !privateError,
+          ...(privateError
+            ? { error: { code: 'NATIVE_SESSION_ERROR', message: marker } }
+            : {
+                payload:
+                  heldRequest.frame.params.method === 'native.session.list'
+                    ? inventory
+                    : {
+                        session: {
+                          id: sessionId,
+                          ownerPrincipalId: ownerId,
+                          executionNodeId: machine,
+                        },
+                        privateMarker: marker,
+                      },
+              }),
+        }),
+      );
+    }
+    for (const result of await Promise.all(pending)) {
+      assert.equal(
+        result.error,
+        undefined,
+        'A closed/failed transport does not prove the native response fence',
+      );
+      report.responseAccepted = result.response.ok;
+      assert.equal(
+        result.response.ok,
+        false,
+        'A revoked client received a delayed native response',
+      );
+      assert.equal(result.response.error.code, 'AUTH_FORBIDDEN');
+      assert.ok(
+        !JSON.stringify(result.response).includes(marker),
+        'Private native payload crossed revocation',
+      );
+    }
     report.checks.push(
-      'an applied credential revocation with its socket close delayed still blocks private native response delivery',
+      revokeRole
+        ? 'Admin role reduction retains native enrollment but blocks delayed session replies, private errors, and direct/aggregate worker inventories before socket close'
+        : 'an applied credential revocation with its socket close delayed still blocks private native response delivery',
     );
     report.pass = true;
   } catch (error) {

@@ -183,9 +183,9 @@ test('oauth seeding writes a full bundle once and re-seeds only on rotation', as
 });
 
 test('configured low and explicit reasoning reach PI calls and both chat transports', async () => {
-  process.env.OPENAI_API_KEY ??= 'faux-test-key';
+  process.env.CODEX_LB_API_KEY ??= 'faux-test-key';
   const faux = fauxProvider({
-    provider: 'openai',
+    provider: 'codex-lb',
     models: [{ id: 'faux-effort-model', reasoning: true }],
   });
   (await piModels()).setProvider(faux.provider);
@@ -195,21 +195,46 @@ test('configured low and explicit reasoning reach PI calls and both chat transpo
     return fauxAssistantMessage('ok');
   };
   faux.setResponses([response, response, response]);
-  await callLLM({ provider: 'openai', model: 'faux-effort-model', userPrompt: 'one' });
+  await callLLM({ provider: 'codex-lb', model: 'faux-effort-model', userPrompt: 'one' });
   await callLLMChat({
-    provider: 'openai',
+    provider: 'codex-lb',
     model: 'faux-effort-model',
     reasoning: 'medium',
     messages: [{ role: 'user', content: 'two' }],
   });
   await callLLMChat({
-    provider: 'openai',
+    provider: 'codex-lb',
     model: 'faux-effort-model',
     reasoning: 'high',
     messages: [{ role: 'user', content: 'three' }],
     onDelta: () => {},
   });
   assert.deepEqual(observed, [getLLMConfig().intelligenceEffort, 'medium', 'high']);
+});
+
+test('other reasoning providers keep implicit thinking disabled and accept explicit effort', async () => {
+  process.env.ANTHROPIC_API_KEY ??= 'faux-test-key';
+  const faux = fauxProvider({
+    provider: 'anthropic',
+    models: [{ id: 'faux-other-reasoning-model', reasoning: true }],
+  });
+  (await piModels()).setProvider(faux.provider);
+  const observed: unknown[] = [];
+  const response = (_context: unknown, options: unknown) => {
+    observed.push((options as { reasoning?: string })?.reasoning);
+    return fauxAssistantMessage('ok');
+  };
+  faux.setResponses([response, response, response, response]);
+  const common = { provider: 'anthropic', model: 'faux-other-reasoning-model' };
+  await callLLM({ ...common, userPrompt: 'one' });
+  await callLLMChat({ ...common, messages: [{ role: 'user', content: 'two' }] });
+  await callLLMChat({
+    ...common,
+    messages: [{ role: 'user', content: 'three' }],
+    onDelta: () => {},
+  });
+  await callLLM({ ...common, userPrompt: 'four', reasoning: 'high' });
+  assert.deepEqual(observed, [undefined, undefined, undefined, 'high']);
 });
 
 test('Astra without matching provider auth never falls back to another CLI for call or chat', async () => {

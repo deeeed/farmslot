@@ -32,13 +32,14 @@ import { resolveNativeContext } from '../../agents/native-context.js';
 import {
   isLocal,
   loadSlotVars,
-  markSlotBusy,
   type ProjectVars,
   type RawProjectJson,
-  readSlotField,
+  readSlotRow,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import { slotRealpath } from '../../core/slot-io.js';
 import { shellQuote } from '../../core/tmux.js';
+import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
@@ -370,8 +371,11 @@ export async function dispatchNativeWorker(input: {
   emit: (event: string, payload: unknown) => void;
 }): Promise<{ dispatched: boolean }> {
   const vars = { ...input.vars, remoteRepo: await slotRealpath(input.vars, input.vars.remoteRepo) };
+  const runGeneration = getRun(input.runId)?.engineState?.generation ?? 0;
   const checkRun = () => {
     input.assertCurrent?.();
+    if ((getRun(input.runId)?.engineState?.generation ?? 0) !== runGeneration)
+      throw new Error('Native worker dispatch generation changed');
     return runnable(
       input.runId,
       vars.slotId,
@@ -481,13 +485,15 @@ export async function dispatchNativeWorker(input: {
 
   const admission = async () => {
     await input.beforeInput();
-    if ((await readSlotField(vars.slotId, 'current_run_id')) !== run.id)
+    const slot = await readSlotRow(vars.slotId);
+    if (slot?.current_run_id !== run.id || slot.phase === 'releasing')
       throw new Error('Native worker slot ownership changed');
     const live = checkRun().agentContexts?.find((item) => item.id === contextId)?.nativeSession;
     if (
       !live ||
       live.sessionId !== binding.sessionId ||
       live.leaseId !== binding.leaseId ||
+      (binding.generation && live.generation !== binding.generation) ||
       live.closedAt ||
       live.releasedAt
     )
@@ -822,7 +828,7 @@ export async function dispatchNativeWorker(input: {
     { status: 'working' },
   );
   if (input.role === primaryRoleForFlow(run.flowType)) {
-    const latest = ownedRun(run.id);
+    const latest = checkRun();
     updateRun(run.id, {
       effort: prepared.launch.effort,
       metrics: {
@@ -836,13 +842,35 @@ export async function dispatchNativeWorker(input: {
     });
     await persistRunNow(ownedRun(run.id), 'native worker accepted');
   }
-  await markSlotBusy(vars.slotId, 'working', 'working');
-  await watchContext(vars.slotId, working);
-  input.emit('dispatch.done', {
-    slotId: vars.slotId,
-    taskId: input.taskId,
-    runner: input.runner,
-    model: input.model,
+  await withRunTransition(run.id, async () => {
+    await admission();
+    const applied = await updateSlotStatusIf(
+      vars.slotId,
+      (slot) => {
+        checkRun();
+        const current = getRun(run.id)?.agentContexts?.find(
+          (item) => item.id === contextId,
+        )?.nativeSession;
+        return (
+          slot.current_run_id === run.id &&
+          slot.phase !== 'releasing' &&
+          current?.leaseId === binding.leaseId &&
+          current.generation === binding.generation &&
+          !current.closedAt &&
+          !current.releasedAt
+        );
+      },
+      { lifecycle: 'busy', phase: 'working', agent: 'working' },
+    );
+    if (!applied) throw new Error('Native worker slot ownership changed during settlement');
+    await watchContext(vars.slotId, working, { assertCurrent: admission });
+    await admission();
+    input.emit('dispatch.done', {
+      slotId: vars.slotId,
+      taskId: input.taskId,
+      runner: input.runner,
+      model: input.model,
+    });
   });
   return { dispatched: true };
 }

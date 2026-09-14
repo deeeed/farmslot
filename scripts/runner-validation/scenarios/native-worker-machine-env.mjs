@@ -19,6 +19,11 @@ const trustNames = [
   'FARMSLOT_RECIPE_SOURCE_DIGEST',
   'FARMSLOT_RECIPE_APPROVE_PLAN',
 ];
+const controlPlaneNames = [
+  'FARMSLOT_NODE_TOKEN',
+  'FARMSLOT_GATEWAY_TOKEN',
+  'FARMSLOT_GATEWAY_PASSWORD',
+];
 
 function privatePath(value, root) {
   const resolved = fs.realpathSync(value);
@@ -96,6 +101,9 @@ export async function runScenario({ runnerAdapter, slotId, model, timeoutMs, out
     const spoof = Object.fromEntries(
       trustNames.map((name) => [name, `fixture-spoof-${randomUUID()}`]),
     );
+    const credentials = Object.fromEntries(
+      controlPlaneNames.map((name) => [name, `fixture-control-plane-${randomUUID()}`]),
+    );
     for (const file of [pool.file, projectFile]) saved.push({ file, bytes: fs.readFileSync(file) });
     const projectEnv = project.command_env ?? {};
     project.command_env = {
@@ -106,6 +114,7 @@ export async function runScenario({ runnerAdapter, slotId, model, timeoutMs, out
         [names.setConflict]: `project-loses-${randomUUID()}`,
         [names.projectOnly]: expected[names.projectOnly],
         ...spoof,
+        ...credentials,
       },
     };
     pool.data.env = {
@@ -114,6 +123,7 @@ export async function runScenario({ runnerAdapter, slotId, model, timeoutMs, out
       [names.setConflict]: expected[names.setConflict],
       [names.unsetConflict]: expected[names.unsetConflict],
       ...spoof,
+      ...credentials,
     };
     configChanged = true;
     fs.writeFileSync(projectFile, JSON.stringify(project, null, 2) + '\n');
@@ -128,7 +138,7 @@ export async function runScenario({ runnerAdapter, slotId, model, timeoutMs, out
     assert.equal(fs.existsSync(markerPath), false);
     const keys = [...Object.values(names), ...trustNames];
     // The task knows only names and the script, never the configured expected values.
-    const script = `const fs=require('node:fs');const keys=${JSON.stringify(keys)};fs.writeFileSync(${JSON.stringify(markerPath)},JSON.stringify({nonce:${JSON.stringify(nonce)},pid:process.pid,values:Object.fromEntries(keys.map(key=>[key,process.env[key]??null]))}),{flag:'wx',mode:0o600});`;
+    const script = `const fs=require('node:fs');const keys=${JSON.stringify(keys)};const controlPlane=${JSON.stringify(controlPlaneNames)};fs.writeFileSync(${JSON.stringify(markerPath)},JSON.stringify({nonce:${JSON.stringify(nonce)},pid:process.pid,values:Object.fromEntries(keys.map(key=>[key,process.env[key]??null])),controlPlanePresent:Object.fromEntries(controlPlane.map(key=>[key,Object.hasOwn(process.env,key)]))}),{flag:'wx',mode:0o600});`;
     let taskDir = path.dirname(projectFile);
     for (const directory of ['tasks', 'dev', `NATIVE-ENV-${nonce}`]) {
       taskDir = path.join(taskDir, directory);
@@ -206,11 +216,17 @@ export async function runScenario({ runnerAdapter, slotId, model, timeoutMs, out
       ...expected,
       ...Object.fromEntries(trustNames.map((name) => [name, null])),
     });
+    assert.deepEqual(
+      observed.controlPlanePresent,
+      Object.fromEntries(controlPlaneNames.map((name) => [name, false])),
+      'Native worker tools must not inherit configured control-plane credentials',
+    );
     report.environment = observed;
     report.command = snapshot.commands.find((item) => item.commandId === binding.commandId);
     report.checks.push(
       'real worker tool inherits pool env; pool overrides project set and unset while project-only values survive',
       'ordinary task clears spoofed recipe trust, kind, name, digest and plan-approval values',
+      'real worker tool lacks synthetic node token, gateway token and gateway password overrides',
     );
     report.pass = true;
   } catch (error) {

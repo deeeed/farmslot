@@ -65,6 +65,8 @@ interface SlotWatch {
 interface WatchSlotOptions {
   runId?: string;
   contexts?: AgentContext[];
+  /** Recheck asynchronous setup before it can replace another owner's watch. */
+  assertCurrent?: () => Promise<void>;
 }
 
 const activeWatches = new Map<string, SlotWatch>();
@@ -224,6 +226,7 @@ export async function watchSlot(
     slot.currentRunId,
     options.runId,
   );
+  if (options.assertCurrent) await options.assertCurrent();
   if (activeRun === undefined) {
     // Ambiguous selection: tear down any existing watches for this slot rather
     // than leaving a stale one emitting events tagged with the wrong runId.
@@ -296,6 +299,7 @@ export async function watchSlot(
         }
       }
       const contextTaskPath = await resolveTaskProgressMarkdownPathForSlot(vars, candidateTaskPath);
+      if (options.assertCurrent) await options.assertCurrent();
       const nextWatchIdentity = identityFor(contextTaskPath);
       const staleWatch = activeWatches.get(key);
       if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
@@ -303,6 +307,7 @@ export async function watchSlot(
         // Raw teardown: this code IS the chained operation for this key —
         // the chain-aware unwatchKey would await its own promise.
         await closeWatchEntry(key, { expected: staleWatch });
+        if (options.assertCurrent) await options.assertCurrent();
       }
       const sw: SlotWatch = {
         slotId,
@@ -387,6 +392,7 @@ export async function watchSlot(
     try {
       await startWatch;
     } catch (err) {
+      if (options.assertCurrent) throw err;
       console.warn(
         `[task-watcher] invalid context watch path for ${key}: ${(err as Error).message}`,
       );
@@ -396,8 +402,12 @@ export async function watchSlot(
   }
 }
 
-export async function watchContext(slotId: string, context: AgentContext): Promise<void> {
-  await watchSlot(slotId, { runId: context.runId, contexts: [context] });
+export async function watchContext(
+  slotId: string,
+  context: AgentContext,
+  options: Pick<WatchSlotOptions, 'assertCurrent'> = {},
+): Promise<void> {
+  await watchSlot(slotId, { ...options, runId: context.runId, contexts: [context] });
 }
 
 // ─── Stop watching a slot ───

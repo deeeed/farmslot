@@ -46,6 +46,8 @@ export function buildRunnerObservabilityInstallCommand(
     accountLabel?: string | null;
     /** Explicit path override (tests / rare); expands on the execution host if relative. */
     authSource?: string | null;
+    /** Already verified bundle, independent of the account-state destination. */
+    supportDir?: string;
   } = {},
 ): string {
   const farmslotDir = farmslotDirForSlot(vars);
@@ -62,6 +64,10 @@ export function buildRunnerObservabilityInstallCommand(
   }
   if (options.authSource?.trim()) {
     parts.push(`--auth-source ${shellQuote(options.authSource.trim())}`);
+  }
+  if (options.supportDir) {
+    const installer = path.posix.join(options.supportDir, INSTALLER_RELATIVE_PATH);
+    return `node ${shellExpressionForRemotePath(installer)} ${parts.join(' ')}`;
   }
   if (farmslotDir !== REMOTE_AGENT_DIR) {
     return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;

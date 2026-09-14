@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { ROOT } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
+import { writeNativeFixtureTask } from '../lib/native-task.mjs';
 
 import { rpc, wait } from './native-worker-lifecycle.mjs';
 import { pinnedWorkerTarget } from './native-worker-read.mjs';
@@ -245,12 +246,114 @@ export async function verifyPrepareBeforeRecovery({
 }
 
 /** Requires an existing private idle worker. Stops it using ordinary run controls. */
-export async function runScenario({ runnerAdapter, via, timeoutMs, outDir }) {
+async function verifyDispatchSettlement({ runnerAdapter, slotId, model, timeoutMs, report }) {
+  const fault = process.env.FARMSLOT_NATIVE_SETTLEMENT_FAULT;
+  const runsDir = process.env.FARMSLOT_RUNS_DIR;
+  const statusFile =
+    process.env.FARMSLOT_NATIVE_SETTLEMENT_STATUS_FILE ?? path.join(ROOT, '.farm-status.json');
+  for (const file of [fault, runsDir])
+    assert.ok(file && path.resolve(file).startsWith(privateRoot));
+  assert.ok(
+    path.resolve(statusFile).startsWith(privateRoot) ||
+      path.resolve(statusFile) === path.join(ROOT, '.farm-status.json'),
+  );
+  const pids = execFileSync('lsof', ['-t', '-nP', '-iTCP:18777', '-sTCP:LISTEN'], {
+    encoding: 'utf8',
+  })
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  assert.equal(pids.length, 1);
+  assert.ok(fs.existsSync(`${fault}.${pids[0]}.loaded`));
+  assert.equal(fs.existsSync(fault), false, 'Use a fresh settlement fault path');
+  const slot = rpc('fleet.status').fleet.slots.find((item) => item.slot === slotId);
+  assert.ok(slot && fs.realpathSync(slot.repo).startsWith(privateRoot));
+  assert.equal(slot.currentRunId, null);
+  const taskFile = path.join(
+    ROOT,
+    'projects',
+    slot.project,
+    'tasks/dev',
+    `NATIVE-SETTLE-${Date.now()}`,
+    'TASK.md',
+  );
+  await writeNativeFixtureTask(
+    taskFile,
+    '# Worker: dev\n\n## Checklist\n\n- [ ] Read fixture.txt.\n\nEnd without a terminal signal. Do not modify files or commit.\n',
+    slot.project,
+  );
+  let runId;
+  let releasing;
+  try {
+    fs.writeFileSync(fault, JSON.stringify({ gatewayPid: pids[0], slotId, runsDir, statusFile }), {
+      mode: 0o600,
+    });
+    runId = rpc('run.createNative', {
+      flowType: 'dev',
+      project: slot.project,
+      ticketOrPr: path.basename(path.dirname(taskFile)),
+      taskFile,
+      slotId,
+      allowedSlots: [slotId],
+      runner: runnerAdapter.RUNNER_ID,
+      ...(model ? { model } : {}),
+      mode: 'interactive',
+      skipPrepare: true,
+      safetyTier: 'full-auto',
+    }).run.id;
+    report.runId = runId;
+    await wait(() => fs.existsSync(`${fault}.held`), Boolean, timeoutMs);
+    assert.equal(JSON.parse(fs.readFileSync(`${fault}.held`, 'utf8')).runId, runId);
+    releasing = request('slot.release', { slotId, expectedRunId: runId, keepWork: true });
+    await wait(
+      () => rpc('fleet.status').fleet.slots.find((item) => item.slot === slotId),
+      (item) => item.phase === 'releasing',
+      timeoutMs,
+    );
+    fs.writeFileSync(`${fault}.release`, '', { mode: 0o600 });
+    const result = await releasing;
+    assert.equal(result.error, undefined, result.error);
+    assert.equal(result.value.released, true);
+    const writes = fs.readFileSync(`${fault}.slots`, 'utf8').trim().split('\n').map(JSON.parse);
+    const fenced = writes.findIndex((item) => item.phase === 'releasing');
+    assert.ok(fenced >= 0);
+    assert.equal(
+      writes.slice(fenced + 1).some((item) => item.phase === 'working'),
+      false,
+      'Retired dispatch overwrote the release fence',
+    );
+    const current = rpc('fleet.status').fleet.slots.find((item) => item.slot === slotId);
+    assert.equal(current.currentRunId, null);
+    assert.equal(current.lifecycle, 'ready');
+    report.slotWrites = writes;
+    report.checks.push(
+      'Accepted dispatch held at durable persistence cannot overwrite concurrent slot release',
+    );
+  } finally {
+    fs.writeFileSync(`${fault}.release`, '', { mode: 0o600 });
+    if (releasing) await releasing;
+    if (runId && !['cancelled', 'done', 'failed'].includes(rpc('run.get', { runId }).run.status))
+      rpc('run.cancel', { runId });
+  }
+}
+
+export async function runScenario({ runnerAdapter, slotId, model, via, timeoutMs, outDir }) {
   const report = { runner: runnerAdapter.RUNNER_ID, checks: [], pass: false, error: null };
   const runId = process.env.FARMSLOT_NATIVE_ADMISSION_RUN_ID;
   let ownsCleanup = false;
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
+    if (via === 'dispatch-settlement') {
+      await verifyDispatchSettlement({ runnerAdapter, slotId, model, timeoutMs, report });
+      report.pass = true;
+      return {
+        scenario: SCENARIO_ID,
+        runner: report.runner,
+        pass: true,
+        report,
+        outPath: writeEvidence(report, SCENARIO_ID, report.runner, outDir),
+      };
+    }
     assert.ok(runId, 'Provide FARMSLOT_NATIVE_ADMISSION_RUN_ID for an idle private fixture worker');
     const run = rpc('run.get', { runId }).run;
     const context = run.agentContexts.find((c) => c.nativeSession && !c.nativeSession.releasedAt);

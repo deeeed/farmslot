@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { Methods, type Principal, type Run, type RunDecision } from '@farmslot/protocol';
 
 import { resolveAgentTarget, upsertAgentContext } from '../agents/contexts.js';
+import { rewriteStatusFile } from '../core/state.js';
 import { decisionResolve } from '../methods/decisions.js';
 import { restartNativeWorkerContexts } from '../runners/native/worker-restart.js';
 import {
@@ -176,6 +177,39 @@ test('generic native run and slot targets enforce ownership without blocking nod
     slotId: 'tmux-owner-fixture',
   });
   runs.push(native, tmux);
+  const slotRow = (fields: Record<string, unknown>) =>
+    rewriteStatusFile((current) => ({
+      ...current,
+      slots: [
+        ...(current?.slots ?? []).filter((row) => row.slot !== native.slotId),
+        { slot: native.slotId, ...fields },
+      ],
+    }));
+  t.after(() =>
+    rewriteStatusFile((current) => ({
+      ...current,
+      slots: (current?.slots ?? []).filter((row) => row.slot !== native.slotId),
+    })),
+  );
+  for (const status of ['created', 'slot-finding'] as const) {
+    updateRun(native.id, { status });
+    await slotRow({ current_run_id: tmux.id, handoff_run_id: null });
+    await runWithSessionOriginator(other, () =>
+      assertNativeWorkerRpcAccess(Methods.SLOT_RELEASE, { slotId: native.slotId }),
+    );
+    for (const claim of [
+      { current_run_id: native.id, handoff_run_id: null },
+      { current_run_id: tmux.id, handoff_run_id: native.id },
+    ]) {
+      await slotRow(claim);
+      await assert.rejects(
+        runWithSessionOriginator(other, () =>
+          assertNativeWorkerRpcAccess(Methods.SLOT_RELEASE, { slotId: native.slotId }),
+        ),
+        /another principal/,
+      );
+    }
+  }
   assert.equal(tmux.transport, undefined);
   assert.equal(tmux.nativeOwnerPrincipalId, undefined);
   await assert.rejects(
@@ -319,14 +353,14 @@ test('native worker configuration is copied, persisted and cannot silently chang
       /Invalid native profile reference/,
     );
   }
-  const run = runWithSessionOriginator(owner, () =>
-    createRun({
-      ...params,
-      transport: 'native',
-      nativeProfile,
-    }),
-  );
+  const request = Object.freeze({
+    ...params,
+    transport: 'native' as const,
+    nativeProfile,
+  });
+  const run = runWithSessionOriginator(owner, () => createRun(request));
   runs.push(run);
+  assert.equal(Object.hasOwn(request, 'runner'), false);
   assert.equal(run.metrics.runner, nativeProfile.runner);
   assert.deepEqual(run.nativeProfile, nativeProfile);
   assert.notEqual(run.nativeProfile, nativeProfile);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { Methods } from '@farmslot/protocol';
@@ -41,6 +42,7 @@ export async function runScenario({
   let runId;
   let target;
   let selection;
+  let supportFault;
   const pinned = () => pinnedWorkerTarget(selection.runId, selection.contextId, selection.leaseId);
   try {
     assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
@@ -66,6 +68,35 @@ export async function runScenario({
           accountContextId: profileStatus.profile.accountContextId,
         }
       : undefined;
+    if (via === 'support-bundle') {
+      assert.equal(report.runner, 'codex');
+      assert.equal(
+        nativeProfile,
+        undefined,
+        'Support installer proof uses the ambient Codex LB route',
+      );
+      supportFault = process.env.FARMSLOT_NATIVE_SETTLEMENT_FAULT;
+      assert.ok(
+        supportFault &&
+          path
+            .resolve(supportFault)
+            .startsWith(path.join(ROOT, 'temp/native-validation') + path.sep),
+      );
+      assert.equal(fs.existsSync(supportFault), false);
+      const pids = execFileSync('lsof', ['-t', '-nP', '-iTCP:18777', '-sTCP:LISTEN'], {
+        encoding: 'utf8',
+      })
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+      assert.equal(pids.length, 1);
+      assert.ok(fs.existsSync(`${supportFault}.${pids[0]}.loaded`));
+      fs.writeFileSync(
+        supportFault,
+        JSON.stringify({ gatewayPid: pids[0], mode: 'observe-support' }),
+        { mode: 0o600 },
+      );
+    }
     const token = randomUUID();
     const marker = `native-remote-${randomUUID()}.txt`;
     const taskFile = path.join(
@@ -93,6 +124,7 @@ export async function runScenario({
       allowedSlots: [slotId],
       runner: report.runner,
       ...(model ? { model } : {}),
+      ...(via === 'support-bundle' ? { effort: 'low' } : {}),
       mode: 'interactive',
       skipPrepare: true,
       safetyTier: 'full-auto',
@@ -121,137 +153,176 @@ export async function runScenario({
     target = { sessionId: binding.sessionId, executionNodeId };
     selection = { runId, contextId: context.id, leaseId: binding.leaseId };
     report.sessionId = binding.sessionId;
-    const read = () => rpc('native.session.read', pinned());
-    const first = await wait(
-      read,
-      (snapshot) => {
-        assert.equal(snapshot.session.cwd, slot.repo);
-        assert.equal(snapshot.session.ownerPrincipalId, binding.ownerPrincipalId);
-        assert.ok(
-          snapshot.commands.find((command) => command.commandId === binding.commandId)?.state !==
-            'failed',
-        );
-        return (
-          snapshot.session.state === 'idle' &&
-          snapshot.commands.find((command) => command.commandId === binding.commandId)?.outcome ===
-            'completed'
-        );
-      },
-      timeoutMs,
-    );
-    assert.equal(first.session.profileId, nativeProfile?.profileId);
-    assert.equal(first.session.accountContextId, nativeProfile?.accountContextId);
-    assert.equal(
-      rpc('native.session.workspace.read', { ...pinned(), path: marker }).content.trim(),
-      token,
-    );
-    const remote = onRemote(
-      `const fs=require('node:fs');const root=${JSON.stringify(slot.repo)};console.log(JSON.stringify({marker:fs.readFileSync(root+${JSON.stringify('/' + marker)},'utf8'),checklist:fs.readFileSync(root+${JSON.stringify('/' + context.taskFile.replace(/TASK\.md$/, 'CHECKLIST.md'))},'utf8')}));`,
-    );
-    assert.equal(remote.marker.trim(), token);
-    assert.equal(remote.checklist.match(/\[x\]/gi)?.length, 2);
-    assert.equal(
-      rpc('run.get', { runId }).run.status,
-      'monitoring',
-      'Remote native turn completion falsely completed task',
-    );
-    report.checks.push(
-      'production remote worker dispatch accepts one native task, writes real remote file and CHECKLIST without a tmux context',
-    );
-    const worker = {
-      runId,
-      contextId: context.id,
-      generation: binding.generation,
-      leaseId: binding.leaseId,
-    };
-    const memoryFile = `native-remote-memory-${randomUUID()}.txt`;
-    const memoryCommand = randomUUID();
-    rpc('native.session.send', {
-      ...target,
-      worker,
-      commandId: memoryCommand,
-      text: `Write ${memoryFile} with the exact token from the first task using conversation memory. Do not read old markers or tasks. End the turn without a terminal signal.`,
-    });
-    await wait(
-      read,
-      (snapshot) =>
-        snapshot.session.state === 'idle' &&
-        snapshot.commands.find((command) => command.commandId === memoryCommand)?.outcome ===
-          'completed',
-      timeoutMs,
-    );
-    assert.equal(
-      rpc('native.session.workspace.read', { ...pinned(), path: memoryFile }).content.trim(),
-      token,
-    );
-    if (via === 'cancel-generation-race') {
-      report.race = await verifyRemoteWorkerCancellationRace({
-        runId,
-        context,
-        binding,
-        slotId,
-        timeoutMs,
-        onRemote,
-      });
-      report.checks.push(
-        'delayed remote RESUME replaces the process before CANCEL; gateway reconciles generation-changed and stops the successor without resending commands',
+    if (supportFault) {
+      assert.equal(
+        binding.accountLabel,
+        'ambient',
+        'Support proof must preserve ambient account selection',
       );
-      report.pass = true;
-      const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
-      return { scenario: SCENARIO_ID, runner: report.runner, pass: true, outPath, report };
+      const installers = fs
+        .readFileSync(`${supportFault}.installers`, 'utf8')
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      assert.ok(installers.length > 0, 'No native account installer command observed');
+      assert.ok(
+        installers.every((item) => /^[a-f0-9]{64}$/.test(item.supportHash ?? '')),
+        'Native account installer bypassed verified support bundle',
+      );
+      const hash = installers.at(-1).supportHash;
+      const installed = onRemote(
+        `const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');const support=path.join(os.homedir(),'farmslot-node/support',${JSON.stringify(hash)});console.log(JSON.stringify({manifest:JSON.parse(fs.readFileSync(path.join(support,'manifest.json'),'utf8')).hash,installerSha:crypto.createHash('sha256').update(fs.readFileSync(path.join(support,'scripts/install-runner-observability.mjs'))).digest('hex')}));`,
+      );
+      assert.equal(installed.manifest, hash);
+      assert.equal(
+        installed.installerSha,
+        createHash('sha256')
+          .update(fs.readFileSync(path.join(ROOT, 'scripts/install-runner-observability.mjs')))
+          .digest('hex'),
+      );
+      assert.ok(binding.stateDirectory && !binding.stateDirectory.startsWith(slot.repo + '/'));
+      report.support = { ...installed, commands: installers };
+      report.checks.push(
+        'Remote account installer used this gateway tree support bundle with external state',
+      );
     }
-    rpc('run.pause', { runId });
-    rpc('native.session.close', { ...target, worker });
-    assert.equal(read().session.processStopped, true);
-    const resumed = rpc('run.resume', { runId }).run;
-    binding = resumed.agentContexts.find((candidate) => candidate.id === context.id).nativeSession;
-    assert.equal(binding.sessionId, first.session.id);
-    assert.notEqual(binding.generation, first.session.generation);
-    const restored = await wait(
-      read,
-      (snapshot) =>
-        snapshot.session.state === 'idle' &&
-        snapshot.commands.length === 3 &&
-        snapshot.commands.at(-1).outcome === 'completed',
-      timeoutMs,
-    );
-    assert.equal(restored.session.nativeSessionId, first.session.nativeSessionId);
-    assert.equal(restored.session.profileId, nativeProfile?.profileId);
-    assert.equal(restored.session.accountContextId, nativeProfile?.accountContextId);
-    assert.notEqual(restored.session.processPid, first.session.processPid);
-    assert.throws(
-      () =>
-        rpc('native.session.send', {
-          ...target,
-          worker,
-          commandId: randomUUID(),
-          text: 'Old generation must not receive input.',
-        }),
-      /closed, transferred or stale/,
-    );
-    report.checks.push(
-      'remote leased input preserves memory; stopped-worker Resume reopens the exact conversation with one continuation and rejects stale generation',
-    );
-    if (via === 'retained-handoff' || via === 'retained-handoff-stopped') {
-      report.parentRunId = runId;
-      selection = await verifyRemoteWorkerHandoff({
-        runId,
-        context,
-        binding,
-        slot,
-        token,
-        timeoutMs,
-        markCommand: `node ${remoteRoot}/node/node_modules/@farmslot/agent-runtime/scripts/mark-checklist-step.cjs`,
-        stopped: via === 'retained-handoff-stopped',
-        recordChild(id) {
-          runId = id;
-          report.runId = id;
-          writeEvidence(report, SCENARIO_ID, report.runner, outDir);
+    const read = () => rpc('native.session.read', pinned());
+    if (via !== 'support-bundle') {
+      const first = await wait(
+        read,
+        (snapshot) => {
+          assert.equal(snapshot.session.cwd, slot.repo);
+          assert.equal(snapshot.session.ownerPrincipalId, binding.ownerPrincipalId);
+          assert.ok(
+            snapshot.commands.find((command) => command.commandId === binding.commandId)?.state !==
+              'failed',
+          );
+          return (
+            snapshot.session.state === 'idle' &&
+            snapshot.commands.find((command) => command.commandId === binding.commandId)
+              ?.outcome === 'completed'
+          );
         },
-      });
-      report.checks.push(
-        `${via}: remote successor preserves saved conversation and memory, rotates lease, sends one task and refuses retired-run input`,
+        timeoutMs,
       );
+      assert.equal(first.session.profileId, nativeProfile?.profileId);
+      if (nativeProfile)
+        assert.equal(first.session.accountContextId, nativeProfile.accountContextId);
+      else assert.ok(first.session.accountContextId, 'Ambient node account identity is bound');
+      assert.equal(
+        rpc('native.session.workspace.read', { ...pinned(), path: marker }).content.trim(),
+        token,
+      );
+      const remote = onRemote(
+        `const fs=require('node:fs');const root=${JSON.stringify(slot.repo)};console.log(JSON.stringify({marker:fs.readFileSync(root+${JSON.stringify('/' + marker)},'utf8'),checklist:fs.readFileSync(root+${JSON.stringify('/' + context.taskFile.replace(/TASK\.md$/, 'CHECKLIST.md'))},'utf8')}));`,
+      );
+      assert.equal(remote.marker.trim(), token);
+      assert.equal(remote.checklist.match(/\[x\]/gi)?.length, 2);
+      assert.equal(
+        rpc('run.get', { runId }).run.status,
+        'monitoring',
+        'Remote native turn completion falsely completed task',
+      );
+      report.checks.push(
+        'production remote worker dispatch accepts one native task, writes real remote file and CHECKLIST without a tmux context',
+      );
+      const worker = {
+        runId,
+        contextId: context.id,
+        generation: binding.generation,
+        leaseId: binding.leaseId,
+      };
+      const memoryFile = `native-remote-memory-${randomUUID()}.txt`;
+      const memoryCommand = randomUUID();
+      rpc('native.session.send', {
+        ...target,
+        worker,
+        commandId: memoryCommand,
+        text: `Write ${memoryFile} with the exact token from the first task using conversation memory. Do not read old markers or tasks. End the turn without a terminal signal.`,
+      });
+      await wait(
+        read,
+        (snapshot) =>
+          snapshot.session.state === 'idle' &&
+          snapshot.commands.find((command) => command.commandId === memoryCommand)?.outcome ===
+            'completed',
+        timeoutMs,
+      );
+      assert.equal(
+        rpc('native.session.workspace.read', { ...pinned(), path: memoryFile }).content.trim(),
+        token,
+      );
+      if (via === 'cancel-generation-race') {
+        report.race = await verifyRemoteWorkerCancellationRace({
+          runId,
+          context,
+          binding,
+          slotId,
+          timeoutMs,
+          onRemote,
+        });
+        report.checks.push(
+          'delayed remote RESUME replaces the process before CANCEL; gateway reconciles generation-changed and stops the successor without resending commands',
+        );
+        report.pass = true;
+        const outPath = writeEvidence(report, SCENARIO_ID, report.runner, outDir);
+        return { scenario: SCENARIO_ID, runner: report.runner, pass: true, outPath, report };
+      }
+      rpc('run.pause', { runId });
+      rpc('native.session.close', { ...target, worker });
+      assert.equal(read().session.processStopped, true);
+      const resumed = rpc('run.resume', { runId }).run;
+      binding = resumed.agentContexts.find(
+        (candidate) => candidate.id === context.id,
+      ).nativeSession;
+      assert.equal(binding.sessionId, first.session.id);
+      assert.notEqual(binding.generation, first.session.generation);
+      const restored = await wait(
+        read,
+        (snapshot) =>
+          snapshot.session.state === 'idle' &&
+          snapshot.commands.length === 3 &&
+          snapshot.commands.at(-1).outcome === 'completed',
+        timeoutMs,
+      );
+      assert.equal(restored.session.nativeSessionId, first.session.nativeSessionId);
+      assert.equal(restored.session.profileId, nativeProfile?.profileId);
+      assert.equal(restored.session.accountContextId, first.session.accountContextId);
+      assert.notEqual(restored.session.processPid, first.session.processPid);
+      assert.throws(
+        () =>
+          rpc('native.session.send', {
+            ...target,
+            worker,
+            commandId: randomUUID(),
+            text: 'Old generation must not receive input.',
+          }),
+        /closed, transferred or stale/,
+      );
+      report.checks.push(
+        'remote leased input preserves memory; stopped-worker Resume reopens the exact conversation with one continuation and rejects stale generation',
+      );
+      if (via === 'retained-handoff' || via === 'retained-handoff-stopped') {
+        report.parentRunId = runId;
+        selection = await verifyRemoteWorkerHandoff({
+          runId,
+          context,
+          binding,
+          slot,
+          token,
+          timeoutMs,
+          markCommand: `node ${remoteRoot}/node/node_modules/@farmslot/agent-runtime/scripts/mark-checklist-step.cjs`,
+          stopped: via === 'retained-handoff-stopped',
+          recordChild(id) {
+            runId = id;
+            report.runId = id;
+            writeEvidence(report, SCENARIO_ID, report.runner, outDir);
+          },
+        });
+        report.checks.push(
+          `${via}: remote successor preserves saved conversation and memory, rotates lease, sends one task and refuses retired-run input`,
+        );
+      }
     }
     const cancelled = rpc('run.cancel', {
       runId,

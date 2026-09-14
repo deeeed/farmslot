@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   NativeSessionInfo,
   NativeSessionReadResult,
   NativeWorkerControlTarget,
@@ -87,4 +88,19 @@ export function nativeWorkerViewControl(
     generation: binding.generation,
     leaseId: binding.leaseId,
   };
+}
+
+/** Archived attempts retain their exact target even while the context starts another worker. */
+export function archivedNativeWorkerTargets(
+  contexts: readonly AgentContext[],
+): NativeWorkerViewTarget[] {
+  return contexts.flatMap((context) =>
+    (context.nativeSessionHistory ?? []).map((binding, index) => ({
+      runId: context.runId,
+      contextId: context.id,
+      label: `${context.label} · Attempt ${index + 1}`,
+      binding,
+      readOnly: true,
+    })),
+  );
 }

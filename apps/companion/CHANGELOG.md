@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Continue native conversations from Co-Pilot and worker runs with streamed history, tool details, approvals, questions and turn controls; preserve focused drafts through reconnect and keep the existing terminal option.
+- Continue native conversations from Co-Pilot and worker runs with streamed history, tool and permission details, approvals, custom question answers and turn controls; preserve focused drafts through reconnect and keep the existing terminal option.
 - Choose native runner configurations, resume saved conversations, and expand unavailable-node diagnostics when needed.
 
 - Add persistent PR monitors, review/QA requests, rule attention, device push enrollment and publication-policy controls, with gateway-owned actions and drafts preserved across reconnects.

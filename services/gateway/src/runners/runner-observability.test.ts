@@ -41,6 +41,37 @@ test('remote observability install prefers the prepared immutable node-support b
 
 const farmslotRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
+test('explicit support bundle installs into external native state without a workspace marker', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-worker-support-'));
+  try {
+    const supportDir = path.join(root, 'support');
+    const stateDir = path.join(root, 'external-state');
+    const installer = path.join(supportDir, INSTALLER_RELATIVE_PATH);
+    mkdirSync(path.dirname(installer), { recursive: true });
+    writeFileSync(installer, 'console.log(JSON.stringify(process.argv.slice(2)));');
+    const command = buildRunnerObservabilityInstallCommand(
+      { host: 'remote-fixture-host.local', slotId: 'native-worker-fixture' } as never,
+      'codex',
+      stateDir,
+      '.',
+      { supportDir },
+    );
+    const args = JSON.parse(execFileSync('/bin/bash', ['-c', command], { encoding: 'utf8' }));
+    assert.deepEqual(args, [
+      '--runner',
+      'codex',
+      '--repo',
+      stateDir,
+      '--runtime-dir',
+      '.',
+      '--slot-id',
+      'native-worker-fixture',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function relativeImportClosure(entryPath: string): string[] {
   const pending = [entryPath];
   const visited = new Set<string>();

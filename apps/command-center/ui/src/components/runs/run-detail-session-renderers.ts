@@ -28,6 +28,7 @@ export interface RunSessionRowState {
 
 export interface RunSessionRow {
   nativeHref?: string;
+  nativeHistory?: boolean;
   contextId: string;
   role: AgentContext['role'];
   label: string;
@@ -43,6 +44,7 @@ export function runAgentSessionRows(run: Pick<Run, 'agentContexts' | 'metrics'>)
   return (run.agentContexts ?? []).map((context) => {
     const sessionId = context.runnerSessionId?.trim() ? context.runnerSessionId.trim() : null;
     return {
+      ...(context.nativeSessionHistory?.length ? { nativeHistory: true } : {}),
       ...((context.nativeSession || context.nativeSessionOwner) && context.runId && context.slotId
         ? {
             nativeHref: slotViewHash({
@@ -213,7 +215,7 @@ export function renderRunAgentSessions(
     <section class="agent-sessions" aria-label="Runner sessions" data-testid="run-agent-sessions">
       <div class="agent-sessions-title">Runner sessions</div>
       <div class="agent-sessions-hint">
-        ${rows.some((row) => row.nativeHref)
+        ${rows.some((row) => row.nativeHref || row.nativeHistory)
           ? 'Open a task conversation to view its history and available controls.'
           : "Copy a terminal command to resume this runner's history, or attach its tmux pane."}
       </div>
@@ -251,32 +253,34 @@ export function renderRunAgentSessions(
                     href=${row.nativeHref}
                     >Open conversation</a
                   >`
-                : html`<button
-                      class="agent-session-btn"
-                      data-testid="run-agent-session-reopen-${row.contextId}"
-                      title="Copy the command that resumes this runner session"
-                      ?disabled=${busy}
-                      @click=${() => ctx.onCopy(row, 'reopen')}
-                    >
-                      ${busy
-                        ? 'Loading…'
-                        : state?.copied === 'reopen'
-                          ? 'Copied reopen'
-                          : 'Reopen session'}
-                    </button>
-                    <button
-                      class="agent-session-btn"
-                      data-testid="run-agent-session-attach-${row.contextId}"
-                      title="Copy the tmux attach command for this pane"
-                      ?disabled=${busy}
-                      @click=${() => ctx.onCopy(row, 'attach')}
-                    >
-                      ${busy
-                        ? 'Loading…'
-                        : state?.copied === 'attach'
-                          ? 'Copied attach'
-                          : 'Attach tmux'}
-                    </button>`}
+                : row.nativeHistory
+                  ? nothing
+                  : html`<button
+                        class="agent-session-btn"
+                        data-testid="run-agent-session-reopen-${row.contextId}"
+                        title="Copy the command that resumes this runner session"
+                        ?disabled=${busy}
+                        @click=${() => ctx.onCopy(row, 'reopen')}
+                      >
+                        ${busy
+                          ? 'Loading…'
+                          : state?.copied === 'reopen'
+                            ? 'Copied reopen'
+                            : 'Reopen session'}
+                      </button>
+                      <button
+                        class="agent-session-btn"
+                        data-testid="run-agent-session-attach-${row.contextId}"
+                        title="Copy the tmux attach command for this pane"
+                        ?disabled=${busy}
+                        @click=${() => ctx.onCopy(row, 'attach')}
+                      >
+                        ${busy
+                          ? 'Loading…'
+                          : state?.copied === 'attach'
+                            ? 'Copied attach'
+                            : 'Attach tmux'}
+                      </button>`}
             </span>
             ${state?.command && state.copied
               ? html`<code
@@ -297,6 +301,7 @@ export function renderRunAgentSessions(
           </div>
         `;
       })}
+      <native-worker-history .contexts=${run.agentContexts ?? []}></native-worker-history>
     </section>
   `;
 }

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NativeSessionInfo, NativeSessionReadResult } from '@farmslot/protocol';
+import type { AgentContext, NativeSessionInfo, NativeSessionReadResult } from '@farmslot/protocol';
 
 import {
+  archivedNativeWorkerTargets,
   assertNativeWorkerViewPage,
   nativeWorkerViewControl,
   nativeWorkerViewKey,
@@ -105,4 +106,28 @@ test('draft scope isolates tasks and roles while a process restart preserves the
     nativeWorkerViewKey({ ...target, binding: { ...target.binding, generation: 'resumed' } }),
     nativeWorkerViewKey(target),
   );
+});
+
+test('archived attempt selection stays pinned after the context starts another worker', () => {
+  const context = {
+    id: target.contextId,
+    runId: target.runId,
+    label: 'Worker',
+    nativeSession: { ...target.binding, sessionId: 'successor', leaseId: 'next-lease' },
+    nativeSessionHistory: [target.binding],
+  } as AgentContext;
+  const [history] = archivedNativeWorkerTargets([context]);
+  assert.equal(history.binding.sessionId, 'session');
+  assert.equal(history.readOnly, true);
+  assert.deepEqual(nativeWorkerViewPin(history), {
+    runId: 'run',
+    contextId: 'dev',
+    generation: 'generation',
+    leaseId: 'lease',
+  });
+  assert.equal(nativeWorkerViewControl(history, session), undefined);
+  assert.deepEqual(archivedNativeWorkerTargets([{ ...context, nativeSession: undefined }]), [
+    history,
+  ]);
+  assert.deepEqual(archivedNativeWorkerTargets([{ ...context, nativeSessionHistory: [] }]), []);
 });

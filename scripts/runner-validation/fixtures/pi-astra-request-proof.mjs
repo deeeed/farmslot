@@ -13,11 +13,32 @@ if (config && Number(process.env.FARMSLOT_PI_ASTRA_GATEWAY_PID) === process.pid)
       return 'codex-lb';
     if (url.hostname === 'chatgpt.com' && url.pathname === '/backend-api/codex/responses')
       return 'openai-codex';
+    if (url.hostname === 'api.anthropic.com' && url.pathname === '/v1/messages') return 'anthropic';
     return undefined;
   };
   const observe = (body, transport, provider) => {
     if (!fs.existsSync(config)) return;
     const target = JSON.parse(fs.readFileSync(config, 'utf8'));
+    if (
+      target.gatewayPid === process.pid &&
+      target.provider === 'anthropic' &&
+      provider === 'anthropic'
+    ) {
+      fs.appendFileSync(
+        `${config}.requests`,
+        JSON.stringify({
+          gatewayPid: process.pid,
+          provider,
+          model: body.model,
+          thinking: body.thinking?.type ?? 'omitted',
+          stoppedBeforeTransport: true,
+          tools: body.tools?.length ?? 0,
+          transport,
+        }) + '\n',
+        { mode: 0o600 },
+      );
+      throw new Error('Validation stopped before provider transport');
+    }
     if (target.gatewayPid !== process.pid || body.model !== 'gpt-6-astra') return;
     const proof = {
       gatewayPid: process.pid,

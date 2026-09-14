@@ -654,7 +654,7 @@ export function createRun(
   if (nativeProfile) {
     if (params.runner && normalizeRunner(params.runner) !== nativeProfile.runner)
       throw new Error('Selected native profile belongs to another worker runner');
-    params.runner = nativeProfile.runner;
+    params = { ...params, runner: nativeProfile.runner };
   }
   const originator = currentSessionOriginator();
   const createdByPrincipalId =

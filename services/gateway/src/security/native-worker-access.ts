@@ -7,6 +7,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
+import { readSlotRow } from '../core/state.js';
 import { getAllRuns, getRun } from '../runs/store.js';
 
 import { assertNativeRunOwner } from './native-worker-owner.js';
@@ -32,11 +33,15 @@ function ids(
   );
 }
 
-function holdsNativeSlot(run: Run): boolean {
-  return Boolean(
-    run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)) ||
-    (run.transport === 'native' && !isTerminalRunStatus(run.status) && !isSlotFreedByPark(run)),
-  );
+async function holdsNativeSlot(run: Run): Promise<boolean> {
+  if (run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)))
+    return true;
+  if (run.transport !== 'native' || isTerminalRunStatus(run.status) || isSlotFreedByPark(run))
+    return false;
+  // FIND_SLOT writes the request before its claim. The row, including a handoff
+  // reservation during slot-finding, establishes ownership before worker launch.
+  const slot = await readSlotRow(run.slotId!);
+  return slot?.current_run_id === run.id || slot?.handoff_run_id === run.id;
 }
 
 /** Generic run/slot controls cannot grant a second principal native input ownership. */
@@ -76,7 +81,7 @@ export async function assertNativeWorkerRpcAccess(method: string, value: unknown
       assertNativeRunOwner(run);
       continue;
     }
-    if (!run.slotId || !holdsNativeSlot(run)) continue;
+    if (!run.slotId || !(await holdsNativeSlot(run))) continue;
     if (slotIds.has(run.slotId)) {
       assertNativeRunOwner(run);
       continue;

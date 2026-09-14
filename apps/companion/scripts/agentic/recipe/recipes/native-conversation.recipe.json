@@ -16,7 +16,7 @@
         "test_id": "companion-native-approve",
         "timeout_ms": 30000,
         "intent": "Restore the gateway pending approval on the device.",
-        "next": "capture-pending"
+        "next": "wait-approval-details"
       },
       "capture-pending": {
         "action": "ui.screenshot",
@@ -125,7 +125,7 @@
         "test_id": "companion-native-approve",
         "timeout_ms": 30000,
         "intent": "Replay the same pending approval after a fresh mobile connection.",
-        "next": "approve"
+        "next": "verify-replayed-details"
       },
       "read-only": {
         "action": "ui.wait_for",
@@ -139,6 +139,25 @@
         "path": "native-history.png",
         "intent": "Record the closed conversation history and disabled composer.",
         "next": "done"
+      },
+      "wait-approval-details": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approval-details",
+        "timeout_ms": 30000,
+        "intent": "Show the complete structured action before approval.",
+        "next": "verify-approval-details"
+      },
+      "verify-approval-details": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
+        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "next": "capture-pending"
+      },
+      "verify-replayed-details": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
+        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "next": "approve"
       }
     }
   }
