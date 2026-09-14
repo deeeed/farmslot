@@ -66,8 +66,8 @@ import {
   updatePRTitle,
 } from './pr-publication.js';
 import {
-  assertPrBodyMatchesTemplate,
-  assertRunPrBodyMatchesTemplate,
+  conformPrBodyToTemplate,
+  conformRunPrBodyToTemplate,
   readGitHubPrTemplate,
 } from './pr-template.js';
 import {
@@ -354,6 +354,48 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   }
 }
 
+/**
+ * The draft PR body a package carries: the rendered body, completed with any
+ * repository-template sections the author left out. The PR description's
+ * shape never fails a run; what was added is logged. Preparation and the
+ * approval-time freshness check both build the body this way, so an appended
+ * section is not mistaken for a changed input.
+ */
+export async function buildPreparedDraftPrBody(
+  run: Run,
+  report: Awaited<ReturnType<typeof readWorkerReport>>,
+  artifacts: ArtifactRef[],
+  baseBranch: string,
+  options: { tolerateMissingSlot?: boolean } = {},
+): Promise<string> {
+  const draftBody = await buildDraftPrBody(run, report, artifacts);
+  // A detached completion (a historical package re-checked after its slot was
+  // released) has no slot to read the template from; its body stands as-is.
+  if (options.tolerateMissingSlot && !run.slotId) return draftBody;
+  try {
+    const conformed = await conformRunPrBodyToTemplate(run, draftBody, baseBranch);
+    if (conformed.added.length > 0 || conformed.outOfOrder.length > 0) {
+      console.warn(
+        `[run-completion] run ${run.id.slice(0, 8)} — PR body completed from the repository template` +
+          (conformed.added.length > 0 ? `; added ${conformed.added.join(', ')}` : '') +
+          (conformed.outOfOrder.length > 0
+            ? `; out of order ${conformed.outOfOrder.join(', ')}`
+            : ''),
+      );
+    }
+    return conformed.body;
+  } catch (error) {
+    if (
+      options.tolerateMissingSlot &&
+      error instanceof SlotConfigError &&
+      error.code === 'SLOT_NOT_FOUND'
+    ) {
+      return draftBody;
+    }
+    throw error;
+  }
+}
+
 export async function assertReadyGatePackageInputsCurrent(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
@@ -372,7 +414,22 @@ export async function assertReadyGatePackageInputsCurrent(
   const mismatches: string[] = [];
 
   if (buildDraftPrTitle(current) !== preparedPackage.draftTitle) mismatches.push('draft title');
-  if ((await buildDraftPrBody(current, report, artifacts)) !== preparedPackage.draftBody) {
+  // Same body the package was prepared with; a run without project config
+  // (fixtures, imported runs) keeps the default branch, as preparation does.
+  const baseBranch = await loadProjectVars(current.project)
+    .then((projectVars) => getProjectField(projectVars.projectJson, 'default_branch'))
+    .catch((error: Error) => {
+      if (!/not found/i.test(error.message)) throw error;
+      return null;
+    });
+  const currentDraftBody = await buildPreparedDraftPrBody(
+    current,
+    report,
+    artifacts,
+    baseBranch || DEFAULT_BRANCH,
+    { tolerateMissingSlot: Boolean(preparedPackage.headSha) },
+  );
+  if (currentDraftBody !== preparedPackage.draftBody) {
     mismatches.push('draft body');
   }
   if (
@@ -653,16 +710,9 @@ export async function prepareCompletionPackage(
   const draftBodyArtifacts = evidenceManifest.length
     ? evidenceManifest
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
-  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
-  try {
-    await assertRunPrBodyMatchesTemplate(run, draftBody, baseBranch);
-  } catch (error) {
-    if (
-      !(options?.headSha && error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND')
-    ) {
-      throw error;
-    }
-  }
+  const draftBody = await buildPreparedDraftPrBody(run, report, draftBodyArtifacts, baseBranch, {
+    tolerateMissingSlot: Boolean(options?.headSha),
+  });
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
     id: packageId,
     artifactPath,
@@ -1098,10 +1148,21 @@ export async function publishCompletionPackage(
     flags.ciRepo = ciRepo;
     if (!ciRepo) throw new Error('no ci.repo configured');
     const baseBranch = (pv && getProjectField(pv.projectJson, 'default_branch')) || DEFAULT_BRANCH;
-    // Package preparation catches bad bodies early from the slot; publication
-    // rechecks GitHub's current base template before any PR mutation.
+    // The approved body was completed against the slot's template at
+    // preparation; GitHub's current base template is re-read here only to
+    // report drift, never to block a publication the operator approved.
     const prTemplate = await readGitHubPrTemplate(ciRepo, baseBranch);
-    if (prTemplate) assertPrBodyMatchesTemplate(approvedPackage.draftBody, prTemplate);
+    const reportTemplateDrift = (body: string, stage: string) => {
+      if (!prTemplate) return;
+      const drift = conformPrBodyToTemplate(body, prTemplate);
+      if (drift.added.length === 0 && drift.outOfOrder.length === 0) return;
+      console.warn(
+        `[run-completion] run ${run.id.slice(0, 8)} — ${stage}: PR body differs from ${prTemplate.path}` +
+          (drift.added.length > 0 ? `; missing ${drift.added.join(', ')}` : '') +
+          (drift.outOfOrder.length > 0 ? `; out of order ${drift.outOfOrder.join(', ')}` : ''),
+      );
+    };
+    reportTemplateDrift(approvedPackage.draftBody, 'approved package');
 
     emit('substep', { name: 'resolve-pr-number', detail: `Resolving PR number against ${ciRepo}` });
     let prNumber = run.prNumber ?? (await findPRNumber(run, ciRepo, { noRetry: true }));
@@ -1175,9 +1236,7 @@ export async function publishCompletionPackage(
       failOnError: true,
       baseBody: approvedPackage.draftBody,
       evidenceManifest,
-      validateBody: prTemplate
-        ? (body) => assertPrBodyMatchesTemplate(body, prTemplate)
-        : undefined,
+      validateBody: prTemplate ? (body) => reportTemplateDrift(body, 'published body') : undefined,
     });
     flags.bodyPostProcessed = true;
 

@@ -20,12 +20,25 @@ export interface RepositoryPrTemplate {
   body: string;
 }
 
-export function levelTwoHeadings(markdown: string): string[] {
-  const headings: string[] = [];
+export interface LevelTwoHeadingLine {
+  heading: string;
+  /** Zero-based line index in the markdown split on \r?\n. */
+  line: number;
+}
+
+/**
+ * Level-two headings with their line positions, ignoring headings inside
+ * fenced blocks and HTML comments. Every reader of template structure
+ * (validation, section extraction) goes through this one parser.
+ */
+export function levelTwoHeadingLines(markdown: string): LevelTwoHeadingLine[] {
+  const headings: LevelTwoHeadingLine[] = [];
   let fence: { character: string; length: number } | null = null;
   let inHtmlComment = false;
 
-  for (const rawLine of markdown.split(/\r?\n/)) {
+  const rawLines = markdown.split(/\r?\n/);
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const rawLine = rawLines[index];
     let line = rawLine;
     if (inHtmlComment) {
       const close = line.indexOf('-->');
@@ -56,10 +69,14 @@ export function levelTwoHeadings(markdown: string): string[] {
       continue;
     }
     if (fence) continue;
-    if (/^\s{0,3}##(?!#)\s+\S/.test(line)) headings.push(line.trim());
+    if (/^\s{0,3}##(?!#)\s+\S/.test(line)) headings.push({ heading: line.trim(), line: index });
   }
 
   return headings;
+}
+
+export function levelTwoHeadings(markdown: string): string[] {
+  return levelTwoHeadingLines(markdown).map((entry) => entry.heading);
 }
 
 export function assertPrBodyMatchesTemplate(body: string, template: RepositoryPrTemplate): void {
@@ -91,6 +108,68 @@ export function assertPrBodyMatchesTemplate(body: string, template: RepositoryPr
     `PR body does not match ${template.path}: ${details.join('; ')}. ` +
       'Fix artifacts/pr-description.md, then refresh and re-review the publication package.',
   );
+}
+
+export interface ConformedPrBody {
+  body: string;
+  /** Template sections the body lacked; appended from the template, in template order. */
+  added: string[];
+  /** Template sections present but not in template order; left where the author put them. */
+  outOfOrder: string[];
+}
+
+/**
+ * The template's own text for one level-two section, heading included: from
+ * the heading line to the line before the next real heading, so a fenced or
+ * commented `##` inside the boilerplate stays part of the section.
+ */
+function templateSection(template: string, heading: string): string {
+  const lines = template.split(/\r?\n/);
+  const headings = levelTwoHeadingLines(template);
+  const position = headings.findIndex((entry) => entry.heading === heading);
+  if (position < 0) return `${heading}\n`;
+  const start = headings[position].line;
+  const end = headings[position + 1]?.line ?? lines.length;
+  return `${lines.slice(start, end).join('\n').trimEnd()}\n`;
+}
+
+/**
+ * Make `body` carry every section the repository template requires. A missing
+ * section is appended from the template itself (its heading and boilerplate),
+ * so the PR is created and reviewers see what the author left out, instead of
+ * the run failing on prose formatting. Order problems are reported, not fixed.
+ */
+export function conformPrBodyToTemplate(
+  body: string,
+  template: RepositoryPrTemplate,
+): ConformedPrBody {
+  const required = levelTwoHeadings(template.body);
+  const actual = levelTwoHeadings(body);
+  let cursor = 0;
+  const added: string[] = [];
+  const outOfOrder: string[] = [];
+  for (const heading of required) {
+    const next = actual.indexOf(heading, cursor);
+    if (next >= 0) cursor = next + 1;
+    else if (actual.includes(heading)) outOfOrder.push(heading);
+    else added.push(heading);
+  }
+  if (added.length === 0) return { body, added, outOfOrder };
+  const sections = added.map((heading) => templateSection(template.body, heading));
+  return {
+    body: `${body.trimEnd()}\n\n${sections.join('\n')}`,
+    added,
+    outOfOrder,
+  };
+}
+
+export async function conformRunPrBodyToTemplate(
+  run: Run,
+  body: string,
+  baseBranch?: string,
+): Promise<ConformedPrBody> {
+  const template = await readRepositoryPrTemplate(run, baseBranch);
+  return template ? conformPrBodyToTemplate(body, template) : { body, added: [], outOfOrder: [] };
 }
 
 export async function readRepositoryPrTemplate(
@@ -130,15 +209,6 @@ export async function readRepositoryPrTemplate(
     path: result.stdout.slice(0, newline).trim(),
     body: result.stdout.slice(newline + 1),
   };
-}
-
-export async function assertRunPrBodyMatchesTemplate(
-  run: Run,
-  body: string,
-  baseBranch?: string,
-): Promise<void> {
-  const template = await readRepositoryPrTemplate(run, baseBranch);
-  if (template) assertPrBodyMatchesTemplate(body, template);
 }
 
 export async function readGitHubPrTemplate(
