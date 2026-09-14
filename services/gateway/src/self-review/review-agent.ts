@@ -34,6 +34,7 @@ import {
   type TmuxWindowRef,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import {
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
@@ -1035,6 +1036,7 @@ export async function runReviewAgent(
     // replaces the idle process while preserving its retained session.
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
+    await ensureNodeSupportBundle(vars, runtimeDir);
     const coldLaunchCommand = () =>
       buildLaunchCommand(vars, runner, model, taskPrompt, {
         taskFile: taskMdPath,

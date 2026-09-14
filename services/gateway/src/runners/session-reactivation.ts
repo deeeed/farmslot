@@ -12,6 +12,7 @@ import {
   TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import {
   buildLaunchCommand,
@@ -237,6 +238,7 @@ async function relaunchRunnerWithArgvPrompt(
 
   const launchedAt = Date.now();
   const deadline = launchedAt + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
+  await ensureNodeSupportBundle(options.vars, options.runtimeDir ?? '.agent');
   const launchCommand = buildLaunchCommand(
     options.vars,
     runner,
@@ -426,6 +428,7 @@ async function reactivateRunnerSessionWithPrompt(
         reason: `Retained ${runner} prompt acceptance baseline is unavailable`,
       };
     }
+    await ensureNodeSupportBundle(options.vars, runtimeDir);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runner,

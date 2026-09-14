@@ -38,6 +38,7 @@ import {
 } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { runnerActivityIsBusy } from '../runners/observability-files.js';
 import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
@@ -348,6 +349,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
   const runtimeDir = await resolveProjectRuntimeDir(run.project);
   const taskDir = await resolveSlotTaskDir(runId, run.project);
+  await ensureNodeSupportBundle(vars, runtimeDir);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,

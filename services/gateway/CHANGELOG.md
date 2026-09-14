@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Every runner launch on a remote slot (dispatch, self-review, inline CI fix, retained-session resume and recovery) first syncs the slot's node support bundle with the gateway's tree; prepare is no longer the only writer, so a gateway-side change to `scripts/` (such as the runner installer) can no longer strand a previously prepared slot on a bundle that cannot launch its runner.
+
 - A chained pr-complete that blocks because the slot's live retained worker would not accept the handoff no longer tears that worker down on the way out; it only drops its reservation and leaves the slot for the operator. The inline CI fix also keeps waiting while the runner hook still reports the worker busy after a gateway-restart recovery, instead of declaring the turn inactive and chaining a conflicting follow-up.
 
 - Grok Build launches seed the checkout into `~/.grok/trusted_folders.toml` on the slot host before the TUI starts, so a fresh slot no longer stalls on the "Do you trust the contents of this directory?" prompt (the launch used to fail after 120s with the prompt unanswered).

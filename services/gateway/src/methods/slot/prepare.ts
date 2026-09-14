@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { open as fsOpen, realpath, stat as fsStat } from 'node:fs/promises';
+import { open as fsOpen, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
@@ -28,19 +28,11 @@ import {
   type RawProjectJson,
   slotFileExists,
   slotReadFile,
-  slotWriteFile,
-  slotWriteFiles,
   updateSlotStatus,
   withMachineEnv,
 } from '../../core/index.js';
-import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { collectSupportFiles, supportHash } from '../../node-support/files.js';
-import { resolveNodeSupportPaths } from '../../node-support/paths.js';
-import {
-  buildNodeSupportPublishCommand,
-  buildNodeSupportVerifyCommand,
-} from '../../node-support/publish-command.js';
+import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
   assertNoOperatorCollision,
   assertNoSiblingCollision,
@@ -56,10 +48,7 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
-import {
-  NODE_SUPPORT_HASH_FILENAME,
-  RUNNER_OBSERVABILITY_SUPPORT_PATHS,
-} from '../../runners/runner-observability.js';
+import {} from '../../runners/runner-observability.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -301,183 +290,14 @@ async function slotPrepareInner(
 
   let hookSupportDir: string | undefined;
   let hookSupportChecked = false;
-  const hookSupportManifestPath = () => path.posix.join(hookSupportDir!, 'manifest.json');
-  const pathWithin = (rootPath: string, candidatePath: string): boolean => {
-    const relative = path.relative(rootPath, candidatePath);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-  };
 
+  // The bundle sync lives in node-support/ensure.ts so every runner launch path
+  // can run it, not only prepare; here it also feeds remapHookSupport below.
   const materializeHookSupport = async () => {
     if (!projectVars || hookSupportChecked) return;
     hookSupportChecked = true;
-    const { paths: hookSupportPaths } = resolveNodeSupportPaths(
-      vars.projectName,
-      projectJson,
-      farmslotRoot,
-    );
-    const supportPaths = [...hookSupportPaths];
-    for (const requiredPath of RUNNER_OBSERVABILITY_SUPPORT_PATHS) {
-      if (
-        !supportPaths.some(
-          (supportPath) =>
-            supportPath === requiredPath || requiredPath.startsWith(`${supportPath}/`),
-        )
-      ) {
-        supportPaths.push(requiredPath);
-      }
-    }
-    supportPaths.sort();
-    if (slotIsLocal) {
-      hookSupportDir = farmslotRoot;
-      step('support', 'Using local node support source');
-      return;
-    }
-    const farmslotRootRealPath = await realpath(farmslotRoot);
-    const files = (
-      await Promise.all(
-        supportPaths.map(async (supportPath) => {
-          const sourcePath = path.join(farmslotRoot, supportPath);
-          const sourceRealPath = await realpath(sourcePath);
-          if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
-            throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
-          }
-          return collectSupportFiles(sourcePath, supportPath);
-        }),
-      )
-    ).flat();
-    const manifest = {
-      version: 1,
-      project: vars.projectName,
-      hash: supportHash(files),
-      paths: supportPaths,
-      fileCount: files.length,
-      files: files.map((file) => ({
-        path: file.relativePath,
-        sha256: file.sha256,
-        mode: file.mode.toString(8).padStart(3, '0'),
-        size: file.size,
-      })),
-    };
-
-    hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
-    const persistNodeSupportSelection = async () => {
-      await slotWriteFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
-        {
-          path: NODE_SUPPORT_HASH_FILENAME,
-          content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
-          mode: 0o644,
-        },
-      ]);
-    };
-    const verifyHookSupport = async () => {
-      const verifyResult = await execOnSlot(
-        vars,
-        buildNodeSupportVerifyCommand({
-          manifestPath: hookSupportManifestPath(),
-          supportDir: hookSupportDir!,
-          files,
-        }),
-      );
-      return verifyResult.exitCode === 0;
-    };
-    if (await slotFileExists(vars, hookSupportManifestPath())) {
-      const current = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
-        hash?: string;
-      };
-      if (current.hash === manifest.hash) {
-        if (!(await verifyHookSupport())) {
-          throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
-        }
-        await persistNodeSupportSelection();
-        step('support', `Node support bundle current (${files.length} files)`);
-        return;
-      }
-    }
-
-    const incomingResult = await execOnSlot(
-      vars,
-      [
-        `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.incoming')}`,
-        `mktemp -d ${shellExpressionForRemotePath(
-          path.posix.join('~/farmslot-node/support/.incoming', `${manifest.hash}.XXXXXX`),
-        )}`,
-      ].join(' && '),
-    );
-    if (incomingResult.exitCode !== 0) {
-      throw new Error(`Node support temp dir creation failed: ${incomingResult.stderr}`);
-    }
-    const incomingDir = incomingResult.stdout.trim().split(/\r?\n/).at(-1);
-    if (!incomingDir) throw new Error('Node support temp dir creation produced no path');
-
-    // Materialize the whole bundle in one RPC (parent dirs + modes included)
-    // rather than a mkdir/write/chmod round-trip per file. A throw here — before
-    // the verify/publish branches, which already clean up — would otherwise
-    // orphan the mktemp'd incoming dir, so cover the upload + manifest write.
-    try {
-      await slotWriteFiles(
-        vars,
-        incomingDir,
-        files.map((file) => ({
-          path: file.relativePath,
-          content: file.contentBase64,
-          mode: file.mode,
-        })),
-      );
-      await slotWriteFile(
-        vars,
-        path.posix.join(incomingDir, 'manifest.json'),
-        `${JSON.stringify(manifest, null, 2)}\n`,
-      );
-    } catch (error) {
-      // execOnSlot reports failure via exitCode rather than throwing, so this
-      // best-effort cleanup won't mask the original error before we rethrow it.
-      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
-      throw error;
-    }
-    const incomingVerifyResult = await execOnSlot(
-      vars,
-      buildNodeSupportVerifyCommand({
-        manifestPath: path.posix.join(incomingDir, 'manifest.json'),
-        supportDir: incomingDir,
-        files,
-      }),
-    );
-    if (incomingVerifyResult.exitCode !== 0) {
-      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
-      throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
-    }
-    const publishResult = await execOnSlot(
-      vars,
-      buildNodeSupportPublishCommand({
-        incomingDir,
-        manifestPath: hookSupportManifestPath(),
-        supportDir: hookSupportDir,
-        supportHash: manifest.hash,
-      }),
-    );
-    if (publishResult.exitCode !== 0) {
-      const cleanupResult = await execOnSlot(
-        vars,
-        `rm -rf ${shellExpressionForRemotePath(incomingDir)}`,
-      );
-      const cleanupDetail =
-        cleanupResult.exitCode === 0 ? '' : `; cleanup failed: ${cleanupResult.stderr}`;
-      throw new Error(`Node support publish failed: ${publishResult.stderr}${cleanupDetail}`);
-    }
-    const published = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
-      hash?: string;
-    };
-    if (published.hash !== manifest.hash) {
-      throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
-    }
-    if (!(await verifyHookSupport())) {
-      throw new Error(`Node support publish verification failed for ${manifest.hash}`);
-    }
-    await persistNodeSupportSelection();
-    step(
-      'support',
-      `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`,
-    );
+    const state = await ensureNodeSupportBundle(vars, runtimeDir, { step, projectVars });
+    hookSupportDir = state?.supportDir;
   };
 
   const remapHookSupport = (command: string): string => {
