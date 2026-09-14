@@ -372,12 +372,7 @@ export async function assertReadyGatePackageInputsCurrent(
   const mismatches: string[] = [];
 
   if (buildDraftPrTitle(current) !== preparedPackage.draftTitle) mismatches.push('draft title');
-  // Re-render with the same base branch the package used, so a rendered body
-  // compares equal when nothing changed.
-  const baseBranch = await resolveRunBaseBranch(current);
-  if (
-    (await buildDraftPrBody(current, report, artifacts, baseBranch)) !== preparedPackage.draftBody
-  ) {
+  if ((await buildDraftPrBody(current, report, artifacts)) !== preparedPackage.draftBody) {
     mismatches.push('draft body');
   }
   if (
