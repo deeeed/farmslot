@@ -549,3 +549,31 @@ export function currentRunCiStatus(
         : liveStatus.lastFixCommitSha,
   };
 }
+
+/**
+ * `run.list` leaves large decision payload values out and names them in
+ * `payloadTrimmed`; the run page needs those (review markdown, PR package,
+ * input snapshot) and gets them from its direct `run.get` copy.
+ */
+export function runHasTrimmedDecisions(run: Pick<Run, 'decisions'>): boolean {
+  return (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0);
+}
+
+/**
+ * The shared (list) run drives status and steps; each trimmed decision takes
+ * its payload from the direct copy of the same decision when one is present.
+ */
+export function mergeTrimmedDecisions(shared: Run, direct: Run | null): Run {
+  if (!direct || direct.id !== shared.id || !runHasTrimmedDecisions(shared)) return shared;
+  const directById = new Map(direct.decisions.map((decision) => [decision.id, decision]));
+  return {
+    ...shared,
+    decisions: shared.decisions.map((decision) => {
+      if (!decision.payloadTrimmed?.length) return decision;
+      const full = directById.get(decision.id);
+      if (!full?.payload) return decision;
+      const { payloadTrimmed: _trimmed, ...rest } = decision;
+      return { ...rest, payload: full.payload };
+    }),
+  };
+}

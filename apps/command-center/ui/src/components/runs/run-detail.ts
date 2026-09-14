@@ -68,11 +68,13 @@ import {
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
+  mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runFamilyPrStatus,
+  runHasTrimmedDecisions,
   shouldAcceptTaskProgressUpdate,
   shouldShowRunCiStatus,
 } from './run-detail-model.js';
@@ -246,7 +248,10 @@ export class RunDetail extends RunDetailState {
     this._connectionStale = s.connection !== 'connected';
     if (wasHydrating && !this._hydrating) this._missingRunFetchAttempted = false;
     const sharedRun = s.runs.find((r) => r.id === this.runId) ?? null;
-    if (sharedRun) {
+    // A list row with trimmed decision payloads keeps its direct copy: the gate
+    // and review renderers need the full payload run.get carries.
+    const sharedTrimmed = sharedRun ? runHasTrimmedDecisions(sharedRun) : false;
+    if (sharedRun && !sharedTrimmed) {
       if (
         this._directRun ||
         this._directRunRefreshing ||
@@ -260,7 +265,12 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshFailed = false;
       this._directRunUnavailable = false;
     }
-    this.run = sharedRun ?? (this._directRun?.id === this.runId ? this._directRun : null);
+    const directRun = this._directRun?.id === this.runId ? this._directRun : null;
+    this.run = sharedRun
+      ? sharedTrimmed
+        ? mergeTrimmedDecisions(sharedRun, directRun)
+        : sharedRun
+      : directRun;
     // Reset transient nudge-decision-card state when the bound run changes or when the
     // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
     // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the
@@ -311,6 +321,18 @@ export class RunDetail extends RunDetailState {
       void this.fetchRun(this.runId);
     }
     if (wasHydrating && !this._hydrating && !sharedRun && this._directRun?.id === this.runId) {
+      void this.fetchRun(this.runId);
+    }
+    // The list row's payloads are trimmed: fetch the full run once, and again
+    // whenever the row moved past the copy we hold.
+    if (
+      sharedRun &&
+      sharedTrimmed &&
+      this.runId &&
+      !this._directRunRefreshing &&
+      !this._directRunRefreshFailed &&
+      (!directRun || directRun.updatedAt < sharedRun.updatedAt)
+    ) {
       void this.fetchRun(this.runId);
     }
     // Fetch initial task progress when entering monitoring (or on mount if already monitoring)

@@ -25,12 +25,14 @@ import {
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
+  mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runEvidenceSummary,
   runFamilyPrStatus,
+  runHasTrimmedDecisions,
   shouldAcceptTaskProgressUpdate,
   shouldShowRunCiStatus,
 } from './run-detail-model.js';
@@ -543,4 +545,47 @@ test('interactive dev model exposes active state and stable action ordering', ()
       'abort',
     ],
   );
+});
+
+test('a list row with trimmed decision payloads takes them from the direct run copy', () => {
+  const decision = (id: string, payload: Record<string, unknown>, payloadTrimmed?: string[]) =>
+    ({
+      id,
+      type: 'engine_review_posting',
+      title: id,
+      description: '',
+      actions: [],
+      createdAt: '2026-09-14T00:00:00.000Z',
+      payload,
+      ...(payloadTrimmed ? { payloadTrimmed } : {}),
+    }) as unknown as Run['decisions'][number];
+  const shared = {
+    id: 'r1',
+    status: 'blocked',
+    updatedAt: '2026-09-14T10:00:00.000Z',
+    decisions: [
+      decision('d1', { kind: 'review', recommendation: 'COMMENT' }, ['reviewMd']),
+      decision('d2', { kind: 'ready' }),
+    ],
+  } as unknown as Run;
+  const direct = {
+    ...shared,
+    decisions: [
+      decision('d1', { kind: 'review', recommendation: 'COMMENT', reviewMd: '# full' }),
+      decision('d2', { kind: 'ready' }),
+    ],
+  } as unknown as Run;
+  assert.equal(runHasTrimmedDecisions(shared), true);
+  assert.equal(runHasTrimmedDecisions(direct), false);
+  const merged = mergeTrimmedDecisions(shared, direct);
+  assert.equal(
+    (merged.decisions[0].payload as unknown as Record<string, unknown>).reviewMd,
+    '# full',
+  );
+  assert.equal(merged.decisions[0].payloadTrimmed, undefined);
+  assert.equal(merged.decisions[1], shared.decisions[1], 'untrimmed decisions stay the list copy');
+  assert.equal(merged.status, 'blocked', 'status and steps come from the list row');
+  // No direct copy (or a different run) leaves the row as-is.
+  assert.equal(mergeTrimmedDecisions(shared, null), shared);
+  assert.equal(mergeTrimmedDecisions(shared, { ...direct, id: 'other' } as Run), shared);
 });
