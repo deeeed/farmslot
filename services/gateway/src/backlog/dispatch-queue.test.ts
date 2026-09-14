@@ -192,6 +192,53 @@ test('addItem preserves interactive dev policy fields for auto-dispatch', () => 
   }
 });
 
+test('native queue admission binds profile ownership and preserves transport on disk', async () => {
+  const oldOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'native-queue-owner';
+  let id: string | undefined;
+  try {
+    const params = {
+      flowType: 'dev' as const,
+      project: 'farmslot-farm',
+      ticketOrPr: 'NATIVE-QUEUE-1',
+      transport: 'native' as const,
+      skipPrepare: true,
+      nativeProfile: {
+        executionNodeId: 'local',
+        runner: 'claude',
+        profileId: 'work',
+        accountContextId: '00000000-0000-4000-8000-000000000001',
+      },
+    };
+    assert.throws(
+      () => addItem(params, { kind: 'system' }),
+      /own the configured native runner profile/,
+    );
+    assert.throws(
+      () => addItem(params, { kind: 'principal', principalId: 'other' }),
+      /own the configured native runner profile/,
+    );
+    const item = addItem(params, { kind: 'principal', principalId: 'native-queue-owner' });
+    id = item.id;
+    await persistQueueNow();
+    await loadQueue();
+    const saved = listItems().find((entry) => entry.id === id)!;
+    assert.equal(saved.transport, 'native');
+    assert.equal(saved.skipPrepare, true);
+    assert.deepEqual(saved.nativeProfile, params.nativeProfile);
+    assert.equal(saved.runner, params.nativeProfile.runner);
+    assert.equal(JSON.stringify(saved).includes('native-queue-owner'), false);
+    assert.deepEqual(getQueueSnapshot().find((entry) => entry.id === id)?.originator, {
+      kind: 'principal',
+      principalId: 'native-queue-owner',
+    });
+  } finally {
+    if (id) removeItem(id);
+    if (oldOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = oldOwner;
+  }
+});
+
 test('addItem carries waitPolicy through to the run the queue item creates', async () => {
   const item = addItem(
     {

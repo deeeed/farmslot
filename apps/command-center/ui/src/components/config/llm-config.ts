@@ -218,12 +218,15 @@ export class LLMConfig extends LitElement {
       this._config = configRes;
       this._tiers = tiersRes.tiers;
 
-      const knownProviders = ['openai-codex', 'openai', 'anthropic', 'google'];
+      const knownProviders = ['codex-lb', 'openai-codex', 'openai', 'anthropic', 'google'];
       this._providers = knownProviders.map((name) => {
-        const storedProfiles = authRes.profiles.filter((p) => p.provider === name && p.hasKey);
+        const storedProfiles =
+          name === 'codex-lb'
+            ? []
+            : authRes.profiles.filter((p) => p.provider === name && p.hasKey);
         const hasProfile = storedProfiles.length > 0;
         const hasEnv = authRes.envProviders.includes(name);
-        const hasClaw = authRes.openclawProviders.includes(name);
+        const hasClaw = name !== 'codex-lb' && authRes.openclawProviders.includes(name);
         // Resolution priority mirrors gateway resolveAuth: store > env > openclaw.
         // Within store, prefer OAuth (richer metadata, supports refresh) and the
         // latest expiry; fall back to the first non-oauth profile if no oauth exists.
@@ -240,7 +243,11 @@ export class LLMConfig extends LitElement {
         return {
           name,
           label:
-            name === 'openai-codex' ? 'OpenAI Codex' : name.charAt(0).toUpperCase() + name.slice(1),
+            name === 'codex-lb'
+              ? 'Codex load balancer'
+              : name === 'openai-codex'
+                ? 'OpenAI Codex'
+                : name.charAt(0).toUpperCase() + name.slice(1),
           hasKey: hasProfile || hasEnv || hasClaw,
           // Match gateway resolveAuth() precedence (auth-resolve.ts):
           // farmslot store → openclaw → env → none. The previous UI ordering
@@ -606,23 +613,28 @@ export class LLMConfig extends LitElement {
               </div>
             `
           : nothing}
-        <div class="key-row">
-          <input
-            class="key-input"
-            type="password"
-            placeholder="sk-... or API key"
-            .value=${this._keyInput[p.name] ?? ''}
-            @input=${(e: Event) => {
-              this._keyInput = {
-                ...this._keyInput,
-                [p.name]: (e.target as HTMLInputElement).value,
-              };
-            }}
-          />
-          <button @click=${() => this._addKey(p.name)} ?disabled=${!this._keyInput[p.name]}>
-            Save
-          </button>
-        </div>
+        ${p.name === 'codex-lb'
+          ? html`<p class="provider-status">
+              Uses CODEX_LB_API_KEY from the gateway environment and the local load balancer on port
+              2455.
+            </p>`
+          : html`<div class="key-row">
+              <input
+                class="key-input"
+                type="password"
+                placeholder="sk-... or API key"
+                .value=${this._keyInput[p.name] ?? ''}
+                @input=${(e: Event) => {
+                  this._keyInput = {
+                    ...this._keyInput,
+                    [p.name]: (e.target as HTMLInputElement).value,
+                  };
+                }}
+              />
+              <button @click=${() => this._addKey(p.name)} ?disabled=${!this._keyInput[p.name]}>
+                Save
+              </button>
+            </div>`}
         <div class="btn-row">
           ${!isActive
             ? html`<button class="primary" @click=${() => this._setProvider(p.name)}>

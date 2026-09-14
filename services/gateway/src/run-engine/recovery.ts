@@ -479,7 +479,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         await deps.reconcileRunAgentRuntime(run);
       } catch (err) {
         console.warn(
-          `[run-engine] tmux runtime reconciliation failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+          `[run-engine] agent runtime reconciliation failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
         );
       }
     }
@@ -819,7 +819,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         continue;
       }
 
-      if (run.status === 'dispatching' && slot.agent === 'working') {
+      if (run.transport !== 'native' && run.status === 'dispatching' && slot.agent === 'working') {
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — slot already working, advancing to monitoring`,
         );

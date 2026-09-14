@@ -132,7 +132,8 @@ export async function routeRunMethod(
 
   switch (method) {
     // Runs
-    case Methods.RUN_CREATE: {
+    case Methods.RUN_CREATE:
+    case Methods.RUN_CREATE_NATIVE: {
       const runParams = p as RunCreateParams & {
         backlogItemId?: unknown;
         workGraphId?: unknown;
@@ -154,6 +155,11 @@ export async function routeRunMethod(
         throw new Error(
           'run.create cannot accept backlog/work-graph launch metadata; use backlog.enqueue or workGraph.schedulerTick',
         );
+      }
+      if (method === Methods.RUN_CREATE_NATIVE) {
+        if (runParams.transport !== undefined && runParams.transport !== 'native')
+          throw new Error('run.createNative requires native transport');
+        return handled(runCreate({ ...runParams, transport: 'native' }, emit));
       }
       return handled(runCreate(runParams, emit));
     }

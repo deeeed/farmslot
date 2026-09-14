@@ -6,6 +6,8 @@ import type {
   CredentialRevokeParams,
   CredentialRevokeResult,
   CredentialSummary,
+  PrincipalBindNativeOwnerParams,
+  PrincipalBindNativeOwnerResult,
   PrincipalCreateParams,
   PrincipalCreateResult,
   PrincipalGrantParams,
@@ -36,6 +38,19 @@ export function principalCreate(
 
 export function principalList(runtime: GatewayAuthRuntime): PrincipalListResult {
   return { principals: structuredClone(runtime.store.snapshot().principals) };
+}
+
+export function principalBindNativeOwner(
+  params: PrincipalBindNativeOwnerParams,
+  runtime: GatewayAuthRuntime,
+): PrincipalBindNativeOwnerResult {
+  validatePrincipalId(params?.nodePrincipalId);
+  validatePrincipalId(params?.ownerPrincipalId);
+  return {
+    principal: translateWriterError(() =>
+      runtime.writer.bindNativeOwner(params.nodePrincipalId, params.ownerPrincipalId),
+    ),
+  };
 }
 
 export function principalGrant(
@@ -142,10 +157,15 @@ function validateSubject(value: unknown): PrincipalSubject {
     return { type: subject.type, displayName: subject.displayName.trim() };
   }
   if (subject.type === 'node' && typeof subject.machine === 'string' && subject.machine.trim()) {
+    if (subject.nativeOwnerPrincipalId !== undefined)
+      validatePrincipalId(subject.nativeOwnerPrincipalId);
     return {
       type: 'node',
       displayName: subject.displayName.trim(),
       machine: subject.machine.trim(),
+      ...(typeof subject.nativeOwnerPrincipalId === 'string'
+        ? { nativeOwnerPrincipalId: subject.nativeOwnerPrincipalId }
+        : {}),
     };
   }
   throw invalid('subject.type must be person, service, or node (with machine)');

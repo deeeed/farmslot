@@ -219,9 +219,15 @@ function taskFileRefFromRun(run: Run): string | null {
  * human-gating priority would outrank a newly created run that legitimately
  * claimed the slot.
  */
-export function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
+export function newestActiveRunForSlot(
+  runs: Run[],
+  slotId: string,
+  currentOwnerId?: string | null,
+): Run | null {
   const candidates = runs.filter((run) => run.slotId === slotId && !isSlotFreedByPark(run));
   if (candidates.length === 0) return null;
+  const recordedOwner = candidates.find((run) => run.id === currentOwnerId);
+  if (recordedOwner) return recordedOwner;
   return candidates.sort((a, b) => {
     const priorityDiff = activeRunPriority(b) - activeRunPriority(a);
     if (priorityDiff !== 0) return priorityDiff;
@@ -234,6 +240,14 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   activeRun: Run | null,
 ): T {
   if (!activeRun) return row;
+  // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
+  // manufacture that claim and make the request fail its own busy-slot check.
+  if (
+    ['created', 'slot-finding'].includes(activeRun.status) &&
+    row.current_run_id !== activeRun.id &&
+    row.handoff_run_id !== activeRun.id
+  )
+    return row;
   // A releasing fence belongs to an in-flight teardown: overwriting it with
   // the active run's phase would reopen the slot mid-destruction. Preserve
   // the fence; the teardown's own CAS finalize decides what comes next.
@@ -347,7 +361,11 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
     const slots = results.map((r) =>
       reconcileRefreshSlotRowWithActiveRun(
         buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-        newestActiveRunForSlot(activeRuns, r.slot),
+        newestActiveRunForSlot(
+          activeRuns,
+          r.slot,
+          prevSlots[r.slot]?.current_run_id as string | undefined,
+        ),
       ),
     );
     const preserved = preserveClaimedRowsUnknownToProbe(

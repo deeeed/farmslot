@@ -10,6 +10,7 @@ import {
   interactiveHandoffDecisionActions,
   interactiveHandoffExtendMinutes,
   isAllowedRunDecisionAction,
+  NATIVE_WORKER_RESUME_ACTION,
   parseInteractiveHandoffTimeoutMinutes,
   visibleInteractiveHandoffActions,
 } from '../../src/runs/interactive-handoff.js';
@@ -61,6 +62,18 @@ test('interactiveHandoffDecisionActions adds extend only when minutes are suppli
     [INTERACTIVE_HANDOFF_SIGNAL_ACTION, INTERACTIVE_HANDOFF_EXTEND_ACTION, 'abort'],
   );
   assert.equal(withExtend[1]?.label, 'Extend monitoring 90 min');
+});
+
+test('saved native workers expose resume without changing terminal handoff actions', () => {
+  assert.equal(isAllowedRunDecisionAction(handoff(), NATIVE_WORKER_RESUME_ACTION), false);
+  const decision = handoff({
+    actions: interactiveHandoffDecisionActions({ resumeNativeWorker: true }),
+  });
+  assert.equal(isAllowedRunDecisionAction(decision, NATIVE_WORKER_RESUME_ACTION), true);
+  assert.deepEqual(
+    visibleInteractiveHandoffActions(decision).map((action) => action.id),
+    [NATIVE_WORKER_RESUME_ACTION, INTERACTIVE_HANDOFF_SIGNAL_ACTION, 'abort'],
+  );
 });
 
 test('legacy timeout handoffs expose extend even when it was not persisted', () => {

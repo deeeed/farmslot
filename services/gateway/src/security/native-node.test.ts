@@ -3,16 +3,59 @@ import test from 'node:test';
 
 import type { Principal } from '@farmslot/protocol';
 
-import { nativeNodeDeclaration } from './native-node.js';
+import {
+  assertNativeMachineAssignment,
+  nativeNodeDeclaration,
+  nativeOwnerAssignedMachines,
+} from './native-node.js';
 
 const principal: Principal = {
   id: 'node-a-principal',
-  subject: { type: 'node', displayName: 'Node A', machine: 'node-a' },
+  subject: {
+    type: 'node',
+    displayName: 'Node A',
+    machine: 'node-a',
+    nativeOwnerPrincipalId: 'owner',
+  },
   roles: [],
 };
 
 test('native node declarations require an issued credential for that exact machine', () => {
   const declaration = { ownerPrincipalId: 'owner' };
+  assert.deepEqual([...nativeOwnerAssignedMachines([principal], 'owner')], ['node-a']);
+  assert.deepEqual([...nativeOwnerAssignedMachines([principal], 'another-owner')], []);
+  assert.deepEqual(
+    [
+      ...nativeOwnerAssignedMachines(
+        [{ ...principal, subject: { type: 'node', displayName: 'legacy', machine: 'legacy' } }],
+        'owner',
+      ),
+    ],
+    [],
+  );
+  assert.throws(
+    () => nativeNodeDeclaration({ ownerPrincipalId: 'victim' }, 'node-a', principal, true),
+    /server-issued assignment/,
+  );
+  assert.throws(
+    () =>
+      nativeNodeDeclaration(
+        declaration,
+        'node-a',
+        { ...principal, subject: { type: 'node', displayName: 'unbound', machine: 'node-a' } },
+        true,
+      ),
+    /server-issued assignment/,
+  );
+  assert.doesNotThrow(() => assertNativeMachineAssignment('node-a', principal, [principal]));
+  assert.throws(
+    () => assertNativeMachineAssignment('node-a', { ...principal, id: 'other' }, [principal]),
+    /another issued node/,
+  );
+  assert.throws(
+    () => assertNativeMachineAssignment('node-a', undefined, [principal]),
+    /another issued node/,
+  );
   assert.deepEqual(nativeNodeDeclaration(declaration, 'node-a', principal, true), declaration);
   assert.throws(
     () => nativeNodeDeclaration(declaration, 'node-b', principal, true),

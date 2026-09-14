@@ -9,6 +9,7 @@ import {
   chatActionRejectCode,
   type EventFrame,
   Events,
+  type FleetStatus,
   type GatewayAuthConnectParams,
   Methods,
   NODE_FRAME_MAGIC,
@@ -57,7 +58,12 @@ import {
   resolveRequestIp,
   sanitizeAuthFailureReason,
 } from './security/auth.js';
-import { canReceiveBroadcast, isNodeSubjectSession } from './security/authorization.js';
+import {
+  authorizeGatewayMethod,
+  canReceiveBroadcast,
+  gatewayWorkspaceAccess,
+  isNodeSubjectSession,
+} from './security/authorization.js';
 import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
@@ -466,7 +472,7 @@ export function initServerGlobals(): void {
   initThumbnailCache(broadcastEvent);
 
   // Watch for fleet state changes and broadcast
-  onStateChange((fleet) => {
+  const publishFleetChange = (fleet: FleetStatus) => {
     broadcast({
       type: 'event',
       event: Events.FLEET_UPDATED,
@@ -478,7 +484,8 @@ export function initServerGlobals(): void {
       console.error(`[dispatch-queue] auto-dispatch error: ${(err as Error).message}`);
     });
     scheduleBacklogAutoDispatchTick();
-  });
+  };
+  onStateChange(publishFleetChange);
   backlogAutoDispatchInterval = setInterval(scheduleBacklogAutoDispatchTick, 60_000);
   backlogAutoDispatchInterval.unref();
 
@@ -486,14 +493,7 @@ export function initServerGlobals(): void {
   // This ensures the UI sees changes immediately instead of waiting for chokidar.
   setSlotUpdateHook(() => {
     loadFleetStatus(true)
-      .then((fleet) => {
-        broadcast({
-          type: 'event',
-          event: Events.FLEET_UPDATED,
-          payload: { fleet },
-          seq: ++eventSeq,
-        });
-      })
+      .then(publishFleetChange)
       .catch((err) => {
         console.warn(`[server] slot update hook fleet refresh failed: ${(err as Error).message}`);
       });
@@ -605,6 +605,18 @@ async function handleMessage(
       });
       return;
     }
+    if (
+      state.authentication?.kind === 'credential' &&
+      (result.authentication?.kind !== 'credential' ||
+        result.authentication.credentialId !== state.authentication.credentialId ||
+        (state.clientKind !== undefined && state.clientKind !== clientKind))
+    ) {
+      sendResponse(state.ws, frame.id, false, undefined, {
+        code: 'AUTH_RECONNECT_REQUIRED',
+        message: 'Changing gateway credentials or client kind requires a fresh connection',
+      });
+      return;
+    }
     state.authenticated = true;
     state.clientKind = clientKind;
     state.authMode = result.mode ?? authRuntime.auth.mode;
@@ -620,6 +632,10 @@ async function handleMessage(
         httpBearerAuth: !authRuntime.resolver.isSoloMode(),
         voiceInstructionFormatting: true,
         gatewayPing: true,
+        workspaceAccess: gatewayWorkspaceAccess(
+          result.principal,
+          authRuntime.store.snapshot().principals,
+        ),
       },
       principal: result.principal
         ? {
@@ -655,8 +671,32 @@ async function handleMessage(
     return;
   }
 
+  const requestCredential =
+    state.authentication?.kind === 'credential' ? state.authentication.credentialId : undefined;
+  const requestClientKind = state.clientKind;
+  const nativeResponseRefusal = () => {
+    if (!frame.method.startsWith('native.')) return undefined;
+    const changed =
+      state.authentication?.kind === 'credential'
+        ? state.authentication.credentialId !== requestCredential
+        : requestCredential !== undefined;
+    try {
+      if (changed || state.clientKind !== requestClientKind)
+        throw new GatewayAuthError('Native request identity changed');
+      requireAuthenticatedSession(authRuntime, state);
+      authorizeGatewayMethod(authRuntime, state, frame.method);
+      return undefined;
+    } catch {
+      // Revoked or unresolvable authority cannot receive even a delayed error's
+      // private details. Preserve normal identity-management response semantics.
+      return {
+        code: 'AUTH_FORBIDDEN',
+        message: 'Native request authority changed before delivery',
+      };
+    }
+  };
   const emit = (event: string, payload: unknown) => {
-    sendEvent(state.ws, event, payload);
+    if (!nativeResponseRefusal()) sendEvent(state.ws, event, payload);
   };
 
   try {
@@ -668,8 +708,14 @@ async function handleMessage(
       nextEventSeq,
       state,
     });
-    sendResponse(state.ws, frame.id, true, result);
+    const refusal = nativeResponseRefusal();
+    sendResponse(state.ws, frame.id, !refusal, refusal ? undefined : result, refusal);
   } catch (err) {
+    const refusal = nativeResponseRefusal();
+    if (refusal) {
+      sendResponse(state.ws, frame.id, false, undefined, refusal);
+      return;
+    }
     const rawMessage = err instanceof Error ? err.message : String(err);
     let message = rawMessage;
     let code = 'METHOD_ERROR';

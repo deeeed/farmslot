@@ -12,19 +12,21 @@ export function PRPushRegistration() {
   const seen = useRef(new Set<string>());
   const client = useConnectionStore((state) => state.client);
   const status = useConnectionStore((state) => state.status);
+  const access = useConnectionStore((state) => state.workspaceAccess);
   const profileId = useConnectionStore((state) => state.activeProfileId);
   const authHeaders = useConnectionStore((state) => state.activeProfileHttpAuthHeaders);
   const enabled = useAttentionPrefsStore((state) => state.enabled);
   const sound = useAttentionPrefsStore((state) => state.sound);
   const initialized = useAttentionPrefsStore((state) => state.initialized);
   useEffect(() => {
-    if (!client || status !== 'connected' || !initialized) return;
+    if (!client || status !== 'connected' || access !== 'farm' || !initialized) return;
     let active = true;
     let pending = false;
     const generation = client.connectionGeneration;
     const isCurrent = () =>
       active &&
       client.connectionState === 'connected' &&
+      client.workspaceAccess === 'farm' &&
       client.connectionGeneration === generation;
     const refresh = () => {
       if (pending || !isCurrent()) return;
@@ -55,12 +57,20 @@ export function PRPushRegistration() {
       appState.remove();
       token.remove();
     };
-  }, [client, status, profileId, authHeaders, enabled, sound, initialized]);
+  }, [client, status, access, profileId, authHeaders, enabled, sound, initialized]);
 
   useEffect(() => {
-    if (!client) return;
+    if (!client || access !== 'farm') return;
+    let active = true;
+    const principalId = client.authenticatedPrincipal?.id;
     const open = async (response: Notifications.NotificationResponse | null) => {
-      if (!response) return;
+      if (
+        !response ||
+        !active ||
+        client.workspaceAccess !== 'farm' ||
+        client.authenticatedPrincipal?.id !== principalId
+      )
+        return;
       const content = response.notification.request.content.data;
       if (
         !content ||
@@ -79,9 +89,16 @@ export function PRPushRegistration() {
           throw new Error('The notification gateway profile is no longer saved.');
         if (state.activeProfileId !== content.profileId)
           await state.setActiveProfile(content.profileId);
+        if (
+          !active ||
+          useConnectionStore.getState().workspaceAccess !== 'farm' ||
+          client.authenticatedPrincipal?.id !== principalId
+        )
+          return;
         router.push(content.route);
         await Notifications.clearLastNotificationResponseAsync();
       } catch (error) {
+        if (!active) return;
         seen.current.delete(id);
         usePRPushDeviceState
           .getState()
@@ -92,11 +109,15 @@ export function PRPushRegistration() {
       void open(response);
     });
     void Notifications.getLastNotificationResponseAsync().then(open, (error) => {
+      if (!active) return;
       usePRPushDeviceState
         .getState()
         .setError(error instanceof Error ? error.message : String(error));
     });
-    return () => listener.remove();
-  }, [client]);
+    return () => {
+      active = false;
+      listener.remove();
+    };
+  }, [client, access]);
   return null;
 }

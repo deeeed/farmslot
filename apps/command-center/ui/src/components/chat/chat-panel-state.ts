@@ -9,6 +9,7 @@ import type {
   CopilotRuntimeSession,
 } from '@farmslot/protocol';
 
+import type { EffortLevel } from '../../utils/runner-options.js';
 import { safeLsGet } from '../../utils/storage.js';
 
 import {
@@ -45,6 +46,7 @@ export abstract class ChatPanelState extends LitElement {
   @state() protected runtimeNotice = '';
   @state() protected runtimeRunner = '';
   @state() protected runtimeModel = '';
+  @state() protected runtimeEffort: EffortLevel = '';
   @state() protected runtimeAutostart = false;
   @state() protected runtimeWorkerRefJson = '';
   @state() protected runtimeDetailsOpen = false;

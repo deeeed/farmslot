@@ -97,6 +97,7 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     session: overrides.session,
     repo: overrides.repo,
     linkedWorktree: overrides.linkedWorktree,
+    agentContexts: overrides.agentContexts,
   };
 }
 
@@ -1800,6 +1801,65 @@ test('selectBranchAffinityEligibleSlots enables Codex TUI nudges but keeps OpenC
     ['mini-mme-2', true],
     ['mini-mme-3', false],
   ]);
+});
+
+test('native nudge eligibility follows the primary context and refuses stopped or recovering workers', () => {
+  const context = {
+    id: 'dev',
+    role: 'dev' as const,
+    label: 'Worker',
+    status: 'working' as const,
+    runner: 'codex',
+    nativeSession: {
+      sessionId: 'native-session',
+      executionNodeId: 'local',
+      ownerPrincipalId: 'owner',
+      generation: 'generation',
+      leaseId: 'lease',
+      commandId: 'command',
+    },
+  };
+  const native = makeBusyClaudeSlot({
+    runner: 'opencode',
+    currentFlowType: 'dev',
+    agentContexts: [context],
+  });
+  const eligible = (slot: SlotStatus) =>
+    selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, { targetBranch: PR_BRANCH })[0]
+      .canNudge;
+  assert.equal(eligible(native), true);
+  assert.equal(
+    eligible({
+      ...native,
+      runner: 'codex',
+      agentContexts: [
+        {
+          ...context,
+          nativeSession: { ...context.nativeSession, closedAt: '2026-09-13T00:00:00Z' },
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    eligible({
+      ...native,
+      agentContexts: [
+        {
+          ...context,
+          nativeSession: {
+            ...context.nativeSession,
+            recovery: { fromGeneration: 'generation', commandId: 'resume' },
+          },
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    eligible({ ...native, agentContexts: [{ ...context, role: 'self-review' }] }),
+    false,
+  );
 });
 
 test('selectBranchAffinityRefreshSlots refreshes non-nudge working slots for fresh-only branch reuse', () => {

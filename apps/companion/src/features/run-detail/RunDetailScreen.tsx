@@ -30,7 +30,9 @@ import {
   extractRunArtifactManifest,
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
+import { currentFarmConnection } from '../../lib/connection-authority';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { nativeRunConversationParams } from '../../lib/native-worker-target';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
@@ -61,6 +63,7 @@ import {
 } from '../../lib/workspace-navigation';
 import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
+import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
 
@@ -301,6 +304,8 @@ export default function RunDetailScreen() {
   const replayStep = useCallback(
     async (stepName: string, skipPrepare?: boolean) => {
       if (!client || !run) return;
+      const isCurrent = currentFarmConnection(client);
+      if (!isCurrent()) return;
       setReplayingStepName(stepName);
       setError(null);
       try {
@@ -309,6 +314,7 @@ export default function RunDetailScreen() {
           stepName,
           ...(skipPrepare ? { skipPrepare: true } : {}),
         });
+        if (!isCurrent()) return;
         setRun(result.run);
         upsertRun(result.run);
         setExpandedStep(null);
@@ -548,6 +554,10 @@ export default function RunDetailScreen() {
           </View>
         </View>
 
+        {reviewPackageActiveTab === 'timeline' && run.transport === 'native' ? (
+          <NativeWorkerLinks run={run} />
+        ) : null}
+
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
@@ -649,7 +659,13 @@ export default function RunDetailScreen() {
                 },
               });
             }}
+            terminalLabel={run.transport === 'native' ? 'Conversation' : 'Terminal'}
             onOpenTerminal={() => {
+              if (run.transport === 'native') {
+                const params = nativeRunConversationParams(run);
+                if (params) router.push({ pathname: '/native', params });
+                return;
+              }
               if (!run.slotId) return;
               router.push({
                 pathname: '/workspace/slot/[slotId]/terminal',
@@ -786,20 +802,26 @@ export default function RunDetailScreen() {
                   })
                 : undefined
             }
+            terminalLabel={run.transport === 'native' ? 'Conversation' : 'Terminal'}
             onOpenTerminal={() =>
-              run.slotId
-                ? router.push({
-                    pathname: '/workspace/slot/[slotId]/terminal',
-                    params: {
-                      slotId: run.slotId,
-                      ...targetRouteContext('terminal'),
-                      runId: run.id,
-                      details: '1',
-                      ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
-                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
-                    },
-                  })
-                : undefined
+              run.transport === 'native'
+                ? (() => {
+                    const params = nativeRunConversationParams(run);
+                    if (params) router.push({ pathname: '/native', params });
+                  })()
+                : run.slotId
+                  ? router.push({
+                      pathname: '/workspace/slot/[slotId]/terminal',
+                      params: {
+                        slotId: run.slotId,
+                        ...targetRouteContext('terminal'),
+                        runId: run.id,
+                        details: '1',
+                        ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                      },
+                    })
+                  : undefined
             }
             onOpenSlot={() =>
               run.slotId
@@ -1005,6 +1027,7 @@ export default function RunDetailScreen() {
         ) : null}
 
         {reviewPackageActiveTab === 'timeline' &&
+          run.transport !== 'native' &&
           run.slotId &&
           !isTerminalRunStatus(run.status) && (
             <View style={styles.section}>

@@ -55,6 +55,12 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
+import {
+  assertNativeProfileSlot,
+  inspectNativeWorkerProfile,
+  nativeProfileAllowedSlots,
+} from '../runners/native/worker-profile.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
@@ -129,6 +135,8 @@ async function claimSelectedSlot(
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found while claiming slot: ${runId}`);
+  if (run.nativeProfile) assertNativeProfileSlot(run.nativeProfile, await loadSlotVars(slotId));
+  if (opts?.takeoverLiveOwner || opts?.reserveOnly) assertNativeSlotReplacementOwner(slotId, runId);
   let selectedExecutionTemplate:
     | import('@farmslot/protocol').ExecutionTemplateReference
     | undefined;
@@ -309,6 +317,17 @@ export async function executeFindSlotStep(
   run: Run,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  if (run.nativeProfile) {
+    await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile);
+    const allowedSlots = await nativeProfileAllowedSlots(
+      run.nativeProfile,
+      run.allowedSlots ?? undefined,
+    );
+    if (run.slotId && !allowedSlots.includes(run.slotId))
+      throw new Error('Selected slot does not belong to the native profile execution node');
+    run = updateRun(runId, { allowedSlots });
+    await persistRunNow(run, 'native profile slot eligibility');
+  }
   const {
     broadcastFn,
     buildDispatchPreviewParamsForRun,

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion stale profile reply isolation",
+  "description": "Use the private gateway reply-delay fixture and prepared native profile state. No session is launched.",
+  "workflow": {
+    "entry": "ready",
+    "nodes": {
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-runner-claude",
+        "timeout_ms": 30000,
+        "intent": "The native setup form is connected before testing reply races.",
+        "next": "claude"
+      },
+      "claude": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-claude",
+        "intent": "Choose the runner whose two native configurations are prepared.",
+        "next": "profiles"
+      },
+      "profiles": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-runner-profile-existing-claude",
+        "timeout_ms": 20000,
+        "intent": "The selected runner has loaded its existing configurations.",
+        "next": "show-authenticated"
+      },
+      "show-authenticated": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-existing-claude",
+        "intent": "Reach the authenticated configuration before delaying its status reply.",
+        "next": "arm-status"
+      },
+      "arm-status": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs arm-status",
+        "intent": "Delay the next actual mobile login-status response, without changing its payload.",
+        "next": "authenticated"
+      },
+      "authenticated": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-profile-existing-claude",
+        "intent": "Select the existing native configuration and begin its real login check.",
+        "next": "status-held"
+      },
+      "status-held": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs held",
+        "intent": "The gateway has produced the old configuration response and holds its delivery.",
+        "next": "choices-pending"
+      },
+      "show-other": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-empty-a up",
+        "intent": "Reach the signed-out configuration while the earlier response remains pending.",
+        "next": "other"
+      },
+      "other": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-profile-empty-a",
+        "intent": "Choose a different configuration before the old status arrives.",
+        "next": "other-selected"
+      },
+      "release-status": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs release-status",
+        "intent": "The delayed authenticated response must not replace or enable the signed-out choice.",
+        "next": "show-refresh"
+      },
+      "show-refresh": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh up",
+        "intent": "Reach profile refresh for the inventory race.",
+        "next": "arm-list"
+      },
+      "arm-list": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs arm-list",
+        "intent": "Delay the next actual mobile profile inventory response.",
+        "next": "refresh"
+      },
+      "refresh": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-refresh",
+        "intent": "Start a real inventory refresh for the current runner.",
+        "next": "list-held"
+      },
+      "list-held": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs held",
+        "intent": "The gateway holds the completed old inventory response.",
+        "next": "show-codex"
+      },
+      "show-codex": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-codex up",
+        "intent": "Reach another runner while the old inventory is pending.",
+        "next": "codex"
+      },
+      "codex": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-codex",
+        "intent": "Change runner before the earlier profile inventory arrives.",
+        "next": "release-list"
+      },
+      "release-list": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs release-list",
+        "intent": "The delayed inventory must preserve the new runner and its configuration choices.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "native-profile-reply-races.png",
+        "intent": "Record the final runner selection after both actual response races.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "choices-pending": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs choices-pending",
+        "intent": "Other configurations remain available while the selected login check is pending.",
+        "next": "show-other"
+      },
+      "other-selected": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reply-proof.mjs other-selected",
+        "intent": "The alternate configuration selection takes effect before the old response arrives.",
+        "next": "release-status"
+      }
+    }
+  }
+}

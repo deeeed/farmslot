@@ -6,7 +6,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - `RunDecision.payloadTrimmed` names the payload keys `run.list` left out; absent on `run.get`, `run.forSlot` and run events.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Define authenticated administration of native node owner assignments and the authenticated client workspace-access capability.
+- Define native worker transport, worker-capable runner choices, leased agent contexts, task-scoped replay, native parking recovery handles, named native configuration references and input controls pinned to a run and process generation.
 
 ## 0.27.0 - 2026-09-13
 

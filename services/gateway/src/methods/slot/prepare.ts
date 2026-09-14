@@ -6,6 +6,7 @@ import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
 import {
   DEFAULT_BRANCH,
+  nativeWorkerBindingIsHeld,
   type PreparePhase,
   READINESS_RECORD,
   type ReadinessRecord,
@@ -31,6 +32,7 @@ import {
   updateSlotStatus,
   withMachineEnv,
 } from '../../core/index.js';
+import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -48,7 +50,13 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
+import {
+  assertNativeSlotReplacementOwner,
+  retireNativeWorkersForSlot,
+} from '../../runners/native/worker.js';
+import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
 import { getRun } from '../../runs/store.js';
+import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
 import { runHealthCheck } from './check.js';
 import { runFixtureSync } from './fixtures.js';
@@ -114,6 +122,7 @@ export async function slotPrepare(
   if (activePrepareSlots.has(params.slotId)) {
     throw new Error(`Slot ${params.slotId} is already preparing`);
   }
+  assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
   const requestId = params.requestId ?? `prepare-${randomUUID()}`;
   const stream = createPrepareStream(emit, {
@@ -128,8 +137,26 @@ export async function slotPrepare(
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
     await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
+    assertNativeSlotReplacementOwner(params.slotId, params.runId);
+    const preparingRun = params.runId ? getRun(params.runId) : null;
+    if (preparingRun?.transport === 'native') {
+      assertNativeRunOwner(preparingRun);
+      if (preparingRun.slotId !== params.slotId)
+        throw new Error('Native run is assigned to another slot');
+      if (
+        preparingRun.agentContexts?.some((context) =>
+          nativeWorkerBindingIsHeld(context.nativeSession),
+        )
+      )
+        throw new NativeWorkerOperationUncertainError(
+          'handoff',
+          'Stop the owned native worker before preparing its workspace.',
+          undefined,
+        );
+    }
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
+    await retireNativeWorkersForSlot(params.slotId, params.runId);
     const result = await slotPrepareInner(params, stream, signal, opts);
     if (!result.prepared) {
       stream.complete(1, `Slot ${params.slotId} is disabled`);
@@ -1014,22 +1041,25 @@ async function slotPrepareInner(
 
   await installEvalRecipeHarness();
 
-  // 4. Ensure tmux session
-  const session = await resolveTmuxSession(vars.slotId, vars);
-  const tmuxR = await execOnSlot(
-    vars,
-    tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`),
-  );
-  if (tmuxR.exitCode === 0) {
-    step('tmux', `tmux session ${session} exists`);
-  } else {
-    await execOnSlot(
+  // Native workers have no terminal session. Project preparation still runs normally.
+  let session: string | undefined;
+  if (!params.runId || getRun(params.runId)?.transport !== 'native') {
+    session = await resolveTmuxSession(vars.slotId, vars);
+    const tmuxR = await execOnSlot(
       vars,
-      tmuxShellSnippet(
-        `new-session -d -s ${shellQuote(session)} -c ${shellQuote(vars.remoteRepo)}`,
-      ),
+      tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`),
     );
-    step('tmux', `Created tmux session ${session}`);
+    if (tmuxR.exitCode === 0) {
+      step('tmux', `tmux session ${session} exists`);
+    } else {
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `new-session -d -s ${shellQuote(session)} -c ${shellQuote(vars.remoteRepo)}`,
+        ),
+      );
+      step('tmux', `Created tmux session ${session}`);
+    }
   }
 
   // 4b. Materialize checkout-local .env.ports from pool-owned resources
@@ -1253,7 +1283,7 @@ async function slotPrepareInner(
     // Profiles that skip preflight and projects without health.dev_server_log
     // intentionally skip this window.
     const devServerLogPath = resolveDevServerLogPath(projectJson, vars, projectVars);
-    if (devServerLogPath) {
+    if (devServerLogPath && session) {
       const tail = await openDevServerLogTailWindow(vars, session, devServerLogPath);
       step('preflight', tail.detail);
     }

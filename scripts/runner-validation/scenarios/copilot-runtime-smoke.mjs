@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -10,7 +11,10 @@ function rpc(method, params = {}) {
   const script = path.resolve('apps/command-center/scripts/cdp.mjs');
   const stdout = execFileSync('node', [script, 'gateway', method, JSON.stringify(params)], {
     encoding: 'utf8',
-    env: process.env,
+    env: {
+      ...process.env,
+      FARMSLOT_RPC_TIMEOUT_MS: process.env.FARMSLOT_RPC_TIMEOUT_MS ?? '60000',
+    },
   });
   return JSON.parse(stdout);
 }
@@ -46,7 +50,13 @@ async function waitForIdle(session, sinceMs, timeoutMs) {
   );
 }
 
-export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
+export async function runScenario({
+  runnerAdapter,
+  timeoutMs,
+  outDir,
+  via,
+  resumeExisting = false,
+}) {
   const runner = runnerAdapter.RUNNER_ID;
   const marker = randomUUID();
   const clientToken = `COPILOT_COMMAND_CENTER_PROOF_${marker}`;
@@ -63,15 +73,85 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir }) {
     error: null,
   };
   try {
-    const before = rpc('operator.snapshot');
-    try {
-      rpc('copilot.stop', { reason: 'runner-validation-reset' });
-    } catch (error) {
-      if (!String(error).includes('METHOD_NOT_FOUND')) throw error;
+    if (resumeExisting) assert.equal(via, 'model-effort');
+    if (via === 'model-effort') {
+      assert.equal(process.env.FARMSLOT_GATEWAY, 'ws://127.0.0.1:18777');
+      assert.ok(
+        process.env.TMUX_TMPDIR?.startsWith('/tmp/fs-'),
+        'Use the private validation tmux server',
+      );
+      assert.equal(
+        rpc('copilot.status').session.status,
+        resumeExisting ? 'running' : 'stopped',
+        'Start with an idle private Copilot',
+      );
     }
-    const startedAt = Date.now();
-    report.start = rpc('copilot.start', { runner, safetyTier: 'sandboxed' });
+    const before = rpc('operator.snapshot');
+    if (!resumeExisting)
+      try {
+        rpc('copilot.stop', { reason: 'runner-validation-reset' });
+      } catch (error) {
+        if (!String(error).includes('METHOD_NOT_FOUND')) throw error;
+      }
+    if (via === 'model-effort' && !resumeExisting) {
+      assert.equal(runner, 'codex');
+      report.configured = rpc('copilot.configure', { runner, model: 'gpt-6-astra', effort: 'low' });
+    }
+    report.start = rpc(
+      'copilot.start',
+      resumeExisting ? { mode: 'reconnect' } : { runner, safetyTier: 'sandboxed' },
+    );
+    const startedAt = Date.parse(report.start.session.startedAt);
+    assert.ok(Number.isFinite(startedAt));
     report.bootstrapIdle = await waitForIdle(report.start.session, startedAt, timeoutMs);
+    if (via === 'model-effort') {
+      assert.equal(report.start.session.model, 'gpt-6-astra');
+      assert.equal(report.start.session.effort, 'low');
+      const panePid = Number(
+        execFileSync(
+          'tmux',
+          ['display-message', '-p', '-t', report.start.session.tmuxTarget, '#{pane_pid}'],
+          { encoding: 'utf8' },
+        ).trim(),
+      );
+      const census = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+        .trim()
+        .split('\n')
+        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+        .filter(Boolean)
+        .map((match) => ({ pid: Number(match[1]), parent: Number(match[2]), command: match[3] }));
+      const owned = new Set([panePid]);
+      for (let added = true; added; ) {
+        added = false;
+        for (const process of census)
+          if (owned.has(process.parent) && !owned.has(process.pid)) {
+            owned.add(process.pid);
+            added = true;
+          }
+      }
+      const worker = census.find(
+        (process) =>
+          owned.has(process.pid) &&
+          /(?:^|\/)codex(?:\s|$)/.test(process.command) &&
+          process.command.includes('--model gpt-6-astra') &&
+          /model_reasoning_effort=["']?low/.test(process.command),
+      );
+      assert.ok(worker, 'Owned runner argv must carry Astra and low reasoning effort');
+      report.launchIdentity = { pid: worker.pid, panePid, model: 'gpt-6-astra', effort: 'low' };
+      assert.throws(
+        () => rpc('copilot.configure', { effort: 'medium' }),
+        /Stop the Co-Pilot runtime/,
+      );
+      const reconnected = rpc('copilot.start', {
+        mode: 'reconnect',
+        model: 'gpt-5.6-sol',
+        effort: 'medium',
+      });
+      assert.equal(reconnected.reused, true);
+      assert.equal(reconnected.session.model, 'gpt-6-astra');
+      assert.equal(reconnected.session.effort, 'low');
+      assert.deepEqual(reconnected.session.terminalWorker, report.start.session.terminalWorker);
+    }
     const sentAt = Date.now();
     report.send = rpc('chat.send', {
       sessionId: 'global',

@@ -1,15 +1,21 @@
 import { html, nothing } from 'lit';
 
+import { isSlotFreedByPark } from '@farmslot/protocol';
+
+import '../chat/native-session-view.js';
+
 import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import type { NativeWorkerViewTarget } from '../chat/native-worker-target.js';
 import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
 import { slotViewAgentContextChipLabel } from './slot-view-agent-contexts.js';
+import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
 import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
-import { requestedRunFromHash } from './slot-view-url-state.js';
+import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
 
 export interface SlotViewBodyRenderContext {
   hasResources: boolean;
@@ -232,6 +238,12 @@ export function renderSlotViewExplorerPanel(view: SlotView) {
 
 export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBodyRenderContext) {
   const selectedAgentContext = view._selectedAgentContext();
+  const pinnedContextUnresolved = isSlotViewContextPinUnresolved({
+    run: view._linkedRun,
+    requestedRunId: requestedRunFromHash(),
+    requestedContextId: getSlotViewHashParam('contextId'),
+    slotId: view.slotId,
+  });
   const selectedRole =
     selectedAgentContext?.role === 'primary' ? '' : (selectedAgentContext?.role ?? '');
   const selectedContextId =
@@ -242,6 +254,24 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
     requestedRunFromHash(),
     slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
   );
+  const nativeWorker: NativeWorkerViewTarget | undefined =
+    selectedAgentContext?.nativeSession &&
+    view._linkedRun &&
+    selectedAgentContext.runId === view._linkedRun.id
+      ? {
+          runId: view._linkedRun.id,
+          contextId: selectedAgentContext.id,
+          label: selectedAgentContext.label,
+          binding: selectedAgentContext.nativeSession,
+          readOnly:
+            !view._linkedRun ||
+            isTerminalRunStatus(view._linkedRun.status) ||
+            view._isRecoveryBlocked ||
+            view._linkedRun.slotId !== view.slotId ||
+            Boolean(view._slot?.currentRunId && view._slot.currentRunId !== view._linkedRun.id) ||
+            isSlotFreedByPark(view._linkedRun),
+        }
+      : undefined;
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -691,7 +721,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                       view._saveLayout();
                     }}
                   >
-                    Terminal
+                    ${nativeWorker ? 'Conversation' : 'Terminal'}
                   </button>
                   ${view._workerHistoryEnabled
                     ? html`
@@ -761,64 +791,76 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   ? html`
                       <div
                         class="sv-terminal-body"
-                        style="height:${slotViewEffectiveTerminalHeight(view)}px"
+                        style="height:${slotViewEffectiveTerminalHeight(
+                          view,
+                          nativeWorker ? 480 : 0,
+                        )}px"
                       >
-                        ${view._bottomTab === 'terminal'
-                          ? html`
-                              <terminal-view
-                                .slotId=${view.slotId}
-                                .runId=${terminalRunId}
-                                @terminal-subscribe-failed=${(
-                                  e: CustomEvent<{ contextId?: string; role?: string }>,
-                                ) => {
-                                  const selected = selectedAgentContext;
-                                  const key =
-                                    e.detail?.contextId ||
-                                    (selected
-                                      ? view._contextKey(selected)
-                                      : e.detail?.role
-                                        ? `${e.detail.role}:${view.slotId}`
-                                        : '');
-                                  if (!key) return;
-                                  const next = new Set(view._unavailableContextKeys);
-                                  next.add(key);
-                                  view._unavailableContextKeys = next;
-                                }}
-                              ></terminal-view>
-                            `
-                          : view._bottomTab === 'history'
-                            ? html`
-                                ${view._renderAgentContexts()}
-                                <worker-session-history
-                                  .slotId=${view.slotId}
-                                  .runId=${terminalRunId}
-                                  .role=${selectedRole}
-                                  .contextId=${selectedContextId}
-                                ></worker-session-history>
-                              `
-                            : view._bottomTab === 'comments'
+                        ${pinnedContextUnresolved
+                          ? html`<p role="status" data-testid="native-context-unavailable">
+                              The selected task context is loading or unavailable.
+                            </p>`
+                          : nativeWorker &&
+                              (view._bottomTab === 'terminal' || view._bottomTab === 'history')
+                            ? html`${view._renderAgentContexts()}<native-session-view
+                                  .worker=${nativeWorker}
+                                ></native-session-view>`
+                            : view._bottomTab === 'terminal'
                               ? html`
-                                  <pr-comments-panel
-                                    .threads=${view._prThreads}
-                                    .pr=${view._prNumber ?? 0}
-                                    .repo=${view._prRepo ?? ''}
-                                    .currentUser=${view._prCurrentUser}
-                                    .loading=${view._prCommentsLoading}
-                                    @comment-navigate=${(e: CustomEvent) =>
-                                      view._handleCommentNavigate(e.detail)}
-                                    @thread-resolved=${() => view._loadPRComments()}
-                                  ></pr-comments-panel>
+                                  <terminal-view
+                                    .slotId=${view.slotId}
+                                    .runId=${terminalRunId}
+                                    @terminal-subscribe-failed=${(
+                                      e: CustomEvent<{ contextId?: string; role?: string }>,
+                                    ) => {
+                                      const selected = selectedAgentContext;
+                                      const key =
+                                        e.detail?.contextId ||
+                                        (selected
+                                          ? view._contextKey(selected)
+                                          : e.detail?.role
+                                            ? `${e.detail.role}:${view.slotId}`
+                                            : '');
+                                      if (!key) return;
+                                      const next = new Set(view._unavailableContextKeys);
+                                      next.add(key);
+                                      view._unavailableContextKeys = next;
+                                    }}
+                                  ></terminal-view>
                                 `
-                              : html`
-                                  <problems-panel
-                                    .diagnostics=${view._diagnostics}
-                                    .loading=${view._diagnosticsLoading}
-                                    .truncated=${view._diagnosticsTruncated}
-                                    @diagnostic-navigate=${(e: CustomEvent) =>
-                                      view._handleDiagnosticNavigate(e.detail)}
-                                    @diagnostics-refresh=${() => view._runDiagnostics()}
-                                  ></problems-panel>
-                                `}
+                              : view._bottomTab === 'history'
+                                ? html`
+                                    ${view._renderAgentContexts()}
+                                    <worker-session-history
+                                      .slotId=${view.slotId}
+                                      .runId=${terminalRunId}
+                                      .role=${selectedRole}
+                                      .contextId=${selectedContextId}
+                                    ></worker-session-history>
+                                  `
+                                : view._bottomTab === 'comments'
+                                  ? html`
+                                      <pr-comments-panel
+                                        .threads=${view._prThreads}
+                                        .pr=${view._prNumber ?? 0}
+                                        .repo=${view._prRepo ?? ''}
+                                        .currentUser=${view._prCurrentUser}
+                                        .loading=${view._prCommentsLoading}
+                                        @comment-navigate=${(e: CustomEvent) =>
+                                          view._handleCommentNavigate(e.detail)}
+                                        @thread-resolved=${() => view._loadPRComments()}
+                                      ></pr-comments-panel>
+                                    `
+                                  : html`
+                                      <problems-panel
+                                        .diagnostics=${view._diagnostics}
+                                        .loading=${view._diagnosticsLoading}
+                                        .truncated=${view._diagnosticsTruncated}
+                                        @diagnostic-navigate=${(e: CustomEvent) =>
+                                          view._handleDiagnosticNavigate(e.detail)}
+                                        @diagnostics-refresh=${() => view._runDiagnostics()}
+                                      ></problems-panel>
+                                    `}
                       </div>
                     `
                   : nothing}

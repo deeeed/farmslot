@@ -26,6 +26,7 @@ import {
   type MachinePauseExecuteParams,
   type MachinePauseExecuteResult,
   type MachinePauseMode,
+  type MachinePauseNativeRecoveryHandle,
   type MachinePausePreviewParams,
   type MachinePausePreviewResult,
   type MachinePausePreviewRun,
@@ -37,6 +38,7 @@ import {
   type MachinePauseReviewedTarget,
   type MachinePauseSelector,
   type MachinePauseStatusResult,
+  type MachinePauseTerminalRecoveryHandle,
   needsGateParkRestore,
   PipelineSteps,
   type ResourcePressureMachine,
@@ -98,8 +100,17 @@ import {
   withRunTransitionWhileMachineHeld,
 } from '../run-lifecycle/transition-coordinator.js';
 import {
+  inspectNativeParkHandle,
+  inspectNativeParkTarget,
+  rehomeNativeParkHandle,
+  reloadNativeWorkerForPark,
+  resolveNativeParkHandle,
+  stopNativeWorkerForPark,
+} from '../runners/native/worker-parking.js';
+import {
   normalizeRunner,
   runnerSessionPortability,
+  runnerSupportsNativeTaskReuse,
   type SessionPortability,
 } from '../runners/registry.js';
 import {
@@ -109,7 +120,7 @@ import {
   rehostRunnerParkTarget,
   reloadRunnerForPark,
   type RunnerParkHostOwnership,
-  type RunnerParkHostPlan,
+  type RunnerParkHostPlan as TerminalParkHostPlan,
   RunnerParkStopError,
   runnerRunningForPark,
   stopRunnerForPark,
@@ -129,6 +140,9 @@ import {
 import { MachinePausePreviewStaleError } from './preview-errors.js';
 
 type Fleet = Awaited<ReturnType<typeof loadFleetStatus>>;
+type RunnerParkHostPlan =
+  | TerminalParkHostPlan
+  | { ok: true; disposition: 'exact' | 'rehost'; recoveryHandle: MachinePauseRecoveryHandle };
 type MachineParkingRecoveryProof = NonNullable<MachineParkRecord['recoveryProof']>;
 
 /**
@@ -203,6 +217,11 @@ export interface MachineParkingDependencies {
   setRunSlot(runId: string, slotId: string | null): Run;
   /** Runner-declared: does a persisted session resolve outside its recorded workspace. */
   sessionPortability(runnerId: string): SessionPortability;
+  rehomeNativeHandle?(
+    run: Run,
+    handle: MachinePauseNativeRecoveryHandle,
+    slotId: string,
+  ): Promise<MachinePauseNativeRecoveryHandle>;
   /**
    * Per-project branch-tracking config, so a re-home target is scored by the
    * same rules dispatch scores a new run's slot with rather than by a second
@@ -410,6 +429,7 @@ async function defaultObserveResources(slotId: string): Promise<SlotResource[]> 
 }
 
 async function defaultResolveRecoveryHandle(run: Run): Promise<MachinePauseRecoveryHandle> {
+  if (run.transport === 'native') return resolveNativeParkHandle(run);
   if (!run.slotId) throw new Error('run has no slot');
   const context = selectAgentContext(run, { role: 'primary' });
   if (!context?.target) throw new Error('primary agent context has no exact tmux target');
@@ -454,6 +474,10 @@ async function defaultInspectRecoveryHandle(
   handle: MachinePauseRecoveryHandle,
   expectedRunnerState: 'live' | 'stopped' | 'stopped-or-live',
 ): Promise<void> {
+  if (handle.version === 2) {
+    await inspectNativeParkHandle(run, handle, expectedRunnerState);
+    return;
+  }
   if (!run.slotId) throw new Error('run has no slot');
   const vars = await loadSlotVars(run.slotId);
   const session = await resolveTmuxSession(run.slotId, vars, { strict: true });
@@ -476,6 +500,7 @@ async function defaultReloadRunner(
   handle: MachinePauseRecoveryHandle,
   continuationPrompt: string,
 ): Promise<MachineParkingRecoveryProof> {
+  if (handle.version === 2) return reloadNativeWorkerForPark(run, handle, continuationPrompt);
   if (!run.slotId) throw new Error('run has no slot');
   const vars = await loadSlotVars(run.slotId);
   const session = await resolveTmuxSession(run.slotId, vars, { strict: true });
@@ -508,6 +533,14 @@ async function defaultReloadRunner(
  * that declares neither fails closed.
  */
 async function defaultInspectRunnerReload(run: Run): Promise<RunnerReloadInspection> {
+  if (run.transport === 'native') {
+    const runnerId = run.metrics.runner ?? 'unknown';
+    return {
+      runnerId,
+      supported: runnerSupportsNativeTaskReuse(runnerId),
+      reason: 'Native parking requires task leases and saved-conversation recovery',
+    };
+  }
   // Declaration-only: no slot vars, no exec, no session probe. The registry
   // answers this from RunnerDefinition alone.
   const inspection = await inspectRunnerRecovery({
@@ -653,7 +686,7 @@ async function defaultPreservedBranchTip(
   return tip.exitCode === 0 ? tip.stdout.trim() || null : null;
 }
 
-async function parkHostOptions(run: Run, handle: MachinePauseRecoveryHandle) {
+async function parkHostOptions(run: Run, handle: MachinePauseTerminalRecoveryHandle) {
   if (!run.slotId) throw new Error('run has no slot');
   return { vars: await loadSlotVars(run.slotId), recoveryHandle: handle };
 }
@@ -667,6 +700,7 @@ const defaultDependencies: MachineParkingDependencies = {
   updatePark: (runId, park) => updateRun(runId, { park }),
   setRunSlot: (runId, slotId) => updateRun(runId, { slotId }),
   sessionPortability: runnerSessionPortability,
+  rehomeNativeHandle: rehomeNativeParkHandle,
   projectConfigs: async () => projectConfigsFromProjects(await loadProjectConfigs()),
   resolveSlotSession: async (slotId) =>
     resolveTmuxSession(slotId, await loadSlotVars(slotId), { strict: true }),
@@ -725,16 +759,26 @@ const defaultDependencies: MachineParkingDependencies = {
     return claimed;
   },
   preservedBranchTip: defaultPreservedBranchTip,
-  inspectParkHost: async (run, handle, ownership) =>
-    inspectRunnerParkHost({
+  inspectParkHost: async (run, handle, ownership) => {
+    if (handle.version === 2) {
+      await inspectNativeParkTarget(run, handle);
+      return { ok: true, disposition: 'exact', recoveryHandle: handle };
+    }
+    return inspectRunnerParkHost({
       ...(await parkHostOptions(run, handle)),
       ...(ownership ? { ownership } : {}),
-    }),
-  rehostParkTarget: async (run, handle, ownership) =>
-    rehostRunnerParkTarget({
+    });
+  },
+  rehostParkTarget: async (run, handle, ownership) => {
+    if (handle.version === 2) {
+      await inspectNativeParkTarget(run, handle);
+      return { ok: true, disposition: 'exact', recoveryHandle: handle };
+    }
+    return rehostRunnerParkTarget({
       ...(await parkHostOptions(run, handle)),
       ...(ownership ? { ownership } : {}),
-    }),
+    });
+  },
   // Lazily imported: the posture reconciler reaches machine parking for the
   // `parked` posture, and a static edge back would close that loop at load.
   recordParkRestoredPosture: async (runId) => {
@@ -742,6 +786,26 @@ const defaultDependencies: MachineParkingDependencies = {
     await getRunResourcePostureReconciler().recordParkRestored(runId);
   },
   rebindAgentContextTarget: async (run, handle) => {
+    if (handle.version === 2) {
+      await inspectNativeParkHandle(run, handle, 'stopped-or-live');
+      const context = run.agentContexts?.find((item) => item.id === handle.contextId);
+      if (!context) throw new Error('Native restore context is missing');
+      const relocatedPath = (value: string | null | undefined) =>
+        handle.relocation && value?.startsWith(handle.relocation.fromCwd + '/')
+          ? handle.cwd + value.slice(handle.relocation.fromCwd.length)
+          : value;
+      await upsertAgentContext(run.id, context.role, {
+        id: context.id,
+        target: null,
+        taskFile: relocatedPath(context.taskFile),
+        signalFile: relocatedPath(context.signalFile),
+      });
+      const activeTaskFile = relocatedPath(run.activeTaskFile) ?? undefined;
+      if (activeTaskFile !== run.activeTaskFile) {
+        await persistRunNow(updateRun(run.id, { activeTaskFile }), 'native relocated active task');
+      }
+      return;
+    }
     const context = run.agentContexts?.find((candidate) => candidate.id === handle.contextId);
     if (!context) {
       throw new Error(`run ${run.id} has no agent context '${handle.contextId}' to re-bind`);
@@ -765,6 +829,7 @@ const defaultDependencies: MachineParkingDependencies = {
       }),
     ),
   stopRunner: async (run, handle) => {
+    if (handle.version === 2) return stopNativeWorkerForPark(run, handle);
     if (!run.slotId) throw new Error('run has no slot');
     const vars = await loadSlotVars(run.slotId);
     const result = await stopRunnerForPark({ vars, recoveryHandle: handle });
@@ -772,6 +837,10 @@ const defaultDependencies: MachineParkingDependencies = {
   },
   reloadRunner: defaultReloadRunner,
   runnerRunning: async (run, handle) => {
+    if (handle.version === 2) {
+      const snapshot = await inspectNativeParkHandle(run, handle, 'stopped-or-live');
+      return snapshot.session.processStopped ? 'stopped' : 'running';
+    }
     if (!run.slotId) return 'unknown';
     return runnerRunningForPark({ vars: await loadSlotVars(run.slotId), recoveryHandle: handle });
   },
@@ -2414,7 +2483,7 @@ export class MachineParkingService {
     if (remaining.size === 0) {
       return taken(MachineParkEligibilityCodes.restoreSlotTaken, takenReason);
     }
-    if (this.deps.sessionPortability(handle.runnerId) !== 'machine') {
+    if (handle.version === 1 && this.deps.sessionPortability(handle.runnerId) !== 'machine') {
       return taken(
         MachineParkEligibilityCodes.restoreRehomeSessionNotPortable,
         `${takenReason}; runner '${handle.runnerId}' scopes its persisted session to the workspace it was recorded in, so it cannot be reloaded from another slot`,
@@ -2475,6 +2544,22 @@ export class MachineParkingService {
       if (missing.length > 0) {
         refuse(`declares no ${missing.join(', ')}`);
         continue;
+      }
+      if (handle.version === 2) {
+        try {
+          if (!this.deps.rehomeNativeHandle)
+            throw new Error('Native relocation capability is unavailable');
+          const native = await this.deps.rehomeNativeHandle(run, handle, candidate.slot);
+          return {
+            ok: true,
+            slotId: candidate.slot,
+            handle: native,
+            host: { ok: true, disposition: 'rehost', recoveryHandle: native },
+          };
+        } catch (error) {
+          refuse(messageOf(error));
+          continue;
+        }
       }
       // The handle names the ORIGINAL slot's tmux session, which the candidate
       // does not own. Re-binding it is what makes the host question answerable
@@ -2810,7 +2895,7 @@ export class MachineParkingService {
     const ownedPaneIds = [
       ...new Set(
         [
-          record.recoveryHandle?.target.paneId,
+          record.recoveryHandle?.version === 1 ? record.recoveryHandle.target.paneId : undefined,
           ...(run.agentContexts ?? []).map((context) => context.target?.paneId),
         ].filter((paneId): paneId is string => Boolean(paneId)),
       ),
@@ -3537,7 +3622,7 @@ export class MachineParkingService {
                 await this.deps.rebindAgentContextTarget(this.requireRun(runId), handle);
               }
               const runner = await this.deps.runnerRunning(this.requireRun(runId), handle);
-              if (runner === 'stopped') {
+              if (runner === 'stopped' || (handle.version === 2 && runner === 'running')) {
                 await this.patchRecord(runId, (current) => ({
                   ...current,
                   phase: 'runner-reloading',
@@ -3561,7 +3646,8 @@ export class MachineParkingService {
                   ...park,
                   recoveryProof: structuredClone(proof),
                 }));
-              } else if (runner === 'running') {
+              } else if (runner === 'running' && handle.version === 1) {
+                const paneId = handle.target.paneId;
                 // The worker was already back — a retry after a restore whose
                 // reload landed and whose next step did not. It still owes a
                 // proof: consumption requires one, and "the process is running"
@@ -3580,7 +3666,7 @@ export class MachineParkingService {
                       // prompt the runner acknowledged.
                       kind: 'adopted',
                       source: 'runner-session-binding',
-                      reason: `the live worker on pane ${handle.target.paneId} owns this run's persisted session`,
+                      reason: `the live worker on pane ${paneId} owns this run's persisted session`,
                     },
                     acceptedAt: this.deps.now(),
                   },

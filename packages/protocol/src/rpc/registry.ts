@@ -15,6 +15,7 @@ export const Methods = {
   PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',
   PRINCIPAL_CREATE: 'principal.create',
+  PRINCIPAL_BIND_NATIVE_OWNER: 'principal.bindNativeOwner',
   PRINCIPAL_LIST: 'principal.list',
   PRINCIPAL_GRANT: 'principal.grant',
   PRINCIPAL_REVOKE_ROLE: 'principal.revokeRole',
@@ -125,6 +126,10 @@ export const Methods = {
 
   // Worker session history (read-only transcript projection)
   NATIVE_SESSION_CREATE: 'native.session.create',
+  NATIVE_PROFILE_LIST: 'native.profile.list',
+  NATIVE_PROFILE_ADD: 'native.profile.add',
+  NATIVE_PROFILE_STATUS: 'native.profile.status',
+  NATIVE_PROFILE_REMOVE: 'native.profile.remove',
   NATIVE_SESSION_ENSURE: 'native.session.ensure',
   NATIVE_SESSION_READ: 'native.session.read',
   NATIVE_SESSION_LIST: 'native.session.list',
@@ -298,6 +303,7 @@ export const Methods = {
   RUN_BUNDLE_IMPORT: 'run.bundle.import',
   RUN_BUNDLE_LIST: 'run.bundle.list',
   RUN_CREATE: 'run.create',
+  RUN_CREATE_NATIVE: 'run.createNative',
   RUN_GET: 'run.get',
   RUN_CONTEXT_BUNDLE: 'run.contextBundle',
   RUN_RECOVERY_PROPOSAL: 'run.recoveryProposal',

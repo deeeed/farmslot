@@ -1,0 +1,69 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion unavailable-node disclosure",
+  "description": "Use the existing private native profile fixture; no inference or node state changes are performed.",
+  "workflow": {
+    "entry": "ready",
+    "nodes": {
+      "ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-unavailable-toggle",
+        "timeout_ms": 30000,
+        "intent": "Unavailable execution nodes have a single disclosure while the healthy local workspace remains usable.",
+        "next": "collapsed"
+      },
+      "collapsed": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs availability-collapsed",
+        "intent": "Unrelated execution-node failures are hidden by default and do not disable local conversation creation.",
+        "next": "reveal"
+      },
+      "reveal": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-unavailable-toggle",
+        "intent": "Reach the compact unavailable-node disclosure through native scrolling.",
+        "next": "capture-collapsed"
+      },
+      "capture-collapsed": {
+        "action": "ui.screenshot",
+        "path": "unavailable-nodes-collapsed.png",
+        "intent": "Record the compact setup screen without the repeated failure list.",
+        "next": "expand"
+      },
+      "expand": {
+        "action": "ui.press",
+        "test_id": "companion-native-unavailable-toggle",
+        "intent": "Inspect execution-node diagnostics only after explicitly expanding them.",
+        "next": "expanded"
+      },
+      "expanded": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs availability-expanded",
+        "intent": "Expanded details match the actual unavailable nodes reported by the gateway.",
+        "next": "capture-expanded"
+      },
+      "capture-expanded": {
+        "action": "ui.screenshot",
+        "path": "unavailable-nodes-expanded.png",
+        "intent": "Record the optional diagnostic details in the native interface.",
+        "next": "collapse"
+      },
+      "collapse": {
+        "action": "ui.press",
+        "test_id": "companion-native-unavailable-toggle",
+        "intent": "Hide diagnostic details and return to a compact setup view.",
+        "next": "verify-collapsed"
+      },
+      "verify-collapsed": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs availability-collapsed",
+        "intent": "The disclosure closes without changing the selected healthy workspace or launching a session.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

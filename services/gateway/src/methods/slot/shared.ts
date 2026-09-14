@@ -40,7 +40,7 @@ export interface CheckStep {
   detail: string;
 }
 
-export const activePrepareSlots = new Set<string>();
+export { activePrepareSlots } from '../../core/native-worker-exclusion.js';
 
 /** In-flight prepare session per slot, so a reloaded UI can re-attach to the
  * live `slot.prepare.*` stream and recover the steps it missed (ADR-037).

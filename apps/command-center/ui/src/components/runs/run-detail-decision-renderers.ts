@@ -122,6 +122,7 @@ export interface RunDecisionRenderContext {
   resolveSlotPick: (runId: string, decisionId: string) => void;
   resolveBranchNudgePick: (runId: string, decisionId: string) => void;
   checkInteractiveHandoffSignal: (runId: string, decision: RunDecision) => void;
+  resumeStoppedWorker: (runId: string, decision: RunDecision) => void;
   handoffSignalCheckBusy: boolean;
   handoffSignalCheckError: string | null;
   handleRecipeRunArtifacts: (
@@ -163,7 +164,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
             : isReviewContinuation
               ? 'Prior review found — choose how to continue'
               : isInteractiveHandoff
-                ? 'Interactive handoff — not publication gate'
+                ? run.transport === 'native'
+                  ? 'Worker needs attention'
+                  : 'Interactive handoff — not publication gate'
                 : isRetrospective
                   ? 'Retrospective ready for review'
                   : recoveredTimeout
@@ -180,7 +183,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
     : undefined;
 
   return html`
-    <div class=${`gate-section ${isReady || isReviewContinuation ? 'ready-gate' : ''}`}>
+    <div
+      class=${`gate-section ${isReview ? 'review-gate' : ''} ${isReady || isReviewContinuation ? 'ready-gate' : ''}`}
+    >
       <div class="gate-header">
         <span class="gate-icon">!</span>
         <div style="flex:1">
@@ -190,9 +195,11 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                 style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:4px"
               >
                 Mode: ${run.mode}.
-                ${interactiveHandoffAllowsExtend(pending)
-                  ? 'Finish in the slot, or extend monitoring without SIGNAL.json.'
-                  : 'Finish in the slot, then check SIGNAL.json to resume.'}
+                ${run.transport === 'native'
+                  ? 'Resume the saved conversation, or check whether the task is complete.'
+                  : interactiveHandoffAllowsExtend(pending)
+                    ? 'Finish in the slot, or extend monitoring without SIGNAL.json.'
+                    : 'Finish in the slot, then check SIGNAL.json to resume.'}
               </div>`
             : nothing}
         </div>
@@ -347,6 +354,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       signalCheckError: context.handoffSignalCheckError,
                       confirmResolve: context.confirmResolve,
                       checkSignalAndResume: context.checkInteractiveHandoffSignal,
+                      resumeStoppedWorker: context.resumeStoppedWorker,
                       posture: context.posture,
                       postureBlockedReason: context.postureBlockedReason,
                       selectPostureChoice: context.selectPostureChoice,

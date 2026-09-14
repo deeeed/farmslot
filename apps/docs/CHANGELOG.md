@@ -5,6 +5,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Task directory contract and agent-runtime reference: the gateway no longer writes a default-valued `checklist-target.json`; absent means `CHECKLIST.md` + `SIGNAL.json`.
+- Document native worker creation and node owner assignment commands.
 - Regenerate the gateway API reference for protocol 0.26.0.
 - Task directory contract: one producer (`task init`), `handoff.json` as the task record, optional `checklist-target.json`, `sandbox.json` readiness record; ledger rows shipped.
 - Task directory contract and worker-artifacts pages: `pr-description.md` is the dev/fix-bug outcome on both Farmslot and skill runs.

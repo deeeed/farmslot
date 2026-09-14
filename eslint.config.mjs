@@ -32,6 +32,8 @@ export default [
       '.claude/**',
       '.agent/**',
       '.artifact-cache/**',
+      // Disposable validation workspaces and their linked runner installations.
+      'temp/**',
       // Vendored clones of other repos (ensure-skills-local.sh caches the skills
       // CLI here inside worker repos). Their files belong to another project and
       // must never be autofixed: a `lint:fix` here rewrote three files in a

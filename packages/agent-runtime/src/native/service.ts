@@ -5,6 +5,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { NativeSessionClient } from './client.js';
+import { NATIVE_PROFILE_METHODS, routeNativeProfile } from './profile-service.js';
 import { nativeWorkspaceChanges, nativeWorkspaceDiff, nativeWorkspaceList } from './workspace.js';
 import { readWorkspaceText } from './workspace-files.js';
 
@@ -34,26 +35,59 @@ export async function routeNativeSession(
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new NativeSessionMethodError('INVALID_PARAMS', 'Expected native session parameters');
   const p = value as Record<string, unknown>;
+  if ('launch' in p)
+    throw new NativeSessionMethodError(
+      'INVALID_PARAMS',
+      'Worker launch settings are supplied by run dispatch',
+    );
   if (p.executionNodeId !== undefined && p.executionNodeId !== client.executionNodeId)
     throw new NativeSessionMethodError(
       'INVALID_PARAMS',
       'Native session targets another execution node',
     );
   try {
+    if (NATIVE_PROFILE_METHODS.includes(method))
+      return await routeNativeProfile(client, principal, method, p);
     switch (method) {
       case Methods.NATIVE_SESSION_WORKSPACE_LIST:
       case Methods.NATIVE_SESSION_WORKSPACE_READ:
       case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
       case Methods.NATIVE_SESSION_WORKSPACE_DIFF: {
-        const { session } = await client.read(principal, string(p, 'sessionId'), undefined, 1);
+        const sessionId = string(p, 'sessionId');
+        const inspect = async () => {
+          const { session } = await client.read(principal, sessionId, undefined, 1);
+          if (session.workerManaged) {
+            const worker = p.worker;
+            if (!worker || typeof worker !== 'object' || Array.isArray(worker))
+              throw new Error('Worker workspace requires its pinned run context');
+            const target = worker as Record<string, unknown>;
+            if (
+              session.workerLeaseId !== target.leaseId ||
+              session.generation !== target.generation ||
+              ['closed', 'failed', 'closing'].includes(session.state)
+            )
+              throw new Error(
+                'Current workspace is unavailable for a closed or transferred worker',
+              );
+          } else if (p.worker !== undefined)
+            throw new Error('Worker workspace target is not a worker');
+          return session;
+        };
+        const session = await inspect();
+        let result: unknown;
         if (method === Methods.NATIVE_SESSION_WORKSPACE_CHANGES)
-          return await nativeWorkspaceChanges(session.cwd);
-        const path = string(p, 'path');
-        if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
-          return await nativeWorkspaceList(session.cwd, path);
-        if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
-          return { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
-        return { path, content: await readWorkspaceText(session.cwd, path) };
+          result = await nativeWorkspaceChanges(session.cwd);
+        else {
+          const path = string(p, 'path');
+          if (method === Methods.NATIVE_SESSION_WORKSPACE_LIST)
+            result = await nativeWorkspaceList(session.cwd, path);
+          else if (method === Methods.NATIVE_SESSION_WORKSPACE_DIFF)
+            result = { path, diff: await nativeWorkspaceDiff(session.cwd, path) };
+          else result = { path, content: await readWorkspaceText(session.cwd, path) };
+        }
+        // File reads await the OS. Refuse their result if a handoff won during that await.
+        if (session.workerManaged) await inspect();
+        return result;
       }
       case Methods.NATIVE_SESSION_CREATE:
       case Methods.NATIVE_SESSION_ENSURE: {
@@ -62,6 +96,9 @@ export async function routeNativeSession(
           cwd: string(p, 'cwd'),
         };
         if (p.model !== undefined) params.model = string(p, 'model');
+        if (p.profileId !== undefined) params.profileId = string(p, 'profileId');
+        if (p.accountContextId !== undefined)
+          params.accountContextId = string(p, 'accountContextId');
         if (p.mode !== undefined) {
           if (p.mode !== 'default' && p.mode !== 'plan')
             throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native interaction mode');

@@ -10,7 +10,12 @@ import type {
   RunRehydratePrNumberResult,
   RunResolveDecisionResult,
 } from '@farmslot/protocol';
-import { buildRunResolveDecisionParams, failedRunCancelEffects, Methods } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  failedRunCancelEffects,
+  Methods,
+  NATIVE_WORKER_RESUME_ACTION,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
@@ -208,17 +213,36 @@ export async function checkInteractiveHandoffSignal(
   decision: RunDecision,
   context: InteractiveHandoffSignalContext,
 ): Promise<void> {
+  return resolveInteractiveHandoff(runId, decision, context, 'signal-written');
+}
+
+export async function resumeStoppedNativeWorker(
+  runId: string,
+  decision: RunDecision,
+  context: InteractiveHandoffSignalContext,
+): Promise<void> {
+  return resolveInteractiveHandoff(runId, decision, context, NATIVE_WORKER_RESUME_ACTION);
+}
+
+async function resolveInteractiveHandoff(
+  runId: string,
+  decision: RunDecision,
+  context: InteractiveHandoffSignalContext,
+  actionId: 'signal-written' | typeof NATIVE_WORKER_RESUME_ACTION,
+): Promise<void> {
   if (context.actionsBlocked() || context.busy()) return;
   context.setBusy(true);
   context.setError(null);
   try {
-    const probe = await gateway.request<RunProbeWorkerSignalResult>(
-      Methods.RUN_PROBE_WORKER_SIGNAL,
-      { runId },
-    );
-    if (!probe.ok) {
-      context.setError(probe.message);
-      return;
+    if (actionId === 'signal-written') {
+      const probe = await gateway.request<RunProbeWorkerSignalResult>(
+        Methods.RUN_PROBE_WORKER_SIGNAL,
+        { runId },
+      );
+      if (!probe.ok) {
+        context.setError(probe.message);
+        return;
+      }
     }
     const resourcePosture = context.resourcePosture?.() ?? null;
     const resolved = await gateway.request<RunResolveDecisionResult>(
@@ -226,7 +250,7 @@ export async function checkInteractiveHandoffSignal(
       buildRunResolveDecisionParams({
         runId,
         decision,
-        actionId: 'signal-written',
+        actionId,
         ...(resourcePosture ? { resourcePosture } : {}),
       }),
     );

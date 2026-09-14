@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { MACHINE_PARK_RESTORE_STAGES, type MachineParkRecord } from '@farmslot/protocol';
+import {
+  isNativeProfileReference,
+  MACHINE_PARK_RESTORE_STAGES,
+  type MachineParkRecord,
+} from '@farmslot/protocol';
 
 /**
  * `free-slot` is its own kind: the slot release and the `slotFreedAt` write
@@ -415,7 +419,40 @@ function validCurrentStep(value: unknown): boolean {
 
 function validRecoveryHandle(value: unknown): boolean {
   if (value === null) return true;
-  if (!isRecord(value) || !isRecord(value.target)) return false;
+  if (!isRecord(value)) return false;
+  if (value.version === 2) {
+    return (
+      value.transport === 'native' &&
+      value.target === undefined &&
+      [
+        'runnerId',
+        'contextId',
+        'sessionId',
+        'nativeSessionId',
+        'executionNodeId',
+        'ownerPrincipalId',
+        'leaseId',
+        'generation',
+        'launchDigest',
+        'slotId',
+        'cwd',
+        'model',
+      ].every((field) => nonEmpty(value[field])) &&
+      optionalString(value.stateDirectory) &&
+      (value.profile === undefined || isNativeProfileReference(value.profile)) &&
+      (value.taskBundle === undefined ||
+        (isRecord(value.taskBundle) &&
+          nonEmpty(value.taskBundle.relativeDirectory) &&
+          typeof value.taskBundle.digest === 'string' &&
+          /^[a-f0-9]{64}$/.test(value.taskBundle.digest))) &&
+      (value.relocation === undefined ||
+        (isRecord(value.relocation) &&
+          nonEmpty(value.relocation.fromSlotId) &&
+          nonEmpty(value.relocation.fromCwd))) &&
+      iso(value.capturedAt)
+    );
+  }
+  if (!isRecord(value.target)) return false;
   return (
     value.version === 1 &&
     nonEmpty(value.runnerId) &&

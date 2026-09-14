@@ -7,6 +7,7 @@ import type {
   ExecutionTemplateCatalogOption,
   ExecutionTemplateOptions,
   FlowType,
+  NativeSessionCatalogResult,
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
@@ -20,6 +21,7 @@ import { DEFAULT_CLAUDE_MODEL } from '@farmslot/protocol';
 
 import { type EffortLevel } from '../../utils/runner-options.js';
 
+import type { DispatchNativeProfileSelection } from './dispatch-native-profile-model.js';
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 
 interface DispatchWizardMockInitialState {
@@ -44,6 +46,18 @@ export abstract class DispatchWizardState extends LitElement {
   _normalizedTicket = ''; // server-normalized form for internal matching only
   @state() _model = DEFAULT_CLAUDE_MODEL;
   @state() _runner = 'claude';
+  @state() _transport: 'tmux' | 'native' = 'tmux';
+  _transportChosen = false;
+  @state() _nativeWorkerRunners: string[] = [];
+  @state() _nativeQueueRunners: string[] = [];
+  @state() _nativeCatalogError = '';
+  @state() _nativeCatalog?: NativeSessionCatalogResult;
+  @state() _nativeCatalogReady = false;
+  @state() _nativeProfileSelection: DispatchNativeProfileSelection | null = null;
+  @state() _nativeProfileRefreshVersion = 0;
+  @state() _nativeProfileScope = '';
+  _nativeCatalogGeneration = 0;
+  _nativeAutomaticSlot = false;
   @state() _effort: EffortLevel = '';
   @state() _slotOverride = '';
   @state() _project = '';

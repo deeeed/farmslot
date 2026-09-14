@@ -1,4 +1,10 @@
-import type { AgentContextSummary, AgentRole, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  AgentContext,
+  AgentContextSummary,
+  AgentRole,
+  Run,
+  SlotStatus,
+} from '@farmslot/protocol';
 import {
   agentRoleLabel,
   agentRoleRank,
@@ -20,10 +26,13 @@ type SlotViewAgentContextLike = Pick<
   | 'runner'
   | 'model'
   | 'target'
+  | 'nativeSession'
+  | 'nativeSessionOwner'
   | 'nudgeCount'
   | 'lastSignalAt'
   | 'updatedAt'
->;
+> &
+  Partial<Pick<AgentContext, 'slotId' | 'nativeSessionHistory'>>;
 
 export interface SlotViewAgentContextRun {
   id: string;
@@ -53,6 +62,7 @@ export function isAgentContextUnavailable(
   ctx: AgentContextSummary,
   unavailableKeys: Set<string>,
 ): boolean {
+  if (ctx.nativeSession) return false;
   if (!ctx.target?.target) return true;
   return unavailableKeys.has(agentContextKey(ctx));
 }
@@ -81,14 +91,16 @@ function toAgentContextSummary(ctx: SlotViewAgentContextLike): AgentContextSumma
     runner: ctx.runner,
     model: ctx.model,
     target: ctx.target,
+    ...(ctx.nativeSession ? { nativeSession: ctx.nativeSession } : {}),
+    ...(ctx.nativeSessionOwner ? { nativeSessionOwner: ctx.nativeSessionOwner } : {}),
     nudgeCount: ctx.nudgeCount,
     lastSignalAt: ctx.lastSignalAt,
     updatedAt: ctx.updatedAt,
   };
 }
 
-function hasTmuxTarget(ctx: AgentContextSummary): boolean {
-  return Boolean(ctx.target?.target);
+function hasSessionTarget(ctx: AgentContextSummary): boolean {
+  return Boolean(ctx.nativeSession || ctx.target?.target);
 }
 
 export function deriveSlotViewAgentContexts({
@@ -101,7 +113,31 @@ export function deriveSlotViewAgentContexts({
   // the run identity is resolved.
   if (!linkedRun) return [];
 
-  const runContexts = (linkedRun.agentContexts ?? []).map(toAgentContextSummary);
+  const runContexts = (linkedRun.agentContexts ?? []).map((ctx) => {
+    const summary = toAgentContextSummary(ctx);
+    if (!ctx.nativeSessionOwner) return summary;
+    const reference = ctx.nativeSessionOwner;
+    const owners = (linkedRun.agentContexts ?? []).filter(
+      (candidate) => candidate.id === reference.contextId,
+    );
+    const owner = owners.length === 1 ? owners[0] : undefined;
+    const bindings = [owner?.nativeSession, ...(owner?.nativeSessionHistory ?? [])].filter(
+      (binding) =>
+        binding?.sessionId === reference.sessionId && binding.leaseId === reference.leaseId,
+    );
+    const binding = bindings.length === 1 ? bindings[0] : undefined;
+    if (
+      owner &&
+      owner.id !== ctx.id &&
+      !owner.nativeSessionOwner &&
+      owner.runId === ctx.runId &&
+      owner.slotId === ctx.slotId &&
+      binding?.sessionId === reference.sessionId &&
+      binding.leaseId === reference.leaseId
+    )
+      return { ...summary, nativeSession: binding };
+    return { ...summary, nativeSession: undefined };
+  });
   const flowRole = primaryRoleForFlow(linkedRun.flowType ?? slot?.currentFlowType);
   const linkedRunId = linkedRun.id;
   const slotContextsForRun = (slot?.agentContexts ?? [])
@@ -114,12 +150,16 @@ export function deriveSlotViewAgentContexts({
   const merged = new Map<string, AgentContextSummary>();
   for (const ctx of slotContextsForRun) {
     if (skipPrimary && ctx.role === 'primary') continue;
-    if (!hasTmuxTarget(ctx)) continue;
+    if (!hasSessionTarget(ctx)) continue;
     merged.set(ctx.id, displayAgentContext(ctx, flowRole, flowRoleExists));
   }
   for (const ctx of runContexts) {
     if (skipPrimary && ctx.role === 'primary') continue;
-    if (!hasTmuxTarget(ctx)) continue;
+    if (!hasSessionTarget(ctx)) {
+      // A stale mirrored alias must not survive the authoritative run's refusal.
+      if (ctx.nativeSessionOwner) merged.delete(ctx.id);
+      continue;
+    }
     merged.set(ctx.id, displayAgentContext(ctx, flowRole, flowRoleExists));
   }
   const contexts = [...merged.values()].sort((a, b) => {

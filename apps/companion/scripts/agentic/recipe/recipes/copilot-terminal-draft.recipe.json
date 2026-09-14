@@ -1,0 +1,62 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion terminal chooser exact target and draft",
+  "description": "Uses an already-running private gateway Copilot. NATIVE_COMPANION_TERMINAL_STATE records its exact worker ref and a draft sentinel. The draft is never sent.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/copilot-terminal-proof.mjs open",
+        "intent": "Open the Co-Pilot chooser with a pending instruction.",
+        "next": "choose"
+      },
+      "choose": {
+        "action": "ui.press",
+        "test_id": "companion-copilot-terminal",
+        "intent": "Choose the existing gateway-owned terminal from Companion.",
+        "next": "wait-terminal"
+      },
+      "wait-terminal": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-worker-terminal",
+        "timeout_ms": 30000,
+        "intent": "The existing terminal client opens for the shared Co-Pilot.",
+        "next": "wait-draft"
+      },
+      "wait-draft": {
+        "action": "ui.wait_for",
+        "text_contains": ["{{params.draft}}"],
+        "timeout_ms": 30000,
+        "intent": "The draft remains editable rather than being sent automatically.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/copilot-terminal-proof.mjs verify",
+        "intent": "Compare the actual mobile route to the exact gateway worker ref and unchanged delivery receipt.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "copilot-terminal-draft.png",
+        "intent": "Record the terminal identity and preserved unsent draft.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "required": ["draft"],
+    "properties": {
+      "draft": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  }
+}

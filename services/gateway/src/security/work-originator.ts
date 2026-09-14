@@ -13,6 +13,11 @@ export function runWithSessionOriginator<T>(principal: Principal, operation: () 
   return sessionOriginator.run({ kind: 'principal', principalId: principal.id }, operation);
 }
 
+/** Background scheduling must not adopt the user whose unrelated event woke it. */
+export function runWithSystemOriginator<T>(operation: () => T): T {
+  return sessionOriginator.run({ kind: 'system' }, operation);
+}
+
 export function currentSessionOriginator(): WorkOriginator {
   // Every network route is entered through runWithSessionOriginator. The
   // fallback preserves direct in-process maintenance callers without making

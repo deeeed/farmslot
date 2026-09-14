@@ -40,6 +40,11 @@ import {
 } from './dispatch-wizard-publication-review-renderer.js';
 
 interface DispatchWizardViewContext {
+  transport: 'tmux' | 'native';
+  nativeWorkerAvailable: boolean;
+  nativeCatalogError: string;
+  nativeProfileControl: unknown;
+  setTransport: (transport: 'tmux' | 'native') => void;
   hydrating: boolean;
   bootstrapFailed: boolean;
   connectionStale: boolean;
@@ -52,6 +57,7 @@ interface DispatchWizardViewContext {
   autoProject: string;
   project: string;
   selectedSlotOverride: string;
+  allowAutomaticSlot: boolean;
   selectedSlotPlatform: string;
   projectApps: readonly string[];
   selectedDispatchApp: string | undefined;
@@ -191,6 +197,11 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
       ${showDispatchForm
         ? html`
             ${renderDispatchWizardPrimaryControls({
+              transport: ctx.transport,
+              nativeWorkerAvailable: ctx.nativeWorkerAvailable,
+              nativeCatalogError: ctx.nativeCatalogError,
+              nativeProfileControl: ctx.nativeProfileControl,
+              setTransport: ctx.setTransport,
               ticketId: ctx.ticketId,
               matchingProject: ctx.matchingProject,
               issueType: ctx.issueType,
@@ -277,6 +288,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               pressureOverrideAvailable: ctx.pressureOverrideAvailable,
               slotSummaryLabel: ctx.slotSummaryLabel,
               selectSlot: ctx.selectSlot,
+              allowAutomaticSlot: ctx.allowAutomaticSlot,
               refreshSlots: ctx.refreshSlots,
               setNudgeIntent: ctx.setNudgeIntent,
               beginPressureOverride: ctx.beginPressureOverride,
@@ -395,6 +407,7 @@ function renderActionFooter(ctx: DispatchWizardViewContext) {
     <div class="actions">
       <button
         class="btn primary"
+        data-testid="dispatch-submit"
         ?disabled=${ctx.dispatchBlocked()}
         title=${ctx.dispatchBlockedReason() ?? ''}
         @click=${() => ctx.dispatch()}
@@ -403,6 +416,7 @@ function renderActionFooter(ctx: DispatchWizardViewContext) {
       </button>
       <button
         class="btn"
+        data-testid="dispatch-queue"
         ?disabled=${ctx.queueBlocked()}
         title=${ctx.queueBlockedReason() ?? ''}
         @click=${() => ctx.addToQueue()}

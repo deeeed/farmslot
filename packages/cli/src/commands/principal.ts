@@ -6,6 +6,7 @@ import {
   readCredentialStoreOffline,
 } from '@farmslot/credential-store';
 import type {
+  PrincipalBindNativeOwnerResult,
   PrincipalCreateResult,
   PrincipalGrantResult,
   PrincipalListResult,
@@ -22,6 +23,7 @@ interface PrincipalCreateOptions {
   type: 'person' | 'service' | 'node';
   name: string;
   machine?: string;
+  nativeOwner?: string;
   role?: Role[];
   offline?: boolean;
 }
@@ -34,6 +36,7 @@ export function registerPrincipalCommands(program: Command): void {
     .requiredOption('--type <type>', 'person, service, or node')
     .requiredOption('--name <display-name>')
     .option('--machine <machine>', 'required for node subjects')
+    .option('--native-owner <principal-id>', 'bind a node to its native account owner')
     .option('--role <role...>', 'admin and/or operator; omission creates roles: []')
     .option('--offline', 'operate on the store while every gateway is stopped')
     .action(async (opts: PrincipalCreateOptions, cmd: Command) => {
@@ -53,6 +56,30 @@ export function registerPrincipalCommands(program: Command): void {
         emit.fail(error);
       }
     });
+
+  principal
+    .command('bind-native-owner')
+    .argument('<node-principal-id>')
+    .requiredOption('--owner <principal-id>')
+    .option('--offline', 'operate on the store while every gateway is stopped')
+    .action(
+      async (nodePrincipalId: string, opts: { owner: string; offline?: boolean }, cmd: Command) => {
+        const { output, client } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          const result: PrincipalBindNativeOwnerResult = opts.offline
+            ? { principal: offlineWriter().bindNativeOwner(nodePrincipalId, opts.owner) }
+            : await client.call('principal.bindNativeOwner', {
+                nodePrincipalId,
+                ownerPrincipalId: opts.owner,
+              });
+          if (emit.machine) emit.ok(result);
+          else output.write(`Bound native owner '${opts.owner}' to '${result.principal.id}'.\n`);
+        } catch (error) {
+          emit.fail(error);
+        }
+      },
+    );
 
   principal
     .command('list')
@@ -135,11 +162,20 @@ export function registerPrincipalCommands(program: Command): void {
 }
 
 function subjectFromOptions(opts: PrincipalCreateOptions): PrincipalSubject {
+  if (opts.nativeOwner !== undefined && opts.type !== 'node')
+    throw Object.assign(new Error('--native-owner requires a node principal'), {
+      code: 'INVALID_PARAMS',
+    });
   if (opts.type === 'person' || opts.type === 'service') {
     return { type: opts.type, displayName: opts.name };
   }
   if (opts.type === 'node' && opts.machine) {
-    return { type: 'node', displayName: opts.name, machine: opts.machine };
+    return {
+      type: 'node',
+      displayName: opts.name,
+      machine: opts.machine,
+      ...(opts.nativeOwner !== undefined ? { nativeOwnerPrincipalId: opts.nativeOwner } : {}),
+    };
   }
   throw Object.assign(new Error('node principals require --machine'), { code: 'INVALID_PARAMS' });
 }

@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 
+import { getLLMConfig } from './config.js';
 import {
   callLLM,
   callLLMChat,
@@ -179,4 +180,46 @@ test('oauth seeding writes a full bundle once and re-seeds only on rotation', as
     expires: 456,
   });
   await piCredentialStore.delete(provider);
+});
+
+test('configured low and explicit reasoning reach PI calls and both chat transports', async () => {
+  process.env.OPENAI_API_KEY ??= 'faux-test-key';
+  const faux = fauxProvider({
+    provider: 'openai',
+    models: [{ id: 'faux-effort-model', reasoning: true }],
+  });
+  (await piModels()).setProvider(faux.provider);
+  const observed: unknown[] = [];
+  const response = (_context: unknown, options: unknown) => {
+    observed.push((options as { reasoning?: string })?.reasoning);
+    return fauxAssistantMessage('ok');
+  };
+  faux.setResponses([response, response, response]);
+  await callLLM({ provider: 'openai', model: 'faux-effort-model', userPrompt: 'one' });
+  await callLLMChat({
+    provider: 'openai',
+    model: 'faux-effort-model',
+    reasoning: 'medium',
+    messages: [{ role: 'user', content: 'two' }],
+  });
+  await callLLMChat({
+    provider: 'openai',
+    model: 'faux-effort-model',
+    reasoning: 'high',
+    messages: [{ role: 'user', content: 'three' }],
+    onDelta: () => {},
+  });
+  assert.deepEqual(observed, [getLLMConfig().intelligenceEffort, 'medium', 'high']);
+});
+
+test('Astra without matching provider auth never falls back to another CLI for call or chat', async () => {
+  const provider = '__no_astra_provider_auth__';
+  await assert.rejects(
+    callLLM({ provider, model: 'gpt-6-astra', userPrompt: 'hello' }),
+    /CLI fallback disabled/,
+  );
+  await assert.rejects(
+    callLLMChat({ provider, model: 'gpt-6-astra', messages: [{ role: 'user', content: 'hello' }] }),
+    /CLI fallback disabled/,
+  );
 });

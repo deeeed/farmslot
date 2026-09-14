@@ -10,7 +10,13 @@ const { WebSocket } = createRequire(path.join(ROOT, 'services/gateway/package.js
 export const SCENARIO_ID = 'native-node-broker-smoke';
 export const RUNNER_AGNOSTIC = true;
 
-async function connect(token, kind, onRequest, url = process.env.FARMSLOT_GATEWAY) {
+export async function connect(
+  token,
+  kind,
+  onRequest,
+  url = process.env.FARMSLOT_GATEWAY,
+  clientName,
+) {
   const ws = new WebSocket(url);
   const pending = new Map();
   let fault;
@@ -43,14 +49,14 @@ async function connect(token, kind, onRequest, url = process.env.FARMSLOT_GATEWA
     ws.once('open', resolve);
     ws.once('error', reject);
   });
-  const request = async (method, params) => {
+  const request = async (method, params, timeoutMs = 10000) => {
     if (fault) throw fault;
     const id = randomUUID();
     let timer;
     try {
       return await new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
-        timer = setTimeout(() => reject(new Error(`Validation ${method} timed out`)), 10000);
+        timer = setTimeout(() => reject(new Error(`Validation ${method} timed out`)), timeoutMs);
         ws.send(JSON.stringify({ type: 'req', id, method, params }));
       });
     } finally {
@@ -59,7 +65,11 @@ async function connect(token, kind, onRequest, url = process.env.FARMSLOT_GATEWA
     }
   };
   try {
-    const auth = await request('auth.connect', { clientKind: kind, token });
+    const auth = await request('auth.connect', {
+      clientKind: kind,
+      token,
+      ...(clientName ? { clientName } : {}),
+    });
     if (!auth.ok) throw new Error('Validation credential did not authenticate');
     return { ws, request, principalId: auth.payload.principal.id };
   } catch (error) {

@@ -96,6 +96,47 @@ const cancelRequest: RunTransitionRequest = {
   reason: 'Cancelled by user',
 };
 
+test('native cancel retains process ownership through failed teardown', async () => {
+  const nativeSession = {
+    sessionId: 'session',
+    generation: 'generation',
+    leaseId: 'lease',
+    commandId: 'command',
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+  };
+  const h = harness(
+    run({
+      transport: 'native',
+      nativeOwnerPrincipalId: 'owner',
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Dev',
+          slotId: 'mini-ff-1',
+          runId: 'run_1',
+          status: 'working',
+          updatedAt: NOW,
+          nativeSession,
+        },
+      ],
+    }),
+    {
+      releaseSlot: async (current) => {
+        assert.equal(current.status, 'cancelled');
+        assert.deepEqual(current.agentContexts?.[0]?.nativeSession, nativeSession);
+        throw new Error('Native stop unconfirmed');
+      },
+    },
+  );
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  assert.deepEqual(result.run.agentContexts?.[0]?.nativeSession, nativeSession);
+  assert.ok(
+    result.effects.some((effect) => effect.name === 'slot-release' && effect.status === 'failed'),
+  );
+});
+
 test('operator cancel settles the backlog and ticks the work graph', async () => {
   // Regression for the gap ADR-053 documents: run.cancel holds the per-request
   // emit, so the index.ts event interceptor never saw it and neither store moved.

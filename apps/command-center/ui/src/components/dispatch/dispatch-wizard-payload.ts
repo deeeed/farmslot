@@ -2,6 +2,7 @@ import type {
   DevInteractiveProfile,
   DispatchQueueAddParams,
   FlowType,
+  NativeProfileReference,
   PressureAdmissionReference,
   PressureDispatchOverride,
   ReviewDepthPolicy,
@@ -18,6 +19,8 @@ export type ComparisonRunParams = Pick<
 >;
 
 export interface DispatchPayloadDraft {
+  transport?: 'tmux' | 'native';
+  nativeProfile?: NativeProfileReference;
   flowType: FlowType;
   project: string;
   ticketOrPr: string;
@@ -64,6 +67,10 @@ function devInteractiveFields(
 
 export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreateParams {
   return {
+    ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.transport === 'native' && input.nativeProfile
+      ? { nativeProfile: input.nativeProfile }
+      : {}),
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketOrPr,
@@ -96,6 +103,11 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
 
 export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): DispatchQueueAddParams {
   return {
+    ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.transport === 'native' && input.nativeProfile
+      ? { nativeProfile: input.nativeProfile }
+      : {}),
+    ...(input.skipPrepare !== undefined ? { skipPrepare: input.skipPrepare } : {}),
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketOrPr,

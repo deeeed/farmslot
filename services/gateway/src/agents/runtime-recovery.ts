@@ -1,4 +1,4 @@
-// agents/runtime-recovery.ts — reconcile persisted agent context state with live tmux runtime.
+// agents/runtime-recovery.ts — reconcile agent contexts with their execution runtime.
 
 import path from 'node:path';
 
@@ -30,6 +30,7 @@ import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js'
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
+import { reconcileNativeRunAgentRuntime } from '../runners/native/worker-runtime.js';
 import {
   normalizeRunner,
   runnerPersistsSessionFiles,
@@ -352,7 +353,12 @@ function statusAfterInspection(
   return 'failed';
 }
 
-export async function reconcileRunAgentRuntime(run: Run): Promise<TmuxWorkerRestoreResult> {
+export async function reconcileRunAgentRuntime(run: Run): Promise<void> {
+  if (run.transport === 'native') await reconcileNativeRunAgentRuntime(run);
+  else await reconcileTmuxRunAgentRuntime(run);
+}
+
+async function reconcileTmuxRunAgentRuntime(run: Run): Promise<TmuxWorkerRestoreResult> {
   const contexts = run.agentContexts ?? [];
   if (!run.slotId || contexts.length === 0) {
     return { slotId: run.slotId ?? '', runId: run.id, restored: false, contexts: [] };
@@ -420,11 +426,12 @@ export async function restoreTmuxWorker(
           (candidate) => candidate.slotId === params.slotId,
         );
   if (!run) throw new Error(`No active run found for slot ${params.slotId}`);
+  if (run.transport === 'native') throw new Error('Use native session recovery for this run');
   if (run.slotId !== params.slotId) {
     throw new Error(`Run ${run.id} is on slot ${run.slotId}, not ${params.slotId}`);
   }
   if (params.mode !== 'restore-window' && params.mode !== 'reload-session') {
-    return reconcileRunAgentRuntime(run);
+    return reconcileTmuxRunAgentRuntime(run);
   }
   if (isTerminalRunStatus(run.status)) {
     throw new Error(`Run ${run.id} is terminal (${run.status}); restore a live run instead`);

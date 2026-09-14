@@ -1,0 +1,70 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Preserve a focused native draft through reconnect",
+  "description": "Run native-draft-proof.mjs setup against the private gateway first. Set NATIVE_COMPANION_DRAFT to the draft recipe parameter. The transport closes while the real typed composer remains focused.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-draft-proof.mjs open",
+        "intent": "Open the exact private native session without prefilling its composer.",
+        "next": "wait-identity"
+      },
+      "wait-identity": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-identity",
+        "timeout_ms": 20000,
+        "intent": "The selected conversation has replayed its live gateway identity before editing.",
+        "next": "compose"
+      },
+      "compose": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "{{params.draft}}",
+        "intent": "An unsent instruction exists through native keyboard editing and remains focused.",
+        "next": "drop-focused"
+      },
+      "drop-focused": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-draft-proof.mjs drop-focused",
+        "intent": "Verify the exact text is focused, close the private mobile socket and observe a real reconnect.",
+        "next": "restored-draft"
+      },
+      "restored-draft": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-draft",
+        "text_contains": ["{{params.draft}}"],
+        "timeout_ms": 20000,
+        "intent": "The remounted conversation must restore every typed character without a prior blur.",
+        "next": "verify-unsent"
+      },
+      "verify-unsent": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-draft-proof.mjs verify-unsent",
+        "intent": "Prove through gateway reads that the draft did not submit a command or answer a request.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "focused-draft-restored.png",
+        "intent": "Record the restored unsent draft in the reconnected conversation.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "required": ["draft"],
+    "properties": {
+      "draft": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  }
+}

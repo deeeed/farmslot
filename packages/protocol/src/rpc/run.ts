@@ -15,6 +15,7 @@ import { Methods } from './registry.js';
 
 export const RunMethods = {
   create: Methods.RUN_CREATE,
+  createNative: Methods.RUN_CREATE_NATIVE,
   get: Methods.RUN_GET,
   list: Methods.RUN_LIST,
   slotHistory: Methods.RUN_SLOT_HISTORY,
@@ -99,6 +100,10 @@ export interface RunCreateParams {
   prNumber?: number;
   model?: string;
   runner?: string;
+  /** Opt in to structured execution without changing runner/model identity. Defaults to tmux. */
+  transport?: import('../contracts/index.js').WorkerTransport;
+  /** Optional configuration for this runner; another reviewer runner keeps its own default. */
+  nativeProfile?: import('./native-profile.js').NativeProfileReference;
   /** Worker scripted-runner config when runner='scripted'. */
   scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;
@@ -193,6 +198,11 @@ export interface RunCreateParams {
 
 export interface RunCreateResult {
   run: Run;
+}
+
+/** Distinct operation so an older gateway cannot silently launch a terminal worker. */
+export interface RunCreateNativeParams extends RunCreateParams {
+  transport?: 'native';
 }
 
 export interface RunGetParams {
@@ -321,7 +331,7 @@ export interface RunReplayStepParams {
   skipPrepare?: boolean;
   /** Replay PREPARE with this named profile; persisted on the run before the engine restarts. */
   prepareProfile?: string;
-  /** Explicitly abandon an ambiguous retained-session handoff and relaunch fresh. Dispatch only. */
+  /** Explicitly start a fresh native task, or abandon a retained terminal handoff. Dispatch only. */
   freshDispatch?: boolean;
   triggeredBy?: 'operator' | 'auto-recovery';
   intelligenceActionId?: string;

@@ -14,6 +14,7 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import { currentFarmConnection } from '../lib/connection-authority';
 import {
   type ConnectionHealthState,
   type ConnectionLiveness,
@@ -59,10 +60,12 @@ import {
 } from '../lib/gateway-profiles';
 import { fetchActiveRuns, fetchRecentRunHistory } from '../lib/gateway-run-sync';
 import { notifyDecision, notifyRunCompleted, notifyViolation } from '../lib/notifications';
+import type { WorkspaceAccess } from '../lib/workspace-access';
 
 import { useDecisionStore } from './decisions';
 import { useFleetStore } from './fleet';
 import { usePRStore } from './prs';
+import { resetFarmState } from './reset-farm-state';
 import { useRunStore } from './runs';
 
 const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
@@ -85,6 +88,9 @@ type DecisionNewEventPayload = {
 
 interface ConnectionStore {
   status: ConnectionState;
+  principalId: string | null;
+  workspaceAccess: WorkspaceAccess;
+  authorityEpoch: number;
   healthStatus: ConnectionHealthState;
   gatewayUrl: string;
   profiles: GatewayProfile[];
@@ -123,6 +129,9 @@ interface ConnectionStore {
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   status: 'disconnected',
+  principalId: null,
+  workspaceAccess: 'none',
+  authorityEpoch: 0,
   healthStatus: INITIAL_CONNECTION_LIVENESS.status,
   gatewayUrl: DEFAULT_GATEWAY_URL,
   profiles: DEFAULT_GATEWAY_PROFILES,
@@ -210,24 +219,23 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         }));
       };
       const refreshDecisions = (reason: string, retryBeforeWarning = false): Promise<void> => {
+        if (client.workspaceAccess !== 'farm' || client.connectionState !== 'connected')
+          return Promise.resolve();
         if (decisionRefreshInFlight) {
           decisionRefreshQueued = true;
           decisionRefreshQueuedReason = reason;
           decisionRefreshQueuedRetryBeforeWarning ||= retryBeforeWarning;
           return decisionRefreshInFlight;
         }
-        const connectionGeneration = client.connectionGeneration;
         // A reconnect starts a fresh sync; never surface stale results from the prior socket.
-        const connectionIsCurrent = () =>
-          client.connectionState === 'connected' &&
-          client.connectionGeneration === connectionGeneration;
+        const connectionIsCurrent = currentFarmConnection(client);
         const requestDecisions = () =>
           client.request<DecisionListResult>(
             Methods.DECISION_LIST,
             undefined,
             DECISION_LIST_TIMEOUT_MS,
           );
-        decisionRefreshInFlight = (async () => {
+        const refresh = (async () => {
           try {
             let result: DecisionListResult;
             try {
@@ -247,6 +255,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             set({ lastSyncError: `Failed to refresh decisions after ${reason}: ${message}` });
           }
         })().finally(() => {
+          if (decisionRefreshInFlight !== refresh) return;
           decisionRefreshInFlight = null;
           if (decisionRefreshQueued) {
             decisionRefreshQueued = false;
@@ -257,7 +266,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             void refreshDecisions(queuedReason, queuedRetryBeforeWarning);
           }
         });
-        return decisionRefreshInFlight;
+        decisionRefreshInFlight = refresh;
+        return refresh;
       };
       requestDecisionRefresh = () => refreshDecisions('manual retry');
 
@@ -324,13 +334,35 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       });
 
       client.onConnectionChange((status) => {
-        const liveness = livenessForTransportState(livenessFromStore(get()), status);
+        const principalId = client.authenticatedPrincipal?.id ?? null;
+        const workspaceAccess = client.workspaceAccess;
+        const authorityChanged =
+          get().principalId !== principalId || get().workspaceAccess !== workspaceAccess;
+        if (authorityChanged) {
+          if (get().workspaceAccess !== 'none' || workspaceAccess !== 'farm') resetFarmState();
+          decisionRefreshQueued = false;
+          decisionRefreshInFlight = null;
+          probeAttemptTracker.invalidate();
+          livenessController?.reset();
+        }
+        const liveness = livenessForTransportState(
+          authorityChanged ? INITIAL_CONNECTION_LIVENESS : livenessFromStore(get()),
+          status,
+        );
         set({
           status,
+          principalId,
+          workspaceAccess,
+          authorityEpoch: get().authorityEpoch + (authorityChanged ? 1 : 0),
+          ...(authorityChanged
+            ? { lastSyncError: null, gatewayCompatibilityHint: null, probeInProgress: false }
+            : {}),
           ...livenessPatch(liveness),
           lastConnectedAt: status === 'connected' ? Date.now() : get().lastConnectedAt,
         });
         if (status !== 'connected') {
+          decisionRefreshInFlight = null;
+          decisionRefreshQueued = false;
           usePRStore.getState().setLoading(false);
           useRunStore.getState().setActiveLoading(false);
           useRunStore.getState().resetHistorySync();
@@ -339,22 +371,27 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         // Fetch all state on connect/reconnect
         if (status === 'connected') {
           void livenessController?.probeFresh();
+          if (workspaceAccess !== 'farm') return;
+          const isCurrent = currentFarmConnection(client);
           useFleetStore.getState().setLoading(true);
           useRunStore.getState().resetHistorySync();
           useRunStore.getState().setActiveLoading(true);
           client
             .request<FleetStatusResult>(Methods.FLEET_STATUS)
             .then((result) => {
+              if (!isCurrent()) return;
               useFleetStore.getState().setFleet(result.fleet);
               set({ lastSyncError: null });
             })
             .catch((err: Error) => {
+              if (!isCurrent()) return;
               set({ lastSyncError: `Failed to refresh fleet: ${err.message}` });
               useFleetStore.getState().setLoading(false);
             });
 
           fetchActiveRuns(client)
             .then((runs) => {
+              if (!isCurrent()) return;
               useRunStore.getState().setRuns(runs);
               set((state) => ({
                 lastSyncError:
@@ -365,6 +402,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
               }));
             })
             .catch((err: Error) => {
+              if (!isCurrent()) return;
               useRunStore.getState().setActiveLoading(false);
               set({ lastSyncError: `Failed to refresh runs: ${err.message}` });
             });
@@ -439,10 +477,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       ...transition.patch,
     });
     if (transition.changed) {
+      resetFarmState();
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    state.client?.setConnection(url, auth);
+    state.client?.setConnection(url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -469,10 +508,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       ...transition.patch,
     });
     if (transition.changed) {
+      resetFarmState();
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    state.client?.setConnection(profile.url, auth);
+    state.client?.setConnection(profile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -533,10 +573,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         ...transition.patch,
       });
       if (transition.changed) {
+        resetFarmState();
         probeAttemptTracker.invalidate();
         livenessController?.reset();
       }
-      state.client?.setConnection(updated.url, auth);
+      state.client?.setConnection(updated.url, auth, transition.changed);
       if (transition.changed) void livenessController?.probeFresh();
     }
   },
@@ -567,11 +608,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileAuthMode: 'none',
         activeProfileHttpAuthHeaders: {},
         gatewayUrl: '',
+        principalId: null,
+        workspaceAccess: 'none',
+        authorityEpoch: get().authorityEpoch + 1,
+        lastSyncError: null,
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
         gatewayCompatibilityHint: null,
       });
       probeAttemptTracker.invalidate();
       livenessController?.reset();
+      resetFarmState();
       state.client?.setConnection('', {});
       return;
     }
@@ -595,10 +641,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       ...transition.patch,
     });
     if (transition.changed) {
+      resetFarmState();
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    state.client?.setConnection(nextProfile.url, auth);
+    state.client?.setConnection(nextProfile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -628,11 +675,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileAuthMode: 'none',
         activeProfileHttpAuthHeaders: {},
         gatewayUrl: '',
+        principalId: null,
+        workspaceAccess: 'none',
+        authorityEpoch: get().authorityEpoch + 1,
+        lastSyncError: null,
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
         gatewayCompatibilityHint: null,
       });
       probeAttemptTracker.invalidate();
       livenessController?.reset();
+      resetFarmState();
       state.client?.setConnection('', {});
       return;
     }
@@ -657,10 +709,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       ...transition.patch,
     });
     if (transition.changed) {
+      resetFarmState();
       probeAttemptTracker.invalidate();
       livenessController?.reset();
     }
-    state.client?.setConnection(nextProfile.url, auth);
+    state.client?.setConnection(nextProfile.url, auth, transition.changed);
     if (transition.changed) void livenessController?.probeFresh();
   },
 
@@ -799,19 +852,21 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   retryDecisionSync: async () => {
-    if (get().status !== 'connected') return;
+    if (get().status !== 'connected' || get().workspaceAccess !== 'farm') return;
     await requestDecisionRefresh?.();
   },
 
   syncRunHistory: async () => {
     const { client, status } = get();
-    if (!client || status !== 'connected') return;
+    if (!client || status !== 'connected' || get().workspaceAccess !== 'farm') return;
+    const isCurrent = currentFarmConnection(client);
     const runStore = useRunStore.getState();
     if (runStore.activeLoading || runStore.historyLoaded || runStore.historyLoading) return;
 
     runStore.setHistoryLoading(true);
     try {
       const runs = await fetchRecentRunHistory(client);
+      if (!isCurrent()) return;
       useRunStore.getState().mergeRuns(runs);
       set((state) => ({
         lastSyncError: state.lastSyncError?.startsWith('Failed to download run history:')
@@ -819,6 +874,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           : state.lastSyncError,
       }));
     } catch (err) {
+      if (!isCurrent()) return;
       useRunStore.getState().setHistoryLoading(false);
       set({
         lastSyncError: `Failed to download run history: ${(err as Error).message}`,
@@ -887,7 +943,11 @@ function livenessPatch(liveness: ConnectionLiveness) {
 function connectionIdentityTransition(
   current: Pick<
     ConnectionStore,
-    'gatewayUrl' | 'activeProfileId' | 'activeProfileAuthMode' | 'activeProfileHttpAuthHeaders'
+    | 'gatewayUrl'
+    | 'activeProfileId'
+    | 'activeProfileAuthMode'
+    | 'activeProfileHttpAuthHeaders'
+    | 'authorityEpoch'
   >,
   next: {
     url: string;
@@ -905,6 +965,10 @@ function connectionIdentityTransition(
     changed,
     patch: changed
       ? {
+          principalId: null,
+          workspaceAccess: 'none' as const,
+          authorityEpoch: current.authorityEpoch + 1,
+          lastSyncError: null,
           ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
           gatewayCompatibilityHint: null,
           probeInProgress: false,

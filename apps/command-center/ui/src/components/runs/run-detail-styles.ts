@@ -246,13 +246,16 @@ export const runDetailStyles = css`
     flex: 1;
   }
   .gate-section {
-    flex: 1;
+    flex: 0 0 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;
     border: 1px solid ${unsafeCSS(colors.statusWarn)}44;
     border-radius: ${unsafeCSS(radii.md)};
     overflow: hidden;
+  }
+  .gate-section.review-gate {
+    flex: 1;
   }
   .gate-section.ready-gate {
     flex: 0 0 auto;

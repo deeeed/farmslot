@@ -153,6 +153,11 @@
       "surface": "na",
       "note": "Command Center chat surface (web UI)."
     },
+    "config.githubAccounts": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc config.githubAccounts",
+      "note": "List verified gateway GitHub accounts without credentials; explicit refresh rechecks authentication."
+    },
     "config.pool": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -201,13 +206,13 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "copilot.formatInstruction": {
-      "surface": "na",
-      "note": "Command Center copilot surface (web UI)."
-    },
     "copilot.configure": {
       "surface": "rpc-only",
       "note": "Shared Co-Pilot runtime configuration is client-neutral; use `farmslot rpc copilot.configure [json]` until a typed CLI lifecycle command is promoted."
+    },
+    "copilot.formatInstruction": {
+      "surface": "na",
+      "note": "Command Center copilot surface (web UI)."
     },
     "copilot.start": {
       "surface": "rpc-only",
@@ -262,10 +267,6 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "dispatch.preview": {
-      "surface": "typed-command",
-      "command": "farmslot dispatch"
-    },
     "dispatch.pressureAdmission.get": {
       "surface": "typed-command",
       "command": "farmslot dispatch pressure-admission status"
@@ -273,6 +274,10 @@
     "dispatch.pressureAdmission.setEnabled": {
       "surface": "typed-command",
       "command": "farmslot dispatch pressure-admission enable|disable"
+    },
+    "dispatch.preview": {
+      "surface": "typed-command",
+      "command": "farmslot dispatch"
     },
     "dispatch.queue.add": {
       "surface": "rpc-only",
@@ -519,6 +524,74 @@
       "surface": "typed-command",
       "command": "farmslot machine status"
     },
+    "native.profile.add": {
+      "surface": "rpc-only",
+      "note": "Register a native configuration directory without accepting credentials."
+    },
+    "native.profile.list": {
+      "surface": "rpc-only",
+      "note": "List registered native configuration directories on an owned execution node."
+    },
+    "native.profile.remove": {
+      "surface": "rpc-only",
+      "note": "Retire a configuration after session cleanup; native files stay on the execution node."
+    },
+    "native.profile.status": {
+      "surface": "rpc-only",
+      "note": "Read runner-reported login state and the native login command for a configuration."
+    },
+    "native.session.catalog": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.close": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.create": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.ensure": {
+      "surface": "rpc-only",
+      "note": "Idempotent native session creation under a caller-reserved UUID; authenticated ownership required."
+    },
+    "native.session.interrupt": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.list": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.read": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.respond": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.send": {
+      "surface": "rpc-only",
+      "note": "Opt-in native runner session; use farmslot rpc with an owning principal and execution node."
+    },
+    "native.session.workspace.changes": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.diff": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.list": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
+    "native.session.workspace.read": {
+      "surface": "rpc-only",
+      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
+    },
     "node.health": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -591,6 +664,136 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "prPush.acknowledge": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.list": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.register": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prPush.unregister": {
+      "surface": "rpc-only",
+      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
+    },
+    "prReview.cancel": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.cancel",
+      "note": "Cancel unstarted review intake and retain its idempotency receipt."
+    },
+    "prReview.get": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.get",
+      "note": "Read the authenticated owner's review request and linked work."
+    },
+    "prReview.submit": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.submit",
+      "note": "Submit an idempotent PR review/QA request under a team policy."
+    },
+    "prRules.accept": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.accept",
+      "note": "Accept or defer durable PR review intake."
+    },
+    "prRules.acknowledgeAction": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.acknowledgeAction",
+      "note": "Acknowledge a rule notification for the authenticated recipient."
+    },
+    "prRules.defer": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.defer",
+      "note": "Accept or defer durable PR review intake."
+    },
+    "prRules.list": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.list",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.preview": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.preview",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.projectImport": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.projectImport",
+      "note": "Inspect a GitHub Project/view and import typed filter mappings without saving policy or starting work."
+    },
+    "prRules.ruleSave": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.ruleSave",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.scan": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.scan",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.setEnabled": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.setEnabled",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prRules.teamSave": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prRules.teamSave",
+      "note": "Team PR trigger rules and durable review intake."
+    },
+    "prWatch.acknowledge": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.acknowledge",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.configure": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.configure",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.get": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.get",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.lifecycle": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.lifecycle",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.list": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.list",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.projectPolicy.set": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.projectPolicy.set",
+      "note": "Opt into monitoring newly published PRs per project."
+    },
+    "prWatch.refresh": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.refresh",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "prWatch.repair": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.repair",
+      "note": "Request repair of monitored PR incidents with explicit execution selection."
+    },
+    "prWatch.subscribe": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prWatch.subscribe",
+      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
+    },
+    "principal.bindNativeOwner": {
+      "surface": "typed-command",
+      "command": "farmslot principal bind-native-owner"
+    },
     "principal.create": {
       "surface": "typed-command",
       "command": "farmslot principal create"
@@ -651,13 +854,13 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "resource.pressure.snapshot": {
-      "surface": "typed-command",
-      "command": "farmslot resource pressure"
-    },
     "resource.pressure.history": {
       "surface": "rpc-only",
       "note": "Lightweight history-only read for fast Command Center first paint; the typed `farmslot resource pressure` command already renders the full snapshot."
+    },
+    "resource.pressure.snapshot": {
+      "surface": "typed-command",
+      "command": "farmslot resource pressure"
     },
     "resource.watch.setEnabled": {
       "surface": "rpc-only",
@@ -761,6 +964,10 @@
     "run.create": {
       "surface": "typed-command",
       "command": "farmslot run"
+    },
+    "run.createNative": {
+      "surface": "typed-command",
+      "command": "farmslot run --transport native"
     },
     "run.delete": {
       "surface": "typed-command",
@@ -877,14 +1084,14 @@
       "command": "farmslot resource capability release",
       "note": "Also used by the Command Center runtime-capabilities panel."
     },
+    "runtime.capability.status": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
+    },
     "runtime.capability.stopWarm": {
       "surface": "typed-command",
       "command": "farmslot resource capability stop-warm",
       "note": "Also used by the Command Center Slot View to stop a warm provider."
-    },
-    "runtime.capability.status": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. Also used by the Command Center runtime-capabilities panel."
     },
     "runtime.posture.apply": {
       "surface": "typed-command",
@@ -1067,6 +1274,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "tmux.pasteText": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
     "tmux.renameWindow": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -1076,10 +1287,6 @@
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "tmux.selectWindow": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.pasteText": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -1174,189 +1381,6 @@
     "workspace.metro.unsubscribe": {
       "surface": "na",
       "note": "Slot Workspace IDE view (web UI)."
-    },
-    "prWatch.acknowledge": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.acknowledge",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.configure": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.configure",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.get": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.get",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.lifecycle": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.lifecycle",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.list": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.list",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.refresh": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.refresh",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.subscribe": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.subscribe",
-      "note": "Persistent PR subscriptions; shared with Command Center and Companion."
-    },
-    "prWatch.repair": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.repair",
-      "note": "Request repair of monitored PR incidents with explicit execution selection."
-    },
-    "prWatch.projectPolicy.set": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prWatch.projectPolicy.set",
-      "note": "Opt into monitoring newly published PRs per project."
-    },
-    "prRules.list": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.list",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prReview.submit": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prReview.submit",
-      "note": "Submit an idempotent PR review/QA request under a team policy."
-    },
-    "prReview.get": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prReview.get",
-      "note": "Read the authenticated owner's review request and linked work."
-    },
-    "prReview.cancel": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prReview.cancel",
-      "note": "Cancel unstarted review intake and retain its idempotency receipt."
-    },
-    "prRules.teamSave": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.teamSave",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prRules.ruleSave": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.ruleSave",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prRules.preview": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.preview",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prRules.setEnabled": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.setEnabled",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prRules.scan": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.scan",
-      "note": "Team PR trigger rules and durable review intake."
-    },
-    "prRules.accept": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.accept",
-      "note": "Accept or defer durable PR review intake."
-    },
-    "prRules.defer": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.defer",
-      "note": "Accept or defer durable PR review intake."
-    },
-    "prRules.acknowledgeAction": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.acknowledgeAction",
-      "note": "Acknowledge a rule notification for the authenticated recipient."
-    },
-    "prRules.projectImport": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc prRules.projectImport",
-      "note": "Inspect a GitHub Project/view and import typed filter mappings without saving policy or starting work."
-    },
-    "prPush.register": {
-      "surface": "rpc-only",
-      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
-    },
-    "prPush.unregister": {
-      "surface": "rpc-only",
-      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
-    },
-    "prPush.list": {
-      "surface": "rpc-only",
-      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
-    },
-    "prPush.acknowledge": {
-      "surface": "rpc-only",
-      "note": "Recipient-scoped PR attention and Companion push registration/delivery status."
-    },
-    "config.githubAccounts": {
-      "surface": "rpc-only",
-      "command": "farmslot rpc config.githubAccounts",
-      "note": "List verified gateway GitHub accounts without credentials; explicit refresh rechecks authentication."
-    },
-    "native.session.create": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.read": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.list": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.send": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.respond": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.interrupt": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.close": {
-      "surface": "rpc-only",
-      "note": "Opt-in native runner session; use farmslot rpc with an owned native execution profile."
-    },
-    "native.session.catalog": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.workspace.list": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.workspace.read": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.workspace.changes": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.workspace.diff": {
-      "surface": "rpc-only",
-      "note": "Owned agent workspace session; available in Copilot and farmslot rpc."
-    },
-    "native.session.ensure": {
-      "surface": "rpc-only",
-      "note": "Idempotent native session creation under a caller-reserved UUID; native profile ownership required."
     }
   }
 }

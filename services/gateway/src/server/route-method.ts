@@ -111,6 +111,7 @@ import {
   type PRDeleteCommentParams,
   type PREditCommentParams,
   type PRForSlotParams,
+  type PrincipalBindNativeOwnerParams,
   type PrincipalCreateParams,
   type PrincipalGrantParams,
   type PrincipalRevokeRoleParams,
@@ -373,6 +374,7 @@ import {
   credentialIssue,
   credentialList,
   credentialRevoke,
+  principalBindNativeOwner,
   principalCreate,
   principalGrant,
   principalList,
@@ -509,7 +511,8 @@ import {
   requireNodeSession,
 } from '../security/auth.js';
 import { authorizeGatewayMethod } from '../security/authorization.js';
-import { nativeNodeDeclaration } from '../security/native-node.js';
+import { assertNativeMachineAssignment, nativeNodeDeclaration } from '../security/native-node.js';
+import { assertNativeWorkerRpcAccess } from '../security/native-worker-access.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import type { ClientState } from './client-state.js';
@@ -568,9 +571,10 @@ export async function routeMethod(
     if (error instanceof GatewayMethodError) throw error;
     throw new GatewayInternalError('RPC authorization resolution failed', error);
   }
-  return runWithSessionOriginator(actingPrincipal, () =>
-    routeAuthorizedMethod(method, params, context),
-  );
+  return runWithSessionOriginator(actingPrincipal, async () => {
+    await assertNativeWorkerRpcAccess(method, params);
+    return routeAuthorizedMethod(method, params, context);
+  });
 }
 
 async function routeAuthorizedMethod(
@@ -593,13 +597,17 @@ async function routeAuthorizedMethod(
     case Methods.NATIVE_SESSION_SEND:
     case Methods.NATIVE_SESSION_RESPOND:
     case Methods.NATIVE_SESSION_INTERRUPT:
+    case Methods.NATIVE_PROFILE_LIST:
+    case Methods.NATIVE_PROFILE_ADD:
+    case Methods.NATIVE_PROFILE_STATUS:
+    case Methods.NATIVE_PROFILE_REMOVE:
     case Methods.NATIVE_SESSION_CATALOG:
     case Methods.NATIVE_SESSION_WORKSPACE_LIST:
     case Methods.NATIVE_SESSION_WORKSPACE_READ:
     case Methods.NATIVE_SESSION_WORKSPACE_CHANGES:
     case Methods.NATIVE_SESSION_WORKSPACE_DIFF:
     case Methods.NATIVE_SESSION_CLOSE:
-      return nativeSessionRoute(method, p);
+      return nativeSessionRoute(method, p, authorizeGatewayMethod(authRuntime, state, method));
     // Gateway self-status
     case Methods.GATEWAY_PING:
       return { ok: true, serverTimeMs: Date.now() };
@@ -611,6 +619,8 @@ async function routeAuthorizedMethod(
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:
       return principalCreate(p as PrincipalCreateParams, authRuntime);
+    case Methods.PRINCIPAL_BIND_NATIVE_OWNER:
+      return principalBindNativeOwner(p as PrincipalBindNativeOwnerParams, authRuntime);
     case Methods.PRINCIPAL_LIST:
       return principalList(authRuntime);
     case Methods.PRINCIPAL_GRANT:
@@ -1026,6 +1036,11 @@ async function routeAuthorizedMethod(
         capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
       };
       const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
+      assertNativeMachineAssignment(
+        machine,
+        resolved.ok ? resolved.principal : undefined,
+        authRuntime.store.snapshot().principals,
+      );
       if (
         (p as Record<string, unknown>).nativeSessions !== undefined &&
         state.authentication?.kind !== 'credential'
@@ -1038,7 +1053,47 @@ async function routeAuthorizedMethod(
         state.authentication?.kind === 'credential',
       );
       if (nativeSessions) rememberNativeExecutionNode(machine, nativeSessions);
-      registerNode(machine, pid, state.ws, protocolVersion, PROTOCOL_VERSION, nativeSessions);
+      const authentication = state.authentication ? { ...state.authentication } : undefined;
+      const registeredClientKind = state.clientKind;
+      const principalId = resolved.ok ? resolved.principal.id : undefined;
+      const nativeAuthority =
+        nativeSessions && principalId && authentication?.kind === 'credential'
+          ? {
+              principalId,
+              valid: () => {
+                if (
+                  !state.authenticated ||
+                  state.authentication?.kind !== 'credential' ||
+                  state.authentication.credentialId !== authentication.credentialId ||
+                  state.clientKind !== registeredClientKind ||
+                  state.ws.readyState !== WebSocket.OPEN
+                )
+                  return false;
+                const current = authRuntime.resolver.resolveSessionPrincipal({
+                  authenticated: true,
+                  authentication,
+                  clientKind: 'node',
+                });
+                return (
+                  current.ok &&
+                  current.principal.id === principalId &&
+                  current.principal.subject.type === 'node' &&
+                  current.principal.subject.machine === machine &&
+                  current.principal.subject.nativeOwnerPrincipalId ===
+                    nativeSessions.ownerPrincipalId
+                );
+              },
+            }
+          : undefined;
+      registerNode(
+        machine,
+        pid,
+        state.ws,
+        protocolVersion,
+        PROTOCOL_VERSION,
+        nativeSessions,
+        nativeAuthority,
+      );
       markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;
       if (protocolVersion && !versionMatch) {

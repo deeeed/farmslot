@@ -240,11 +240,15 @@ export interface ImprovementApplyResult {
   }[];
 }
 
+export type LLMReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface LLMConfigGetResult {
   defaultProvider: string;
   copilotModel: string;
   intelligenceModel: string;
   improvementModel?: string;
+  copilotEffort?: LLMReasoningEffort;
+  intelligenceEffort?: LLMReasoningEffort;
 }
 
 export interface LLMConfigSetParams {

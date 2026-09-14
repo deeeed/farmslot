@@ -1,11 +1,13 @@
 import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 
 import type {
   ConfigTemplateOptionsResult,
   DispatchCandidatesResult,
   ExecutionTemplateCatalogOption,
   FlowType,
+  NativeSessionCatalogResult,
   PRStatus,
   ReviewRunnerId,
   ReviewValidationDepth,
@@ -15,6 +17,7 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import './execution-template-preview-modal.js';
+import './dispatch-native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -28,6 +31,12 @@ import {
   pickCompatibleExecutionTemplateId,
 } from '../shared/execution-template-picker-model.js';
 
+import {
+  dispatchNativeProfileKey,
+  type DispatchNativeProfileSelection,
+  nativeDispatchNodeSlots,
+  nativeDispatchProfileReason,
+} from './dispatch-native-profile-model.js';
 import {
   addDispatchQueueItemFromDraft,
   buildDispatchWizardPayloadDraft,
@@ -148,6 +157,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._parseHashParams();
     this._applyMockInitial();
     this._syncFleet(getState());
+    if (!this.mockMode && gateway.connectionState === 'connected') void this._loadNativeWorkers();
     if (this.mockMode && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
       this._syncSelectedAppForProject(this._project);
@@ -156,7 +166,12 @@ export class DispatchWizard extends DispatchWizardState {
     }
     this._unsubConn = gateway.onConnectionChange((st) => {
       if (this.mockMode) return;
+      if (st !== 'connected') {
+        this._nativeCatalogReady = false;
+        this._nativeCatalogGeneration++;
+      }
       if (st === 'connected') {
+        void this._loadNativeWorkers();
         this._templateOptionsCache.clear();
         this._allCandidates = [];
         if (this._projectConfigs.length === 0) {
@@ -176,6 +191,46 @@ export class DispatchWizard extends DispatchWizardState {
     this._unsubState?.();
     if (this._matchTimer) clearTimeout(this._matchTimer);
     if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
+  }
+
+  private async _loadNativeWorkers(): Promise<void> {
+    const generation = ++this._nativeCatalogGeneration;
+    const epoch = gateway.connectionEpoch;
+    const scope = `${gateway.gatewayUrl}:${gateway.authenticatedPrincipalId}`;
+    if (scope !== this._nativeProfileScope) {
+      this._nativeProfileScope = scope;
+      this._nativeProfileSelection = null;
+      this._nativeCatalog = undefined;
+    }
+    this._nativeCatalogReady = false;
+    this._nativeWorkerRunners = [];
+    this._nativeQueueRunners = [];
+    try {
+      const result = await gateway.request<NativeSessionCatalogResult>(
+        Methods.NATIVE_SESSION_CATALOG,
+        {},
+      );
+      if (
+        !this.isConnected ||
+        gateway.connectionState !== 'connected' ||
+        epoch !== gateway.connectionEpoch ||
+        generation !== this._nativeCatalogGeneration
+      )
+        return;
+      this._nativeCatalog = result;
+      this._nativeCatalogReady = true;
+      this._nativeProfileRefreshVersion++;
+      this._nativeWorkerRunners = result.runners
+        .filter((runner) => runner.supportsWorkers)
+        .map((runner) => runner.runner);
+      this._nativeCatalogError = '';
+      this._nativeQueueRunners = result.runners
+        .filter((runner) => runner.supportsWorkers && runner.supportsQueuedWorkers)
+        .map((runner) => runner.runner);
+    } catch (error) {
+      if (this.isConnected && generation === this._nativeCatalogGeneration)
+        this._nativeCatalogError = `Native worker choices unavailable: ${(error as Error).message}`;
+    }
   }
 
   private _syncFleet(s: AppState) {
@@ -238,6 +293,11 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _tryHydrateComparisonParentEngine(runs: readonly Run[]): void {
+    const parentTransport = runs.find((run) => run.id === this._comparisonParentRunId);
+    if (parentTransport && !this._transportChosen) {
+      this._transport = parentTransport.transport ?? 'tmux';
+      this._transportChosen = true;
+    }
     if (
       !shouldHydrateComparisonParentEngine({
         hydrated: this._comparisonParentEngineHydrated,
@@ -521,7 +581,19 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _applyVisibleCandidates(previousOverride?: string): void {
-    const visible = filterDispatchCandidatesForProject(this._allCandidates, this._project);
+    let visible = filterDispatchCandidatesForProject(this._allCandidates, this._project);
+    if (
+      this._transport === 'native' &&
+      this._nativeAutomaticSlot &&
+      this._nativeProfileSelection?.executionNodeId
+    ) {
+      const slots = nativeDispatchNodeSlots(
+        this._nativeCatalog,
+        this._nativeProfileSelection.executionNodeId,
+        this._project,
+      );
+      visible = visible.filter((candidate) => slots.includes(candidate.slotId));
+    }
     this._applyCandidateResult({ candidates: visible }, previousOverride ?? this._slotOverride);
   }
 
@@ -589,6 +661,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _refreshDispatchSnapshot(): void {
+    if (!this.mockMode) void this._loadNativeWorkers();
     this._templateOptionsCache.clear();
     this._allCandidates = [];
     void this._fetchTemplateOptions();
@@ -645,7 +718,8 @@ export class DispatchWizard extends DispatchWizardState {
     this._nudgeIntents = next.nudgeIntents;
     if (next.nudgeIntentsChanged) this._nudgeIntentVersion++;
     this._lastFetchScoringKey = next.scoringKey;
-    this._slotOverride = next.slotOverride;
+    this._slotOverride =
+      this._transport === 'native' && this._nativeAutomaticSlot ? '' : next.slotOverride;
     // Fresh candidates carry fresh pressure evidence. A half-completed
     // override confirmation must not survive onto a decision it never saw.
     this._resetPressureOverrideDraft();
@@ -775,6 +849,8 @@ export class DispatchWizard extends DispatchWizardState {
   };
 
   private _exitComparisonMode(): void {
+    this._transport = 'tmux';
+    this._transportChosen = false;
     const next = exitedComparisonModeState();
     this._comparisonLane = next.comparisonLane;
     this._comparisonFamilyId = next.comparisonFamilyId;
@@ -791,6 +867,8 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _applyComparisonBaseline(run: Run): void {
+    this._transport = run.transport ?? 'tmux';
+    this._transportChosen = true;
     this._comparisonFlow = true;
     const next = forkComparisonStateFromRun(
       run,
@@ -882,6 +960,10 @@ export class DispatchWizard extends DispatchWizardState {
   private _parseHashParams() {
     const prefill = parseDispatchWizardHash(location.hash, RUNNER_OPTIONS);
     if (!prefill) return;
+    if (prefill.transport) {
+      this._transport = prefill.transport;
+      this._transportChosen = true;
+    }
     if (prefill.flowType) {
       this._assignFlowType(prefill.flowType);
       if (prefill.ticketId) this._ticketId = prefill.ticketId;
@@ -1028,7 +1110,43 @@ export class DispatchWizard extends DispatchWizardState {
             ? 'No compatible execution template is available.'
             : 'Select one exact execution template.'
           : null;
+    const profileContext = {
+      runner: this._runner,
+      slotId: this._slotOverride,
+      project: this._project,
+      refreshVersion: this._nativeProfileRefreshVersion,
+    };
+    const profileReason =
+      this._transport === 'native'
+        ? nativeDispatchProfileReason({
+            ...profileContext,
+            selection: this._nativeProfileSelection,
+            catalog: this._nativeCatalog,
+            catalogReady: this._nativeCatalogReady,
+          })
+        : null;
+    const node =
+      this._transport === 'native' ? this._nativeProfileSelection?.executionNodeId : undefined;
+    const allowedSlots = node
+      ? nativeDispatchNodeSlots(this._nativeCatalog, node, this._project).filter(
+          (slot) => !base.allowedSlots || base.allowedSlots.includes(slot),
+        )
+      : base.allowedSlots;
+    const nodeReason =
+      node && !allowedSlots?.length
+        ? 'No eligible slots match the selected node and machine filters.'
+        : null;
+    const transportReason =
+      profileReason ??
+      nodeReason ??
+      (this._transport === 'native' && !this._nativeWorkerRunners.includes(this._runner)
+        ? 'The selected runner does not support native worker dispatch.'
+        : null);
     const queueTemplateReason =
+      transportReason ??
+      (this._transport === 'native' && !this._nativeQueueRunners.includes(this._runner)
+        ? 'Native worker queueing is unavailable on this gateway.'
+        : null) ??
       templateReason ??
       (selectedNudgeIntent({
         candidates: this._candidates,
@@ -1042,8 +1160,9 @@ export class DispatchWizard extends DispatchWizardState {
         : null);
     return {
       ...base,
-      dispatchBlockedReason: templateReason ?? base.dispatchBlockedReason,
-      dispatchBlocked: base.dispatchBlocked || templateReason !== null,
+      allowedSlots,
+      dispatchBlockedReason: transportReason ?? templateReason ?? base.dispatchBlockedReason,
+      dispatchBlocked: base.dispatchBlocked || templateReason !== null || transportReason !== null,
       queueBlockedReason: queueTemplateReason ?? base.queueBlockedReason,
       queueBlocked: base.queueBlocked || queueTemplateReason !== null,
     };
@@ -1086,6 +1205,9 @@ export class DispatchWizard extends DispatchWizardState {
           }
         : undefined;
     return buildDispatchWizardPayloadDraft({
+      transport: this._transport,
+      nativeProfile:
+        this._transport === 'native' ? this._nativeProfileSelection?.profile : undefined,
       pressureOverride,
       pressureAdmissionRef,
       flowType: this._flowType,
@@ -1270,6 +1392,49 @@ export class DispatchWizard extends DispatchWizardState {
           this._selectedTaskTemplateFileName,
         );
     const view = renderDispatchWizardView({
+      transport: this._transport,
+      nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
+      nativeCatalogError: this._nativeCatalogError,
+      nativeProfileControl: keyed(
+        this._nativeProfileScope,
+        html`<dispatch-native-profiles
+          .catalog=${this._nativeCatalog}
+          .runner=${this._runner}
+          .slotId=${this._slotOverride}
+          .project=${this._project}
+          .refreshVersion=${this._nativeProfileRefreshVersion}
+          .disabled=${this._dispatching || this._connectionStale || !this._nativeCatalogReady}
+          @dispatch-native-profile-change=${(
+            event: CustomEvent<DispatchNativeProfileSelection>,
+          ) => {
+            if (
+              event.detail.key !==
+              dispatchNativeProfileKey({
+                runner: this._runner,
+                slotId: this._slotOverride,
+                project: this._project,
+                refreshVersion: this._nativeProfileRefreshVersion,
+              })
+            )
+              return;
+            if (this._transport !== 'native') return;
+            const previousNode = this._nativeProfileSelection?.executionNodeId;
+            this._nativeProfileSelection = event.detail;
+            if (this._nativeAutomaticSlot && previousNode !== event.detail.executionNodeId)
+              this._applyVisibleCandidates();
+          }}
+        ></dispatch-native-profiles>`,
+      ),
+      setTransport: (transport) => {
+        this._transport = transport;
+        if (transport === 'tmux') {
+          this._nativeProfileSelection = null;
+          this._nativeAutomaticSlot = false;
+        }
+        this._applyVisibleCandidates();
+        this._transportChosen = true;
+        this._error = '';
+      },
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
       connectionStale: this._connectionStale,
@@ -1282,6 +1447,7 @@ export class DispatchWizard extends DispatchWizardState {
       autoProject: this._autoProject,
       project: this._project,
       selectedSlotOverride: this._slotOverride,
+      allowAutomaticSlot: this._transport === 'native',
       selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
       refreshSlots: () => this._refreshDispatchSnapshot(),
       projectApps: projectApps(this._projectConfigs, this._project),
@@ -1437,9 +1603,11 @@ export class DispatchWizard extends DispatchWizardState {
       slotSummaryLabel: (slotId) =>
         slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),
       selectSlot: (slotId) => {
+        this._nativeAutomaticSlot = !slotId;
         this._closeExecutionTemplatePreview(false);
         if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
+        this._applyVisibleCandidates();
         this._applyVisibleCatalog();
       },
       setNudgeIntent: (slotId, intent) => this._setNudgeIntent(slotId, intent),

@@ -244,6 +244,7 @@ for (const [name, actual, expected] of [
     RunMethods,
     {
       create: Methods.RUN_CREATE,
+      createNative: Methods.RUN_CREATE_NATIVE,
       get: Methods.RUN_GET,
       list: Methods.RUN_LIST,
       slotHistory: Methods.RUN_SLOT_HISTORY,

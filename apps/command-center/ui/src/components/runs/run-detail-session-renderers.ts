@@ -8,6 +8,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 export type RunSessionCopyKind = 'reopen' | 'attach';
 
@@ -26,6 +27,7 @@ export interface RunSessionRowState {
 }
 
 export interface RunSessionRow {
+  nativeHref?: string;
   contextId: string;
   role: AgentContext['role'];
   label: string;
@@ -41,6 +43,15 @@ export function runAgentSessionRows(run: Pick<Run, 'agentContexts' | 'metrics'>)
   return (run.agentContexts ?? []).map((context) => {
     const sessionId = context.runnerSessionId?.trim() ? context.runnerSessionId.trim() : null;
     return {
+      ...((context.nativeSession || context.nativeSessionOwner) && context.runId && context.slotId
+        ? {
+            nativeHref: slotViewHash({
+              slotId: context.slotId,
+              runId: context.runId,
+              contextId: context.id,
+            }),
+          }
+        : {}),
       contextId: context.id,
       role: context.role,
       label: context.label,
@@ -202,7 +213,9 @@ export function renderRunAgentSessions(
     <section class="agent-sessions" aria-label="Runner sessions" data-testid="run-agent-sessions">
       <div class="agent-sessions-title">Runner sessions</div>
       <div class="agent-sessions-hint">
-        Copy a terminal command to resume this runner's history, or attach its tmux pane.
+        ${rows.some((row) => row.nativeHref)
+          ? 'Open a task conversation to view its history and available controls.'
+          : "Copy a terminal command to resume this runner's history, or attach its tmux pane."}
       </div>
       ${rows.map((row) => {
         const state = ctx.states[row.contextId];
@@ -231,28 +244,39 @@ export function renderRunAgentSessions(
                 >`
               : nothing}
             <span class="agent-session-actions">
-              <button
-                class="agent-session-btn"
-                data-testid="run-agent-session-reopen-${row.contextId}"
-                title="Copy the command that resumes this runner session"
-                ?disabled=${busy}
-                @click=${() => ctx.onCopy(row, 'reopen')}
-              >
-                ${busy
-                  ? 'Loading…'
-                  : state?.copied === 'reopen'
-                    ? 'Copied reopen'
-                    : 'Reopen session'}
-              </button>
-              <button
-                class="agent-session-btn"
-                data-testid="run-agent-session-attach-${row.contextId}"
-                title="Copy the tmux attach command for this pane"
-                ?disabled=${busy}
-                @click=${() => ctx.onCopy(row, 'attach')}
-              >
-                ${busy ? 'Loading…' : state?.copied === 'attach' ? 'Copied attach' : 'Attach tmux'}
-              </button>
+              ${row.nativeHref
+                ? html`<a
+                    class="agent-session-btn"
+                    data-testid="run-native-session-${row.contextId}"
+                    href=${row.nativeHref}
+                    >Open conversation</a
+                  >`
+                : html`<button
+                      class="agent-session-btn"
+                      data-testid="run-agent-session-reopen-${row.contextId}"
+                      title="Copy the command that resumes this runner session"
+                      ?disabled=${busy}
+                      @click=${() => ctx.onCopy(row, 'reopen')}
+                    >
+                      ${busy
+                        ? 'Loading…'
+                        : state?.copied === 'reopen'
+                          ? 'Copied reopen'
+                          : 'Reopen session'}
+                    </button>
+                    <button
+                      class="agent-session-btn"
+                      data-testid="run-agent-session-attach-${row.contextId}"
+                      title="Copy the tmux attach command for this pane"
+                      ?disabled=${busy}
+                      @click=${() => ctx.onCopy(row, 'attach')}
+                    >
+                      ${busy
+                        ? 'Loading…'
+                        : state?.copied === 'attach'
+                          ? 'Copied attach'
+                          : 'Attach tmux'}
+                    </button>`}
             </span>
             ${state?.command && state.copied
               ? html`<code
