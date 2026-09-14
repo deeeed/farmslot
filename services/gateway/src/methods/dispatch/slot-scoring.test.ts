@@ -89,6 +89,13 @@ test('replaceable warm slots exclude active-run transitions and manual work', ()
     activeRunSlotIds([{ id: 'active', slotId: 'warm', status: 'monitoring' }], 'active'),
     new Set(),
   );
+  // A blocked run (a retained-handoff hold awaiting the operator) still
+  // occupies its slot: reconciliation must not publish it ready over the
+  // live worker the hold preserved.
+  assert.deepEqual(
+    activeRunSlotIds([{ id: 'held', slotId: 'kept', status: 'blocked' }]),
+    new Set(['kept']),
+  );
   assert.deepEqual(
     activeRunIds([
       { id: 'active', status: 'monitoring' },
