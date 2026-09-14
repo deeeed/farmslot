@@ -27,6 +27,7 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
+import { rerequestChangesRequestedReviewers } from '../run-completion/review-rerequest.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -66,6 +67,9 @@ export interface FinalizeStepContext {
 }
 
 const S = PipelineSteps;
+
+/** Flows whose rounds push to the farm's own PR and therefore re-request review. */
+const REREQUEST_REVIEW_FLOWS = new Set<string>(['pr-complete', 'dev', 'fix-bug', 'update-branch']);
 
 export async function executeFinalizeStep(
   runId: string,
@@ -372,12 +376,30 @@ export async function executeFinalizeStep(
     }
   }
 
+  // 6. The round addressed the reviewers' threads; put the PR back in the
+  // queue of everyone whose verdict is still CHANGES_REQUESTED. Only for
+  // rounds that update the farm's own PR, never for review-pr runs, which
+  // review someone else's.
+  let reviewRerequested: string[] = [];
+  if (!artifactOnly && ciRepo && prNumber && REREQUEST_REVIEW_FLOWS.has(current.flowType)) {
+    emitWithBroadcast('substep', {
+      name: 'rerequest-review',
+      detail: `Re-requesting reviewers who asked for changes on PR #${prNumber}`,
+    });
+    reviewRerequested = await rerequestChangesRequestedReviewers(
+      ciRepo,
+      prNumber,
+      `[run-engine] run ${runId.slice(0, 8)} —`,
+    );
+  }
+
   const cliCommand = `farmslot slot release ${current.slotId}`;
   return {
     inputs,
     outputs: {
       session: session ?? null,
       commentPosted,
+      reviewRerequested,
       metricsSavedToTask,
       artifactPath: metricsSavedToTask ? 'artifacts/session-metrics.json' : undefined,
       costEstimate: current.metrics.costEstimate,

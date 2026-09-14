@@ -191,6 +191,8 @@ Record bounded subscription and billing observations separately from protocol su
 
 **Follow-up (2026-09-14): rendered PR bodies.** The worker authors only the prose sections of the repository PR template in `artifacts/pr-description.md`; the pack's `vars.pr_body_cmd` (`mm-harness pr-body render`) renders `artifacts/pr-body.md` with the recipe and run-log sections built from artifacts, on the gateway host before the package is validated and on the engineer's machine from the Cook evidence skill. Motivation: run `f3085f27` failed its gate because a hand-pasted code fence swallowed the rest of the body. Templates lose their paste instructions.
 
+**Follow-up (2026-09-14): review re-request.** Farm rounds resolved review threads but never asked the reviewers to look again, so PRs stayed on "changes requested" after every thread was addressed. Finalize now re-requests every reviewer whose latest verdict is still CHANGES_REQUESTED (pr-complete, dev, fix-bug, update-branch; never review-pr). Next step on the same lane: a ci-watch on every open farm PR so new comments chain a round without an operator noticing them.
+
 ### 6. Later Lanes / Captured Backlog
 
 The remaining future lanes should not displace eval packages unless they become blockers. The list below also calls out items that are implemented history, so they are not accidentally scheduled again.
