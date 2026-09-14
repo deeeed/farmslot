@@ -169,14 +169,13 @@ export async function buildDraftPrBody(
   run: Run,
   report: string | null,
   artifacts: ArtifactRef[],
-  baseBranch?: string,
 ): Promise<string> {
   // The pack's renderer (when declared) turns the authored prose plus the
   // recipe and run artifacts into pr-body.md; that rendered body is published.
   // Without a renderer the authored file is the body, as before. The freshness
   // check re-renders and compares, so the renderer must be deterministic for
   // unchanged inputs (the harness command is).
-  const render = await renderPrBodyArtifact(run, baseBranch);
+  const render = await renderPrBodyArtifact(run);
   if (!render.rendered) {
     console.log(`[run-completion] pr-body not rendered for run ${run.id}: ${render.reason}`);
   }

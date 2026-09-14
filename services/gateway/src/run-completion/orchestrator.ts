@@ -354,19 +354,6 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   }
 }
 
-async function resolveRunBaseBranch(run: Run): Promise<string> {
-  if (!run.slotId) return DEFAULT_BRANCH;
-  try {
-    const vars = await loadSlotVars(run.slotId);
-    const projectVars = await loadProjectVars(vars.projectName);
-    return getProjectField(projectVars.projectJson, 'default_branch') || DEFAULT_BRANCH;
-  } catch (error) {
-    // A removed slot must not block the freshness check; the default branch is the fallback.
-    if (error instanceof SlotConfigError && error.code === 'SLOT_NOT_FOUND') return DEFAULT_BRANCH;
-    throw error;
-  }
-}
-
 export async function assertReadyGatePackageInputsCurrent(
   current: Run,
   preparedPackage: ReadyGatePrPackage,
@@ -671,7 +658,7 @@ export async function prepareCompletionPackage(
   const draftBodyArtifacts = evidenceManifest.length
     ? evidenceManifest
     : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
-  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts, baseBranch);
+  const draftBody = await buildDraftPrBody(run, report, draftBodyArtifacts);
   try {
     await assertRunPrBodyMatchesTemplate(run, draftBody, baseBranch);
   } catch (error) {
