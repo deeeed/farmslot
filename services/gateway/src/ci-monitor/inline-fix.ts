@@ -39,12 +39,16 @@ import {
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { runnerActivityIsBusy } from '../runners/observability-files.js';
+import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
+import type { ObservabilityReading, RunnerActivity } from '../runners/observability-types.js';
 import {
   type LaunchAckSignalSnapshot,
   readLaunchAckSignalSnapshot,
 } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
+  readRunnerActivityFromObservability,
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerProcessPatternSource,
@@ -95,6 +99,26 @@ import {
 
 const MAX_INLINE_CI_FIX_ATTEMPTS = 2;
 const MAX_INLINE_CI_FIX_TOTAL = 6;
+/**
+ * Whether the inline-fix worker is still busy on its task. With a turn token the
+ * exact runner turn is the proof; a delivery recovered after a gateway restart
+ * has none, and then the runner hook's activity reading stands in, because the
+ * alternative (declaring the turn inactive) abandons a worker mid-tool and lets
+ * a chained follow-up tear it down.
+ */
+export function inlineFixRunnerStillBusy(
+  hasTurnToken: boolean,
+  turnState: { value: string; confidence: string } | null | undefined,
+  activity: ObservabilityReading<RunnerActivity> | null | undefined,
+): boolean {
+  if (hasTurnToken) return turnState?.value === 'active' && turnState.confidence === 'high';
+  return (
+    isObservabilityReadingAuthoritative(activity) &&
+    activity.value !== 'unknown' &&
+    runnerActivityIsBusy(activity.value)
+  );
+}
+
 const INLINE_FIX_TIMEOUT_MS = 10 * 60_000;
 const INLINE_FIX_HARD_TIMEOUT_MS = 60 * 60_000;
 const INLINE_FIX_FALLBACK_POLL_MS = 30_000;
@@ -909,9 +933,19 @@ async function attemptInlineCIFix(
     let lastInvalidSignalReason: string | null = null;
     while (Date.now() < hardDeadline && !signal.aborted) {
       if (Date.now() >= deadline) {
-        if (!acceptedTurnToken) break;
+        if (!acceptedTurnToken) {
+          // A delivery recovered after a gateway restart carries no turn token;
+          // the runner hook's activity reading stands in for the exact turn.
+          const activity = await readRunnerActivityFromObservability(vars, workerTarget, runner);
+          if (!inlineFixRunnerStillBusy(false, null, activity)) break;
+          deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
+          console.log(
+            `[ci-monitor] run ${runId.slice(0, 8)} — inline-fix runner hook still reports ${activity?.value}; extending the wait instead of starting a conflicting follow-up`,
+          );
+          continue;
+        }
         const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
-        if (turnState?.value !== 'active' || turnState.confidence !== 'high') break;
+        if (!inlineFixRunnerStillBusy(true, turnState, null)) break;
         deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — exact inline-fix runner turn is still active; extending the wait instead of starting a conflicting follow-up`,
@@ -1113,7 +1147,12 @@ async function attemptInlineCIFix(
     const terminalTurnState = acceptedTurnToken
       ? await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken)
       : null;
-    if (terminalTurnState?.value === 'active' && terminalTurnState.confidence === 'high') {
+    const terminalActivity = acceptedTurnToken
+      ? null
+      : await readRunnerActivityFromObservability(vars, workerTarget, runner);
+    // Same rule at the hard deadline: a worker the hook still shows busy is
+    // held for the operator, never handed to an automatic follow-up.
+    if (inlineFixRunnerStillBusy(Boolean(acceptedTurnToken), terminalTurnState, terminalActivity)) {
       const blockedReason = `Inline CI fix runner turn remained active for ${Math.round((Date.now() - startedAt) / 60_000)} minutes; operator inspection required before another task can be dispatched`;
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — ${blockedReason}`);
       await markAgentContextStatus(runId, 'ci-fix', 'blocked');

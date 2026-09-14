@@ -73,7 +73,7 @@ import {
   RedirectedError,
   setEngineDecisionRuntime,
 } from './engine-decisions.js';
-import { BlockedRunError } from './errors.js';
+import { BlockedRunError, RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
 import { executeFinalizeStep } from './finalize-step.js';
@@ -190,6 +190,7 @@ export async function cleanupSlotAfterRunFailure(
   // Injected only so the escalated branch is reachable from a test without
   // mocking a module; production always takes the lazy import below.
   teardownWorker?: (slotId: string) => Promise<void>,
+  options: { preserveRetainedWorker?: boolean } = {},
 ): Promise<void> {
   const { slotOwnershipReleaseFields, transitionSlotStatus } = await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
@@ -203,7 +204,7 @@ export async function cleanupSlotAfterRunFailure(
       planRef.value = 'already-releasing';
       return null;
     }
-    const plan = failedRunSlotCleanup(slot, runId, getRun);
+    const plan = failedRunSlotCleanup(slot, runId, getRun, options);
     planRef.value = plan;
     // Escalated: this run merely held the reservation and the recorded owner
     // is dead — the reset also owns physical worker teardown (below).
@@ -544,6 +545,7 @@ function failedRunSlotCleanupEffect(
   reason: string,
   destructive?: (run: Run) => Promise<void>,
   extra?: { reason: string; destructive?: (run: Run) => Promise<void> },
+  options: { preserveRetainedWorker?: boolean } = {},
 ): (run: Run) => Promise<void> {
   return async (run) => {
     if (!run.slotId) return;
@@ -559,6 +561,8 @@ function failedRunSlotCleanupEffect(
           run.id,
           stage,
           destructiveCleanup ? () => destructiveCleanup(run) : undefined,
+          undefined,
+          options,
         );
       } catch (err) {
         failures.push(`${stage}: ${(err as Error).message.slice(0, 200)}`);
@@ -893,8 +897,14 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             Events.RUN_UPDATED,
             terminalSlotCleanup(
               takePendingTerminalSlotRelease(runId),
-              failedRunSlotCleanupEffect('blocked run', (run) =>
-                teardownGateHeldAgentsIfNeeded(run),
+              failedRunSlotCleanupEffect(
+                'blocked run',
+                (run) => teardownGateHeldAgentsIfNeeded(run),
+                undefined,
+                // A retained-session handoff hold blocked precisely to keep the
+                // slot's live worker for the operator; the cleanup must not
+                // tear it down on the way out.
+                { preserveRetainedWorker: err.detail === RETAINED_SESSION_HANDOFF_HOLD },
               ),
             ),
           ),

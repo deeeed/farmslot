@@ -26,6 +26,7 @@ import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
+import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { probeRemotePath } from './remote-probes.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -504,7 +505,7 @@ export async function executeDispatchStep(
       if (result.disposition === 'hold') {
         throw blockedRunError(
           `Retained session handoff requires operator attention: ${result.reason}`,
-          'retained-session-handoff',
+          RETAINED_SESSION_HANDOFF_HOLD,
         );
       }
       console.log(

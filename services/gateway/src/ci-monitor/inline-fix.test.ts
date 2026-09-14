@@ -12,6 +12,7 @@ import { farmslotRoot } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 
 import {
+  inlineFixRunnerStillBusy,
   resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
@@ -263,4 +264,24 @@ test('default CI fix template completion marker writes CI-FIX signal', async () 
   } finally {
     await rm(taskDir, { recursive: true, force: true });
   }
+});
+
+test('inline fix stays with a busy worker with or without a turn token', () => {
+  const reading = (value: string, confidence: 'high' | 'medium' | 'low') =>
+    ({ value, confidence, observedAt: Date.now(), source: 'signal' }) as never;
+  // Exact turn token: only an active, high-confidence turn keeps waiting.
+  assert.equal(inlineFixRunnerStillBusy(true, { value: 'active', confidence: 'high' }, null), true);
+  assert.equal(
+    inlineFixRunnerStillBusy(true, { value: 'active', confidence: 'medium' }, null),
+    false,
+  );
+  assert.equal(inlineFixRunnerStillBusy(true, { value: 'idle', confidence: 'high' }, null), false);
+  assert.equal(inlineFixRunnerStillBusy(true, null, reading('tool-running', 'high')), false);
+  // Recovered delivery (no token): the hook activity stands in.
+  assert.equal(inlineFixRunnerStillBusy(false, null, reading('tool-running', 'high')), true);
+  assert.equal(inlineFixRunnerStillBusy(false, null, reading('composing', 'medium')), true);
+  assert.equal(inlineFixRunnerStillBusy(false, null, reading('idle', 'high')), false);
+  assert.equal(inlineFixRunnerStillBusy(false, null, reading('unknown', 'high')), false);
+  assert.equal(inlineFixRunnerStillBusy(false, null, reading('tool-running', 'low')), false);
+  assert.equal(inlineFixRunnerStillBusy(false, null, null), false);
 });

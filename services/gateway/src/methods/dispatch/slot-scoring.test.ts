@@ -89,6 +89,13 @@ test('replaceable warm slots exclude active-run transitions and manual work', ()
     activeRunSlotIds([{ id: 'active', slotId: 'warm', status: 'monitoring' }], 'active'),
     new Set(),
   );
+  // A blocked run (a retained-handoff hold awaiting the operator) still
+  // occupies its slot: reconciliation must not publish it ready over the
+  // live worker the hold preserved.
+  assert.deepEqual(
+    activeRunSlotIds([{ id: 'held', slotId: 'kept', status: 'blocked' }]),
+    new Set(['kept']),
+  );
   assert.deepEqual(
     activeRunIds([
       { id: 'active', status: 'monitoring' },
@@ -350,6 +357,20 @@ test('failedRunSlotCleanup resets only owned slots and clears only own reservati
     'reset',
   );
   assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
+  // A retained-session handoff hold blocked to keep the owner's live worker:
+  // the reservation holder only drops its reservation, dead owner or not.
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', deadOwner, {
+      preserveRetainedWorker: true,
+    }),
+    'clear-reservation',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me' }, 'me', liveOwner, {
+      preserveRetainedWorker: true,
+    }),
+    'reset',
+  );
   assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
   assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
 });
