@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publication packages render the PR body through the pack's `vars.pr_body_cmd` (MetaMask packs: `mm-harness pr-body render`) before validating it: the worker authors only the prose sections, the recipe and run log sections come from artifacts, and a missing prose section is reported by name instead of as a template mismatch.
+
 - Task dirs no longer carry a default-valued `checklist-target.json`; the one-release compatibility write is gone now that every node runs the 0.9 `mark` engine (absent means `CHECKLIST.md` + `SIGNAL.json`; role switches still write one).
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -196,3 +196,23 @@ test('buildDraftPrBody preserves later summary sections after stripping executio
   assert.equal(body.match(/^## Summary$/gm)?.length, 2);
   assert.match(body, /Nested source summary that remains part of the report\./);
 });
+
+test('buildDraftPrBody keeps the authored prose ahead of a stale pr-body.md when no renderer runs', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-precedence-'));
+  try {
+    await mkdir(path.join(root, 'artifacts'), { recursive: true });
+    const taskFile = path.join(root, 'task.md');
+    await writeFile(taskFile, '# Task\n');
+    await writeFile(
+      path.join(root, 'artifacts', 'pr-description.md'),
+      '## Summary\n\nfresh prose\n',
+    );
+    await writeFile(path.join(root, 'artifacts', 'pr-body.md'), '## Summary\n\nstale render\n');
+    // A slot the pool does not know means no pack renderer: the authored file stays the body.
+    const body = await buildDraftPrBody(makeRun({ taskFile, slotId: 'no-such-slot' }), null, []);
+    assert.match(body, /fresh prose/);
+    assert.doesNotMatch(body, /stale render/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
