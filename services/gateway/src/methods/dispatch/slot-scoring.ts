@@ -580,6 +580,16 @@ export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
   ownerRunLookup: (id: string) => { status: string; park?: Run['park'] } | undefined,
+  options: {
+    /**
+     * The run blocked because it declined to replace the slot's live retained
+     * worker (a retained-session handoff hold). That worker is the thing being
+     * preserved for the operator, so a reservation holder only clears its
+     * reservation even when the recorded owner is already terminal: escalating
+     * to a reset would tear the worker down and publish the slot ready.
+     */
+    preserveRetainedWorker?: boolean;
+  } = {},
 ): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
   // ADR-054 `free-slot`: a gate-parked run's slot is never this cleanup's to
   // take. In flight, the run still owns the row, so the plan below would read
@@ -596,6 +606,7 @@ export function failedRunSlotCleanup(
     return reserved && reserved !== runId ? 'release-keep-handoff' : 'reset';
   }
   if (reserved === runId) {
+    if (options.preserveRetainedWorker) return 'clear-reservation';
     // The reservation holder is the sanctioned successor: when the recorded
     // owner is missing or terminal (fresh reuse terminalizes it before the
     // teardown that then failed), nobody else will ever tear this slot down —

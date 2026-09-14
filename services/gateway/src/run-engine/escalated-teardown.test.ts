@@ -69,3 +69,38 @@ test('a failed escalated worker kill leaves the fence up AND reports the failure
   assert.equal(row.phase, 'releasing', 'the fence stays up rather than hiding a live worker');
   assert.notEqual(row.lifecycle, 'ready');
 });
+
+test('a retained-session handoff hold clears its reservation and never kills the warm worker', async (t) => {
+  const statusPath = statusFileWith(t, {
+    slot: 'held-slot',
+    lifecycle: 'busy',
+    phase: 'working',
+    // The owner already went terminal (ci-watch chained a successor) but its
+    // worker is deliberately warm; the successor blocked rather than replace it.
+    current_run_id: 'terminal-owner',
+    handoff_run_id: 'reservation-holder',
+  });
+
+  const { stdout } = await runAgainstStatusFile(
+    statusPath,
+    `const { cleanupSlotAfterRunFailure } = await import('./src/run-engine/orchestrator.js');
+     let killed = false;
+     await cleanupSlotAfterRunFailure(
+       'held-slot',
+       'reservation-holder',
+       'blocked run',
+       undefined,
+       async () => { killed = true; },
+       { preserveRetainedWorker: true },
+     );
+     console.log(JSON.stringify({ killed }));`,
+  );
+
+  const { killed } = JSON.parse(stdout.trim().split('\n').at(-1)!);
+  assert.equal(killed, false, 'the worker the dispatch declined to replace stays alive');
+
+  const row = JSON.parse(readFileSync(statusPath, 'utf8')).slots[0];
+  assert.equal(row.handoff_run_id, null, 'only the reservation is cleared');
+  assert.equal(row.current_run_id, 'terminal-owner');
+  assert.equal(row.lifecycle, 'busy', 'the slot is not published ready over a live worker');
+});

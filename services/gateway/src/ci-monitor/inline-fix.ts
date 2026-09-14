@@ -39,12 +39,15 @@ import {
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { runnerActivityIsBusy } from '../runners/observability-files.js';
+import { isObservabilityReadingAuthoritative } from '../runners/observability-send-decision.js';
 import {
   type LaunchAckSignalSnapshot,
   readLaunchAckSignalSnapshot,
 } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
+  readRunnerActivityFromObservability,
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerProcessPatternSource,
@@ -909,7 +912,24 @@ async function attemptInlineCIFix(
     let lastInvalidSignalReason: string | null = null;
     while (Date.now() < hardDeadline && !signal.aborted) {
       if (Date.now() >= deadline) {
-        if (!acceptedTurnToken) break;
+        if (!acceptedTurnToken) {
+          // A delivery recovered after a gateway restart carries no turn token.
+          // The runner hook is still authoritative for "busy": abandoning a
+          // worker mid-tool here is what let a chained pr-complete tear it down.
+          const activity = await readRunnerActivityFromObservability(vars, workerTarget, runner);
+          if (
+            !isObservabilityReadingAuthoritative(activity) ||
+            activity.value === 'unknown' ||
+            !runnerActivityIsBusy(activity.value)
+          ) {
+            break;
+          }
+          deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);
+          console.log(
+            `[ci-monitor] run ${runId.slice(0, 8)} — inline-fix runner hook still reports ${activity.value}; extending the wait instead of starting a conflicting follow-up`,
+          );
+          continue;
+        }
         const turnState = await readRunnerTurnState(vars, workerTarget, runner, acceptedTurnToken);
         if (turnState?.value !== 'active' || turnState.confidence !== 'high') break;
         deadline = Math.min(hardDeadline, Date.now() + INLINE_FIX_TIMEOUT_MS);

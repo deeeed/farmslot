@@ -350,6 +350,20 @@ test('failedRunSlotCleanup resets only owned slots and clears only own reservati
     'reset',
   );
   assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
+  // A retained-session handoff hold blocked to keep the owner's live worker:
+  // the reservation holder only drops its reservation, dead owner or not.
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', deadOwner, {
+      preserveRetainedWorker: true,
+    }),
+    'clear-reservation',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me' }, 'me', liveOwner, {
+      preserveRetainedWorker: true,
+    }),
+    'reset',
+  );
   assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
   assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
 });
