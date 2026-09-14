@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -134,8 +135,7 @@ test('runReplayStep restores worker checklist-target when replaying from self-re
     () => {},
   );
 
-  const manifest = JSON.parse(
-    await readFile(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST), 'utf-8'),
-  );
-  assert.deepEqual(manifest, { checklist: 'CHECKLIST.md', signal: 'SIGNAL.json' });
+  // Restoring the worker target removes the role switch's manifest: absent
+  // means CHECKLIST.md + SIGNAL.json to the mark engine.
+  assert.equal(existsSync(path.join(taskDirOnSlot, CHECKLIST_TARGET_MANIFEST)), false);
 });
