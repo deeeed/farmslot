@@ -25,6 +25,7 @@ import {
   listRecipeRunArtifactGroupsForRun,
 } from '../../live-recipe/context.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
+import { trimRunForList } from '../../runs/list-trim.js';
 import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
 
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
@@ -58,7 +59,10 @@ export async function runList(params: RunListParams): Promise<RunListResult> {
   // are consumed individually (runGet/runForSlot via presentRun, and
   // decisionList) — enriching every run in a list would be wasted work.
   const result = listRuns(params);
-  return attachRunListSummaries(result, params);
+  // Summaries read the full runs; the listed rows then shed the decision
+  // payload values only a single run's page renders (see runs/list-trim.ts).
+  const withSummaries = attachRunListSummaries(result, params);
+  return { ...withSummaries, runs: withSummaries.runs.map(trimRunForList) };
 }
 
 export function selectActiveRunForSlot(

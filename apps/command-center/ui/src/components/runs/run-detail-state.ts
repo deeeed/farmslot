@@ -72,6 +72,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _connectionStale = false;
   @state() _directRunRefreshing = false;
   @state() _directRunRefreshFailed = false;
+  /** When the last direct fetch of a trimmed list row failed; gates the retry. */
+  _directRunFailedAt: number | null = null;
   @state() _directRunUnavailable = false;
   @state() _evidenceLightboxOpen = false;
   @state() _evidenceLightboxItems: LightboxItem[] = [];

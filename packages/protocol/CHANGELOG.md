@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RunDecision.payloadTrimmed` names the payload keys `run.list` left out; absent on `run.get`, `run.forSlot` and run events.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.27.0 - 2026-09-13

@@ -549,3 +549,55 @@ export function currentRunCiStatus(
         : liveStatus.lastFixCommitSha,
   };
 }
+
+/**
+ * `run.list` leaves large decision payload values out and names them in
+ * `payloadTrimmed`; the run page needs those (review markdown, PR package,
+ * input snapshot) and gets them from its direct `run.get` copy.
+ */
+export function runHasTrimmedDecisions(run: Pick<Run, 'decisions'>): boolean {
+  return (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0);
+}
+
+/**
+ * The shared (list) run drives status and steps; each trimmed decision takes
+ * its payload from the direct copy of the same decision when one is present.
+ */
+export function mergeTrimmedDecisions(shared: Run, direct: Run | null): Run {
+  if (!direct || direct.id !== shared.id || !runHasTrimmedDecisions(shared)) return shared;
+  const directById = new Map(direct.decisions.map((decision) => [decision.id, decision]));
+  return {
+    ...shared,
+    decisions: shared.decisions.map((decision) => {
+      if (!decision.payloadTrimmed?.length) return decision;
+      const full = directById.get(decision.id);
+      if (!full?.payload) return decision;
+      const { payloadTrimmed: _trimmed, ...rest } = decision;
+      return { ...rest, payload: full.payload };
+    }),
+  };
+}
+
+/** How long the run page waits before retrying a failed direct fetch of a trimmed row. */
+export const TRIMMED_RUN_FETCH_RETRY_MS = 5_000;
+
+/**
+ * Whether the run page should fetch the full run behind a trimmed list row:
+ * no direct copy yet, or the row moved past the copy. A failed fetch is
+ * retried after TRIMMED_RUN_FETCH_RETRY_MS instead of pausing the page for
+ * good; an in-flight fetch is never doubled.
+ */
+export function shouldFetchTrimmedRun(params: {
+  sharedRun: Pick<Run, 'decisions' | 'updatedAt'> | null;
+  directRun: Pick<Run, 'updatedAt'> | null;
+  refreshing: boolean;
+  failedAt: number | null;
+  now: number;
+}): boolean {
+  if (!params.sharedRun || params.refreshing) return false;
+  if (!runHasTrimmedDecisions(params.sharedRun)) return false;
+  if (params.failedAt !== null && params.now - params.failedAt < TRIMMED_RUN_FETCH_RETRY_MS) {
+    return false;
+  }
+  return !params.directRun || params.directRun.updatedAt < params.sharedRun.updatedAt;
+}

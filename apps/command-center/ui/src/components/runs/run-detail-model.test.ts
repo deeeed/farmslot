@@ -25,14 +25,18 @@ import {
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
+  mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runEvidenceSummary,
   runFamilyPrStatus,
+  runHasTrimmedDecisions,
   shouldAcceptTaskProgressUpdate,
+  shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
+  TRIMMED_RUN_FETCH_RETRY_MS,
 } from './run-detail-model.js';
 
 test('interactive completion hold is distinct from a resumable pause', () => {
@@ -542,5 +546,103 @@ test('interactive dev model exposes active state and stable action ordering', ()
       'failed',
       'abort',
     ],
+  );
+});
+
+test('a list row with trimmed decision payloads takes them from the direct run copy', () => {
+  const decision = (id: string, payload: Record<string, unknown>, payloadTrimmed?: string[]) =>
+    ({
+      id,
+      type: 'engine_review_posting',
+      title: id,
+      description: '',
+      actions: [],
+      createdAt: '2026-09-14T00:00:00.000Z',
+      payload,
+      ...(payloadTrimmed ? { payloadTrimmed } : {}),
+    }) as unknown as Run['decisions'][number];
+  const shared = {
+    id: 'r1',
+    status: 'blocked',
+    updatedAt: '2026-09-14T10:00:00.000Z',
+    decisions: [
+      decision('d1', { kind: 'review', recommendation: 'COMMENT' }, ['reviewMd']),
+      decision('d2', { kind: 'ready' }),
+    ],
+  } as unknown as Run;
+  const direct = {
+    ...shared,
+    decisions: [
+      decision('d1', { kind: 'review', recommendation: 'COMMENT', reviewMd: '# full' }),
+      decision('d2', { kind: 'ready' }),
+    ],
+  } as unknown as Run;
+  assert.equal(runHasTrimmedDecisions(shared), true);
+  assert.equal(runHasTrimmedDecisions(direct), false);
+  const merged = mergeTrimmedDecisions(shared, direct);
+  assert.equal(
+    (merged.decisions[0].payload as unknown as Record<string, unknown>).reviewMd,
+    '# full',
+  );
+  assert.equal(merged.decisions[0].payloadTrimmed, undefined);
+  assert.equal(merged.decisions[1], shared.decisions[1], 'untrimmed decisions stay the list copy');
+  assert.equal(merged.status, 'blocked', 'status and steps come from the list row');
+  // No direct copy (or a different run) leaves the row as-is.
+  assert.equal(mergeTrimmedDecisions(shared, null), shared);
+  assert.equal(mergeTrimmedDecisions(shared, { ...direct, id: 'other' } as Run), shared);
+});
+
+test('a trimmed row is fetched once, again when it moves on, and retried after a failure window', () => {
+  const trimmedRow = (updatedAt: string) =>
+    ({
+      updatedAt,
+      decisions: [{ id: 'd1', payload: {}, payloadTrimmed: ['reviewMd'] }],
+    }) as unknown as Run;
+  const fullRow = { updatedAt: 't1', decisions: [{ id: 'd1', payload: {} }] } as unknown as Run;
+  const base = { refreshing: false, failedAt: null, now: 100_000 };
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t1'), directRun: null }),
+    true,
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t1'), directRun: { updatedAt: 't1' } }),
+    false,
+    'the copy is current',
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({ ...base, sharedRun: trimmedRow('t2'), directRun: { updatedAt: 't1' } }),
+    true,
+    'the row moved past the copy',
+  );
+  assert.equal(shouldFetchTrimmedRun({ ...base, sharedRun: fullRow, directRun: null }), false);
+  assert.equal(shouldFetchTrimmedRun({ ...base, sharedRun: null, directRun: null }), false);
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      refreshing: true,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    false,
+    'never doubles an in-flight fetch',
+  );
+  // A failed fetch is retried once the window has passed, not on every tick.
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      failedAt: 100_000 - TRIMMED_RUN_FETCH_RETRY_MS + 1,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFetchTrimmedRun({
+      ...base,
+      failedAt: 100_000 - TRIMMED_RUN_FETCH_RETRY_MS,
+      sharedRun: trimmedRow('t1'),
+      directRun: null,
+    }),
+    true,
   );
 });

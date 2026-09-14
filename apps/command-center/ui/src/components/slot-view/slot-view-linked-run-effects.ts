@@ -11,6 +11,7 @@ import {
   shouldPreserveSlotViewCachedNullRun,
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
+  slotViewNeedsDirectRunFetch,
 } from './slot-view-linked-run-model.js';
 import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
 import {
@@ -202,7 +203,7 @@ export async function refreshSlotViewLinkedRun(
   const refreshToken = Symbol('linked-run-refresh');
   view._linkedRunRefreshToken = refreshToken;
   try {
-    if (requestedRunId && !cachedRun) {
+    if (slotViewNeedsDirectRunFetch(requestedRunId, cachedRun)) {
       try {
         const direct = await gateway.request<RunGetResult>(Methods.RUN_GET, {
           runId: requestedRunId,

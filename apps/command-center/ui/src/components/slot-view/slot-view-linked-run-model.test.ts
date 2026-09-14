@@ -8,6 +8,7 @@ import {
   selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
   slotViewLinkedRunTransition,
+  slotViewNeedsDirectRunFetch,
 } from './slot-view-linked-run-model.js';
 
 function stubRun(id: string, slotId: string): Run {
@@ -149,4 +150,19 @@ test('slotViewLinkedRunTransition refreshes progress on monitoring entry only', 
     }).shouldRefreshMonitoringProgress,
     false,
   );
+});
+
+test('a pinned run is fetched directly when the cache has no row or only a trimmed run.list row', () => {
+  const full = {
+    id: 'r1',
+    decisions: [{ id: 'd1', payload: { kind: 'ready' } }],
+  } as unknown as Run;
+  const trimmed = {
+    id: 'r1',
+    decisions: [{ id: 'd1', payload: { kind: 'ready' }, payloadTrimmed: ['prPackage'] }],
+  } as unknown as Run;
+  assert.equal(slotViewNeedsDirectRunFetch('r1', null), true);
+  assert.equal(slotViewNeedsDirectRunFetch('r1', trimmed), true);
+  assert.equal(slotViewNeedsDirectRunFetch('r1', full), false);
+  assert.equal(slotViewNeedsDirectRunFetch(null, trimmed), false, 'no pin, no direct fetch');
 });
