@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".
+- The PR description's shape no longer fails a run at `complete`: sections the worker left out of `artifacts/pr-description.md` are appended from the repository PR template (heading and boilerplate) and the PR is created; the completion log names what was added.
 - Every runner launch on a remote slot (dispatch, self-review, inline CI fix, retained-session resume and recovery) first syncs the slot's node support bundle with the gateway's tree; prepare is no longer the only writer, so a gateway-side change to `scripts/` (such as the runner installer) can no longer strand a previously prepared slot on a bundle that cannot launch its runner.
 
 - A chained pr-complete that blocks because the slot's live retained worker would not accept the handoff no longer tears that worker down on the way out; it only drops its reservation and leaves the slot for the operator. The inline CI fix also keeps waiting while the runner hook still reports the worker busy after a gateway-restart recovery, instead of declaring the turn inactive and chaining a conflicting follow-up.
