@@ -28,6 +28,7 @@ import {
 } from '../core/tmux.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { resolveDispatchSafetyTier } from '../methods/dispatch/safety-tier.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { buildRunnerSessionReloadCommand } from '../runners/launch-command.js';
 import {
   normalizeRunner,
@@ -484,6 +485,7 @@ export async function restoreTmuxWorker(
     }
     const projectVars = await loadProjectVars(run.project);
     const runtimeDir = await resolveProjectRuntimeDir(run.project);
+    await ensureNodeSupportBundle(vars, runtimeDir, { projectVars });
     const safetyTier = resolveDispatchSafetyTier({
       runTier: run.safetyTier,
       projectDefaultRaw: projectVars.projectJson.default_safety_tier,

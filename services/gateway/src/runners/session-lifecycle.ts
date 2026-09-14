@@ -11,6 +11,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 
 import {
   buildRunnerSessionReloadCommand,
@@ -774,6 +775,7 @@ export async function reloadRunnerForPark(
       );
     }
     promptAcceptanceBaselineMs = baseline;
+    await ensureNodeSupportBundle(options.vars, handle.runtimeDir ?? '.agent');
     command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runnerId,
