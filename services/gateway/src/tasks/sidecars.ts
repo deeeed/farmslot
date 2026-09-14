@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, copyFile } from 'node:fs/promises';
+import { chmod, copyFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -36,9 +36,30 @@ export async function copyPreparedTaskRootSidecars(
 
   for (const sidecar of TASK_ROOT_SIDECARS) {
     const source = path.join(params.taskDir, sidecar);
-    if (!existsSync(source)) continue;
-
     const dest = path.join(params.workerTaskAbs, sidecar);
+    if (!existsSync(source)) {
+      // A fresh task dir carries no manifest: absent means the worker default.
+      // A slot task dir left by an interrupted role switch may still hold one
+      // that points the mark at the nested checklist, so absent at the source
+      // must mean absent at the destination too.
+      if (sidecar === CHECKLIST_TARGET_MANIFEST) {
+        if (local) {
+          await rm(dest, { force: true });
+        } else {
+          if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar reset`);
+          const rmRes = await execLocal(
+            `ssh ${shellQuote(params.sshTarget)} ${shellQuote(`rm -f ${shellQuote(dest)}`)}`,
+          );
+          if (rmRes.exitCode !== 0) {
+            throw new Error(
+              `removing stale ${sidecar} on ${params.sshTarget}:${dest} failed: ${rmRes.stderr.trim() || rmRes.stdout.trim() || `exit ${rmRes.exitCode}`}`,
+            );
+          }
+        }
+      }
+      continue;
+    }
+
     if (local) {
       await copyFile(source, dest);
       if (sidecar === CHECKLIST_MARKER_INPUT) {

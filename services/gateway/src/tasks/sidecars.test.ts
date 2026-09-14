@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,4 +71,30 @@ test('copyPreparedTaskRootSidecars copies executable mark helper locally', async
     await readFile(path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST), 'utf-8'),
     `${JSON.stringify({ checklist: 'TASK.md', signal: 'SIGNAL.json' }, null, 2)}\n`,
   );
+});
+
+test('copyPreparedTaskRootSidecars removes a stale role manifest when the fresh task dir has none', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'sidecars-stale-manifest-'));
+  const taskDir = path.join(root, 'task');
+  const workerTaskAbs = path.join(root, 'worker');
+  await mkdir(taskDir, { recursive: true });
+  await mkdir(workerTaskAbs, { recursive: true });
+  await writeFile(path.join(taskDir, CHECKLIST_MARKER_INPUT), '#!/bin/sh\n', 'utf-8');
+  // Left behind by an interrupted self-review on the slot: points the mark at
+  // the nested checklist. A fresh worker dispatch must not inherit it.
+  await writeFile(
+    path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST),
+    JSON.stringify({ checklist: 'SELF-REVIEW.md', signal: 'SELF-REVIEW-SIGNAL.json' }),
+    'utf-8',
+  );
+
+  const copied = await copyPreparedTaskRootSidecars({
+    taskDir,
+    workerTaskAbs,
+    host: 'localhost',
+    machine: 'local',
+  });
+
+  assert.deepEqual(copied, [CHECKLIST_MARKER_INPUT]);
+  assert.equal(existsSync(path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST)), false);
 });
