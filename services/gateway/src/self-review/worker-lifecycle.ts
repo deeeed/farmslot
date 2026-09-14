@@ -7,12 +7,17 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { ensureTmuxWindow, firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  nativeWorkerLiveStatus,
+  readNativeWorkerSnapshot,
+} from '../runners/native/worker-control.js';
+import {
   readRunnerTurnState,
   resolvePrimaryWorkerTarget,
   runnerPaneLooksIdle,
   runnerProcessPatternSource,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import { getRun } from '../runs/store.js';
 
 export async function runnerTurnLeaseIsActive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -164,6 +169,11 @@ export async function isWorkerAlive(
   runId?: string,
 ): Promise<boolean> {
   let workerTarget = '<unresolved>';
+  if (runId && getRun(runId)?.transport === 'native') {
+    const status = nativeWorkerLiveStatus(await readNativeWorkerSnapshot(runId));
+    if (status === 'unknown') throw new Error('Native worker liveness is unconfirmed');
+    return status === 'working';
+  }
   try {
     workerTarget = runId
       ? (await resolveAgentTarget(vars.slotId, { runId, role: 'primary' })).target

@@ -238,6 +238,7 @@ export function buildRerunAlongsideHref(run: Run, hash?: string): string {
   params.set('lane', 'comparison');
   params.set('familyId', run.familyId);
   params.set('parentRunId', run.id);
+  if (run.transport) params.set('transport', run.transport);
   const runner = run.metrics?.runner;
   const model = run.metrics?.model;
   if (runner) params.set('runner', runner);

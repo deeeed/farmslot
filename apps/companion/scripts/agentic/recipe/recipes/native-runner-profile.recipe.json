@@ -1,0 +1,256 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native configuration and saved conversation",
+  "description": "Use the private simulator and prepared NATIVE_COMPANION_PROFILE_STATE; the outer runner always closes its fixture session.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["word", "draft"],
+    "properties": {
+      "word": {
+        "type": "string"
+      },
+      "draft": {
+        "type": "string"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "setup-ready",
+    "nodes": {
+      "runner": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-claude",
+        "intent": "Choose the installed Claude runner.",
+        "next": "profiles-ready"
+      },
+      "profiles-scroll": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-empty-a",
+        "intent": "Bring the signed-out configuration into view through native scrolling.",
+        "next": "signed-out"
+      },
+      "signed-out": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-profile-empty-a",
+        "intent": "Choose the signed-out configuration.",
+        "next": "verify-signed-out"
+      },
+      "verify-signed-out": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs signed-out",
+        "intent": "Verify actual signed-out state disables creation without launching a session.",
+        "next": "authenticated-visible"
+      },
+      "authenticated": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-profile-existing-claude",
+        "intent": "Choose the authenticated native configuration.",
+        "next": "model-scroll"
+      },
+      "model-scroll": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh",
+        "intent": "Bring the selected configuration and its refresh action into view.",
+        "next": "verify-authenticated"
+      },
+      "model": {
+        "action": "ui.press",
+        "test_id": "companion-native-model-0",
+        "intent": "Choose Sonnet.",
+        "next": "create-visible"
+      },
+      "create": {
+        "action": "ui.press",
+        "test_id": "companion-native-create",
+        "intent": "Start the selected configuration through Companion.",
+        "next": "identity"
+      },
+      "identity": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-identity",
+        "timeout_ms": 30000,
+        "intent": "The newly created conversation displays its runner and session identity.",
+        "next": "adopt"
+      },
+      "adopt": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs adopt",
+        "intent": "Verify the actual session runner, model, directory and profile registration.",
+        "next": "type-memory"
+      },
+      "type-memory": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "Remember {{params.word}}. Reply with exactly that word. Use no tools.",
+        "intent": "Enter a unique conversation memory.",
+        "next": "send-memory"
+      },
+      "send-memory": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Submit exactly one native command.",
+        "next": "verify-memory"
+      },
+      "verify-memory": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs remembered",
+        "intent": "Verify one accepted/completed command and its real response.",
+        "next": "draft"
+      },
+      "draft": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "{{params.draft}}",
+        "intent": "Keep an unsent draft before closing.",
+        "next": "close"
+      },
+      "close": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs close",
+        "intent": "Close only the fixture session and verify stopped processes.",
+        "next": "resume-ready"
+      },
+      "resume-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-resume",
+        "timeout_ms": 30000,
+        "intent": "The stopped conversation offers continuation through its saved runner session.",
+        "next": "resume-visible"
+      },
+      "resume": {
+        "action": "ui.press",
+        "test_id": "companion-native-resume",
+        "intent": "Resume the saved conversation from Companion.",
+        "next": "verify-resumed"
+      },
+      "verify-resumed": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs resumed",
+        "intent": "Verify saved identity, new generation, retained draft and no replay.",
+        "next": "recall"
+      },
+      "recall": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "Reply with only the word you remembered earlier. Use no tools.",
+        "intent": "Replace the unsent draft with a memory question.",
+        "next": "send-recall"
+      },
+      "send-recall": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Continue the resumed conversation.",
+        "next": "verify-recall"
+      },
+      "verify-recall": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs recalled",
+        "intent": "Verify remembered context and exactly one additional command.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "native-profile-resumed.png",
+        "intent": "Record the preserved conversation and its response after resuming.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "verify-authenticated": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs authenticated",
+        "intent": "The chosen native configuration is authenticated and permits a new conversation.",
+        "next": "reconnect"
+      },
+      "reconnect": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs reconnect",
+        "intent": "The chosen configuration survives a real mobile gateway disconnect and requires fresh login readiness.",
+        "next": "replace-registration"
+      },
+      "replace-registration": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs replace",
+        "intent": "Replace only the private profile registration while preserving its native directory and credentials.",
+        "next": "refresh-visible"
+      },
+      "refresh-registration": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-refresh",
+        "intent": "Refresh the selected configuration after its registration changed on the node.",
+        "next": "verify-stale"
+      },
+      "verify-stale": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs stale",
+        "intent": "The old registration blocks creation and offers explicit selection of the updated profile.",
+        "next": "updated-visible"
+      },
+      "accept-updated": {
+        "action": "ui.press",
+        "test_id": "companion-native-runner-profile-existing-claude",
+        "intent": "Explicitly accept the updated configuration registration.",
+        "next": "verify-updated"
+      },
+      "verify-updated": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-proof.mjs authenticated",
+        "intent": "The explicitly accepted registration is ready to start the selected conversation.",
+        "next": "model-visible"
+      },
+      "profiles-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-runner-profile-empty-a",
+        "timeout_ms": 20000,
+        "intent": "The selected runner has loaded its available native configurations before choosing one.",
+        "next": "profiles-scroll"
+      },
+      "setup-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-runner-claude",
+        "timeout_ms": 30000,
+        "intent": "The connected gateway exposes available native runners in the creation form.",
+        "next": "runner"
+      },
+      "authenticated-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-existing-claude",
+        "intent": "Make the signed-in configuration reachable after the login warning appears.",
+        "next": "authenticated"
+      },
+      "refresh-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-profile-refresh",
+        "intent": "Keep profile refresh reachable after reconnecting.",
+        "next": "refresh-registration"
+      },
+      "updated-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-runner-profile-existing-claude",
+        "intent": "Reach the explicit updated-configuration selection.",
+        "next": "accept-updated"
+      },
+      "model-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-model-0",
+        "intent": "Reach the model choice after profile readiness changes.",
+        "next": "model"
+      },
+      "create-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-create",
+        "intent": "Reach the start action for the selected configuration and model.",
+        "next": "create"
+      },
+      "resume-visible": {
+        "action": "command",
+        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-resume",
+        "intent": "Reach the saved conversation continuation action above its history.",
+        "next": "resume"
+      }
+    }
+  }
+}

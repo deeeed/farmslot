@@ -16,6 +16,7 @@ import {
   CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
 } from '../lib/artifact-url';
+import { currentFarmConnection } from '../lib/connection-authority';
 import {
   buildPRDashboardRows,
   buildPRDashboardScope,
@@ -355,13 +356,16 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
       setPRLoading(false);
       return;
     }
+    const isCurrent = currentFarmConnection(client);
+    if (!isCurrent()) return;
     setRefreshing(true);
     setPRLoading(true);
     setPRError(null);
     try {
       const result = await client.request<PRListResult>(Methods.PR_LIST, {}, PR_LIST_TIMEOUT_MS);
-      setPRs(result.prs);
+      if (isCurrent()) setPRs(result.prs);
     } catch (err) {
+      if (!isCurrent()) return;
       setPRError(`Failed to load PR list: ${(err as Error).message}`);
     } finally {
       setRefreshing(false);

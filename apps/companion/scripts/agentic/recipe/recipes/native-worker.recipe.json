@@ -1,0 +1,113 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion worker input and retained task history",
+  "description": "Run native-worker-proof.mjs setup using the private gateway and native-worker-proof fixture before execution. NATIVE_COMPANION_WORKER_STATE and NATIVE_COMPANION_TOKEN_FILE name private paths.",
+  "workflow": {
+    "entry": "open-run",
+    "nodes": {
+      "open-run": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs open-run",
+        "intent": "Open the real native worker run timeline.",
+        "next": "wait-link"
+      },
+      "wait-link": {
+        "action": "ui.wait_for",
+        "timeout_ms": 30000,
+        "intent": "The run overview names its native conversation action.",
+        "next": "open-conversation",
+        "test_id": "companion-native-worker-dev-{{params.lease_id}}"
+      },
+      "open-conversation": {
+        "action": "ui.press",
+        "intent": "Open the session using the run link, preserving its task and input lease.",
+        "next": "wait-native",
+        "test_id": "companion-native-worker-dev-{{params.lease_id}}"
+      },
+      "wait-native": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-draft",
+        "timeout_ms": 30000,
+        "intent": "The conversation composer is available for the selected run.",
+        "next": "type"
+      },
+      "type": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "Recall the exact value you wrote in mobile-worker.txt from this conversation. Reply with that value only. Do not use tools or write signals.",
+        "intent": "Continue the selected worker from the mobile composer.",
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Send the pinned instruction through the shared API.",
+        "next": "verify-input"
+      },
+      "verify-input": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs verify-mobile",
+        "intent": "Verify native task identity, remembered value and exactly one delivered command.",
+        "next": "capture-active"
+      },
+      "capture-active": {
+        "action": "ui.screenshot",
+        "path": "worker-active.png",
+        "intent": "Record the active worker conversation.",
+        "next": "handoff"
+      },
+      "handoff": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs handoff",
+        "intent": "Dispatch the successor task using real retained-session handoff.",
+        "next": "read-only"
+      },
+      "read-only": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-read-only",
+        "timeout_ms": 30000,
+        "intent": "The open previous task view loses write access after transfer.",
+        "next": "task-history"
+      },
+      "task-history": {
+        "action": "ui.wait_for",
+        "text_contains": ["Task history"],
+        "timeout_ms": 30000,
+        "intent": "The previous task is visibly identified as frozen history.",
+        "next": "verify-history"
+      },
+      "verify-history": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs verify-history",
+        "intent": "Prove the prior lease has frozen history and no successor events or mobile writes.",
+        "next": "capture-history"
+      },
+      "capture-history": {
+        "action": "ui.screenshot",
+        "path": "worker-history.png",
+        "intent": "Record the frozen prior task and disabled composer after transfer.",
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs cleanup",
+        "intent": "Cancel only the private successor and verify process cleanup plus slot release.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  },
+  "paramsSchema": {
+    "type": "object",
+    "required": ["lease_id"],
+    "properties": {
+      "lease_id": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  }
+}

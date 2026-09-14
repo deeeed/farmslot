@@ -4,7 +4,11 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Configure server-owned native account assignments when creating nodes or with `principal bind-native-owner`.
+
 - `farmslot run` reads the task flow from `inputs/handoff.json`, falling back to the pre-0.9 `inputs/template-provenance.json`.
+
+- Support `run create --transport native` for opt-in structured worker sessions while retaining the default terminal transport.
 - `farmslot run gate` lists and accepts `continue` on a timed-out interactive handoff so monitoring can be extended without SIGNAL.json.
 
 - feat(machine): `farmslot machine status` and `machine restore` print `restore=<slot> (was

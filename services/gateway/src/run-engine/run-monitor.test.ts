@@ -146,6 +146,48 @@ function devRunView(overrides: Partial<MonitorNudgeRunView> = {}): MonitorNudgeR
   };
 }
 
+test('native signal freshness follows its task lease instead of replayed controller timestamps', () => {
+  const nativeSession = {
+    sessionId: 'session',
+    leaseId: 'lease',
+    commandId: 'command',
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+    launchRequestedAt: '2026-04-25T08:00:00Z',
+  };
+  const run = {
+    steps: [{ name: 'dispatch', completedAt: '2026-04-25T08:10:00Z' }],
+    monitorState: { startedAt: '2026-04-25T08:11:00Z' },
+    agentContexts: [{ id: 'dev', role: 'dev' as const, nativeSession }],
+  };
+  const signal: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    timestamp: '2026-04-25T08:01:00Z',
+  };
+  assert.equal(isWorkerSignalFreshForRun(run, signal), true);
+  assert.equal(
+    isWorkerSignalFreshForRun(run, { ...signal, timestamp: '2026-04-25T07:59:59Z' }),
+    false,
+  );
+  assert.equal(isWorkerSignalFreshForRun(run, { ...signal, timestamp: 'invalid' }), false);
+  assert.equal(
+    isWorkerSignalFreshForRun(
+      {
+        ...run,
+        agentContexts: [
+          {
+            ...run.agentContexts[0],
+            nativeSession: { ...nativeSession, releasedAt: '2026-04-25T08:05:00Z' },
+          },
+        ],
+      },
+      signal,
+    ),
+    false,
+  );
+});
+
 test('isWorkerSignalFreshForRun rejects terminal signals from an earlier monitor attempt', () => {
   const run = {
     steps: [{ name: 'monitor', status: 'running' as const, startedAt: '2026-04-25T08:09:45.730Z' }],

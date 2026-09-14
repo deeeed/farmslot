@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { MachineParkRecord } from '@farmslot/protocol';
+import type { MachineParkRecord, MachinePauseTerminalRecoveryHandle } from '@farmslot/protocol';
 
 import { MachineParkingIntentJournalStore } from './journal.js';
 
@@ -220,7 +220,10 @@ test('deep-invalid record tables quarantine per file while valid journal loads',
         ...value,
         recoveryHandle: {
           ...value.recoveryHandle!,
-          target: { ...value.recoveryHandle!.target, paneId: 'worker.1' },
+          target: {
+            ...(value.recoveryHandle as MachinePauseTerminalRecoveryHandle).target,
+            paneId: 'worker.1',
+          },
         },
       }),
     },
@@ -498,5 +501,67 @@ test('a re-home note round-trips, and a half-written one is refused at write', a
       [{ ...record, rehome: { ...rehome, toSlotId: rehome.fromSlotId } } as never],
       'run-c',
     ),
+  );
+});
+
+test('native parking journals retain exact host ownership without a terminal target', async (t) => {
+  const runsDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-native-park-journal-'));
+  t.after(() => rm(runsDir, { recursive: true, force: true }));
+  const store = new MachineParkingIntentJournalStore(runsDir);
+  const native = richRecord('native-release');
+  native.recoveryHandle = {
+    version: 2,
+    transport: 'native',
+    runnerId: 'claude',
+    contextId: 'primary',
+    sessionId: 'conversation',
+    nativeSessionId: 'host-session',
+    stateDirectory: '/private/state',
+    relocation: { fromSlotId: 'source-slot', fromCwd: '/source' },
+    taskBundle: { relativeDirectory: '.task/dev/task', digest: 'a'.repeat(64) },
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'node-a',
+    leaseId: 'task-lease',
+    generation: 'generation-a',
+    launchDigest: 'launch-digest',
+    profile: {
+      executionNodeId: 'node-a',
+      runner: 'claude',
+      profileId: 'work',
+      accountContextId: '00000000-0000-4000-8000-000000000001',
+    },
+    slotId: 'slot-a',
+    cwd: '/fixture',
+    model: 'sonnet',
+    capturedAt: native.createdAt,
+  };
+  await store.write('pause', [native]);
+  const restored = await store.load();
+  assert.equal(restored.quarantined.length, 0);
+  assert.deepEqual(restored.journals[0]?.records[0]?.recoveryHandle, native.recoveryHandle);
+  for (const key of [
+    'ownerPrincipalId',
+    'executionNodeId',
+    'leaseId',
+    'generation',
+    'cwd',
+  ] as const) {
+    const invalid = structuredClone(native);
+    if (invalid.recoveryHandle?.version !== 2) throw new Error('native fixture missing');
+    invalid.recoveryHandle[key] = '';
+    await assert.rejects(store.write('pause', [invalid]), /invalid machine parking intent journal/);
+  }
+  const invalidProfile = structuredClone(native);
+  if (invalidProfile.recoveryHandle?.version !== 2 || !invalidProfile.recoveryHandle.profile)
+    throw new Error('profile fixture missing');
+  invalidProfile.recoveryHandle.profile.accountContextId = 'invalid';
+  await assert.rejects(
+    store.write('pause', [invalidProfile]),
+    /invalid machine parking intent journal/,
+  );
+  const terminalTarget = { ...native, recoveryHandle: { ...native.recoveryHandle, target: {} } };
+  await assert.rejects(
+    store.write('pause', [terminalTarget]),
+    /invalid machine parking intent journal/,
   );
 });

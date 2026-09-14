@@ -70,12 +70,34 @@ export class CredentialStoreWriter {
         subject: structuredClone(subject),
         roles: cloneRoles(roles),
       };
+      validateNativeOwner(store, principal);
       return {
         next: { ...store, principals: [...store.principals, principal] },
         result: principal,
       };
     });
     return result;
+  }
+
+  bindNativeOwner(nodePrincipalId: string, ownerPrincipalId: string): Principal {
+    return this.mutate((store) => {
+      const principal = requiredPrincipal(store, nodePrincipalId);
+      if (principal.subject.type !== 'node')
+        throw new CredentialStoreRefusalError('Native ownership requires a node principal');
+      if (
+        principal.subject.nativeOwnerPrincipalId &&
+        principal.subject.nativeOwnerPrincipalId !== ownerPrincipalId
+      )
+        throw new CredentialStoreRefusalError(
+          'Native owner is immutable; retire this node before enrolling another owner',
+        );
+      const updated: Principal = {
+        ...principal,
+        subject: { ...principal.subject, nativeOwnerPrincipalId: ownerPrincipalId },
+      };
+      validateNativeOwner(store, updated);
+      return { next: replacePrincipal(store, updated), result: updated };
+    });
   }
 
   grantRole(principalId: string, role: Role, scope: RoleScope): Principal {
@@ -309,6 +331,29 @@ export class CredentialStoreWriter {
         'and start them again.',
     );
   }
+}
+
+function validateNativeOwner(store: CredentialStore, principal: Principal): void {
+  if (principal.subject.type !== 'node' || principal.subject.nativeOwnerPrincipalId === undefined)
+    return;
+  const { nativeOwnerPrincipalId: ownerId, machine } = principal.subject;
+  const owner = store.principals.find((candidate) => candidate.id === ownerId);
+  if (!owner || owner.subject.type === 'node' || machine === 'local')
+    throw new CredentialStoreRefusalError(
+      'Native ownership requires a stored person or service and a distinct execution node',
+    );
+  if (
+    store.principals.some(
+      (candidate) =>
+        candidate.id !== principal.id &&
+        candidate.subject.type === 'node' &&
+        candidate.subject.machine === machine &&
+        candidate.subject.nativeOwnerPrincipalId !== undefined,
+    )
+  )
+    throw new CredentialStoreRefusalError(
+      'This native execution machine is already assigned to another node principal',
+    );
 }
 
 function buildCredential(

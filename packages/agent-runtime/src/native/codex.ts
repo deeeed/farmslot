@@ -1,7 +1,30 @@
+import { execFile } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
+import { promisify } from 'node:util';
+
 import type { NativeSessionResponse } from '@farmslot/protocol';
 
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
+
+/** Git's shared metadata can live outside a linked worktree's writable root. */
+async function gitWritableRoot(cwd: string, env?: NodeJS.ProcessEnv): Promise<string | undefined> {
+  let common: string;
+  try {
+    const result = await promisify(execFile)(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { cwd, env, timeout: 10000 },
+    );
+    common = result.stdout.trim();
+  } catch (error) {
+    // Non-repository conversations need no extra write grant. Git's refusal
+    // leaves the ordinary workspace sandbox in place rather than broadening it.
+    if ((error as { code?: unknown }).code === 128) return undefined;
+    throw error;
+  }
+  return realpath(common);
+}
 
 function wireObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -46,6 +69,7 @@ export const codexNativeAdapter: NativeAdapter = {
     questions: false,
     interrupt: true,
     resume: true,
+    resumeAcrossWorkspaces: true,
   },
   async start(options, emit) {
     let nativeSessionId = '';
@@ -185,13 +209,19 @@ export const codexNativeAdapter: NativeAdapter = {
         capabilities: { experimentalApi: true },
       });
       process.write({ method: 'initialized', params: {} });
+      const gitRoot =
+        options.safetyTier === 'dangerous'
+          ? undefined
+          : await gitWritableRoot(options.cwd, options.env);
       const result = wireObject(
         await process.request(options.resumeSessionId ? 'thread/resume' : 'thread/start', {
           ...(options.resumeSessionId ? { threadId: options.resumeSessionId } : {}),
           cwd: options.cwd,
           model: options.model,
-          approvalPolicy: 'untrusted',
-          sandbox: 'workspace-write',
+          approvalPolicy:
+            options.safetyTier && options.safetyTier !== 'sandboxed' ? 'never' : 'untrusted',
+          sandbox: options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
+          ...(gitRoot ? { config: { 'sandbox_workspace_write.writable_roots': [gitRoot] } } : {}),
         }),
       );
       nativeSessionId = wireString(wireObject(result.thread).id);
@@ -215,13 +245,14 @@ export const codexNativeAdapter: NativeAdapter = {
           await (startingTurn = process.request('turn/start', {
             threadId: nativeSessionId,
             input: [{ type: 'text', text }],
+            ...(options.effort ? { effort: options.effort } : {}),
             ...(options.mode === 'plan'
               ? {
                   collaborationMode: {
                     mode: 'plan',
                     settings: {
                       model: resolvedModel,
-                      reasoning_effort: 'low',
+                      reasoning_effort: options.effort ?? 'low',
                       developer_instructions: null,
                     },
                   },

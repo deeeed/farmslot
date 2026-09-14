@@ -22,6 +22,7 @@ import {
   isKnownRunner,
   normalizeRunner,
   runnerDefaultModel,
+  runnerSupportsEffort,
   runnerSupportsInitialPromptArg,
 } from '../runners/registry.js';
 
@@ -143,9 +144,14 @@ export function createCopilotRunnerVars(checkout: string): SlotVars {
   };
 }
 
-export function resolveCopilotRunner(input?: { runner?: string; model?: string }): {
+export function resolveCopilotRunner(input?: {
+  runner?: string;
+  model?: string;
+  effort?: string;
+}): {
   runner: string;
   model: string;
+  effort: string;
 } {
   const runner = normalizeRunner(
     input?.runner || process.env.FARMSLOT_COPILOT_RUNNER || DEFAULT_COPILOT_RUNNER,
@@ -158,7 +164,13 @@ export function resolveCopilotRunner(input?: { runner?: string; model?: string }
   if (!getRunnerDefinition(runner).acceptsModel(model)) {
     throw new Error(`Runner '${runner}' does not accept model '${model}'`);
   }
-  return { runner, model };
+  const effort =
+    input?.effort ??
+    process.env.FARMSLOT_COPILOT_EFFORT ??
+    (runnerSupportsEffort(runner, model, 'low') ? 'low' : 'auto');
+  if (!runnerSupportsEffort(runner, model, effort))
+    throw new Error(`Runner '${runner}' does not accept effort '${effort}' for '${model}'`);
+  return { runner, model, effort };
 }
 
 export function buildCopilotLaunch(input: {
@@ -166,6 +178,7 @@ export function buildCopilotLaunch(input: {
   runner: string;
   model: string;
   safetyTier: SafetyTier;
+  effort?: string;
   bootstrapPrompt: string;
   store: CopilotRuntimeStore;
   runtimeDir?: string;
@@ -176,6 +189,7 @@ export function buildCopilotLaunch(input: {
   const command = buildLaunchCommand(vars, input.runner, input.model, input.bootstrapPrompt, {
     repo: input.checkout,
     safetyTier: input.safetyTier,
+    effort: input.effort,
     runtimeDir,
     initialPromptOnLaunch: bootstrapOnLaunch,
   });

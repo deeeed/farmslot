@@ -6,9 +6,11 @@ import type { ClientState } from '../server/client-state.js';
 import type { GatewayAuthRuntime, GatewayAuthSession } from './auth.js';
 import { AUTHORIZATION_METHOD_CLASSIFICATION } from './authorization-classification.generated.js';
 import { activeAdminCredentialCount } from './credential-store.js';
+import { hasNativeWorkspaceAccess } from './native-owner.js';
 
 const IDENTITY_MANAGEMENT_METHODS = new Set([
   'principal.create',
+  'principal.bindNativeOwner',
   'principal.list',
   'principal.grant',
   'principal.revokeRole',
@@ -84,6 +86,11 @@ function authorizeGatewayIngress(
     throw noActiveAdminDenial(session, runtime, principal);
   }
   const classification = classificationFor(method);
+  if (
+    classification?.classification === 'native-owner' &&
+    hasNativeWorkspaceAccess(principal, runtime.store.snapshot().principals)
+  )
+    return principal;
   if (hasRole(principal, 'operator') && classification?.classification === 'operator') {
     return principal;
   }
@@ -134,6 +141,16 @@ export function isNodeSubjectSession(
     if (error instanceof GatewayMethodError) return false;
     throw error;
   }
+}
+
+/** Authentication tells clients which workspace they may bootstrap. */
+export function gatewayWorkspaceAccess(
+  principal: Principal | undefined,
+  principals: readonly Principal[],
+): 'farm' | 'native' | 'none' {
+  if (!principal || principal.subject.type === 'node') return 'none';
+  if (hasRole(principal, 'admin') || hasRole(principal, 'operator')) return 'farm';
+  return hasNativeWorkspaceAccess(principal, principals) ? 'native' : 'none';
 }
 
 export function isAdminPrincipal(principal: Principal): boolean {
@@ -212,11 +229,13 @@ function denial(
 
 function classificationFor(
   method: string,
-): { classification: 'admin' | 'operator' | 'node-subject'; reason?: string } | undefined {
+):
+  | { classification: 'admin' | 'operator' | 'node-subject' | 'native-owner'; reason?: string }
+  | undefined {
   return (
     AUTHORIZATION_METHOD_CLASSIFICATION as Record<
       string,
-      { classification: 'admin' | 'operator' | 'node-subject'; reason?: string }
+      { classification: 'admin' | 'operator' | 'node-subject' | 'native-owner'; reason?: string }
     >
   )[method];
 }

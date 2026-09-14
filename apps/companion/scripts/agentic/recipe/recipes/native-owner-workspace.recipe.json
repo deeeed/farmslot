@@ -1,0 +1,20 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Native account workspace isolation",
+  "description": "Launch the private app with the original admin profile selected and the second owner profile already provisioned. Supply the nonsecret NATIVE_OWNER_TRANSITION_FIXTURE, private administrator credential, existing native session, simulator and evidence directory. Uses native controls and one retained read-only inspector to prove account transitions, history isolation and request boundaries. Profile seeding does not prove the credential-entry form.",
+  "workflow": {
+    "entry": "transitions",
+    "nodes": {
+      "transitions": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-owner-transition-proof.mjs",
+        "intent": "Populate real farm history, remove admin access, select an owned native conversation, switch saved accounts, refuse a protected route, revoke the credential and verify state/request isolation. Restore the original account and role.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

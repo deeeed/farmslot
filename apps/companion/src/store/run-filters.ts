@@ -21,6 +21,8 @@ const DEFAULTS: RunFilters = { flow: '', lane: '', sort: 'newest', search: '', t
 interface RunFilterStore {
   filters: RunFilters;
   initialized: boolean;
+  accountEpoch: number;
+  resetForAccount: () => void;
   init: () => Promise<void>;
   setFlow: (flow: FlowFilter) => void;
   setLane: (lane: LaneFilter) => void;
@@ -34,11 +36,20 @@ interface RunFilterStore {
 export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
   filters: DEFAULTS,
   initialized: false,
+  accountEpoch: 0,
+  resetForAccount: () =>
+    set((state) => ({
+      filters: DEFAULTS,
+      initialized: true,
+      accountEpoch: state.accountEpoch + 1,
+    })),
 
   init: async () => {
     if (get().initialized) return;
+    const epoch = get().accountEpoch;
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      if (get().accountEpoch !== epoch) return;
       if (raw) {
         const parsed = JSON.parse(raw);
         const merged: RunFilters = { ...DEFAULTS, ...parsed, search: '' };
@@ -54,6 +65,7 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
         set({ initialized: true });
       }
     } catch (err) {
+      if (get().accountEpoch !== epoch) return;
       console.debug('[run-filters] init parse error:', err);
       set({ initialized: true });
     }

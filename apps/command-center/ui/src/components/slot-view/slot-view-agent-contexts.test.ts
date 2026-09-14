@@ -43,6 +43,71 @@ function slot(overrides: Partial<SlotViewAgentContextSlot> = {}): SlotViewAgentC
   };
 }
 
+test('native worker and referenced fix contexts remain selectable without tmux targets', () => {
+  const binding: NonNullable<AgentContextSummary['nativeSession']> = {
+    sessionId: 'native-session',
+    executionNodeId: 'local',
+    ownerPrincipalId: 'owner',
+    generation: 'generation',
+    leaseId: 'lease',
+    commandId: 'command',
+  };
+  const worker = context({
+    id: 'fix',
+    role: 'fix-bug',
+    runId: 'run-1',
+    target: null,
+    nativeSession: binding,
+  });
+  const fix = context({
+    id: 'follow-up',
+    role: 'self-review-fix',
+    runId: 'run-1',
+    target: null,
+    nativeSessionOwner: {
+      contextId: worker.id,
+      sessionId: binding.sessionId,
+      leaseId: binding.leaseId,
+    },
+  });
+  const contexts = deriveSlotViewAgentContexts({
+    linkedRun: run({ agentContexts: [worker, fix] }),
+    slot: slot(),
+  });
+  assert.deepEqual(
+    contexts.map((item) => item.id),
+    [worker.id, fix.id],
+  );
+  assert.equal(contexts[1].nativeSession, binding);
+  assert.equal(isAgentContextUnavailable(contexts[0], new Set()), false);
+  const historicalBinding = { ...binding, releasedAt: 'released' };
+  const historical = deriveSlotViewAgentContexts({
+    linkedRun: run({
+      agentContexts: [
+        {
+          ...worker,
+          nativeSession: { ...binding, leaseId: 'new-lease' },
+          nativeSessionHistory: [historicalBinding],
+        },
+        fix,
+      ],
+    }),
+    slot: slot(),
+  });
+  assert.deepEqual(historical.find((item) => item.id === fix.id)?.nativeSession, historicalBinding);
+  const stale = deriveSlotViewAgentContexts({
+    linkedRun: run({
+      agentContexts: [{ ...worker, nativeSession: { ...binding, leaseId: 'new-lease' } }, fix],
+    }),
+    slot: slot({ agentContexts: [contexts[1]] }),
+  });
+  assert.equal(
+    stale.some((item) => item.id === fix.id),
+    false,
+    'Stale slot mirror cannot restore a transferred native alias',
+  );
+});
+
 test('deriveSlotViewAgentContexts filters stale slot contexts and prefers run contexts', () => {
   const contexts = deriveSlotViewAgentContexts({
     linkedRun: run({

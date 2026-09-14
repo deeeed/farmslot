@@ -31,6 +31,8 @@ import {
   normalizeRawProjectPrepare,
   normalizeRawProjectRoadmap,
   normalizeRawRuntimeCapabilities,
+  poolDir,
+  projectsDir,
 } from '../core/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 
@@ -45,8 +47,6 @@ export function isValidSafetyTier(value: unknown): value is SafetyTier {
 export type StateChangeHandler = (fleet: FleetStatus) => void;
 
 const statusFile = resolveStatusFilePath(farmslotRoot);
-const poolDir = path.join(farmslotRoot, 'pool');
-const projectsDir = path.join(farmslotRoot, 'projects');
 
 function normalizeProjectCICheckGroups(rawCi: any): ProjectConfig['ci']['checkGroups'] {
   const explicit = Array.isArray(rawCi?.check_groups) ? rawCi.check_groups : [];

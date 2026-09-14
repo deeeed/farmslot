@@ -1,5 +1,62 @@
 export type SlotAgent = 'idle' | 'working' | 'no-tmux';
 
+/** Execution transport is independent of the selected runner and model. */
+export type WorkerTransport = 'tmux' | 'native';
+
+export interface NativeWorkerSessionBinding {
+  /** Reserved before launch, then used by native.session.ensure on every retry. */
+  sessionId: string;
+  executionNodeId: string;
+  ownerPrincipalId: string;
+  /** Absent until initial creation is reconciled with the native host. */
+  generation?: string;
+  /** Changes when an idle retained session is transferred to another task. */
+  leaseId: string;
+  /** Persisted before sending the current task prompt. Reused after uncertain delivery. */
+  commandId: string;
+  /** Confirmed native acceptance of this task's initial command. */
+  acceptedAt?: string;
+  /** Private launch settings are represented by a digest, never environment values. */
+  launchDigest?: string;
+  accountLabel?: string;
+  /** Captured before launch and retained across parking, recovery and task handoff. */
+  profile?: import('../rpc/native-profile.js').NativeProfileReference;
+  /** Execution-host-owned state outside recyclable slot worktrees. Absent for legacy workers. */
+  stateDirectory?: string;
+  effort?: string;
+  safetyTier?: SafetyTier;
+  /** Durable intent recorded before the initial native launch request. */
+  launchRequestedAt?: string;
+  /** A confirmed close allows the slot to be reused by another transport or owner. */
+  closedAt?: string;
+  /** Advances when an explicit close abandons an uncertain recovery instruction. */
+  recoveryEpoch?: number;
+  /** The retained process continues under a successor task's lease. */
+  releasedAt?: string;
+  /** Durable source of an idle-session transfer, retained until reconciliation completes. */
+  handoffFrom?: { runId: string; contextId: string; leaseId: string };
+  handoffCompletedAt?: string;
+  /** Correlates an explicit stopped-worker resume across a lost host reply. */
+  recovery?: {
+    fromGeneration: string;
+    commandId: string;
+    requestedAt?: string;
+    /** Fix recovery continues the active subtask; an idle recovery waits for fresh findings. */
+    contextId?: string;
+    text?: string;
+    resumeOnly?: boolean;
+    /** Continue an operator-held terminal finding without replacing its live process. */
+    continueLive?: boolean;
+  };
+}
+
+/** A pending recovery can own a new process even while the last recorded generation is closed. */
+export function nativeWorkerBindingIsHeld(
+  binding: NativeWorkerSessionBinding | undefined,
+): boolean {
+  return Boolean(binding && !binding.releasedAt && (!binding.closedAt || binding.recovery));
+}
+
 export const AGENT_ROLES = [
   'primary',
   'dev',
@@ -60,9 +117,21 @@ export interface AgentContext {
   artifactScope?: string | null;
   /** Review loop that owns the persisted launch snapshot. */
   reviewLoopNumber?: number | null;
+  /** Gateway validation completed for the structured reviewer result and archived artifacts. */
+  reviewResultValidatedAt?: string;
   runner?: string | null;
   model?: string | null;
   target?: AgentContextTarget | null;
+  /** Native sessions have no tmux target. */
+  nativeSession?: NativeWorkerSessionBinding;
+  /** Subtask sharing a same-run worker. Session and lease prevent adoption after task replay. */
+  nativeSessionOwner?: { contextId: string; sessionId: string; leaseId: string };
+  /** Durable instruction identity for a subtask in a shared native conversation. */
+  nativeCommandId?: string;
+  /** Exact materialized subtask prompt, retained for duplicate-safe delivery recovery. */
+  nativeCommandText?: string;
+  /** Confirmed closed/released attempts retained when this context is explicitly restarted. */
+  nativeSessionHistory?: NativeWorkerSessionBinding[];
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
   /**
@@ -110,6 +179,9 @@ export interface AgentContextSummary {
   runner?: string | null;
   model?: string | null;
   target?: AgentContextTarget | null;
+  nativeSession?: NativeWorkerSessionBinding;
+  nativeSessionOwner?: AgentContext['nativeSessionOwner'];
+  nativeCommandId?: string;
   nudgeCount?: number;
   lastSignalAt?: string;
   /** When present, used to pick the latest reviewer among multiple same-run tabs. */

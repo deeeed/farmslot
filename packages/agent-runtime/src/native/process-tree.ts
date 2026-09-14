@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 interface ProcessIdentity {
   pid: number;
@@ -6,15 +6,9 @@ interface ProcessIdentity {
   group: number;
   identity: string;
 }
-function processes(): Map<number, ProcessIdentity> {
-  // OS process metadata only. Never inspect native stdout or process environments.
-  // Start metadata survives exec and process-title changes, unlike command text.
-  const output = execFileSync('ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: 1_000,
-  });
+const columns = 'pid=,ppid=,pgid=,lstart=';
+const censusTimeoutMs = 5_000;
+function parseProcesses(output: string): Map<number, ProcessIdentity> {
   const result = new Map<number, ProcessIdentity>();
   for (const line of output.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
@@ -28,8 +22,91 @@ function processes(): Map<number, ProcessIdentity> {
   }
   return result;
 }
+function processes(pid?: number): Map<number, ProcessIdentity> {
+  // OS process metadata only. Never inspect native stdout or process environments.
+  // Start metadata survives exec and process-title changes, unlike command text.
+  let output: string;
+  try {
+    output = execFileSync(
+      'ps',
+      pid === undefined ? ['-axo', columns] : ['-p', String(pid), '-o', columns],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: censusTimeoutMs,
+        killSignal: 'SIGKILL',
+      },
+    );
+  } catch (error) {
+    if (pid !== undefined && (error as { status?: number }).status === 1) {
+      try {
+        process.kill(pid, 0);
+      } catch (probeError) {
+        if ((probeError as NodeJS.ErrnoException).code === 'ESRCH') return new Map();
+        throw probeError;
+      }
+    }
+    throw error;
+  }
+  return parseProcesses(output);
+}
+
+type Observer = { apply(snapshot: Map<number, ProcessIdentity>): void; failed(error: Error): void };
+const observers = new Map<symbol, Observer>();
+let censusTimer: NodeJS.Timeout | undefined;
+let scanning = false;
+let stalledCensus: Error | undefined;
+function scheduleCensus(): void {
+  if (!observers.size || censusTimer || scanning) return;
+  censusTimer = setTimeout(() => {
+    censusTimer = undefined;
+    scanning = true;
+    const participants = [...observers.entries()];
+    let expired = false;
+    let deadline: NodeJS.Timeout | undefined;
+    const child = execFile(
+      'ps',
+      ['-axo', columns],
+      {
+        encoding: 'utf8',
+        timeout: censusTimeoutMs,
+        killSignal: 'SIGKILL',
+        maxBuffer: 16 * 1024 * 1024,
+      },
+      (error, output) => {
+        clearTimeout(deadline);
+        scanning = false;
+        stalledCensus = undefined;
+        if (expired) {
+          // A late callback cannot rehabilitate the snapshot that missed its deadline.
+          scheduleCensus();
+          return;
+        }
+        const snapshot = error ? undefined : parseProcesses(output);
+        for (const [token, observer] of participants) {
+          // A scan started before registration or disposal cannot update that tree.
+          if (observers.get(token) !== observer) continue;
+          if (error) observer.failed(error);
+          else observer.apply(snapshot!);
+        }
+        scheduleCensus();
+      },
+    );
+    deadline = setTimeout(() => {
+      expired = true;
+      stalledCensus = new Error('Native process census exceeded its deadline');
+      child.kill('SIGKILL');
+      // execFile's timeout waits for child/pipe closure before its callback. Fail
+      // ownership observation now, keeping this scan reserved until it really exits.
+      for (const observer of [...observers.values()]) observer.failed(stalledCensus);
+    }, censusTimeoutMs);
+    deadline.unref();
+  }, 100);
+  censusTimer.unref();
+}
 function signal(identity: ProcessIdentity, kind: NodeJS.Signals): void {
-  const current = processes().get(identity.pid);
+  const current = processes(identity.pid).get(identity.pid);
   if (!current || current.identity !== identity.identity) return;
   try {
     process.kill(identity.pid, kind);
@@ -42,13 +119,34 @@ export class NativeProcessTree {
   private owned = new Map<number, ProcessIdentity>();
   private readonly rootIdentity: string;
   constructor(private readonly root: number) {
-    const identity = processes().get(root)?.identity;
+    const snapshot = processes();
+    const identity = snapshot.get(root)?.identity;
     if (!identity) throw new Error('Native process identity is unavailable');
     this.rootIdentity = identity;
-    this.capture();
+    this.applySnapshot(snapshot);
   }
   capture(): void {
-    const snapshot = processes();
+    this.applySnapshot(processes());
+  }
+  observe(failed: (error: Error) => void): () => void {
+    const token = Symbol('native-process-census');
+    observers.set(token, { apply: (snapshot) => this.applySnapshot(snapshot), failed });
+    if (stalledCensus) {
+      const error = stalledCensus;
+      queueMicrotask(() => {
+        if (observers.has(token)) failed(error);
+      });
+    }
+    scheduleCensus();
+    return () => {
+      observers.delete(token);
+      if (!observers.size) {
+        clearTimeout(censusTimer);
+        censusTimer = undefined;
+      }
+    };
+  }
+  private applySnapshot(snapshot: Map<number, ProcessIdentity>): void {
     const root = snapshot.get(this.root);
     if (root?.identity === this.rootIdentity) {
       this.owned.set(root.pid, root);
@@ -74,6 +172,10 @@ export class NativeProcessTree {
       }
     }
   }
+  /** Last observed identities remain useful when a later census cannot be read. */
+  snapshot(): ProcessIdentity[] {
+    return [...this.owned.values()].map((identity) => ({ ...identity }));
+  }
   /** Freeze observed owners before the final ancestry scan, preventing new child launches. */
   stop(): void {
     this.capture();
@@ -87,8 +189,11 @@ export class NativeProcessTree {
       }
     };
     for (const entry of this.owned.values()) attempt(() => signal(entry, 'SIGSTOP'));
-    attempt(() => this.capture());
-    attempt(() => this.stopGroup());
+    attempt(() => {
+      const frozen = processes();
+      this.applySnapshot(frozen);
+      this.stopGroup(frozen);
+    });
     for (const entry of [...this.owned.values()].reverse()) attempt(() => signal(entry, 'SIGKILL'));
     if (errors.length)
       throw new AggregateError(
@@ -97,13 +202,13 @@ export class NativeProcessTree {
       );
   }
   empty(): boolean {
-    this.capture();
+    const snapshot = processes();
+    this.applySnapshot(snapshot);
     if (this.owned.size > 0) return false;
     // A reused group cannot be signaled safely or counted as proof of cleanup.
-    return ![...processes().values()].some((entry) => entry.group === this.root);
+    return ![...snapshot.values()].some((entry) => entry.group === this.root);
   }
-  private stopGroup(): void {
-    const snapshot = processes();
+  private stopGroup(snapshot: Map<number, ProcessIdentity>): void {
     const members = [...snapshot.values()].filter((entry) => entry.group === this.root);
     if (!members.length) return;
     if (!members.some((entry) => this.owned.get(entry.pid)?.identity === entry.identity))

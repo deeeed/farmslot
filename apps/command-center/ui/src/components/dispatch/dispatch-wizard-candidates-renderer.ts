@@ -17,6 +17,7 @@ type NudgeIntent = 'nudge' | 'fresh';
 
 export interface DispatchCandidateSelectionRenderContext {
   project: string;
+  allowAutomaticSlot: boolean;
   slotOverride: string;
   loadingCandidates: boolean;
   candidateRefreshFailed: boolean;
@@ -213,7 +214,7 @@ export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelection
   const isWorking =
     sameTask && !ctx.candidates.some((candidate) => candidate.slotId === sameTask.slot);
   const firstDispatchable = ctx.dispatchableCandidates[0]?.slotId ?? '';
-  const selectedSlot = ctx.slotOverride || firstDispatchable;
+  const selectedSlot = ctx.slotOverride || (ctx.allowAutomaticSlot ? '' : firstDispatchable);
   const options = ctx.candidates.map((candidate, index) =>
     candidateOption(ctx, candidate, index, selectedSlot),
   );
@@ -252,12 +253,12 @@ export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelection
             .project=${ctx.project}
             .options=${options}
             .selectedSlots=${selectedSlot ? [selectedSlot] : []}
-            .showAnyEligible=${false}
+            .showAnyEligible=${ctx.allowAutomaticSlot}
             selectionMode="single"
             secondaryLabel="Score"
             @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) => {
               const slotId = event.detail.allowedSlots?.[0];
-              if (slotId) ctx.selectSlot(slotId);
+              if (slotId || ctx.allowAutomaticSlot) ctx.selectSlot(slotId ?? '');
             }}
             @slot-choice-action=${(event: CustomEvent<SlotChoiceActionDetail>) => {
               if (event.detail.actionId === 'nudge' || event.detail.actionId === 'fresh') {

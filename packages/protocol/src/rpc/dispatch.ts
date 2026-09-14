@@ -96,7 +96,7 @@ export interface DispatchCandidateNudgeMeta {
   ctxPct: number | null;
   prMatchKind: 'pr-number' | 'branch-slug';
   riskFlags: string[];
-  /** True when the slot's runner supports tmux send-keys nudges (Claude today). When false the
+  /** True when the existing worker supports task reuse through its current transport. When false the
    * row still surfaces — the operator wants to see "this slot is on the PR's branch" — but
    * the wizard's Nudge action button is disabled with a tooltip; only Fresh dispatch works. */
   canNudge: boolean;
@@ -148,6 +148,9 @@ export interface DispatchCandidatesResult {
 // ─── Dispatch Queue param/result types ───
 
 export interface DispatchQueueAddParams {
+  transport?: import('../contracts/agents.js').WorkerTransport;
+  nativeProfile?: import('./native-profile.js').NativeProfileReference;
+  skipPrepare?: boolean;
   queueKind?: QueueItemKind;
   label?: string;
   flowType: FlowType;
@@ -294,6 +297,7 @@ export interface DispatchExecuteParams {
   skipPrepare?: boolean;
   model?: string;
   runner?: string;
+  transport?: import('../contracts/index.js').WorkerTransport;
   /** Worker scripted-runner config when runner='scripted'. */
   scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;

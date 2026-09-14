@@ -54,14 +54,16 @@ export function startProgressWatcher(
   filePath: string,
   runId: string,
   label = 'Review',
-  options: { contextId?: string; role?: AgentRole } = {},
-): { stop: () => void; ready: Promise<void> } {
+  options: { contextId?: string; role?: AgentRole; isCurrent?: () => boolean } = {},
+): { stop: () => Promise<void>; ready: Promise<void> } {
   let lastProgress = '';
+  let stopped = false;
   const fallbackContextId = label === 'Fix' ? 'self-review-fix' : 'self-review';
   const contextId = options.contextId ?? fallbackContextId;
   const role = options.role ?? (fallbackContextId as AgentRole);
 
   const compute = async (content: string): Promise<void> => {
+    if (stopped || options.isCurrent?.() === false) return;
     const total = (content.match(/- \[[ x]\]/g) || []).length;
     const done = (content.match(/- \[x\]/gi) || []).length;
     const progress = `${done}/${total}`;
@@ -76,6 +78,7 @@ export function startProgressWatcher(
         contextId,
         role,
       });
+      if (stopped || options.isCurrent?.() === false) return;
       broadcastFn(Events.TASK_PROGRESS_UPDATED, {
         slotId: vars.slotId,
         runId,
@@ -105,15 +108,16 @@ export function startProgressWatcher(
     const ready = onUpdate();
     return {
       ready,
-      stop: () => {
-        watcher.close();
+      stop: async () => {
+        stopped = true;
+        await watcher.close();
       },
     };
   }
 
   // Remote slot — register callback for node.fs.changed dispatch + start node-side watch
   const key = `${vars.machine}|${filePath}|${runId}|${label}|${contextId}`;
-  remoteProgressEntries.set(key, {
+  const entry: RemoteProgressEntry = {
     machine: vars.machine,
     path: filePath,
     onContent: (content) => {
@@ -123,7 +127,8 @@ export function startProgressWatcher(
         );
       });
     },
-  });
+  };
+  remoteProgressEntries.set(key, entry);
   const node = getNode(vars.machine);
   let watchRequestId: string | undefined;
   if (node) {
@@ -148,17 +153,15 @@ export function startProgressWatcher(
   }
   return {
     ready: Promise.resolve(),
-    stop: () => {
-      remoteProgressEntries.delete(key);
+    stop: async () => {
+      stopped = true;
+      if (remoteProgressEntries.get(key) === entry) remoteProgressEntries.delete(key);
       if (!watchRequestId) return;
       const liveNode = getNode(vars.machine);
       if (liveNode) {
-        sendNodeRequest(liveNode, 'fs.watch.stop', { requestId: watchRequestId }).catch((err) => {
-          debugSelfReviewLog(
-            `[self-review] remote fs.watch.stop failed for ${filePath}: ${(err as Error).message}`,
-          );
-        });
+        await sendNodeRequest(liveNode, 'fs.watch.stop', { requestId: watchRequestId });
       }
+      // Node disconnect closes its connection-owned filesystem watches.
     },
   };
 }

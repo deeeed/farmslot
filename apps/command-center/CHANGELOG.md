@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add live validation controls for native worker profiles, conversation history, account changes, and load-balancer-backed Copilot alongside terminal runners.
 
 ## 0.11.0 - 2026-09-13
 

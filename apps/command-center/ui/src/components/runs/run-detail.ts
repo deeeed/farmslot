@@ -26,6 +26,7 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
+import './native-worker-history.js';
 import './step-inspector.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
@@ -58,6 +59,7 @@ import {
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
   resolveSlotPick,
+  resumeStoppedNativeWorker,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
@@ -1177,6 +1179,8 @@ export class RunDetail extends RunDetailState {
       selectPostureChoice: (choice) => void this._selectPostureGateChoice(run.id, choice),
       checkInteractiveHandoffSignal: (runId, decision) =>
         this._checkInteractiveHandoffSignal(runId, decision),
+      resumeStoppedWorker: (runId, decision) =>
+        this._checkInteractiveHandoffSignal(runId, decision, true),
       handoffSignalCheckBusy: this._handoffSignalCheckBusy,
       handoffSignalCheckError: this._handoffSignalCheckError,
       resolveSlotPick: (runId, decisionId) => this._resolveSlotPick(runId, decisionId),
@@ -1325,30 +1329,38 @@ export class RunDetail extends RunDetailState {
     this._postureGate = { ...this._postureGate, reconciliationPending: true };
   }
 
-  private async _checkInteractiveHandoffSignal(runId: string, decision: RunDecision) {
+  private async _checkInteractiveHandoffSignal(
+    runId: string,
+    decision: RunDecision,
+    resumeWorker = false,
+  ) {
     // A refused posture choice blocks the resume for the same reason it blocks
     // any other resolution: the decision would be consumed by a refusal.
     if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
     // Snapshot once: the request and the baseline must agree on what was sent.
     const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
     const observation = this._postureTransitionObservation(forwardedChoice);
-    await checkInteractiveHandoffSignal(runId, decision, {
-      actionsBlocked: () => this._actionsBlocked(),
-      busy: () => this._handoffSignalCheckBusy,
-      setBusy: (busy) => {
-        this._handoffSignalCheckBusy = busy;
+    await (resumeWorker ? resumeStoppedNativeWorker : checkInteractiveHandoffSignal)(
+      runId,
+      decision,
+      {
+        actionsBlocked: () => this._actionsBlocked(),
+        busy: () => this._handoffSignalCheckBusy,
+        setBusy: (busy) => {
+          this._handoffSignalCheckBusy = busy;
+        },
+        setError: (error) => {
+          this._handoffSignalCheckError = error;
+        },
+        // Only ever forwarded where the Gateway would honour it; a hidden panel
+        // must not send a choice the operator cannot see or clear.
+        resourcePosture: () => forwardedChoice,
+        onDecisionResolved: (run) => {
+          if (this.runId !== run.id) return;
+          this._adoptResolvedPostureTransition(run, observation);
+        },
       },
-      setError: (error) => {
-        this._handoffSignalCheckError = error;
-      },
-      // Only ever forwarded where the Gateway would honour it; a hidden panel
-      // must not send a choice the operator cannot see or clear.
-      resourcePosture: () => forwardedChoice,
-      onDecisionResolved: (run) => {
-        if (this.runId !== run.id) return;
-        this._adoptResolvedPostureTransition(run, observation);
-      },
-    });
+    );
   }
 
   private _jumpToSuccessorWhenAvailable(originRunId: string): void {

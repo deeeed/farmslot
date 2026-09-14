@@ -75,3 +75,20 @@ test('local tmux launch normalizes host-specific base indexes before using agent
   assert.match(source, /base-index/);
   assert.match(source, /configureTranscript\(target, transcriptPath\)/);
 });
+
+test('Copilot low effort leaves the ordinary worker default unchanged', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-effort-'));
+  const launch = buildCopilotLaunch({
+    checkout: '/configured/operator/farmslot',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'low',
+    safetyTier: 'sandboxed',
+    bootstrapPrompt: 'read bootstrap',
+    store: new CopilotRuntimeStore(home),
+  });
+  assert.match(launch.command, /--model gpt-6-astra/);
+  assert.match(launch.command, /model_reasoning_effort.*low/);
+  const worker = buildLaunchCommand(launch.vars, 'codex', 'gpt-6-astra', 'ordinary worker');
+  assert.match(worker, /model_reasoning_effort.*high/);
+});

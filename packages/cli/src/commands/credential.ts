@@ -32,6 +32,7 @@ export function registerCredentialCommands(program: Command): void {
     .option('--name <display-name>', 'credential display name; defaults to --principal')
     .option('--subject <subject>', 'create the principal first: person, service, or node')
     .option('--machine <machine>', 'machine binding required with --subject node')
+    .option('--native-owner <principal-id>', 'bind a new node to its native account owner')
     .option('--role <role>', 'grant admin or operator before issuance')
     .option('--scope <scope>', 'required with --role; only global is supported')
     .option('--write-node-env', 'write the credential to FARMSLOT_NODE_TOKEN in .env.local-auth')
@@ -47,6 +48,7 @@ export function registerCredentialCommands(program: Command): void {
           name?: string;
           subject?: string;
           machine?: string;
+          nativeOwner?: string;
           role?: string;
           scope?: string;
           writeNodeEnv?: boolean;
@@ -193,6 +195,7 @@ async function prepareIssuePrincipal(
     principal: string;
     subject?: string;
     machine?: string;
+    nativeOwner?: string;
     role?: string;
     scope?: string;
     offline?: boolean;
@@ -201,6 +204,13 @@ async function prepareIssuePrincipal(
     call<T>(method: string, params: unknown): Promise<T>;
   },
 ): Promise<string> {
+  if (opts.nativeOwner !== undefined && opts.subject !== 'node')
+    throw Object.assign(
+      new Error(
+        '--native-owner requires --subject node; use principal bind-native-owner for an existing node',
+      ),
+      { code: 'INVALID_PARAMS' },
+    );
   const role = optionalRole(opts.role);
   if (Boolean(role) !== Boolean(opts.scope)) {
     throw Object.assign(new Error('--role and --scope must be provided together'), {
@@ -213,6 +223,8 @@ async function prepareIssuePrincipal(
   const roles = role ? [{ role, scope: { kind: 'global' as const } }] : [];
   if (opts.subject) {
     const subject = issueSubject(opts.subject, opts.principal, opts.machine);
+    if (subject.type === 'node' && opts.nativeOwner !== undefined)
+      subject.nativeOwnerPrincipalId = opts.nativeOwner;
     if (subject.type === 'node' && roles.length > 0) {
       throw Object.assign(new Error('node principals cannot hold --role bindings'), {
         code: 'INVALID_PARAMS',

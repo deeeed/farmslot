@@ -135,8 +135,10 @@ export interface RunnerGracefulExitCapability {
 
 export interface RunnerDefinition {
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
-  nativeTransport?: 'codex-app-server' | 'claude-stream-json';
-  nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'> };
+  nativeTransport?: 'codex-app-server' | 'claude-stream-json' | 'cursor-acp' | 'grok-acp';
+  /** Native task leases and saved-conversation recovery have been implemented for this runner. */
+  supportsNativeTaskReuse?: boolean;
+  nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
@@ -263,6 +265,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',
+    supportsNativeTaskReuse: true,
     nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
@@ -304,6 +307,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   codex: {
     id: 'codex',
     nativeTransport: 'codex-app-server',
+    supportsNativeTaskReuse: true,
     nativeChoices: {
       models: [
         DEFAULT_CODEX_MODEL,
@@ -363,6 +367,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   cursor: {
     id: 'cursor',
+    nativeTransport: 'cursor-acp',
+    nativeChoices: {
+      models: ['gpt-5.6-luna[context=272k,reasoning=medium,fast=false]'],
+      defaultModel: 'gpt-5.6-luna[context=272k,reasoning=medium,fast=false]',
+      modes: ['default'],
+    },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)(cursor-)?agent($| )'],
     requiresExplicitTerminationIdentity: true,
@@ -403,6 +413,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   grok: {
     id: 'grok',
+    nativeTransport: 'grok-acp',
+    nativeChoices: { models: ['grok-4.6'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's
@@ -727,6 +739,14 @@ export function runnerSupportsInteractivePrompt(runnerId?: string | null): boole
 export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).supportsTmuxNudges;
+}
+
+export function runnerSupportsNativeTaskReuse(runnerId?: string | null): boolean {
+  return (
+    isKnownRunner(runnerId) &&
+    Boolean(getRunnerDefinition(runnerId).nativeTransport) &&
+    getRunnerDefinition(runnerId).supportsNativeTaskReuse === true
+  );
 }
 
 /** Interrupt an active turn using only the registered runner capability. */

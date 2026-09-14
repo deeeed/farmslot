@@ -35,6 +35,23 @@ const baseDraft = {
   comparison: {},
 } satisfies Partial<DispatchPayloadDraft>;
 
+test('native queue and direct dispatch preserve transport and preparation intent', () => {
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    flowType: 'dev',
+    project: 'fixture',
+    ticketOrPr: 'DEV-1',
+    mode: 'interactive',
+    devInteractiveProfile: 'reviewed',
+    transport: 'native',
+    skipPrepare: true,
+  };
+  assert.equal(buildDispatchQueueAddParams(draft).transport, 'native');
+  assert.equal(buildDispatchQueueAddParams(draft).skipPrepare, true);
+  assert.equal(buildRunCreateParams(draft).transport, 'native');
+  assert.equal(buildRunCreateParams({ ...draft, transport: 'tmux' }).transport, 'tmux');
+});
+
 test('rejected nudge rows retain cached pressure-cause details', () => {
   const source = readFileSync(
     new URL('./dispatch-wizard-candidates-renderer.ts', import.meta.url),
@@ -225,4 +242,34 @@ test('pressure override keeps the reuse intent: nudge and fresh payloads stay va
     pressureGeneration: 'gen-x',
   });
   assert.equal(admitted.pressureOverride, undefined);
+});
+
+test('native profile registration is identical in direct and queued payloads and absent for tmux', () => {
+  const nativeProfile = {
+    executionNodeId: 'worker',
+    runner: 'claude',
+    profileId: 'work',
+    accountContextId: '957ee253-708e-45c4-bcbc-860df9f9123c',
+  };
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    flowType: 'dev',
+    project: 'fixture',
+    ticketOrPr: 'DEV-1',
+    mode: 'interactive',
+    devInteractiveProfile: 'lightweight',
+    transport: 'native',
+    nativeProfile,
+  };
+  assert.deepEqual(buildRunCreateParams(draft).nativeProfile, nativeProfile);
+  assert.deepEqual(buildDispatchQueueAddParams(draft).nativeProfile, nativeProfile);
+  assert.equal(buildRunCreateParams({ ...draft, transport: 'tmux' }).nativeProfile, undefined);
+  assert.equal(
+    buildDispatchQueueAddParams({ ...draft, transport: 'tmux' }).nativeProfile,
+    undefined,
+  );
+  assert.equal(
+    buildRunCreateParams({ ...draft, nativeProfile: undefined }).nativeProfile,
+    undefined,
+  );
 });

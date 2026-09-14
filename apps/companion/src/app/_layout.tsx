@@ -32,6 +32,9 @@ const COPILOT_FAB_POSITION_STORAGE_KEY = '@farmslot:copilotFabPosition';
 
 export default function RootLayout() {
   const init = useConnectionStore((s) => s.init);
+  const access = useConnectionStore((s) => s.workspaceAccess);
+  const authorityEpoch = useConnectionStore((s) => s.authorityEpoch);
+  const farm = isStoreScreenshotMode || access === 'farm';
   const initTerminalPrefs = useTerminalPrefsStore((s) => s.init);
   const initAttentionPrefs = useAttentionPrefsStore((s) => s.init);
 
@@ -39,22 +42,27 @@ export default function RootLayout() {
     if (isStoreScreenshotMode) {
       seedStoreScreenshotMode();
     } else {
-      // Recipe automation must not be blocked by the native notification prompt.
-      if (!__DEV__ || process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE !== '1') {
-        initNotifications();
-      }
       init();
     }
     void initTerminalPrefs();
     void initAttentionPrefs();
   }, [init, initAttentionPrefs, initTerminalPrefs]);
 
+  useEffect(() => {
+    if (
+      farm &&
+      !isStoreScreenshotMode &&
+      (!__DEV__ || process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE !== '1')
+    )
+      initNotifications();
+  }, [farm]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <RecipeBridgeProvider bridgeName="@farmslot/companion">
+      <WorkspaceProviders farm={farm} key={authorityEpoch}>
         <StatusBar style="light" />
-        <GlobalFilterCoordinator />
-        {!isStoreScreenshotMode ? (
+        {farm ? <GlobalFilterCoordinator /> : null}
+        {farm && !isStoreScreenshotMode ? (
           <>
             <PRPushRegistration />
             <WhatsNewMonitor />
@@ -68,115 +76,130 @@ export default function RootLayout() {
             contentStyle: { backgroundColor: colors.bgBase },
           }}
         >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="pr-automation"
-            options={{
-              title: 'PR monitoring',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/prs" />,
-            }}
-          />
-          <Stack.Screen
-            name="filters"
-            options={{
-              headerShown: false,
-              presentation: 'formSheet',
-              sheetAllowedDetents: [0.55, 0.9],
-              sheetGrabberVisible: true,
-              sheetInitialDetentIndex: 1,
-            }}
-          />
-          <Stack.Screen
-            name="run-filters"
-            options={{
-              headerShown: false,
-              presentation: 'formSheet',
-              sheetAllowedDetents: [0.55, 0.9],
-              sheetGrabberVisible: true,
-              sheetInitialDetentIndex: 1,
-            }}
-          />
-          <Stack.Screen
-            name="backlog/create"
-            options={{
-              headerShown: false,
-              presentation: 'formSheet',
-              sheetAllowedDetents: [0.65, 0.95],
-              sheetGrabberVisible: true,
-              sheetInitialDetentIndex: 1,
-            }}
-          />
-          <Stack.Screen
-            name="backlog/edit/[id]"
-            options={{
-              headerShown: false,
-              presentation: 'formSheet',
-              sheetAllowedDetents: [0.65, 0.95],
-              sheetGrabberVisible: true,
-              sheetInitialDetentIndex: 1,
-            }}
-          />
-          <Stack.Screen
-            name="backlog/[id]"
-            options={{
-              title: 'Backlog item',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/backlog" />,
-            }}
-          />
-          <Stack.Screen
-            name="roadmap/[id]"
-            options={{
-              title: 'Roadmap item',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/roadmap" />,
-            }}
-          />
-          <Stack.Screen
-            name="slot/[id]"
-            options={{
-              title: 'Slot Detail',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/fleet" />,
-            }}
-          />
-          <Stack.Screen name="workspace/slot/[slotId]" options={{ headerShown: false }} />
-          <Stack.Screen name="workspace/run/[runId]" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="run/[id]"
-            options={{
-              title: 'Run Detail',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
-            }}
-          />
-          <Stack.Screen
-            name="family/[familyId]"
-            options={{
-              title: 'Family Workspace',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
-            }}
-          />
-          <Stack.Screen
-            name="decision/[id]"
-            options={{
-              title: 'Review Gate',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/inbox" />,
-            }}
-          />
-          <Stack.Screen name="terminal/[slotId]" options={{ headerShown: false }} />
-          <Stack.Screen name="terminal/worker" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="prs"
-            options={{
-              title: 'Pull Requests',
-              headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/settings" />,
-            }}
-          />
-          <Stack.Screen name="artifacts/[runId]" options={{ headerShown: false }} />
-          <Stack.Screen name="diff/[runId]" options={{ headerShown: false }} />
-          <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="connection" options={{ title: 'Gateway connection' }} />
+          <Stack.Protected guard={farm || access === 'native'}>
+            <Stack.Screen name="native" options={{ title: 'Conversations' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={farm}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="pr-automation"
+              options={{
+                title: 'PR monitoring',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/prs" />,
+              }}
+            />
+            <Stack.Screen
+              name="filters"
+              options={{
+                headerShown: false,
+                presentation: 'formSheet',
+                sheetAllowedDetents: [0.55, 0.9],
+                sheetGrabberVisible: true,
+                sheetInitialDetentIndex: 1,
+              }}
+            />
+            <Stack.Screen
+              name="run-filters"
+              options={{
+                headerShown: false,
+                presentation: 'formSheet',
+                sheetAllowedDetents: [0.55, 0.9],
+                sheetGrabberVisible: true,
+                sheetInitialDetentIndex: 1,
+              }}
+            />
+            <Stack.Screen
+              name="backlog/create"
+              options={{
+                headerShown: false,
+                presentation: 'formSheet',
+                sheetAllowedDetents: [0.65, 0.95],
+                sheetGrabberVisible: true,
+                sheetInitialDetentIndex: 1,
+              }}
+            />
+            <Stack.Screen
+              name="backlog/edit/[id]"
+              options={{
+                headerShown: false,
+                presentation: 'formSheet',
+                sheetAllowedDetents: [0.65, 0.95],
+                sheetGrabberVisible: true,
+                sheetInitialDetentIndex: 1,
+              }}
+            />
+            <Stack.Screen
+              name="backlog/[id]"
+              options={{
+                title: 'Backlog item',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/backlog" />,
+              }}
+            />
+            <Stack.Screen
+              name="roadmap/[id]"
+              options={{
+                title: 'Roadmap item',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/roadmap" />,
+              }}
+            />
+            <Stack.Screen
+              name="slot/[id]"
+              options={{
+                title: 'Slot Detail',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/fleet" />,
+              }}
+            />
+            <Stack.Screen name="workspace/slot/[slotId]" options={{ headerShown: false }} />
+            <Stack.Screen name="workspace/run/[runId]" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="run/[id]"
+              options={{
+                title: 'Run Detail',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
+              }}
+            />
+            <Stack.Screen
+              name="family/[familyId]"
+              options={{
+                title: 'Family Workspace',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
+              }}
+            />
+            <Stack.Screen
+              name="decision/[id]"
+              options={{
+                title: 'Review Gate',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/inbox" />,
+              }}
+            />
+            <Stack.Screen name="terminal/[slotId]" options={{ headerShown: false }} />
+            <Stack.Screen name="terminal/worker" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="prs"
+              options={{
+                title: 'Pull Requests',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/settings" />,
+              }}
+            />
+            <Stack.Screen name="artifacts/[runId]" options={{ headerShown: false }} />
+            <Stack.Screen name="diff/[runId]" options={{ headerShown: false }} />
+            <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />
+          </Stack.Protected>
         </Stack>
         {!isStoreScreenshotMode ? <AppEnvironmentIndicator /> : null}
-        {!isStoreScreenshotMode ? <FloatingCopilotButton /> : null}
-      </RecipeBridgeProvider>
+        {farm && !isStoreScreenshotMode ? <FloatingCopilotButton /> : null}
+      </WorkspaceProviders>
     </GestureHandlerRootView>
+  );
+}
+
+function WorkspaceProviders({ farm, children }: { farm: boolean; children: React.ReactNode }) {
+  return farm ? (
+    <RecipeBridgeProvider bridgeName="@farmslot/companion">{children}</RecipeBridgeProvider>
+  ) : (
+    <>{children}</>
   );
 }
 

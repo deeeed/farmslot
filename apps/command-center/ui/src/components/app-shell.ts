@@ -108,6 +108,7 @@ import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styl
 
 type Route =
   | 'onboarding'
+  | 'native'
   | 'fleet'
   | 'terminal'
   | 'devices'
@@ -383,6 +384,7 @@ export class FarmApp extends LitElement {
   }
 
   private async refreshTmuxWorkers(opts: { force?: boolean } = {}): Promise<void> {
+    if (gateway.workspaceAccess !== 'farm') return;
     if (this.pinnedSlots.length === 0) {
       this.tmuxWorkers = [];
       return;
@@ -407,6 +409,7 @@ export class FarmApp extends LitElement {
   }
 
   private async checkForUpdate(): Promise<void> {
+    if (gateway.workspaceAccess !== 'farm') return;
     try {
       const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS);
       this.updateStatus = result.update;
@@ -645,6 +648,7 @@ export class FarmApp extends LitElement {
   }
 
   private onGlobalKeyDown = (e: KeyboardEvent) => {
+    if (gateway.workspaceAccess !== 'farm') return;
     if (e.key === 'Escape' && this.versionDetailsOpen) {
       this.versionDetailsOpen = false;
       return;
@@ -661,6 +665,7 @@ export class FarmApp extends LitElement {
   }
 
   private onCopilotPromptRequest = (event: CustomEvent<CopilotPromptRequestDetail>) => {
+    if (gateway.workspaceAccess !== 'farm') return;
     const detail = event.detail;
     if (!detail?.prompt) return;
     this.chatOpen = true;
@@ -710,6 +715,10 @@ export class FarmApp extends LitElement {
   };
 
   private parseHash() {
+    if (gateway.workspaceAccess !== 'farm') {
+      if (gateway.workspaceAccess === 'native') this.route = 'native';
+      return;
+    }
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
     this.devCaptureMode = this.isDevCaptureHash(raw);
@@ -769,6 +778,7 @@ export class FarmApp extends LitElement {
     }
     const valid: Route[] = [
       'onboarding',
+      'native',
       'fleet',
       'terminal',
       'devices',
@@ -1387,16 +1397,25 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   private renderAuthScreen() {
     const authError = gateway.authError;
     return html`
-      ${renderAppShellAuthStyles()}
-      <form class="auth-card" @submit=${(event: Event) => this.submitGatewayAuth(event)}>
-        <div class="auth-title">Gateway authentication required</div>
+      ${renderAppShellAuthStyles(this.connection === 'connected')}
+      <form
+        class="${this.connection === 'connected' ? 'connection-card' : 'auth-card'}"
+        @submit=${(event: Event) => this.submitGatewayAuth(event)}
+      >
+        <div class="auth-title">
+          ${this.connection === 'connected'
+            ? 'Change gateway credentials'
+            : 'Gateway authentication required'}
+        </div>
         <div class="auth-copy">
-          This Command Center controls terminals and workers. Enter the gateway token or password to
-          continue. The secret is stored only in this browser profile local storage.
+          Enter your gateway token or password to open your Farmslot workspace. The secret is stored
+          in this browser profile.
         </div>
         ${authError
           ? html`<div class="auth-error">${authError.message}</div>`
-          : html`<div class="auth-error">Gateway rejected unauthenticated access.</div>`}
+          : this.connection === 'auth_required'
+            ? html`<div class="auth-error">Gateway rejected unauthenticated access.</div>`
+            : nothing}
         <div class="auth-modes">
           ${(['token', 'password'] as const).map(
             (mode) => html`
@@ -1433,6 +1452,8 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
     switch (this.route) {
       case 'onboarding':
         return this.renderOnboardingScreen();
+      case 'native':
+        return html`<native-session-view></native-session-view>`;
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
@@ -1850,10 +1871,49 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
     this.devHarnessLoaded = true;
   }
 
+  private renderNativeWorkspace() {
+    return html`
+      <style>
+        farm-app {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
+        .native-connection {
+          padding: 12px 16px;
+          border-bottom: 1px solid var(--color-border, #292933);
+        }
+        .native-connection summary {
+          cursor: pointer;
+        }
+        native-session-view {
+          display: block;
+          flex: 1;
+          min-height: 0;
+        }
+      </style>
+      <details class="native-connection">
+        <summary>Farmslot · Gateway connection</summary>
+        <p>${gateway.gatewayUrl}</p>
+        ${this.renderAuthScreen()}
+      </details>
+      <native-session-view></native-session-view>
+    `;
+  }
+
   render() {
-    if (this.connection === 'auth_required' && this.route !== 'onboarding') {
-      return html`${this.renderAuthScreen()} ${this.renderWhatsNewModal()}`;
+    if (this.connection !== 'connected') {
+      return this.connection === 'auth_required'
+        ? this.renderAuthScreen()
+        : this.renderOnboardingScreen();
     }
+    if (gateway.workspaceAccess === 'none') {
+      return html`<p>
+          This account has no workspace access. Ask your farm administrator to enroll it.
+        </p>
+        ${this.renderAuthScreen()}`;
+    }
+    if (gateway.workspaceAccess === 'native') return this.renderNativeWorkspace();
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
     if (this.route === 'dev' && this.devCaptureMode) {
       return html`

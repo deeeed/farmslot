@@ -63,6 +63,30 @@ function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test('fleet refresh does not turn a requested slot into an acquired slot', () => {
+  const row = makeRefreshRow();
+  for (const status of ['created', 'slot-finding'] as const) {
+    const requested = makeRun({ id: 'request', status, slotId: row.slot });
+    assert.deepEqual(reconcileRefreshSlotRowWithActiveRun(row, requested), row);
+    const claimed = reconcileRefreshSlotRowWithActiveRun(
+      { ...row, current_run_id: requested.id },
+      requested,
+    );
+    assert.equal(claimed.current_run_id, requested.id);
+    assert.equal(claimed.lifecycle, 'busy');
+  }
+});
+
+test('fleet refresh preserves the recorded successor over a higher-priority prior run', () => {
+  const parent = makeRun({ id: 'parent', status: 'monitoring', slotId: 'fixture' });
+  const successor = makeRun({ id: 'child', status: 'slot-finding', slotId: 'fixture' });
+  assert.equal(
+    newestActiveRunForSlot([parent, successor], 'fixture', successor.id)?.id,
+    successor.id,
+  );
+  assert.equal(newestActiveRunForSlot([parent, successor], 'fixture', 'missing')?.id, parent.id);
+});
+
 test('fleet refresh reconciliation preserves active run ownership when status probe loses current_run_id', () => {
   const activeRun: Run = {
     ...makeRun({

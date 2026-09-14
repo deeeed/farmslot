@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
+import { buildRerunAlongsideHref } from '../runs/run-detail-model.js';
+
 import {
   parseDispatchWizardHash,
   shouldUsePrefillSlot,
@@ -8,6 +12,28 @@ import {
 } from './dispatch-wizard-prefill.js';
 
 const runners = ['claude', 'codex', 'opencode'] as const;
+
+test('comparison links round-trip the baseline transport and an explicit terminal override', () => {
+  const parent = {
+    id: 'native-parent',
+    familyId: 'family',
+    flowType: 'dev',
+    project: 'fixture',
+    ticketOrPr: 'DEV-1',
+    transport: 'native',
+    metrics: { runner: 'codex', model: 'gpt-6-astra' },
+  } as Run;
+  const href = buildRerunAlongsideHref(parent, '');
+  assert.equal(parseDispatchWizardHash(href, runners)?.transport, 'native');
+  assert.equal(
+    parseDispatchWizardHash(href.replace('transport=native', 'transport=tmux'), runners)?.transport,
+    'tmux',
+  );
+  assert.equal(
+    parseDispatchWizardHash('#dispatch?flow=dev&transport=unknown', runners)?.transport,
+    undefined,
+  );
+});
 
 test('parseDispatchWizardHash reads dispatch URL prefill and publication reviews', () => {
   const result = parseDispatchWizardHash(

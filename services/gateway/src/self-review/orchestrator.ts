@@ -47,6 +47,7 @@ import {
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { ensureNodeSupportBundle } from '../node-support/ensure.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { resumeNativeWorker } from '../runners/native/worker-recovery.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
@@ -82,7 +83,16 @@ import {
   terminalWorkerSignalFromRaw,
 } from '../tasks/worker-signals.js';
 
+import { finishReviewCleanup } from './cleanup.js';
 import { parseSelfReviewIssueBullets } from './issues.js';
+import { deliverNativeFix, nativeFixTurnIsActive, prepareNativeFix } from './native-fix.js';
+import {
+  assertNativeReviewOperationCurrent,
+  captureNativeReviewOperationCheck,
+  nativeReviewOperationIsCurrent,
+  withNativeReviewMutation,
+  withNativeReviewOperation,
+} from './native-review-operation.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
 import {
@@ -228,6 +238,16 @@ export async function executeSelfReview(
   runId: string,
   slotId: string,
   options: SelfReviewOptions = {},
+): Promise<SelfReviewResult> {
+  const run = getRun(runId);
+  if (!run) throw new Error('Run not found');
+  return withNativeReviewOperation(run, () => executeOwnedSelfReview(runId, slotId, options));
+}
+
+async function executeOwnedSelfReview(
+  runId: string,
+  slotId: string,
+  options: SelfReviewOptions,
 ): Promise<SelfReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
@@ -489,7 +509,7 @@ export interface SelfReviewRetryDeps {
     filePath: string,
     runId: string,
     label?: string,
-  ) => { stop(): void };
+  ) => { stop(): void | Promise<void> };
   waitForWorkerSignal: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     taskDir: string,
@@ -556,6 +576,7 @@ export async function selfReviewFixTurnIsActive(
 ): Promise<boolean> {
   const run = getRun(runId);
   const fixContext = run ? selectAgentContext(run, { role: 'self-review-fix' }) : null;
+  if (run?.transport === 'native') return nativeFixTurnIsActive(runId, expectedTurnToken);
   if (fixContext?.status !== 'working') return false;
   const target = fixContext?.target?.target;
   if (!target) return false;
@@ -572,12 +593,16 @@ const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   relaunchWorkerForFix,
   resumeFixPromptDelivery: resumeSelfReviewFixPromptDelivery,
   sendFeedbackToWorker,
-  startProgressWatcher,
+  startProgressWatcher: (vars, file, runId, label) =>
+    startProgressWatcher(vars, file, runId, label, {
+      isCurrent: captureNativeReviewOperationCheck(),
+    }),
   waitForWorkerSignal,
-  markAgentContextStatus,
-  unwatchContext,
+  markAgentContextStatus: (...args) =>
+    withNativeReviewMutation(() => markAgentContextStatus(...args)),
+  unwatchContext: (...args) => withNativeReviewMutation(() => unwatchContext(...args)),
   runReviewAgent,
-  captureFixDelta: captureFixDeltaSnapshot,
+  captureFixDelta: (...args) => withNativeReviewMutation(() => captureFixDeltaSnapshot(...args)),
   captureHeadSha: captureCurrentHeadSha,
   getWorkerContextPct: readWorkerContextPct,
   restoreWorkerChecklistTargetFromSlot,
@@ -675,6 +700,7 @@ export async function runSelfReviewRetryLoop({
       : [reviewAttemptFromResult(result, retryCount + 1)];
 
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
+    assertNativeReviewOperationCurrent();
     console.log(
       `[self-review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
@@ -848,6 +874,7 @@ export async function runSelfReviewRetryLoop({
     let fixSignal;
     let fixCompletedAt = fixStartedAt;
     let workerBlockReason: string | null = null;
+    let fixFailure: unknown;
     try {
       fixSignal = await deps.waitForWorkerSignal(
         vars,
@@ -859,6 +886,7 @@ export async function runSelfReviewRetryLoop({
           : undefined,
       );
       fixCompletedAt = new Date().toISOString();
+      assertNativeReviewOperationCurrent();
       if (!fixSignal) {
         console.warn(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
         await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
@@ -999,14 +1027,26 @@ export async function runSelfReviewRetryLoop({
           durationMs: Date.now() - start,
         };
       }
+    } catch (error) {
+      fixFailure = error;
+      throw error;
     } finally {
-      fixWatcher.stop();
       const parentRun = deps.getRun(runId);
-      await deps.restoreWorkerChecklistTargetFromSlot(
-        vars,
-        taskDir,
-        parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
-      );
+      await finishReviewCleanup(fixFailure, [
+        () => fixWatcher.stop(),
+        async () => {
+          if (!nativeReviewOperationIsCurrent()) return;
+          await withNativeReviewMutation(() =>
+            deps.restoreWorkerChecklistTargetFromSlot(
+              vars,
+              taskDir,
+              parentRun
+                ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined }
+                : undefined,
+            ),
+          );
+        },
+      ]);
     }
   }
 
@@ -1196,6 +1236,14 @@ export async function resumeSelfReviewFixPromptDelivery(
     priorPromptSendAttempted?: boolean;
   } = {},
 ): Promise<FixPromptDeliveryResult> {
+  assertNativeReviewOperationCurrent();
+  if (deps.getRun(runId)?.transport === 'native') {
+    if (context.taskFile)
+      await withNativeReviewMutation(() =>
+        deps.syncChecklistTarget(vars, path.posix.dirname(context.taskFile!), 'self-review-fix'),
+      );
+    return deliverNativeFix(runId, context.id);
+  }
   const storedTarget = context.target?.target;
   const session = context.target?.session;
   const taskFile = context.taskFile;
@@ -1326,6 +1374,7 @@ async function recoverSelfReviewFixPass({
   findingsArtifactScope?: string | null;
   setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<SelfReviewResult | null> {
+  assertNativeReviewOperationCurrent();
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) =>
     canRecoverSelfReviewFixPass(ctx, taskDir, findingsArtifactScope),
@@ -1340,24 +1389,27 @@ async function recoverSelfReviewFixPass({
     expectedAttemptId: string | undefined,
     patch: Partial<AgentContext> = {},
   ): Promise<boolean> => {
-    const updated = await upsertAgentContext(
-      runId,
-      'self-review-fix',
-      { id: fixContext.id },
-      {
-        resolvePatch: (current) =>
-          current &&
-          current.artifactScope === findingsArtifactScope &&
-          current.taskFile === fixContext.taskFile &&
-          current.signalFile === fixContext.signalFile &&
-          current.signalAttemptId === expectedAttemptId
-            ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
-            : null,
-      },
+    const updated = await withNativeReviewMutation(() =>
+      upsertAgentContext(
+        runId,
+        'self-review-fix',
+        { id: fixContext.id },
+        {
+          resolvePatch: (current) =>
+            current &&
+            current.artifactScope === findingsArtifactScope &&
+            current.taskFile === fixContext.taskFile &&
+            current.signalFile === fixContext.signalFile &&
+            current.signalAttemptId === expectedAttemptId
+              ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
+              : null,
+        },
+      ),
     );
     return updated !== null;
   };
 
+  let recoveryFailure: unknown;
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
     const rawSignal = await readOptionalSelfReviewFixSignal(vars, fixSignalPath);
@@ -1489,7 +1541,10 @@ async function recoverSelfReviewFixPass({
         taskDir,
         SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
       );
-      const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
+      const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix', {
+        isCurrent: captureNativeReviewOperationCheck(),
+      });
+      let waitFailure: unknown;
       try {
         const deliveredTurnToken = delivery.status === 'delivered' ? delivery.turnToken : undefined;
         fixSignal = await waitForWorkerSignal(
@@ -1507,8 +1562,11 @@ async function recoverSelfReviewFixPass({
             expiredAttemptId = attemptId;
           },
         );
+      } catch (error) {
+        waitFailure = error;
+        throw error;
       } finally {
-        fixWatcher.stop();
+        await finishReviewCleanup(waitFailure, [() => fixWatcher.stop()]);
       }
     }
 
@@ -1576,7 +1634,9 @@ async function recoverSelfReviewFixPass({
     )
       return null;
     // Keep the reusable fix-context watch; the next review round uses the same files.
-    const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, fixBaseSha, artifactScope);
+    const fixDelta = await withNativeReviewMutation(() =>
+      captureFixDeltaSnapshot(vars, taskDir, 2, fixBaseSha, artifactScope),
+    );
     const initialAttempt: IndependentReviewAttempt = {
       loopNumber: 1,
       verdict: 'issues',
@@ -1677,13 +1737,25 @@ async function recoverSelfReviewFixPass({
       sessionPolicy,
       feedbackAlreadySent: true,
     });
+  } catch (error) {
+    recoveryFailure = error;
+    throw error;
   } finally {
     const parentRun = getRun(runId);
-    await restoreWorkerChecklistTargetFromSlot(
-      vars,
-      taskDir,
-      parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
-    );
+    await finishReviewCleanup(recoveryFailure, [
+      async () => {
+        if (!nativeReviewOperationIsCurrent()) return;
+        await withNativeReviewMutation(() =>
+          restoreWorkerChecklistTargetFromSlot(
+            vars,
+            taskDir,
+            parentRun
+              ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined }
+              : undefined,
+          ),
+        );
+      },
+    ]);
   }
 }
 
@@ -1767,6 +1839,20 @@ async function sendFeedbackToWorker(
   fixBaseSha: string | null,
   findingsArtifactScope?: string | null,
 ): Promise<FixDeliveryAcceptance> {
+  return withNativeReviewMutation(() =>
+    sendOwnedFeedbackToWorker(vars, issues, taskDir, runId, fixBaseSha, findingsArtifactScope),
+  );
+}
+
+async function sendOwnedFeedbackToWorker(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  issues: SelfReviewIssue[],
+  taskDir: string,
+  runId: string,
+  fixBaseSha: string | null,
+  findingsArtifactScope?: string | null,
+): Promise<FixDeliveryAcceptance> {
+  assertNativeReviewOperationCurrent();
   const run = getRun(runId);
   const project = run?.project;
   if (!project)
@@ -1830,9 +1916,11 @@ async function sendFeedbackToWorker(
   const replacementReadySignal = replacementOwner?.signalFile
     ? await readLaunchAckSignalSnapshot(vars, replacementOwner.signalFile)
     : null;
+  assertNativeReviewOperationCurrent();
   await removeSlotFiles(vars, [fixSignalPath]);
   const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
   const fixLaunchAckBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
+  assertNativeReviewOperationCurrent();
 
   // Write the fix task to a file on the slot
   await writeTextFileOnSlot(
@@ -1841,8 +1929,35 @@ async function sendFeedbackToWorker(
     expanded,
   );
   await syncChecklistTargetForRole(vars, taskDir, 'self-review-fix');
+  assertNativeReviewOperationCurrent();
 
   const fixTaskRel = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
+  if (run.transport === 'native') {
+    const attemptStartedAt = new Date().toISOString();
+    const basePrompt = await resolveWorkerDispatchPrompt(project, {
+      taskFile: fixTaskRel,
+      taskDir,
+    });
+    const context = await prepareNativeFix({
+      runId,
+      taskFile: fixTaskRel,
+      signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
+      attemptStartedAt,
+      prompt: selfReviewFixPrompt(basePrompt, taskDir, fixTaskRel, attemptStartedAt),
+      fixBaseSha,
+      artifactScope: findingsArtifactScope,
+    });
+    const deadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+    do {
+      const delivery = await deliverNativeFix(runId, context.id);
+      if (delivery.status === 'delivered')
+        return { signalBaseline: fixSignalBaseline, turnToken: delivery.turnToken };
+      if (delivery.status === 'relaunch-required') break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } while (Date.now() < deadline);
+    // Keep the durable attempt and checklist selected while acceptance is uncertain.
+    throw new SelfReviewFixDeliveryError('Native fix acceptance needs reconciliation');
+  }
   try {
     // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
     updateRun(runId, { activeTaskFile: fixTaskRel });
@@ -2075,6 +2190,7 @@ async function readWorkerContextPct(
   runner: string,
   runId: string,
 ): Promise<number | null> {
+  if (getRun(runId)?.transport === 'native') return null;
   const provider = getRunnerStatusProvider(runner);
   if (!provider) return null;
   try {
@@ -2185,6 +2301,14 @@ async function relaunchWorkerForFix(
   model: string,
   runId: string,
 ): Promise<boolean> {
+  assertNativeReviewOperationCurrent();
+  if (getRun(runId)?.transport === 'native') {
+    await resumeNativeWorker(runId, {
+      purpose: 'self-review-fix',
+      assertCurrent: assertNativeReviewOperationCurrent,
+    });
+    return isWorkerAlive(vars, runner, runId);
+  }
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
   const effectiveModel = resolveWorkerModel(parentRun, runner, model);
@@ -2342,6 +2466,7 @@ export async function waitForWorkerSignal(
   const maxActiveMs = Math.max(timeoutMs, Math.min(FEEDBACK_MAX_ACTIVE_MS, timeoutMs * 4));
   while (Date.now() - start < maxActiveMs && Date.now() - lastProgressAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, 2000));
+    assertNativeReviewOperationCurrent();
     const expected =
       typeof expectedAttemptId === 'function' ? expectedAttemptId() : expectedAttemptId;
     if (expected !== lastExpectedAttemptId) {
@@ -2351,6 +2476,7 @@ export async function waitForWorkerSignal(
       lastExpectedAttemptId = expected;
     }
     const raw = await readOptionalSelfReviewFixSignal(vars, signalPath);
+    assertNativeReviewOperationCurrent();
     if (raw && raw !== lastObservedSignal) {
       lastObservedSignal = raw;
       try {

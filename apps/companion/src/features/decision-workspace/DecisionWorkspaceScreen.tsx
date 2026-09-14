@@ -40,6 +40,7 @@ import {
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
   groupVisualArtifactPairs,
 } from '../../lib/artifact-url';
+import { currentFarmConnection } from '../../lib/connection-authority';
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
@@ -170,11 +171,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
   const refreshDecision = useCallback(() => {
     if (!client || !resolvedDecisionId) return;
+    const isCurrent = currentFarmConnection(client);
+    if (!isCurrent()) return;
     const fallbackRunId = routeParamString(routeRunId).trim();
     setError(null);
     client
       .request<DecisionListResult>('decision.list')
       .then((result) => {
+        if (!isCurrent()) return;
         setDecisions(result.decisions);
         const next = result.decisions.find((d) => d.id === resolvedDecisionId) ?? null;
         if (next) {
@@ -189,7 +193,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         return client.request<RunGetResult>('run.get', { runId: fallbackRunId });
       })
       .then((result) => {
-        if (!result) return;
+        if (!isCurrent() || !result) return;
         const runDecision = result.run.decisions?.find((d) => d.id === resolvedDecisionId) ?? null;
         if (!runDecision) {
           setDecision(null);
@@ -199,6 +203,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
         setDecision(decisionDetailFromRun(result.run, runDecision));
       })
       .catch((err: Error) => {
+        if (!isCurrent()) return;
         setError(`Failed to refresh decision: ${err.message}`);
       });
   }, [client, resolvedDecisionId, routeRunId, setDecisions]);

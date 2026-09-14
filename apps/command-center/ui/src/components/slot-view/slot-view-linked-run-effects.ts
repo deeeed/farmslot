@@ -7,6 +7,7 @@ import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
 import {
+  isSlotViewContextPinUnresolved,
   selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
   type SlotViewLinkedRunSource,
@@ -20,7 +21,7 @@ import {
   slotBoundRunIdForSlot,
   slotViewPendingReviewSnapshot,
 } from './slot-view-model.js';
-import { requestedRunFromHash } from './slot-view-url-state.js';
+import { getSlotViewHashParam, requestedRunFromHash } from './slot-view-url-state.js';
 
 function selfReviewProgressDetail(run: Run | null | undefined): string | null {
   return run?.steps.find((step) => step.name === 'self-review')?.detail ?? null;
@@ -42,6 +43,19 @@ export function applySlotViewLinkedRun(
   prevRunStatus: string | null,
   source: SlotViewLinkedRunSource = 'rpc',
 ): string | null {
+  const requestedRunId = requestedSlotViewRunFromUrl();
+  const requestedContextId = getSlotViewHashParam('contextId');
+  const retainedRun =
+    requestedRunId && requestedContextId && view._linkedRun?.id !== requestedRunId
+      ? null
+      : view._linkedRun;
+  const contextPinUnresolved = isSlotViewContextPinUnresolved({
+    run: run ?? (source === 'cache' ? retainedRun : null),
+    requestedRunId,
+    requestedContextId,
+    slotId: view.slotId,
+  });
+  if (contextPinUnresolved) run = null;
   const previousRunId = view._lastLinkedRunId;
   const previousActiveTaskFile = view._lastLinkedRunActiveTaskFile;
   const previousSelfReviewProgress = view._lastLinkedRunSelfReviewProgress;
@@ -52,7 +66,7 @@ export function applySlotViewLinkedRun(
     // be a transient hydration miss during mount or reconnect — overwriting
     // _linkedRun and dropping _lastLinkedRunId here would erase the prior run
     // identity, so the next RPC arrival could not detect run transitions.
-    if (shouldPreserveSlotViewCachedNullRun({ source, previousRunId })) {
+    if (shouldPreserveSlotViewCachedNullRun({ source, previousRunId, contextPinUnresolved })) {
       return prevRunStatus;
     }
     view._linkedRun = null;
@@ -190,6 +204,9 @@ export async function refreshSlotViewLinkedRun(
   prevRunStatus: string | null,
 ): Promise<string | null> {
   const requestedRunId = requestedSlotViewRunFromUrl();
+  const requestedContextId = getSlotViewHashParam('contextId');
+  const refreshToken = Symbol('linked-run-refresh');
+  view._linkedRunRefreshToken = refreshToken;
   const slotBoundRunId = slotBoundRunIdForSlot(
     view.slotId,
     view._slot?.currentRunId,
@@ -200,10 +217,8 @@ export async function refreshSlotViewLinkedRun(
   void view._refreshRecipeRuns(cachedRun);
   if (!view._isLive || gateway.connectionState !== 'connected') return nextPrevRunStatus;
 
-  const refreshToken = Symbol('linked-run-refresh');
-  view._linkedRunRefreshToken = refreshToken;
   try {
-    if (slotViewNeedsDirectRunFetch(requestedRunId, cachedRun)) {
+    if (slotViewNeedsDirectRunFetch(requestedRunId, cachedRun, requestedContextId)) {
       try {
         const direct = await gateway.request<RunGetResult>(Methods.RUN_GET, {
           runId: requestedRunId,
@@ -216,8 +231,8 @@ export async function refreshSlotViewLinkedRun(
           void view._refreshRecipeRuns(cachedRun);
         }
       } catch (err) {
-        // The URL hint can outlive a run snapshot or be pasted into another
-        // session; continue with the authoritative slot selector below.
+        // A URL can outlive a run snapshot. The selector below keeps explicit
+        // context pins unresolved instead of redirecting their input to another run.
         console.warn(
           '[slot-view] requested run refresh failed; falling back to slot selector:',
           err instanceof Error ? err.message : String(err),
@@ -230,6 +245,8 @@ export async function refreshSlotViewLinkedRun(
     });
     if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
     const nextRun = selectSlotViewLinkedRun({
+      requestedContextId,
+      slotId: view.slotId,
       requestedRunId,
       slotBoundRunId,
       cachedRun,

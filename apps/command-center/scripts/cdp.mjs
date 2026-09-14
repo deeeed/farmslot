@@ -65,8 +65,10 @@ async function listTabs() {
 function commandCenterUrl(target) {
   if (!target) die('missing target');
   if (/^https?:\/\//.test(target)) return target;
-  const base = UI_URL.endsWith('/') ? UI_URL.slice(0, -1) : UI_URL;
-  return `${base}/${target.startsWith('#') ? target : `#${target}`}`;
+  const url = new URL(UI_URL);
+  if (!url.pathname.endsWith('/')) url.pathname += '/';
+  url.hash = target.startsWith('#') ? target.slice(1) : target;
+  return url.href;
 }
 
 function matchesNavigatedRoute(actualUrl, expectedUrl) {

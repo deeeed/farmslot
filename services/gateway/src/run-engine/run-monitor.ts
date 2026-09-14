@@ -37,6 +37,11 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
+  nativeWorkerLiveStatus,
+  readNativeWorkerSnapshot,
+  sendNativeWorkerInstruction,
+} from '../runners/native/worker-control.js';
+import {
   classifyMonitorProgress,
   evaluateMonitorStuckForRunner,
   shouldDeliverStuckNudge,
@@ -47,6 +52,7 @@ import {
   readRunnerActivityFromObservability,
   readRunnerTurnState,
   runnerLineLooksWaiting,
+  runnerSupportsNativeTaskReuse,
   runnerSupportsTmuxNudgesForLaunch,
   runnerTmuxNudgeUnsupportedDescription,
   sendRunnerInstructionSafely,
@@ -85,6 +91,7 @@ import {
   MAX_BUDGET_NUDGE_DEFERRAL_MS,
 } from './budget-delivery-state.js';
 import {
+  type BudgetUsageSampleResult,
   type BudgetUsageSampleState,
   captureBudgetUsageBaselinePin,
   emptyBudgetUsageSampleState,
@@ -274,6 +281,9 @@ export async function prepareWarmBudgetBaselineForHandoff(
 ): Promise<'not-required' | 'captured' | 'unavailable'> {
   const run = getRun(runId);
   if (!run) return 'unavailable';
+  // Native accounting is reported explicitly unavailable by the monitor until the
+  // structured usage contract is implemented; there is no tmux transcript to pin.
+  if (run.transport === 'native') return 'not-required';
   const config = await loadMonitorConfig(run.project, run.flowType);
   if (!hasUsageBudget(config)) return 'not-required';
   if (!getRunnerSessionUsageProvider(run.metrics.runner)) return 'not-required';
@@ -490,7 +500,7 @@ export interface MonitorResult {
   workerSignal?: WorkerSignal;
 }
 
-type FreshnessAgentContext = Pick<AgentContext, 'id' | 'role' | 'startedAt'>;
+type FreshnessAgentContext = Pick<AgentContext, 'id' | 'role' | 'startedAt' | 'nativeSession'>;
 
 type FreshnessRunContext = {
   steps: Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt' | 'outputs'>[];
@@ -522,6 +532,14 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
     const heldAt = held.ok ? parseStrictIsoMs(held.signal.timestamp) : null;
     const signalAt = parseStrictIsoMs(signal.timestamp);
     if (heldAt === null || signalAt === null || signalAt <= heldAt) return false;
+  }
+  const native = matchingSignalContext(run, signal)?.nativeSession;
+  if (native) {
+    // Reconciliation and monitor restart do not create a new native task. Their
+    // controller timestamps cannot invalidate a signal already written by this lease.
+    const launchAt = parseStrictIsoMs(native.launchRequestedAt);
+    const signalAt = parseStrictIsoMs(signal.timestamp);
+    return !native.releasedAt && launchAt !== null && signalAt !== null && signalAt >= launchAt;
   }
   const durableFreshnessFloors = [
     run.steps.find((s) => s.name === PipelineSteps.DISPATCH)?.completedAt,
@@ -797,10 +815,18 @@ function launchCommandForRun(run: Run): unknown {
   return run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs?.launchCommand;
 }
 
+function workerNudgesSupported(run: Run): boolean {
+  return (
+    run.transport === 'native' ||
+    runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
+  );
+}
+
 export function shouldHoldForMissingTerminalSignal(
   contract: Pick<WorkerTerminalContractDocument, 'requireSignal'> | null | undefined,
-  run: Pick<Run, 'flowType' | 'mode'>,
+  run: Pick<Run, 'flowType' | 'mode' | 'transport'>,
 ): boolean {
+  if (run.transport === 'native') return true;
   if (contract) return contract.requireSignal;
   if (run.flowType === 'pr-complete' && run.mode === 'interactive') return false;
   return true;
@@ -810,7 +836,7 @@ export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | '
   return run.flowType === 'pr-complete' && run.mode === 'interactive';
 }
 
-type AgentLiveStatus = 'working' | 'idle' | 'no-tmux';
+type AgentLiveStatus = 'working' | 'idle' | 'no-tmux' | 'unknown';
 
 export function monitorRunnerBlockerViolation(options: {
   paneContent: string;
@@ -860,7 +886,7 @@ export function shouldSkipMonitorNudge(
   violation: Pick<MonitorViolation, 'type'>,
   agentStatus: AgentLiveStatus,
 ): boolean {
-  if (runHasOpenHumanGate(run)) return true;
+  if (runHasOpenHumanGate(run) || agentStatus === 'unknown') return true;
 
   const flowHasHumanGate = FLOW_STEPS[run.flowType]?.includes(PipelineSteps.HUMAN_GATE) ?? false;
   if (
@@ -923,6 +949,13 @@ export async function monitorRun(
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   const initialRun = run;
+  const generation = run.engineState?.generation ?? 0;
+  const createMonitorDecision = (
+    id: string,
+    reason: string,
+    description: string,
+    actions?: RunDecision['actions'],
+  ) => createBlockedDecision(id, reason, description, actions, { signal, generation });
   // The monitor follows the flow-owned primary worker for this run. Secondary
   // roles such as self-review and ci-fix have their own watchers/signals and
   // must not retarget the main completion monitor mid-run.
@@ -936,7 +969,7 @@ export async function monitorRun(
 
   const config = await loadMonitorConfig(run.project, run.flowType);
   const terminalContract = await loadTerminalContractForRun(initialRun, slotId);
-  const holdIfMissingSignal = (current: Pick<Run, 'flowType' | 'mode'>) =>
+  const holdIfMissingSignal = (current: Pick<Run, 'flowType' | 'mode' | 'transport'>) =>
     shouldHoldForMissingTerminalSignal(terminalContract, current);
   const now = Date.now();
 
@@ -1050,29 +1083,43 @@ export async function monitorRun(
           try {
             const context = currentMonitorContext();
             const currentRun = getRun(runId) ?? initialRun;
-            const retainedSession = resolveRunRetainedSessionBinding(currentRun, context);
-            const vars = await loadSlotVars(slotId);
-            const target = (
-              await resolveAgentTarget(slotId, {
+            const instruction = artifactContractWorkerInstruction(
+              probe.message,
+              probe.signal
+                ? (artifactTerminalCommandForSignal(probe.signal) ?? 'complete')
+                : 'complete',
+            );
+            if (currentRun.transport === 'native') {
+              const outcome = await sendNativeWorkerInstruction({
                 runId,
+                slotId,
                 role: context?.role,
                 contextId: context?.id,
-              })
-            ).target;
-            await sendRunnerInstructionSafely(
-              vars,
-              target,
-              context?.runner ?? initialRun.metrics.runner ?? 'claude',
-              artifactContractWorkerInstruction(
-                probe.message,
-                probe.signal
-                  ? (artifactTerminalCommandForSignal(probe.signal) ?? 'complete')
-                  : 'complete',
-              ),
-              'artifact-contract',
-              undefined,
-              retainedSessionSendOption(retainedSession),
-            );
+                key: 'artifact-contract',
+                text: instruction,
+              });
+              if (outcome !== 'confirmed')
+                throw new Error('Native artifact notification is unconfirmed');
+            } else {
+              const retainedSession = resolveRunRetainedSessionBinding(currentRun, context);
+              const vars = await loadSlotVars(slotId);
+              const target = (
+                await resolveAgentTarget(slotId, {
+                  runId,
+                  role: context?.role,
+                  contextId: context?.id,
+                })
+              ).target;
+              await sendRunnerInstructionSafely(
+                vars,
+                target,
+                context?.runner ?? initialRun.metrics.runner ?? 'claude',
+                instruction,
+                'artifact-contract',
+                undefined,
+                retainedSessionSendOption(retainedSession),
+              );
+            }
           } catch (err) {
             // The durable blocked decision below is the recovery path when the
             // best-effort worker notification cannot be delivered.
@@ -1081,7 +1128,7 @@ export async function monitorRun(
             );
           }
         }
-        const actionId = await createBlockedDecision(
+        const actionId = await createMonitorDecision(
           runId,
           'interactive_handoff',
           `Completion is blocked by the worker artifact contract. The worker was notified and the run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
@@ -1101,7 +1148,7 @@ export async function monitorRun(
         updateRunStep(runId, 'monitor', {
           detail: `Terminal contract infrastructure unavailable: ${probe.message.slice(0, 1000)}`,
         });
-        const actionId = await createBlockedDecision(
+        const actionId = await createMonitorDecision(
           runId,
           'interactive_handoff',
           `Completion is blocked by Farmslot slot infrastructure, not worker artifacts. Do not ask the worker to retry.\n\n${probe.message}`,
@@ -1153,7 +1200,7 @@ export async function monitorRun(
         `[run-monitor] run ${runId.slice(0, 8)} — worker already done on start (agent=${startupAgent})`,
       );
       if (holdIfMissingSignal(run)) {
-        const actionId = await createBlockedDecision(
+        const actionId = await createMonitorDecision(
           runId,
           'interactive_handoff',
           INTERACTIVE_HANDOFF_DESCRIPTION,
@@ -1264,7 +1311,7 @@ export async function monitorRun(
           );
           if (holdIfMissingSignal(currentRun)) {
             snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-            const actionId = await createBlockedDecision(
+            const actionId = await createMonitorDecision(
               runId,
               'interactive_handoff',
               INTERACTIVE_HANDOFF_DESCRIPTION,
@@ -1390,7 +1437,7 @@ export async function monitorRun(
             `[run-monitor] run ${runId.slice(0, 8)} — runner unavailable; blocking instead of nudging: ${v.message}`,
           );
           snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-          const actionId = await createBlockedDecision(
+          const actionId = await createMonitorDecision(
             runId,
             'runner_unavailable',
             `${v.message} Restore the provider account or authentication in the retained runner pane, then choose Continue. The worktree and current task state are preserved.`,
@@ -1414,7 +1461,7 @@ export async function monitorRun(
               `[run-monitor] run ${runId.slice(0, 8)} — interactive PR-complete handoff (${v.type}), blocking instead of nudging`,
             );
             snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-            const actionId = await createBlockedDecision(
+            const actionId = await createMonitorDecision(
               runId,
               'interactive_handoff',
               `${INTERACTIVE_HANDOFF_DESCRIPTION}\n\nMonitor note: ${v.message}`,
@@ -1444,7 +1491,7 @@ export async function monitorRun(
               `[run-monitor] run ${runId.slice(0, 8)} — max nudges (${config.maxNudges}), creating decision`,
             );
             snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-            const actionId = await createBlockedDecision(
+            const actionId = await createMonitorDecision(
               runId,
               'max_nudges',
               `Worker exceeded ${config.maxNudges} nudges — may need manual intervention`,
@@ -1455,12 +1502,7 @@ export async function monitorRun(
             }
             // "continue" — reset nudge count and resume
             updateRun(runId, { metrics: { ...latestRun.metrics, nudgeCount: 0 } });
-          } else if (
-            runnerSupportsTmuxNudgesForLaunch(
-              latestRun.metrics.runner,
-              launchCommandForRun(latestRun),
-            )
-          ) {
+          } else if (workerNudgesSupported(latestRun)) {
             const nudgeContext = currentMonitorContext();
             if (await sendNudge(runId, slotId, v, nudgeContext?.role, nudgeContext?.id)) {
               snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
@@ -1475,7 +1517,7 @@ export async function monitorRun(
               `[run-monitor] run ${runId.slice(0, 8)} — ${description}; escalating to decision`,
             );
             snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
-            const actionId = await createBlockedDecision(runId, 'runner_waiting', description);
+            const actionId = await createMonitorDecision(runId, 'runner_waiting', description);
             if (actionId === 'abort') {
               exitReason = 'aborted';
               return { pollCount, exitReason, violations: allViolations, snapshots };
@@ -1512,7 +1554,7 @@ export async function monitorRun(
         snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
         const timeoutRun = getRun(runId);
         if (timeoutRun && holdIfMissingSignal(timeoutRun)) {
-          const actionId = await createBlockedDecision(
+          const actionId = await createMonitorDecision(
             runId,
             'interactive_handoff',
             `${INTERACTIVE_HANDOFF_DESCRIPTION}\n\nMonitor note: exceeded ${config.totalTimeoutMs / 60000} minute timeout.`,
@@ -1537,7 +1579,7 @@ export async function monitorRun(
           persistMonitorWindowStart(runId, state.startedAt);
           continue;
         }
-        const actionId = await createBlockedDecision(
+        const actionId = await createMonitorDecision(
           runId,
           'timeout',
           `Run exceeded ${config.totalTimeoutMs / 60000} minute timeout`,
@@ -1572,6 +1614,26 @@ async function detectViolations(
   const now = Date.now();
 
   try {
+    if (getRun(runId)?.transport === 'native') {
+      const snapshot = await readNativeWorkerSnapshot(runId, role, contextId);
+      if (snapshot.session.state === 'running') state.lastStructuredProgressAt = now;
+      // Permission/question requests belong to the user. A monitor nudge cannot answer them.
+      if (
+        snapshot.session.state === 'idle' &&
+        !snapshot.pendingRequests.length &&
+        now - state.lastStructuredProgressAt > config.stuckTimeoutMs
+      )
+        violations.push({
+          slotId,
+          role,
+          contextId,
+          type: 'stuck',
+          message: `Native worker idle without a terminal task signal for ${Math.round((now - state.lastStructuredProgressAt) / 60000)} minutes`,
+          nudgeSent: null,
+          timestamp: new Date(now).toISOString(),
+        });
+      return violations;
+    }
     const vars = await loadSlotVars(slotId);
     const paneContent = await capturePaneContent(vars, runId, role, contextId);
     const runner = getRun(runId)?.metrics.runner;
@@ -1663,8 +1725,10 @@ async function checkAgentLive(
   runId?: string,
   role?: AgentRole,
   contextId?: string,
-): Promise<'working' | 'idle' | 'no-tmux'> {
+): Promise<AgentLiveStatus> {
   try {
+    if (runId && getRun(runId)?.transport === 'native')
+      return nativeWorkerLiveStatus(await readNativeWorkerSnapshot(runId, role, contextId));
     const vars = await loadSlotVars(slotId);
     if (!vars.session) return 'idle';
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
@@ -1681,7 +1745,7 @@ async function checkAgentLive(
     console.warn(
       `[run-monitor] live agent check failed for slot=${slotId} run=${runId?.slice(0, 8) ?? '-'} role=${role ?? '-'}: ${(err as Error).message}`,
     );
-    return 'no-tmux';
+    return runId && getRun(runId)?.transport === 'native' ? 'unknown' : 'no-tmux';
   }
 }
 
@@ -1692,9 +1756,9 @@ async function waitForWorkerStart(
   runId?: string,
   role?: AgentRole,
   contextId?: string,
-): Promise<'working' | 'idle' | 'no-tmux'> {
+): Promise<AgentLiveStatus> {
   const deadline = Date.now() + timeoutMs;
-  let lastStatus: 'working' | 'idle' | 'no-tmux' = 'idle';
+  let lastStatus: AgentLiveStatus = 'idle';
   while (Date.now() < deadline) {
     lastStatus = await checkAgentLive(slotId, runner, runId, role, contextId);
     if (lastStatus === 'working') return lastStatus;
@@ -1728,13 +1792,33 @@ async function sendNudge(
 ): Promise<boolean> {
   const run = getRun(runId);
   if (!run) return false;
-  if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+  if (!workerNudgesSupported(run)) {
     return false;
   }
 
   const nudgeMsg = buildNudgeMessage(violation);
 
   try {
+    if (run.transport === 'native') {
+      const result = await sendNativeWorkerInstruction({
+        runId,
+        slotId,
+        role,
+        contextId,
+        key: `monitor:${violation.type}:${run.metrics.nudgeCount}`,
+        text: nudgeMsg,
+      });
+      if (result !== 'confirmed') return false;
+      const latest = getRun(runId);
+      if (!latest) return false;
+      updateRun(runId, {
+        metrics: { ...latest.metrics, nudgeCount: latest.metrics.nudgeCount + 1 },
+      });
+      await persistRunNow(getRun(runId)!, 'native monitor nudge');
+      violation.nudgeSent = new Date().toISOString();
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      return true;
+    }
     const vars = await loadSlotVars(slotId);
     const context = selectAgentContext(run, { role, contextId });
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
@@ -1827,10 +1911,19 @@ export async function sendBudgetNudge(
 ): Promise<BudgetNudgeDelivery> {
   const run = getRun(runId);
   if (!run) return 'not-attempted';
-  if (!runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+  if (!workerNudgesSupported(run)) {
     return 'not-attempted';
   }
 
+  if (run.transport === 'native')
+    return sendNativeWorkerInstruction({
+      runId,
+      slotId,
+      role,
+      contextId,
+      key: 'budget',
+      text: buildUsageBudgetNudgeMessage(message),
+    });
   const vars = await loadSlotVars(slotId);
   const context = selectAgentContext(run, { role, contextId });
   const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
@@ -1930,6 +2023,10 @@ async function isRunnerMidTurn(
   const run = getRun(runId);
   if (!run) return false;
   try {
+    if (run.transport === 'native') {
+      const snapshot = await readNativeWorkerSnapshot(runId, role, contextId);
+      return snapshot.session.state !== 'idle' || snapshot.pendingRequests.length > 0;
+    }
     const vars = await loadSlotVars(slotId);
     const session = (await resolveAgentTarget(slotId, { runId, role, contextId })).target;
     const runner = run.metrics.runner ?? 'claude';
@@ -1945,7 +2042,7 @@ async function isRunnerMidTurn(
     console.warn(
       `[run-monitor] run ${runId.slice(0, 8)} — runner progress unreadable: ${(error as Error).message}`,
     );
-    return false;
+    return run.transport === 'native';
   }
 }
 
@@ -1981,13 +2078,27 @@ export async function pollBudgetGuardStep(params: {
     ? (params.localVarsStub as Awaited<ReturnType<typeof loadSlotVars>>)
     : await loadSlotVars(params.slotId);
   const priorUnavailable = params.budgetUsage.unavailableReason;
-  const sample = await sampleBudgetUsage({
-    slotId: params.slotId,
-    vars,
-    runner: params.runner,
-    runnerSessionPath: params.runnerSessionPath,
-    prior: params.budgetUsage,
-  });
+  const sample: BudgetUsageSampleResult =
+    getRun(params.runId)?.transport === 'native'
+      ? {
+          turns: null,
+          totalTokens: null,
+          availability: 'unavailable',
+          unavailableReason: 'Native worker usage accounting is unavailable',
+          enforcementFailure: true,
+          unsupportedRunner: true,
+          nextState: {
+            ...params.budgetUsage,
+            unavailableReason: 'Native worker usage accounting is unavailable',
+          },
+        }
+      : await sampleBudgetUsage({
+          slotId: params.slotId,
+          vars,
+          runner: params.runner,
+          runnerSessionPath: params.runnerSessionPath,
+          prior: params.budgetUsage,
+        });
   let violation: MonitorViolation | null = null;
   let nudgeSent = false;
 
@@ -2060,7 +2171,7 @@ export async function pollBudgetGuardStep(params: {
     if (decision.deliver) {
       const run = getRun(params.runId);
       const deliveryViolation = violation ?? raiseViolation(decision.message);
-      if (run && !runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))) {
+      if (run && !workerNudgesSupported(run)) {
         // Waiting cannot help: this runner will never accept a pane instruction.
         delivery = advanceBudgetDelivery(delivery, {
           kind: 'delivery-impossible',
@@ -2135,7 +2246,7 @@ export async function pollRunBudgetGuard(params: {
   delivery?: BudgetDeliveryState;
   budgetUsage?: BudgetUsageSampleState;
   monitorStartedAt?: string;
-  agentStatus: 'working' | 'idle' | 'no-tmux';
+  agentStatus: AgentLiveStatus;
   sendNudge: boolean;
 }): Promise<PollBudgetGuardStepResult> {
   const run = getRun(params.runId);
@@ -2143,9 +2254,10 @@ export async function pollRunBudgetGuard(params: {
   const vars = await loadSlotVars(params.slotId);
   const context = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   const retainedSession = resolveRunRetainedSessionBinding(run, context);
-  const resolvedSession = retainedSession.binding
-    ? null
-    : await resolveRunnerSessionForRun(run, vars);
+  const resolvedSession =
+    run.transport === 'native' || retainedSession.binding
+      ? null
+      : await resolveRunnerSessionForRun(run, vars);
   const tick = await pollBudgetGuardStep({
     runId: params.runId,
     slotId: params.slotId,
@@ -2372,11 +2484,35 @@ async function createBlockedDecision(
     { id: 'continue', label: 'Continue', style: 'primary' },
     { id: 'abort', label: 'Abort Run', style: 'danger' },
   ],
+  owner: { signal: AbortSignal; generation: number },
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
+  // Async status/signal probes can finish after cancellation, pause or a newer
+  // engine loop. A retired monitor cannot create a decision or rewrite run status.
+  const current = () =>
+    getRun(runId) === run &&
+    !owner.signal.aborted &&
+    (run.engineState?.generation ?? 0) === owner.generation &&
+    !['done', 'failed', 'cancelled', 'paused'].includes(run.status);
+  if (!current()) return 'abort';
 
   const monitorCtx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  let resumeNativeWorker = false;
+  let resumeUnavailableReason: string | undefined;
+  if (
+    run.transport === 'native' &&
+    reason === 'interactive_handoff' &&
+    runnerSupportsNativeTaskReuse(monitorCtx?.runner ?? run.metrics.runner) &&
+    monitorCtx?.runnerSessionId &&
+    monitorCtx.nativeSession?.generation
+  ) {
+    const { session } = await readNativeWorkerSnapshot(runId, undefined, monitorCtx.id);
+    if (!current()) return 'abort';
+    resumeNativeWorker = session.capabilities.resume && session.processStopped === true;
+    resumeUnavailableReason = session.capabilities.resumeUnavailableReason;
+  }
+  const generation = run.engineState?.generation ?? 0;
   const extendMinutes =
     reason === 'interactive_handoff'
       ? parseInteractiveHandoffTimeoutMinutes(description)
@@ -2386,10 +2522,21 @@ async function createBlockedDecision(
     id: randomUUID(),
     type: `monitor_${reason}`,
     title: `Run ${runId.slice(0, 8)} — ${reason.replace('_', ' ')}`,
-    description,
+    description:
+      run.transport === 'native' && reason === 'interactive_handoff'
+        ? description.replace(
+            INTERACTIVE_HANDOFF_DESCRIPTION,
+            resumeNativeWorker
+              ? 'The worker has not reported task completion. Resume its saved conversation to continue, or check for a completion report.'
+              : `The worker has not reported task completion. ${resumeUnavailableReason ?? 'Check for a completion report or continue through its available task controls.'}`,
+          )
+        : description,
     actions:
       reason === 'interactive_handoff'
-        ? interactiveHandoffDecisionActions({ extendMinutes })
+        ? interactiveHandoffDecisionActions({
+            extendMinutes,
+            resumeNativeWorker,
+          })
         : actions,
     createdAt: new Date().toISOString(),
     context:
@@ -2422,10 +2569,30 @@ async function createBlockedDecision(
   disarmAutoRecovery?.();
   decisionResolvers.delete(decision.id);
 
-  // Mark decision resolved
-  decision.resolvedAt = new Date().toISOString();
-  decision.resolvedAction = actionId;
-  updateRun(runId, { status: 'monitoring', decisions: run.decisions });
+  // Recovery may replace the decision array while this waiter is suspended.
+  // Settle the current record, preserving its durable recovery intent and newer decisions.
+  const latest = getRun(runId);
+  const currentDecision = latest?.decisions.find((candidate) => candidate.id === decision.id);
+  if (
+    !latest ||
+    !currentDecision ||
+    (latest.engineState?.generation ?? 0) !== generation ||
+    ['done', 'failed', 'cancelled'].includes(latest.status) ||
+    (currentDecision.resolvedAt && currentDecision.resolvedAction !== actionId)
+  )
+    return 'abort';
+  updateRun(runId, {
+    status: 'monitoring',
+    decisions: latest.decisions.map((candidate) =>
+      candidate.id === decision.id
+        ? {
+            ...candidate,
+            resolvedAt: candidate.resolvedAt ?? new Date().toISOString(),
+            resolvedAction: actionId,
+          }
+        : candidate,
+    ),
+  });
   broadcastFn(Events.RUN_DECISION_RESOLVED, { runId, decisionId: decision.id, actionId });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 

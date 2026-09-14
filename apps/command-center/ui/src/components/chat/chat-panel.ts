@@ -401,6 +401,9 @@ export class ChatPanel extends ChatPanelState {
     this.runtime = session;
     this.runtimeRunner = session.runner;
     this.runtimeModel = session.model;
+    this.runtimeEffort = (
+      session.effort === 'auto' ? '' : (session.effort ?? '')
+    ) as RunnerModelEffortChangeDetail['effort'];
     this.runtimeAutostart = session.autostart;
     this.runtimeWorkerRefJson = session.terminalWorker
       ? JSON.stringify(session.terminalWorker)
@@ -415,6 +418,7 @@ export class ChatPanel extends ChatPanelState {
       const result = await gateway.request<CopilotConfigureResult>(Methods.COPILOT_CONFIGURE, {
         runner: this.runtimeRunner,
         model: this.runtimeModel,
+        effort: this.runtimeEffort || 'auto',
         autostart: this.runtimeAutostart,
       });
       this.syncRuntime(result.session);
@@ -430,6 +434,7 @@ export class ChatPanel extends ChatPanelState {
   private handleRuntimePickerChange(event: CustomEvent<RunnerModelEffortChangeDetail>) {
     this.runtimeRunner = event.detail.runner;
     this.runtimeModel = event.detail.model;
+    this.runtimeEffort = event.detail.effort;
   }
 
   public async submitPrompt(
@@ -966,8 +971,7 @@ export class ChatPanel extends ChatPanelState {
                   <runner-model-effort-picker
                     .runner=${this.runtimeRunner}
                     .model=${this.runtimeModel}
-                    .effort=${''}
-                    .showEffort=${false}
+                    .effort=${this.runtimeEffort}
                     .disabled=${this.runtimeLoading || runtimeStatus === 'running'}
                     @runner-model-effort-change=${this.handleRuntimePickerChange}
                   ></runner-model-effort-picker>

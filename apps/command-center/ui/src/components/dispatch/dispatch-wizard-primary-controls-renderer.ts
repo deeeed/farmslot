@@ -36,6 +36,11 @@ const REVIEW_TIER_HELP: Record<ReviewTier, string> = {
 };
 
 export interface DispatchWizardPrimaryControlsRenderContext {
+  transport: 'tmux' | 'native';
+  nativeWorkerAvailable: boolean;
+  nativeCatalogError: string;
+  nativeProfileControl: unknown;
+  setTransport: (transport: 'tmux' | 'native') => void;
   ticketId: string;
   matchingProject: boolean;
   issueType: string;
@@ -80,8 +85,30 @@ export function renderDispatchWizardPrimaryControls(
   return html`
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
-    ${renderRunnerModelConfig(ctx)} ${renderReviewTierSelector(ctx)} ${renderPrepareToggle(ctx)}
-    ${renderInteractiveDevProfile(ctx)}
+    ${renderRunnerModelConfig(ctx)}
+    <label class="section-label"
+      >Worker interface
+      <select
+        data-testid="dispatch-transport"
+        .value=${ctx.transport}
+        @change=${(event: Event) =>
+          ctx.setTransport((event.target as HTMLSelectElement).value as 'tmux' | 'native')}
+      >
+        <option value="tmux">Terminal (tmux)</option>
+        <option value="native" ?disabled=${!ctx.nativeWorkerAvailable}>
+          Conversation (native)
+        </option>
+      </select>
+    </label>
+    ${ctx.nativeCatalogError ? html`<p role="status">${ctx.nativeCatalogError}</p>` : nothing}
+    ${ctx.transport === 'native'
+      ? html`<p>
+          Messages, tools and approvals appear in Farmslot. The selected runner keeps its own login
+          and model.
+        </p>`
+      : nothing}
+    ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}
+    ${renderReviewTierSelector(ctx)} ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
   `;
 }
 

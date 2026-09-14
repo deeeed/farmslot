@@ -12,6 +12,19 @@ const observer = getRunnerObservability(runner);
 assert.ok(observer, 'Runner has no structured observability');
 const deadline = Date.now() + timeoutMs;
 while (Date.now() < deadline) {
+  const binding = await observer.getSessionBinding?.(vars, target);
+  const durable = binding
+    ? await observer.getSessionDeliveryState(vars, target, binding.sessionId, binding.sessionPath)
+    : null;
+  if (
+    durable?.value === 'idle' &&
+    durable.confidence === 'high' &&
+    durable.turnToken &&
+    durable.observedAt >= sinceMs
+  ) {
+    console.log(JSON.stringify({ binding, durable }));
+    process.exit(0);
+  }
   const [activity, completed] = await Promise.all([
     observer.getActivity(vars, target),
     observer.lastTurnCompletedAt(vars, target),

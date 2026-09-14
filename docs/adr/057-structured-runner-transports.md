@@ -18,7 +18,7 @@ Farmslot needs shared session controls in Command Center, Companion, CLI, and wo
 
 The runtime owns the agent loop, tools, compaction, and authentication. The transport carries commands and events between that runtime and Farmslot. A Farmslot session identifies its execution node, runner, account context, native session, and selected transport independently of any terminal pane.
 
-Keep tmux as the default. Add opt-in structured transports within the shared runner capability layer, starting with Codex app-server and the unmodified Claude structured process. Add Grok and Cursor through ACP and choose OpenCode ACP or its native server according to demonstrated capabilities. Record the resolved executable, runner version, account mode, and negotiated capabilities for each launch. Unknown capabilities remain unavailable.
+Keep tmux as the default. Add opt-in structured transports within the shared runner capability layer, starting with Codex app-server and the unmodified Claude structured process. Add Grok and Cursor through ACP. OpenCode is outside this delivery scope. Record the resolved executable, runner version, account mode, and negotiated capabilities for each launch. Unknown capabilities remain unavailable.
 
 Existing tmux sessions continue through their current adapter. New native sessions do not require tmux. Saved-session resume and attachment to an existing process are separate capabilities. Arbitrary live TUI takeover is outside this decision.
 
@@ -42,17 +42,29 @@ On reconnect, restore events and pending approvals for the same account and sess
 
 History and archive readers reuse the native session identity and ownership boundary. Reconcile archive schema changes before integration so live events and archived messages do not create competing session records.
 
-### Native authentication and account isolation
+### Native authentication and execution ownership
 
 Users install and sign into the native runner in their execution context. Farmslot does not collect subscription tokens in shared application state, route them into PI, impersonate an official client, or silently switch to paid API credentials. The runtime keeps its native authentication and tool behavior.
 
-Account context comes from authorized execution context, not an arbitrary client-supplied label. Bind launch, history access, commands, and approval replies to that context. Account switching requires a distinct process and session context; stale replies cannot reach the new account. Keep credentials out of event history and client payloads.
+Account context comes from authorized execution context, not an arbitrary client-supplied label. Bind launch, history access, commands, and approval replies to that context. Profiles identify native configuration directories, not subscription identities. Login rotation in the same directory preserves saved conversations without re-enrollment. Resume remains within the same runner and reconciles accepted commands before further delivery; stale process-generation replies stay refused. Switching runners uses an explicit handover, outside saved-session resume. Keep credentials out of event history and client payloads.
 
 Native node execution requires an issued node credential bound to the exact machine and `FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID` set on that node. `deploy-node.sh` carries this opt-in into its service environment. The node keeps native journals under its own Farmslot home and retains runner installation and login locally. Session and workspace requests include `executionNodeId`; omission continues to select the gateway host. Replacing a node connection cannot answer requests sent to the previous connection, and a missing node never redirects a session to the gateway host.
 
-The first implementation is experimental and restricted to a pinned principal in a single trusted operator context. The account-setup phase adds user-owned execution profiles. Shared deployments require principal authorization and execution isolation consistent with ADR-051. Separate account labels under one unrestricted OS user do not establish a security boundary. Do not advertise multi-user account isolation until process, filesystem, and credential access checks prove that boundary.
+The first implementation was restricted to a pinned principal in a single trusted operator context. The account-setup phase adds optional profiles belonging to one trusted operator under one OS user. Each product user owns their execution node. Prove profile-directory binding, owner routing, and conversation continuity across ordinary login rotation. Profile directories do not isolate mutually untrusted users sharing an OS account.
 
 Successful inference establishes access at the time of the request. Subscription entitlement, permitted automation, quotas, and billing require separate provider-specific evidence. Compare equivalent native TUI and structured tasks using provider usage records where available. Mark unavailable or delayed billing evidence explicitly. Initialization and estimated token cost cannot establish subscription economics.
+
+### Workspace boundaries
+
+Codex `sandboxed` and `full-auto` sessions may write the workspace and its Git common directory. For linked worktrees this includes the primary checkout's shared Git metadata, including HEAD, index, refs, and other worktree metadata. The tier does not isolate repository metadata between the trusted operator's worktrees.
+
+Pool machine environment values are part of the native worker's `launchDigest`. Changing one, including rotating a configured load-balancer key, invalidates recovery, retained handoff, and parking restore for the old launch. Finish those tasks before changing the environment, or restart them explicitly with the new configuration.
+
+### Parking portability
+
+Native worker parking must support restoring the saved conversation into another eligible slot in this delivery. The runner layer owns any supported workspace relocation and records the destination identity. Prove source process cleanup, destination reservation, owner continuity, and retry/cancellation behavior before exposing restore. Do not satisfy portability by starting an unrelated conversation.
+
+Parking preserves the full task bundle, including artifacts, with a 64 MiB file-content limit and no symlinks or special files. Oversized or unsupported bundles refuse parking; artifacts are not silently omitted. The separate artifact mirror does not replace files a resumed worker may still need.
 
 ### Client integration and code reuse
 
@@ -68,7 +80,7 @@ recovery is therefore gated to sessions started with 2.1.265 or newer. Older
 sessions remain readable/closeable and expose the unsupported capability. Test
 tool-result and assistant-message context, not only tokens from user prompts.
 
-G001 shipped in PR #615 with live-validated local Codex and Claude adapters. G002 shipped in PR #616 with local process supervision, durable events, replay, and recovery validation. G003 Command Center integration shipped in PR #618. G004 worker and retained-reviewer integration, remote execution, and Companion are current; additional runners and isolated user-account setup remain pending. The trusted local principal restriction still applies; these results do not establish shared-account isolation or subscription billing.
+G001 shipped in PR #615 with local Codex and Claude adapters. G002 shipped in PR #616 with process supervision, durable events, replay, and recovery. G003 Command Center integration shipped in PR #618. The remaining delivery adds native workers, retained reviewers, cross-slot parking, Companion, Cursor/Grok standalone adapters, and trusted-operator profiles. Execution remains bound to the local profile owner or an assigned node owner; these capabilities do not establish isolation between untrusted users sharing an OS account or prove subscription billing.
 
 | Phase | Deliverable                                         | Required proof                                                                                                                                                              |
 | ----- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -77,7 +89,7 @@ G001 shipped in PR #615 with live-validated local Codex and Claude adapters. G00
 | 2     | Node supervision and durable events                 | Client and gateway reconnect, two concurrent sessions, replay without duplication, process failure, uncertain acceptance, stale and cross-account request rejection         |
 | 3     | Native Copilot in Command Center                    | Complete a task through real controls without tmux; CDP and gateway assertions prove approval, interruption, refresh, and pending-request recovery                          |
 | 4     | Workers, retained reviewers, remote node, Companion | Real dispatch and handoff, second-machine execution, reconnect, mobile approval and continuation of the exact session, and tmux compatibility                               |
-| 5     | Grok, Cursor, OpenCode, account setup               | Each declared capability passes the common suite; native installation/login and account switching preserve isolation                                                        |
+| 5     | Grok, Cursor, account setup                         | Each declared capability passes the common suite; native login rotation preserves conversations; profile and node ownership stay enforced                                   |
 
 Use production gateway scenarios in `scripts/runner-validation/`. Unit tests guard regressions but do not establish runner behavior. Every new live assertion needs a negative check that demonstrates it can fail. Browser validation drives real controls without injecting UI state. Keep bounded provider usage observations separate from protocol evidence and private account details outside public docs.
 
@@ -87,4 +99,14 @@ Keep an adapter experimental if interactive permissions or exact session continu
 
 Farmslot can present agent sessions without terminal rendering while retaining native runner behavior. Protocol version changes become adapter maintenance, with capability checks and live scenarios guarding compatibility.
 
-This decision adds durable process and event ownership to the execution node. It requires explicit account isolation before shared-account product claims. It does not establish cheaper inference, unlimited unattended use, or subscription permission for a custom PI runtime.
+This decision adds durable process and event ownership to the execution node. Each product user owns their execution node; optional profile directories are not isolation for mutually untrusted users sharing an OS account. It does not establish cheaper inference, unlimited unattended use, or subscription permission for a custom PI runtime.
+
+## Trusted operator profile scope
+
+Several profiles on one OS user belong to one trusted operator; each product user owns their own execution node. Reuse native configuration directories and preserve conversation history across ordinary login rotation. Keep process ownership and approval routing bound to the node owner and session generation. Profiles are optional for side-by-side configurations; saved-session resume never changes runners. This delivery does not isolate mutually untrusted users on the same node. No separate sandbox, container or host-tool broker is required. Keep future extensions in the runner capability layer.
+
+## Load-balancer configuration
+
+Native Codex keeps its configured provider and transport. With codex-lb, the native endpoint is `http://127.0.0.1:2455/backend-api/codex`; the client key comes from `CODEX_LB_API_KEY`. Native API-key authentication can use that client key without a direct ChatGPT OAuth login. Use a separate native configuration when establishing a different credential profile, and preserve existing conversation files.
+
+Gateway intelligence can explicitly select the `codex-lb` provider in LLM settings. PI uses the load balancer's SDK endpoint, `http://127.0.0.1:2455/v1`, with Astra/low defaults and the same environment key. It does not import upstream OAuth credentials or fall back to another provider when the key or request fails. Other saved provider choices remain authoritative. This HTTP/SSE route serves fresh intelligence requests; native agent sessions retain their configured WebSocket transport. API list prices are not reported as subscription charges.

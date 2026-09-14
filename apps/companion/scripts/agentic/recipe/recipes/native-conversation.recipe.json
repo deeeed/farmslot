@@ -1,0 +1,164 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native conversation controls",
+  "description": "Run native-conversation-proof.mts setup first with private gateway token, proof state and simulator environment. Proves actual approval, continuation, denial and interruption through Companion.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts open",
+        "intent": "Open the exact private native session using a real app deep link.",
+        "next": "wait-approval"
+      },
+      "wait-approval": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approve",
+        "timeout_ms": 30000,
+        "intent": "Restore the gateway pending approval on the device.",
+        "next": "wait-approval-details"
+      },
+      "capture-pending": {
+        "action": "ui.screenshot",
+        "path": "native-pending.png",
+        "intent": "Record the actual pending tool and exact session identity.",
+        "next": "reload-pending"
+      },
+      "approve": {
+        "action": "ui.press",
+        "test_id": "companion-native-approve",
+        "intent": "Approve the disposable write from Companion.",
+        "next": "verify-approved"
+      },
+      "verify-approved": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approved",
+        "intent": "Prove native approval resolution and the actual file write.",
+        "next": "type-continuation"
+      },
+      "type-continuation": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-draft",
+        "value": "What exact token did I ask you to remember? Reply with the token only. Do not use tools.",
+        "intent": "Continue the same conversation through the mobile composer.",
+        "next": "send"
+      },
+      "send": {
+        "action": "ui.press",
+        "test_id": "companion-native-send",
+        "intent": "Submit the user instruction through the shared session API.",
+        "next": "verify-continuation"
+      },
+      "verify-continuation": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts continued",
+        "intent": "Assert preserved native identity, prior memory and exactly one command delivery.",
+        "next": "prepare-denial"
+      },
+      "prepare-denial": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts prepare-denial",
+        "intent": "Request a second disposable tool operation for denial proof.",
+        "next": "wait-denial"
+      },
+      "wait-denial": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-deny",
+        "timeout_ms": 30000,
+        "intent": "Expose the pending denial decision.",
+        "next": "deny"
+      },
+      "deny": {
+        "action": "ui.press",
+        "test_id": "companion-native-deny",
+        "intent": "Deny the tool through the real mobile control.",
+        "next": "verify-denied"
+      },
+      "verify-denied": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts denied",
+        "intent": "Prove approval resolution and absence of the denied file.",
+        "next": "prepare-interrupt"
+      },
+      "prepare-interrupt": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts prepare-interrupt",
+        "intent": "Start a bounded disposable sleep to interrupt.",
+        "next": "stop"
+      },
+      "stop": {
+        "action": "ui.press",
+        "test_id": "companion-native-stop",
+        "intent": "Interrupt the running native turn from the device.",
+        "next": "verify-interrupted"
+      },
+      "verify-interrupted": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts interrupted",
+        "intent": "Prove the exact running command emitted native interruption.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "native-conversation.png",
+        "intent": "Retain the final mobile transcript and controls.",
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts cleanup",
+        "intent": "Close only the proof session and verify process cleanup.",
+        "next": "read-only"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "reload-pending": {
+        "action": "command",
+        "cmd": "FARMSLOT_METRO_ORIGIN=http://localhost:$METRO_PORT node scripts/agentic/cdp-eval.mjs 'const m=Array.from(__r.getModules()).find(([id,m])=>m.verboseName?.endsWith(\"/Utilities/DevSettings.js\")); __r(m[0]).default.reload(); return {reloadRequested:true};' ",
+        "intent": "Reload the real development client while the approval is pending.",
+        "next": "wait-replayed-approval"
+      },
+      "wait-replayed-approval": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approve",
+        "timeout_ms": 30000,
+        "intent": "Replay the same pending approval after a fresh mobile connection.",
+        "next": "verify-replayed-details"
+      },
+      "read-only": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-read-only",
+        "timeout_ms": 20000,
+        "intent": "The closed conversation stays readable and disables input.",
+        "next": "capture-history"
+      },
+      "capture-history": {
+        "action": "ui.screenshot",
+        "path": "native-history.png",
+        "intent": "Record the closed conversation history and disabled composer.",
+        "next": "done"
+      },
+      "wait-approval-details": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approval-details",
+        "timeout_ms": 30000,
+        "intent": "Show the complete structured action before approval.",
+        "next": "verify-approval-details"
+      },
+      "verify-approval-details": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
+        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "next": "capture-pending"
+      },
+      "verify-replayed-details": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
+        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "next": "approve"
+      }
+    }
+  }
+}

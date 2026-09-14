@@ -119,3 +119,46 @@ test('hook-driven runners remain starting until bootstrap delivery is proven', a
   assert.equal((await starting).session.status, 'running');
   await controller.stop({ reason: 'bootstrap-state-test' });
 });
+
+test('Copilot effort persists without relabelling or replacing a live conversation', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-effort-config-'));
+  const { controller, tmux } = testController({ home, checkout: process.cwd() });
+  const fresh = await controller.status();
+  assert.equal(fresh.session.runner, 'codex');
+  assert.equal(fresh.session.model, 'gpt-6-astra');
+  assert.equal(fresh.session.effort, 'low');
+  await controller.configure({ runner: 'codex', model: 'gpt-5.6-sol', effort: 'medium' });
+  const started = await controller.start();
+  assert.equal(started.session.model, 'gpt-5.6-sol');
+  assert.equal(started.session.effort, 'medium');
+  await assert.rejects(controller.configure({ effort: 'low' }), /Stop the Co-Pilot runtime/);
+  const reused = await controller.start({ runner: 'codex', model: 'gpt-6-astra', effort: 'low' });
+  assert.equal(reused.reused, true);
+  assert.equal(reused.session.model, 'gpt-5.6-sol');
+  assert.equal(reused.session.effort, 'medium');
+  assert.equal(tmux.launchCount, 1);
+  const restored = testController({ home, checkout: process.cwd(), tmux }).controller;
+  await restored.initialize();
+  assert.equal((await restored.status()).session.effort, 'medium');
+  await restored.stop();
+  await restored.configure({ model: 'gpt-6-astra', effort: 'low' });
+  assert.equal((await restored.start()).session.effort, 'low');
+  await restored.stop();
+});
+
+test('stopped legacy configuration resolves next-start effort before confirmation', async () => {
+  const home = await mkdtemp(path.join(tmpdir(), 'copilot-legacy-effort-'));
+  const first = testController({ home, checkout: process.cwd() }).controller;
+  await first.status();
+  const store = new CopilotRuntimeStore(home);
+  const legacy = (await store.load())!;
+  delete legacy.session.effort;
+  delete legacy.session.dangerousLaunch.effort;
+  legacy.session.model = 'gpt-5.6-sol';
+  await store.save(legacy);
+  const restored = testController({ home, checkout: process.cwd() }).controller;
+  const status = await restored.status();
+  assert.equal(status.session.model, 'gpt-5.6-sol');
+  assert.equal(status.session.effort, 'low');
+  assert.equal(status.session.dangerousLaunch.effort, 'low');
+});

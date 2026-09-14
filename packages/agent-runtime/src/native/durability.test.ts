@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import fs, {
@@ -23,6 +23,7 @@ import { NativeSessionClient } from './client.js';
 import { decodeRequest, type HostIdentity, requestHost, socketDirectory } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { alive, appendDurable, matchesProcess, privateDirectory, readJson } from './storage.js';
+import { decodeNativeWorkerLaunch, type NativeWorkerLaunch } from './worker-launch.js';
 
 const fixture = `#!/usr/bin/env node
 if (process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
@@ -33,10 +34,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  const m = JSON.parse(line);
  if(m.method==='initialize') send({id:m.id,result:{}});
  if(m.method==='thread/start'||m.method==='thread/resume') {
+  fs.writeFileSync('native-start.json',JSON.stringify({params:m.params,env:{probe:process.env.NATIVE_WORKER_PROBE,omc:process.env.DISABLE_OMC,omx:process.env.DISABLE_OMX}}),{mode:0o600});
   thread=m.params.threadId || 'thread-'+process.pid;
   send({id:m.id,result:{thread:{id:thread}}});
  }
  if(m.method==='turn/start') {
+  fs.writeFileSync('native-turn.json',JSON.stringify(m.params),{mode:0o600});
   const text=m.params.input[0].text; turn='turn-'+m.id;
   fs.appendFileSync('inputs',text+'\\n');
   if(text==='unknown') { process.exit(23); }
@@ -78,6 +81,113 @@ function setup() {
       rmSync(cwd, { recursive: true, force: true });
     },
   };
+}
+
+for (const mode of ['startup', 'periodic', 'persistent'] as const) {
+  test(`supervisor ${mode} census failure stops its host and preserves cleanup truth`, async () => {
+    const fixture = setup();
+    const client = new NativeSessionClient(fixture.root);
+    const config = join(fixture.cwd, 'census-fault.json');
+    const previousOptions = process.env.NODE_OPTIONS;
+    const previousFault = process.env.FARMSLOT_NATIVE_CENSUS_FAULT;
+    const preload = new URL(
+      '../../../../scripts/runner-validation/fixtures/native-census-fault.mjs',
+      import.meta.url,
+    ).href;
+    process.env.NODE_OPTIONS = `${previousOptions ?? ''} --import=${preload}`.trim();
+    process.env.FARMSLOT_NATIVE_CENSUS_FAULT = config;
+    writeFileSync(config, JSON.stringify({ root: fixture.root, armed: mode === 'startup' }), {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(fixture.cwd, 'codex'),
+      readFileSync(join(fixture.cwd, 'codex'), 'utf8').replace('},600);', '},60000);'),
+    );
+    let descendant: number | undefined;
+    let descendantStart: string | undefined;
+    try {
+      if (mode === 'startup') {
+        await assert.rejects(
+          client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
+          /Native host unavailable/,
+        );
+        const host = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+        const worker = readJson<{ pid: number }>(join(fixture.root, 'worker.json'));
+        assert.equal(alive(host.pid), false);
+        assert.equal(alive(worker.pid), false);
+        assert.equal(
+          readJson<{ state: string }>(join(fixture.root, 'cleanup.json')).state,
+          'complete',
+        );
+        const retry = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+        await client.close('owner', retry.id);
+      } else {
+        const session = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+        const host = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+        await client.send('owner', session.id, 'census', 'crash');
+        await until(() => existsSync(join(fixture.cwd, 'descendant')));
+        descendant = Number(readFileSync(join(fixture.cwd, 'descendant'), 'utf8'));
+        descendantStart = execFileSync('ps', ['-p', String(descendant), '-o', 'lstart='], {
+          encoding: 'utf8',
+        }).trim();
+        writeFileSync(
+          config,
+          JSON.stringify({ root: fixture.root, armed: false, observePid: descendant }),
+        );
+        await until(() => existsSync(`${config}.observed`));
+        writeFileSync(
+          config,
+          JSON.stringify({ root: fixture.root, armed: true, persistent: mode === 'persistent' }),
+        );
+        await until(
+          () => existsSync(`${config}.fired`) && !alive(host.pid) && !alive(session.hostPid),
+        );
+        await until(() => !alive(session.processPid!));
+        const cleanup = readJson<{
+          state: string;
+          error?: string;
+          observedProcesses?: Array<{ pid: number }>;
+        }>(join(fixture.root, 'cleanup.json'));
+        assert.equal(cleanup.state, mode === 'persistent' ? 'unknown' : 'complete');
+        assert.match(cleanup.error ?? '', /census timeout/);
+        assert.equal(existsSync(join(fixture.cwd, 'effects')), false);
+        if (mode === 'persistent') {
+          assert.ok(cleanup.observedProcesses?.some((entry) => entry.pid === descendant));
+          await assert.rejects(client.list('owner'), /Native host unavailable/);
+        } else {
+          assert.equal(alive(descendant), false);
+          const recovered = await client.read('owner', session.id);
+          assert.equal(recovered.session.state, 'failed');
+          assert.equal(recovered.session.processStopped, true);
+        }
+      }
+    } finally {
+      rmSync(config, { force: true });
+      const hostFile = join(fixture.root, 'host.json');
+      if (existsSync(hostFile)) {
+        const host = readJson<HostIdentity>(hostFile);
+        if (alive(host.pid)) {
+          process.kill(host.pid, 'SIGTERM');
+          await until(() => !alive(host.pid));
+        }
+      }
+      if (descendant && alive(descendant)) {
+        const ownedDescendant = descendant;
+        const current = execFileSync('ps', ['-p', String(ownedDescendant), '-o', 'lstart='], {
+          encoding: 'utf8',
+        }).trim();
+        assert.equal(current, descendantStart, 'Fixture descendant PID was reused');
+        process.kill(ownedDescendant, 'SIGKILL');
+        await until(() => !alive(ownedDescendant));
+      }
+      if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = previousOptions;
+      if (previousFault === undefined) delete process.env.FARMSLOT_NATIVE_CENSUS_FAULT;
+      else process.env.FARMSLOT_NATIVE_CENSUS_FAULT = previousFault;
+      rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
+      fixture.restore();
+    }
+  });
 }
 
 test('reserved native creation is concurrent-safe and survives journal reload without relaunch', async () => {
@@ -193,6 +303,493 @@ test('an uncertain reservation fsync remains failed after retry and journal relo
   }
 });
 
+test('worker launch keeps environment private and transfers only an idle task lease', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const secret = `private-environment-${randomUUID()}`;
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: './codex',
+    effort: 'high',
+    safetyTier: 'full-auto',
+    environment: { set: { NATIVE_WORKER_PROBE: secret }, unset: [] },
+  };
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  try {
+    assert.throws(
+      () => decodeNativeWorkerLaunch({ ...launch, futurePermissionFlag: true }),
+      /Unsupported/,
+    );
+    const session = await manager.ensure('owner', params, launch);
+    assert.equal(session.workerManaged, true);
+    assert.equal(session.workerLeaseId, launch.leaseId);
+    const started = readJson<{
+      params: { approvalPolicy: string; sandbox: string };
+      env: Record<string, string>;
+    }>(join(fixture.cwd, 'native-start.json'));
+    assert.deepEqual(started.env, { probe: secret, omc: '1', omx: '1' });
+    assert.equal(started.params.approvalPolicy, 'never');
+    assert.equal(started.params.sandbox, 'workspace-write');
+    const next = { ...launch, leaseId: randomUUID() };
+    await manager.send('owner', session.id, randomUUID(), 'approval');
+    assert.equal(
+      readJson<{ effort: string }>(join(fixture.cwd, 'native-turn.json')).effort,
+      'high',
+    );
+    await until(() => manager.read('owner', session.id).pendingRequests.length > 0);
+    assert.throws(
+      () => manager.transferWorker('owner', session.id, session.generation, launch.leaseId, next),
+      /idle session/,
+    );
+    await manager.respond(
+      'owner',
+      session.id,
+      manager.read('owner', session.id).pendingRequests[0]!.request!.id,
+      { decision: 'deny' },
+    );
+    await until(() => manager.read('owner', session.id).session.state === 'idle');
+    assert.throws(
+      () =>
+        manager.transferWorker('owner', session.id, session.generation, launch.leaseId, {
+          ...next,
+          safetyTier: 'dangerous',
+        }),
+      /preserve generation and launch configuration/,
+    );
+    const handedOff = manager.transferWorker(
+      'owner',
+      session.id,
+      session.generation,
+      launch.leaseId,
+      next,
+    );
+    assert.equal(handedOff.workerLeaseId, next.leaseId);
+    assert.equal(handedOff.processPid, session.processPid);
+    assert.equal(
+      manager.transferWorker('owner', session.id, session.generation, launch.leaseId, next)
+        .workerLeaseId,
+      next.leaseId,
+    );
+    assert.throws(
+      () => manager.assertWorkerLease('owner', session.id, session.generation, launch.leaseId),
+      /task lease changed/,
+    );
+    await assert.rejects(manager.ensure('owner', params, launch), /another worker task lease/);
+    manager.assertWorkerLease('owner', session.id, session.generation, next.leaseId);
+    assert.equal((await manager.ensure('owner', params, next)).processPid, session.processPid);
+    assert.equal(
+      readFileSync(join(fixture.root, `${session.id}.journal`), 'utf8').includes(secret),
+      false,
+    );
+    await manager.close('owner', session.id);
+    await assert.rejects(
+      manager.create('owner', {
+        runner: 'codex',
+        cwd: fixture.cwd,
+        resumeSessionId: session.nativeSessionId,
+      }),
+      /Worker recovery requires/,
+    );
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('uncertain worker lease persistence refuses input until explicit close and recovery', async (t) => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const session = await manager.ensure('owner', params, launch);
+  const next = { ...launch, leaseId: randomUUID() };
+  const fault = t.mock.method(fs, 'fsyncSync', () => {
+    throw new Error('Lease flush failed');
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => manager.transferWorker('owner', session.id, session.generation, launch.leaseId, next),
+      /Lease flush failed/,
+    );
+    fault.mock.restore();
+    syncBuiltinESMExports();
+    assert.throws(
+      () => manager.assertWorkerLease('owner', session.id, session.generation, next.leaseId),
+      /Lease flush failed/,
+    );
+    assert.throws(
+      () => manager.transferWorker('owner', session.id, session.generation, launch.leaseId, next),
+      /Lease flush failed/,
+    );
+    await assert.rejects(manager.ensure('owner', params, next), /Lease flush failed/);
+    manager.assertWorkerLease('owner', session.id, session.generation, next.leaseId, true);
+    await manager.close('owner', session.id);
+    const reloaded = new NativeSessionManager(fixture.root);
+    const closed = await reloaded.ensure('owner', params, next);
+    assert.equal(closed.state, 'closed');
+    assert.equal(closed.workerLeaseId, next.leaseId);
+  } finally {
+    fault.mock.restore();
+    syncBuiltinESMExports();
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('cancelling an initial worker reservation prevents a delayed launch and survives reload', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  const pending = manager.ensure('owner', params, launch);
+  try {
+    assert.equal(
+      (await manager.cancelWorker('owner', params.sessionId, launch.leaseId)).cancelled,
+      true,
+    );
+    await assert.rejects(pending, /cancelled before launch/);
+    assert.equal(existsSync(join(fixture.cwd, 'native-start.json')), false);
+    assert.equal(manager.list('owner').length, 0);
+    const reloaded = new NativeSessionManager(fixture.root);
+    await assert.rejects(reloaded.ensure('owner', params, launch), /cancelled before launch/);
+    await assert.rejects(
+      reloaded.cancelWorker('other', params.sessionId, launch.leaseId),
+      /another owner/,
+    );
+  } finally {
+    await Promise.allSettled([pending]);
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('cancelling a reserved handoff fences a delayed transfer and preserves later task leases', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  const successor = { ...launch, leaseId: randomUUID() };
+  try {
+    const session = await manager.ensure('owner', params, launch);
+    await assert.rejects(
+      manager.cancelWorker(
+        'other',
+        session.id,
+        successor.leaseId,
+        session.generation,
+        launch.leaseId,
+      ),
+      /ownership changed/,
+    );
+    assert.equal(manager.read('owner', session.id).session.workerLeaseId, launch.leaseId);
+    const cancel = manager.cancelWorker(
+      'owner',
+      session.id,
+      successor.leaseId,
+      session.generation,
+      launch.leaseId,
+    );
+    const delayed = manager.transferWorker(
+      'owner',
+      session.id,
+      session.generation,
+      launch.leaseId,
+      successor,
+    );
+    assert.equal(delayed.workerLeaseId, successor.leaseId);
+    const stopped = await cancel;
+    assert.equal(stopped.session?.processStopped, true);
+    assert.equal(stopped.session?.state, 'closed');
+    const retried = await manager.ensure('owner', params, successor);
+    assert.equal(retried.state, 'closed');
+    assert.equal(retried.processPid, session.processPid);
+    assert.equal(
+      (await new NativeSessionManager(fixture.root).ensure('owner', params, successor)).state,
+      'closed',
+    );
+    const resumed = await manager.create(
+      'owner',
+      { ...params, resumeSessionId: session.nativeSessionId },
+      successor,
+    );
+    const later = { ...successor, leaseId: randomUUID() };
+    manager.transferWorker('owner', session.id, resumed.generation, successor.leaseId, later);
+    await assert.rejects(
+      manager.cancelWorker(
+        'owner',
+        session.id,
+        successor.leaseId,
+        resumed.generation,
+        launch.leaseId,
+      ),
+      /ownership changed/,
+    );
+    assert.equal(manager.read('owner', session.id).session.workerLeaseId, later.leaseId);
+    assert.ok(alive(resumed.processPid!));
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('cancelled recovery IDs survive reload while a new explicit recovery remains available', async () => {
+  const fixture = setup();
+  let manager = new NativeSessionManager(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  try {
+    const first = await manager.ensure(
+      'owner',
+      { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd },
+      launch,
+    );
+    await manager.closeWorker('owner', first.id, first.generation, launch.leaseId);
+    const params = {
+      sessionId: first.id,
+      generation: first.generation,
+      runner: 'codex',
+      cwd: fixture.cwd,
+      resumeSessionId: first.nativeSessionId,
+    };
+    const cancelledIds = [randomUUID(), randomUUID()];
+    for (const commandId of cancelledIds)
+      await manager.cancelWorker(
+        'owner',
+        first.id,
+        launch.leaseId,
+        first.generation,
+        undefined,
+        commandId,
+      );
+    manager = new NativeSessionManager(fixture.root);
+    for (const commandId of cancelledIds)
+      await assert.rejects(
+        manager.resumeWorker('owner', { ...params, commandId }, launch),
+        /operation was cancelled/,
+      );
+    const resumed = await manager.resumeWorker(
+      'owner',
+      { ...params, commandId: randomUUID() },
+      launch,
+    );
+    assert.notEqual(resumed.generation, first.generation);
+    for (const commandId of cancelledIds) {
+      await manager.cancelWorker(
+        'owner',
+        first.id,
+        launch.leaseId,
+        first.generation,
+        undefined,
+        commandId,
+      );
+      assert.equal(manager.read('owner', first.id).session.generation, resumed.generation);
+      assert.ok(alive(resumed.processPid!));
+    }
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+for (const race of ['cancel', 'transfer'] as const) {
+  test(`worker resume rechecks ${race} after its asynchronous executable probe`, async () => {
+    const fixture = setup();
+    const manager = new NativeSessionManager(fixture.root);
+    const launch: NativeWorkerLaunch = {
+      leaseId: randomUUID(),
+      executable: join(fixture.cwd, 'codex'),
+      safetyTier: 'sandboxed',
+      environment: { set: {}, unset: [] },
+    };
+    let pending: Promise<unknown> | undefined;
+    try {
+      const first = await manager.ensure(
+        'owner',
+        { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd },
+        launch,
+      );
+      await manager.closeWorker('owner', first.id, first.generation, launch.leaseId);
+      const startReceipt = readFileSync(join(fixture.cwd, 'native-start.json'), 'utf8');
+      const binary = readFileSync(launch.executable!, 'utf8');
+      writeFileSync(
+        launch.executable!,
+        binary.replace(
+          "if (process.argv.includes('--version')) {",
+          `if (process.argv.includes('--version')) {
+        const probeFs = require('node:fs');
+        probeFs.writeFileSync('version-entered', '');
+        while (!probeFs.existsSync('version-release')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      `,
+        ),
+      );
+      const commandId = randomUUID();
+      pending = manager.resumeWorker(
+        'owner',
+        {
+          sessionId: first.id,
+          generation: first.generation,
+          runner: 'codex',
+          cwd: fixture.cwd,
+          resumeSessionId: first.nativeSessionId,
+          commandId,
+        },
+        launch,
+      );
+      const rejected = assert.rejects(
+        pending,
+        race === 'cancel' ? /operation was cancelled/ : /lease changed/,
+      );
+      await until(() => existsSync(join(fixture.cwd, 'version-entered')));
+      if (race === 'cancel')
+        await manager.cancelWorker(
+          'owner',
+          first.id,
+          launch.leaseId,
+          first.generation,
+          undefined,
+          commandId,
+        );
+      else
+        manager.transferWorker('owner', first.id, first.generation, launch.leaseId, {
+          ...launch,
+          leaseId: randomUUID(),
+        });
+      writeFileSync(join(fixture.cwd, 'version-release'), '');
+      await rejected;
+      const after = manager.read('owner', first.id).session;
+      assert.equal(after.generation, first.generation);
+      assert.equal(after.processStopped, true);
+      assert.equal(readFileSync(join(fixture.cwd, 'native-start.json'), 'utf8'), startReceipt);
+    } finally {
+      writeFileSync(join(fixture.cwd, 'version-release'), '');
+      if (pending) await Promise.allSettled([pending]);
+      for (const session of manager.list('owner')) await manager.close('owner', session.id);
+      fixture.restore();
+    }
+  });
+}
+
+test('replayed worker cancellation cannot stop an explicitly resumed generation', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  try {
+    const first = await manager.ensure('owner', params, launch);
+    await manager.cancelWorker('owner', first.id, launch.leaseId);
+    const resumed = await manager.create(
+      'owner',
+      { ...params, resumeSessionId: first.nativeSessionId },
+      launch,
+    );
+    assert.notEqual(resumed.generation, first.generation);
+    for (const generation of [undefined, first.generation]) {
+      const replay = await manager.cancelWorker('owner', first.id, launch.leaseId, generation);
+      assert.equal(replay.generation, first.generation);
+      assert.equal(manager.read('owner', first.id).session.state, 'idle');
+      assert.ok(alive(resumed.processPid!));
+    }
+    const closed = await manager.cancelWorker(
+      'owner',
+      first.id,
+      launch.leaseId,
+      resumed.generation,
+    );
+    assert.equal(closed.session?.state, 'closed');
+    assert.equal(closed.session?.processStopped, true);
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
+  }
+});
+
+test('worker host rejects public input and accepts only leased commands and permission replies', async () => {
+  const fixture = setup();
+  const client = new NativeSessionClient(fixture.root);
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+  };
+  try {
+    const session = await client.ensureWorker(
+      'owner',
+      { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd },
+      launch,
+    );
+    const target = {
+      sessionId: session.id,
+      generation: session.generation,
+      leaseId: launch.leaseId,
+    };
+    await assert.rejects(
+      client.send('owner', session.id, 'unleased', 'approval'),
+      /requires its run context/,
+    );
+    await assert.rejects(client.interrupt('owner', session.id), /requires its run context/);
+    await assert.rejects(client.close('owner', session.id), /requires its run context/);
+    await assert.rejects(
+      client.sendWorker('owner', { ...target, leaseId: randomUUID() }, 'stale', 'approval'),
+      /lease changed/,
+    );
+    assert.equal(existsSync(join(fixture.cwd, 'inputs')), false);
+    await client.sendWorker('owner', target, 'leased-approval', 'approval');
+    await until(async () => (await client.read('owner', session.id)).pendingRequests.length === 1);
+    const pending = (await client.read('owner', session.id)).pendingRequests[0]!.request!.id;
+    await assert.rejects(
+      client.respond('owner', session.id, pending, { decision: 'approve' }),
+      /requires its run context/,
+    );
+    await assert.rejects(
+      client.respondWorker('owner', { ...target, generation: randomUUID() }, pending, {
+        decision: 'approve',
+      }),
+      /generation.*changed/,
+    );
+    assert.equal((await client.read('owner', session.id)).pendingRequests.length, 1);
+    await client.respondWorker('owner', target, pending, { decision: 'deny' });
+    await until(async () => (await client.read('owner', session.id)).session.state === 'idle');
+    assert.equal((await client.closeWorker('owner', target)).processStopped, true);
+  } finally {
+    const file = join(fixture.root, 'host.json');
+    if (existsSync(file)) {
+      const host = readJson<HostIdentity>(file);
+      if (alive(host.pid)) {
+        process.kill(host.pid, 'SIGTERM');
+        await until(() => !alive(host.pid));
+      }
+    }
+    rmSync(socketDirectory(fixture.root), { recursive: true, force: true });
+    fixture.restore();
+  }
+});
+
 test('old native hosts retain ordinary reads but refuse ensured creation before IPC', async () => {
   const fixture = setup();
   const socketRoot = socketDirectory(fixture.root);
@@ -224,6 +821,19 @@ test('old native hosts retain ordinary reads but refuse ensured creation before 
     await assert.rejects(
       client.ensure('owner', { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd }),
       /host upgrade required/,
+    );
+    assert.deepEqual(requests, ['list']);
+    await assert.rejects(
+      client.ensureWorker(
+        'owner',
+        { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd },
+        {
+          leaseId: randomUUID(),
+          safetyTier: 'sandboxed',
+          environment: { set: {}, unset: [] },
+        },
+      ),
+      /host upgrade required for worker launch/,
     );
     assert.deepEqual(requests, ['list']);
   } finally {
@@ -609,5 +1219,49 @@ test('unregistered host cannot bind and exits if its supervisor disappears', asy
   } finally {
     if (child.exitCode === null) child.kill('SIGKILL');
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a stopped worker transfers its lease before resuming the saved conversation', async () => {
+  const fixture = setup();
+  const manager = new NativeSessionManager(fixture.root);
+  const params = { sessionId: randomUUID(), runner: 'codex', cwd: fixture.cwd };
+  const launch: NativeWorkerLaunch = {
+    leaseId: randomUUID(),
+    executable: join(fixture.cwd, 'codex'),
+    safetyTier: 'full-auto',
+    environment: { set: {}, unset: [] },
+  };
+  const successor = { ...launch, leaseId: randomUUID() };
+  try {
+    const first = await manager.ensure('owner', params, launch);
+    await manager.cancelWorker('owner', first.id, launch.leaseId, first.generation);
+    const transferred = manager.transferWorker(
+      'owner',
+      first.id,
+      first.generation,
+      launch.leaseId,
+      successor,
+    );
+    assert.equal(transferred.processStopped, true);
+    assert.equal(transferred.generation, first.generation);
+    assert.equal(transferred.workerLeaseId, successor.leaseId);
+    assert.throws(
+      () => manager.assertWorkerLease('owner', first.id, first.generation, launch.leaseId),
+      /lease changed/,
+    );
+    const resumed = await manager.create(
+      'owner',
+      { ...params, resumeSessionId: first.nativeSessionId },
+      successor,
+    );
+    assert.equal(resumed.nativeSessionId, first.nativeSessionId);
+    assert.notEqual(resumed.generation, first.generation);
+    await manager.cancelWorker('owner', first.id, launch.leaseId, first.generation);
+    assert.ok(alive(resumed.processPid!));
+    assert.equal(manager.read('owner', first.id).session.workerLeaseId, successor.leaseId);
+  } finally {
+    for (const session of manager.list('owner')) await manager.close('owner', session.id);
+    fixture.restore();
   }
 });

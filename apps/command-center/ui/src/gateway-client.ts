@@ -7,7 +7,7 @@ import type {
   RequestFrame,
   ResponseFrame,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, workspaceAccessFromAuth } from '@farmslot/protocol';
 
 import {
   createIdleRequestTimeout,
@@ -182,6 +182,7 @@ export class GatewayClient {
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
   private principalId: string | null = null;
+  private access: 'farm' | 'native' | 'none' = 'none';
   private reqId = 0;
   private pending = new Map<string, PendingRequest>();
   private eventSubs = new Map<string, Set<EventCallback>>();
@@ -229,6 +230,10 @@ export class GatewayClient {
     return this.state === 'connected' ? this.principalId : null;
   }
 
+  get workspaceAccess(): 'farm' | 'native' | 'none' {
+    return this.state === 'connected' ? this.access : 'none';
+  }
+
   get connectionEpoch(): number {
     return this.epoch;
   }
@@ -262,6 +267,7 @@ export class GatewayClient {
     this.authBlocked = false;
     this.lastAuthError = null;
     replaceStoredGatewayAuthForHttp(auth);
+    this.rejectAllPending('Gateway credentials changed');
     this.teardownSocket();
     this.setState('disconnected');
   }
@@ -384,6 +390,7 @@ export class GatewayClient {
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
     this.principalId = result.principal?.id ?? null;
+    this.access = workspaceAccessFromAuth(result);
     this.epoch += 1;
     this.backoff = 1000;
     this.lastAuthError = null;

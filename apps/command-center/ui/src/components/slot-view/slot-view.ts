@@ -406,7 +406,10 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   _selectedAgentContext(): AgentContextSummary | null {
-    return selectSlotViewAgentContext(this._agentContexts(), this._selectedAgentContextId);
+    return selectSlotViewAgentContext(
+      this._agentContexts(),
+      this._getHashParam('contextId') ?? this._selectedAgentContextId,
+    );
   }
 
   _taskAgentContext(): AgentContextSummary | null {
@@ -433,6 +436,7 @@ export class SlotView extends SlotViewRecipePresenter {
       this._selectedAgentContextIds = { ...this._selectedAgentContextIds, [this.slotId]: ctx.id };
     }
     this._saveLayout();
+    syncSlotViewUrlState(this, ctx.id);
   }
 
   _renderAgentContexts() {

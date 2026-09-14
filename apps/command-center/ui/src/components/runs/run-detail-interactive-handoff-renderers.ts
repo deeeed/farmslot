@@ -6,6 +6,7 @@ import { marked } from 'marked';
 import {
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
   INTERACTIVE_HANDOFF_SIGNAL_ACTION,
+  NATIVE_WORKER_RESUME_ACTION,
   primaryRoleForFlow,
   type ResourcePostureGateChoice,
   type Run,
@@ -35,6 +36,7 @@ export interface InteractiveHandoffRenderContext {
   signalCheckError: string | null;
   confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
   checkSignalAndResume: (runId: string, decision: RunDecision) => void;
+  resumeStoppedWorker: (runId: string, decision: RunDecision) => void;
   /** ADR-054 gate choice plus the Gateway's preview of its effect. */
   posture: RunPostureGateState;
   /** Why resolving is blocked by the posture choice, or null when it is not. */
@@ -61,7 +63,14 @@ export function renderInteractiveHandoffGate(
   const primaryAction = actions.find((action) => action.id === INTERACTIVE_HANDOFF_SIGNAL_ACTION);
   const extendAction = actions.find((action) => action.id === INTERACTIVE_HANDOFF_EXTEND_ACTION);
   const abortAction = actions.find((action) => action.id === 'abort');
-  const primaryHelp = primaryAction?.description ?? '';
+  const resumeAction =
+    run.transport === 'native'
+      ? actions.find((action) => action.id === NATIVE_WORKER_RESUME_ACTION)
+      : undefined;
+  const primaryHelp =
+    run.transport === 'native'
+      ? "Check the worker's completion report before advancing the run."
+      : (primaryAction?.description ?? '');
   const extendHelp = extendAction?.description ?? '';
 
   return html`
@@ -117,25 +126,29 @@ export function renderInteractiveHandoffGate(
           DOMPurify.sanitize(marked.parse(decision.description ?? '', { async: false }) as string),
         )}
       </div>
-      <details class="ih-help">
-        <summary>SIGNAL.json help</summary>
-        <div>
-          ${signalFile
-            ? html`<div>Expected path: <code class="ih-path">${signalFile}</code></div>`
-            : html`<div>Expected path: resolve from the worker task directory in Slot View.</div>`}
-          <ol>
-            <li>Do any manual PR work in the slot terminal.</li>
-            <li>Mark checklist progress: <code>./mark 1</code>, <code>./mark 2</code>, …</li>
-            <li>
-              When done, write a terminal signal:
-              <code>./mark complete</code> or <code>./mark no-change --reason "…"</code>
-            </li>
-            <li>Click <strong>Check SIGNAL.json &amp; resume</strong>.</li>
-          </ol>
-          <div>Minimum terminal example (success):</div>
-          <pre>${SIGNAL_EXAMPLE}</pre>
-        </div>
-      </details>
+      ${run.transport === 'native'
+        ? nothing
+        : html`<details class="ih-help">
+            <summary>SIGNAL.json help</summary>
+            <div>
+              ${signalFile
+                ? html`<div>Expected path: <code class="ih-path">${signalFile}</code></div>`
+                : html`<div>
+                    Expected path: resolve from the worker task directory in Slot View.
+                  </div>`}
+              <ol>
+                <li>Do any manual PR work in the slot terminal.</li>
+                <li>Mark checklist progress: <code>./mark 1</code>, <code>./mark 2</code>, …</li>
+                <li>
+                  When done, write a terminal signal:
+                  <code>./mark complete</code> or <code>./mark no-change --reason "…"</code>
+                </li>
+                <li>Click <strong>Check SIGNAL.json &amp; resume</strong>.</li>
+              </ol>
+              <div>Minimum terminal example (success):</div>
+              <pre>${SIGNAL_EXAMPLE}</pre>
+            </div>
+          </details>`}
       ${context.signalCheckError
         ? html`<div class="ih-error" role="alert">${context.signalCheckError}</div>`
         : nothing}
@@ -146,6 +159,23 @@ export function renderInteractiveHandoffGate(
         run,
       })}
       <div class="gate-actions">
+        ${resumeAction
+          ? html`<div class="gate-action-cell">
+              <button
+                class="gate-action-btn"
+                data-testid="native-worker-resume"
+                style="background:${colors.accent}; border-color:${colors.accent}; color:#fff"
+                ?disabled=${context.actionsBlocked ||
+                context.signalCheckBusy ||
+                context.postureBlockedReason !== null}
+                title=${context.postureBlockedReason ?? resumeAction.description ?? ''}
+                @click=${() => context.resumeStoppedWorker(run.id, decision)}
+              >
+                ${context.signalCheckBusy ? 'Resuming…' : resumeAction.label}
+              </button>
+              <div class="gate-action-help">${resumeAction.description}</div>
+            </div>`
+          : nothing}
         ${primaryAction
           ? html`
               <div class="gate-action-cell">
@@ -158,7 +188,11 @@ export function renderInteractiveHandoffGate(
                   title=${context.postureBlockedReason ?? primaryHelp}
                   @click=${() => context.checkSignalAndResume(run.id, decision)}
                 >
-                  ${context.signalCheckBusy ? 'Checking…' : primaryAction.label}
+                  ${context.signalCheckBusy
+                    ? 'Checking…'
+                    : run.transport === 'native'
+                      ? 'Check task completion'
+                      : primaryAction.label}
                 </button>
                 ${primaryHelp ? html`<div class="gate-action-help">${primaryHelp}</div>` : nothing}
               </div>

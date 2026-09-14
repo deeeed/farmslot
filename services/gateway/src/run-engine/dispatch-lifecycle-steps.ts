@@ -6,6 +6,7 @@ import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
+import { nudgeNativeWorker } from '../runners/native/worker-nudge.js';
 import {
   hostListEligibleLabels,
   hostMarkAccountExhausted,
@@ -285,7 +286,7 @@ export async function executePrepareStep(
   // F2.10 preflight: remote slots must expose tmux/lsof/node on PATH
   // before prepare runs. Failing early with a readable error avoids minutes
   // of confusing "metro up but capture-helper silently dies" diagnostics.
-  const pathProbe = await probeRemotePath(current.slotId);
+  const pathProbe = await probeRemotePath(current.slotId, current.transport);
   if (!pathProbe.ok) {
     const msg = pathProbe.detail
       ? `Remote PATH probe failed on ${pathProbe.machine}: ${pathProbe.detail}. Run: scripts/audit-remote-path.sh`
@@ -495,6 +496,7 @@ export async function executeDispatchStep(
             success: true,
             warmHandoff: true,
             workerTarget: result.workerTarget,
+            ...(result.nativeSession ? { nativeSession: result.nativeSession } : {}),
             subSteps,
             readinessWaitMs: Date.now() - dispatchStart,
             runner: result.runner,
@@ -544,6 +546,19 @@ export async function executeDispatchStep(
     }
     const collector = createSubStepCollector();
     const dispatchStart = Date.now();
+    if (current.transport === 'native') {
+      const result = await nudgeNativeWorker(runId, collector.emit);
+      updateRun(runId, { activeTaskFile: result.taskFile ?? undefined });
+      return {
+        inputs,
+        outputs: {
+          success: true,
+          ...result,
+          subSteps: collector.finish(),
+          readinessWaitMs: Date.now() - dispatchStart,
+        },
+      };
+    }
     const result = await nudgeDispatch(
       {
         slotId: current.slotId,
@@ -602,6 +617,7 @@ export async function executeDispatchStep(
   ];
   if (current.metrics.runner) cliCommandParts.push('--runner', shellQuote(current.metrics.runner));
   if (current.metrics.model) cliCommandParts.push('--model', shellQuote(current.metrics.model));
+  if (current.transport === 'native') cliCommandParts.push('--transport', 'native');
   if (current.app) cliCommandParts.push('--app', shellQuote(current.app));
   const cliCommand = cliCommandParts.join(' ');
 
@@ -616,7 +632,10 @@ export async function executeDispatchStep(
   // Eligibility + ledger live on the execution host (node-local multi-node safe).
   const runnerId = normalizeRunner(current.metrics.runner);
   const statusProvider = getRunnerStatusProvider(runnerId);
-  const supportsBind = Boolean(statusProvider?.supportsAccountBinding);
+  // Native dispatch pins its account with the durable session reservation. Retrying an
+  // already-accepted native task must not run a new quota/failover selection first.
+  const supportsBind =
+    current.transport !== 'native' && Boolean(statusProvider?.supportsAccountBinding);
   const triedLabels: string[] = [];
   let rebindDone = false;
   let forcedLabel: string | undefined;

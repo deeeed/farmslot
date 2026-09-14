@@ -33,6 +33,7 @@ export interface ResolvedAuth {
 }
 
 const PROVIDER_ENV_VARS: Record<string, string[]> = {
+  'codex-lb': ['CODEX_LB_API_KEY'],
   anthropic: ['ANTHROPIC_API_KEY'],
   openai: ['OPENAI_API_KEY'],
   google: ['GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
@@ -60,6 +61,12 @@ function oauthBundle(
 }
 
 export async function resolveAuth(provider: string): Promise<ResolvedAuth | null> {
+  // LB credentials are client keys supplied by its launcher. Never search upstream
+  // OAuth stores or import a user's native account when this route is selected.
+  if (provider === 'codex-lb') {
+    const apiKey = process.env.CODEX_LB_API_KEY?.trim();
+    return apiKey ? { apiKey, source: 'env:CODEX_LB_API_KEY' } : null;
+  }
   // 1. Farmslot's own store. OAuth credentials get a proactive refresh when
   // they're within the expiry window so the caller never sees an expired
   // access token (failure mode that previously showed up as silent codex

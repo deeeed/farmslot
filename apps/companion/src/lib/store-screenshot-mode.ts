@@ -45,6 +45,7 @@ export function seedStoreScreenshotMode(): void {
   useFilterStore.getState().setAvailable(fixtures.fleet.slots);
   useConnectionStore.setState({
     status: 'connected',
+    workspaceAccess: 'farm',
     healthStatus: 'healthy',
     gatewayUrl: DEMO_PROFILE.url,
     profiles: [DEMO_PROFILE],

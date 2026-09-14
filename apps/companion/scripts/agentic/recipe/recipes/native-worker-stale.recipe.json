@@ -1,0 +1,47 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Refuse stale mobile worker generation",
+  "description": "An active private worker is selected using an obsolete generation and a nonempty draft. Its input must remain disabled.",
+  "workflow": {
+    "entry": "open-stale",
+    "nodes": {
+      "open-stale": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs open-stale",
+        "intent": "Open an obsolete generation of an otherwise live worker.",
+        "next": "stale-error"
+      },
+      "stale-error": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-error",
+        "text_contains": ["stale"],
+        "timeout_ms": 20000,
+        "intent": "Show the gateway refusal for the stale task generation.",
+        "next": "read-only"
+      },
+      "read-only": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-read-only",
+        "timeout_ms": 20000,
+        "intent": "Keep the prefilled obsolete instruction from controlling the live worker.",
+        "next": "capture"
+      },
+      "capture": {
+        "action": "ui.screenshot",
+        "path": "stale-worker.png",
+        "intent": "Record the stale-target refusal and disabled input controls.",
+        "next": "verify"
+      },
+      "verify": {
+        "action": "command",
+        "cmd": "yarn exec node scripts/agentic/native-worker-proof.mjs verify-no-mobile",
+        "intent": "Prove the live worker received no command and the draft made no file.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

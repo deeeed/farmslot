@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import {
   Methods,
+  type NativeWorkerControlTarget,
   type NativeWorkspaceChangesResult,
   type NativeWorkspaceDiffResult,
   type NativeWorkspaceListResult,
@@ -24,6 +25,7 @@ export class NativeWorkspace extends LitElement {
   @property() sessionId = '';
   @property() executionNodeId = 'local';
   @property({ attribute: false }) api: NativeSessionApi = gateway;
+  @property({ attribute: false }) worker?: NativeWorkerControlTarget;
   @state() private tab: 'files' | 'changes' = 'changes';
   @state() private directory = '.';
   @state() private listing?: NativeWorkspaceListResult;
@@ -126,7 +128,12 @@ export class NativeWorkspace extends LitElement {
   `;
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('sessionId') || changed.has('executionNodeId')) {
+    if (
+      changed.has('sessionId') ||
+      changed.has('executionNodeId') ||
+      (changed.has('worker') &&
+        JSON.stringify(changed.get('worker')) !== JSON.stringify(this.worker))
+    ) {
       this.revision++;
       this.directory = '.';
       this.selected = '';
@@ -136,6 +143,11 @@ export class NativeWorkspace extends LitElement {
       this.changes = undefined;
       if (this.sessionId) void this.refresh();
     }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.revision++;
   }
 
   private async refresh() {
@@ -148,14 +160,19 @@ export class NativeWorkspace extends LitElement {
       if (this.tab === 'files') {
         const result = await this.api.request<NativeWorkspaceListResult>(
           Methods.NATIVE_SESSION_WORKSPACE_LIST,
-          { sessionId, executionNodeId, path: this.directory },
+          {
+            sessionId,
+            executionNodeId,
+            path: this.directory,
+            ...(this.worker ? { worker: this.worker } : {}),
+          },
         );
         if (revision !== this.revision) return;
         this.listing = result;
       } else {
         const result = await this.api.request<NativeWorkspaceChangesResult>(
           Methods.NATIVE_SESSION_WORKSPACE_CHANGES,
-          { sessionId, executionNodeId },
+          { sessionId, executionNodeId, ...(this.worker ? { worker: this.worker } : {}) },
         );
         if (revision !== this.revision) return;
         this.changes = result;
@@ -186,13 +203,13 @@ export class NativeWorkspace extends LitElement {
       if (display === 'source') {
         const result = await this.api.request<NativeWorkspaceReadResult>(
           Methods.NATIVE_SESSION_WORKSPACE_READ,
-          { sessionId, executionNodeId, path },
+          { sessionId, executionNodeId, path, ...(this.worker ? { worker: this.worker } : {}) },
         );
         if (revision === this.revision) this.source = result;
       } else {
         const result = await this.api.request<NativeWorkspaceDiffResult>(
           Methods.NATIVE_SESSION_WORKSPACE_DIFF,
-          { sessionId, executionNodeId, path },
+          { sessionId, executionNodeId, path, ...(this.worker ? { worker: this.worker } : {}) },
         );
         if (revision === this.revision) this.diff = result;
       }

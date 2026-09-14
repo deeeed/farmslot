@@ -180,6 +180,22 @@ function validateCredentialStore(value: unknown, path: string): asserts value is
   value.credentials.forEach((credential, index) => validateCredential(credential, path, index));
   assertUniqueIds(value.principals, path, 'principal');
   assertUniqueIds(value.credentials, path, 'credential');
+  const principals = value.principals as Principal[];
+  const assignedMachines = new Set<string>();
+  for (const principal of principals) {
+    if (principal.subject.type !== 'node' || principal.subject.nativeOwnerPrincipalId === undefined)
+      continue;
+    const subject = principal.subject;
+    const owner = principals.find((candidate) => candidate.id === subject.nativeOwnerPrincipalId);
+    if (!owner || owner.subject.type === 'node' || principal.subject.machine === 'local')
+      fail(path, `principal '${principal.id}' has an invalid native owner assignment`);
+    if (assignedMachines.has(principal.subject.machine))
+      fail(
+        path,
+        `native machine '${principal.subject.machine}' has more than one assigned principal`,
+      );
+    assignedMachines.add(principal.subject.machine);
+  }
 }
 
 function validatePrincipal(
@@ -223,8 +239,14 @@ function validateSubject(
     fail(path, `principal[${index}].subject is invalid`);
   }
   if (value.type === 'person' || value.type === 'service') return;
-  if (value.type === 'node' && typeof value.machine === 'string' && value.machine.length > 0)
+  if (value.type === 'node' && typeof value.machine === 'string' && value.machine.length > 0) {
+    if (
+      value.nativeOwnerPrincipalId !== undefined &&
+      (typeof value.nativeOwnerPrincipalId !== 'string' || !value.nativeOwnerPrincipalId.trim())
+    )
+      fail(path, `principal[${index}].subject native owner is invalid`);
     return;
+  }
   fail(path, `principal[${index}].subject has an unknown or incomplete type`);
 }
 

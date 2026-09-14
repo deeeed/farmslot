@@ -191,6 +191,7 @@ export function RunFocusedArtifactCard({
   onOpenCompare,
   onOpenSlot,
   onOpenTerminal,
+  terminalLabel = 'Terminal',
   onOpenFamily,
   onOpenPR,
 }: {
@@ -209,6 +210,7 @@ export function RunFocusedArtifactCard({
   onOpenDiff: () => void;
   onOpenCompare: () => void;
   onOpenSlot: () => void;
+  terminalLabel?: string;
   onOpenTerminal: () => void;
   onOpenFamily: () => void;
   onOpenPR: () => void;
@@ -262,7 +264,7 @@ export function RunFocusedArtifactCard({
         />
         <CockpitTile label="Slot" value={slotId ?? '-'} onPress={onOpenSlot} disabled={!slotId} />
         <CockpitTile
-          label="Terminal"
+          label={terminalLabel}
           value={slotId ? 'live' : '-'}
           onPress={onOpenTerminal}
           disabled={!slotId}
@@ -308,6 +310,7 @@ export function RunReviewWorkspaceSummary({
   onOpenFamily,
   onOpenFamilyRetros,
   onOpenTerminal,
+  terminalLabel = 'Terminal',
   onOpenSlot,
   onOpenPR,
   onOpenCompareTarget,
@@ -328,6 +331,7 @@ export function RunReviewWorkspaceSummary({
   onOpenDiff: () => void;
   onOpenFamily: () => void | undefined;
   onOpenFamilyRetros: () => void | undefined;
+  terminalLabel?: string;
   onOpenTerminal: () => void | undefined;
   onOpenSlot: () => void | undefined;
   onOpenPR: () => void;
@@ -491,6 +495,7 @@ export function RunReviewWorkspaceSummary({
           onOpenDiff={onOpenDiff}
           onOpenSlot={onOpenSlot}
           onOpenTerminal={onOpenTerminal}
+          terminalLabel={terminalLabel}
           artifactCount={manifestCount}
           recipeArtifactCount={recipeArtifactCount}
           recipeAvailable={recipeAvailable}
@@ -522,6 +527,7 @@ export function RunReviewWorkspaceSummary({
         slotId={run.slotId}
         prNumber={run.prNumber}
         onOpenTerminal={onOpenTerminal}
+        terminalLabel={terminalLabel}
         onOpenSlot={onOpenSlot}
         onOpenPR={onOpenPR}
         onOpenArtifacts={() => onOpenArtifacts()}
@@ -733,6 +739,7 @@ export function RunBeforeAfterPriorityPanel({
   onOpenDiff,
   onOpenSlot,
   onOpenTerminal,
+  terminalLabel = 'Terminal',
 }: {
   pair: VisualArtifactPair;
   pairCount: number;
@@ -751,6 +758,7 @@ export function RunBeforeAfterPriorityPanel({
   onOpenRecipe: () => void;
   onOpenDiff: () => void;
   onOpenSlot: () => void | undefined;
+  terminalLabel?: string;
   onOpenTerminal: () => void | undefined;
 }) {
   return (
@@ -792,7 +800,7 @@ export function RunBeforeAfterPriorityPanel({
         <CockpitTile label="Diff" value={diffValue} onPress={onOpenDiff} />
         <CockpitTile label="Slot" value={slotId ?? '-'} onPress={onOpenSlot} disabled={!slotId} />
         <CockpitTile
-          label="Terminal"
+          label={terminalLabel}
           value={slotId ? 'live' : '-'}
           onPress={onOpenTerminal}
           disabled={!slotId}
@@ -824,6 +832,7 @@ export function RunWorkspaceCockpit({
   slotId,
   prNumber,
   onOpenTerminal,
+  terminalLabel = 'Terminal',
   onOpenSlot,
   onOpenPR,
   onOpenArtifacts,
@@ -851,6 +860,7 @@ export function RunWorkspaceCockpit({
   terminalAvailable: boolean;
   slotId: string | null | undefined;
   prNumber: number | null | undefined;
+  terminalLabel?: string;
   onOpenTerminal: () => void | undefined;
   onOpenSlot: () => void | undefined;
   onOpenPR: () => void;
@@ -877,7 +887,7 @@ export function RunWorkspaceCockpit({
           onPress={onOpenTerminal}
           disabled={!terminalAvailable}
         >
-          <Text style={styles.cockpitTerminalText}>Terminal</Text>
+          <Text style={styles.cockpitTerminalText}>{terminalLabel}</Text>
         </Pressable>
       </View>
       <ScrollView

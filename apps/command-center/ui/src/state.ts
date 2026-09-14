@@ -198,6 +198,29 @@ const state: AppState = {
   githubQuota: null,
 };
 
+function clearWorkspaceState(): void {
+  // Authentication transitions must not leave the previous owner's farm in memory.
+  Object.assign(state, {
+    fleet: null,
+    prs: [],
+    decisions: [],
+    runs: [],
+    runSummaryMeta: null,
+    runFamilySummaries: [],
+    runProjectAnalytics: [],
+    queueItems: [],
+    backlogItems: [],
+    workGraphs: [],
+    violations: [],
+    prsUpdatedAt: 0,
+    globalFilters: { projects: [], machines: [] },
+    projectDefaultBranches: {},
+    projectSlotTracking: {},
+    githubQuota: null,
+  });
+  state.runDeletionsRevision += 1;
+}
+
 function resetBootstrapState(): void {
   state.hydrated = { ...EMPTY_HYDRATED };
   state.bootstrapFailed = { ...EMPTY_HYDRATED };
@@ -723,9 +746,10 @@ export function initState(): void {
       // dead connection and would corrupt the next one if drained.
       activeBootstrap = null;
       resetBootstrapState();
+      clearWorkspaceState();
     }
     setConnection(conn);
-    if (conn === 'connected') {
+    if (conn === 'connected' && gateway.workspaceAccess === 'farm') {
       const epoch = gateway.connectionEpoch;
       void fetchInitialState(epoch);
     }
@@ -958,7 +982,9 @@ async function runFetchInitialState(
 ): Promise<void> {
   const epoch = bs.epoch;
   const stillCurrent = () =>
-    gateway.connectionState === 'connected' && gateway.connectionEpoch === epoch;
+    gateway.connectionState === 'connected' &&
+    gateway.workspaceAccess === 'farm' &&
+    gateway.connectionEpoch === epoch;
 
   const drainSlice = (slice: HydratedSlice) => {
     if (activeBootstrap !== bs) return;

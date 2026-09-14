@@ -8,6 +8,7 @@ import {
   InMemoryCredentialStore,
   type Message as PiMessage,
   type MutableModels as PiModels,
+  type ThinkingLevel,
   type Tool,
   type ToolCall,
   type ToolResultMessage,
@@ -18,6 +19,8 @@ import type { ChatToolTraceEntry, StepLLMUsage } from '@farmslot/protocol';
 import { execLocal } from '../core/exec.js';
 
 import { resolveAuth } from './auth-resolve.js';
+import { registerCodexAstra, reportedLlmCost, requiresExactAstraProvider } from './codex-astra.js';
+import { CODEX_LB_PROVIDER, registerCodexLb } from './codex-lb.js';
 import { getLLMConfig } from './config.js';
 
 // pi-ai ≥0.82 replaces the module-level getModel/completeSimple/streamSimple
@@ -35,9 +38,12 @@ export const piCredentialStore = new InMemoryCredentialStore();
 let piModelsPromise: Promise<PiModels> | null = null;
 // Exported so tests can swap a faux provider into the live collection.
 export function piModels(): Promise<PiModels> {
-  piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) =>
-    mod.builtinModels({ credentials: piCredentialStore }),
-  );
+  piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) => {
+    const models = mod.builtinModels({ credentials: piCredentialStore });
+    registerCodexAstra(models);
+    registerCodexLb(models);
+    return models;
+  });
   return piModelsPromise;
 }
 
@@ -76,6 +82,7 @@ export interface LLMCallOptions {
   systemPrompt?: string;
   userPrompt: string;
   maxTokens?: number;
+  reasoning?: ThinkingLevel;
   signal?: AbortSignal;
   /** Default true for interactive callers. Set false for authority-bound autonomous paths. */
   allowCliFallback?: boolean;
@@ -93,6 +100,7 @@ export interface LLMChatOptions {
   messages: ConversationMessage[]; // always required (CLI fallback path)
   piMessages?: PiMessage[]; // pre-built pi-ai history; bypasses stub construction
   maxTokens?: number;
+  reasoning?: ThinkingLevel;
   onDelta?: (text: string) => void;
   onStatus?: (text: string) => void;
   signal?: AbortSignal;
@@ -167,18 +175,21 @@ export const TIER_MAP: Record<string, Record<string, string>> = {
     anthropic: 'haiku',
     openai: 'gpt-4.1-mini',
     'openai-codex': 'gpt-5.6-luna',
+    'codex-lb': 'gpt-6-astra',
     google: 'gemini-flash',
   },
   standard: {
     anthropic: 'sonnet',
     openai: 'gpt-4.1',
     'openai-codex': 'gpt-5.6-terra',
+    'codex-lb': 'gpt-6-astra',
     google: 'gemini-pro',
   },
   smart: {
     anthropic: 'opus',
     openai: 'gpt-4.1',
     'openai-codex': 'gpt-5.6-sol',
+    'codex-lb': 'gpt-6-astra',
     google: 'gemini-pro',
   },
 };
@@ -222,10 +233,28 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMCallResult> {
 
   if (auth) {
     await ensureOAuthCredentialSeeded(provider, auth.oauth);
-    return callViaPiAi(provider, resolvedModel, auth.apiKey, auth.source, opts, maxTokens);
+    return callViaPiAi(
+      provider,
+      resolvedModel,
+      auth.apiKey,
+      auth.source,
+      {
+        ...opts,
+        reasoning:
+          opts.reasoning ??
+          (provider === 'openai-codex' || provider === CODEX_LB_PROVIDER
+            ? cfg.intelligenceEffort
+            : undefined),
+      },
+      maxTokens,
+    );
   }
 
-  if (opts.allowCliFallback === false) {
+  if (
+    opts.allowCliFallback === false ||
+    provider === CODEX_LB_PROVIDER ||
+    requiresExactAstraProvider(resolvedModel)
+  ) {
     throw new Error(`[llm] no API auth for ${provider}; CLI fallback disabled for this caller`);
   }
 
@@ -271,6 +300,7 @@ async function callViaPiAi(
     {
       apiKey,
       maxTokens,
+      reasoning: opts.reasoning,
       signal: opts.signal,
       onResponse: ({ status, headers }: { status: number; headers: Record<string, string> }) => {
         httpStatus = status;
@@ -295,7 +325,7 @@ async function callViaPiAi(
     model,
     inputTokens: response.usage?.input,
     outputTokens: response.usage?.output,
-    costUsd: response.usage?.cost?.total,
+    costUsd: reportedLlmCost(provider, response.usage?.cost?.total),
     durationMs,
   };
 
@@ -421,8 +451,27 @@ export async function callLLMChat(opts: LLMChatOptions): Promise<LLMCallResult> 
 
   if (auth) {
     await ensureOAuthCredentialSeeded(provider, auth.oauth);
-    return callChatViaPiAi(provider, resolvedModel, auth.apiKey, auth.source, opts, maxTokens);
+    return callChatViaPiAi(
+      provider,
+      resolvedModel,
+      auth.apiKey,
+      auth.source,
+      {
+        ...opts,
+        reasoning:
+          opts.reasoning ??
+          (provider === 'openai-codex' || provider === CODEX_LB_PROVIDER
+            ? cfg.copilotEffort
+            : undefined),
+      },
+      maxTokens,
+    );
   }
+
+  if (provider === CODEX_LB_PROVIDER || requiresExactAstraProvider(resolvedModel))
+    throw new Error(
+      `[llm] no API auth for ${provider}; CLI fallback disabled for the selected provider/model`,
+    );
 
   // CLI fallback: flatten conversation to single prompt
   console.log(`[llm] no auth for ${provider}, falling back to CLI for chat`);
@@ -497,6 +546,7 @@ async function callChatViaPiAi(
   const roundOptions = {
     apiKey,
     maxTokens,
+    reasoning: opts.reasoning,
     signal: opts.signal,
     onResponse: ({ status, headers }: { status: number; headers: Record<string, string> }) => {
       httpStatus = status;
@@ -640,7 +690,7 @@ async function callChatViaPiAi(
     model,
     inputTokens: ru?.input || undefined,
     outputTokens: ru?.output || undefined,
-    costUsd: ru?.cost?.total || undefined,
+    costUsd: reportedLlmCost(provider, ru?.cost?.total || undefined),
     durationMs,
   };
 

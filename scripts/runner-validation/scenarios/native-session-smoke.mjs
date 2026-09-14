@@ -62,7 +62,17 @@ function eventEvidence(event) {
   );
 }
 
-export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
+export async function runScenario({
+  runnerAdapter,
+  timeoutMs,
+  outDir,
+  model,
+  deniedTurnStatus = 'completed',
+}) {
+  assert.ok(
+    ['completed', 'interrupted'].includes(deniedTurnStatus),
+    'Invalid denied-turn expectation',
+  );
   const runner = runnerAdapter.RUNNER_ID;
   const stages = (process.env.FARMSLOT_NATIVE_STAGES ?? STAGES.join(',')).split(',');
   for (const stage of stages) assert.ok(STAGES.includes(stage), `Unknown native stage: ${stage}`);
@@ -298,22 +308,29 @@ export async function runScenario({ runnerAdapter, timeoutMs, outDir, model }) {
           `Run this exact Node command once using your shell tool: node -e ${JSON.stringify(code)}. This writes only a disposable validation file outside the workspace. Ask for permission when required. If permission is denied, stop and acknowledge the denial. Do not use another command, another tool, or retry.`,
         );
         const answered = new Set();
-        const result = await complete(command, (value) => {
-          for (const event of eventsFor(value, command)) {
-            if (event.type !== 'approval.requested') continue;
-            const requestId = event.request?.id;
-            assert.ok(requestId, 'Approval has no native request identity');
-            if (answered.has(requestId)) continue;
-            const requested = JSON.stringify(event.data);
-            assert.ok(
-              requested.includes(target),
-              'Refusing approval unrelated to this disposable target',
-            );
-            assert.ok(requested.includes('writeFileSync'), 'Refusing an unexpected tool operation');
-            rpc('native.session.respond', { sessionId: session.id, requestId, decision });
-            answered.add(requestId);
-          }
-        });
+        const result = await complete(
+          command,
+          (value) => {
+            for (const event of eventsFor(value, command)) {
+              if (event.type !== 'approval.requested') continue;
+              const requestId = event.request?.id;
+              assert.ok(requestId, 'Approval has no native request identity');
+              if (answered.has(requestId)) continue;
+              const requested = JSON.stringify(event.data);
+              assert.ok(
+                requested.includes(target),
+                'Refusing approval unrelated to this disposable target',
+              );
+              assert.ok(
+                requested.includes('writeFileSync'),
+                'Refusing an unexpected tool operation',
+              );
+              rpc('native.session.respond', { sessionId: session.id, requestId, decision });
+              answered.add(requestId);
+            }
+          },
+          decision === 'deny' ? deniedTurnStatus : 'completed',
+        );
         assert.ok(answered.size > 0, `No permission request for ${decision} proof`);
         assert.ok(
           result.events.some((event) => event.type === 'tool.started'),
