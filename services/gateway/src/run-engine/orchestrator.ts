@@ -45,6 +45,7 @@ import {
   type TerminalTransitionRequest,
 } from '../run-lifecycle/terminal-transition.js';
 import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
+import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
 import {
   createRun,
@@ -60,6 +61,7 @@ import { schedulerTick } from '../work-graph/store.js';
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
 import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
+import { DeferredSlotReleases } from './deferred-slot-release.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
 import {
   buildDispatchPreviewParamsForRun,
@@ -354,22 +356,28 @@ const stepPartialIO = new Map<string, StepIO>();
 /**
  * Slot releases a terminal step asked the engine to run AFTER the run publishes.
  *
- * Keyed by run, cleared when startRun claims the run and again when the release
- * is consumed, so a generation that ended without reaching its terminal tail
- * cannot hand a stale release to the next one. A gateway that dies between the
+ * Bound to the producing generation: a retiring loop cannot replace or consume
+ * its successor's release. A gateway that dies between the
  * terminal publish and the release leaves a `busy`/`held` slot with no active
  * run, which `reconcileOrphanedSlots` already reclaims.
  */
-const pendingTerminalSlotRelease = new Map<string, SlotReleaseParams>();
+const pendingTerminalSlotRelease = new DeferredSlotReleases(
+  (runId, generation) => Boolean(getRun(runId)) && getRunGeneration(runId) === generation,
+);
 
-function deferTerminalSlotRelease(runId: string, params: SlotReleaseParams): void {
-  pendingTerminalSlotRelease.set(runId, params);
+function deferTerminalSlotRelease(
+  runId: string,
+  generation: number,
+  params: SlotReleaseParams,
+): void {
+  pendingTerminalSlotRelease.defer(runId, generation, params);
 }
 
-function takePendingTerminalSlotRelease(runId: string): SlotReleaseParams | undefined {
-  const params = pendingTerminalSlotRelease.get(runId);
-  pendingTerminalSlotRelease.delete(runId);
-  return params;
+function takePendingTerminalSlotRelease(
+  runId: string,
+  generation: number,
+): SlotReleaseParams | undefined {
+  return pendingTerminalSlotRelease.take(runId, generation);
 }
 
 /**
@@ -585,6 +593,7 @@ async function finalizeNonThrownTerminalRun(
   runId: string,
   currentIdx: number,
   steps: readonly string[],
+  generation: number,
 ): Promise<void> {
   const run = getRun(runId);
   if (!run) return;
@@ -636,7 +645,7 @@ async function finalizeNonThrownTerminalRun(
     collaborators: terminalCollaborators(
       Events.RUN_UPDATED,
       terminalSlotCleanup(
-        takePendingTerminalSlotRelease(runId),
+        takePendingTerminalSlotRelease(runId, generation),
         failedRunSlotCleanupEffect(`non-thrown ${run.status}`, async (currentRun) => {
           await cleanupSlotProcesses(currentRun.slotId!);
           await teardownGateHeldAgentsIfNeeded(currentRun);
@@ -661,14 +670,15 @@ export interface StartRunOptions {
 }
 
 export async function startRun(runId: string, options: StartRunOptions = {}): Promise<void> {
+  const generation = options.expectedGeneration ?? getRunGeneration(runId);
   try {
-    await driveRun(runId, options);
+    await driveRun(runId, { ...options, expectedGeneration: generation });
   } finally {
     // Every exit, not just the completion tail: a run that deferred a release
     // and then cancelled, paused, bailed on a generation bump, or ended through
     // a failure route used to leave its entry behind until the next `startRun`
     // for the same run — which for a terminal run never comes.
-    pendingTerminalSlotRelease.delete(runId);
+    takePendingTerminalSlotRelease(runId, generation);
   }
 }
 
@@ -713,7 +723,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // (e.g. MONITOR observed workerSignal.status='blocked'). The exception-driven
       // catch below — the only place that runs resetSlot + skip-remaining — never fires
       // on this path, so the slot would otherwise rot in busy/{phase}/idle forever.
-      await finalizeNonThrownTerminalRun(runId, i, steps);
+      await finalizeNonThrownTerminalRun(runId, i, steps, myGen);
       return;
     }
 
@@ -743,7 +753,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     });
 
     try {
-      const stepIO = await executeStep(runId, stepName);
+      const stepIO = await executeStep(runId, stepName, myGen);
 
       // Re-check cancellation/pause after async step
       const after = getRun(runId);
@@ -779,7 +789,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
 
       if (after.status === 'failed' || after.status === 'blocked') {
         // Step `i` is now correctly marked done; finalize only needs to skip steps i+1..end.
-        await finalizeNonThrownTerminalRun(runId, i + 1, steps);
+        await finalizeNonThrownTerminalRun(runId, i + 1, steps, myGen);
         return;
       }
 
@@ -813,7 +823,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // An operator may cancel while an asynchronous step is failing. The
       // operator-owned terminal state wins over the late exception.
       const interruptedRun = getRun(runId);
-      if (!interruptedRun || interruptedRun.status === 'cancelled') {
+      if (
+        !interruptedRun ||
+        interruptedRun.status === 'cancelled' ||
+        interruptedRun.status === 'paused' ||
+        getRunGeneration(runId) !== myGen
+      ) {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} threw after ${interruptedRun?.status ?? 'deletion'}; preserving operator state`,
         );
@@ -831,13 +846,18 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           completedAt: new Date().toISOString(),
         });
         updateRun(runId, { status: 'blocked', error: msg });
-        await finalizeNonThrownTerminalRun(runId, i + 1, steps);
+        await finalizeNonThrownTerminalRun(runId, i + 1, steps, myGen);
         return;
       }
 
-      if (err instanceof PromptDeliveryUncertainError) {
+      if (
+        err instanceof PromptDeliveryUncertainError ||
+        err instanceof NativeWorkerOperationUncertainError
+      ) {
+        const nativeOperation =
+          err instanceof NativeWorkerOperationUncertainError ? err.operation : undefined;
         console.warn(
-          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} has uncertain prompt delivery; preserving the claimed slot and runner`,
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} has uncertain ${nativeOperation ?? 'prompt delivery'}; preserving the claimed slot and runner`,
         );
         const partialIO = stepPartialIO.get(runId);
         stepPartialIO.delete(runId);
@@ -847,7 +867,13 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           inputs: partialIO?.inputs,
           // Structured marker for recovery: replay must not have to read the
           // runner layer's failure prose to know the prompt may be executing.
-          outputs: { ...(partialIO?.outputs ?? {}), promptDeliveryUncertain: true },
+          outputs: {
+            ...(partialIO?.outputs ?? {}),
+            ...(nativeOperation ? { nativeWorkerOperationUncertain: nativeOperation } : {}),
+            ...(!nativeOperation || nativeOperation === 'delivery'
+              ? { promptDeliveryUncertain: true }
+              : {}),
+          },
         });
         for (let j = i + 1; j < steps.length; j++) {
           updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -855,7 +881,9 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         const blockedRun = getRun(runId)!;
         updateRun(runId, {
           status: 'blocked',
-          error: `${msg}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
+          error: nativeOperation
+            ? `${msg}\n\nThe native session reservation and slot claim remain owned until this operation is reconciled.`
+            : `${msg}\n\nThe runner and claimed slot were preserved because the prompt may already be executing.`,
           metrics: {
             ...blockedRun.metrics,
             outcome: 'partial',
@@ -896,7 +924,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           collaborators: terminalCollaborators(
             Events.RUN_UPDATED,
             terminalSlotCleanup(
-              takePendingTerminalSlotRelease(runId),
+              takePendingTerminalSlotRelease(runId, myGen),
               failedRunSlotCleanupEffect(
                 'blocked run',
                 (run) => teardownGateHeldAgentsIfNeeded(run),
@@ -954,7 +982,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
           collaborators: terminalCollaborators(
             Events.RUN_UPDATED,
             terminalSlotCleanup(
-              takePendingTerminalSlotRelease(runId),
+              takePendingTerminalSlotRelease(runId, myGen),
               failedRunSlotCleanupEffect(`monitor-terminal ${err.status}`, (run) =>
                 cleanupSlotProcesses(run.slotId!),
               ),
@@ -1024,11 +1052,11 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // This run never owned the slot, so it owes no teardown — and a release a
       // step recorded is not its to perform either. Dropped explicitly so it
       // cannot leak to a later generation.
-      if (claimRefused) takePendingTerminalSlotRelease(runId);
+      if (claimRefused) takePendingTerminalSlotRelease(runId, myGen);
       const failureCleanup = claimRefused
         ? null
         : terminalSlotCleanup(
-            takePendingTerminalSlotRelease(runId),
+            takePendingTerminalSlotRelease(runId, myGen),
             preWorkerFailure
               ? failedRunSlotCleanupEffect(
                   `${stepName} failure`,
@@ -1075,7 +1103,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
     // `done` is published first and tmux teardown follows as an after-effect. A
     // step that handed the slot on — a CI-watch chain, a publication gate hold —
     // defers nothing, and this transition then owes no teardown.
-    const release = takePendingTerminalSlotRelease(runId);
+    const release = takePendingTerminalSlotRelease(runId, myGen);
     await routeAndRecordTerminalTransition({
       runId,
       kind: 'complete',
@@ -1428,7 +1456,7 @@ interface StepIO {
   outputs?: Record<string, unknown>;
 }
 
-async function executeStep(runId: string, step: string): Promise<StepIO> {
+async function executeStep(runId: string, step: string, generation: number): Promise<StepIO> {
   const run = getRun(runId)!;
 
   switch (step) {
@@ -1478,7 +1506,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
-        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
     case S.SELF_REVIEW:
       return executeSelfReviewStep(runId, {
@@ -1496,7 +1524,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
-        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
     case S.HUMAN_GATE:
       return executeHumanGateStep(runId, {
@@ -1514,7 +1542,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
-        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
     case S.COMPLETE:
       return executeCompleteStep(runId, {
@@ -1532,7 +1560,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
         stepPartialIO,
-        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
     case S.CI_WATCH:
       return executeCIWatchStep(runId, {
@@ -1544,7 +1572,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         loadProjectVarsOrNull,
         resolveCIWatchTerminalPatch,
         startRun,
-        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, params),
+        deferTerminalSlotRelease: (params) => deferTerminalSlotRelease(runId, generation, params),
       });
     case S.FINALIZE:
       return executeFinalizeStep(runId, {

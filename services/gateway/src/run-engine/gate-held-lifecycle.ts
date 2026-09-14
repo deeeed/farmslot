@@ -105,5 +105,5 @@ export async function teardownGateHeldAgentsIfNeeded(run: Run): Promise<void> {
   if (!shouldTeardownGateHeldAgents(run)) return;
   const slotId = run.slotId;
   if (!slotId) return;
-  await killSlotAgents(slotId);
+  await killSlotAgents(slotId, run.id);
 }

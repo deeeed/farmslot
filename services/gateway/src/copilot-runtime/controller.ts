@@ -207,7 +207,7 @@ export class CopilotRuntimeController {
     const checkout = await this.inspectCheckout(this.checkout);
     const workload = this.workload(this.persisted?.session.status === 'running');
     if (!this.persisted) {
-      const { runner, model } = resolveCopilotRunner();
+      const { runner, model, effort } = resolveCopilotRunner();
       const now = this.timestamp();
       this.persisted = {
         schemaVersion: 1,
@@ -219,6 +219,7 @@ export class CopilotRuntimeController {
           transcriptId: GLOBAL_CHAT_SESSION_ID,
           runner,
           model,
+          effort,
           autostart: dangerousAutostartEnabled(),
           safetyTier: dangerousAutostartEnabled() ? 'dangerous' : 'sandboxed',
           checkout,
@@ -226,7 +227,7 @@ export class CopilotRuntimeController {
           lastDelivery: this.idleDelivery(now),
           updatedAt: now,
           terminalReason: 'not-started',
-          dangerousLaunch: dangerousLaunchBinding({ checkout, runner, model }),
+          dangerousLaunch: dangerousLaunchBinding({ checkout, runner, model, effort }),
         },
       };
       await this.refreshTerminalWorker();
@@ -235,10 +236,21 @@ export class CopilotRuntimeController {
       const previous = this.persisted.session.checkout;
       this.persisted.session.checkout = checkout;
       this.persisted.session.workload = workload;
+      // A stopped legacy record has no running effort to preserve. Resolve its next
+      // launch before computing the confirmation, while active legacy sessions stay unknown.
+      if (
+        this.persisted.session.status === 'stopped' &&
+        this.persisted.session.effort === undefined
+      )
+        this.persisted.session.effort = resolveCopilotRunner({
+          runner: this.persisted.session.runner,
+          model: this.persisted.session.model,
+        }).effort;
       this.persisted.session.dangerousLaunch = dangerousLaunchBinding({
         checkout,
         runner: this.persisted.session.runner,
         model: this.persisted.session.model,
+        effort: this.persisted.session.effort,
       });
       this.persisted.session.updatedAt = this.timestamp();
       await this.refreshTerminalWorker();
@@ -259,24 +271,34 @@ export class CopilotRuntimeController {
     const requestedRunner = params.runner ?? session.runner;
     const requestedModel =
       params.model ?? (requestedRunner === session.runner ? session.model : undefined);
-    const { runner, model } = resolveCopilotRunner({
+    const { runner, model, effort } = resolveCopilotRunner({
       runner: requestedRunner,
       ...(requestedModel ? { model: requestedModel } : {}),
+      effort:
+        params.effort ??
+        (requestedRunner === session.runner ? (session.effort ?? 'auto') : undefined),
     });
-    if (active && (runner !== session.runner || model !== session.model)) {
-      throw new Error('Stop the Co-Pilot runtime before changing its runner or model');
+    if (
+      active &&
+      (runner !== session.runner ||
+        model !== session.model ||
+        effort !== (session.effort ?? 'auto'))
+    ) {
+      throw new Error('Stop the Co-Pilot runtime before changing its runner, model or effort');
     }
     session.runner = runner;
     session.model = model;
+    session.effort = effort;
     session.autostart = params.autostart ?? session.autostart;
     session.dangerousLaunch = dangerousLaunchBinding({
       checkout: session.checkout,
       runner,
       model,
+      effort,
     });
     session.updatedAt = this.timestamp();
     await this.persist();
-    await this.audit('configure', { runner, model, autostart: session.autostart });
+    await this.audit('configure', { runner, model, effort, autostart: session.autostart });
     this.emitRuntime();
     return { session };
   }
@@ -354,16 +376,21 @@ export class CopilotRuntimeController {
       (configuredRunner === this.persisted?.session.runner
         ? this.persisted?.session.model
         : undefined);
-    const { runner, model } = resolveCopilotRunner({
+    const { runner, model, effort } = resolveCopilotRunner({
       ...(configuredRunner ? { runner: configuredRunner } : {}),
       ...(configuredModel ? { model: configuredModel } : {}),
+      effort:
+        params.effort ??
+        (configuredRunner === this.persisted?.session.runner
+          ? this.persisted?.session.effort
+          : undefined),
     });
     const localDangerousAutostart = allowLocalDangerousAutostart && dangerousAutostartEnabled();
     const safetyTier = params.safetyTier ?? (localDangerousAutostart ? 'dangerous' : 'sandboxed');
     if (safetyTier === 'full-auto') {
       throw new Error('Co-Pilot V1 supports sandboxed or explicitly confirmed dangerous starts');
     }
-    const binding = dangerousLaunchBinding({ checkout, runner, model });
+    const binding = dangerousLaunchBinding({ checkout, runner, model, effort });
     if (safetyTier === 'dangerous' && !allowLocalDangerousAutostart) {
       assertDangerousConfirmation(binding, params.confirmation);
     }
@@ -378,6 +405,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner,
         model,
+        effort,
         autostart: this.persisted?.session.autostart ?? localDangerousAutostart,
         safetyTier,
         checkout,
@@ -404,6 +432,7 @@ export class CopilotRuntimeController {
       checkout: this.checkout,
       runner,
       model,
+      effort,
       safetyTier,
       bootstrapPrompt,
       store: this.store,
@@ -450,7 +479,7 @@ export class CopilotRuntimeController {
       throw new Error('Co-Pilot launched without an addressable tmux pane');
     }
     await this.persist();
-    await this.audit('start', { runner, model, safetyTier, paneId: launched.paneId });
+    await this.audit('start', { runner, model, effort, safetyTier, paneId: launched.paneId });
     this.emitRuntime();
     this.startTranscriptMonitor();
     return { session: this.persisted.session, reused: false, reconnected: false };
@@ -737,7 +766,7 @@ export class CopilotRuntimeController {
 
   private async setAmbiguous(candidates: string[]): Promise<void> {
     const checkout = await this.inspectCheckout(this.checkout);
-    const { runner, model } = resolveCopilotRunner();
+    const { runner, model, effort } = resolveCopilotRunner();
     const now = this.timestamp();
     this.persisted = {
       schemaVersion: 1,
@@ -749,6 +778,7 @@ export class CopilotRuntimeController {
         transcriptId: GLOBAL_CHAT_SESSION_ID,
         runner: this.persisted?.session.runner ?? runner,
         model: this.persisted?.session.model ?? model,
+        effort: this.persisted ? this.persisted.session.effort : effort,
         autostart: this.persisted?.session.autostart ?? dangerousAutostartEnabled(),
         safetyTier: this.persisted?.session.safetyTier ?? 'sandboxed',
         checkout,
@@ -761,6 +791,7 @@ export class CopilotRuntimeController {
           checkout,
           runner: this.persisted?.session.runner ?? runner,
           model: this.persisted?.session.model ?? model,
+          effort: this.persisted ? this.persisted.session.effort : effort,
         }),
       },
     };

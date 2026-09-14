@@ -5,7 +5,7 @@ export function copilotRuntimeStatusLabel(status: string): string {
 }
 
 export function dangerousLaunchSummary(binding: CopilotDangerousLaunchBinding): string {
-  return `${binding.checkout} · ${binding.branch} · ${binding.dirtyFileCount} dirty · ${binding.runner}/${binding.model}`;
+  return `${binding.checkout} · ${binding.branch} · ${binding.dirtyFileCount} dirty · ${binding.runner}/${binding.model}${binding.effort ? ` · ${binding.effort} effort` : ''}`;
 }
 
 export function dangerousStartParams(
@@ -17,6 +17,7 @@ export function dangerousStartParams(
     safetyTier: 'dangerous',
     runner: binding.runner,
     model: binding.model,
+    ...(binding.effort !== undefined ? { effort: binding.effort } : {}),
     confirmation: {
       fingerprint: binding.fingerprint,
       typedPhrase,

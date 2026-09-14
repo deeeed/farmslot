@@ -2,6 +2,7 @@ import type { DecisionAction, RunDecision } from '../contracts/runs.js';
 
 export const INTERACTIVE_HANDOFF_SIGNAL_ACTION = 'signal-written';
 export const INTERACTIVE_HANDOFF_EXTEND_ACTION = 'continue';
+export const NATIVE_WORKER_RESUME_ACTION = 'resume-native-worker';
 export const DEFAULT_MONITOR_EXTEND_MINUTES = 90;
 
 const TIMEOUT_NOTE_RE = /Monitor note: exceeded (\d+) minute timeout/;
@@ -40,6 +41,7 @@ export function extendMonitoringAction(minutes: number): DecisionAction {
 
 export function interactiveHandoffDecisionActions(opts?: {
   extendMinutes?: number;
+  resumeNativeWorker?: boolean;
 }): DecisionAction[] {
   const actions: DecisionAction[] = [
     {
@@ -50,6 +52,13 @@ export function interactiveHandoffDecisionActions(opts?: {
         'Reads SIGNAL.json on the slot. Resumes the run only if it contains a fresh terminal status.',
     },
   ];
+  if (opts?.resumeNativeWorker)
+    actions.unshift({
+      id: NATIVE_WORKER_RESUME_ACTION,
+      label: 'Resume stopped worker',
+      style: 'primary',
+      description: 'Resume the saved conversation and continue the current task.',
+    });
   if (opts?.extendMinutes != null) {
     actions.push(extendMonitoringAction(opts.extendMinutes));
   }

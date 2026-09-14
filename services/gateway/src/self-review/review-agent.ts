@@ -41,6 +41,7 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
+import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
@@ -85,6 +86,7 @@ import {
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
+import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
 import {
@@ -185,7 +187,7 @@ export function applyTerminalReviewSignal(
   return { ...withTiming, verdict: 'pass', issues: [], incomplete: true };
 }
 
-async function readTerminalReviewSignal(
+export async function readTerminalReviewSignal(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   signalBasename: string,
@@ -241,7 +243,7 @@ export function reviewerResultRelPath(contextId: string): string {
   return `artifacts/review-result.${contextId}.json`;
 }
 
-function continuationReviewScope(params: {
+export function continuationReviewScope(params: {
   priorHeadSha: string | null;
   currentHeadSha: string | null;
   priorArtifactDir: string;
@@ -350,9 +352,21 @@ export async function resumeReviewAgentPromptDelivery(
     | 'target'
     | 'attemptStartedAt'
     | 'startedAt'
+    | 'nativeSession'
   >,
   dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
 ): Promise<'delivered' | 'inactive' | 'indeterminate' | 'retired' | 'unsupported'> {
+  if (context.nativeSession) {
+    const binding = context.nativeSession;
+    if (binding.releasedAt || (binding.closedAt && !binding.recovery)) return 'inactive';
+    const snapshot = await readNativeWorkerSnapshot(runId, 'self-review', context.id);
+    if (['closed', 'failed'].includes(snapshot.session.state))
+      return snapshot.session.processStopped ? 'inactive' : 'indeterminate';
+    const receipt = snapshot.commands.find((command) => command.commandId === binding.commandId);
+    // Acceptance only restores the pending review. Its terminal signal and result
+    // artifacts remain completion authority; recovery never sends another prompt.
+    return binding.acceptedAt || receipt?.accepted ? 'delivered' : 'indeterminate';
+  }
   const dependencies = {
     ...defaultReviewPromptRecoveryDependencies,
     ...dependencyOverrides,
@@ -500,7 +514,7 @@ export interface ReviewAgentResult {
   terminalInvalidReason?: string;
 }
 
-async function persistReviewOutputArtifacts(params: {
+export async function persistReviewOutputArtifacts(params: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   taskDir: string;
   taskMdPath: string;
@@ -706,10 +720,12 @@ async function recoverRunningReviewAgent(params: {
   const signalBasename = path.posix.basename(context.signalFile);
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
   const resultRelPath = context.reviewResultFile ?? null;
+  const recoveredTaskFile = context.taskFile;
   const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
     contextId: context.id,
     role: 'self-review',
   });
+  let recoveryFailure: unknown;
   try {
     const completed = await waitForRecoveredReviewerOrCleanup(
       () =>
@@ -796,16 +812,23 @@ async function recoverRunningReviewAgent(params: {
       startedAt,
       completedAt,
     };
+  } catch (error) {
+    recoveryFailure = error;
+    throw error;
   } finally {
-    watcher.stop();
-    await unwatchContext(params.slotId, context.id);
-    clearRunActiveTaskFile(params.runId, context.taskFile);
-    const latest = getRun(params.runId);
-    await restoreWorkerChecklistTargetFromSlot(
-      params.vars,
-      params.taskDir,
-      latest ? { flowType: latest.flowType, mode: latest.mode ?? undefined } : undefined,
-    );
+    await finishReviewCleanup(recoveryFailure, [
+      () => watcher.stop(),
+      () => unwatchContext(params.slotId, context.id),
+      async () => {
+        clearRunActiveTaskFile(params.runId, recoveredTaskFile);
+        const latest = getRun(params.runId);
+        await restoreWorkerChecklistTargetFromSlot(
+          params.vars,
+          params.taskDir,
+          latest ? { flowType: latest.flowType, mode: latest.mode ?? undefined } : undefined,
+        );
+      },
+    ]);
     // Keep the canonical reviewer window after successful recovery. The next
     // review retargets it; run/slot teardown owns final cleanup.
   }
@@ -825,6 +848,22 @@ export async function runReviewAgent(
   sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   sessionIntent: ReviewSessionIntent = 'reset',
 ): Promise<ReviewAgentResult> {
+  if (getRun(_runId)?.transport === 'native') {
+    const { runNativeReviewAgent } = await import('./native-review-agent.js');
+    return runNativeReviewAgent({
+      vars,
+      runner,
+      model,
+      taskDir,
+      runId: _runId,
+      reviewTimeoutMs,
+      loopNumber,
+      validationDepth,
+      artifactScope,
+      sessionPolicy,
+      sessionIntent,
+    });
+  }
   const session = await resolveTmuxSession(vars.slotId, vars);
   const recovered = await recoverRunningReviewAgent({
     vars,
@@ -843,7 +882,8 @@ export async function runReviewAgent(
   const startedAt = new Date().toISOString();
   const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
-  let progressWatcher: { stop(): void } | null = null;
+  let progressWatcher: { stop(): void | Promise<void> } | null = null;
+  let primaryFailure: unknown;
   let activeTaskSet = false;
   const sessionFilesBefore = await bestEffortListRunnerSessionFiles(vars, runner);
   let sessionMeta: ReviewSessionMeta = {
@@ -1478,37 +1518,43 @@ export async function runReviewAgent(
       completedAt,
     };
   } catch (err) {
+    primaryFailure = err;
     invalidateWarmReviewerSessions(_runId, runner);
-    await markAgentContextStatus(
-      _runId,
-      'self-review',
-      isTerminalReviewArtifactError(err) ? 'blocked' : 'failed',
-      {
-        id: allocated.id,
-        lastSignalAt: new Date().toISOString(),
-      },
-    );
-    throw err;
-  } finally {
-    progressWatcher?.stop();
-    // Cleanup must not mask the original throw above — log and continue so the outer error
-    // propagates intact to the run-engine catch. The canonical reviewer window
-    // remains available for same-run continuation and operator inspection;
-    // run/slot teardown owns its final cleanup.
     try {
-      await unwatchContext(vars.slotId, allocated.id);
-    } catch (cleanupErr) {
-      console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
-    }
-    if (activeTaskSet) {
-      clearRunActiveTaskFile(_runId, taskMdPath);
-      const parentRun = getRun(_runId);
-      await restoreWorkerChecklistTargetFromSlot(
-        vars,
-        taskDir,
-        parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
+      await markAgentContextStatus(
+        _runId,
+        'self-review',
+        isTerminalReviewArtifactError(err) ? 'blocked' : 'failed',
+        {
+          id: allocated.id,
+          lastSignalAt: new Date().toISOString(),
+        },
+      );
+    } catch (recordError) {
+      primaryFailure = new AggregateError(
+        [err, recordError],
+        `${String(err)}; status recording also failed: ${String(recordError)}`,
+        { cause: err },
       );
     }
+    throw primaryFailure;
+  } finally {
+    await finishReviewCleanup(primaryFailure, [
+      () => progressWatcher?.stop(),
+      () => unwatchContext(vars.slotId, allocated.id),
+      async () => {
+        if (!activeTaskSet) return;
+        clearRunActiveTaskFile(_runId, taskMdPath);
+        const parentRun = getRun(_runId);
+        await restoreWorkerChecklistTargetFromSlot(
+          vars,
+          taskDir,
+          parentRun
+            ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined }
+            : undefined,
+        );
+      },
+    ]);
   }
 }
 

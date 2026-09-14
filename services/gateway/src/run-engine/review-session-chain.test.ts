@@ -126,3 +126,54 @@ test('reviewer continuity does not cross models or automation owners', () => {
     { kind: 'fallback', reason: 'missing-session' },
   );
 });
+
+test('native review continuity uses its owned stopped session without a tmux transcript path', () => {
+  const { current, prior } = runs();
+  const binding = {
+    sessionId: 'native-session',
+    generation: 'generation',
+    leaseId: 'lease',
+    commandId: 'initial',
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+    acceptedAt: 'accepted',
+    closedAt: 'closed',
+  };
+  const nativePrior: Run = {
+    ...prior,
+    transport: 'native',
+    nativeOwnerPrincipalId: 'owner',
+    agentContexts: [
+      { ...prior.agentContexts![0], runnerSessionPath: null, nativeSession: binding },
+    ],
+  };
+  const nativeCurrent: Run = { ...current, transport: 'native', nativeOwnerPrincipalId: 'owner' };
+  assert.deepEqual(
+    resolveRepeatReviewResumePlan(nativeCurrent, nativePrior, 'codex', 'gpt-6-astra'),
+    {
+      kind: 'native-resume',
+      binding: {
+        priorRunId: prior.id,
+        contextId: prior.agentContexts![0].id,
+        runnerSessionId: 'session-1',
+      },
+    },
+  );
+  for (const wrong of [
+    { ...nativeCurrent, nativeOwnerPrincipalId: 'other' },
+    { ...nativeCurrent, ticketOrPr: 'deeeed/farmslot#2' },
+    {
+      ...nativeCurrent,
+      repeatReviewContext: { ...nativeCurrent.repeatReviewContext!, priorFamilyId: 'other' },
+    },
+  ])
+    assert.equal(resolveRepeatReviewResumePlan(wrong, nativePrior, 'codex').kind, 'fallback');
+  const transferred = {
+    ...nativePrior,
+    agentContexts: [
+      { ...nativePrior.agentContexts![0], nativeSession: { ...binding, releasedAt: 'released' } },
+    ],
+  };
+  assert.equal(resolveRepeatReviewResumePlan(nativeCurrent, transferred, 'codex').kind, 'fallback');
+  assert.equal(resolveRepeatReviewResumePlan(current, nativePrior, 'codex').kind, 'fallback');
+});

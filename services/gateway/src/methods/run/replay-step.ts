@@ -469,6 +469,8 @@ export async function runReplayStep(
   emit: Emit,
   hooks: RunReplayStepHooks = {},
 ): Promise<RunReplayStepResult> {
+  if (params.freshDispatch !== undefined && typeof params.freshDispatch !== 'boolean')
+    throw new Error('freshDispatch must be a boolean');
   if (
     params.triggeredBy !== undefined &&
     params.triggeredBy !== 'auto-recovery' &&
@@ -478,7 +480,10 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const initialNativeStatus = existing.transport === 'native' ? existing.status : undefined;
   const hasRunnerOverride = params.runner !== undefined || params.model !== undefined;
+  if (existing.transport === 'native' && hasRunnerOverride && params.stepName !== PS.DISPATCH)
+    throw new Error('Change a native worker runner/model through dispatch replay');
   if (
     hasRunnerOverride &&
     params.stepName !== PS.DISPATCH &&
@@ -513,7 +518,7 @@ export async function runReplayStep(
     if (params.stepName !== PS.DISPATCH) {
       throw new Error('freshDispatch is valid only when replaying dispatch');
     }
-    if (!existing.engineState?.flags?.warmSessionReuse) {
+    if (existing.transport !== 'native' && !existing.engineState?.flags?.warmSessionReuse) {
       throw new Error('freshDispatch requires a retained-session handoff run');
     }
   }
@@ -572,7 +577,11 @@ export async function runReplayStep(
   const humanGateIdx = flowSteps ? flowSteps.indexOf(PS.HUMAN_GATE) : -1;
   const probedTaskSignal =
     replayStepName === PS.DISPATCH
-      ? await readAdoptableTaskSignal(existing, { freshDispatch: Boolean(params.freshDispatch) })
+      ? await readAdoptableTaskSignal(existing, {
+          freshDispatch: Boolean(
+            params.freshDispatch || (existing.transport === 'native' && hasRunnerOverride),
+          ),
+        })
       : null;
   const adoptedTaskSignal = probedTaskSignal && monitorIdx >= 0 ? probedTaskSignal : null;
   if (adoptedTaskSignal) {
@@ -601,6 +610,18 @@ export async function runReplayStep(
     );
   }
 
+  const nativeFreshRestart =
+    existing.transport === 'native' &&
+    targetIdx >= 0 &&
+    (params.freshDispatch === true ||
+      hasRunnerOverride ||
+      targetIdx < dispatchIdx ||
+      (prepareIdx >= 0 && targetIdx <= prepareIdx));
+  if (
+    nativeFreshRestart &&
+    existing.agentContexts?.some((context) => context.nativeSession?.recovery)
+  )
+    throw new Error('Reconcile the pending native recovery before restarting its task');
   const step = existing.steps.find((s) => s.name === replayStepName);
   if (!step) throw new Error(`Step not found: ${params.stepName}`);
 
@@ -665,6 +686,7 @@ export async function runReplayStep(
 
   let reclaimedSlotId: string | null = null;
   let revived = false;
+  let nativeReplayGeneration: number | undefined;
   try {
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
     // Do this only after replay entry validation so rejected replays do not leave a
@@ -673,7 +695,19 @@ export async function runReplayStep(
     // Capture immediately: sampling generation after later awaits reads a
     // force-complete bump and makes the fence compare equal to itself.
     const ownedGeneration = bumpRunGeneration(params.runId);
+    nativeReplayGeneration = ownedGeneration;
+    const assertNativeReplayCurrent = () => {
+      if (initialNativeStatus === undefined) return;
+      const current = getRun(params.runId);
+      if (
+        !current ||
+        current.engineState?.generation !== ownedGeneration ||
+        current.status !== initialNativeStatus
+      )
+        throw new Error('Native replay was superseded by another run action');
+    };
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+    assertNativeReplayCurrent();
 
     const replaysCompletionOrGate =
       targetIdx >= 0 &&
@@ -709,7 +743,14 @@ export async function runReplayStep(
     // that still yields and reopens the decision-resolver race this block closes.
     if (hooks.afterGenerationBump) await hooks.afterGenerationBump();
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+    assertNativeReplayCurrent();
 
+    if (nativeFreshRestart) {
+      const { restartNativeWorkerContexts } =
+        await import('../../runners/native/worker-restart.js');
+      await restartNativeWorkerContexts(params.runId, assertNativeReplayCurrent);
+      assertNativeReplayCurrent();
+    }
     let replayTaskFile = existing.taskFile ?? null;
     let effectiveSlotId = existing.slotId;
 
@@ -745,6 +786,7 @@ export async function runReplayStep(
         // writing slot status here would steal that physical worker from the new run.
         try {
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
@@ -777,6 +819,7 @@ export async function runReplayStep(
           }
           reclaimedSlotId = replaySlotId;
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
@@ -791,6 +834,7 @@ export async function runReplayStep(
     // run owns the worker whose signal we adopted, so record the delivery.
     if (adoptedTaskSignal) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      assertNativeReplayCurrent();
       const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
       updateRunStep(params.runId, PS.DISPATCH, {
         status: 'done',
@@ -816,6 +860,7 @@ export async function runReplayStep(
       !hasActiveSelfReviewFix(runBeforeGateReplay)
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      assertNativeReplayCurrent();
       const copied = await refreshArtifactMirror(runBeforeGateReplay);
       console.log(
         `[run] replay from ${replayStepName} — refreshed ${copied} worker artifact(s) before rebuilding the gate`,
@@ -843,6 +888,7 @@ export async function runReplayStep(
     const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
     const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+    assertNativeReplayCurrent();
     if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
       const newFlags = { ...existing.engineState.flags };
       delete newFlags.nudgeReuse;
@@ -875,6 +921,7 @@ export async function runReplayStep(
       targetIdx >= selfReviewIdx
     ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      assertNativeReplayCurrent();
       try {
         const {
           loadSlotVars,
@@ -915,12 +962,14 @@ export async function runReplayStep(
             `${workerTaskDir}/${ciFixTarget.signal}`,
           ];
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           await execOnSlot(
             vars,
             `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
             vars.remoteRepo,
           );
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           if (preserveSelfReviewFix) {
             await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
           } else {
@@ -946,8 +995,14 @@ export async function runReplayStep(
       targetIdx >= prepareIdx &&
       targetIdx <= dispatchIdx;
 
-    if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
+    if (
+      replaysWorkerLaunch &&
+      (existing.transport !== 'native' || nativeFreshRestart) &&
+      effectiveSlotId &&
+      existing.taskFile
+    ) {
       assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+      assertNativeReplayCurrent();
       try {
         const {
           loadSlotVars,
@@ -971,6 +1026,7 @@ export async function runReplayStep(
           const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
           const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+          assertNativeReplayCurrent();
           await execOnSlot(
             vars,
             `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
@@ -990,6 +1046,7 @@ export async function runReplayStep(
     }
 
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+    assertNativeReplayCurrent();
 
     // Reset this step and all subsequent steps to pending
     const stepIdx = existing.steps.indexOf(step);
@@ -1130,7 +1187,7 @@ export async function runReplayStep(
             Boolean(activeFixTaskFile),
           )
         : currentBeforeReplayUpdate.engineState,
-      params.freshDispatch,
+      params.freshDispatch || nativeFreshRestart,
     );
     // Soft-lock was taken before long awaits. Re-validate holder+epoch and live
     // ownership before revive: expiry reclaim or concurrent replay may have stolen it.
@@ -1159,6 +1216,7 @@ export async function runReplayStep(
       }
     }
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+    assertNativeReplayCurrent();
     updateRun(params.runId, {
       status: activeStatusForReplayStep(replayStepName),
       error: undefined,
@@ -1227,7 +1285,13 @@ export async function runReplayStep(
     return { run: getRun(params.runId)! };
   } catch (err) {
     await releaseSoftLockIfHeld();
-    if (reclaimedSlotId && !revived) {
+    if (
+      reclaimedSlotId &&
+      !revived &&
+      (initialNativeStatus === undefined ||
+        (getRun(params.runId)?.engineState?.generation === nativeReplayGeneration &&
+          getRun(params.runId)?.status === initialNativeStatus))
+    ) {
       try {
         const { slotRelease } = await import('../slot.js');
         await slotRelease(

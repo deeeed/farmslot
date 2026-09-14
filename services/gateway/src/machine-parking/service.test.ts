@@ -6,7 +6,9 @@ import {
   isSlotFreedByPark,
   type MachineParkRecord,
   machineParkRestoreComplete,
+  type MachinePauseNativeRecoveryHandle,
   type MachinePauseRecoveryHandle,
+  type MachinePauseTerminalRecoveryHandle,
   needsGateParkRestore,
   type Run,
   type RuntimeCapabilityCatalogEntry,
@@ -38,7 +40,7 @@ import {
   type RunnerReloadInspection,
 } from './service.js';
 
-function recoveryHandle(runId: string, slotId: string): MachinePauseRecoveryHandle {
+function recoveryHandle(runId: string, slotId: string): MachinePauseTerminalRecoveryHandle {
   return {
     version: 1,
     runnerId: 'claude',
@@ -54,6 +56,13 @@ function recoveryHandle(runId: string, slotId: string): MachinePauseRecoveryHand
     model: 'sonnet',
     capturedAt: '2026-08-21T00:00:00.000Z',
   };
+}
+
+function terminalHandle(
+  handle: MachinePauseRecoveryHandle | null | undefined,
+): MachinePauseTerminalRecoveryHandle {
+  assert.equal(handle?.version, 1);
+  return handle as MachinePauseTerminalRecoveryHandle;
 }
 
 function runningResource(id = 'browser-cdp'): SlotResource {
@@ -513,7 +522,7 @@ function harness(initialRuns: Run[]): Harness {
     },
     inspectParkHost: async (run, handle, ownership) => {
       calls.push(
-        `inspect-park-host:${run.id}:${run.slotId}:${handle.target.session}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
+        `inspect-park-host:${run.id}:${run.slotId}:${handle.version === 1 ? handle.target.session : handle.nativeSessionId}:${ownership?.ownedPaneIds.join(',') ?? 'no-ownership'}`,
       );
       // Slot-scoped fixture first, so a test can refuse ONE candidate without
       // refusing the run's host everywhere and proving nothing about which slot
@@ -534,7 +543,9 @@ function harness(initialRuns: Run[]): Harness {
       );
     },
     rebindAgentContextTarget: async (run, handle) => {
-      calls.push(`rebind-context:${run.id}:${handle.target.paneId}`);
+      calls.push(
+        `rebind-context:${run.id}:${handle.version === 1 ? handle.target.paneId : 'native'}`,
+      );
     },
     recordParkRestoredPosture: async (runId) => {
       calls.push(`posture-restored:${runId}`);
@@ -2645,7 +2656,7 @@ test('a taken original slot re-homes the restore onto another free slot', async 
   // tmux session, with a structured acknowledgement.
   assert.equal(after.park!.recoveryProof?.sessionId, 'session-run-gate');
   assert.equal(after.park!.recoveryProof?.acknowledgement.kind, 'structured');
-  assert.equal(after.park!.recoveryHandle?.target.session, 'session-slot-b');
+  assert.equal(terminalHandle(after.park!.recoveryHandle).target.session, 'session-slot-b');
   // Every restore stage landed, and the freed-slot obligation is discharged.
   assert.equal(machineParkRestoreComplete(after.park!.restoreProgress), true);
   assert.equal(after.park!.slotFreedAt, undefined);
@@ -2750,7 +2761,7 @@ test('a lost claim rolls the whole re-home back rather than leaving it half move
   // The row reads free, so the write-ahead lands, and the CAS then loses.
   ctx.failClaims.add('slot-b');
   const before = ctx.runs.get('run-gate')!;
-  const originalHandleSession = before.park!.recoveryHandle!.target.session;
+  const originalHandleSession = terminalHandle(before.park!.recoveryHandle).target.session;
 
   const { preview } = await previewFreedRestore(ctx);
   await ctx.service.restore({
@@ -2768,7 +2779,7 @@ test('a lost claim rolls the whole re-home back rather than leaving it half move
   // this run does not own.
   assert.equal(after.park!.slotId, 'slot-a');
   assert.equal(after.slotId, 'slot-a');
-  assert.equal(after.park!.recoveryHandle?.target.session, originalHandleSession);
+  assert.equal(terminalHandle(after.park!.recoveryHandle).target.session, originalHandleSession);
   // And no move is claimed. A record that never took a slot must not say it
   // moved — the next attempt would then re-home FROM the slot it lost, throwing
   // away the true original.
@@ -3238,7 +3249,10 @@ test('a re-hosted pane lands on the record and the agent context together', asyn
   assert.equal(restored.ok, true, JSON.stringify(ctx.runs.get('run-gate')!.park!.errors));
   // The record is what a later restore reads; the context is what the operator's
   // attach reads. One without the other leaves someone staring at a dead pane.
-  assert.equal(ctx.runs.get('run-gate')!.park!.recoveryHandle?.target.paneId, '%777');
+  assert.equal(
+    terminalHandle(ctx.runs.get('run-gate')!.park!.recoveryHandle).target.paneId,
+    '%777',
+  );
   assert.ok(ctx.calls.includes('rebind-context:run-gate:%777'));
 });
 
@@ -3450,7 +3464,10 @@ test('a retry repairs an attach target the previous attempt left on a dead pane'
   };
 
   assert.equal((await ctx.service.restoreForGateResolution('run-gate')).ok, false);
-  assert.equal(ctx.runs.get('run-gate')!.park!.recoveryHandle?.target.paneId, '%555');
+  assert.equal(
+    terminalHandle(ctx.runs.get('run-gate')!.park!.recoveryHandle).target.paneId,
+    '%555',
+  );
 
   const retried = await ctx.service.restoreForGateResolution('run-gate');
 
@@ -5774,4 +5791,161 @@ test('an override that delegates to the previous stub still reports exactly once
     })),
     [{ resourceId: 'browser-cdp', action: 'booted', ok: true }],
   );
+});
+
+function nativeParkHandle(runId: string, slotId: string): MachinePauseNativeRecoveryHandle {
+  return {
+    version: 2,
+    transport: 'native',
+    runnerId: 'claude',
+    contextId: 'primary',
+    sessionId: `session-${runId}`,
+    nativeSessionId: `native-${runId}`,
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'node-a',
+    leaseId: `lease-${runId}`,
+    generation: 'native-generation',
+    launchDigest: 'launch-digest',
+    slotId,
+    cwd: `/fixture/${slotId}`,
+    model: 'sonnet',
+    capturedAt: '2026-08-21T00:00:00.000Z',
+  };
+}
+
+test('native release stops its owned worker before resources and restores the original slot', async () => {
+  const run = activeRun('run-a', 'slot-a');
+  run.transport = 'native';
+  const ctx = harness([run]);
+  ctx.deps.resolveRecoveryHandle = async () => nativeParkHandle(run.id, run.slotId!);
+  const preview = await ctx.service.preview({
+    machine: 'machine-a',
+    mode: 'release',
+    selector: { kind: 'all' },
+  });
+  const parked = await ctx.service.execute({
+    machine: 'machine-a',
+    mode: 'release',
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: run.id, generation: 3 }],
+    operationId: 'native-park',
+  });
+  assert.equal(parked.ok, true);
+  assert.equal(parked.records[0]?.recoveryHandle?.version, 2);
+  const stop = ctx.calls.indexOf('stop-runner:run-a');
+  assert.ok(stop >= 0 && stop < ctx.calls.findIndex((call) => call.startsWith('stop-resource:')));
+  const restore = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'all' },
+    execute: true,
+    previewId: restore.previewId,
+    reviewedTargets: [{ runId: run.id, generation: 3 }],
+    operationId: 'native-restore',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.records));
+  assert.equal(ctx.runs.get(run.id)?.slotId, 'slot-a');
+  assert.equal(ctx.runs.get(run.id)?.park?.recoveryProof?.acknowledgement.kind, 'structured');
+});
+
+test('a live native restore retry reconciles continuation acceptance before orchestration resumes', async () => {
+  const run = activeRun('run-a', 'slot-a');
+  run.transport = 'native';
+  run.status = 'paused';
+  run.park = {
+    ...parkedRecord(run.id, run.slotId!),
+    mode: 'release',
+    phase: 'partial',
+    recoveryHandle: nativeParkHandle(run.id, run.slotId!),
+    residuals: { runner: 'running', resources: [] },
+  };
+  const ctx = harness([run]);
+  const reload = ctx.deps.reloadRunner;
+  let reconciliations = 0;
+  ctx.deps.reloadRunner = async (...args) => {
+    reconciliations++;
+    if (reconciliations === 1) throw new Error('continuation acceptance unconfirmed');
+    return reload(...args);
+  };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const preview = await ctx.service.restore({ machine: 'machine-a', selector: { kind: 'all' } });
+    const result = await ctx.service.restore({
+      machine: 'machine-a',
+      selector: { kind: 'all' },
+      execute: true,
+      previewId: preview.previewId,
+      reviewedTargets: [{ runId: run.id, generation: 3 }],
+      operationId: `native-retry-${attempt}`,
+    });
+    assert.equal(result.ok, attempt === 2, JSON.stringify(result.records));
+    if (attempt === 1) {
+      assert.equal(ctx.calls.includes('resume:run-a'), false);
+      assert.equal(ctx.runs.get(run.id)?.park?.recoveryProof, undefined);
+    }
+  }
+  assert.equal(reconciliations, 2);
+  assert.equal(ctx.runs.get(run.id)?.park?.recoveryProof?.acknowledgement.kind, 'structured');
+});
+
+test('native freed-slot restore refuses without its native relocation capability', async () => {
+  const ctx = await rehomeHarness();
+  const run = ctx.runs.get('run-gate')!;
+  run.transport = 'native';
+  run.park!.recoveryHandle = nativeParkHandle(run.id, 'slot-a');
+  const { preview } = await previewFreedRestore(ctx);
+  assert.equal(preview.runs[0]?.eligibility.eligible, false);
+  assert.match(preview.runs[0]!.eligibility.reason, /Native relocation capability is unavailable/);
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(
+    ctx.calls.some((call) => call.startsWith('claim-slot:')),
+    false,
+  );
+});
+
+test('native relocation uses shared slot claims and never rehosts the successor terminal', async () => {
+  const ctx = await rehomeHarness();
+  const run = ctx.runs.get('run-gate')!;
+  run.transport = 'native';
+  run.park!.recoveryHandle = {
+    ...nativeParkHandle(run.id, 'slot-a'),
+    stateDirectory: '/state/session',
+  };
+  ctx.deps.rehomeNativeHandle = async (_run, handle, slotId) => ({
+    ...handle,
+    slotId,
+    cwd: `/fixture/${slotId}`,
+    relocation: { fromSlotId: handle.slotId, fromCwd: handle.cwd },
+  });
+  ctx.deps.inspectParkHost = async (_run, handle) => ({
+    ok: true,
+    disposition: 'exact',
+    recoveryHandle: handle,
+  });
+  ctx.deps.rehostParkTarget = async (_run, handle) => ({
+    ok: true,
+    disposition: 'exact',
+    recoveryHandle: handle,
+  });
+  const { preview, entry } = await previewFreedRestore(ctx);
+  assert.equal(entry.eligibility.eligible, true, entry.eligibility.reason);
+  assert.equal(entry.restoreTarget.slotId, 'slot-b');
+  assert.equal(run.slotId, 'slot-a');
+  const result = await ctx.service.restore({
+    machine: 'machine-a',
+    selector: { kind: 'include', runIds: [run.id] },
+    execute: true,
+    previewId: preview.previewId,
+    reviewedTargets: [{ runId: run.id, generation: 3 }],
+    operationId: 'native-rehome',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.records));
+  assert.equal(ctx.slotOwners.get('slot-a'), 'run-successor');
+  assert.equal(ctx.slotOwners.get('slot-b'), run.id);
+  assert.equal(run.slotId, 'slot-b');
+  const handle = run.park!.recoveryHandle;
+  assert.equal(handle?.version, 2);
+  if (handle?.version !== 2) throw new Error('Native handle missing');
+  assert.equal(handle.sessionId, `session-${run.id}`);
+  assert.equal(handle.leaseId, `lease-${run.id}`);
+  assert.deepEqual(handle.relocation, { fromSlotId: 'slot-a', fromCwd: '/fixture/slot-a' });
 });

@@ -83,6 +83,7 @@ export interface CopilotDangerousLaunchBinding {
   dirtyFileCount: number;
   runner: string;
   model: string;
+  effort?: string;
   safetyTier: 'dangerous';
 }
 
@@ -101,6 +102,7 @@ export interface CopilotRuntimeSession {
   transcriptId: string;
   runner: string;
   model: string;
+  effort?: string;
   autostart: boolean;
   safetyTier: SafetyTier;
   checkout: CopilotCheckoutIdentity;
@@ -124,6 +126,7 @@ export interface CopilotStatusResult {
 export interface CopilotConfigureParams {
   runner?: string;
   model?: string;
+  effort?: string;
   autostart?: boolean;
 }
 
@@ -135,6 +138,7 @@ export interface CopilotStartParams {
   mode?: 'start' | 'reconnect';
   runner?: string;
   model?: string;
+  effort?: string;
   safetyTier?: SafetyTier;
   confirmation?: CopilotDangerousConfirmation;
 }

@@ -2,7 +2,17 @@
 // Each run persisted as .runs/{id}.json
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -20,9 +30,11 @@ import {
   isReviewValidationDepth,
   isTerminalRunStatus,
   isValidDomainName,
+  nativeWorkerBindingIsHeld,
   normalizeCiActionId,
   normalizeFlowType,
   normalizeRunTags,
+  parseNativeProfileReference,
   primaryRoleForFlow,
   prNumberFromRunInput,
   type Run,
@@ -45,6 +57,7 @@ import {
   runnerDefaultModel,
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
+import { resolveNativeWorkerOwner } from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
@@ -270,7 +283,18 @@ async function persistBody(run: Run): Promise<void> {
   // serialized body after a newer persistRunNow (chain still serializes, but
   // capture the object state this call intends to flush).
   const payload = JSON.stringify(run, null, 2);
-  await writeFile(tmpPath, payload, 'utf-8');
+  await writeFile(tmpPath, payload, {
+    encoding: 'utf-8',
+    ...(run.transport === 'native' ? { mode: 0o600 } : {}),
+  });
+  if (run.transport === 'native') {
+    const file = await open(tmpPath, 'r');
+    try {
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+  }
   if (runs.get(run.id) !== run) {
     try {
       await unlink(tmpPath);
@@ -282,6 +306,14 @@ async function persistBody(run: Run): Promise<void> {
     return;
   }
   await rename(tmpPath, filePath);
+  if (run.transport === 'native') {
+    const directory = await open(RUNS_DIR, 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  }
 }
 
 async function enqueueRunPersist(run: Run): Promise<void> {
@@ -593,6 +625,9 @@ function normalizePressureAdmissionRefRequest(
 export function createRun(
   params: RunCreateParams,
   options?: {
+    /** Trusted internal handoff only. Never copied from RPC parameters. */
+    nativeOwnerPrincipalId?: string;
+    createdByPrincipalId?: string;
     /**
      * When true, skip fire-and-forget persist so the caller can await a
      * durable write after related handoff work (e.g. queue stamp) completes.
@@ -601,6 +636,31 @@ export function createRun(
     deferBackgroundPersist?: boolean;
   },
 ): Run {
+  if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
+    throw new Error('Run ownership cannot be supplied in run parameters');
+  const parent = params.parentRunId ? runs.get(params.parentRunId) : undefined;
+  const transport = params.transport ?? parent?.transport;
+  if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
+    throw new Error('Unknown worker transport');
+  const nativeOwnerPrincipalId =
+    transport === 'native'
+      ? resolveNativeWorkerOwner(options?.nativeOwnerPrincipalId ?? parent?.nativeOwnerPrincipalId)
+      : undefined;
+  const selectedProfile = params.nativeProfile;
+  if (selectedProfile !== undefined && transport !== 'native')
+    throw new Error('Native profile selection requires native worker transport');
+  const nativeProfile =
+    selectedProfile === undefined ? undefined : parseNativeProfileReference(selectedProfile);
+  if (nativeProfile) {
+    if (params.runner && normalizeRunner(params.runner) !== nativeProfile.runner)
+      throw new Error('Selected native profile belongs to another worker runner');
+    params = { ...params, runner: nativeProfile.runner };
+  }
+  const originator = currentSessionOriginator();
+  const createdByPrincipalId =
+    originator.kind === 'principal'
+      ? originator.principalId
+      : (options?.createdByPrincipalId ?? parent?.createdByPrincipalId ?? nativeOwnerPrincipalId);
   assertNoAutomatedPRConflict(params, getAllRuns());
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
@@ -704,6 +764,10 @@ export function createRun(
       : params.engineState;
   const run: Run = {
     id,
+    ...(transport ? { transport } : {}),
+    ...(nativeOwnerPrincipalId ? { nativeOwnerPrincipalId } : {}),
+    ...(nativeProfile ? { nativeProfile } : {}),
+    ...(createdByPrincipalId ? { createdByPrincipalId } : {}),
     familyId,
     parentRunId: params.parentRunId ?? null,
     familyRootTicketOrPr: params.familyRootTicketOrPr ?? params.ticketOrPr,
@@ -930,6 +994,39 @@ export function listRunTags(): Array<{ tag: string; count: number }> {
 export function updateRun(id: string, partial: Partial<Run>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if ('transport' in partial && (partial.transport ?? 'tmux') !== (run.transport ?? 'tmux'))
+    throw new Error('Worker transport is fixed for the run; create a new run to switch transport');
+  if ('nativeProfile' in partial && !isDeepStrictEqual(partial.nativeProfile, run.nativeProfile))
+    throw new Error(
+      'Native configuration is fixed for the run; login rotation keeps the same profile',
+    );
+  if (
+    'nativeOwnerPrincipalId' in partial &&
+    partial.nativeOwnerPrincipalId !== run.nativeOwnerPrincipalId
+  )
+    throw new Error('Native run ownership cannot be changed');
+  if (
+    'createdByPrincipalId' in partial &&
+    partial.createdByPrincipalId !== run.createdByPrincipalId
+  )
+    throw new Error('Run creator cannot be changed');
+  if (
+    run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)) &&
+    (('slotId' in partial && partial.slotId !== run.slotId) ||
+      ('project' in partial && partial.project !== run.project))
+  )
+    throw new Error('Close or transfer the native worker before changing its slot or project');
+  if ('agentContexts' in partial) {
+    for (const context of run.agentContexts ?? []) {
+      const binding = context.nativeSession;
+      if (!binding || !nativeWorkerBindingIsHeld(binding)) continue;
+      const next = partial.agentContexts?.find((item) => item.id === context.id)?.nativeSession;
+      if (next?.sessionId !== binding.sessionId || next.leaseId !== binding.leaseId)
+        throw new Error(
+          'Native worker ownership cannot be discarded before confirmed close or transfer',
+        );
+    }
+  }
   const previousStatus = run.status;
   const statusProvided = Object.prototype.hasOwnProperty.call(partial, 'status');
   if (
@@ -1063,12 +1160,20 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
   return run;
 }
 
+function assertNativeWorkersReleased(run: Run): void {
+  if (run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)))
+    throw new Error(
+      'Native worker ownership cannot leave the run store before confirmed close or transfer',
+    );
+}
+
 export async function deleteRun(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
+  assertNativeWorkersReleased(run);
   if (run.backlogReconcilePending) {
     throw new Error(`Cannot delete run ${id} while backlog reconciliation is pending`);
   }
@@ -1194,6 +1299,7 @@ export async function archiveRun(id: string): Promise<boolean> {
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
+  assertNativeWorkersReleased(run);
   if (run.backlogReconcilePending) {
     throw new Error(`Cannot archive run ${id} while backlog reconciliation is pending`);
   }

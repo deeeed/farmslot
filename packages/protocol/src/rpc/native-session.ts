@@ -7,12 +7,18 @@ export interface NativeSessionCapabilities {
   questions: boolean;
   interrupt: boolean;
   resume: boolean;
+  /** Saved conversation may resume in a sibling worktree on the same execution host. */
+  resumeAcrossWorkspaces?: boolean;
   resumeUnavailableReason?: string;
 }
 
 export interface NativeSessionCreateParams {
   /** Omitted or local selects the gateway host; otherwise an authenticated execution node. */
   executionNodeId?: string;
+  /** Named native account profile on this execution node; omitted preserves ambient behavior. */
+  profileId?: string;
+  /** Required with profileId; guards a selection made before a profile was replaced. */
+  accountContextId?: string;
   runner: string;
   cwd: string;
   model?: string;
@@ -23,6 +29,15 @@ export interface NativeSessionCreateParams {
 export interface NativeSessionTargetParams {
   sessionId: string;
   executionNodeId?: string;
+  /** Pin a worker view to its run, rather than adopting a successor's refreshed lease. */
+  worker?: NativeWorkerControlTarget;
+}
+
+export interface NativeWorkerControlTarget {
+  runId: string;
+  contextId: string;
+  generation: string;
+  leaseId: string;
 }
 
 /** Idempotent initial creation. Older runtimes reject this operation without launching. */
@@ -39,6 +54,9 @@ export interface NativeExecutionNodeDeclaration {
   ownerPrincipalId: string;
   /** The node routes reserved creation; its retained host is checked separately at invocation. */
   supportsEnsure?: boolean;
+  /** Private worker launch contract, separate from ordinary session creation. */
+  supportsWorkers?: boolean;
+  supportsProfiles?: boolean;
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];
@@ -96,34 +114,43 @@ export interface NativeSessionInfo {
   ownerPrincipalId: string;
   executionNodeId: string;
   accountContextId: string;
+  profileId?: string;
   cwd: string;
   executable: string;
   version: string;
   model?: string;
   mode: 'default' | 'plan';
   accountMode: 'native';
+  effort?: string;
+  /** Recovery must rebuild the trusted worker launch configuration through run controls. */
+  workerManaged?: boolean;
+  /** Current worker task's input lease; independent of process generation and command IDs. */
+  workerLeaseId?: string;
   capabilities: NativeSessionCapabilities;
   state: 'starting' | 'idle' | 'waiting' | 'running' | 'closing' | 'closed' | 'failed';
 }
+export const NativeSessionEventTypes = {
+  SESSION_STARTED: 'session.started',
+  COMMAND_SUBMITTED: 'command.submitted',
+  COMMAND_ACCEPTED: 'command.accepted',
+  TURN_STARTED: 'turn.started',
+  TEXT_DELTA: 'text.delta',
+  TOOL_STARTED: 'tool.started',
+  TOOL_COMPLETED: 'tool.completed',
+  APPROVAL_REQUESTED: 'approval.requested',
+  APPROVAL_RESOLVED: 'approval.resolved',
+  QUESTION_REQUESTED: 'question.requested',
+  TURN_COMPLETED: 'turn.completed',
+  SESSION_CLOSED: 'session.closed',
+  ERROR: 'error',
+} as const;
+
 export interface NativeSessionEvent {
   sessionId: string;
   sequence: number;
   generation: string;
   at: string;
-  type:
-    | 'session.started'
-    | 'command.submitted'
-    | 'command.accepted'
-    | 'turn.started'
-    | 'text.delta'
-    | 'tool.started'
-    | 'tool.completed'
-    | 'approval.requested'
-    | 'approval.resolved'
-    | 'question.requested'
-    | 'turn.completed'
-    | 'session.closed'
-    | 'error';
+  type: (typeof NativeSessionEventTypes)[keyof typeof NativeSessionEventTypes];
   commandId?: string;
   turnId?: string;
   nativeId?: string;
@@ -155,6 +182,17 @@ export interface NativeSessionReadResult {
   /** Most recent 100 receipts. Older command IDs remain durably deduplicated. */
   commands: NativeCommandReceipt[];
   pendingRequests: NativeSessionEvent[];
+  /** Worker events retain absolute session sequences inside this task's lease window. */
+  scope?: NativeWorkerHistoryScope;
+}
+
+export interface NativeWorkerHistoryScope {
+  leaseId: string;
+  /** Exclusive first boundary; an omitted read cursor starts here. */
+  startAfter: number;
+  /** Inclusive last boundary, frozen when the lease transfers. */
+  endAt: number;
+  released: boolean;
 }
 
 /** Curated native choices; availability and billing remain account-owned. */
@@ -163,6 +201,10 @@ export interface NativeRunnerOption {
   models: string[];
   defaultModel: string;
   modes: Array<'default' | 'plan'>;
+  /** Task dispatch and leased recovery are available in addition to standalone chat. */
+  supportsWorkers?: boolean;
+  /** Queued creation preserves the authenticated profile owner and transport. */
+  supportsQueuedWorkers?: boolean;
 }
 export interface NativeSessionCatalogResult {
   runners: NativeRunnerOption[];
@@ -172,6 +214,7 @@ export interface NativeSessionCatalogResult {
     slotId?: string;
     project?: string;
     executionNodeId?: string;
+    supportsProfiles?: boolean;
   }>;
 }
 export interface NativeWorkspacePathParams extends NativeSessionTargetParams {

@@ -51,6 +51,11 @@ import {
   findActiveGateHeldRunForSlot,
   findGateParkedRunForSlot,
 } from '../../run-engine/gate-held-lifecycle.js';
+import {
+  assertNativeSlotReplacementOwner,
+  cancelNativeRunWorkers,
+  retireNativeWorkersForSlot,
+} from '../../runners/native/worker.js';
 import { runnerPromptSubmitKey } from '../../runners/registry.js';
 import { archiveRunnerSessionsForSlotRelease } from '../../runners/session-archive.js';
 import {
@@ -58,6 +63,7 @@ import {
   RUNNER_PARK_LIVENESS_PROBE_ATTEMPTS,
 } from '../../runners/session-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
+import { getRun } from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 import { releaseRuntimeCapabilitiesForSlot } from '../runtime-capabilities.js';
@@ -151,6 +157,7 @@ async function slotReleaseImpl(
   const vars = await loadSlotVars(params.slotId);
   const forceReset = params.forceReset ?? false;
   const preserveAgents = params.preserveAgents ?? false;
+  assertNativeSlotReplacementOwner(params.slotId, params.expectedRunId ?? boundOwner ?? undefined);
   const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
   if (gateHeldRun && !preserveAgents && !forceReset) {
     throw new Error(
@@ -324,10 +331,16 @@ async function slotReleaseImpl(
     // Close the passive log reader first. If it were the only non-agent
     // window, killing role windows first would leave it as tmux's last window;
     // closing it afterward would destroy the slot session.
-    await closeDevServerLogTailWindow(vars);
     step('agent', 'Killing agent...');
-    await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
-    await killAllAgentWindows(vars);
+    const releasingRunId = params.expectedRunId ?? boundOwner;
+    if (releasingRunId && getRun(releasingRunId)?.transport === 'native') {
+      await cancelNativeRunWorkers(releasingRunId);
+    } else {
+      await retireNativeWorkersForSlot(params.slotId, releasingRunId ?? undefined);
+      await closeDevServerLogTailWindow(vars);
+      await killAgentInSession(vars, runner ?? undefined, primaryRoleForFlow(flowType));
+      await killAllAgentWindows(vars);
+    }
     step('agent', 'Agent killed');
     // The staged terminal attachments belong to the session that just died. Delete them
     // here rather than waiting for the bounded stale sweep so the slot goes back to idle
@@ -644,7 +657,12 @@ async function slotReleaseImpl(
 }
 
 /** Tear down role windows and runner processes without running a full slot release. */
-export async function killSlotAgents(slotId: string): Promise<void> {
+export async function killSlotAgents(slotId: string, runId?: string): Promise<void> {
+  if (runId && getRun(runId)?.transport === 'native') {
+    await cancelNativeRunWorkers(runId);
+    return;
+  }
+  await retireNativeWorkersForSlot(slotId, runId);
   const vars = await loadSlotVars(slotId);
   const runner = (await readSlotField(slotId, 'runner')) as string | null;
   const flowType = (await readSlotField(slotId, 'current_flow_type')) as FlowType | null;

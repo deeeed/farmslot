@@ -86,3 +86,28 @@ test('dangerous confirmation rejects stale metadata and incomplete acknowledgeme
     assert.match(COPILOT_DANGEROUS_WARNING, new RegExp(boundary));
   }
 });
+
+test('dangerous launch approval is invalid after the configured effort changes', () => {
+  const checkout = testCheckout('/operator/farmslot');
+  const low = dangerousLaunchBinding({
+    checkout,
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'low',
+  });
+  const medium = dangerousLaunchBinding({
+    checkout,
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'medium',
+  });
+  assert.throws(
+    () =>
+      assertDangerousConfirmation(medium, {
+        fingerprint: low.fingerprint,
+        typedPhrase: low.typedPhrase,
+        warningAcknowledged: true,
+      }),
+    /no longer matches/,
+  );
+});

@@ -29,6 +29,9 @@ export interface EvalQueueCell {
 }
 
 export interface QueueItem {
+  transport?: import('./agents.js').WorkerTransport;
+  nativeProfile?: import('../rpc/native-profile.js').NativeProfileReference;
+  skipPrepare?: boolean;
   id: string;
   prWork?: import('./pr-monitoring.js').PRWorkReference;
   waitingReason?: string;

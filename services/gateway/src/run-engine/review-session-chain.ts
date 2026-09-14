@@ -6,7 +6,10 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { runnerRetainedSessionHandoff } from '../runners/registry.js';
+import {
+  runnerRetainedSessionHandoff,
+  runnerSupportsNativeTaskReuse,
+} from '../runners/registry.js';
 import {
   deliverPromptToRetainedRunnerSession,
   type RunnerSessionReactivationOptions,
@@ -22,6 +25,7 @@ export interface RepeatReviewResumeBinding {
 export type RepeatReviewResumePlan =
   | { kind: 'reset' }
   | { kind: 'resume'; binding: RepeatReviewResumeBinding }
+  | { kind: 'native-resume'; binding: Omit<RepeatReviewResumeBinding, 'runnerSessionPath'> }
   | { kind: 'fallback'; reason: ReviewSessionFallbackReason };
 
 export type RepeatReviewResumeAttempt =
@@ -42,14 +46,29 @@ export type RepeatReviewResumeAttempt =
  * Runner mechanics remain behind the shared runner capability adapter.
  */
 export function resolveRepeatReviewResumePlan(
-  current: Pick<Run, 'flowType' | 'project' | 'slotId' | 'repeatReviewContext' | 'prWork'>,
+  current: Pick<
+    Run,
+    | 'flowType'
+    | 'project'
+    | 'slotId'
+    | 'repeatReviewContext'
+    | 'prWork'
+    | 'transport'
+    | 'nativeOwnerPrincipalId'
+    | 'ticketOrPr'
+  >,
   prior: Run | null,
   runner: string,
   model?: string | null,
 ): RepeatReviewResumePlan {
   const context = current.repeatReviewContext;
   if (!context || context.sessionIntent !== 'resume') return { kind: 'reset' };
-  if (runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt') {
+  const native = current.transport === 'native';
+  if (
+    native
+      ? !runnerSupportsNativeTaskReuse(runner)
+      : runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt'
+  ) {
     return { kind: 'fallback', reason: 'unsupported-runner' };
   }
   if (
@@ -82,6 +101,25 @@ export function resolveRepeatReviewResumePlan(
   if (!current.slotId || prior.slotId !== current.slotId) {
     return { kind: 'fallback', reason: 'slot-mismatch' };
   }
+  if (
+    native &&
+    (prior.transport !== 'native' ||
+      !current.nativeOwnerPrincipalId ||
+      prior.nativeOwnerPrincipalId !== current.nativeOwnerPrincipalId)
+  )
+    return { kind: 'fallback', reason: 'missing-session' };
+  if (!native && prior.transport === 'native')
+    return { kind: 'fallback', reason: 'missing-session' };
+  if (native) {
+    const requestedRef = parseGitHubRef(current.ticketOrPr);
+    if (
+      !requestedRef ||
+      requestedRef.repo.toLowerCase() !== context.repository.toLowerCase() ||
+      requestedRef.number !== context.prNumber ||
+      context.priorFamilyId !== prior.familyId
+    )
+      return { kind: 'fallback', reason: 'missing-session' };
+  }
   const reviewer = [...(prior.agentContexts ?? [])]
     .filter(
       (candidate) =>
@@ -89,14 +127,19 @@ export function resolveRepeatReviewResumePlan(
         candidate.runner === runner &&
         candidate.slotId === current.slotId &&
         candidate.runnerSessionId?.trim() &&
-        candidate.runnerSessionPath?.trim(),
+        (native
+          ? candidate.nativeSession?.generation &&
+            candidate.nativeSession.acceptedAt &&
+            !candidate.nativeSession.releasedAt &&
+            !candidate.nativeSession.recovery
+          : candidate.runnerSessionPath?.trim()),
     )
     .sort((left, right) => {
       const leftAt = left.completedAt ?? left.updatedAt ?? left.startedAt ?? '';
       const rightAt = right.completedAt ?? right.updatedAt ?? right.startedAt ?? '';
       return rightAt.localeCompare(leftAt) || right.id.localeCompare(left.id);
     })[0];
-  if (!reviewer?.runnerSessionId?.trim() || !reviewer.runnerSessionPath?.trim()) {
+  if (!reviewer?.runnerSessionId?.trim() || (!native && !reviewer.runnerSessionPath?.trim())) {
     const anotherRunner = (prior.agentContexts ?? []).some(
       (candidate) => candidate.role === 'review' && candidate.runner !== runner,
     );
@@ -106,13 +149,22 @@ export function resolveRepeatReviewResumePlan(
     };
   }
   if (model && reviewer.model !== model) return { kind: 'fallback', reason: 'model-mismatch' };
+  if (native)
+    return {
+      kind: 'native-resume',
+      binding: {
+        priorRunId: prior.id,
+        contextId: reviewer.id,
+        runnerSessionId: reviewer.runnerSessionId,
+      },
+    };
   return {
     kind: 'resume',
     binding: {
       priorRunId: prior.id,
       contextId: reviewer.id,
       runnerSessionId: reviewer.runnerSessionId,
-      runnerSessionPath: reviewer.runnerSessionPath,
+      runnerSessionPath: reviewer.runnerSessionPath!,
     },
   };
 }

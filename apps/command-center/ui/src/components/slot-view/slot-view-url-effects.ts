@@ -6,6 +6,7 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
+import { isSlotViewContextPinUnresolved } from './slot-view-linked-run-model.js';
 import { loadSlotViewGitFileContent } from './slot-view-live-effects.js';
 import {
   branchDiffKey,
@@ -32,13 +33,27 @@ export function handleSlotViewHashChange(view: SlotView): void {
   // When navigating to the same slot with a different ?file= param, _initLive
   // won't re-run (slotId didn't change), so we must restore the file here.
   if (isSlotViewHashForSlot(view.slotId) && view._fileUrlReady) {
+    const requestedRunId = requestedRunFromHash();
+    if (
+      (requestedRunId && requestedRunId !== view._linkedRun?.id) ||
+      isSlotViewContextPinUnresolved({
+        run: view._linkedRun,
+        requestedRunId,
+        requestedContextId: getSlotViewHashParam('contextId'),
+        slotId: view.slotId,
+      })
+    ) {
+      // File restoration can synchronously sync the URL. Retire the old run
+      // first so it cannot replace the newly requested task with its own ID.
+      view._linkedRunRefreshToken = Symbol('run-navigation');
+      view._linkedRun = null;
+    }
     // Hydrate URL-pinned history state BEFORE _refreshLinkedRun fires
     // _syncUrlState — otherwise the sync would write the URL back without
     // our just-arrived ?history=1, racing the hashchange we're handling.
     restoreSlotViewHistoryFromUrl(view);
     void restoreSlotViewFileFromUrl(view);
     restoreSlotViewResourceFromUrl(view);
-    const requestedRunId = requestedRunFromHash();
     if (requestedRunId && !view._reviewPanelOpen) {
       view._reviewPanelOpen = true;
       view._saveLayout();
@@ -56,7 +71,7 @@ export function restoreSlotViewHistoryFromUrl(view: SlotView): void {
 }
 
 /** Update URL hash with current local slot-view state (replaceState to avoid history spam) */
-export function syncSlotViewUrlState(view: SlotView): void {
+export function syncSlotViewUrlState(view: SlotView, contextId?: string): void {
   const fileForUrl = view._activeFile;
   const resourceForUrl = view._activeResourceId || requestedResourceFromHash();
   const runForUrl = view._linkedRun?.id ?? requestedRunFromHash() ?? undefined;
@@ -68,6 +83,7 @@ export function syncSlotViewUrlState(view: SlotView): void {
     slotId: view.slotId,
     activity: view._sidebarOpen && view._activity === 'info' ? 'info' : undefined,
     runId: runForUrl,
+    contextId: contextId ?? getSlotViewHashParam('contextId') ?? undefined,
     file: fileForUrl,
     resource: view._resourcePanelOpen ? (resourceForUrl ?? '') : '',
     recipeRun: view._selectedRecipeRunId,

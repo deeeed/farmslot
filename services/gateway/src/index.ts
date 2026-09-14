@@ -117,8 +117,13 @@ import {
 } from './security/auth.js';
 import { authorizeStoredRunEffect } from './security/authorization.js';
 import { registerGatewayPresence } from './security/gateway-presence.js';
+import { requireNativeProfileOwner } from './security/native-worker-owner.js';
 import { applyGatewayCors } from './security/origin.js';
-import { migrationOriginator, resolveWorkOriginator } from './security/work-originator.js';
+import {
+  migrationOriginator,
+  resolveWorkOriginator,
+  runWithSessionOriginator,
+} from './security/work-originator.js';
 import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -463,13 +468,23 @@ async function main(): Promise<void> {
         itemLabel,
         effectiveSafetyTier,
       );
-    authorizeOriginator();
+    const creatingPrincipal = authorizeOriginator();
+    if (item.transport === 'native') {
+      requireNativeProfileOwner(creatingPrincipal.id);
+      if (item.queueKind && item.queueKind !== 'dispatch')
+        throw new Error('Native worker transport is only supported for dispatch queue items');
+    }
     // runCreate/evalTrialStart await substantially before the durable store write.
     // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
     // before createRun in the store — after those awaits, not before them.
     const beforeCreate = () => {
       assertQueueClaimHeld(claim, 'pre-durable-createRun');
-      authorizeOriginator();
+      const currentPrincipal = authorizeOriginator();
+      if (currentPrincipal.id !== creatingPrincipal.id)
+        throw new Error('Queued worker originator changed before creation');
+      if (item.transport === 'native') {
+        requireNativeProfileOwner(currentPrincipal.id);
+      }
       assertPRQueueAdmission(prDispatchSelection);
     };
     /** After createRun is persisted, drop the queue row and await queue disk write. */
@@ -482,35 +497,38 @@ async function main(): Promise<void> {
       }
     };
     if (item.queueKind === 'eval-cell' && item.evalCell) {
+      const cell = item.evalCell;
       const { evalTrialStart } = await import('./methods/eval.js');
-      const params = item.evalCell.trialStartParams as unknown as EvalTrialStartParams;
-      const result = await evalTrialStart(
-        {
-          ...params,
-          project: item.project,
-          experimentManifestPath: item.evalCell.experimentManifestPath,
-          trialId: item.evalCell.trialId,
-          capGroupId: item.evalCell.capGroupId,
-          suiteId: item.evalCell.suiteId,
-          safetyTier: effectiveSafetyTier,
-          slotId: item.slotId,
-          allowedSlots:
-            item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
-        },
-        observedBroadcast,
-        {
-          beforeCreate,
-          afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
-          durableStamp: async (created) => {
-            await stampQueueItemRunIdNow(item.id, created.id);
+      const params = cell.trialStartParams as unknown as EvalTrialStartParams;
+      const result = await runWithSessionOriginator(creatingPrincipal, () =>
+        evalTrialStart(
+          {
+            ...params,
+            project: item.project,
+            experimentManifestPath: cell.experimentManifestPath,
+            trialId: cell.trialId,
+            capGroupId: cell.capGroupId,
+            suiteId: cell.suiteId,
+            safetyTier: effectiveSafetyTier,
+            slotId: item.slotId,
+            allowedSlots:
+              item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
           },
-          awaitPersist: true,
-          // Called inside evalTrialStart immediately after createRun is durable,
-          // before package-manifest writes that can still fail.
-          afterCreate: async (run) => {
-            await dropQueueRowAfterCreate(run.id);
+          observedBroadcast,
+          {
+            beforeCreate,
+            afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
+            durableStamp: async (created) => {
+              await stampQueueItemRunIdNow(item.id, created.id);
+            },
+            awaitPersist: true,
+            // Called inside evalTrialStart immediately after createRun is durable,
+            // before package-manifest writes that can still fail.
+            afterCreate: async (run) => {
+              await dropQueueRowAfterCreate(run.id);
+            },
           },
-        },
+        ),
       );
       // Defensive: if afterCreate was not invoked (deduped path), still drop when a run id exists.
       if (result.run?.id && getQueueSnapshot().some((q) => q.id === item.id)) {
@@ -520,6 +538,9 @@ async function main(): Promise<void> {
     }
     const { runCreate } = await import('./methods/run.js');
     const runParams = {
+      transport: item.transport,
+      nativeProfile: item.nativeProfile,
+      skipPrepare: item.skipPrepare,
       flowType: item.flowType,
       project: item.project,
       ticketOrPr: item.ticketOrPr,
@@ -565,19 +586,21 @@ async function main(): Promise<void> {
       pendingReviewPlan: item.pendingReviewPlan,
       safetyTier: effectiveSafetyTier,
     } satisfies import('@farmslot/protocol').RunCreateParams;
-    const { run } = await runCreate(runParams, broadcastEvent, {
-      expectedExecutionTemplate: item.executionTemplate,
-      beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
-      beforeCreate,
-      afterCreateSync: (created) => {
-        if (item.prWork) created.prWork = structuredClone(item.prWork);
-        stampQueueItemRunId(item.id, created.id);
-      },
-      durableStamp: async (created) => {
-        await stampQueueItemRunIdNow(item.id, created.id);
-      },
-      awaitPersist: true,
-    });
+    const createQueuedRun = () =>
+      runCreate(runParams, broadcastEvent, {
+        expectedExecutionTemplate: item.executionTemplate,
+        beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
+        beforeCreate,
+        afterCreateSync: (created) => {
+          if (item.prWork) created.prWork = structuredClone(item.prWork);
+          stampQueueItemRunId(item.id, created.id);
+        },
+        durableStamp: async (created) => {
+          await stampQueueItemRunIdNow(item.id, created.id);
+        },
+        awaitPersist: true,
+      });
+    const { run } = await runWithSessionOriginator(creatingPrincipal, createQueuedRun);
     await recordPRQueueRun(item, run);
     // Link backlog before dropping the queue row so a crash/link-persist failure
     // still leaves item.runId for startup heal (needs-attention can observe the Run).

@@ -71,9 +71,9 @@ function slotViewResizeMaxHeight(view: SlotView, type: SlotViewResizeType): numb
   return computeEffectiveTerminalHeight(Number.MAX_SAFE_INTEGER, rightColHeight);
 }
 
-export function slotViewEffectiveTerminalHeight(view: SlotView): number {
+export function slotViewEffectiveTerminalHeight(view: SlotView, minimumHeight = 0): number {
   return computeEffectiveTerminalHeight(
-    view._terminalHeight,
+    Math.max(view._terminalHeight, minimumHeight),
     view._rightColHeight || slotViewRightColHeight(view),
   );
 }

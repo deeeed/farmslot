@@ -14,7 +14,7 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 
-import { markSlotBusy, markSlotHeld, updateSlotStatus } from '../core/index.js';
+import { markSlotBusy, markSlotHeld, updateSlotStatusIf } from '../core/index.js';
 import {
   finalizeEvalResultPackageForRun,
   readResultPackageManifest,
@@ -431,6 +431,19 @@ export async function executeMonitorStep(
   const inputs: Record<string, unknown> = { slotId: current.slotId };
   const controller = new AbortController();
   activeMonitors.set(runId, controller);
+  const generation = current.engineState?.generation ?? 0;
+  const canSettle = () => {
+    const latest = getRun(runId);
+    return Boolean(
+      latest &&
+      !controller.signal.aborted &&
+      activeMonitors.get(runId) === controller &&
+      (latest.engineState?.generation ?? 0) === generation &&
+      latest.slotId === current.slotId &&
+      !['done', 'failed', 'cancelled', 'paused'].includes(latest.status),
+    );
+  };
+  const retiredResult = (): StepIO => ({ inputs, outputs: { exitReason: 'aborted' } });
   let monitorResult: MonitorResult | undefined;
   try {
     monitorResult = await monitorRun(runId, current.slotId, controller.signal);
@@ -442,8 +455,14 @@ export async function executeMonitorStep(
   // cancellation can still interrupt the bounded post-completion wait; the
   // try/finally covers every remaining exit path of this step.
   try {
+    if (!canSettle()) return retiredResult();
     // Worker is done — clear agent status
-    await updateSlotStatus(current.slotId, { agent: 'idle' });
+    await updateSlotStatusIf(
+      current.slotId,
+      (slot) => slot.current_run_id === runId && canSettle(),
+      { agent: 'idle' },
+    );
+    if (!canSettle()) return retiredResult();
     const after = getRun(runId)!;
     const workerSignal = monitorResult?.workerSignal ?? null;
     if (workerSignal?.disposition || workerSignal?.evidence || workerSignal?.checklistTiming) {

@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import { Events, type MachineParkRecord } from '@farmslot/protocol';
 
-import { withMachineRunTransition } from '../../run-lifecycle/transition-coordinator.js';
+import {
+  withMachineRunTransition,
+  withRunTransition,
+} from '../../run-lifecycle/transition-coordinator.js';
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../runs/store.js';
 
 import {
@@ -493,7 +496,7 @@ test('runForceComplete publishes terminal state before slot release and reports 
   updateRun(run.id, { status: 'failed', error: 'self-review exhausted' });
 
   const order: string[] = [];
-  const result = await runForceCompleteTransitionLocked({ runId: run.id }, () => {}, {
+  const result = await runForceComplete({ runId: run.id }, () => {}, {
     cancelEngine: () => {},
     bumpGeneration: (runId) => {
       const current = getRun(runId)!;
@@ -526,6 +529,42 @@ test('runForceComplete publishes terminal state before slot release and reports 
     /ssh teardown failed/,
   );
 });
+
+test(
+  'force-complete releases lifecycle locks before advisory teardown reacquires them',
+  { timeout: 3000 },
+  async (t) => {
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'example-mobile-farm',
+      ticketOrPr: `PROJ-${Date.now()}-force-lock`,
+      slotId: 'force-complete-lock-fixture',
+    });
+    t.after(() => cleanupRun(run.id));
+    updateRun(run.id, { status: 'failed' });
+    let released = false;
+    const result = await runForceComplete({ runId: run.id }, () => {}, {
+      cancelEngine: () => {},
+      bumpGeneration: (id) => {
+        const current = getRun(id)!;
+        const generation = (current.engineState?.generation ?? 0) + 1;
+        updateRun(id, { engineState: { ...current.engineState, generation } });
+        return generation;
+      },
+      attachPrNumber: async () => {},
+      publish: async (current) => current,
+      releaseSlot: async () =>
+        withRunTransition(run.id, async () => {
+          assert.equal(getRun(run.id)?.status, 'done');
+          assert.equal(getRun(run.id)?.engineState?.operatorForceCompleted, true);
+          released = true;
+          return { released: true };
+        }),
+    });
+    assert.equal(released, true);
+    assert.equal(result.effects?.find((effect) => effect.name === 'slot-release')?.status, 'ok');
+  },
+);
 
 test('publishForceCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async (t) => {
   const run = createRun({

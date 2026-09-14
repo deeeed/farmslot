@@ -12,7 +12,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { upsertAgentContext } from '../../agents/contexts.js';
+import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
   execLocal,
@@ -46,6 +46,7 @@ import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import {
+  dispatchExecute,
   enforceDispatchPressureGate,
   ensureWorkerRoleTarget,
   isRunnerAliveInAnyPane,
@@ -81,7 +82,8 @@ export interface WarmSessionHandoffParams {
 export type WarmSessionHandoffResult =
   | {
       handedOff: true;
-      workerTarget: string;
+      workerTarget?: string;
+      nativeSession?: import('@farmslot/protocol').NativeWorkerSessionBinding;
       runner: string;
       model: string | null;
     }
@@ -180,6 +182,49 @@ export async function warmSessionHandoffDispatch(
     };
   }
   const parentRun = params.parentRunId ? (getRun(params.parentRunId) ?? null) : null;
+  if (requestingRun.transport === 'native') {
+    const destination = selectAgentContext(requestingRun, {
+      role: primaryRoleForFlow(requestingRun.flowType),
+    });
+    const source =
+      parentRun && selectAgentContext(parentRun, { role: primaryRoleForFlow(parentRun.flowType) });
+    const retainedFrom =
+      destination?.nativeSession?.handoffFrom ??
+      (source?.nativeSession && parentRun
+        ? { runId: parentRun.id, contextId: source.id }
+        : undefined);
+    if (!retainedFrom)
+      return {
+        handedOff: false,
+        disposition: 'hold',
+        reason: 'Native handoff requires an exact recorded parent worker',
+      };
+    await dispatchExecute(
+      {
+        slotId: params.slotId,
+        taskFile: params.taskFile,
+        runId: params.runId,
+        runner: params.runner ?? undefined,
+        model: params.model ?? undefined,
+        transport: 'native',
+        skipPrepare: true,
+        safetyTier: requestingRun.safetyTier,
+        effort: requestingRun.effort,
+        mode: requestingRun.mode,
+      },
+      emit,
+      { nativeRetainedFrom: retainedFrom },
+    );
+    const context = selectAgentContext(getRun(params.runId)!, {
+      role: primaryRoleForFlow(requestingRun.flowType),
+    });
+    return {
+      handedOff: true,
+      nativeSession: context?.nativeSession,
+      runner: context?.runner ?? params.runner ?? '',
+      model: context?.model ?? null,
+    };
+  }
 
   const slotRunnerRaw = (await readSlotField(params.slotId, 'runner')) as string | null;
   const slotModelRaw = (await readSlotField(params.slotId, 'model')) as string | null;

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  isSlotViewContextPinUnresolved,
   isSlotViewTerminalRunStatus,
   selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
@@ -45,6 +46,37 @@ test('selectSlotViewLinkedRun prefers fleet-bound run over stale URL pin', () =>
     })?.id,
     'bound-run',
   );
+});
+
+test('an explicit native context keeps its task history while a successor owns the slot', () => {
+  const source = stubRun('source', 'slot');
+  source.transport = 'native';
+  source.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      runId: source.id,
+      slotId: 'slot',
+      target: null,
+      status: 'failed',
+      nativeSession: { sessionId: 'session', leaseId: 'old-lease', releasedAt: 'now' },
+    },
+  ] as unknown as Run['agentContexts'];
+  const successor = stubRun('successor', 'slot');
+  const selection = {
+    requestedRunId: source.id,
+    requestedContextId: 'dev',
+    slotId: 'slot',
+    slotBoundRunId: successor.id,
+    cachedRun: source,
+    rpcRun: successor,
+  };
+  assert.equal(selectSlotViewLinkedRun(selection), source);
+  assert.equal(selectSlotViewLinkedRun({ ...selection, requestedContextId: 'missing' }), null);
+  assert.equal(selectSlotViewLinkedRun({ ...selection, slotId: 'other-slot' }), null);
+  assert.equal(selectSlotViewLinkedRun({ ...selection, cachedRun: null }), null);
+  assert.equal(selectSlotViewLinkedRun({ ...selection, requestedContextId: undefined }), successor);
 });
 
 test('selectSlotViewLinkedRun keeps URL pin when slot is not bound elsewhere', () => {
@@ -165,4 +197,41 @@ test('a pinned run is fetched directly when the cache has no row or only a trimm
   assert.equal(slotViewNeedsDirectRunFetch('r1', trimmed), true);
   assert.equal(slotViewNeedsDirectRunFetch('r1', full), false);
   assert.equal(slotViewNeedsDirectRunFetch(null, trimmed), false, 'no pin, no direct fetch');
+  assert.equal(
+    slotViewNeedsDirectRunFetch('r1', full, 'dev'),
+    true,
+    'context pin needs exact hydration',
+  );
+});
+
+test('native publication rejects an unknown same-run pin during cache and direct hydration', () => {
+  const run = stubRun('active', 'slot');
+  run.transport = 'native';
+  run.agentContexts = [
+    {
+      id: 'dev',
+      role: 'dev',
+      label: 'Dev',
+      runId: run.id,
+      slotId: 'slot',
+      target: null,
+      nativeSession: { sessionId: 'session', leaseId: 'lease' },
+    },
+  ] as unknown as Run['agentContexts'];
+  const pin = { run, requestedRunId: run.id, requestedContextId: 'unknown', slotId: 'slot' };
+  assert.equal(isSlotViewContextPinUnresolved(pin), true);
+  assert.equal(isSlotViewContextPinUnresolved({ ...pin, run: null }), true);
+  assert.equal(isSlotViewContextPinUnresolved({ ...pin, requestedContextId: 'dev' }), false);
+  assert.equal(isSlotViewContextPinUnresolved({ ...pin, requestedContextId: null }), false);
+  assert.equal(isSlotViewContextPinUnresolved({ ...pin, requestedRunId: null }), false);
+  assert.equal(isSlotViewContextPinUnresolved({ ...pin, run: stubRun('bound', 'slot') }), false);
+  assert.equal(
+    shouldPreserveSlotViewCachedNullRun({
+      source: 'cache',
+      previousRunId: run.id,
+      contextPinUnresolved: true,
+    }),
+    false,
+    'a cached null must clear the prior conversation when its new pin is invalid',
+  );
 });

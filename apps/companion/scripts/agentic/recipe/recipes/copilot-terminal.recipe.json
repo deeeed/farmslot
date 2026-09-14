@@ -33,7 +33,7 @@
         "action": "ui.press",
         "test_id": "companion-advanced-copilot",
         "intent": "Ask Companion to resolve the persistent Co-Pilot from the gateway.",
-        "next": "wait-terminal"
+        "next": "choose-terminal"
       },
       "wait-terminal": {
         "action": "ui.wait_for",
@@ -52,7 +52,16 @@
         "proves": ["copilot-terminal-handoff"],
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "choose-terminal": {
+        "action": "ui.press",
+        "test_id": "companion-copilot-terminal",
+        "intent": "Open the existing terminal from the Co-Pilot transport chooser.",
+        "next": "wait-terminal"
+      }
     }
   }
 }

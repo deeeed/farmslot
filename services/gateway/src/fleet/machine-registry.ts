@@ -10,6 +10,7 @@ export interface ConnectedNode {
   versionMatch?: boolean;
   ws: WebSocket;
   nativeSessions?: NativeExecutionNodeDeclaration;
+  nativeAuthority?: { principalId: string; valid(): boolean };
 }
 
 const nodes = new Map<string, ConnectedNode>();
@@ -21,6 +22,7 @@ export function registerNode(
   protocolVersion?: string,
   gatewayProtocolVersion?: string,
   nativeSessions?: NativeExecutionNodeDeclaration,
+  nativeAuthority?: ConnectedNode['nativeAuthority'],
 ): void {
   const versionMatch = protocolVersion != null && protocolVersion === gatewayProtocolVersion;
   nodes.set(machine, {
@@ -31,6 +33,7 @@ export function registerNode(
     versionMatch: protocolVersion != null ? versionMatch : undefined,
     ws,
     nativeSessions,
+    nativeAuthority,
   });
 }
 

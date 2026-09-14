@@ -14,6 +14,7 @@ export function dangerousLaunchBinding(input: {
   checkout: CopilotCheckoutIdentity;
   runner: string;
   model: string;
+  effort?: string;
 }): CopilotDangerousLaunchBinding {
   const bound = {
     checkout: input.checkout.path,
@@ -22,6 +23,7 @@ export function dangerousLaunchBinding(input: {
     dirtyFileCount: input.checkout.dirtyFileCount,
     runner: input.runner,
     model: input.model,
+    ...(input.effort !== undefined ? { effort: input.effort } : {}),
     safetyTier: 'dangerous' as const,
     typedPhrase: COPILOT_DANGEROUS_TYPED_PHRASE,
     warning: COPILOT_DANGEROUS_WARNING,
@@ -39,7 +41,9 @@ export function assertDangerousConfirmation(
 ): void {
   if (!confirmation) throw new Error('Dangerous Co-Pilot start requires typed confirmation');
   if (confirmation.fingerprint !== binding.fingerprint) {
-    throw new Error('Dangerous Co-Pilot confirmation no longer matches the displayed launch metadata');
+    throw new Error(
+      'Dangerous Co-Pilot confirmation no longer matches the displayed launch metadata',
+    );
   }
   if (confirmation.typedPhrase !== binding.typedPhrase) {
     throw new Error(`Dangerous Co-Pilot confirmation must exactly match: ${binding.typedPhrase}`);

@@ -131,6 +131,18 @@ export function resolveProviderAccountForSlot({
     active[provider]?.trim() ||
     null;
 
+  // Selection feeds the implicit ambient label back as a forced label. Native
+  // profile registrations can create this file without defining legacy accounts.
+  if (boundLabel === AMBIENT_ACCOUNT_LABEL && !Object.hasOwn(config.accounts, boundLabel)) {
+    return {
+      label: AMBIENT_ACCOUNT_LABEL,
+      provider,
+      authPath: ambientCodexAuthPath(),
+      ambient: true,
+      source: 'ambient-default',
+    };
+  }
+
   if (!boundLabel) {
     const ambientDef = Object.entries(config.accounts).find(
       ([, def]) =>
@@ -192,13 +204,13 @@ export function providerFailoverCandidates({
   if (!config) {
     return excluded.has(AMBIENT_ACCOUNT_LABEL) ? [] : [AMBIENT_ACCOUNT_LABEL];
   }
-  const pool =
-    config.failoverPool ??
-    Object.entries(config.accounts)
-      .filter(([, def]) => def.provider === provider)
-      .map(([label]) => label);
+  const named = Object.entries(config.accounts)
+    .filter(([, def]) => def.provider === provider)
+    .map(([label]) => label);
+  const pool = config.failoverPool ?? (named.length ? named : [AMBIENT_ACCOUNT_LABEL]);
   return pool.filter((label) => {
     if (excluded.has(label)) return false;
+    if (label === AMBIENT_ACCOUNT_LABEL && !Object.hasOwn(config.accounts, label)) return true;
     const def = config.accounts[label];
     return Boolean(def && def.provider === provider);
   });

@@ -29,11 +29,51 @@ export function nativeNodeDeclaration(
       'INVALID_PARAMS',
       'Native node requires a distinct machine and configured owner',
     );
-  const supportsEnsure = 'supportsEnsure' in value ? value.supportsEnsure : undefined;
-  if (supportsEnsure !== undefined && typeof supportsEnsure !== 'boolean')
-    throw new GatewayMethodError('INVALID_PARAMS', 'Native node supportsEnsure must be boolean');
-  return {
-    ownerPrincipalId: value.ownerPrincipalId,
-    ...(supportsEnsure !== undefined ? { supportsEnsure } : {}),
-  };
+  const declaration: NativeExecutionNodeDeclaration = { ownerPrincipalId: value.ownerPrincipalId };
+  if (principal.subject.nativeOwnerPrincipalId !== declaration.ownerPrincipalId)
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      'Native node owner must match its server-issued assignment',
+    );
+  const capabilities = value as Record<string, unknown>;
+  for (const field of ['supportsEnsure', 'supportsWorkers', 'supportsProfiles'] as const) {
+    const capability = capabilities[field];
+    if (capability === undefined) continue;
+    if (typeof capability !== 'boolean')
+      throw new GatewayMethodError('INVALID_PARAMS', `Native node ${field} must be boolean`);
+    declaration[field] = capability;
+  }
+  return declaration;
+}
+
+export function assertNativeMachineAssignment(
+  machine: string,
+  principal: Principal | undefined,
+  principals: readonly Principal[],
+): void {
+  const assigned = principals.find(
+    (entry) =>
+      entry.subject.type === 'node' &&
+      entry.subject.machine === machine &&
+      entry.subject.nativeOwnerPrincipalId !== undefined,
+  );
+  if (assigned && assigned.id !== principal?.id)
+    throw new GatewayMethodError(
+      'AUTH_FORBIDDEN',
+      'Native execution machine belongs to another issued node principal',
+    );
+}
+
+/** Offline inventory comes from issued assignments; remembered hello data is not authority. */
+export function nativeOwnerAssignedMachines(
+  principals: readonly Principal[],
+  owner: string,
+): Set<string> {
+  return new Set(
+    principals.flatMap((principal) =>
+      principal.subject.type === 'node' && principal.subject.nativeOwnerPrincipalId === owner
+        ? [principal.subject.machine]
+        : [],
+    ),
+  );
 }

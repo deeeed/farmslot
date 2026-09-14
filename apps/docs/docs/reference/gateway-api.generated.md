@@ -176,6 +176,10 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `machine.pause.preview`                 | machine          | lifecycle     | —      | —      | Machine Pause Preview gateway method.                 |
 | `machine.pause.restore`                 | machine          | lifecycle     | —      | —      | Machine Pause Restore gateway method.                 |
 | `machine.pause.status`                  | machine          | lifecycle     | —      | —      | Machine Pause Status gateway method.                  |
+| `native.profile.add`                    | native           | bounded-write | —      | —      | Native Profile Add gateway method.                    |
+| `native.profile.list`                   | native           | read-only     | —      | —      | Native Profile List gateway method.                   |
+| `native.profile.remove`                 | native           | bounded-write | —      | —      | Native Profile Remove gateway method.                 |
+| `native.profile.status`                 | native           | read-only     | —      | —      | Native Profile Status gateway method.                 |
 | `native.session.catalog`                | native           | bounded-write | —      | —      | Native Session Catalog gateway method.                |
 | `native.session.close`                  | native           | bounded-write | —      | —      | Native Session Close gateway method.                  |
 | `native.session.create`                 | native           | bounded-write | —      | —      | Native Session Create gateway method.                 |
@@ -233,6 +237,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `prWatch.refresh`                       | prWatch          | bounded-write | —      | —      | PrWatch Refresh gateway method.                       |
 | `prWatch.repair`                        | prWatch          | bounded-write | —      | —      | PrWatch Repair gateway method.                        |
 | `prWatch.subscribe`                     | prWatch          | bounded-write | —      | —      | PrWatch Subscribe gateway method.                     |
+| `principal.bindNativeOwner`             | principal        | bounded-write | —      | —      | Principal BindNativeOwner gateway method.             |
 | `principal.create`                      | principal        | bounded-write | —      | —      | Principal Create gateway method.                      |
 | `principal.grant`                       | principal        | bounded-write | —      | —      | Principal Grant gateway method.                       |
 | `principal.list`                        | principal        | read-only     | —      | —      | Principal List gateway method.                        |
@@ -275,6 +280,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.cleanup`                           | run              | bounded-write | —      | —      | Run Cleanup gateway method.                           |
 | `run.contextBundle`                     | run              | bounded-write | —      | —      | Run ContextBundle gateway method.                     |
 | `run.create`                            | run              | bounded-write | —      | —      | Run Create gateway method.                            |
+| `run.createNative`                      | run              | bounded-write | —      | —      | Run CreateNative gateway method.                      |
 | `run.delete`                            | run              | high-impact   | —      | —      | Run Delete gateway method.                            |
 | `run.forSlot`                           | run              | bounded-write | —      | —      | Run ForSlot gateway method.                           |
 | `run.forceComplete`                     | run              | bounded-write | —      | —      | Run ForceComplete gateway method.                     |

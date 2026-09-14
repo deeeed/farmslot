@@ -2,6 +2,7 @@ import type {
   NativeSessionCapabilities,
   NativeSessionEvent,
   NativeSessionResponse,
+  SafetyTier,
 } from '@farmslot/protocol';
 
 export type NativeEventInput = Omit<
@@ -16,6 +17,8 @@ export interface NativeAdapterOptions {
   mode?: 'default' | 'plan';
   resumeSessionId?: string;
   env?: NodeJS.ProcessEnv;
+  effort?: string;
+  safetyTier?: SafetyTier;
 }
 export interface NativeAdapterSession {
   nativeSessionId: string;
@@ -28,6 +31,7 @@ export interface NativeAdapterSession {
 export interface NativeAdapter {
   capabilities: NativeSessionCapabilities;
   /** Compatibility policy based on the native executable's version metadata. */
+  workspaceResumeUnavailableReason?: (version: string) => string | undefined;
   resumeUnavailableReason?: (version: string) => string | undefined;
   start(
     options: NativeAdapterOptions,

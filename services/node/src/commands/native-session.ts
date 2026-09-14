@@ -1,7 +1,8 @@
 import path from 'node:path';
 
-import { NativeSessionClient } from '@farmslot/agent-runtime/native';
+import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
 import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
+import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import type { NativeExecutionNodeDeclaration } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
@@ -18,7 +19,12 @@ export class NativeNodeSessions {
     if (owner?.trim()) {
       if (!machine || machine === 'local')
         throw new Error('Native execution requires a distinct node machine ID');
-      this.declaration = { ownerPrincipalId: owner.trim(), supportsEnsure: true };
+      this.declaration = {
+        ownerPrincipalId: owner.trim(),
+        supportsEnsure: true,
+        supportsWorkers: true,
+        supportsProfiles: true,
+      };
     }
     this.client = new NativeSessionClient(
       path.join(root, 'nodes', encodeURIComponent(machine)),
@@ -33,6 +39,13 @@ export class NativeNodeSessions {
       });
     if (typeof value.method !== 'string')
       throw Object.assign(new Error('Native method is required'), { code: 'INVALID_PARAMS' });
+    if (NATIVE_WORKER_METHODS.includes(value.method))
+      return routeNativeWorkerSession(
+        this.client,
+        this.declaration.ownerPrincipalId,
+        value.method,
+        value.params,
+      );
     return routeNativeSession(
       this.client,
       this.declaration.ownerPrincipalId,

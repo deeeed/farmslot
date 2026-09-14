@@ -24,7 +24,7 @@ export class JsonLineProcess {
   readonly child: ChildProcessWithoutNullStreams;
   private nextId = 0;
   private tree?: NativeProcessTree;
-  private treeTimer?: NodeJS.Timeout;
+  private stopObservingTree?: () => void;
   private closed = false;
   private finish!: () => void;
   private finished = new Promise<void>((resolve) => {
@@ -118,15 +118,10 @@ export class JsonLineProcess {
     try {
       if (this.child.pid) {
         this.tree = new NativeProcessTree(this.child.pid);
-        this.treeTimer = setInterval(() => {
-          try {
-            this.tree!.capture();
-          } catch (error) {
-            // Loss of process ownership evidence fails this session and its cleanup claim.
-            this.beginCleanup(new Error('Native process census failed', { cause: error }));
-          }
-        }, 100);
-        this.treeTimer.unref();
+        this.stopObservingTree = this.tree.observe((error) => {
+          // Loss of process ownership evidence fails this session and its cleanup claim.
+          this.beginCleanup(new Error('Native process census failed', { cause: error }));
+        });
         options.onSpawn?.(this.child.pid, identity);
       }
       this.child.stdin.write('\n');
@@ -197,7 +192,7 @@ export class JsonLineProcess {
     this.cleanupStarted = true;
     this.cleanupError = error;
     this.fail(error);
-    clearInterval(this.treeTimer);
+    this.stopObservingTree?.();
     clearTimeout(this.stopTimer);
     void this.cleanGroup().then(
       () => this.settle(),
@@ -235,13 +230,22 @@ export class JsonLineProcess {
       this.child.kill('SIGKILL');
       throw new Error('Native process ownership could not be established');
     }
-    this.tree.stop();
+    let stopError: unknown;
+    try {
+      this.tree.stop();
+    } catch (error) {
+      // A group can disappear while shutdown snapshots are being taken. Accept
+      // cleanup only after fresh OS evidence proves every tracked process and
+      // the original group are absent; otherwise retain the stop failure.
+      stopError = error;
+    }
     const deadline = Date.now() + 3_000;
     while (Date.now() < deadline) {
       if (this.tree.empty() && (this.child.exitCode !== null || this.child.signalCode !== null))
         return;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (stopError) throw stopError;
     throw new Error('Native child processes did not stop');
   }
 }

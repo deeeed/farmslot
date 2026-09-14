@@ -1,5 +1,7 @@
 // run-engine/remote-probes.ts — remote readiness probes used by run-engine prepare/recovery seams.
 
+import type { WorkerTransport } from '@farmslot/protocol';
+
 import { execFileArgv } from '../core/exec.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
@@ -8,6 +10,7 @@ const REMOTE_PATH_CRITICAL = ['tmux', 'lsof', 'node'] as const;
 
 export async function probeRemotePath(
   slotId: string,
+  transport: WorkerTransport = 'tmux',
 ): Promise<{ ok: true } | { ok: false; missing: string[]; machine: string; detail?: string }> {
   let locality: Awaited<ReturnType<typeof getSlotLocality>>;
   try {
@@ -20,9 +23,10 @@ export async function probeRemotePath(
   }
   if (locality.isLocal) return { ok: true };
   const { machine, sshTarget } = locality;
-  const cmd = REMOTE_PATH_CRITICAL.map(
-    (b) => `printf '%s=%s\\n' '${b}' "$(command -v '${b}' 2>/dev/null || echo MISSING)"`,
-  ).join('; ');
+  const critical = transport === 'native' ? ['node', 'ps'] : REMOTE_PATH_CRITICAL;
+  const cmd = critical
+    .map((b) => `printf '%s=%s\\n' '${b}' "$(command -v '${b}' 2>/dev/null || echo MISSING)"`)
+    .join('; ');
   let stdout = '';
   const node = getNode(machine);
   if (node) {
@@ -58,7 +62,7 @@ export async function probeRemotePath(
     } catch (err) {
       return {
         ok: false,
-        missing: [...REMOTE_PATH_CRITICAL],
+        missing: [...critical],
         machine,
         detail: `probe failed: ${(err as Error).message.slice(0, 200)}`,
       };
@@ -67,7 +71,7 @@ export async function probeRemotePath(
   if (!stdout) {
     return {
       ok: false,
-      missing: [...REMOTE_PATH_CRITICAL],
+      missing: [...critical],
       machine,
       detail: 'no output from remote probe (node offline + no ssh target)',
     };

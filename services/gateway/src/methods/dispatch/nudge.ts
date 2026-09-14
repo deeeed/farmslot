@@ -6,6 +6,7 @@ import {
   type AgentContextTarget,
   agentDispatchWindow,
   type FlowType,
+  isTerminalRunStatus,
   primaryRoleForFlow,
 } from '@farmslot/protocol';
 
@@ -26,6 +27,11 @@ import {
 } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import {
+  assertNativeSlotReplacementOwner,
+  cancelNativeRunWorkers,
+  retireNativeWorkersForSlot,
+} from '../../runners/native/worker.js';
 import {
   normalizeRunner,
   resolveSafeSendTimeoutMs,
@@ -105,11 +111,32 @@ export async function terminalizePriorRunOnSlot(
     `[${label}] slot=${slotId} reassigning current_run_id ${priorRunId} -> ${currentRunId} (operator-approved)`,
   );
   // Dynamic import to avoid a static cycle: run-engine imports from this file already.
-  const { cancelRunEngine } = await import('../../run-engine/orchestrator.js');
-  cancelRunEngine(priorRunId);
   const { getRun: getRunForCleanup, updateRun: updateRunForCleanup } =
     await import('../../runs/store.js');
   const priorRun = getRunForCleanup(priorRunId);
+  if (priorRun?.slotId === slotId && priorRun.transport === 'native') {
+    assertNativeSlotReplacementOwner(slotId, currentRunId);
+    if (label !== 'fresh-reuse')
+      throw new Error('Native task handoff must transfer its lease before retiring the source run');
+    if (isTerminalRunStatus(priorRun.status)) {
+      await cancelNativeRunWorkers(priorRunId);
+      for (const context of priorRun.agentContexts ?? [])
+        await unwatchContext(slotId, context.id, { expectedRunId: priorRunId });
+      return { priorRunId, terminated: false };
+    }
+    const { runCancel } = await import('../run/lifecycle-control.js');
+    const result = await runCancel({
+      runId: priorRunId,
+      reason: `Replaced by fresh run ${currentRunId}`,
+    });
+    if (result.effects?.some((effect) => effect.status === 'failed'))
+      throw new Error(
+        'Native worker cancellation did not finish; slot preparation remains blocked',
+      );
+    return { priorRunId, terminated: true };
+  }
+  const { cancelRunEngine } = await import('../../run-engine/orchestrator.js');
+  cancelRunEngine(priorRunId);
   let terminated = false;
   if (priorRun?.slotId === slotId) {
     const isAlreadyTerminal =
@@ -141,12 +168,14 @@ export async function terminalizePriorRunOnSlot(
  * doesn't race the prior worker mutating the same git worktree.
  */
 export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
+  assertNativeSlotReplacementOwner(slotId, newRunId);
   await terminalizePriorRunOnSlot(slotId, newRunId, 'fresh-reuse');
-  await teardownWorkerOnSlot(slotId);
+  await teardownWorkerOnSlot(slotId, newRunId);
 }
 
 /** Stop every retained runner and role window before a slot is made reusable. */
-export async function teardownWorkerOnSlot(slotId: string): Promise<void> {
+export async function teardownWorkerOnSlot(slotId: string, incomingRunId?: string): Promise<void> {
+  await retireNativeWorkersForSlot(slotId, incomingRunId);
   const vars = await loadSlotVars(slotId);
   const session = await resolveTmuxSession(vars.slotId, vars, { strict: true });
   const recordedRunner = (await readSlotField(slotId, 'runner')) as string | null;
@@ -196,6 +225,11 @@ export async function nudgeDispatch(
   const { getAllRuns, getRun: getRunForVerify } = await import('../../runs/store.js');
   const requestingRun = getRunForVerify(params.runId);
   if (!requestingRun) throw new Error(`Run ${params.runId} not found in store`);
+  const priorOwner = liveSlot?.currentRunId ? getRunForVerify(liveSlot.currentRunId) : null;
+  if (requestingRun.transport === 'native' || priorOwner?.transport === 'native')
+    throw new Error(
+      'Native task reuse requires the native dispatch path; terminal adoption is unsupported',
+    );
   // Explicit prepare only — profile-fit must not change nudge resource eligibility.
   const requiredPrepareProfile = requestingRun.prepareProfile || null;
   const eligibilityFail = await verifyBranchAffinityNudgeStillEligible(

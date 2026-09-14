@@ -7,11 +7,17 @@ import {
   Methods,
   type RequestFrame,
   type ResponseFrame,
+  type SelfPrincipalSummary,
 } from '@farmslot/protocol';
 
 import { gatewaySupportsPing } from './gateway-connection-test';
 import { connectionWaitTerminalError } from './gateway-connection-wait';
 import type { GatewayAuthCredentials } from './gateway-http-auth';
+import {
+  type WorkspaceAccess,
+  workspaceAccessFromAuth,
+  workspaceAllowsMethod,
+} from './workspace-access';
 
 export { type GatewayConnectionTestResult, testGatewayConnection } from './gateway-connection-test';
 export {
@@ -50,6 +56,15 @@ export class GatewayClient {
   private lastConnectionError: string | null = null;
   private pingSupported: boolean | null = null;
   private generation = 0;
+  private principal: SelfPrincipalSummary | null = null;
+  private access: WorkspaceAccess = 'none';
+
+  get authenticatedPrincipal(): SelfPrincipalSummary | null {
+    return this.principal;
+  }
+  get workspaceAccess(): WorkspaceAccess {
+    return this.access;
+  }
 
   constructor(url: string, auth: GatewayAuthCredentials = {}) {
     this.url = url;
@@ -69,15 +84,19 @@ export class GatewayClient {
     return this.generation;
   }
 
-  setConnection(url: string, auth: GatewayAuthCredentials = {}): void {
+  setConnection(url: string, auth: GatewayAuthCredentials = {}, force = false): void {
     const changed =
-      this.url !== url || this.auth.token !== auth.token || this.auth.password !== auth.password;
+      force ||
+      this.url !== url ||
+      this.auth.token !== auth.token ||
+      this.auth.password !== auth.password;
     this.url = url;
     this.auth = auth;
     if (!changed) return;
 
     this.generation += 1;
     this.pingSupported = null;
+    this.clearAuthority();
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
     this.closeCurrentSocket();
@@ -110,16 +129,18 @@ export class GatewayClient {
 
     socket.onopen = () => {
       if (this.ws !== socket) return;
-      this.authenticate().catch((error: Error) => {
+      this.authenticate(socket, this.generation).catch((error: Error) => {
         if (this.ws !== socket) return;
+        this.clearAuthority();
         this.lastConnectionError = `Authentication failed: ${error.message}`;
         this.rejectAllPending(this.lastConnectionError);
         socket.close();
       });
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.ws !== socket) return;
+      if (event.code === 1008) this.clearAuthority();
       this.ws = null;
       this.invalidateTransportCapability();
       if (this.state === 'connecting' && !this.lastConnectionError) {
@@ -161,12 +182,15 @@ export class GatewayClient {
     this.connect();
   }
 
-  private async authenticate(): Promise<void> {
+  private async authenticate(socket: WebSocket, generation: number): Promise<void> {
     const result = await this.request<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
       clientKind: 'companion',
       ...this.auth,
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
+    if (this.ws !== socket || this.generation !== generation) return;
+    this.principal = result.principal ?? null;
+    this.access = workspaceAccessFromAuth(result);
     this.pingSupported = gatewaySupportsPing(result);
     this.backoff = 1000;
     this.lastConnectionError = null;
@@ -177,6 +201,8 @@ export class GatewayClient {
     this.disposed = true;
     this.cancelReconnect();
     this.pausedForBackground = false;
+    this.clearAuthority();
+    this.generation += 1;
     this.rejectAllPending('Client disconnected');
     this.closeCurrentSocket();
     this.setState('disconnected');
@@ -189,9 +215,14 @@ export class GatewayClient {
     params?: unknown,
     timeout = DEFAULT_TIMEOUT,
   ): Promise<T> {
+    const generation = this.generation;
     if (method !== Methods.AUTH_CONNECT && this.state !== 'connected') {
       await this.waitForConnected(timeout);
     }
+
+    if (generation !== this.generation) throw new Error('Gateway identity changed before request');
+    if (!workspaceAllowsMethod(this.access, method, params))
+      throw new Error('This account cannot access farm controls');
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
@@ -200,7 +231,7 @@ export class GatewayClient {
     const id = String(++this.reqId);
     const frame: RequestFrame = { type: 'req', id, method, params };
 
-    return new Promise<T>((resolve, reject) => {
+    const result = await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request ${method} timed out after ${timeout}ms`));
@@ -214,6 +245,8 @@ export class GatewayClient {
 
       this.ws!.send(JSON.stringify(frame));
     });
+    if (generation !== this.generation) throw new Error('Gateway identity changed during request');
+    return result;
   }
 
   subscribe(event: string, callback: EventCallback): () => void {
@@ -296,6 +329,7 @@ export class GatewayClient {
   }
 
   private handleEvent(frame: EventFrame): void {
+    if (this.access !== 'farm' || this.state !== 'connected') return;
     const subs = this.eventSubs.get(frame.event);
     if (!subs) return;
     for (const cb of subs) {
@@ -359,6 +393,11 @@ export class GatewayClient {
   private invalidateTransportCapability(): void {
     this.generation += 1;
     this.pingSupported = null;
+  }
+
+  private clearAuthority(): void {
+    this.principal = null;
+    this.access = 'none';
   }
 
   private setupAppStateListener(): void {

@@ -6,6 +6,7 @@ import {
   type DispatchPreviewResult,
   type FlowType,
   isPressureAdmissionRejected,
+  nativeWorkerBindingIsHeld,
   PR_BOUND_FLOW_TYPES,
   type PressureAdmissionDecision,
   primaryRoleForFlow,
@@ -31,6 +32,7 @@ import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
+  runnerSupportsNativeTaskReuse,
   runnerSupportsTmuxNudges,
   runnerSupportsTmuxNudgesForLaunch,
 } from '../../runners/registry.js';
@@ -439,7 +441,24 @@ export function selectBranchAffinityEligibleSlots(
     if (companionResourceBlocker(s, options?.requiredPrepareProfile)) continue;
     const m = isBranchAffinityCandidateBranchMatch(s, ticketSlug, prNumber, targetBranch);
     if (!m.matched) continue;
-    eligible.push({ slot: s, prMatchKind: m.kind, canNudge: runnerSupportsTmuxNudges(s.runner) });
+    const primaryRole = s.currentFlowType
+      ? primaryRoleForFlow(s.currentFlowType as FlowType)
+      : null;
+    const nativeWorker = s.agentContexts?.find(
+      (context) => (!primaryRole || context.role === primaryRole) && context.nativeSession,
+    );
+    eligible.push({
+      slot: s,
+      prMatchKind: m.kind,
+      canNudge: nativeWorker
+        ? Boolean(
+            nativeWorkerBindingIsHeld(nativeWorker.nativeSession) &&
+            nativeWorker.nativeSession?.generation &&
+            !nativeWorker.nativeSession.recovery &&
+            runnerSupportsNativeTaskReuse(nativeWorker.runner ?? s.runner),
+          )
+        : runnerSupportsTmuxNudges(s.runner),
+    });
   }
   return eligible;
 }

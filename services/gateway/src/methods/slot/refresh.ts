@@ -19,6 +19,7 @@ import {
   type SlotVars,
   updateSlotStatusIf,
 } from '../../core/index.js';
+import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { shellQuote } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 
@@ -127,6 +128,7 @@ export async function slotRefresh(
     complete(1, msg);
     throw new Error(msg);
   }
+  assertNoNativeWorkerRecovery(params.slotId);
   activePrepareSlots.add(params.slotId);
 
   try {

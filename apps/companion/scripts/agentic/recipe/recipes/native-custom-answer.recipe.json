@@ -1,0 +1,70 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion custom native question answer",
+  "description": "Use a fresh NATIVE_COMPANION_PROOF_STATE and the private gateway, token file and simulator environment. A real Claude question has suggested options; Companion sends custom text and the runner repeats the received answer.",
+  "workflow": {
+    "entry": "setup",
+    "nodes": {
+      "setup": {
+        "action": "command",
+        "cmd": "NATIVE_COMPANION_RUNNER=claude NATIVE_COMPANION_MODEL=sonnet yarn exec tsx scripts/agentic/native-conversation-proof.mts setup-question",
+        "intent": "Create a disposable real Claude question with suggested options.",
+        "next": "open"
+      },
+      "open": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts open",
+        "intent": "Open the exact session through the actual app route.",
+        "next": "wait-answer"
+      },
+      "wait-answer": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-custom-answer-0",
+        "timeout_ms": 30000,
+        "intent": "Custom input remains available when the question has options.",
+        "next": "type-answer"
+      },
+      "type-answer": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-custom-answer-0",
+        "value": "Use the amber folder instead",
+        "intent": "Enter an answer outside the runner suggestions.",
+        "next": "dismiss-keyboard"
+      },
+      "capture-answer": {
+        "action": "ui.screenshot",
+        "path": "native-custom-answer.png",
+        "intent": "Record suggestions and the custom answer before submission.",
+        "next": "send-answer"
+      },
+      "send-answer": {
+        "action": "ui.press",
+        "test_id": "companion-native-answer",
+        "intent": "Submit custom text through the actual question control.",
+        "next": "verify-answer"
+      },
+      "verify-answer": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts answered",
+        "intent": "Prove request resolution and the runner receiving the exact custom answer.",
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts cleanup",
+        "intent": "Close only the disposable proof session.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "dismiss-keyboard": {
+        "action": "ui.key_press",
+        "key": "Enter",
+        "intent": "Finish the custom answer using the native Return key and reveal the submit control.",
+        "next": "capture-answer"
+      }
+    }
+  }
+}

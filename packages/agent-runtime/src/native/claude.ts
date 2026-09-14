@@ -65,6 +65,16 @@ export const claudeNativeAdapter: NativeAdapter = {
     questions: true,
     interrupt: true,
     resume: true,
+    resumeAcrossWorkspaces: true,
+  },
+  workspaceResumeUnavailableReason: (version) => {
+    const parsed = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(version);
+    return parsed &&
+      (Number(parsed[1]) > 2 ||
+        (Number(parsed[1]) === 2 &&
+          (Number(parsed[2]) > 1 || (Number(parsed[2]) === 1 && Number(parsed[3]) >= 269))))
+      ? undefined
+      : 'Cross-worktree recovery requires Claude Code 2.1.269 or newer';
   },
   async start(options, emit) {
     const nativeSessionId = options.resumeSessionId ?? randomUUID();
@@ -357,6 +367,10 @@ export const claudeNativeAdapter: NativeAdapter = {
         '--replay-user-messages',
         '--permission-prompt-tool',
         'stdio',
+        ...(options.safetyTier && options.safetyTier !== 'sandboxed'
+          ? ['--dangerously-skip-permissions']
+          : []),
+        ...(options.effort ? ['--effort', options.effort] : []),
         ...(options.model ? ['--model', options.model] : []),
         ...(options.resumeSessionId
           ? ['--resume', options.resumeSessionId]

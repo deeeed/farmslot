@@ -4,6 +4,7 @@ import { isReviewValidationDepth, reviewValidationDepthForLoop } from '@farmslot
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 
 export interface DispatchWizardPrefill {
+  transport?: 'tmux' | 'native';
   base: string;
   flowType?: FlowType;
   ticketId?: string;
@@ -67,6 +68,9 @@ export function parseDispatchWizardHash(
   const laneComparison = params.get('lane') === 'comparison';
   const intentComparison = params.get('intent') === 'comparison';
   return {
+    ...(params.get('transport') === 'native' || params.get('transport') === 'tmux'
+      ? { transport: params.get('transport') as 'native' | 'tmux' }
+      : {}),
     base,
     flowType: flow && VALID_FLOWS.includes(flow as FlowType) ? (flow as FlowType) : undefined,
     ticketId: params.get('ticket') ?? undefined,

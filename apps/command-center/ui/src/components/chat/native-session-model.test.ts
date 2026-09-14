@@ -60,6 +60,26 @@ function page(events: NativeSessionEvent[]): NativeSessionReadResult {
   };
 }
 
+test('task replay starts at an absolute lease boundary and empty histories preserve that cursor', () => {
+  const first = appendNativePage(
+    { events: [], cursor: 40 },
+    page([event(41, 'text.delta', 'owned')]),
+  );
+  assert.equal(first.cursor, 41);
+  assert.deepEqual(
+    first.events.map((item) => item.sequence),
+    [41],
+  );
+  assert.equal(
+    appendNativePage({ events: [], cursor: 40 }, { ...page([]), cursor: 40 }).cursor,
+    40,
+  );
+  assert.throws(
+    () => appendNativePage({ events: [], cursor: 40 }, page([event(42, 'text.delta')])),
+    /gap/,
+  );
+});
+
 test('replay ignores duplicate pages and refuses gaps or other session events', () => {
   const first = appendNativePage(
     { events: [], cursor: 0 },

@@ -12,6 +12,7 @@ import {
   failedRunCancelEffects,
   type HumanGrade,
   isAllowedRunDecisionAction,
+  Methods,
   observedReviewSessionContinuity,
   type ReviewChainEntry,
   reviewChainForRun,
@@ -79,13 +80,17 @@ export async function executeRunCreate(
   const result = await withStreamProgress(
     'Creating run',
     (onData) =>
-      ctx.client.callWithEvents<{ run: Run }>('run.create', params, (event: EventFrame) => {
-        const payload = event.payload;
-        if (payload && typeof payload === 'object' && 'data' in payload) {
-          const data = payload.data;
-          if (typeof data === 'string') onData(data);
-        }
-      }),
+      ctx.client.callWithEvents<{ run: Run }>(
+        params.transport === 'native' ? Methods.RUN_CREATE_NATIVE : Methods.RUN_CREATE,
+        params,
+        (event: EventFrame) => {
+          const payload = event.payload;
+          if (payload && typeof payload === 'object' && 'data' in payload) {
+            const data = payload.data;
+            if (typeof data === 'string') onData(data);
+          }
+        },
+      ),
     !emit.machine,
   );
   if (emit.machine) {
@@ -229,6 +234,7 @@ export interface RunCreateCliOptions {
   prepareProfile?: string;
   mode?: string;
   runner?: string;
+  transport?: string;
   model?: string;
   app?: string;
   domain?: string;
@@ -309,6 +315,8 @@ function buildPressureAdmissionParams(opts: RunCreateCliOptions): Record<string,
 }
 
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
+  if (opts.transport !== undefined && opts.transport !== 'native' && opts.transport !== 'tmux')
+    throw new Error('--transport must be native or tmux');
   if (opts.ticket && opts.task) {
     throw new Error('Use either --ticket or --task, not both.');
   }
@@ -324,6 +332,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     prepareProfile: opts.prepareProfile || undefined,
     mode: opts.mode || undefined,
     runner: opts.runner || undefined,
+    ...(opts.transport ? { transport: opts.transport } : {}),
     model: opts.model || undefined,
     ...(scripted ? { scripted } : {}),
     app: opts.app || undefined,
@@ -797,6 +806,7 @@ export function registerRunCommand(program: Command): void {
       'Runner override (claude, codex, opencode, or a runner-aware custom config)',
     )
     .option('--model <name>', 'Model override')
+    .option('--transport <name>', 'Worker transport: tmux (default) or native')
     .option(
       '--scripted-scenario <name>',
       'Scripted scenario for runner=scripted (success, failure, timeout)',

@@ -248,21 +248,25 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## native.\*
 
-| Method                             | Surface  | CLI command | TUI | Note                                                                                                |
-| ---------------------------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------------------------- |
-| `native.session.create`            | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.ensure`            | rpc-only |             |     | Idempotent native session creation under a caller-reserved UUID; native profile ownership required. |
-| `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.interrupt`         | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.close`             | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owned native execution profile.              |
-| `native.session.catalog`           | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
-| `native.session.workspace.list`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
-| `native.session.workspace.read`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
-| `native.session.workspace.changes` | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
-| `native.session.workspace.diff`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                               |
+| Method                             | Surface  | CLI command | TUI | Note                                                                                               |
+| ---------------------------------- | -------- | ----------- | --- | -------------------------------------------------------------------------------------------------- |
+| `native.session.create`            | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.profile.list`              | rpc-only |             |     | List registered native configuration directories on an owned execution node.                       |
+| `native.profile.add`               | rpc-only |             |     | Register a native configuration directory without accepting credentials.                           |
+| `native.profile.status`            | rpc-only |             |     | Read runner-reported login state and the native login command for a configuration.                 |
+| `native.profile.remove`            | rpc-only |             |     | Retire a configuration after session cleanup; native files stay on the execution node.             |
+| `native.session.ensure`            | rpc-only |             |     | Idempotent native session creation under a caller-reserved UUID; authenticated ownership required. |
+| `native.session.read`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.list`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.send`              | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.respond`           | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.interrupt`         | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.close`             | rpc-only |             |     | Opt-in native runner session; use farmslot rpc with an owning principal and execution node.        |
+| `native.session.catalog`           | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
+| `native.session.workspace.list`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
+| `native.session.workspace.read`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
+| `native.session.workspace.changes` | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
+| `native.session.workspace.diff`    | rpc-only |             |     | Owned agent workspace session; available in Copilot and farmslot rpc.                              |
 
 ## node.\*
 
@@ -309,12 +313,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## principal.\*
 
-| Method                 | Surface       | CLI command                     | TUI | Note |
-| ---------------------- | ------------- | ------------------------------- | --- | ---- |
-| `principal.create`     | typed-command | `farmslot principal create`     |     |      |
-| `principal.list`       | typed-command | `farmslot principal list`       |     |      |
-| `principal.grant`      | typed-command | `farmslot principal grant`      |     |      |
-| `principal.revokeRole` | typed-command | `farmslot principal revokeRole` |     |      |
+| Method                      | Surface       | CLI command                            | TUI | Note |
+| --------------------------- | ------------- | -------------------------------------- | --- | ---- |
+| `principal.create`          | typed-command | `farmslot principal create`            |     |      |
+| `principal.bindNativeOwner` | typed-command | `farmslot principal bind-native-owner` |     |      |
+| `principal.list`            | typed-command | `farmslot principal list`              |     |      |
+| `principal.grant`           | typed-command | `farmslot principal grant`             |     |      |
+| `principal.revokeRole`      | typed-command | `farmslot principal revokeRole`        |     |      |
 
 ## providerAccounts.\*
 
@@ -409,46 +414,47 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## run.\*
 
-| Method                       | Surface       | CLI command                   | TUI | Note                                                                                           |
-| ---------------------------- | ------------- | ----------------------------- | --- | ---------------------------------------------------------------------------------------------- |
-| `run.bundle.export`          | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.bundle.import`          | typed-command | `farmslot runs`               |     |                                                                                                |
-| `run.bundle.list`            | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.create`                 | typed-command | `farmslot run`                |     |                                                                                                |
-| `run.get`                    | typed-command | `farmslot run`                |     |                                                                                                |
-| `run.contextBundle`          | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.recoveryProposal`       | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.list`                   | typed-command | `farmslot run`                | yes |                                                                                                |
-| `run.slotHistory`            | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.cancel`                 | typed-command | `farmslot run`                |     |                                                                                                |
-| `run.forceComplete`          | typed-command | `farmslot run force-complete` |     |                                                                                                |
-| `run.pause`                  | typed-command | `farmslot run pause`          |     |                                                                                                |
-| `run.resume`                 | typed-command | `farmslot run resume`         |     |                                                                                                |
-| `run.replayStep`             | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.activateOnSlot`         | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.autoRecovery.stop`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.ciWatch.poke`           | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.refreshReviewGate`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.refreshPublishPackage`  | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.refreshMirror`          | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.rehydratePrNumber`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.interactiveDev.resolve` | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.forSlot`                | typed-command | `farmslot run for-slot`       |     |                                                                                                |
-| `run.resolveDecision`        | typed-command | `farmslot run`                | yes |                                                                                                |
-| `run.probeWorkerSignal`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.sessionCommand`         | typed-command | `farmslot run session`        |     |                                                                                                |
-| `run.grade`                  | typed-command | `farmslot run grade`          |     |                                                                                                |
-| `run.getGrade`               | typed-command | `farmslot run get-grade`      |     |                                                                                                |
-| `run.proposeImprovement`     | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.delete`                 | typed-command | `farmslot runs`               |     |                                                                                                |
-| `run.archive`                | typed-command | `farmslot run`                |     |                                                                                                |
-| `run.bulkDelete`             | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.cleanup`                | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.tags.set`               | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.tags.list`              | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.backfillSummaries`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.recipeRunsForSlot`      | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `run.recipeRunsForRun`       | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                       | Surface       | CLI command                       | TUI | Note                                                                                           |
+| ---------------------------- | ------------- | --------------------------------- | --- | ---------------------------------------------------------------------------------------------- |
+| `run.bundle.export`          | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.bundle.import`          | typed-command | `farmslot runs`                   |     |                                                                                                |
+| `run.bundle.list`            | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.create`                 | typed-command | `farmslot run`                    |     |                                                                                                |
+| `run.createNative`           | typed-command | `farmslot run --transport native` |     |                                                                                                |
+| `run.get`                    | typed-command | `farmslot run`                    |     |                                                                                                |
+| `run.contextBundle`          | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.recoveryProposal`       | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.list`                   | typed-command | `farmslot run`                    | yes |                                                                                                |
+| `run.slotHistory`            | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.cancel`                 | typed-command | `farmslot run`                    |     |                                                                                                |
+| `run.forceComplete`          | typed-command | `farmslot run force-complete`     |     |                                                                                                |
+| `run.pause`                  | typed-command | `farmslot run pause`              |     |                                                                                                |
+| `run.resume`                 | typed-command | `farmslot run resume`             |     |                                                                                                |
+| `run.replayStep`             | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.activateOnSlot`         | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.autoRecovery.stop`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.ciWatch.poke`           | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.refreshReviewGate`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.refreshPublishPackage`  | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.refreshMirror`          | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.rehydratePrNumber`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.interactiveDev.resolve` | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.forSlot`                | typed-command | `farmslot run for-slot`           |     |                                                                                                |
+| `run.resolveDecision`        | typed-command | `farmslot run`                    | yes |                                                                                                |
+| `run.probeWorkerSignal`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.sessionCommand`         | typed-command | `farmslot run session`            |     |                                                                                                |
+| `run.grade`                  | typed-command | `farmslot run grade`              |     |                                                                                                |
+| `run.getGrade`               | typed-command | `farmslot run get-grade`          |     |                                                                                                |
+| `run.proposeImprovement`     | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.delete`                 | typed-command | `farmslot runs`                   |     |                                                                                                |
+| `run.archive`                | typed-command | `farmslot run`                    |     |                                                                                                |
+| `run.bulkDelete`             | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.cleanup`                | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.tags.set`               | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.tags.list`              | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.backfillSummaries`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.recipeRunsForSlot`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.recipeRunsForRun`       | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
 ## runtime.\*
 

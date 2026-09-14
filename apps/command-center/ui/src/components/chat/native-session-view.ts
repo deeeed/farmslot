@@ -1,5 +1,6 @@
-import { html, LitElement, nothing } from 'lit';
+import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import {
@@ -7,6 +8,7 @@ import {
   Events,
   Methods,
   type NativeCommandReceipt,
+  type NativeProfileInfo,
   type NativeSessionCatalogResult,
   type NativeSessionCreateParams,
   type NativeSessionEvent,
@@ -15,16 +17,20 @@ import {
   type NativeSessionReadResult,
   type NativeSessionResponse,
   type NativeSessionSendResult,
+  type NativeWorkerHistoryScope,
 } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
 import './chat-message.js';
 import './native-workspace.js';
+import './native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
 import { safeLsGet, safeLsRemove, safeLsSet } from '../../utils/storage.js';
 import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
+import type { NativeProfileSelection } from './native-profiles.js';
+import { renderNativeSessionHeader } from './native-session-header.js';
 import {
   appendNativePage,
   nativeCommandLockSettled,
@@ -32,7 +38,15 @@ import {
   nativeTimeline,
   type NativeTranscript,
 } from './native-session-model.js';
+import { renderNativeSessionRequest } from './native-session-request.js';
 import { nativeSessionStyles } from './native-session-styles.js';
+import {
+  assertNativeWorkerViewPage,
+  nativeWorkerViewControl,
+  nativeWorkerViewKey,
+  nativeWorkerViewPin,
+  type NativeWorkerViewTarget,
+} from './native-worker-target.js';
 import { type NativeSessionApi } from './native-workspace.js';
 
 type LocalCommand = {
@@ -48,6 +62,7 @@ export class NativeSessionView extends LitElement {
   @property({ attribute: false }) api: NativeSessionApi = gateway;
   /** Fixture clients are supplied before connection; production always follows gateway authentication. */
   @property({ type: Boolean }) fixture = false;
+  @property({ attribute: false }) worker?: NativeWorkerViewTarget;
   @state() private catalog?: NativeSessionCatalogResult;
   @state() private sessions: NativeSessionInfo[] = [];
   @state() private session?: NativeSessionInfo;
@@ -58,12 +73,16 @@ export class NativeSessionView extends LitElement {
     NativeSessionListResult['unavailableExecutionNodes']
   > = [];
   @state() private creating = false;
+  @state() private profile?: NativeProfileInfo;
+  @state() private profileReady = true;
+  private profileNodeId = 'local';
   @state() private runner = '';
   @state() private model = '';
   @state() private mode: 'default' | 'plan' = 'default';
   @state() private cwd = '';
   @state() private customCwd = false;
   @state() private transcript: NativeTranscript = { events: [], cursor: 0 };
+  @state() private historyScope?: NativeWorkerHistoryScope;
   @state() private receipts: NativeCommandReceipt[] = [];
   @state() private requests: NativeSessionEvent[] = [];
   @state() private draft = '';
@@ -96,6 +115,42 @@ export class NativeSessionView extends LitElement {
   }
 
   static styles = nativeSessionStyles;
+
+  protected updated(changed: PropertyValues) {
+    if (!changed.has('worker') || !this.isConnected) return;
+    const previous = changed.get('worker') as NativeWorkerViewTarget | undefined;
+    if (
+      this.worker &&
+      (!previous || nativeWorkerViewKey(previous) !== nativeWorkerViewKey(this.worker))
+    )
+      this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
+    else if (this.worker && previous?.binding.generation !== this.worker.binding.generation)
+      this.schedule(0);
+    else if (!this.worker && previous) void this.connect();
+  }
+
+  private get workerControl() {
+    if (this.historyScope?.released) return undefined;
+    return this.worker ? nativeWorkerViewControl(this.worker, this.session) : undefined;
+  }
+
+  private get inputAllowed() {
+    return !this.worker || Boolean(this.workerControl);
+  }
+
+  private get taskHistory() {
+    return Boolean(
+      this.worker &&
+      (this.worker.readOnly ||
+        this.worker.binding.closedAt ||
+        this.worker.binding.releasedAt ||
+        this.historyScope?.released),
+    );
+  }
+
+  private get workspaceAllowed() {
+    return !this.worker || (!this.taskHistory && Boolean(this.workerControl));
+  }
 
   connectedCallback() {
     super.connectedCallback();
@@ -137,6 +192,7 @@ export class NativeSessionView extends LitElement {
   }
 
   private sessionKey(suffix: string) {
+    if (this.worker) return this.key(`worker:${nativeWorkerViewKey(this.worker)}:${suffix}`);
     return this.key(
       this.selectedNodeId === 'local'
         ? suffix
@@ -170,9 +226,14 @@ export class NativeSessionView extends LitElement {
       this.catalog = undefined;
       this.responseAttempts = new Set();
       this.transcript = { events: [], cursor: 0 };
+      this.historyScope = undefined;
       this.requests = [];
       this.receipts = [];
       this.loadLocal();
+    }
+    if (this.worker) {
+      this.select(this.worker.binding.sessionId, this.worker.binding.executionNodeId);
+      return;
     }
     await this.refreshSessions();
     this.schedule(0);
@@ -215,9 +276,15 @@ export class NativeSessionView extends LitElement {
   }
 
   private async refreshSessions() {
+    if (this.worker) {
+      this.schedule(0);
+      return;
+    }
     // Connection status represents transport loss; reconnect reloads inventory.
     if (!this.connected) return;
-    const revision = this.revision;
+    // Inventory belongs to the principal, independent of the selected conversation.
+    // Selecting New while the catalog loads must not discard the only catalog response.
+    const storageScope = this.storageScope;
     const inventoryRevision = ++this.inventoryRevision;
     try {
       const [catalog, result] = await Promise.all([
@@ -227,12 +294,21 @@ export class NativeSessionView extends LitElement {
       if (
         !this.isConnected ||
         !this.connected ||
-        revision !== this.revision ||
+        storageScope !== this.storageScope ||
         inventoryRevision !== this.inventoryRevision
       )
         return;
       this.catalog = catalog;
-      this.sessions = [...result.sessions].reverse();
+      this.sessions = result.sessions.filter((session) => !session.workerManaged).reverse();
+      if (
+        result.sessions.some(
+          (session) =>
+            session.workerManaged &&
+            session.id === this.selectedId &&
+            session.executionNodeId === this.selectedNodeId,
+        )
+      )
+        this.select('');
       this.unavailableNodes = result.unavailableExecutionNodes ?? [];
       if (!this.runner) {
         this.runner = catalog.runners[0]?.runner ?? '';
@@ -246,7 +322,7 @@ export class NativeSessionView extends LitElement {
     } catch (error) {
       if (
         this.connected &&
-        revision === this.revision &&
+        storageScope === this.storageScope &&
         inventoryRevision === this.inventoryRevision
       )
         this.error = (error as Error).message;
@@ -270,7 +346,8 @@ export class NativeSessionView extends LitElement {
         const page = await this.api.request<NativeSessionReadResult>(Methods.NATIVE_SESSION_READ, {
           sessionId: this.selectedId,
           executionNodeId: this.selectedNodeId,
-          after: this.transcript.cursor,
+          ...(this.worker ? { worker: nativeWorkerViewPin(this.worker) } : {}),
+          ...(this.worker && !this.historyScope ? {} : { after: this.transcript.cursor }),
           limit: 200,
         });
         if (!this.isConnected || revision !== this.revision) return;
@@ -279,6 +356,20 @@ export class NativeSessionView extends LitElement {
           page.session.executionNodeId !== this.selectedNodeId
         )
           throw new Error('Native replay returned another session or execution node');
+        if (this.worker) {
+          assertNativeWorkerViewPage(this.worker, page);
+          const scope = page.scope!;
+          if (
+            this.historyScope &&
+            (scope.startAfter !== this.historyScope.startAfter ||
+              scope.endAt < this.historyScope.endAt ||
+              (this.historyScope.released &&
+                (!scope.released || scope.endAt !== this.historyScope.endAt)))
+          )
+            throw new Error('Task history boundaries changed');
+          if (!this.historyScope) this.transcript = { events: [], cursor: scope.startAfter };
+          this.historyScope = scope;
+        }
         this.pollError = '';
         const timeline = this.renderRoot.querySelector('.timeline');
         const nearBottom =
@@ -338,21 +429,34 @@ export class NativeSessionView extends LitElement {
     this.selectedNodeId = executionNodeId;
     this.responseAttempts = new Set();
     this.creating = !id;
+    this.profile = undefined;
+    this.profileReady = true;
     this.session = undefined;
     this.transcript = { events: [], cursor: 0 };
+    this.historyScope = undefined;
     this.receipts = [];
     this.requests = [];
     this.caughtUp = false;
     this.error = '';
     this.pollError = '';
     this.busy = false;
-    safeLsSet(this.key('selected'), id);
-    safeLsSet(this.key('selected-node'), executionNodeId);
+    if (!this.worker) {
+      safeLsSet(this.key('selected'), id);
+      safeLsSet(this.key('selected-node'), executionNodeId);
+    }
     this.loadLocal();
     this.schedule(0);
   }
 
   private async create(resume?: NativeSessionInfo) {
+    if (this.worker) return;
+    if (
+      !resume &&
+      (!this.profileReady || (this.profile && this.profileNodeId !== this.executionNodeId))
+    ) {
+      this.error = 'Select a ready account profile for this node';
+      return;
+    }
     this.busy = true;
     this.error = '';
     const revision = this.revision;
@@ -364,6 +468,9 @@ export class NativeSessionView extends LitElement {
           mode: resume.mode,
           cwd: resume.cwd,
           resumeSessionId: resume.nativeSessionId,
+          ...(resume.profileId
+            ? { profileId: resume.profileId, accountContextId: resume.accountContextId }
+            : {}),
         }
       : {
           executionNodeId: this.executionNodeId,
@@ -371,6 +478,9 @@ export class NativeSessionView extends LitElement {
           model: this.model || undefined,
           mode: this.mode,
           cwd: this.cwd,
+          ...(this.profile
+            ? { profileId: this.profile.id, accountContextId: this.profile.accountContextId }
+            : {}),
         };
     try {
       const result = await this.api.request<{ session: NativeSessionInfo }>(
@@ -392,6 +502,7 @@ export class NativeSessionView extends LitElement {
   private get canSend() {
     return (
       this.connected &&
+      this.inputAllowed &&
       this.caughtUp &&
       !this.invalidDelivery &&
       !this.busy &&
@@ -430,6 +541,7 @@ export class NativeSessionView extends LitElement {
         executionNodeId: command.executionNodeId,
         commandId: command.commandId,
         text: command.text,
+        ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
       if (revision === this.revision)
@@ -440,7 +552,7 @@ export class NativeSessionView extends LitElement {
   }
 
   private async sessionAction(method: string) {
-    if (!this.session || this.busy || !this.connected) return;
+    if (!this.session || this.busy || !this.connected || !this.inputAllowed) return;
     const revision = this.revision;
     this.busy = true;
     this.error = '';
@@ -448,6 +560,7 @@ export class NativeSessionView extends LitElement {
       await this.api.request(method, {
         sessionId: this.session.id,
         executionNodeId: this.session.executionNodeId,
+        ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
@@ -481,6 +594,7 @@ export class NativeSessionView extends LitElement {
         executionNodeId: this.session.executionNodeId,
         requestId: request.id,
         ...response,
+        ...(this.worker ? { worker: this.workerControl } : {}),
       });
     } catch (error) {
       if (revision === this.revision)
@@ -493,6 +607,7 @@ export class NativeSessionView extends LitElement {
   private responseDisabled(event: NativeSessionEvent) {
     return (
       !this.connected ||
+      !this.inputAllowed ||
       !this.caughtUp ||
       event.generation !== this.session?.generation ||
       !!event.responseState ||
@@ -517,80 +632,16 @@ export class NativeSessionView extends LitElement {
   }
 
   private renderRequest(event: NativeSessionEvent) {
-    const request = event.request;
-    if (!request) return nothing;
-    const disabled = this.responseDisabled(event);
-    return html`<div class="request" data-request-id=${request.id}>
-      <h3>${request.title}</h3>
-      ${request.detail ? html`<pre>${request.detail}</pre>` : nothing}
-      ${request.tool
-        ? html`<div data-testid="native-request-tool">
-            <strong>${request.tool.name}</strong>
-            <pre>${JSON.stringify(request.tool.input, null, 2)}</pre>
-          </div>`
-        : nothing}
-      ${event.type === 'approval.requested' && event.data
-        ? html`<details open>
-            <summary>Action details</summary>
-            <pre>${JSON.stringify(event.data, null, 2)}</pre>
-          </details>`
-        : nothing}
-      ${event.type === 'question.requested'
-        ? html`<form
-            @submit=${(e: SubmitEvent) => {
-              e.preventDefault();
-              this.answer(event, e.currentTarget as HTMLFormElement);
-            }}
-          >
-            ${(request.questions ?? []).map(
-              (question) =>
-                html`<fieldset ?disabled=${disabled}>
-                  <legend>${question.prompt}</legend>
-                  ${question.options.map(
-                    (option) =>
-                      html`<label
-                        ><input
-                          type=${question.multiSelect ? 'checkbox' : 'radio'}
-                          name=${question.id}
-                          value=${option.label}
-                        />${option.label}${option.description
-                          ? ` · ${option.description}`
-                          : ''}</label
-                      >`,
-                  )}
-                  <label
-                    >Custom answer<input
-                      type="text"
-                      name=${`free:${question.id}`}
-                      aria-label=${`Custom answer: ${question.prompt}`}
-                  /></label>
-                </fieldset>`,
-            )}<button ?disabled=${disabled || !this.session?.capabilities.questions} type="submit">
-              Send answers
-            </button>
-          </form>`
-        : html`<div class="actions">
-            <button
-              data-testid="native-approve"
-              ?disabled=${disabled || !this.session?.capabilities.approvals}
-              @click=${() => this.respond(event, { decision: 'approve' })}
-            >
-              Approve
-            </button>
-            <button
-              data-testid="native-deny"
-              ?disabled=${disabled || !this.session?.capabilities.approvals}
-              @click=${() => this.respond(event, { decision: 'deny' })}
-            >
-              Deny
-            </button>
-          </div>`}
-      ${disabled && this.connected
-        ? html`<p class="meta">
-            Response pending or outcome unknown. Reconnecting never resends an answer.
-          </p>`
-        : nothing}
-    </div>`;
+    return renderNativeSessionRequest({
+      event,
+      disabled: this.responseDisabled(event),
+      session: this.session,
+      connected: this.connected,
+      answer: (form) => this.answer(event, form),
+      respond: (response) => {
+        void this.respond(event, response);
+      },
+    });
   }
 
   render() {
@@ -599,89 +650,46 @@ export class NativeSessionView extends LitElement {
       ? this.receipts.find((receipt) => receipt.commandId === this.localCommand?.commandId)
       : this.receipts.at(-1);
     const canResume =
+      !this.worker &&
       session &&
       session.capabilities.resume &&
       session.nativeSessionId &&
       ['closed', 'failed'].includes(session.state) &&
       (!session.processPid || session.processStopped);
     return html`
-      <div class="bar">
-        <label class="inline"
-          >Session<select
-            data-testid="native-session-select"
-            @change=${(e: Event) => {
-              const value = (e.target as HTMLSelectElement).value;
-              const selected = this.sessions.find((item) => this.sessionChoice(item) === value);
-              if (selected) this.select(selected.id, selected.executionNodeId);
-              else if (!value) this.select('');
-            }}
-          >
-            <option value="" .selected=${!this.selectedId}>New session</option>
-            ${this.selectedId &&
-            !this.sessions.some(
-              (item) => item.id === this.selectedId && item.executionNodeId === this.selectedNodeId,
-            )
-              ? html`<option
-                  .selected=${true}
-                  value=${this.sessionChoice({
-                    id: this.selectedId,
-                    executionNodeId: this.selectedNodeId,
-                  })}
-                >
-                  ${this.selectedNodeId} · ${this.selectedId.slice(0, 8)} · Unavailable
-                </option>`
-              : nothing}
-            ${this.sessions.map(
-              (item) =>
-                html`<option
-                  value=${this.sessionChoice(item)}
-                  .selected=${item.id === this.selectedId &&
-                  item.executionNodeId === this.selectedNodeId}
-                >
-                  ${item.runner} · ${item.model ?? 'default'} · ${item.cwd.split('/').at(-1)} ·
-                  ${item.executionNodeId} · ${item.id.slice(0, 8)} · ${item.state}
-                </option>`,
-            )}
-          </select></label
-        >
-        <button data-testid="native-new" ?disabled=${this.busy} @click=${() => this.select('')}>
-          New session
-        </button>
-        <button
-          data-testid="native-refresh"
-          ?disabled=${!this.connected}
-          @click=${() => {
-            this.error = '';
-            void this.refreshSessions();
-            this.schedule(0);
-          }}
-        >
-          Refresh sessions
-        </button>
-        ${session
-          ? html`<button
-              aria-pressed=${this.workspace}
-              data-testid="native-workspace-toggle"
-              @click=${() => (this.workspace = !this.workspace)}
-            >
-              ${this.workspace ? 'Conversation' : 'Files / Changes'}${this.requests.length
-                ? ` · ${this.requests.length} waiting`
-                : ''}
-            </button>`
-          : nothing}
-        <span
-          class="status"
-          role="status"
-          data-state=${this.connected ? (session?.state ?? '') : 'disconnected'}
-          >${!this.connected
-            ? 'Disconnected. Draft and session preserved.'
-            : session
-              ? `${session.state}${this.caughtUp ? '' : ' · Replaying history'}`
-              : ''}</span
-        >
-      </div>
+      ${renderNativeSessionHeader({
+        worker: this.worker,
+        sessions: this.sessions,
+        selectedId: this.selectedId,
+        selectedNodeId: this.selectedNodeId,
+        session,
+        connected: this.connected,
+        caughtUp: this.caughtUp,
+        busy: this.busy,
+        workspace: this.workspace,
+        workspaceAllowed: this.workspaceAllowed,
+        taskHistory: this.taskHistory,
+        requestCount: this.requests.length,
+        sessionChoice: (item) => this.sessionChoice(item),
+        select: (id, node) => this.select(id, node),
+        refresh: () => {
+          this.error = '';
+          void this.refreshSessions();
+          this.schedule(0);
+        },
+        toggleWorkspace: () => {
+          this.workspace = !this.workspace;
+        },
+      })}
       ${this.error ? html`<div class="error" role="alert">${this.error}</div>` : nothing}
       ${this.pollError ? html`<div class="error" role="alert">${this.pollError}</div>` : nothing}
+      ${this.worker && !this.inputAllowed
+        ? html`<p class="meta" data-testid="native-worker-read-only">
+            ${this.taskHistory
+              ? 'This task history is read-only. Slot files reflect the current workspace.'
+              : 'Input unavailable for this task. Use its task controls for recovery, or select the current worker.'}
+          </p>`
+        : nothing}
       ${this.unavailableNodes.map(
         (node) =>
           html`<p class="error" role="status">
@@ -692,7 +700,11 @@ export class NativeSessionView extends LitElement {
         ? html`<section class="new-session">
             <p>Start an agent workspace using an installed runner and its own account.</p>
             <runner-model-effort-picker
-              .catalog=${this.catalog?.runners ?? []}
+              .catalog=${this.profile
+                ? (this.catalog?.runners ?? []).filter(
+                    (option) => option.runner === this.profile!.runner,
+                  )
+                : (this.catalog?.runners ?? [])}
               .runner=${this.runner}
               .model=${this.model}
               .showEffort=${false}
@@ -711,6 +723,7 @@ export class NativeSessionView extends LitElement {
                   : this.contextChoice({ cwd: this.cwd, executionNodeId: this.executionNodeId })}
                 ?disabled=${this.busy}
                 @change=${(e: Event) => {
+                  const previousNode = this.executionNodeId;
                   const value = (e.target as HTMLSelectElement).value;
                   this.customCwd = value === '__custom__';
                   if (this.customCwd) {
@@ -724,6 +737,11 @@ export class NativeSessionView extends LitElement {
                       this.cwd = context.cwd;
                       this.executionNodeId = context.executionNodeId ?? 'local';
                     }
+                  }
+                  if (previousNode !== this.executionNodeId) {
+                    this.profile = undefined;
+                    this.profileReady = true;
+                    this.profileNodeId = this.executionNodeId;
                   }
                 }}
               >
@@ -756,6 +774,35 @@ export class NativeSessionView extends LitElement {
                     @input=${(e: Event) => (this.cwd = (e.target as HTMLInputElement).value)}
                 /></label>`
               : nothing}
+            ${this.catalog?.contexts.some(
+              (context) =>
+                (context.executionNodeId ?? 'local') === this.executionNodeId &&
+                context.supportsProfiles,
+            )
+              ? keyed(
+                  this.revision,
+                  html`<native-profiles
+                    .api=${this.api}
+                    .executionNodeId=${this.executionNodeId}
+                    .runner=${this.runner}
+                    .disabled=${this.busy || !this.connected}
+                    @native-profile-change=${(event: CustomEvent<NativeProfileSelection>) => {
+                      const selected = event.detail;
+                      if (selected.executionNodeId !== this.executionNodeId) return;
+                      this.profile = selected.profile;
+                      this.profileReady = selected.ready;
+                      this.profileNodeId = selected.executionNodeId;
+                      if (selected.profile && selected.profile.runner !== this.runner) {
+                        this.runner = selected.profile.runner;
+                        this.model =
+                          this.catalog?.runners.find((option) => option.runner === this.runner)
+                            ?.defaultModel ?? '';
+                        this.mode = 'default';
+                      }
+                    }}
+                  ></native-profiles>`,
+                )
+              : nothing}
             <label
               >Interaction mode<select
                 data-testid="native-mode"
@@ -782,7 +829,11 @@ export class NativeSessionView extends LitElement {
               <button
                 class="primary"
                 data-testid="native-create"
-                ?disabled=${!this.connected || this.busy || !this.cwd.trim() || !this.runner}
+                ?disabled=${!this.connected ||
+                this.busy ||
+                !this.cwd.trim() ||
+                !this.runner ||
+                !this.profileReady}
                 @click=${() => this.create()}
               >
                 ${this.busy ? 'Starting…' : 'Start session'}
@@ -795,7 +846,9 @@ export class NativeSessionView extends LitElement {
                 <strong
                   >${session.runner} · ${session.model ?? 'Runner default'} ·
                   ${session.mode}</strong
-                ><span class="meta">${session.cwd}</span>
+                ><span class="meta"
+                  >${session.cwd}${session.profileId ? ` · Profile ${session.profileId}` : ''}</span
+                >
                 <details>
                   <summary>Session details</summary>
                   <div class="meta">
@@ -804,7 +857,11 @@ export class NativeSessionView extends LitElement {
                   </div>
                 </details>
               </div>
-              <div class="layout ${this.workspace ? 'workspace-visible' : 'conversation-only'}">
+              <div
+                class="layout ${this.workspace && this.workspaceAllowed
+                  ? 'workspace-visible'
+                  : 'conversation-only'}"
+              >
                 <section class="conversation">
                   <div class="timeline" aria-label="Agent conversation">
                     ${repeat(
@@ -910,6 +967,7 @@ ${JSON.stringify(
                     <label
                       >Message<textarea
                         data-testid="native-message"
+                        ?disabled=${!this.inputAllowed}
                         .value=${this.draft}
                         @input=${(e: Event) => {
                           this.draft = (e.target as HTMLTextAreaElement).value;
@@ -935,6 +993,7 @@ ${JSON.stringify(
                       <button
                         data-testid="native-stop"
                         ?disabled=${!this.connected ||
+                        !this.inputAllowed ||
                         this.busy ||
                         !session.capabilities.interrupt ||
                         !['running', 'waiting'].includes(session.state)}
@@ -945,7 +1004,7 @@ ${JSON.stringify(
                       ${!['closed', 'failed'].includes(session.state)
                         ? html`<button
                             data-testid="native-close"
-                            ?disabled=${!this.connected || this.busy}
+                            ?disabled=${!this.connected || this.busy || !this.inputAllowed}
                             @click=${() => this.sessionAction(Methods.NATIVE_SESSION_CLOSE)}
                           >
                             Close session
@@ -968,11 +1027,12 @@ ${JSON.stringify(
                     </div>
                   </div>
                 </section>
-                ${this.workspace
+                ${this.workspace && this.workspaceAllowed
                   ? html`<native-workspace
                       .sessionId=${session.id}
                       .executionNodeId=${session.executionNodeId}
                       .api=${this.api}
+                      .worker=${this.worker ? nativeWorkerViewPin(this.worker) : undefined}
                     ></native-workspace>`
                   : nothing}
               </div>

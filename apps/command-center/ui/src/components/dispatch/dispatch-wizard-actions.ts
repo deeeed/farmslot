@@ -1,6 +1,7 @@
 import type {
   DevInteractiveProfile,
   FlowType,
+  NativeProfileReference,
   PressureAdmissionReference,
   PressureDispatchOverride,
   ReviewDepthPolicy,
@@ -22,6 +23,8 @@ import {
 } from './dispatch-wizard-payload.js';
 
 export interface DispatchPayloadDraftInput {
+  transport?: 'tmux' | 'native';
+  nativeProfile?: NativeProfileReference;
   flowType: FlowType | null;
   project: string;
   ticketId: string;
@@ -60,6 +63,10 @@ export function buildDispatchWizardPayloadDraft(
     branch: input.branch,
   });
   return {
+    ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.transport === 'native' && input.nativeProfile
+      ? { nativeProfile: input.nativeProfile }
+      : {}),
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketId,
@@ -92,7 +99,7 @@ export function buildDispatchWizardPayloadDraft(
 
 export async function dispatchRunCreateFromDraft(draft: DispatchPayloadDraft): Promise<string> {
   const result = await gateway.request<RunCreateResult>(
-    Methods.RUN_CREATE,
+    draft.transport === 'native' ? Methods.RUN_CREATE_NATIVE : Methods.RUN_CREATE,
     buildRunCreateParams(draft),
   );
   return result.run.id;

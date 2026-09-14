@@ -107,6 +107,7 @@ export interface RunForceCompleteTransitionDependencies {
   bumpGeneration(runId: string): number;
   attachPrNumber(runId: string, prNumber: number): Promise<void>;
   publish(run: Run): Promise<Run>;
+  /** Advisory teardown runs after the public wrapper releases lifecycle locks. */
   releaseSlot(run: Run): Promise<{ released: boolean }>;
 }
 
@@ -121,8 +122,17 @@ const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = 
 export async function runForceComplete(
   params: RunForceCompleteParams,
   emit: Emit,
+  deps: RunForceCompleteTransitionDependencies = DEFAULT_RUN_FORCE_COMPLETE_DEPS,
 ): Promise<RunForceCompleteResult> {
-  return withRunTransition(params.runId, () => runForceCompleteTransitionLocked(params, emit));
+  const result = await withRunTransition(params.runId, () =>
+    runForceCompleteTransitionLocked(params, emit, deps),
+  );
+  if (result.run.status !== 'done') return result;
+  // The terminal override fences replay before releasing the coordinator.
+  // Teardown may cancel a handoff source or join another slot release; neither
+  // can run while this request holds the machine/run keys they may need.
+  const effects = await collectForceCompleteSlotReleaseEffect(result.run, deps);
+  return { ...result, run: getRun(params.runId) ?? result.run, effects };
 }
 
 export async function runForceCompleteTransitionLocked(
@@ -261,9 +271,8 @@ export async function runForceCompleteTransitionLocked(
     );
     settled = getRun(params.runId) ?? settled;
   }
-  const effects = await collectForceCompleteSlotReleaseEffect(settled, deps);
   console.log(`[run] force-completed ${originalStatus} run ${params.runId.slice(0, 8)}`);
-  return { run: getRun(params.runId) ?? settled, effects };
+  return { run: getRun(params.runId) ?? settled };
 }
 
 async function collectForceCompleteSlotReleaseEffect(
@@ -304,11 +313,23 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 }
 
 async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean }> {
-  if (!run.slotId) return { released: false };
+  const slotId = run.slotId;
+  if (!slotId) return { released: false };
+  if (run.transport === 'native') {
+    // An uncertain handoff can still have the parent on the slot row. Retire
+    // this run's task leases before the release CAS; otherwise that CAS skips
+    // the child and leaves its reserved process/handoff alive.
+    const { cancelNativeRunWorkers } = await import('../../runners/native/worker.js');
+    await cancelNativeRunWorkers(run.id);
+    const { updateSlotStatusIf } = await import('../../core/index.js');
+    await updateSlotStatusIf(slotId, (slot) => slot.handoff_run_id === run.id, {
+      handoff_run_id: null,
+    });
+  }
   const { slotRelease } = await import('../slot.js');
   const { broadcastEvent } = await import('../../server.js');
   const result = await slotRelease(
-    { slotId: run.slotId, keepWork: true, expectedRunId: run.id },
+    { slotId, keepWork: true, expectedRunId: run.id },
     broadcastEvent,
   );
   if (result.released) {
@@ -620,6 +641,11 @@ export async function runResumeTransitionLocked(
 
 async function nudgeResumedMonitor(existing: Run, emit: Emit): Promise<void> {
   if (!existing.slotId) return;
+  if (existing.transport === 'native') {
+    const { resumeNativeWorker } = await import('../../runners/native/worker-recovery.js');
+    await resumeNativeWorker(existing.id);
+    return;
+  }
   try {
     const { loadSlotVars } = await import('../../core/config.js');
     const vars = await loadSlotVars(existing.slotId);

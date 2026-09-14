@@ -7,7 +7,7 @@ export interface Principal {
 export type PrincipalSubject =
   | { type: 'person'; displayName: string }
   | { type: 'service'; displayName: string }
-  | { type: 'node'; displayName: string; machine: string };
+  | { type: 'node'; displayName: string; machine: string; nativeOwnerPrincipalId?: string };
 
 export interface RoleBinding {
   role: Role;
@@ -47,6 +47,13 @@ export interface PrincipalCreateResult {
 export interface PrincipalListParams {}
 export interface PrincipalListResult {
   principals: Principal[];
+}
+export interface PrincipalBindNativeOwnerParams {
+  nodePrincipalId: string;
+  ownerPrincipalId: string;
+}
+export interface PrincipalBindNativeOwnerResult {
+  principal: Principal;
 }
 export interface PrincipalGrantParams {
   principalId: string;

@@ -11,6 +11,7 @@ import {
   type DispatchQueueUpdateParams,
   isTerminalRunStatus,
   normalizeRunTags,
+  parseNativeProfileReference,
   type PressureAdmissionDecision,
   type PRExecutionChoice,
   type QueueClaim,
@@ -29,8 +30,10 @@ import {
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import { normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
-import type { WorkOriginator } from '../security/work-originator.js';
+import { requireNativeProfileOwner } from '../security/native-worker-owner.js';
+import { runWithSystemOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 import { preparePRQueueAdmission } from './pr-admission.js';
 
@@ -413,6 +416,22 @@ export function addItem(
   params: InternalDispatchQueueAddParams,
   originator: WorkOriginator,
 ): QueueItem {
+  const transport =
+    params.transport ?? (params.parentRunId ? getRun(params.parentRunId)?.transport : undefined);
+  if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
+    throw new Error('Unknown queued worker transport');
+  const selectedProfile = params.nativeProfile;
+  if (selectedProfile !== undefined && transport !== 'native')
+    throw new Error('Native profile selection requires native worker transport');
+  const nativeProfile =
+    selectedProfile === undefined ? undefined : parseNativeProfileReference(selectedProfile);
+  if (nativeProfile && params.runner && normalizeRunner(params.runner) !== nativeProfile.runner)
+    throw new Error('Selected native profile belongs to another worker runner');
+  if (transport === 'native') {
+    requireNativeProfileOwner(originator.kind === 'principal' ? originator.principalId : undefined);
+    if (params.queueKind && params.queueKind !== 'dispatch')
+      throw new Error('Native worker transport is only supported for dispatch queue items');
+  }
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
   if (params.prWork) {
@@ -457,6 +476,9 @@ export function addItem(
     launchAttempt: params.launchAttempt,
     label: params.label,
     flowType: params.flowType,
+    ...(transport ? { transport } : {}),
+    ...(nativeProfile ? { nativeProfile } : {}),
+    ...(params.skipPrepare !== undefined ? { skipPrepare: params.skipPrepare } : {}),
     project: params.project,
     ticketOrPr: params.ticketOrPr,
     familyId: params.familyId,
@@ -472,7 +494,7 @@ export function addItem(
     prepareProfile: params.prepareProfile,
     waitPolicy: params.waitPolicy,
     model: params.model,
-    runner: params.runner,
+    runner: nativeProfile?.runner ?? params.runner,
     scripted: params.scripted,
     effort: params.effort,
     mode: params.mode,
@@ -1109,7 +1131,7 @@ export function canDispatchQueuedItemToSlot(slot: SlotStatus): boolean {
 
 export async function tryDispatchNext(): Promise<void> {
   if (dispatchInFlight) return dispatchInFlight;
-  dispatchInFlight = tryDispatchNextOnce().finally(() => {
+  dispatchInFlight = runWithSystemOriginator(tryDispatchNextOnce).finally(() => {
     dispatchInFlight = null;
   });
   return dispatchInFlight;
@@ -1349,7 +1371,11 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
       }
       // Revert to queued on failure when we still own the claim and no Run exists.
-      releaseQueueClaim(claim);
+      if (releaseQueueClaim(claim, { quiet: true })) {
+        item.waitingReason = err instanceof Error ? err.message : String(err);
+        schedulePersist('auto-dispatch-failure');
+        broadcastQueue();
+      }
       console.error(
         `[dispatch-queue] auto-dispatch failed for ${item.id.slice(0, 8)}: ${(err as Error).message}`,
       );

@@ -5,6 +5,17 @@ import { join } from 'node:path';
 import { authenticated, decodeRequest, type HostIdentity, object } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 import { privateDirectory, readJson } from './storage.js';
+import {
+  NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_CLOSE,
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_INTERRUPT,
+  NATIVE_WORKER_READ,
+  NATIVE_WORKER_RESPOND,
+  NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_TRANSFER,
+} from './worker-launch.js';
 
 // The supervisor must durably register this PID before the host can bind or launch.
 await new Promise<void>((resolve, reject) => {
@@ -43,11 +54,48 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         const p = decodeRequest(envelope.request);
         let value: unknown;
         switch (p.method) {
+          case NATIVE_WORKER_READ:
+            value = manager.readWorker(p.owner, p.id, p.leaseId, p.after, p.limit);
+            break;
           case 'create':
             value = await manager.create(p.owner, p.params);
             break;
           case 'ensure':
             value = await manager.ensure(p.owner, p.params);
+            break;
+          case NATIVE_WORKER_ENSURE:
+            value = await manager.ensure(p.owner, p.params, p.launch);
+            break;
+          case NATIVE_WORKER_RESUME:
+            value = await manager.resumeWorker(p.owner, p.params, p.launch);
+            break;
+          case NATIVE_WORKER_TRANSFER:
+            value = manager.transferWorker(p.owner, p.id, p.generation, p.leaseId, p.launch);
+            break;
+          case NATIVE_WORKER_CANCEL:
+            value = await manager.cancelWorker(
+              p.owner,
+              p.id,
+              p.leaseId,
+              p.generation,
+              p.sourceLeaseId,
+              p.resumeCommandId,
+            );
+            break;
+          case NATIVE_WORKER_SEND:
+            manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.send(p.owner, p.id, p.commandId, p.text);
+            break;
+          case NATIVE_WORKER_RESPOND:
+            manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.respond(p.owner, p.id, p.requestId, p.response);
+            break;
+          case NATIVE_WORKER_CLOSE:
+            value = await manager.closeWorker(p.owner, p.id, p.generation, p.leaseId);
+            break;
+          case NATIVE_WORKER_INTERRUPT:
+            manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.interrupt(p.owner, p.id);
             break;
           case 'list':
             value = manager.list(p.owner);
@@ -56,15 +104,31 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = manager.read(p.owner, p.id, p.after, p.limit);
             break;
           case 'send':
+            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
+              throw new Error(
+                'Native worker input requires its run context, generation and task lease',
+              );
             value = await manager.send(p.owner, p.id, p.commandId, p.text);
             break;
           case 'respond':
+            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
+              throw new Error(
+                'Native worker input requires its run context, generation and task lease',
+              );
             value = await manager.respond(p.owner, p.id, p.requestId, p.response);
             break;
           case 'interrupt':
+            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
+              throw new Error(
+                'Native worker input requires its run context, generation and task lease',
+              );
             value = await manager.interrupt(p.owner, p.id);
             break;
           case 'close':
+            if (manager.read(p.owner, p.id, undefined, 1).session.workerManaged)
+              throw new Error(
+                'Native worker input requires its run context, generation and task lease',
+              );
             value = await manager.close(p.owner, p.id);
             break;
         }

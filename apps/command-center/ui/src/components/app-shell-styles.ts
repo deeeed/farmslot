@@ -2,10 +2,12 @@ import { html } from 'lit';
 
 import { colors, fonts, layout, spacing } from '../styles/theme-tokens.js';
 
-export function renderAppShellAuthStyles() {
+export function renderAppShellAuthStyles(embedded = false) {
   return html`
     <style>
-      farm-app {
+      ${embedded
+          ? ''
+          : `farm-app {
         display: flex;
         width: 100vw;
         height: 100vh;
@@ -14,8 +16,10 @@ export function renderAppShellAuthStyles() {
         font-family: ${fonts.mono};
         align-items: center;
         justify-content: center;
-      }
-      farm-app .auth-card {
+      }`}
+        farm-app
+        .auth-card,
+      farm-app .connection-card {
         width: min(440px, calc(100vw - 48px));
         background: ${colors.bgSurface};
         border: 1px solid ${colors.bgCard};

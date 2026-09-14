@@ -9,6 +9,7 @@ import {
   type AgentRole,
   DEFAULT_CLAUDE_MODEL,
   type DispatchExecuteParams,
+  nativeWorkerBindingIsHeld,
   type PressureAdmissionDecision,
   type PressureAdmissionReference,
   type PressureAdmissionRejected,
@@ -19,7 +20,11 @@ import {
 } from '@farmslot/protocol';
 import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
-import { markAgentContextStatus, upsertAgentContext } from '../../agents/contexts.js';
+import {
+  markAgentContextStatus,
+  selectAgentContext,
+  upsertAgentContext,
+} from '../../agents/contexts.js';
 import { assertPRReviewWorktreeHead } from '../../backlog/pr-admission.js';
 import {
   applyProjectCommandEnv,
@@ -61,12 +66,19 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
 import {
+  assertNativeSlotReplacementOwner,
+  dispatchNativeWorker,
+  retireNativeWorkersForSlot,
+} from '../../runners/native/worker.js';
+import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
+import {
   assertSupportedRunnerSpelling,
   captureRunnerPromptAcceptanceBaseline,
   detectRunnerLaunchBlocker,
   normalizeRunner,
   PromptDeliveryUncertainError,
   runnerDefaultModel,
+  runnerDefaultSafetyTier,
   runnerLaunchBlockerAutoActionKey,
   runnerNeedsPostLaunchPrompt,
   runnerPaneHasDeferredLaunchBlocker,
@@ -93,6 +105,7 @@ import {
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
+import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
@@ -1014,8 +1027,14 @@ export async function enforceDispatchPressureGate(input: {
 export async function dispatchExecute(
   params: DispatchExecuteParams,
   emit: EventEmitter,
+  options: {
+    nativeRetainedFrom?: { runId: string; contextId: string };
+    assertCurrent?: () => void;
+  } = {},
 ): Promise<{ dispatched: boolean; launchCommand?: string }> {
+  options.assertCurrent?.();
   const vars = await loadSlotVars(params.slotId);
+  options.assertCurrent?.();
 
   // Check dispatchability
   if (vars.slotMode === 'disabled') throw new Error(`Slot ${params.slotId} is disabled`);
@@ -1051,6 +1070,19 @@ export async function dispatchExecute(
   const flowSubdir = path.basename(path.dirname(taskDir));
   const { getRun, updateRun: updateRunStore } = await import('../../runs/store.js');
   const currentRun = params.runId ? getRun(params.runId) : null;
+  const nativeDispatchBoundary = currentRun?.steps.find(
+    (entry) => entry.name === 'dispatch',
+  )?.startedAt;
+  const transport = currentRun?.transport ?? params.transport ?? 'tmux';
+  if (params.transport && currentRun && params.transport !== (currentRun.transport ?? 'tmux'))
+    throw new Error('Dispatch must preserve the run transport');
+  if (transport === 'native') {
+    if (!currentRun) throw new Error('Native dispatch requires a persisted run');
+    assertNativeRunOwner(currentRun);
+  }
+  assertNativeSlotReplacementOwner(params.slotId, params.runId);
+  if (options.nativeRetainedFrom && (transport !== 'native' || !params.skipPrepare))
+    throw new Error('Native retained handoff requires native transport without preparation');
 
   // Sustained-pressure admission recompute (MANUAL-000109). Execution never
   // trusts a preview-time decision. The gate is run once early for a cheap
@@ -1062,7 +1094,18 @@ export async function dispatchExecute(
     currentRun ? (dispatchStartedAtMs(currentRun) ?? 'no-attempt') : 'no-attempt'
   }`;
   const runPressureGate = async (): Promise<void> => {
+    options.assertCurrent?.();
     const latestRun = params.runId ? getRun(params.runId) : currentRun;
+    if (
+      currentRun?.transport === 'native' &&
+      latestRun?.steps.find((entry) => entry.name === 'dispatch')?.startedAt !==
+        nativeDispatchBoundary
+    )
+      throw new NativeWorkerOperationUncertainError(
+        'handoff',
+        'The native dispatch attempt was superseded.',
+        undefined,
+      );
     await enforceDispatchPressureGate({
       machine: vars.machine,
       runId: params.runId,
@@ -1079,6 +1122,7 @@ export async function dispatchExecute(
         },
       },
     });
+    options.assertCurrent?.();
   };
   await runPressureGate();
 
@@ -1134,13 +1178,21 @@ export async function dispatchExecute(
         : null,
   });
   assertRunnerLaunchPrerequisites(vars, runner);
+  const taskDirName = resolveProjectTaskDirName(projectJson);
+  const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const priorReviewRun = currentRun?.repeatReviewContext?.priorRunId
     ? (getRun(currentRun.repeatReviewContext.priorRunId) ?? null)
     : null;
   const repeatReviewSessionIntent = reviewSessionIntentForContext(currentRun?.repeatReviewContext);
-  const repeatReviewResumePlan = currentRun
-    ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner, model)
-    : ({ kind: 'reset' } as const);
+  const existingNativeBinding =
+    currentRun?.transport === 'native'
+      ? selectAgentContext(currentRun, { role: primaryRoleForFlow(currentRun.flowType) })
+          ?.nativeSession
+      : undefined;
+  const repeatReviewResumePlan =
+    currentRun && !existingNativeBinding
+      ? resolveRepeatReviewResumePlan(currentRun, priorReviewRun, runner, model)
+      : ({ kind: 'reset' } as const);
   let reviewSessionContinuity: ReviewSessionTrace['continuity'] | undefined;
   const recordReviewSession = (trace: ReviewSessionTrace): void => {
     if (!currentRun?.repeatReviewContext) return;
@@ -1151,6 +1203,97 @@ export async function dispatchExecute(
       repeatReviewContext: { ...latest.repeatReviewContext, session: trace },
     });
   };
+
+  if (transport === 'native' && currentRun?.repeatReviewContext && !existingNativeBinding) {
+    if (repeatReviewResumePlan.kind === 'native-resume') {
+      if (!params.skipPrepare)
+        throw new Error('Native review resume requires the prepared dispatch path');
+      const source = repeatReviewResumePlan.binding;
+      options = {
+        ...options,
+        nativeRetainedFrom: { runId: source.priorRunId, contextId: source.contextId },
+      };
+      recordReviewSession({
+        intent: 'resume',
+        continuity: 'resume-unconfirmed',
+        priorRunId: source.priorRunId,
+        priorSessionId: source.runnerSessionId,
+      });
+    } else {
+      recordReviewSession({
+        intent: repeatReviewSessionIntent,
+        continuity: repeatReviewResumePlan.kind === 'fallback' ? 'fallback-fresh' : 'fresh',
+        priorRunId: currentRun.repeatReviewContext.priorRunId,
+        ...(repeatReviewResumePlan.kind === 'fallback'
+          ? { fallbackReason: repeatReviewResumePlan.reason }
+          : {}),
+      });
+    }
+  }
+  const launchNative = async () => {
+    if (!currentRun) throw new Error('Native dispatch requires a persisted run');
+    const result = await dispatchNativeWorker({
+      runId: currentRun.id,
+      vars,
+      retainedFrom: options.nativeRetainedFrom,
+      role: primaryRoleForFlow(currentRun.flowType),
+      taskId,
+      taskFile: `${workerTaskDir}/TASK.md`,
+      signalFile: `${workerTaskDir}/SIGNAL.json`,
+      runner,
+      model,
+      effort,
+      safetyTier:
+        resolveDispatchSafetyTier({
+          paramsTier: params.safetyTier,
+          runTier: currentRun.safetyTier,
+          projectDefaultRaw: projectJson.default_safety_tier,
+        }) ?? runnerDefaultSafetyTier(runner),
+      domain: resolveEffectiveDomain(currentRun.domain, vars.domain),
+      project: projectJson,
+      projectVars,
+      accountLabel: params.providerAccountLabel,
+      beforeInput: runPressureGate,
+      assertCurrent: options.assertCurrent,
+      emit,
+    });
+    const latest = getRun(currentRun.id)!;
+    if (latest.repeatReviewContext) {
+      const reviewer = selectAgentContext(latest, { role: primaryRoleForFlow(latest.flowType) });
+      recordReviewSession({
+        ...latest.repeatReviewContext.session,
+        intent: reviewSessionIntentForContext(latest.repeatReviewContext),
+        continuity: reviewer?.nativeSession?.handoffCompletedAt
+          ? 'resumed'
+          : latest.repeatReviewContext.session?.continuity === 'fallback-fresh'
+            ? 'fallback-fresh'
+            : 'fresh',
+        sessionId: reviewer?.runnerSessionId ?? undefined,
+      });
+      const { persistRunNow } = await import('../../runs/store.js');
+      await persistRunNow(getRun(currentRun.id)!, 'native review session continuity');
+    }
+    return result;
+  };
+  if (
+    currentRun?.transport === 'native' &&
+    selectAgentContext(currentRun, {
+      role: primaryRoleForFlow(currentRun.flowType),
+    })?.nativeSession
+  ) {
+    // Reconcile the existing reservation before preparation, slot claims or task copies.
+    // Re-copying TASK.md here would erase progress written while the gateway was away.
+    try {
+      return await launchNative();
+    } catch (error) {
+      if (error instanceof NativeWorkerOperationUncertainError) throw error;
+      throw new NativeWorkerOperationUncertainError(
+        'delivery',
+        'Native worker reconciliation requires attention; existing work is preserved.',
+        error,
+      );
+    }
+  }
 
   step(
     'info',
@@ -1176,26 +1319,59 @@ export async function dispatchExecute(
   const existingFamily = (await readSlotField(params.slotId, 'current_family_id')) as string | null;
   const existingLane = (await readSlotField(params.slotId, 'current_lane')) as string | null;
   const existingVariant = (await readSlotField(params.slotId, 'current_variant')) as string | null;
-  const identityPolicy = evaluateSlotIdentityPolicy(
-    {
-      runId: existingRunId,
-      ticket: existingTicket,
-      flow: existingFlow,
-      familyId: existingFamily,
-      lane: existingLane,
-      variant: existingVariant,
-    },
-    {
-      runId: params.runId ?? null,
-      ticket: taskId,
-      flow: flowType || null,
-      familyId: currentRun?.familyId ?? null,
-      lane: currentRun?.lane ?? params.lane ?? null,
-      variant: currentRun?.variant ?? params.variant ?? null,
-      parentRunId: currentRun?.parentRunId ?? null,
-    },
-    params.mode,
-  );
+  const retainedSource = options.nativeRetainedFrom
+    ? getRun(options.nativeRetainedFrom.runId)
+    : null;
+  if (options.nativeRetainedFrom) {
+    if (
+      !currentRun ||
+      !retainedSource ||
+      retainedSource.transport !== 'native' ||
+      retainedSource.nativeOwnerPrincipalId !== currentRun.nativeOwnerPrincipalId ||
+      retainedSource.project !== currentRun.project ||
+      retainedSource.slotId !== params.slotId ||
+      (retainedSource.familyId !== currentRun.familyId &&
+        !(
+          repeatReviewResumePlan.kind === 'native-resume' &&
+          repeatReviewResumePlan.binding.priorRunId === retainedSource.id &&
+          repeatReviewResumePlan.binding.contextId === options.nativeRetainedFrom.contextId
+        )) ||
+      retainedSource.lane !== currentRun.lane ||
+      retainedSource.variant !== currentRun.variant ||
+      (existingRunId !== retainedSource.id && existingRunId !== currentRun.id) ||
+      !retainedSource.agentContexts?.find(
+        (context) => context.id === options.nativeRetainedFrom!.contextId,
+      )?.nativeSession
+    )
+      throw new NativeWorkerOperationUncertainError(
+        'handoff',
+        'Retained source no longer owns the selected task family and slot.',
+        undefined,
+      );
+    assertNativeRunOwner(retainedSource);
+  }
+  const identityPolicy = retainedSource
+    ? { action: 'allow' as const }
+    : evaluateSlotIdentityPolicy(
+        {
+          runId: existingRunId,
+          ticket: existingTicket,
+          flow: existingFlow,
+          familyId: existingFamily,
+          lane: existingLane,
+          variant: existingVariant,
+        },
+        {
+          runId: params.runId ?? null,
+          ticket: taskId,
+          flow: flowType || null,
+          familyId: currentRun?.familyId ?? null,
+          lane: currentRun?.lane ?? params.lane ?? null,
+          variant: currentRun?.variant ?? params.variant ?? null,
+          parentRunId: currentRun?.parentRunId ?? null,
+        },
+        params.mode,
+      );
   if (identityPolicy.action !== 'allow') {
     if (identityPolicy.action === 'warn') {
       step(
@@ -1203,11 +1379,29 @@ export async function dispatchExecute(
         `Compatibility reuse on legacy slot identity (${existingRunId}/${existingFlow}/${existingTicket}/${existingFamily}/${existingLane}/${existingVariant})`,
       );
     } else if (identityPolicy.action === 'scrub') {
+      if (options.nativeRetainedFrom)
+        throw new NativeWorkerOperationUncertainError(
+          'handoff',
+          'Retained handoff cannot scrub conflicting slot identity.',
+          undefined,
+        );
+      if (
+        currentRun?.transport === 'native' &&
+        currentRun.agentContexts?.some((context) =>
+          nativeWorkerBindingIsHeld(context.nativeSession),
+        )
+      )
+        throw new NativeWorkerOperationUncertainError(
+          'handoff',
+          'Reconcile the owned native worker before scrubbing slot identity.',
+          undefined,
+        );
       step(
         'clean',
         `Validation mode auto-scrub for stale slot identity (${existingRunId}/${existingFlow}/${existingTicket}/${existingFamily}/${existingLane}/${existingVariant})`,
       );
       const slotMod = await import('../slot.js');
+      await retireNativeWorkersForSlot(params.slotId, params.runId);
       await slotMod.killAgentInSession(
         vars,
         existingRunner ?? undefined,
@@ -1226,12 +1420,20 @@ export async function dispatchExecute(
   // slot busy/releasing before killing tmux and resets state unconditionally
   // at its end, so a claim accepted during that window would be killed and
   // then clobbered, leaving a zombie worker.
+  options.assertCurrent?.();
   step('claim', 'Claiming slot...');
   const claim = await claimSlotStatusIf(
     params.slotId,
-    (slot) =>
-      slotClaimBlockedByRelease(slot) === null &&
-      slotClaimBlockedByHandoff(slot, params.runId ?? '') === null,
+    (slot) => {
+      options.assertCurrent?.();
+      return (
+        slotClaimBlockedByRelease(slot) === null &&
+        slotClaimBlockedByHandoff(slot, params.runId ?? '') === null &&
+        (transport !== 'native' ||
+          slot.current_run_id === existingRunId ||
+          slot.current_run_id === params.runId)
+      );
+    },
     buildSlotClaimStatus({
       runId: params.runId ?? null,
       taskId,
@@ -1259,6 +1461,8 @@ export async function dispatchExecute(
   step('claim', 'Slot claimed, lifecycle=busy(dispatching)');
 
   // 2. Prepare slot
+  await runPressureGate();
+  await retireNativeWorkersForSlot(params.slotId, params.runId, options.nativeRetainedFrom);
   if (!params.skipPrepare) {
     step('prepare', 'Preparing slot...');
     try {
@@ -1272,6 +1476,7 @@ export async function dispatchExecute(
           mergeMain,
           flowType: flowType || undefined,
           app: selectedApp || undefined,
+          runId: params.runId,
         },
         emit,
       );
@@ -1302,8 +1507,6 @@ export async function dispatchExecute(
 
   // 3. Copy task to worker
   step('copy', 'Copying task files...');
-  const taskDirName = resolveProjectTaskDirName(projectJson);
-  const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 
   if (isLocal(vars.host, vars.machine)) {
@@ -1344,6 +1547,31 @@ export async function dispatchExecute(
   // 5s without this invalidation. Slot-scoped + per-run memo bust.
   invalidateArtifactTextCache(path.join(workerTaskAbs, 'artifacts'), vars.slotId);
   if (currentRun?.id) invalidateLiveRecipeContextMemo(currentRun.id);
+
+  if (transport === 'native' && currentRun) {
+    // Only a first launch retires residual terminal workers. A native retry keeps its input owner.
+    if (
+      !options.nativeRetainedFrom &&
+      !currentRun.agentContexts?.some((context) => context.nativeSession)
+    ) {
+      const slotMod = await import('../slot.js');
+      await runPressureGate();
+      await slotMod.closeDevServerLogTailWindow(vars);
+      await slotMod.killAgentInSession(
+        vars,
+        existingRunner ?? undefined,
+        primaryRoleForFlow(existingFlow ?? currentRun.flowType),
+      );
+      await slotMod.killAllAgentWindows(vars);
+    }
+    const { restoreWorkerChecklistTargetFromSlot } =
+      await import('../../tasks/checklist-target.js');
+    await restoreWorkerChecklistTargetFromSlot(vars, workerTaskDir, {
+      flowType: currentRun.flowType,
+      mode: currentRun.mode,
+    });
+    return launchNative();
+  }
 
   // 4. Clean pane (kill any existing agent). This is the first irreversible
   // effect of a fresh dispatch, so re-evaluate immediately before it. Later

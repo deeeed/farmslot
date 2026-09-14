@@ -66,7 +66,7 @@ The approved interface includes read-only source and Git diff views. Gateway loo
 
 ### 7. Validation and rollout
 
-Prove Codex and Claude through production gateway RPC before releasing client controls. Extend the same live scenarios to remote workers, retained reviewers, Command Center, Companion, Grok, Cursor, and OpenCode. Each runner must pass its declared capabilities, including reconnect and negative ownership checks. Existing tmux acceptance and retained-handoff scenarios remain required. See the phased gates in [ADR-057](adr/057-structured-runner-transports.md#validation-and-rollout).
+Prove Codex and Claude through production gateway RPC before releasing client controls. Extend the same live scenarios to remote workers, retained reviewers, Command Center, Companion, Grok, and Cursor. Each runner must pass its declared capabilities, including reconnect and negative ownership checks. Existing tmux acceptance and retained-handoff scenarios remain required. See the phased gates in [ADR-057](adr/057-structured-runner-transports.md#validation-and-rollout).
 
 ## Boundaries
 

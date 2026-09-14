@@ -56,10 +56,14 @@ Add opt-in native runner sessions while retaining tmux defaults. The shared runn
 1. **Shipped, G001, PR #615:** Codex and Claude native gateway adapters with capability-gated permissions, interruption, follow-up context, and saved-session resume. Live gateway validation is recorded; the local legacy interactive authentication limitation remains explicit in validation evidence.
 2. **Shipped, G002, PR #616:** local process supervision, durable events, replay, duplicate command protection, and owner-bound pending requests, with live gateway recovery and process-failure validation. Remote-node integration remains phase 4.
 3. **Shipped, G003, PR #618:** deliver opt-in native Copilot within the existing chat flow, retaining regular runner/model selection and terminal access. Add streamed conversation, expandable tools, composer approvals/questions, Stop and recovery controls, plus read-only Files/Changes beside the transcript on wide screens and tabs on narrow screens. Adapt T3 interaction patterns to Farmslot under [DESIGN.md](../DESIGN.md); workspace Git changes must not imply turn checkpoints. Prove complete tasks, actual source/diff changes, and pending-request refresh/reconnect through real browser controls.
-4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion. Reconcile live and archived session identity before integration.
-5. Add Grok, Cursor, and OpenCode, then native installation/login flows for user-owned accounts. Prove each declared capability and account isolation before enabling shared deployments.
+4. Extend the same contract to worker dispatch, retained reviewers, a remote node, and Companion, including native parking restore into another eligible slot. Preserve saved conversation identity and prove source cleanup, destination reservation, relocation, and recovery races. Reconcile live and archived session identity before integration.
+5. Add Grok and Cursor, then native installation/login flows for user-owned accounts. Several profiles under one OS user belong to one trusted operator; each product user owns their execution node. Prove profile-directory binding, owner routing, and conversation continuity across ordinary login rotation.
 
-The first UI release remains restricted to one pinned principal in a trusted local execution context. Shared user accounts require the phase 5 isolation gates.
+Set new Copilot and gateway-intelligence defaults to Codex Astra with low effort, validating backend support and preserving active conversations and explicit settings.
+
+Finish the remaining scope in one reviewed PR. Refresh from latest main before implementation batches and final validation/review; preserve existing tmux workflows throughout.
+
+The first UI release was restricted to one pinned principal in a trusted local execution context. Phase 5 extends owner-bound access to user-owned nodes under [ADR-057's trusted operator scope](adr/057-structured-runner-transports.md#trusted-operator-profile-scope); it does not isolate mutually untrusted users sharing an OS account.
 
 Record bounded subscription and billing observations separately from protocol success. Missing provider evidence remains unknown. PI runtime replacement, whole T3 UI import, and arbitrary live TUI takeover stay outside this rollout.
 
@@ -309,3 +313,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 - Eval experiments consume the cleaner local-first package/publication boundary and remain artifact-only/no-PR by construction. PR #78's local suite builder still fans out into many single-case experiments rather than introducing a new suite runtime.
 - Dev-flow publication gating is shipped; future work should be evidence-driven tuning and UI/UX polish, not a fresh publication-model decision.
 - Any UI change still requires Command Center typecheck plus browser/CDP validation per `CLAUDE.md` and `apps/command-center/CLAUDE.md`.
+
+## Trusted operator profile scope
+
+Several profiles on one OS user belong to one trusted operator; each product user owns their own execution node. Reuse native configuration directories and preserve conversation history across ordinary login rotation. Keep process ownership and approval routing bound to the node owner and session generation. Profiles are optional for side-by-side configurations; saved-session resume never changes runners. This delivery does not isolate mutually untrusted users on the same node. No separate sandbox, container or host-tool broker is required. Keep future extensions in the runner capability layer.

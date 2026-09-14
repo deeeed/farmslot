@@ -7,6 +7,7 @@ export const AuthMethods = {
 
 export type GatewayAuthClientKind = 'ui' | 'companion' | 'node';
 export type GatewayAuthMode = 'none' | 'token' | 'password';
+export type GatewayWorkspaceAccess = 'farm' | 'native' | 'none';
 
 export interface GatewayAuthConnectParams {
   clientKind: GatewayAuthClientKind;
@@ -26,9 +27,25 @@ export interface GatewayAuthConnectResult {
     voiceInstructionFormatting: boolean;
     /** Absent on gateways predating the lightweight liveness method. */
     gatewayPing?: boolean;
+    /** Client shell selection; every RPC still checks current server authority. */
+    workspaceAccess?: GatewayWorkspaceAccess;
   };
   /** Optional only for compatibility with older gateways. */
   principal?: SelfPrincipalSummary;
+}
+
+/** Shared client compatibility policy. Every gateway request still checks authority. */
+export function workspaceAccessFromAuth(result: GatewayAuthConnectResult): GatewayWorkspaceAccess {
+  const explicit = result.capabilities.workspaceAccess;
+  if (explicit !== undefined)
+    return explicit === 'farm' || explicit === 'native' ? explicit : 'none';
+  if (!result.principal) return 'farm';
+  if (result.principal.subjectKind === 'node') return 'none';
+  return result.principal.roles.some(
+    ({ role, scope }) => (role === 'admin' || role === 'operator') && scope.kind === 'global',
+  )
+    ? 'farm'
+    : 'none';
 }
 
 export type PairingAuthority =

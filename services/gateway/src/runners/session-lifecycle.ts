@@ -1,4 +1,4 @@
-import type { MachinePauseRecoveryHandle } from '@farmslot/protocol';
+import type { MachinePauseTerminalRecoveryHandle as MachinePauseRecoveryHandle } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';

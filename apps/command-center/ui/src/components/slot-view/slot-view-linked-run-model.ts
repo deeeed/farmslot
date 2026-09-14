@@ -2,10 +2,38 @@ import { isTerminalRunStatus, type Run, type RunStatus } from '@farmslot/protoco
 
 import { runHasTrimmedDecisions } from '../runs/run-detail-model.js';
 
+import { deriveSlotViewAgentContexts } from './slot-view-agent-contexts.js';
+
 export type SlotViewLinkedRunSource = 'cache' | 'rpc';
 
 export function isSlotViewTerminalRunStatus(status: string | null | undefined): boolean {
   return status !== null && status !== undefined && isTerminalRunStatus(status as RunStatus);
+}
+
+/** Explicit native URLs must resolve exactly, without the legacy role fallback. */
+export function isSlotViewContextPinUnresolved(params: {
+  run: Run | null;
+  requestedRunId: string | null;
+  requestedContextId: string | null;
+  slotId?: string;
+}): boolean {
+  if (!params.requestedRunId || !params.requestedContextId) return false;
+  const run = params.run;
+  if (!run) return true;
+  // Terminal pins retain their existing slot-owner and role-following semantics.
+  if (run.transport !== 'native') return false;
+  const context = run.agentContexts?.find((item) => item.id === params.requestedContextId);
+  const native = deriveSlotViewAgentContexts({ linkedRun: run, slot: null }).find(
+    (item) => item.id === params.requestedContextId,
+  );
+  return !(
+    run.id === params.requestedRunId &&
+    params.slotId &&
+    run.slotId === params.slotId &&
+    context?.slotId === params.slotId &&
+    context.runId === run.id &&
+    native?.nativeSession
+  );
 }
 
 /** Pick which run slot-view should treat as linked after cache + RPC hydration. */
@@ -14,7 +42,25 @@ export function selectSlotViewLinkedRun(params: {
   slotBoundRunId: string | null;
   cachedRun: Run | null;
   rpcRun: Run | null;
+  requestedContextId?: string | null;
+  slotId?: string;
 }): Run | null {
+  if (params.requestedRunId && params.requestedContextId) {
+    const requested = [params.rpcRun, params.cachedRun].find(
+      (run) => run?.id === params.requestedRunId,
+    );
+    if (!requested) return null;
+    if (requested.transport === 'native') {
+      return isSlotViewContextPinUnresolved({
+        run: requested,
+        requestedRunId: params.requestedRunId,
+        requestedContextId: params.requestedContextId,
+        slotId: params.slotId,
+      })
+        ? null
+        : requested;
+    }
+  }
   const authoritativeBoundRun =
     params.slotBoundRunId && params.rpcRun?.id === params.slotBoundRunId ? params.rpcRun : null;
   if (authoritativeBoundRun) return authoritativeBoundRun;
@@ -30,8 +76,9 @@ export function selectSlotViewLinkedRun(params: {
 export function shouldPreserveSlotViewCachedNullRun(params: {
   source: SlotViewLinkedRunSource;
   previousRunId: string | null;
+  contextPinUnresolved?: boolean;
 }): boolean {
-  return params.source === 'cache' && params.previousRunId !== null;
+  return !params.contextPinUnresolved && params.source === 'cache' && params.previousRunId !== null;
 }
 
 export function slotViewLinkedRunTransition(params: {
@@ -70,7 +117,8 @@ export function slotViewLinkedRunTransition(params: {
 export function slotViewNeedsDirectRunFetch(
   requestedRunId: string | null,
   cachedRun: Pick<Run, 'decisions'> | null,
+  requestedContextId: string | null = null,
 ): boolean {
   if (!requestedRunId) return false;
-  return !cachedRun || runHasTrimmedDecisions(cachedRun);
+  return Boolean(requestedContextId) || !cachedRun || runHasTrimmedDecisions(cachedRun);
 }

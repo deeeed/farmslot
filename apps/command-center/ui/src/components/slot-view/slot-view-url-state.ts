@@ -8,6 +8,7 @@ export interface SlotViewUrlState {
   slotId: string;
   activity?: 'info';
   runId?: string;
+  contextId?: string;
   file?: string;
   resource?: string;
   recipeRun?: string;
@@ -31,6 +32,7 @@ export function slotViewHash(state: SlotViewUrlState): string {
   const params = new URLSearchParams();
   if (state.activity === 'info') params.set('activity', 'info');
   if (state.runId) params.set('runId', state.runId);
+  if (state.contextId) params.set('contextId', state.contextId);
   if (state.file) params.set('file', state.file);
   if (state.resource) params.set('resource', state.resource);
   if (state.recipeRun) params.set('recipeRun', state.recipeRun);

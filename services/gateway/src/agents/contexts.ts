@@ -28,6 +28,8 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 
+import { resolveNativeContext } from './native-context.js';
+
 export const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
   'complete',
   'failed',
@@ -53,6 +55,7 @@ export function summarizeAgentContexts(
   run: Pick<Run, 'agentContexts' | 'taskFile'>,
 ): AgentContextSummary[] {
   return (run.agentContexts ?? []).map((ctx) => {
+    const nativeSession = resolveNativeContext(run, ctx)?.binding;
     const {
       id,
       role,
@@ -64,6 +67,8 @@ export function summarizeAgentContexts(
       runner,
       model,
       target,
+      nativeSessionOwner,
+      nativeCommandId,
       nudgeCount,
       ctxPct,
       lastSignalAt,
@@ -81,6 +86,9 @@ export function summarizeAgentContexts(
       runner,
       model,
       target,
+      ...(nativeSession ? { nativeSession } : {}),
+      ...(nativeSessionOwner ? { nativeSessionOwner } : {}),
+      ...(nativeCommandId ? { nativeCommandId } : {}),
       nudgeCount,
       ctxPct,
       lastSignalAt,
@@ -230,6 +238,8 @@ export async function resolveAgentTarget(
   if (selector?.target?.trim()) {
     const target = selector.target.trim();
     const targetSession = target.split(':')[0] || target;
+    const run = selector.runId ? getRun(selector.runId) : await findActiveRunForSlot(slotId);
+    if (run?.transport === 'native') throw new Error('Use native session controls for this worker');
     // Validate the target session belongs to this slot
     const vars = await loadSlotVars(slotId);
     const expectedSession = await resolveTmuxSession(slotId, vars, { strict: true });
@@ -239,7 +249,6 @@ export async function resolveAgentTarget(
       );
     }
     const role = selector.role;
-    const run = selector.runId ? getRun(selector.runId) : await findActiveRunForSlot(slotId);
     const canonicalTarget = canonicalExplicitTarget(target);
     const context = run
       ? (getAgentContexts(run).find(
@@ -277,6 +286,12 @@ export async function resolveAgentTarget(
     run = null;
   }
   const ctx = run ? selectAgentContext(run, selector) : null;
+  if (
+    ctx?.nativeSession ||
+    ctx?.nativeSessionOwner ||
+    (run?.transport === 'native' && !ctx?.target)
+  )
+    throw new Error('Use native session controls for this worker');
   const explicitNonPrimaryRole = selector?.role && selector.role !== 'primary';
   if ((selector?.contextId || explicitNonPrimaryRole) && !ctx) {
     const requested = selector?.contextId
@@ -390,6 +405,18 @@ export async function upsertAgentContext(
         slotId: currentRun.slotId ?? slotId,
         updatedAt: now,
       };
+      if ((context.nativeSession || context.nativeSessionOwner) && context.target)
+        throw new Error('A native agent context cannot also have a tmux target');
+      if (
+        context.nativeSessionOwner &&
+        !resolveNativeContext({ agentContexts: [...contexts, context] }, context)
+      )
+        throw new Error('Native subtask must reference its current same-run worker lease');
+      if (
+        context.nativeSession?.ownerPrincipalId !== undefined &&
+        context.nativeSession.ownerPrincipalId !== currentRun.nativeOwnerPrincipalId
+      )
+        throw new Error('Native agent context must preserve its run owner');
       if (!context.startedAt) context.startedAt = now;
       nextContext = context;
       return [...contexts, context];

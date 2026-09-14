@@ -1,15 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { FilterBar } from '../../components/FilterBar';
+import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { colors } from '../../lib/theme';
+import { workspaceHome } from '../../lib/workspace-access';
+import { useConnectionStore } from '../../store/connection';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const access = useConnectionStore((state) => state.workspaceAccess);
+  if (!isStoreScreenshotMode && access !== 'farm') return <Redirect href={workspaceHome(access)} />;
   const connectedHeader = (
     <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
       <ConnectionBanner />

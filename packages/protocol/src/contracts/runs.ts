@@ -10,6 +10,7 @@ import type {
   RunnerSessionArchiveRef,
   SafetyTier,
   ScriptedRunnerConfig,
+  WorkerTransport,
 } from './agents.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
@@ -1642,7 +1643,7 @@ export interface MachineParkResourceManifest {
 }
 
 /** Exact persisted runner identity required to restore a released worker. */
-export interface MachinePauseRecoveryHandle {
+export interface MachinePauseTerminalRecoveryHandle {
   version: 1;
   runnerId: string;
   contextId: string;
@@ -1656,6 +1657,35 @@ export interface MachinePauseRecoveryHandle {
   taskDir?: string;
   capturedAt: string;
 }
+
+/** Native workers retain host and task-lease identity without a terminal target. */
+export interface MachinePauseNativeRecoveryHandle {
+  version: 2;
+  transport: 'native';
+  runnerId: string;
+  contextId: string;
+  /** Saved runner conversation, distinct from the host's session id. */
+  sessionId: string;
+  nativeSessionId: string;
+  /** Original host state; never migrated implicitly for legacy workers. */
+  stateDirectory?: string;
+  relocation?: { fromSlotId: string; fromCwd: string };
+  taskBundle?: { relativeDirectory: string; digest: string };
+  executionNodeId: string;
+  ownerPrincipalId: string;
+  leaseId: string;
+  generation: string;
+  launchDigest: string;
+  profile?: import('../rpc/native-profile.js').NativeProfileReference;
+  slotId: string;
+  cwd: string;
+  model: string;
+  capturedAt: string;
+}
+
+export type MachinePauseRecoveryHandle =
+  | MachinePauseTerminalRecoveryHandle
+  | MachinePauseNativeRecoveryHandle;
 
 export interface MachineParkError {
   phase: MachineParkPhase;
@@ -2016,6 +2046,13 @@ export interface MachineParkRecord {
 
 export interface Run {
   id: string;
+  /** Authenticated creator, retained for background actions that touch another run's resources. */
+  createdByPrincipalId?: string;
+  /** Omission preserves the existing tmux execution path. */
+  transport?: WorkerTransport;
+  /** Trusted gateway stamp. Native background execution uses this persisted owner. */
+  nativeOwnerPrincipalId?: string;
+  nativeProfile?: import('../rpc/native-profile.js').NativeProfileReference;
   prWork?: import('./pr-monitoring.js').PRWorkReference;
   prPublications?: import('./pr-monitoring.js').PRPublicationRecord[];
   familyId: string;

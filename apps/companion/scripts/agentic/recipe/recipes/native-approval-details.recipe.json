@@ -1,0 +1,64 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion complete native approval details",
+  "description": "Run native-conversation-proof.mts setup first with a fresh proof state. Compare the visible native action data with its pending gateway request, approve the disposable file write and close the session.",
+  "workflow": {
+    "entry": "open",
+    "nodes": {
+      "open": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts open",
+        "intent": "Open the exact private native session using a real app deep link.",
+        "next": "wait-approval"
+      },
+      "wait-approval": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approve",
+        "timeout_ms": 30000,
+        "intent": "Restore the gateway pending approval on the device.",
+        "next": "wait-approval-details"
+      },
+      "wait-approval-details": {
+        "action": "ui.wait_for",
+        "test_id": "companion-native-approval-details",
+        "timeout_ms": 15000,
+        "intent": "Show the complete structured action before approval.",
+        "next": "verify-approval-details"
+      },
+      "verify-approval-details": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approval-disclosure",
+        "intent": "Compare the visible approval data with the exact pending request returned by the gateway.",
+        "next": "capture-pending"
+      },
+      "capture-pending": {
+        "action": "ui.screenshot",
+        "path": "native-pending.png",
+        "intent": "Record the actual pending tool and exact session identity.",
+        "next": "approve"
+      },
+      "approve": {
+        "action": "ui.press",
+        "test_id": "companion-native-approve",
+        "intent": "Approve the disposable write from Companion.",
+        "next": "verify-approved"
+      },
+      "verify-approved": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts approved",
+        "intent": "Prove native approval resolution and the actual file write.",
+        "next": "cleanup"
+      },
+      "cleanup": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/agentic/native-conversation-proof.mts cleanup",
+        "intent": "Close only the proof session and verify process cleanup.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -6,7 +6,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - The run page keeps its direct `run.get` copy when the shared list row has trimmed decision payloads and renders the gate, review and recipe panels from it, refetching when the row moves on; gate approvals and step replays are no longer paused behind "Run refresh failed" on large fleets.
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Select the local load balancer for gateway intelligence using its configured environment key, without an upstream sign-in flow.
+
+- Manage optional native configuration profiles, check their login status and retain the selected configuration when resuming a conversation.
+
+- Give enrolled native-only accounts a conversation workspace without farm navigation or background farm requests; clear prior account views on reconnect or credential changes.
+
+- Dispatch or queue native workers and use a task-bound conversation with tools, files and diffs. Open previous worker attempts from Run Detail and keep their history separate from the successor’s messages and controls. Resume stopped workers from decisions while preserving conversation and task progress, and keep controls reachable on long run pages.
 
 ## 0.12.0 - 2026-09-13
 

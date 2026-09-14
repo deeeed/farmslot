@@ -16,6 +16,7 @@ import {
   isSlotFreedByPark,
   isTerminalRunStatus,
   MachineParkEligibilityCodes,
+  NATIVE_WORKER_RESUME_ACTION,
   needsGateParkRestore,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
@@ -112,6 +113,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
+import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -704,7 +706,11 @@ async function markInteractiveDevDoneWithoutPr(
     completedAt: new Date().toISOString(),
     error: undefined,
     metrics: { ...current.metrics, outcome: 'success' },
-    agentContexts: [],
+    agentContexts: current.agentContexts?.some(
+      (context) => context.nativeSession || context.nativeSessionHistory?.length,
+    )
+      ? current.agentContexts
+      : [],
     engineState: appendInteractiveDevAction(run.id, params, current),
   });
   completeStepAsOperator(run.id, 'complete', reason, {
@@ -849,7 +855,12 @@ export async function runInteractiveDevResolve(
       completedAt: isBlocked ? undefined : new Date().toISOString(),
       error: reason,
       metrics: { ...current.metrics, outcome: isBlocked ? 'partial' : 'failure' },
-      ...(isBlocked ? {} : { agentContexts: [] }),
+      ...(isBlocked ||
+      current.agentContexts?.some(
+        (context) => context.nativeSession || context.nativeSessionHistory?.length,
+      )
+        ? {}
+        : { agentContexts: [] }),
       engineState: appendInteractiveDevAction(run.id, params, current),
     });
     emit(Events.RUN_UPDATED, { run: updated });
@@ -1311,10 +1322,23 @@ export async function runResolveDecision(
   emit: Emit,
   dependencies: RunResolveDecisionDependencies = {},
 ): Promise<RunResolveDecisionResult> {
+  if (params.actionId === NATIVE_WORKER_RESUME_ACTION) {
+    const { withRunTransition } = await import('../run-lifecycle/transition-coordinator.js');
+    return withRunTransition(params.runId, () => resolveRunDecision(params, emit, dependencies));
+  }
+  return resolveRunDecision(params, emit, dependencies);
+}
+
+async function resolveRunDecision(
+  params: RunResolveDecisionParams,
+  emit: Emit,
+  dependencies: RunResolveDecisionDependencies,
+): Promise<RunResolveDecisionResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  assertNativeRunOwner(existing);
 
-  const decision = existing.decisions.find((d) => d.id === params.decisionId);
+  let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
   // ADR-054 `free-slot`: refuse a park that is still LANDING before anything
@@ -1329,6 +1353,15 @@ export async function runResolveDecision(
   if (!isAllowedRunDecisionAction(decision, params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
   }
+  const resumeNative = params.actionId === NATIVE_WORKER_RESUME_ACTION;
+  if (
+    resumeNative &&
+    (existing.transport !== 'native' ||
+      existing.status !== 'blocked' ||
+      decision.type !== 'monitor_interactive_handoff' ||
+      needsGateParkRestore(existing))
+  )
+    throw new Error('Resume stopped worker requires an owned, unparked native monitor decision');
   if (decision.type === 'improvement' && params.actionId === 'apply') {
     // Resolving here would mark the card applied WITHOUT writing any file —
     // apply must go through improvement.apply, which writes, validates, and
@@ -1344,6 +1377,7 @@ export async function runResolveDecision(
   const gateParkRestore = await restoreGateParkForResolution(params.runId, existing, dependencies);
   const skipHandoffSignal =
     params.actionId === 'abort' ||
+    resumeNative ||
     (params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
       interactiveHandoffAllowsExtend(decision));
   if (decision.type === 'monitor_interactive_handoff' && !skipHandoffSignal) {
@@ -1393,6 +1427,14 @@ export async function runResolveDecision(
   // was not parked when the request arrived. Consuming the decision after that
   // would drive the engine against a worker the park stopped.
   assertNotGateParked(params.runId, getRun(params.runId)!);
+  if (resumeNative) {
+    const { resumeNativeWorkerDecision } = await import('./run/native-worker-decision.js');
+    await resumeNativeWorkerDecision(existing.id, decision.id);
+    assertDecisionStillUnresolved(params.runId, params.decisionId);
+  }
+  decision = getRun(params.runId)!.decisions.find(
+    (candidate) => candidate.id === params.decisionId,
+  )!;
   // Past every refusal now, so the normalization may persist.
   if (normalizedReviews) normalizeExhaustedReviewContinuationsForRun(params.runId);
   if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
@@ -1427,7 +1469,7 @@ export async function runResolveDecision(
     params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
     (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
   if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
-  updateRun(params.runId, { decisions: existing.decisions });
+  updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
 
   // Unblock whichever resolver owns this decision
   resolveMonitorDecision(params.decisionId, params.actionId);
