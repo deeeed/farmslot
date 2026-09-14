@@ -224,7 +224,9 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 - `docs/adr/README.md` is helpful as an index, but it is not a complete inventory because ADR-026, ADR-027, and ADR-028 exist outside its current table.
 - This file intentionally summarizes history; it does not override raw ADR text or archived milestone records.
 
-## Current Historical Interpretation
+## Historical interpretation as of 2026-07-20
+
+This dated snapshot predates the [native transport rollout](#native-structured-runner-transports) completed on 2026-09-14.
 
 As of 2026-07-20 (through PR #361, the recipe source trust model; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md) for ADR-level shipped-vs-open detail):
 
