@@ -1968,18 +1968,16 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `grok` on PATH when no grok_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-4.6`,
-      );
+      assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
+      assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
+      assert.ok(cmd.endsWith(`cd '/tmp/repo' && grok --effort xhigh --model grok-4.6`));
     });
 
     it('falls back to inline Grok launcher with grok-4.6 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6`,
+      assert.ok(
+        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6`),
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -1992,9 +1990,10 @@ describe('buildLaunchCommand', () => {
         effort: 'xhigh',
         safetyTier: 'full-auto',
       });
-      assert.equal(
-        cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast`,
+      assert.ok(
+        cmd.endsWith(
+          `cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast`,
+        ),
       );
     });
 
@@ -2123,6 +2122,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     });
     assert.match(cmd, /inputs\/inherited\/recipe-source[.]json/);
     assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
+    assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok'/);
     assert.match(cmd, /grok-code-fast-1 --resume 'session'$/);
   });
 
@@ -2165,9 +2165,12 @@ describe('buildRunnerSessionReloadCommand', () => {
       effort: 'xhigh',
       safetyTier: 'dangerous',
     });
-    assert.equal(
-      cmd,
-      `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
+    assert.ok(cmd.startsWith(CLEAR_RECIPE_TRUST_ENV));
+    assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok' --repo '\/tmp\/repo'/);
+    assert.ok(
+      cmd.endsWith(
+        `cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
+      ),
     );
   });
 

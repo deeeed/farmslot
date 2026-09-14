@@ -298,15 +298,24 @@ export function buildRunnerSessionReloadCommand(
   }
 
   if (runner === 'grok') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
     const modelFlag = runnerModelFlag(model);
     const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     return withMachineEnv(
       withTaskRecipeTrustEnvironment(
-        `cd ${shellQuote(repo)} && ${resolveGrokBinary(
-          vars.grokPath,
-        )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+        withRunnerObservabilityInstall(
+          `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+            vars.grokPath,
+          )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+          installCommand,
+        ),
         repo,
         opts.taskDir,
       ),
@@ -741,20 +750,30 @@ export function buildLaunchCommand(
   }
 
   // Grok Build CLI: same interactive contract as Cursor. Launch the TUI first
-  // and deliver the task prompt after the composer is ready.
+  // and deliver the task prompt after the composer is ready. The install step
+  // seeds Grok's directory-trust record so the trust prompt never appears.
   if (runner === 'grok') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
     if (cmdIsRunnerAware) {
-      return withRecipeTrust(expanded);
+      return withRecipeTrust(withRunnerObservabilityInstall(expanded, installCommand));
     }
     return withRecipeTrust(
-      buildGrokLaunch({
-        binary: resolveGrokBinary(vars.grokPath),
-        model,
-        effort: opts.effort,
-        prompt,
-        repo,
-        safetyTier: tier,
-      }),
+      withRunnerObservabilityInstall(
+        buildGrokLaunch({
+          binary: resolveGrokBinary(vars.grokPath),
+          model,
+          effort: opts.effort,
+          prompt,
+          repo,
+          safetyTier: tier,
+        }),
+        installCommand,
+      ),
     );
   }
 

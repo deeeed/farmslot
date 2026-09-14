@@ -1204,10 +1204,51 @@ async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, a
   }
 }
 
+const GROK_TRUSTED_FOLDERS_FILE = 'trusted_folders.toml';
+
+function grokTrustedFolderPaths(content) {
+  const lines = content.split('\n');
+  const trusted = new Set();
+  for (const index of tomlSectionHeaderIndexes(lines)) {
+    const header = lines[index].trim().replace(/\s*#.*$/, '');
+    const inner = header.slice(1, -1);
+    const parts = tomlDottedParts(inner);
+    if (parts.length === 2 && parts[0] === 'folders') trusted.add(parts[1]);
+  }
+  return trusted;
+}
+
+/**
+ * Grok Build asks "Do you trust the contents of this directory?" the first time
+ * it starts in a checkout and records the answer in ~/.grok/trusted_folders.toml.
+ * Seed that record for the slot checkout so a fresh slot launches straight to the
+ * composer; a TUI prompt is never answered from pane text.
+ */
+function installGrok({ repo }) {
+  if (!repo) throw new Error('missing --repo');
+  const grokDir = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
+  fs.mkdirSync(grokDir, { recursive: true });
+  const trustedPath = path.join(grokDir, GROK_TRUSTED_FOLDERS_FILE);
+  const content = fs.existsSync(trustedPath) ? fs.readFileSync(trustedPath, 'utf8') : '';
+  const trusted = grokTrustedFolderPaths(content);
+  const wanted = [...new Set([path.resolve(repo), canonicalCodexPath(repo)])];
+  const missing = wanted.filter((folder) => !trusted.has(folder));
+  if (missing.length === 0) return { trustedPath, added: [] };
+  const decidedAt = Math.floor(Date.now() / 1000);
+  const blocks = missing.map(
+    (folder) =>
+      `[folders."${escapeTomlBasicString(folder)}"]\ntrusted = true\ndecided_at = ${decidedAt}\n`,
+  );
+  const merged = [content.trimEnd(), ...blocks].filter(Boolean).join('\n\n') + '\n';
+  fs.writeFileSync(trustedPath, merged.replace(/^\n+/, ''));
+  return { trustedPath, added: missing };
+}
+
 async function install(args) {
   const runner = args.runner || 'claude';
   if (runner === 'claude') installClaude(args);
   else if (runner === 'codex') await installCodex(args);
+  else if (runner === 'grok') installGrok(args);
   else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 

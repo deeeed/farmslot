@@ -289,6 +289,51 @@ test('installed hook writes JSONL records and atomic per-session and per-pane sn
   assert.equal(paneState.tmuxPane, '%1');
 });
 
+test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and stays idempotent', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-'));
+  const trustedPath = path.join(home, '.grok', 'trusted_folders.toml');
+  fs.mkdirSync(path.dirname(trustedPath), { recursive: true });
+  fs.writeFileSync(
+    trustedPath,
+    '[folders."/Users/someone/dev/other"]\ntrusted = true\ndecided_at = 1788418308\n',
+  );
+  const run = () =>
+    execFileSync(
+      process.execPath,
+      [
+        INSTALLER,
+        '--runner',
+        'grok',
+        '--repo',
+        repo,
+        '--runtime-dir',
+        '.agent',
+        '--slot-id',
+        'install-test',
+      ],
+      { stdio: 'pipe', env: { ...process.env, HOME: home } },
+    );
+  run();
+  const first = fs.readFileSync(trustedPath, 'utf8');
+  assert.match(
+    first,
+    /^\[folders\."\/Users\/someone\/dev\/other"\]\ntrusted = true\ndecided_at = 1788418308\n/,
+  );
+  const realRepo = fs.realpathSync(repo);
+  assert.ok(first.includes(`[folders."${realRepo}"]\ntrusted = true\ndecided_at = `), first);
+  assert.ok(
+    !fs.existsSync(path.join(repo, '.agent')),
+    'grok install writes nothing into the checkout',
+  );
+  run();
+  assert.equal(
+    fs.readFileSync(trustedPath, 'utf8'),
+    first,
+    'second install leaves the file unchanged',
+  );
+});
+
 test('codex install keeps project hooks and config clean while isolating managed hooks', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-'));
   fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
