@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `writeTaskDir` drops the transition `writeChecklistManifest` option; a task dir never carries a default-valued `checklist-target.json`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.9.0 - 2026-09-13

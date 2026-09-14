@@ -1336,8 +1336,8 @@ export async function writeTaskFile(
 
   // The task dir itself comes from the shared producer: TASK.md, CHECKLIST.md
   // (split layout), the mark shim, handoff.json, the terminal contract, and the
-  // ticket as fetched. checklist-target.json is only a one-release compatibility
-  // write (see writeChecklistManifest); absent means the worker default.
+  // ticket as fetched. No checklist-target.json: absent means the worker default;
+  // only a role switch writes one.
   await writeTaskDir({
     taskDir: taskAbsDir,
     taskMarkdown: finalContent,
@@ -1346,9 +1346,6 @@ export async function writeTaskFile(
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
-    // Transition for one release: nodes still on agent-runtime < 0.9 fail closed
-    // without the manifest. Drop once every node runs the 0.9 engine.
-    writeChecklistManifest: true,
   });
 
   // Download Jira image attachments to assets/

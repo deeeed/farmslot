@@ -27,7 +27,7 @@ This is the only layout the task writer produces. One flow keeps its own pairing
   CHECKLIST.md                     execution checklist (template, placeholders rendered, otherwise verbatim)
   mark                             shim: exec ${FARMSLOT_MARK_CMD:-<recorded command>} "$DIR" "$@"
   SIGNAL.json                      written only by mark
-  checklist-target.json            role switches write it; absent = CHECKLIST.md + SIGNAL.json (gateway still writes the default for one release)
+  checklist-target.json            role switches write it; absent = CHECKLIST.md + SIGNAL.json
   inputs/
     handoff.json                   the task record: identity, flow, task, report paths,
                                    executionTemplate (selected checklist + digests),
@@ -43,18 +43,18 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 One producer writes the shared layer on every surface: `taskInit` / `farmslot-agent task init` in `@farmslot/agent-runtime`. The gateway composes the same pieces (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps; mm-harness wraps the CLI with MetaMask defaults; the recipe-cook skill calls mm-harness.
 
-| File                                   | Producer                                                     | Consumer                                                               |
-| -------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| `TASK.md`                              | task init; worker updates `STATUS` and may append notes      | worker, family follow-ups, review brief                                |
-| `CHECKLIST.md`                         | task init                                                    | worker, `mark`, progress parser, Command Center progress               |
-| `mark`                                 | task init; command is a project value (`vars.mark_cmd`)      | worker                                                                 |
-| `checklist-target.json`                | role switch; gateway also writes the default for one release | `mark`, progress path resolution (default when absent)                 |
-| `SIGNAL.json`                          | `mark` only                                                  | run monitor, publication gate, closeout                                |
-| `inputs/handoff.json`                  | task init                                                    | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
-| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`              | `mark` terminal commands, artifact contract check, monitor hold        |
-| `inputs/bug-input.json`                | task init from the fetched ticket                            | `farmslot run`, review inputs                                          |
-| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)                   | worker, evidence package, Command Center (later)                       |
-| `artifacts/*`                          | worker                                                       | publication gate, review, retrospective (see worker artifacts by flow) |
+| File                                   | Producer                                                | Consumer                                                               |
+| -------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `TASK.md`                              | task init; worker updates `STATUS` and may append notes | worker, family follow-ups, review brief                                |
+| `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress               |
+| `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                 |
+| `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                 |
+| `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                |
+| `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
+| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold        |
+| `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                          |
+| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                       |
+| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow) |
 
 ## Provenance
 
@@ -124,7 +124,7 @@ Shared `inputs/` names: `bug-input.json` for the ticket as fetched and `assets/`
 
 ## Simplification ledger
 
-Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected. Shipped 2026-09-13: one task-dir producer; provenance folded into `handoff.json`; `ticket-comments.json` removed; `checklist-target.json` optional for readers (the gateway still writes the default-valued file for one release so nodes on an older `mark` engine keep working; the write goes next release).
+Kept current with the layout. Each row is something the layout still carries that a good default could remove. Rows leave when shipped or rejected. Shipped 2026-09-13: one task-dir producer; provenance folded into `handoff.json`; `ticket-comments.json` removed; `checklist-target.json` optional for readers. Shipped 2026-09-14: the gateway no longer writes the default-valued `checklist-target.json` (every node runs the 0.9 `mark` engine).
 
 | Candidate                                                        | Today                                                                                                            | Simpler default                                                                 | State                                   |
 | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------- |
