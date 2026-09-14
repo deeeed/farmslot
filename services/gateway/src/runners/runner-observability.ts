@@ -101,5 +101,7 @@ export function withRunnerObservabilityInstall(
  * pane output, so launch detection reports it instead of a ready timeout).
  */
 export function withRequiredRunnerInstall(launchCommand: string, installCommand: string): string {
-  return `(${installCommand}) && ${launchCommand}`;
+  // The launch is grouped so a `;` inside a pool dispatch_cmd cannot detach
+  // the runner from the install result.
+  return `(${installCommand}) && { ${launchCommand}; }`;
 }

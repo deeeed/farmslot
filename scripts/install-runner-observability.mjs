@@ -1227,7 +1227,7 @@ const GROK_TRUSTED_FOLDER_HEADER = /^\s*\[\s*folders\s*\.\s*"((?:[^"\\]|\\.)*)"\
 
 function grokTrustedFolderPaths(content) {
   const trusted = new Set();
-  for (const line of content.split('\n')) {
+  for (const line of content.split(/\r?\n/)) {
     const match = line.match(GROK_TRUSTED_FOLDER_HEADER);
     if (match) trusted.add(unescapeTomlBasicString(match[1]));
   }

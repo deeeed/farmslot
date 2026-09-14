@@ -289,6 +289,10 @@ test('installed hook writes JSONL records and atomic per-session and per-pane sn
   assert.equal(paneState.tmuxPane, '%1');
 });
 
+function grokTrustedFolderCount(content, folder) {
+  return content.split(/\r?\n/).filter((line) => line.includes(`[folders."${folder}"]`)).length;
+}
+
 function installGrokTrust(repo, env) {
   execFileSync(
     process.execPath,
@@ -316,14 +320,15 @@ test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and sta
   fs.mkdirSync(path.dirname(trustedPath), { recursive: true });
   fs.writeFileSync(
     trustedPath,
-    '[folders."/Users/someone/dev/other"]\ntrusted = true\ndecided_at = 1788418308\n',
+    '[folders."/Users/someone/dev/other"] # kept\r\ntrusted = true\r\ndecided_at = 1788418308\r\n',
   );
   installGrokTrust(repo, { HOME: home });
   const first = fs.readFileSync(trustedPath, 'utf8');
   assert.match(
     first,
-    /^\[folders\."\/Users\/someone\/dev\/other"\]\ntrusted = true\ndecided_at = 1788418308\n/,
+    /^\[folders\."\/Users\/someone\/dev\/other"\] # kept\r\ntrusted = true\r\ndecided_at = 1788418308/,
   );
+  assert.equal(grokTrustedFolderCount(first, '/Users/someone/dev/other'), 1);
   const realRepo = fs.realpathSync(repo);
   assert.ok(
     first.includes(`[folders."${realRepo.replace(/"/g, '\\"')}"]\ntrusted = true\ndecided_at = `),
@@ -339,6 +344,7 @@ test('grok install seeds directory trust in ~/.grok/trusted_folders.toml and sta
     first,
     'second install leaves the file unchanged',
   );
+  assert.equal(grokTrustedFolderCount(first, realRepo.replace(/"/g, '\\"')), 1);
 });
 
 test('grok install honours GROK_HOME and creates the trust store when absent', () => {

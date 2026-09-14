@@ -1973,7 +1973,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
       assert.match(
         cmd,
-        /--slot-id '[^']*'\) && cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.6$/,
+        /--slot-id '[^']*'\) && \{ cd '\/tmp\/repo' && grok --effort xhigh --model grok-4\.6; \}$/,
       );
     });
 
@@ -1981,7 +1981,7 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.ok(
-        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6`),
+        cmd.endsWith(`cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.6; }`),
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -1996,7 +1996,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.ok(
         cmd.endsWith(
-          `cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast`,
+          `cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast; }`,
         ),
       );
     });
@@ -2012,7 +2012,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.6$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.6; \}$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
@@ -2042,7 +2042,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /\/usr\/local\/bin\/grok --effort high --model grok-composer-2\.5-fast --permission-mode bypassPermissions$/,
+        /\/usr\/local\/bin\/grok --effort high --model grok-composer-2\.5-fast --permission-mode bypassPermissions; \}$/,
       );
       assert.equal(cmd.match(/--model/g)?.length, 1);
       assert.equal(cmd.match(/--effort/g)?.length, 1);
@@ -2127,7 +2127,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /inputs\/inherited\/recipe-source[.]json/);
     assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
     assert.match(cmd, /install-runner-observability\.mjs' --runner 'grok'/);
-    assert.match(cmd, /grok-code-fast-1 --resume 'session'$/);
+    assert.match(cmd, /grok-code-fast-1 --resume 'session'; \}$/);
   });
 
   it('builds a Claude resume command with observability and safety flags', () => {
@@ -2174,7 +2174,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.doesNotMatch(cmd, /continuing without hooks/, 'trust seeding is required for Grok');
     assert.ok(
       cmd.endsWith(
-        `cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
+        `cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'; }`,
       ),
     );
   });
