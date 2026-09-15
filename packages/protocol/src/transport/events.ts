@@ -203,13 +203,16 @@ export interface PRUpdatedPayload {
 }
 
 /**
- * The gateway finished refreshing its warm PR list from GitHub. `prs` is
- * present only when the list changed and replaces the client's copy; without
- * it the client just records the new fetch time and clears `refreshing`.
+ * The gateway finished a refresh of its warm PR list. `prs` is present only
+ * when the list changed and replaces the client's copy; without it the client
+ * records `fetchedAt` and clears `refreshing`. `error` means the refresh
+ * failed and the list the client holds (fetched at `fetchedAt`, if any) is
+ * unchanged and possibly old.
  */
 export interface PRListUpdatedPayload {
-  fetchedAt: string;
+  fetchedAt?: string;
   prs?: PRStatus[];
+  error?: string;
 }
 
 export interface DecisionNewPayload {

@@ -172,7 +172,11 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     // every run of this project, so filtering it could hide this project's
     // PRs. Discover per project instead (uncached, as before the warm list).
     const scoped = await fetchPRList({ project: params.project, force: params.force });
-    return { prs: scoped.prs, fetchedAt: new Date().toISOString(), refreshing: false };
+    return {
+      prs: scoped.prs.filter((p) => p.project === params.project),
+      fetchedAt: new Date().toISOString(),
+      refreshing: false,
+    };
   }
   // Match on the PR's resolved project (PRStatus.project), not repo slug.
   // Projects whose internal name differs from their GitHub owner/name
@@ -305,8 +309,9 @@ export async function fetchPRList(
     if (list) list.push(prNum);
     else prsByRepo.set(repo, [prNum]);
   }
+  let seeded = new Set<string>();
   try {
-    await prefetchPRBatchViaGraphQL(prsByRepo);
+    seeded = await prefetchPRBatchViaGraphQL(prsByRepo);
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     console.warn(
@@ -314,10 +319,9 @@ export async function fetchPRList(
     );
   }
 
-  // Fetch all PRs in parallel. Under `force`, a PR the batch could not seed
+  // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
   // (truncated node, failed chunk) still has to reach GitHub, so force only
   // those; seeded PRs read the snapshot the batch just wrote.
-  const seededNow = Date.now();
   const prs = await Promise.all(
     Array.from(prInfo.entries()).map(async ([prNum, info]) => {
       try {
@@ -329,10 +333,7 @@ export async function fetchPRList(
           workerActive: info.workerActive,
           summary: info.summary,
           repoOverride: info.repo,
-          force:
-            opts.force === true &&
-            info.repo !== undefined &&
-            shouldPrefetchPRRawData(info.repo, prNum, seededNow),
+          force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;

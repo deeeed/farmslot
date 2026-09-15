@@ -222,3 +222,56 @@ test('a truncated fetch is reported so project-scoped callers can rediscover', a
     cleanup();
   }
 });
+
+test('a forced refresh during a non-forced fetch runs after it and reaches the fetcher with force', async () => {
+  const { cleanup } = isolate();
+  try {
+    const seen: boolean[] = [];
+    let release: (() => void) | undefined;
+    const fetch = (force: boolean) =>
+      new Promise<{ prs: PRStatus[]; truncated: boolean }>((resolve) => {
+        seen.push(force);
+        if (!force) release = () => resolve(list([pr(1)]));
+        else resolve(list([pr(2)]));
+      });
+    const cold = servePRList(fetch);
+    const forced = servePRList(fetch, { force: true });
+    const forcedAgain = servePRList(fetch, { force: true });
+    assert.deepEqual(seen, [false], 'forced call waits for the running fetch');
+    release!();
+    const [first, second, third] = await Promise.all([cold, forced, forcedAgain]);
+    assert.deepEqual(seen, [false, true], 'one forced fetch serves both forced callers');
+    assert.equal(first.prs[0].pr, 1);
+    assert.equal(second.prs[0].pr, 2);
+    assert.equal(third.fetchedAt, second.fetchedAt);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a failed background refresh is announced with the retained fetch time', async () => {
+  const { cleanup } = isolate();
+  try {
+    const events: Array<{ fetchedAt?: string; error?: string; prs?: PRStatus[] }> = [];
+    startPRListRefresher(async () => list([pr(1)]), {
+      broadcast: (_event, payload) => events.push(payload as (typeof events)[number]),
+      hasClients: () => false,
+      initialDelayMs: 100_000,
+      intervalMs: 100_000,
+    })();
+    const first = await servePRList(async () => list([pr(1)]));
+    await servePRList(
+      async () => {
+        throw new Error('gh down');
+      },
+      { now: Date.parse(first.fetchedAt!) + PR_LIST_STALE_MS + 1 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(events.length, 2);
+    assert.equal(events[1].error, 'gh down');
+    assert.equal(events[1].fetchedAt, first.fetchedAt);
+    assert.equal(events[1].prs, undefined);
+  } finally {
+    cleanup();
+  }
+});

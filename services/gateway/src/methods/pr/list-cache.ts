@@ -39,7 +39,8 @@ export const PR_LIST_STALE_MS = 60_000;
 
 let snapshot: PRListSnapshot | null = null;
 let loaded = false;
-let inflight: Promise<PRListSnapshot> | null = null;
+let inflight: { promise: Promise<PRListSnapshot>; forced: boolean } | null = null;
+let queuedForced: Promise<PRListSnapshot> | null = null;
 let broadcastFn: Broadcast = () => {};
 
 function cacheFile(): string {
@@ -100,6 +101,7 @@ export function resetPRListCacheForTests(): void {
   snapshot = null;
   loaded = false;
   inflight = null;
+  queuedForced = null;
   broadcastFn = () => {};
 }
 
@@ -108,9 +110,8 @@ function ageMs(snap: PRListSnapshot, now: number): number {
   return Number.isFinite(fetched) ? now - fetched : Number.POSITIVE_INFINITY;
 }
 
-function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
-  if (inflight) return inflight;
-  inflight = (async () => {
+function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
+  const promise = (async () => {
     try {
       const { prs, truncated } = await fetch(force);
       const next: PRListSnapshot = { fetchedAt: new Date().toISOString(), prs, truncated };
@@ -128,13 +129,38 @@ function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> 
       inflight = null;
     }
   })();
-  return inflight;
+  inflight = { promise, forced: force };
+  return promise;
 }
 
-function logBackgroundFailure(err: unknown): void {
-  console.warn(
-    `[pr.list] background refresh failed; keeping warm list: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
-  );
+/**
+ * One fetch at a time. A forced refresh that arrives while a non-forced one
+ * is running must still reach GitHub, so it is queued behind it (and shared
+ * by any further forced callers) instead of being answered by that fetch.
+ */
+function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
+  if (!inflight) return runRefresh(fetch, force);
+  if (!force || inflight.forced) return inflight.promise;
+  queuedForced ??= inflight.promise
+    .then(
+      () => runRefresh(fetch, true),
+      () => runRefresh(fetch, true),
+    )
+    .finally(() => {
+      queuedForced = null;
+    });
+  return queuedForced;
+}
+
+/**
+ * A background refresh failed: keep the warm copy, but tell clients so they
+ * stop showing "refreshing" and can flag the data as possibly old.
+ */
+function announceBackgroundFailure(err: unknown): void {
+  const message = err instanceof Error ? err.message.slice(0, 200) : String(err);
+  console.warn(`[pr.list] background refresh failed; keeping warm list: ${message}`);
+  const payload: PRListUpdatedPayload = { fetchedAt: snapshot?.fetchedAt, error: message };
+  broadcastFn(Events.PR_LIST_UPDATED, payload);
 }
 
 /**
@@ -157,7 +183,7 @@ export async function servePRList(
     };
   }
   if (ageMs(snapshot, opts.now ?? Date.now()) > PR_LIST_STALE_MS && !inflight)
-    refresh(fetch, false).catch(logBackgroundFailure);
+    refresh(fetch, false).catch(announceBackgroundFailure);
   return {
     prs: snapshot.prs,
     fetchedAt: snapshot.fetchedAt,
@@ -190,7 +216,7 @@ export function startPRListRefresher(
   const tick = () => {
     if (!opts.hasClients() || inflight) return;
     if (snapshot && ageMs(snapshot, Date.now()) <= PR_LIST_STALE_MS) return;
-    refresh(fetch, false).catch(logBackgroundFailure);
+    refresh(fetch, false).catch(announceBackgroundFailure);
   };
   const initial = setTimeout(tick, opts.initialDelayMs ?? 3_000);
   initial.unref();
