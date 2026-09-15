@@ -1,6 +1,9 @@
+import { parseGitHubRef } from '@farmslot/protocol';
+
 import { safeLsGet, safeLsSet } from '../../utils/storage.js';
 
-import type { PRWorkspaceEntry } from './pr-workspace.js';
+import type { PRKey } from './pr-board-url-state.js';
+import { type PRWorkspaceEntry, prWorkspaceKey } from './pr-workspace.js';
 
 /**
  * What "Mine" means on the PRs page. A browser-side preference: there is no
@@ -10,23 +13,19 @@ import type { PRWorkspaceEntry } from './pr-workspace.js';
 export interface MineScope {
   logins: string[];
   includeRunOwned: boolean;
-  /** PRs the viewer explicitly took over, as `repo#number` (lower-case repo). */
+  /** PRs the viewer explicitly took over, as workspace keys (`host/repo#number`, lower-case). */
   adopted: string[];
 }
 
-export function adoptionKey(key: { repo: string; pr: number }): string {
-  return `${key.repo.toLowerCase()}#${key.pr}`;
+export function adoptionKey(key: PRKey): string {
+  return prWorkspaceKey(key);
 }
 
-export function isAdopted(scope: MineScope, key: { repo: string; pr: number }): boolean {
+export function isAdopted(scope: MineScope, key: PRKey): boolean {
   return scope.adopted.includes(adoptionKey(key));
 }
 
-export function withAdoption(
-  scope: MineScope,
-  key: { repo: string; pr: number },
-  adopted: boolean,
-): MineScope {
+export function withAdoption(scope: MineScope, key: PRKey, adopted: boolean): MineScope {
   const id = adoptionKey(key);
   const rest = scope.adopted.filter((item) => item !== id);
   return { ...scope, adopted: adopted ? [...rest, id] : rest };
@@ -77,9 +76,6 @@ export function saveMineScope(scope: MineScope): void {
   );
 }
 
-/** `owner/repo#123`: the run family started from an existing PR rather than creating one. */
-const PR_REF = /^[^\s/]+\/[^\s#]+#\d+$/;
-
 /**
  * A farmslot run "created" the PR when its family root is a ticket or task,
  * not a PR reference. A pr-complete or review run started on someone else's
@@ -87,8 +83,9 @@ const PR_REF = /^[^\s/]+\/[^\s#]+#\d+$/;
  */
 export function isRunCreatedPR(status: PRWorkspaceEntry['status']): boolean {
   if (status?.ownedFamily !== true) return false;
+  // `owner/repo#123` as the root means the family started from an existing PR.
   const root = status.familyRootTicketOrPr?.trim() ?? '';
-  return root !== '' && !PR_REF.test(root);
+  return root !== '' && parseGitHubRef(root) === null;
 }
 
 export function isMineEntry(entry: PRWorkspaceEntry, scope: MineScope): boolean {

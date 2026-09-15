@@ -85,3 +85,19 @@ test('without an observation the overall GitHub decision decides, and says so', 
   assert.equal(prReviewQueue(entry(undefined, { prState: 'MERGED' })).group, 'Not ready');
   assert.equal(prReviewQueue(entry({ draft: true })).label, 'Draft');
 });
+
+test('with two review accounts the most pressing one wins', () => {
+  const e = entry({
+    reviewer: 'bob',
+    review: { state: 'APPROVED', commit: 'head2', submittedAt: null },
+  });
+  e.reviewObservations.push({
+    ...base,
+    reviewer: 'alice',
+    requested: true,
+    observedAt: '2026-09-10T11:59:00.000Z',
+  });
+  const item = prReviewQueue(e);
+  assert.equal(item.group, 'Not reviewed yet');
+  assert.match(item.detail, /@alice/);
+});

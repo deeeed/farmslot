@@ -359,7 +359,9 @@ export async function fetchPRList(
       const ageMs = freshness ? now - Date.parse(freshness) : Infinity;
       if (!Number.isFinite(ageMs) || ageMs > PR_DASHBOARD_TERMINAL_TTL_MS) continue;
     }
-    const repo = await resolveRepoForRun(run);
+    // resolveRepoForRun returns undefined when the project declares ci.repo
+    // (fetchPRData resolves it later); the key needs the repo now.
+    const repo = (await resolveRepoForRun(run)) ?? (await loadProjectConfig(run.project))?.ci?.repo;
     const key = candidateKey(repo, run.prNumber);
     if (prInfo.has(key)) continue;
     prInfo.set(key, {

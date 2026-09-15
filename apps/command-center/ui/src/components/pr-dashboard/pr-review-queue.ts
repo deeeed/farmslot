@@ -26,7 +26,30 @@ export interface PRReviewQueueItem {
   tone: 'warn' | 'ok' | 'fail' | 'muted';
 }
 
+/**
+ * With several configured review accounts, each has its own standing; the
+ * queue shows the most pressing one (earliest group) so an outstanding request
+ * for one account is not hidden behind another account's approval.
+ */
 export function prReviewQueue(entry: PRWorkspaceEntry): PRReviewQueueItem {
+  const latestByReviewer = new Map<string, PRWorkspaceEntry['reviewObservations'][number]>();
+  for (const observation of entry.reviewObservations) {
+    const key = observation.reviewer.toLowerCase();
+    const previous = latestByReviewer.get(key);
+    if (!previous || Date.parse(observation.observedAt) > Date.parse(previous.observedAt))
+      latestByReviewer.set(key, observation);
+  }
+  if (latestByReviewer.size <= 1) return evaluate(entry);
+  return [...latestByReviewer.values()]
+    .map((observation) => evaluate({ ...entry, reviewObservations: [observation] }))
+    .reduce((best, item) =>
+      PR_REVIEW_QUEUE_GROUPS.indexOf(item.group) < PR_REVIEW_QUEUE_GROUPS.indexOf(best.group)
+        ? item
+        : best,
+    );
+}
+
+function evaluate(entry: PRWorkspaceEntry): PRReviewQueueItem {
   const readiness = prReviewReadiness(entry);
   const observation = readiness.observation;
   const status = entry.status;

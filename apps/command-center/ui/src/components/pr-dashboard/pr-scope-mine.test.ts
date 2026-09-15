@@ -62,7 +62,15 @@ test('taking a PR over makes it mine regardless of author; releasing undoes it',
   const theirs = entry('bob');
   assert.equal(isMineEntry(theirs, base), false);
   const taken = withAdoption(base, { repo: 'Org/App', pr: 1 }, true);
-  assert.deepEqual(taken.adopted, ['org/app#1'], 'repo is case-folded');
+  assert.deepEqual(taken.adopted, ['github.com/org/app#1'], 'host-qualified, case-folded');
+  assert.equal(
+    isMineEntry(
+      theirs,
+      withAdoption(base, { repo: 'org/app', pr: 1, host: 'git.example.com' }, true),
+    ),
+    false,
+    'adopting the same number on another host does not adopt this one',
+  );
   assert.equal(isMineEntry(theirs, taken), true);
   assert.equal(describeMineScope(taken), '@arthur + 1 taken over');
   assert.equal(isMineEntry(theirs, withAdoption(taken, { repo: 'org/app', pr: 1 }, false)), false);

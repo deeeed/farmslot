@@ -896,9 +896,9 @@ export class PRBoard extends LitElement {
             : this._scope === 'mine'
               ? isMineEntry(entry, this._mineScope)
               : true;
-      if (!inSection) continue;
       // An explicit selection (detail link, or a PR that merged while open)
-      // stays visible so its detail pane does not go blank.
+      // stays visible whatever the scope, so its detail pane does not go blank.
+      if (!inSection && !prKeyEqual(entry.key, this._selectedPr)) continue;
       if (
         !this._showHistory &&
         isTerminalPREntry(entry) &&
@@ -976,6 +976,7 @@ export class PRBoard extends LitElement {
     };
     saveMineScope(next);
     this._mine = next;
+    this._mineNotice = '';
     this._mineEditing = false;
   }
   private _renderMineEditor() {
@@ -1679,8 +1680,7 @@ export class PRBoard extends LitElement {
                             ? 'Loading author…'
                             : 'Author unavailable'}
                       </p>
-                      ${isAdopted(this._mineScope, selected.key) ||
-                      !isMineEntry(selected, this._mineScope)
+                      ${!isMineEntry(selected, { ...this._mineScope, adopted: [] })
                         ? html`<button
                             class="guard-toggle"
                             data-testid="pr-guard-toggle"

@@ -146,16 +146,6 @@ export class PRCard extends LitElement {
       white-space: nowrap;
     }
 
-    .guard-badge {
-      font-family: ${unsafeCSS(fonts.mono)};
-      font-size: 10px;
-      padding: 1px 6px;
-      border-radius: 3px;
-      border: 1px solid ${unsafeCSS(colors.accent)};
-      color: ${unsafeCSS(colors.accent)};
-      white-space: nowrap;
-    }
-
     .reason-chip {
       display: inline-block;
       font-family: ${unsafeCSS(fonts.mono)};
@@ -329,8 +319,8 @@ export class PRCard extends LitElement {
   /**
    * Clicking the card offers the selection to the board (detail pane + URL, so
    * the view is shareable). When nothing claims it, as in the standalone dev
-   * harness or inside the detail pane where the card already is the selection,
-   * the click toggles the inline sections instead.
+   * harness, the click toggles the inline sections instead. A force-expanded
+   * card (the detail pane) has nothing left to toggle, so it ignores the click.
    */
   private _toggle() {
     const claimed = !this.dispatchEvent(
@@ -389,14 +379,6 @@ export class PRCard extends LitElement {
         <div class="top-row">
           <span class="pr-number">#${pr.pr}</span>
           <span class="rec-badge" style="background:${rec.bg}; color:${rec.fg}">${rec.label}</span>
-          ${this.adopted
-            ? html`<span
-                class="guard-badge"
-                data-testid="pr-card-guard"
-                title="You took this PR over"
-                >under your guard</span
-              >`
-            : nothing}
           ${this.adopted
             ? html`<span
                 class="guard-badge"
