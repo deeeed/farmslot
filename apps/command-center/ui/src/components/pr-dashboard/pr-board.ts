@@ -45,6 +45,7 @@ import {
   type PRLayout,
 } from './pr-board-url-state.js';
 import { buildPRDashboardScopeSummary } from './pr-filters.js';
+import { PR_REVIEW_QUEUE_GROUPS, prReviewQueue } from './pr-review-queue.js';
 import { prReviewReadiness, reviewRunLabel } from './pr-review-status.js';
 import {
   describeMineScope,
@@ -1186,6 +1187,7 @@ export class PRBoard extends LitElement {
       entry.monitors.flatMap((m) => m.incidents.filter((i) => !i.resolvedAt).map((i) => i.id)),
     ).size;
     const readiness = prReviewReadiness(entry);
+    const queue = this._section === 'reviews' ? prReviewQueue(entry) : undefined;
     const reason = !working && entry.status ? prAttentionReasons(entry.status)[0] : undefined;
     const label =
       this._section === 'reviews'
@@ -1224,13 +1226,14 @@ export class PRBoard extends LitElement {
         ></span
       >
       <span class="pr-row-statuses">
-        ${this._section === 'reviews'
+        ${this._section === 'reviews' && queue
           ? html`<span
-                class=${`review-badge review-tone-${readiness.tone}`}
+                class=${`review-badge review-tone-${queue.tone}`}
                 data-testid="pr-row-review-status"
-                title=${readiness.detail}
-                >${readiness.label}</span
-              ><span class="pr-author">${readiness.personal}</span>`
+                data-review-queue=${queue.group}
+                title=${`${queue.detail} GitHub: ${readiness.label}.`}
+                >${queue.label}</span
+              ><span class="pr-author">${queue.detail}</span>`
           : reason
             ? html`<span
                 class=${`reason-chip reason-tone-${reason.tone}`}
@@ -1265,16 +1268,9 @@ export class PRBoard extends LitElement {
       </p>`;
     }
     if (this._section === 'reviews' && this._sortMode === 'group') {
-      return (
-        [
-          'Needs review',
-          'Changes requested',
-          'Approved',
-          'Not ready for review',
-          'Review status unknown',
-        ] as const
-      ).map((group) => {
-        const rows = entries.filter((entry) => prReviewReadiness(entry).group === group);
+      const queued = entries.map((entry) => ({ entry, queue: prReviewQueue(entry) }));
+      return PR_REVIEW_QUEUE_GROUPS.map((group) => {
+        const rows = queued.filter((item) => item.queue.group === group).map((item) => item.entry);
         return rows.length
           ? html`<div class="list-group-header">
                 <span>${group}</span><span class="list-group-count">${rows.length}</span>
