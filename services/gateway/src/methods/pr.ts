@@ -202,6 +202,11 @@ export async function prList(
   return { ...served, prs: served.prs.filter((p) => p.project === params.project) };
 }
 
+/** GitHub says the PR no longer exists or is no longer visible to this token. */
+export class PRGoneError extends Error {}
+
+const PR_GONE_PATTERN = /HTTP 404|Not Found|Could not resolve to a PullRequest/i;
+
 export interface PRListFetchResult {
   prs: PRStatus[];
   /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
@@ -356,6 +361,11 @@ export async function fetchPRList(
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
+        if (error instanceof PRGoneError) {
+          // Deleted or no longer visible: drop the row, do not carry it.
+          console.warn(`[pr.list] ${error.message}`);
+          return null;
+        }
         failed.push(`${info.repo}#${prNum}`);
         console.warn(
           `[pr.list] ${info.repo}#${prNum} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
@@ -364,7 +374,8 @@ export async function fetchPRList(
       }
     }),
   );
-  if (failed.length > 0 && failed.length === prInfo.size)
+  // One unreadable candidate is a PR problem; every candidate unreadable is GitHub.
+  if (failed.length > 1 && failed.length === prInfo.size)
     throw new Error(`GitHub unavailable: all ${failed.length} PR reads failed`);
 
   return {
@@ -398,8 +409,12 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
   // share one network round-trip. force=true bypasses both caches.
   const raw = await getPRRawData(ghRepo, prNum, force);
-  if (rejectIncomplete && raw.prStateStdout.trim() === '')
-    throw new Error(`GitHub returned no state for ${ghRepo}#${prNum}`);
+  if (rejectIncomplete && raw.prStateStdout.trim() === '') {
+    const why = raw.prStateError ?? 'empty response';
+    if (PR_GONE_PATTERN.test(why))
+      throw new PRGoneError(`${ghRepo}#${prNum} is gone: ${why.slice(0, 120)}`);
+    throw new Error(`GitHub returned no state for ${ghRepo}#${prNum}: ${why.slice(0, 120)}`);
+  }
 
   // Parse checks
   const checkGroups = projectConfig?.ci?.checkGroups ?? [];

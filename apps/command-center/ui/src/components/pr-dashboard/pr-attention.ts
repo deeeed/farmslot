@@ -75,17 +75,19 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         'A human reviewer asked for changes on GitHub. Address the feedback, then re-request review.',
       tone: 'fail',
     });
-  if (!pr.anyFailed && pr.allFailedNames?.length)
-    // Not a watched check, so it does not drive the recommendation: listed
-    // after the blocking reasons so the first chip still explains the column.
-    reasons.push({
-      kind: 'ci-failed',
-      label: `Unwatched check failed: ${joinNames(pr.allFailedNames)}`,
-      detail: `Failing checks outside the watched set: ${pr.allFailedNames.join(', ')}.`,
-      tone: 'warn',
-    });
-  if (reasons.some((reason) => reason.tone === 'fail' || reason.kind === 'bot-comments'))
-    return reasons;
+  // Not a watched check, so it never drives the recommendation: always listed
+  // after whatever does, so the first chip explains the column. It leads only
+  // when it is the sole thing worth saying.
+  const unwatched: PRAttentionReason | undefined =
+    !pr.anyFailed && pr.allFailedNames?.length
+      ? {
+          kind: 'ci-failed',
+          label: `Unwatched check failed: ${joinNames(pr.allFailedNames)}`,
+          detail: `Failing checks outside the watched set: ${pr.allFailedNames.join(', ')}.`,
+          tone: 'warn',
+        }
+      : undefined;
+  if (reasons.length) return unwatched ? [...reasons, unwatched] : reasons;
   if (pr.reviewDecision === 'REVIEW_REQUIRED')
     reasons.push({
       kind: 'review-required',
@@ -114,5 +116,6 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       detail: 'Nothing is blocking this PR; merge when ready.',
       tone: 'ok',
     });
+  if (unwatched) reasons.push(unwatched);
   return reasons;
 }

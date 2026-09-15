@@ -38,12 +38,16 @@ const CACHE_FILE_NAME = 'pr-list.json';
 const PR_LIST_SNAPSHOT_VERSION = 1;
 /** A served list older than this triggers a background refresh. */
 export const PR_LIST_STALE_MS = 60_000;
+/** A PR GitHub keeps failing to read is carried from the previous copy for at most this long. */
+export const PR_LIST_CARRY_MAX_MS = 60 * 60 * 1000;
 
 let snapshot: PRListSnapshot | null = null;
 let loaded = false;
 let inflight: { promise: Promise<PRListSnapshot>; forced: boolean } | null = null;
 let queuedForced: Promise<PRListSnapshot> | null = null;
 let broadcastFn: Broadcast = () => {};
+/** `repo#pr` → when the row first had to be carried because GitHub could not read it. */
+const carriedSince = new Map<string, number>();
 
 function cacheFile(): string {
   return farmCacheFile(CACHE_FILE_NAME);
@@ -132,6 +136,7 @@ export function resetPRListCacheForTests(): void {
   inflight = null;
   queuedForced = null;
   broadcastFn = () => {};
+  carriedSince.clear();
 }
 
 function ageMs(snap: PRListSnapshot, now: number): number {
@@ -143,18 +148,38 @@ function ageMs(snap: PRListSnapshot, now: number): number {
  * PRs GitHub could not be read for keep the row from the previous copy, so a
  * partial outage never turns a known MERGED PR into a blank OPEN placeholder.
  */
-function withLastKnownState(prs: PRStatus[], failed: string[]): PRStatus[] {
-  if (failed.length === 0 || !snapshot) return prs;
+function withLastKnownState(prs: PRStatus[], failed: string[], now: number): PRStatus[] {
   const keys = new Set(failed);
-  const carried = snapshot.prs.filter((p) => keys.has(`${p.repo}#${p.pr}`));
+  for (const key of carriedSince.keys()) if (!keys.has(key)) carriedSince.delete(key);
+  if (failed.length === 0 || !snapshot) return prs;
+  const carried: PRStatus[] = [];
+  const expired: string[] = [];
+  for (const row of snapshot.prs) {
+    const key = `${row.repo}#${row.pr}`;
+    if (!keys.has(key)) continue;
+    const since = carriedSince.get(key) ?? now;
+    carriedSince.set(key, since);
+    // Bounded: a PR that was deleted, or whose repo access was revoked, reads
+    // exactly like an outage, so it must not be carried forever.
+    if (now - since > PR_LIST_CARRY_MAX_MS) {
+      expired.push(key);
+      carriedSince.delete(key);
+      continue;
+    }
+    carried.push(row);
+  }
   if (carried.length)
     console.warn(
       `[pr.list] kept last known state for ${carried.length} PR(s): ${carried.map((p) => `${p.repo}#${p.pr}`).join(', ')}`,
     );
+  if (expired.length)
+    console.warn(
+      `[pr.list] dropped ${expired.length} unreadable PR(s) after 1h: ${expired.join(', ')}`,
+    );
   return [...prs, ...carried];
 }
 
-function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
+function runRefresh(fetch: PRListFetcher, force: boolean, now: number): Promise<PRListSnapshot> {
   // Register before invoking so a fetcher that throws synchronously cannot
   // clear `inflight` first and leave a stale entry behind.
   let settle!: { resolve: (value: PRListSnapshot) => void; reject: (reason: unknown) => void };
@@ -168,9 +193,9 @@ function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapsho
   (async () => {
     try {
       const fetched = await fetch(force);
-      const prs = withLastKnownState(fetched.prs, fetched.failed ?? []);
+      const prs = withLastKnownState(fetched.prs, fetched.failed ?? [], now);
       const next: PRListSnapshot = {
-        fetchedAt: new Date().toISOString(),
+        fetchedAt: new Date(now).toISOString(),
         prs,
         truncated: fetched.truncated,
       };
@@ -184,6 +209,11 @@ function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapsho
         : { fetchedAt: next.fetchedAt };
       broadcastFn(Events.PR_LIST_UPDATED, payload);
       return next;
+    } catch (err) {
+      // Every client that was told `refreshing` (not only the caller that
+      // triggered this fetch) must hear that it ended, and how.
+      announceFailure(err);
+      throw err;
     } finally {
       if (inflight === entry) inflight = null;
     }
@@ -191,18 +221,24 @@ function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapsho
   return entry.promise;
 }
 
+function announceFailure(err: unknown): void {
+  const message = err instanceof Error ? err.message.slice(0, 200) : String(err);
+  const payload: PRListUpdatedPayload = { fetchedAt: snapshot?.fetchedAt, error: message };
+  broadcastFn(Events.PR_LIST_UPDATED, payload);
+}
+
 /**
  * One fetch at a time. A forced refresh that arrives while a non-forced one
  * is running must still reach GitHub, so it is queued behind it (and shared
  * by any further forced callers) instead of being answered by that fetch.
  */
-function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
-  if (!inflight) return runRefresh(fetch, force);
+function refresh(fetch: PRListFetcher, force: boolean, now = Date.now()): Promise<PRListSnapshot> {
+  if (!inflight) return runRefresh(fetch, force, now);
   if (!force || inflight.forced) return inflight.promise;
   queuedForced ??= inflight.promise
     .then(
-      () => runRefresh(fetch, true),
-      () => runRefresh(fetch, true),
+      () => runRefresh(fetch, true, Date.now()),
+      () => runRefresh(fetch, true, Date.now()),
     )
     .finally(() => {
       queuedForced = null;
@@ -210,15 +246,11 @@ function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> 
   return queuedForced;
 }
 
-/**
- * A background refresh failed: keep the warm copy, but tell clients so they
- * stop showing "refreshing" and can flag the data as possibly old.
- */
-function announceBackgroundFailure(err: unknown): void {
-  const message = err instanceof Error ? err.message.slice(0, 200) : String(err);
-  console.warn(`[pr.list] background refresh failed; keeping warm list: ${message}`);
-  const payload: PRListUpdatedPayload = { fetchedAt: snapshot?.fetchedAt, error: message };
-  broadcastFn(Events.PR_LIST_UPDATED, payload);
+/** A background refresh failed; the warm copy stays and runRefresh already announced it. */
+function logBackgroundFailure(err: unknown): void {
+  console.warn(
+    `[pr.list] background refresh failed; keeping warm list: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
+  );
 }
 
 /**
@@ -232,7 +264,7 @@ export async function servePRList(
 ): Promise<ServedPRList> {
   if (!loaded) loadPRListCache();
   if (opts.force || !snapshot) {
-    const fresh = await refresh(fetch, opts.force === true);
+    const fresh = await refresh(fetch, opts.force === true, opts.now);
     return {
       prs: fresh.prs,
       fetchedAt: fresh.fetchedAt,
@@ -241,7 +273,7 @@ export async function servePRList(
     };
   }
   if (ageMs(snapshot, opts.now ?? Date.now()) > PR_LIST_STALE_MS && !inflight)
-    refresh(fetch, false).catch(announceBackgroundFailure);
+    refresh(fetch, false, opts.now).catch(logBackgroundFailure);
   return {
     prs: snapshot.prs,
     fetchedAt: snapshot.fetchedAt,
@@ -274,7 +306,7 @@ export function startPRListRefresher(
   const tick = () => {
     if (!opts.hasClients() || inflight) return;
     if (snapshot && ageMs(snapshot, Date.now()) <= PR_LIST_STALE_MS) return;
-    refresh(fetch, false).catch(announceBackgroundFailure);
+    refresh(fetch, false).catch(logBackgroundFailure);
   };
   const initial = setTimeout(tick, opts.initialDelayMs ?? 3_000);
   initial.unref();

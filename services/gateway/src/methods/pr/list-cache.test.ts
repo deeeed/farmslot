@@ -9,6 +9,7 @@ import { Events, type PRStatus } from '@farmslot/protocol';
 import {
   loadPRListCache,
   peekPRList,
+  PR_LIST_CARRY_MAX_MS,
   PR_LIST_STALE_MS,
   resetPRListCacheForTests,
   servePRList,
@@ -304,6 +305,62 @@ test('PRs GitHub could not read keep their last known row instead of vanishing',
       ],
     );
     assert.equal(peekPRList()?.prs.length, 2, 'persisted copy carries the row too');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a forced refresh that fails is announced to every client, and the caller still sees the error', async () => {
+  const { cleanup } = isolate();
+  try {
+    const events: Array<{ error?: string }> = [];
+    setPRListBroadcast((_event, payload) => events.push(payload as (typeof events)[number]));
+    await servePRList(async () => list([pr(1)]));
+    await assert.rejects(
+      servePRList(
+        async () => {
+          throw new Error('gh down');
+        },
+        { force: true },
+      ),
+      /gh down/,
+    );
+    assert.equal(events.at(-1)?.error, 'gh down');
+    assert.equal(peekPRList()?.prs[0].pr, 1, 'warm copy retained');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a row GitHub keeps failing to read is carried for an hour, then dropped', async () => {
+  const { cleanup } = isolate();
+  try {
+    const t0 = Date.parse('2026-09-15T10:00:00.000Z');
+    await servePRList(async () => list([pr(1), pr(2)]), { now: t0 });
+    const failing = async () => list([pr(2)], false, ['org/app#1']);
+    const carried = await servePRList(failing, { force: true, now: t0 + 1_000 });
+    assert.deepEqual(
+      carried.prs.map((p) => p.pr),
+      [2, 1],
+    );
+    // The carry clock starts at the first failed read (t0 + 1s), not at t0.
+    const stillCarried = await servePRList(failing, {
+      force: true,
+      now: t0 + 1_000 + PR_LIST_CARRY_MAX_MS,
+    });
+    assert.deepEqual(
+      stillCarried.prs.map((p) => p.pr),
+      [2, 1],
+    );
+    const dropped = await servePRList(failing, {
+      force: true,
+      now: t0 + 1_000 + PR_LIST_CARRY_MAX_MS + 1,
+    });
+    assert.deepEqual(
+      dropped.prs.map((p) => p.pr),
+      [2],
+      'unreadable for over an hour: gone from the list',
+    );
   } finally {
     cleanup();
   }

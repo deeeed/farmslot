@@ -9,6 +9,7 @@ import {
   Methods,
   type MonitorViolationPayload,
   type PendingDecision,
+  type PRListUpdatedPayload,
   type PRUpdatedPayload,
   type Run,
   type SlotStatus,
@@ -205,6 +206,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       client.subscribe(Events.PR_UPDATED, (payload) => {
         const data = payload as PRUpdatedPayload;
         if (data.pr) usePRStore.getState().upsertPR(data.pr);
+      });
+
+      // The gateway serves pr.list from a warm copy and refreshes it in the
+      // background; a changed list arrives here, a failed refresh flags the
+      // copy we hold as possibly old.
+      client.subscribe(Events.PR_LIST_UPDATED, (payload) => {
+        const data = payload as PRListUpdatedPayload;
+        const prs = usePRStore.getState();
+        if (data.error) prs.setError(`PR refresh failed on the gateway: ${data.error}`);
+        else if (data.prs) prs.setPRs(data.prs);
       });
 
       let decisionRefreshInFlight: Promise<void> | null = null;

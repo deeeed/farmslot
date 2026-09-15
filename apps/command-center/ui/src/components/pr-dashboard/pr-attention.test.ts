@@ -88,6 +88,23 @@ test('an unwatched failure never outranks the blocker that put the PR in Needs A
   assert.equal(reasons[1].tone, 'warn');
 });
 
+test('an unwatched failure trails the ready or waiting reason instead of leading it', () => {
+  const ready = prAttentionReasons(
+    status({ allPassed: true, reviewDecision: 'APPROVED', allFailedNames: ['docs-build'] }),
+  );
+  assert.deepEqual(
+    ready.map((r) => r.kind),
+    ['ready', 'ci-failed'],
+  );
+  const waiting = prAttentionReasons(
+    status({ reviewDecision: 'REVIEW_REQUIRED', allFailedNames: ['docs-build'] }),
+  );
+  assert.deepEqual(
+    waiting.map((r) => r.kind),
+    ['review-required', 'ci-failed'],
+  );
+});
+
 test('running-check names come from the same set as the count', () => {
   const reasons = prAttentionReasons(
     status({

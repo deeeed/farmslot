@@ -19,6 +19,8 @@ export interface PRRawSnapshot {
   author?: string;
   checksStdout: string;
   prStateStdout: string;
+  /** Why the PR state read returned nothing (gh's message); absent when it succeeded. */
+  prStateError?: string;
   commentsStdout: string;
   reviewCommentsStdout: string;
   latestCommitStdout: string;
@@ -143,6 +145,7 @@ export async function getPRRawData(
       author: author || undefined,
       checksStdout: checks.stdout,
       prStateStdout: stateLine ?? '',
+      prStateError: stateLine ? undefined : prState.stderr || 'empty response',
       commentsStdout: comments.stdout,
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,

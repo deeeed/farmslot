@@ -807,7 +807,14 @@ export class PRBoard extends LitElement {
           ? entry.reviews.length > 0 || entry.requests.length > 0
           : this._scope !== 'monitored' || entry.monitors.length > 0;
       if (!inSection) continue;
-      if (!this._showHistory && isTerminalPREntry(entry)) hiddenTerminal += 1;
+      // An explicit selection (detail link, or a PR that merged while open)
+      // stays visible so its detail pane does not go blank.
+      if (
+        !this._showHistory &&
+        isTerminalPREntry(entry) &&
+        !prKeyEqual(entry.key, this._selectedPr)
+      )
+        hiddenTerminal += 1;
       else visible.push(entry);
     }
     return { visible, hiddenTerminal };
