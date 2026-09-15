@@ -86,20 +86,38 @@ export function renderDispatchWizardPrimaryControls(
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${renderRunnerModelConfig(ctx)}
-    <label class="section-label"
-      >Worker interface
-      <select
+    <div>
+      <div class="section-label" id="worker-interface-label">Worker interface</div>
+      <div
+        class="pill-row"
+        role="group"
+        aria-labelledby="worker-interface-label"
         data-testid="dispatch-transport"
-        .value=${ctx.transport}
-        @change=${(event: Event) =>
-          ctx.setTransport((event.target as HTMLSelectElement).value as 'tmux' | 'native')}
       >
-        <option value="tmux">Terminal (tmux)</option>
-        <option value="native" ?disabled=${!ctx.nativeWorkerAvailable}>
-          Conversation (native)
-        </option>
-      </select>
-    </label>
+        <button
+          type="button"
+          class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
+          data-transport="tmux"
+          aria-pressed=${ctx.transport === 'tmux'}
+          @click=${() => ctx.setTransport('tmux')}
+        >
+          Terminal
+        </button>
+        <button
+          type="button"
+          class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
+          data-transport="native"
+          aria-pressed=${ctx.transport === 'native'}
+          ?disabled=${!ctx.nativeWorkerAvailable}
+          title=${ctx.nativeWorkerAvailable
+            ? 'Messages, tools and approvals in Farmslot'
+            : 'Native workers are unavailable for this runner'}
+          @click=${() => ctx.setTransport('native')}
+        >
+          Conversation
+        </button>
+      </div>
+    </div>
     ${ctx.nativeCatalogError ? html`<p role="status">${ctx.nativeCatalogError}</p>` : nothing}
     ${ctx.transport === 'native'
       ? html`<p>

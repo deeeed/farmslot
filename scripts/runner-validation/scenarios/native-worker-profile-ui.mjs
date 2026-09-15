@@ -200,14 +200,14 @@ export async function runScenario({
       (state) => state.selection?.ready && state.selectedProfile === profileId,
       timeoutMs,
     );
-    cdp('select', 'dispatch', 'dispatch-wizard >>> [data-testid=dispatch-transport]', 'tmux');
+    click("root.querySelector('[data-testid=dispatch-transport] [data-transport=tmux]')");
     const terminal = await wait(
       inspect,
       (state) => state.transport === 'tmux' && !state.profileMounted,
       timeoutMs,
     );
     assert.equal(terminal.selection, null);
-    cdp('select', 'dispatch', 'dispatch-wizard >>> [data-testid=dispatch-transport]', 'native');
+    click("root.querySelector('[data-testid=dispatch-transport] [data-transport=native]')");
     await wait(
       inspect,
       (state) => state.profileMounted && state.selectedProfile === '' && state.selection?.ready,

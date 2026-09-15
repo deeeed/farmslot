@@ -73,7 +73,7 @@ export async function runScenario({
         'eval',
         route,
         walk +
-          `const s=all.find(e=>e.matches('[data-testid=dispatch-transport]'));return s?{value:s.value,nativeDisabled:[...s.options].find(o=>o.value==='native')?.disabled}:null;`,
+          `const s=all.find(e=>e.matches('[data-testid=dispatch-transport]'));return s?{value:s.querySelector('[aria-pressed=true]')?.dataset.transport,nativeDisabled:s.querySelector('[data-transport=native]')?.disabled}:null;`,
       );
     cdp('goto', route);
     await wait(selectState, (state) => state && !state.nativeDisabled, timeoutMs);
@@ -102,7 +102,7 @@ export async function runScenario({
         walk +
           `const e=all.find(e=>e.matches(${JSON.stringify(leaf)}));if(!e)throw Error('Control missing');let p=e;const parts=[${JSON.stringify(leaf)}];while(p){const h=p.getRootNode().host;if(!h)break;parts.unshift(h.localName);p=h;}return {selector:parts.join(' >>> ')};`,
       ).selector;
-    cdp('select', route, selector('[data-testid=dispatch-transport]'), 'native');
+    click('Conversation');
     cdp('fill', route, selector('.ticket-input'), ticket);
     click('Skip Prepare');
     click('Reviewed');

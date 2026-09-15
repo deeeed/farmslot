@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Match the dispatch worker-interface choice to the existing button controls, with clear Terminal and Conversation states.
+
 - The run page keeps its direct `run.get` copy when the shared list row has trimmed decision payloads and renders the gate, review and recipe panels from it, refetching when the row moves on; gate approvals and step replays are no longer paused behind "Run refresh failed" on large fleets.
 
 - Select the local load balancer for gateway intelligence using its configured environment key, without an upstream sign-in flow.
