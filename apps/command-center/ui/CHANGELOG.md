@@ -6,6 +6,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - The PRs page shows a loading placeholder while pull requests are fetched from GitHub and a pulsing "Fetching PR info…" note during background refreshes; merged and closed PRs are hidden behind the "Show merged / closed & history" toggle with a hidden count in the header; each card and list row carries a reason chip (merge conflict, failing checks by name, bot comments, changes requested by a reviewer, waiting for review, checks running) with the full list under "Why it needs you"; the Reviews tab is now "Need Review".
 
+- Explain dispatch settings in a collapsible guide and field hints; match the worker-interface choice to existing buttons and reset unsupported Conversation selections to Terminal.
+
 - The run page keeps its direct `run.get` copy when the shared list row has trimmed decision payloads and renders the gate, review and recipe panels from it, refetching when the row moves on; gate approvals and step replays are no longer paused behind "Run refresh failed" on large fleets.
 
 - Select the local load balancer for gateway intelligence using its configured environment key, without an upstream sign-in flow.

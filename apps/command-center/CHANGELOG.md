@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Update native dispatch probes for the worker-interface button controls.
+
 - Add live validation controls for native worker profiles, conversation history, account changes, and load-balancer-backed Copilot alongside terminal runners.
 
 ## 0.11.0 - 2026-09-13

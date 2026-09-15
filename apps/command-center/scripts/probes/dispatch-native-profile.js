@@ -5,7 +5,8 @@ const profile = worker?.querySelector('native-profiles')?.shadowRoot;
 return {
   page: performance.timeOrigin,
   ticket: root?.querySelector('.ticket-input')?.value,
-  transport: root?.querySelector('[data-testid=dispatch-transport]')?.value,
+  transport: root?.querySelector('[data-testid=dispatch-transport] [aria-pressed=true]')?.dataset
+    .transport,
   node: worker?.querySelector('[data-testid=dispatch-native-node]')?.value,
   nodeDisabled: worker?.querySelector('[data-testid=dispatch-native-node]')?.disabled,
   profileMounted: Boolean(profile),
