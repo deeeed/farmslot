@@ -135,7 +135,7 @@ import {
   broadcastEvent,
   broadcastPrincipalEvent,
   createWebSocketServer,
-  hasConnectedClients,
+  hasConnectedViewers,
   initServerGlobals,
 } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook, setGitHubRuleEventRouter } from './webhook.js';
@@ -360,7 +360,7 @@ async function main(): Promise<void> {
   loadPRListCache();
   startPRListRefresher((force) => fetchPRList({ force }), {
     broadcast: observedBroadcast,
-    hasClients: hasConnectedClients,
+    hasClients: hasConnectedViewers,
   });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();

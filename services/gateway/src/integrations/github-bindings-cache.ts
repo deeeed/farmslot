@@ -6,10 +6,9 @@
 // Layout: FARMSLOT_DIR/.farm-cache/github-bindings.json
 //   { [repo]: { [branch]: { prNumber: number, at: string } } }
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
-import { farmslotRoot } from '../core/config.js';
+import { farmCacheFile } from '../core/farm-cache.js';
 
 interface Binding {
   prNumber: number;
@@ -18,7 +17,6 @@ interface Binding {
 
 type BindingsFile = Record<string, Record<string, Binding>>;
 
-const CACHE_DIR_NAME = '.farm-cache';
 const CACHE_FILE_NAME = 'github-bindings.json';
 
 let cachePath: string | null = null;
@@ -26,14 +24,7 @@ let bindings: BindingsFile = {};
 let loaded = false;
 
 function ensureCachePath(): string {
-  if (cachePath) return cachePath;
-  const base =
-    process.env.FARMSLOT_DIR && process.env.FARMSLOT_DIR.length > 0
-      ? process.env.FARMSLOT_DIR
-      : farmslotRoot;
-  const dir = path.join(base, CACHE_DIR_NAME);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  cachePath = path.join(dir, CACHE_FILE_NAME);
+  cachePath ??= farmCacheFile(CACHE_FILE_NAME);
   return cachePath;
 }
 

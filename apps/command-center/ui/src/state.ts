@@ -117,6 +117,8 @@ export interface AppState {
   prsUpdatedAt: number;
   /** True while the gateway answered from its warm list and is refreshing from GitHub. */
   prsRefreshing: boolean;
+  /** Why the gateway's last background PR refresh failed; null once one succeeds. */
+  prsRefreshError: string | null;
   globalFilters: GlobalFilters;
   projectDefaultBranches: Record<string, string>;
   projectSlotTracking: Record<
@@ -197,6 +199,7 @@ const state: AppState = {
   violations: [],
   prsUpdatedAt: 0,
   prsRefreshing: false,
+  prsRefreshError: null,
   globalFilters: loadGlobalFilters(),
   projectDefaultBranches: {},
   projectSlotTracking: {},
@@ -219,6 +222,7 @@ function clearWorkspaceState(): void {
     violations: [],
     prsUpdatedAt: 0,
     prsRefreshing: false,
+    prsRefreshError: null,
     globalFilters: { projects: [], machines: [] },
     projectDefaultBranches: {},
     projectSlotTracking: {},
@@ -466,6 +470,7 @@ export function updatePRs(
   const fetched = meta.fetchedAt ? Date.parse(meta.fetchedAt) : NaN;
   state.prsUpdatedAt = Number.isFinite(fetched) ? fetched : Date.now();
   state.prsRefreshing = meta.refreshing ?? false;
+  state.prsRefreshError = null;
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
   notify();
 }
@@ -479,7 +484,7 @@ export function updatePR(pr: PRStatus): void {
   // Replace the array ref so `this._prs = s.prs` in subscribers triggers
   // Lit's reactive comparison; in-place mutation would be missed.
   state.prs = idx >= 0 ? state.prs.map((p, i) => (i === idx ? pr : p)) : [...state.prs, pr];
-  state.prsUpdatedAt = Date.now();
+  // One patched row does not make the whole list freshly fetched; prsUpdatedAt stays.
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
   notify();
 }
@@ -489,13 +494,18 @@ export function markPRsRefreshed(fetchedAt: string | undefined): void {
   const fetched = fetchedAt ? Date.parse(fetchedAt) : NaN;
   if (Number.isFinite(fetched) && fetched > state.prsUpdatedAt) state.prsUpdatedAt = fetched;
   state.prsRefreshing = false;
+  state.prsRefreshError = null;
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: false };
   notify();
 }
 
-/** A PR refresh failed (ours or the gateway's background one); keep the list, flag it. */
-export function markPRsRefreshFailed(): void {
+/**
+ * A PR refresh failed; keep the list, flag it. `gatewayError` carries the
+ * gateway's own background-refresh message, absent when our request failed.
+ */
+export function markPRsRefreshFailed(gatewayError?: string): void {
   state.prsRefreshing = false;
+  state.prsRefreshError = gatewayError ?? null;
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: true };
   notify();
 }
@@ -794,7 +804,7 @@ export function initState(): void {
   // replaces ours; an unchanged one only clears the refreshing flag.
   gateway.subscribe<PRListUpdatedPayload>(Events.PR_LIST_UPDATED, (p) => {
     deferEvent('prs', () => {
-      if (p.error) markPRsRefreshFailed();
+      if (p.error) markPRsRefreshFailed(p.error);
       else if (p.prs) updatePRs(p.prs, { fetchedAt: p.fetchedAt });
       else markPRsRefreshed(p.fetchedAt);
     });

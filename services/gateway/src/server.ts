@@ -811,9 +811,16 @@ export function broadcast(frame: EventFrame, ownerId?: string): void {
   }
 }
 
-/** True while at least one WebSocket client is open; background pollers gate on it. */
-export function hasConnectedClients(): boolean {
-  for (const ws of clients.keys()) if (ws.readyState === WebSocket.OPEN) return true;
+/**
+ * True while an authenticated dashboard (Command Center or Companion) is
+ * connected. Node agents and sockets that have not authenticated yet do not
+ * count: they never render PRs, so background PR polling gates on this.
+ */
+export function hasConnectedViewers(): boolean {
+  for (const [ws, state] of clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    if (state.clientKind === 'ui' || state.clientKind === 'companion') return true;
+  }
   return false;
 }
 

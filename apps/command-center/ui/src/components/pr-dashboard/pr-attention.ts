@@ -57,14 +57,6 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         : 'At least one watched check failed.',
       tone: 'fail',
     });
-  else if (pr.allFailedNames?.length)
-    // Not a watched check, so it does not drive the recommendation; still worth a glance.
-    reasons.push({
-      kind: 'ci-failed',
-      label: `Unwatched check failed: ${joinNames(pr.allFailedNames)}`,
-      detail: `Failing checks outside the watched set: ${pr.allFailedNames.join(', ')}.`,
-      tone: 'warn',
-    });
   const actionable = pr.actionableBotComments.length;
   if (actionable > 0)
     reasons.push({
@@ -83,7 +75,17 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         'A human reviewer asked for changes on GitHub. Address the feedback, then re-request review.',
       tone: 'fail',
     });
-  if (reasons.length) return reasons;
+  if (!pr.anyFailed && pr.allFailedNames?.length)
+    // Not a watched check, so it does not drive the recommendation: listed
+    // after the blocking reasons so the first chip still explains the column.
+    reasons.push({
+      kind: 'ci-failed',
+      label: `Unwatched check failed: ${joinNames(pr.allFailedNames)}`,
+      detail: `Failing checks outside the watched set: ${pr.allFailedNames.join(', ')}.`,
+      tone: 'warn',
+    });
+  if (reasons.some((reason) => reason.tone === 'fail' || reason.kind === 'bot-comments'))
+    return reasons;
   if (pr.reviewDecision === 'REVIEW_REQUIRED')
     reasons.push({
       kind: 'review-required',
@@ -91,13 +93,17 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       detail: 'GitHub still requires reviews before this PR can merge.',
       tone: 'warn',
     });
+  // Count and names come from the same set: watched checks when any are
+  // running, otherwise every GitHub check.
+  const watchedPending = pr.checks.filter((c) => c.status === 'pending').map((c) => c.name);
   const pendingCount = pr.checkSummary.pending || pr.allCheckSummary?.pending || 0;
+  const pendingNames = pr.checkSummary.pending ? watchedPending : (pr.allPendingNames ?? []);
   if (pendingCount > 0)
     reasons.push({
       kind: 'ci-pending',
       label: `${pendingCount} check${pendingCount === 1 ? '' : 's'} running`,
-      detail: pr.allPendingNames?.length
-        ? `Still running: ${pr.allPendingNames.join(', ')}.`
+      detail: pendingNames.length
+        ? `Still running: ${pendingNames.join(', ')}.`
         : 'CI has not finished yet.',
       tone: 'muted',
     });

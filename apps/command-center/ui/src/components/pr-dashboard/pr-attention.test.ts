@@ -77,6 +77,32 @@ test('an unwatched failing check is reported as a warning, with long names clipp
   );
 });
 
+test('an unwatched failure never outranks the blocker that put the PR in Needs Attention', () => {
+  const reasons = prAttentionReasons(
+    status({ allFailedNames: ['docs-build'], reviewDecision: 'CHANGES_REQUESTED' }),
+  );
+  assert.deepEqual(
+    reasons.map((r) => r.kind),
+    ['changes-requested', 'ci-failed'],
+  );
+  assert.equal(reasons[1].tone, 'warn');
+});
+
+test('running-check names come from the same set as the count', () => {
+  const reasons = prAttentionReasons(
+    status({
+      checks: [
+        { name: 'unit', status: 'pending', watchName: 'unit' },
+        { name: 'lint', status: 'pass', watchName: 'lint' },
+      ],
+      checkSummary: { passed: 1, failed: 0, pending: 1, skipped: 0, total: 2 },
+      allPendingNames: ['unit', 'docs', 'e2e'],
+    }),
+  );
+  assert.equal(reasons[0].label, '1 check running');
+  assert.equal(reasons[0].detail, 'Still running: unit.');
+});
+
 test('non-blocking states report review wait, then pending checks', () => {
   const waiting = prAttentionReasons(
     status({

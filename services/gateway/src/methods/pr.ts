@@ -168,16 +168,27 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
  * copy is older than PR_LIST_STALE_MS. Project scoping filters the warm list so
  * every caller shares one fetch.
  */
-export async function prList(params?: PRListParams): Promise<PRListResult> {
-  const { truncated, ...served } = await servePRList((force) => fetchPRList({ force }), {
+export async function prList(
+  params?: PRListParams,
+  fetchList: (opts: {
+    force?: boolean;
+    project?: string;
+  }) => Promise<PRListFetchResult> = fetchPRList,
+): Promise<PRListResult> {
+  const { truncated, ...served } = await servePRList((force) => fetchList({ force }), {
     force: params?.force,
   });
   if (!params?.project) return served;
   if (truncated) {
     // The shared copy hit MAX_PR_DASHBOARD_CANDIDATES before it could reach
     // every run of this project, so filtering it could hide this project's
-    // PRs. Discover per project instead (uncached, as before the warm list).
-    const scoped = await fetchPRList({ project: params.project, force: params.force });
+    // PRs. Discover per project instead: uncached (bounded by the 60s raw
+    // cache), as every project-scoped call was before the warm list existed.
+    const scoped = await fetchList({ project: params.project, force: params.force });
+    if (scoped.truncated)
+      console.warn(
+        `[pr.list] project ${params.project} alone exceeds ${MAX_PR_DASHBOARD_CANDIDATES} candidates; list is incomplete`,
+      );
     return {
       prs: scoped.prs.filter((p) => p.project === params.project),
       fetchedAt: new Date().toISOString(),
@@ -269,12 +280,8 @@ export async function fetchPRList(
   //    Skip terminal runs older than PR_DASHBOARD_TERMINAL_TTL_MS — otherwise ancient/closed
   //    PRs pile up and blow the UI 15s timeout via sequential GitHub fetches in step 3.
   const now = Date.now();
-  let truncated = false;
   for (const run of runByPR.values()) {
-    if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) {
-      truncated = true;
-      break;
-    }
+    if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
     if (opts.project && run.project !== opts.project) continue;
     if (run.prNumber == null) continue;
     if (prInfo.has(run.prNumber)) continue;
@@ -292,6 +299,8 @@ export async function fetchPRList(
     });
   }
 
+  // Slots alone can fill the cap too, so decide after both discovery passes.
+  const truncated = prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES;
   if (prInfo.size === 0) return { prs: [], truncated, failed: [] };
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request

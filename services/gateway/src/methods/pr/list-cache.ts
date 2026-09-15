@@ -8,8 +8,7 @@
 // PR_LIST_STALE_MS while a client is connected, and broadcasts
 // `pr.list.updated` whenever a refresh changes the list.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 import {
   Events,
@@ -18,7 +17,7 @@ import {
   type PRStatus,
 } from '@farmslot/protocol';
 
-import { farmslotRoot } from '../../core/config.js';
+import { farmCacheFile } from '../../core/farm-cache.js';
 
 export interface PRListSnapshot {
   fetchedAt: string;
@@ -34,8 +33,9 @@ type PRListFetcher = (
 export type ServedPRList = PRListResult & { truncated: boolean };
 type Broadcast = (event: string, payload: unknown) => void;
 
-const CACHE_DIR_NAME = '.farm-cache';
 const CACHE_FILE_NAME = 'pr-list.json';
+/** Bump when PRStatus fields the UI dereferences change shape; older files are ignored. */
+const PR_LIST_SNAPSHOT_VERSION = 1;
 /** A served list older than this triggers a background refresh. */
 export const PR_LIST_STALE_MS = 60_000;
 
@@ -46,21 +46,40 @@ let queuedForced: Promise<PRListSnapshot> | null = null;
 let broadcastFn: Broadcast = () => {};
 
 function cacheFile(): string {
-  const base =
-    process.env.FARMSLOT_DIR && process.env.FARMSLOT_DIR.length > 0
-      ? process.env.FARMSLOT_DIR
-      : farmslotRoot;
-  const dir = path.join(base, CACHE_DIR_NAME);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return path.join(dir, CACHE_FILE_NAME);
+  return farmCacheFile(CACHE_FILE_NAME);
 }
 
-function isSnapshot(value: unknown): value is PRListSnapshot {
+interface StoredPRList extends PRListSnapshot {
+  version: number;
+}
+
+/** The fields clients dereference without guards; anything else is tolerated. */
+function isPRStatusLike(value: unknown): value is PRStatus {
+  const p = value as PRStatus;
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as PRListSnapshot).fetchedAt === 'string' &&
-    Array.isArray((value as PRListSnapshot).prs)
+    typeof p === 'object' &&
+    p !== null &&
+    typeof p.repo === 'string' &&
+    typeof p.pr === 'number' &&
+    typeof p.prState === 'string' &&
+    Array.isArray(p.checks) &&
+    Array.isArray(p.failedNames) &&
+    Array.isArray(p.botComments) &&
+    Array.isArray(p.actionableBotComments) &&
+    typeof p.checkSummary === 'object' &&
+    p.checkSummary !== null
+  );
+}
+
+function isStoredPRList(value: unknown): value is StoredPRList {
+  const v = value as StoredPRList;
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    v.version === PR_LIST_SNAPSHOT_VERSION &&
+    typeof v.fetchedAt === 'string' &&
+    Array.isArray(v.prs) &&
+    v.prs.every(isPRStatusLike)
   );
 }
 
@@ -73,12 +92,14 @@ export function loadPRListCache(): void {
   }
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf-8'));
-    snapshot = isSnapshot(parsed) ? parsed : null;
+    snapshot = isStoredPRList(parsed)
+      ? { fetchedAt: parsed.fetchedAt, prs: parsed.prs, truncated: parsed.truncated }
+      : null;
     if (snapshot)
       console.log(
         `[pr.list] warm list: ${snapshot.prs.length} PR(s) fetched ${snapshot.fetchedAt} (${file})`,
       );
-    else console.warn(`[pr.list] ignoring malformed warm list at ${file}`);
+    else console.warn(`[pr.list] ignoring warm list at ${file}: unknown version or shape`);
   } catch (err) {
     // A corrupt snapshot only costs one cold fetch; the next refresh rewrites it.
     console.warn(`[pr.list] failed to read warm list ${file}: ${(err as Error).message}`);
@@ -90,13 +111,19 @@ function persist(next: PRListSnapshot): void {
   const file = cacheFile();
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(next), 'utf-8');
+    const stored: StoredPRList = { version: PR_LIST_SNAPSHOT_VERSION, ...next };
+    writeFileSync(tmp, JSON.stringify(stored), 'utf-8');
     renameSync(tmp, file);
   } catch (err) {
     // Disk persistence is an optimisation for the next gateway start; the
     // in-memory copy already serves this process.
     console.error(`[pr.list] persist failed: ${(err as Error).message}`);
   }
+}
+
+/** Where refresh completions and failures are announced (`pr.list.updated`). */
+export function setPRListBroadcast(broadcast: Broadcast): void {
+  broadcastFn = broadcast;
 }
 
 export function resetPRListCacheForTests(): void {
@@ -128,7 +155,17 @@ function withLastKnownState(prs: PRStatus[], failed: string[]): PRStatus[] {
 }
 
 function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
-  const promise = (async () => {
+  // Register before invoking so a fetcher that throws synchronously cannot
+  // clear `inflight` first and leave a stale entry behind.
+  let settle!: { resolve: (value: PRListSnapshot) => void; reject: (reason: unknown) => void };
+  const entry = {
+    promise: new Promise<PRListSnapshot>((resolve, reject) => {
+      settle = { resolve, reject };
+    }),
+    forced: force,
+  };
+  inflight = entry;
+  (async () => {
     try {
       const fetched = await fetch(force);
       const prs = withLastKnownState(fetched.prs, fetched.failed ?? []);
@@ -148,11 +185,10 @@ function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapsho
       broadcastFn(Events.PR_LIST_UPDATED, payload);
       return next;
     } finally {
-      inflight = null;
+      if (inflight === entry) inflight = null;
     }
-  })();
-  inflight = { promise, forced: force };
-  return promise;
+  })().then(settle.resolve, settle.reject);
+  return entry.promise;
 }
 
 /**
@@ -233,7 +269,7 @@ export function startPRListRefresher(
     initialDelayMs?: number;
   },
 ): () => void {
-  broadcastFn = opts.broadcast;
+  setPRListBroadcast(opts.broadcast);
   if (!loaded) loadPRListCache();
   const tick = () => {
     if (!opts.hasClients() || inflight) return;

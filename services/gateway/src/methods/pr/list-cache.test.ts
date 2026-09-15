@@ -12,11 +12,24 @@ import {
   PR_LIST_STALE_MS,
   resetPRListCacheForTests,
   servePRList,
+  setPRListBroadcast,
   startPRListRefresher,
 } from './list-cache.js';
 
 function pr(n: number, extra: Partial<PRStatus> = {}): PRStatus {
-  return { pr: n, repo: 'org/app', title: `PR ${n}`, project: 'app', ...extra } as PRStatus;
+  return {
+    pr: n,
+    repo: 'org/app',
+    title: `PR ${n}`,
+    project: 'app',
+    prState: 'OPEN',
+    checks: [],
+    checkSummary: { passed: 0, failed: 0, pending: 0, skipped: 0, total: 0 },
+    failedNames: [],
+    botComments: [],
+    actionableBotComments: [],
+    ...extra,
+  } as PRStatus;
 }
 
 function list(prs: PRStatus[], truncated = false, failed: string[] = []) {
@@ -143,13 +156,22 @@ test('the snapshot on disk is served on the next start; malformed files are igno
     const cacheDir = path.join(dir, '.farm-cache');
     mkdirSync(cacheDir, { recursive: true });
     const file = path.join(cacheDir, 'pr-list.json');
-    writeFileSync(file, JSON.stringify({ fetchedAt: '2026-09-15T00:00:00.000Z', prs: [pr(4)] }));
+    writeFileSync(
+      file,
+      JSON.stringify({ version: 1, fetchedAt: '2026-09-15T00:00:00.000Z', prs: [pr(4)] }),
+    );
     loadPRListCache();
     assert.equal(peekPRList()?.prs[0].pr, 4);
-    resetPRListCacheForTests();
-    writeFileSync(file, '{"prs": "nope"}');
-    loadPRListCache();
-    assert.equal(peekPRList(), null);
+    for (const stale of [
+      '{"prs": "nope"}',
+      JSON.stringify({ fetchedAt: '2026-09-15T00:00:00.000Z', prs: [pr(4)] }),
+      JSON.stringify({ version: 1, fetchedAt: 'x', prs: [{ pr: 4, repo: 'org/app' }] }),
+    ]) {
+      resetPRListCacheForTests();
+      writeFileSync(file, stale);
+      loadPRListCache();
+      assert.equal(peekPRList(), null, `rejected: ${stale.slice(0, 40)}`);
+    }
   } finally {
     cleanup();
   }
@@ -163,7 +185,7 @@ test('the refresher only fetches while a client is connected and broadcasts chan
     const events: Array<{ event: string; count: number | undefined }> = [];
     const fetch = async () => {
       calls += 1;
-      return list(calls === 3 ? [pr(1), pr(2)] : [pr(1)]);
+      return list([pr(1)]);
     };
     const stop = startPRListRefresher(fetch, {
       broadcast: (event, payload) =>
@@ -190,12 +212,7 @@ test('an unchanged refresh still announces completion, without shipping the list
   const { cleanup } = isolate();
   try {
     const events: Array<{ fetchedAt: string; prs?: PRStatus[] }> = [];
-    startPRListRefresher(async () => list([pr(1)]), {
-      broadcast: (_event, payload) => events.push(payload as (typeof events)[number]),
-      hasClients: () => false,
-      initialDelayMs: 100_000,
-      intervalMs: 100_000,
-    })();
+    setPRListBroadcast((_event, payload) => events.push(payload as (typeof events)[number]));
     const first = await servePRList(async () => list([pr(1)]));
     assert.equal(events.length, 1, 'cold fetch announces the new list');
     assert.equal(events[0].prs?.length, 1);
@@ -253,12 +270,7 @@ test('a failed background refresh is announced with the retained fetch time', as
   const { cleanup } = isolate();
   try {
     const events: Array<{ fetchedAt?: string; error?: string; prs?: PRStatus[] }> = [];
-    startPRListRefresher(async () => list([pr(1)]), {
-      broadcast: (_event, payload) => events.push(payload as (typeof events)[number]),
-      hasClients: () => false,
-      initialDelayMs: 100_000,
-      intervalMs: 100_000,
-    })();
+    setPRListBroadcast((_event, payload) => events.push(payload as (typeof events)[number]));
     const first = await servePRList(async () => list([pr(1)]));
     await servePRList(
       async () => {
