@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, isAbsolute, join, relative, sep } from 'node:path';
 
 import type { NativeSessionCreateParams, NativeSessionInfo, SafetyTier } from '@farmslot/protocol';
 
@@ -13,6 +13,40 @@ export interface NativeWorkerLaunch {
   environment: { set: Record<string, string>; unset: string[] };
   effort?: string;
   safetyTier: SafetyTier;
+  filesystemPolicy?: NativeWorkerFilesystemPolicy;
+}
+
+/** Source stays readable; tools may write only the separate task/output roots. */
+export interface NativeWorkerFilesystemPolicy {
+  readOnlyRoots: string[];
+  writableRoots: string[];
+}
+
+export function validateNativeWorkerFilesystemPolicy(value: unknown): NativeWorkerFilesystemPolicy {
+  const policy = object(value);
+  if (Object.keys(policy).some((key) => !['readOnlyRoots', 'writableRoots'].includes(key)))
+    throw new Error('Unsupported native worker filesystem policy field');
+  for (const name of ['readOnlyRoots', 'writableRoots'] as const) {
+    const roots = policy[name];
+    if (
+      !Array.isArray(roots) ||
+      !roots.length ||
+      roots.some((root) => typeof root !== 'string' || !isAbsolute(root) || root.includes('\0'))
+    )
+      throw new Error('Native worker filesystem roots must be nonempty absolute paths');
+  }
+  const result = policy as unknown as NativeWorkerFilesystemPolicy;
+  const within = (root: string, file: string) => {
+    const child = relative(root, file);
+    return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+  };
+  if (
+    result.readOnlyRoots.some((source) =>
+      result.writableRoots.some((output) => within(source, output) || within(output, source)),
+    )
+  )
+    throw new Error('Native worker source and writable roots must not overlap');
+  return result;
 }
 
 export const NATIVE_WORKER_STATE = 'native.worker.state';
@@ -80,9 +114,15 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
   if (
     Object.keys(launch).some(
       (key) =>
-        !['leaseId', 'executable', 'accountLabel', 'environment', 'effort', 'safetyTier'].includes(
-          key,
-        ),
+        ![
+          'leaseId',
+          'executable',
+          'accountLabel',
+          'environment',
+          'effort',
+          'safetyTier',
+          'filesystemPolicy',
+        ].includes(key),
     )
   )
     throw new Error('Unsupported native worker launch field');
@@ -118,6 +158,11 @@ export function decodeNativeWorkerLaunch(value: unknown): NativeWorkerLaunch {
     ...(typeof launch.accountLabel === 'string' ? { accountLabel: launch.accountLabel } : {}),
     ...(typeof launch.effort === 'string' ? { effort: launch.effort } : {}),
     safetyTier: launch.safetyTier as SafetyTier,
+    ...(launch.filesystemPolicy === undefined
+      ? {}
+      : {
+          filesystemPolicy: validateNativeWorkerFilesystemPolicy(launch.filesystemPolicy),
+        }),
     environment: { set: set as Record<string, string>, unset },
   };
 }
@@ -131,6 +176,7 @@ export function nativeWorkerLaunchDigest(launch: NativeWorkerLaunch): string {
         accountLabel: launch.accountLabel,
         safetyTier: launch.safetyTier,
         effort: launch.effort,
+        ...(launch.filesystemPolicy ? { filesystemPolicy: launch.filesystemPolicy } : {}),
         environment: {
           set: Object.entries(launch.environment.set).sort(([a], [b]) => a.localeCompare(b)),
           unset: [...new Set(launch.environment.unset)].sort(),

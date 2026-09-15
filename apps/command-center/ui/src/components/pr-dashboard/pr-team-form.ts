@@ -1,6 +1,7 @@
 import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import type { PoolConfig } from '@farmslot/protocol';
 import type { PRRulePredicate } from '@farmslot/protocol';
 import {
   assertPRTeamConfig,
@@ -58,6 +59,7 @@ export class PRTeamForm extends LitElement {
   @state() private sourceMode: 'farm' | 'project' = 'farm';
   @state() private selectedFarm = '';
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) pools: PoolConfig[] = [];
   @property({ type: Boolean }) disabled = false;
   @state() private draft = newTeam();
   @state() private error = '';
@@ -527,10 +529,12 @@ export class PRTeamForm extends LitElement {
         >
           <summary>Review settings</summary>
           <p class="muted">
-            Choose slots and models before running reviews. These settings are optional for
+            Configure execution and models before starting reviews. These settings are optional for
             notification-only rules.
           </p>
           <pr-review-policy-editor
+            .pools=${this.pools}
+            .farms=${this.farms}
             .execution=${draft.execution}
             .review=${draft.review}
             .slots=${draft.repositories.some((policy) => policy.project)
@@ -553,6 +557,8 @@ export class PRTeamForm extends LitElement {
         >
           <summary>Farm mappings and review overrides · ${draft.repositories.length}</summary>
           <pr-repository-policies
+            .pools=${this.pools}
+            .farms=${this.farms}
             .value=${draft.repositories}
             .projects=${this.projects}
             .slots=${this.slots}

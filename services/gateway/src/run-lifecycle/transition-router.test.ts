@@ -150,6 +150,7 @@ test('operator cancel settles the backlog and ticks the work graph', async () =>
     [
       'engine-cancel:ok',
       'warm-sessions:ok',
+      'review-workspace:skipped',
       'backlog-settle:ok',
       'work-graph-tick:ok',
       'runtime-capabilities:ok',
@@ -158,6 +159,58 @@ test('operator cancel settles the backlog and ticks the work graph', async () =>
   );
   assert.ok(h.calls.includes('settleBacklog'), 'backlog must be settled by the transition itself');
   assert.ok(h.calls.includes('tickWorkGraph'), 'work graph must be told, not left to poll');
+});
+
+test('workspace cancellation retains its binding and cleans it without releasing a slot', async () => {
+  const workspace = {
+    workspaceId: 'owned-workspace',
+    machine: 'host',
+    executionNodeId: 'local',
+    checkoutPath: '/owned/source',
+    taskPath: '/owned/task',
+    artifactPath: '/owned/task/artifacts',
+  };
+  let cleaned: Run | undefined;
+  const h = harness(run({ flowType: 'review-pr', slotId: null, reviewWorkspace: workspace }), {
+    releaseWorkspace: async (current) => {
+      cleaned = current;
+    },
+  });
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  assert.equal(result.run.status, 'cancelled');
+  assert.deepEqual(cleaned?.reviewWorkspace, workspace);
+  assert.equal(cleaned?.status, 'cancelled');
+  assert.equal(result.effects.find((effect) => effect.name === 'review-workspace')?.status, 'ok');
+  assert.equal(h.calls.includes('releaseSlot'), false);
+  assert.equal(h.calls.includes('releaseCapabilities'), false);
+});
+
+test('uncertain workspace cleanup remains an explicit failed effect after cancellation', async () => {
+  const h = harness(
+    run({
+      slotId: null,
+      reviewWorkspace: {
+        workspaceId: 'owned-workspace',
+        machine: 'host',
+        executionNodeId: 'local',
+        checkoutPath: '/owned/source',
+        taskPath: '/owned/task',
+        artifactPath: '/owned/task/artifacts',
+      },
+    }),
+    {
+      releaseWorkspace: async () => {
+        throw new Error('allocation still running');
+      },
+    },
+  );
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  assert.equal(result.run.status, 'cancelled');
+  assert.equal(
+    result.effects.find((effect) => effect.name === 'review-workspace')?.status,
+    'failed',
+  );
+  assert(result.run.reviewWorkspace);
 });
 
 test('backlog settles before the scheduler tick reads it', async () => {

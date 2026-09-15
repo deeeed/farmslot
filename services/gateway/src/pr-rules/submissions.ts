@@ -2,15 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  DEFAULT_PR_REVIEW_OPTIONS,
   monitoredPRKey,
   type PRReviewContribution,
   type PRReviewRequest,
   type PRReviewSubmission,
   type PRRulePreviewItem,
+  samePRReviewOptions,
 } from '@farmslot/protocol';
 
-import { reconcileReviewIntent, reviewIntentId, updateReviewDisplay } from './intents.js';
+import {
+  reconcileReviewIntent,
+  reviewIntentId,
+  sameReviewPurpose,
+  updateReviewDisplay,
+} from './intents.js';
 import type { PRRuleStoreData } from './store.js';
 
 export function createReviewSubmission(
@@ -97,12 +102,13 @@ export function applyReviewSubmission(
       submission.error =
         item.match.reasons.join('; ') || 'PR does not match the team review policy';
     else {
-      const rounds = data.intents.filter(
+      const allRounds = data.intents.filter(
         (entry) =>
           monitoredPRKey(entry.pr) === monitoredPRKey(item.subject.pr) &&
           entry.headSha === item.subject.headSha &&
           entry.reviewProfile === item.reviewProfile,
       );
+      const rounds = allRounds.filter((entry) => sameReviewPurpose(entry, item));
       // A receipt that predates execution is still concurrent intake when its
       // provider read finishes late. Only identical authorized requirements can
       // join that running assignment; never change its execution configuration.
@@ -118,10 +124,7 @@ export function applyReviewSubmission(
               (source) =>
                 source.project === item.project &&
                 isDeepStrictEqual(source.execution, item.execution) &&
-                isDeepStrictEqual(
-                  source.review ?? DEFAULT_PR_REVIEW_OPTIONS,
-                  item.review ?? DEFAULT_PR_REVIEW_OPTIONS,
-                ),
+                samePRReviewOptions(source.review, item.review),
             ),
       );
       let intent =
@@ -130,7 +133,7 @@ export function applyReviewSubmission(
           (entry) => !entry.runId && !['running', 'completed', 'failed'].includes(entry.status),
         );
       if (!intent) {
-        const round = Math.max(0, ...rounds.map((entry) => entry.round ?? 1)) + 1;
+        const round = Math.max(0, ...allRounds.map((entry) => entry.round ?? 1)) + 1;
         intent = {
           id: reviewIntentId(item, round),
           round,

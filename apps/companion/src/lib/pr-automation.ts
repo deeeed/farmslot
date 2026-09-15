@@ -1,10 +1,11 @@
 import {
-  assertPRExecutionProfile,
   assertPRMonitorConfig,
   assertPRReviewRequest,
+  assertPRSlotExecutionProfile,
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CODEX_MODEL,
   DEFAULT_PR_REVIEW_OPTIONS,
+  isPRWorkspaceExecutionProfile,
   monitoredPRUrl,
   parseGitHubPullUrl,
   type PRExecutionProfile,
@@ -13,10 +14,11 @@ import {
   type PRProjectMonitorPolicy,
   type PRReviewOptions,
   type PRReviewRequest,
+  type PRSlotExecutionProfile,
   type PRTeamProfile,
 } from '@farmslot/protocol';
 
-export function newPRExecution(): PRExecutionProfile {
+export function newPRExecution(): PRSlotExecutionProfile {
   return {
     slotPolicy: { kind: 'pool', allowedSlots: [] },
     models: [{ runner: 'codex', model: DEFAULT_CODEX_MODEL, effort: DEFAULT_CODEX_EFFORT }],
@@ -129,6 +131,12 @@ export function buildPRMonitorConfig(
   original?: PRMonitor,
   publication = false,
 ): PRMonitorConfig {
+  const repairExecution = normalizePRExecution(draft.execution);
+  let policy: PRMonitorConfig['policy'] = { mode: 'notify-only' };
+  if (draft.automatic) {
+    assertPRSlotExecutionProfile(repairExecution);
+    policy = { mode: 'automatic-repair', execution: repairExecution };
+  }
   const parsed = parseGitHubPullUrl(draft.url);
   if (!publication && !original && !parsed) throw new Error('Enter a GitHub pull request URL');
   if (publication && !draft.project.trim()) throw new Error('Choose a project');
@@ -141,9 +149,7 @@ export function buildPRMonitorConfig(
     account: original?.config.account ?? { host: draft.host.trim(), login: draft.login.trim() },
     ...(original?.config.teamId ? { teamId: original.config.teamId } : {}),
     ...(draft.project.trim() ? { project: draft.project.trim() } : {}),
-    policy: draft.automatic
-      ? { mode: 'automatic-repair', execution: normalizePRExecution(draft.execution) }
-      : { mode: 'notify-only' },
+    policy,
     pollIntervalMs: Number(draft.intervalSeconds) * 1000,
     watchedChecks: draft.checks
       .split('\n')
@@ -158,10 +164,12 @@ export function buildPRMonitorConfig(
 export function validatePRRepair(project: string, execution: PRExecutionProfile) {
   if (!project.trim()) throw new Error('Choose a project for repair');
   const selected = normalizePRExecution(execution);
-  assertPRExecutionProfile(selected);
+  assertPRSlotExecutionProfile(selected);
   return { project: project.trim(), execution: selected };
 }
 export function togglePRSlot(execution: PRExecutionProfile, slotId: string): PRExecutionProfile {
+  if (isPRWorkspaceExecutionProfile(execution))
+    throw new Error('Workspace review cannot select a device slot');
   const previous =
     execution.slotPolicy.kind === 'exact'
       ? [execution.slotPolicy.slotId]
@@ -179,6 +187,13 @@ export function togglePRSlot(execution: PRExecutionProfile, slotId: string): PRE
 }
 export function prExecutionText(profile?: PRExecutionProfile): string {
   if (!profile) return 'No execution profile configured';
+  if (isPRWorkspaceExecutionProfile(profile)) {
+    const machines =
+      profile.workspacePolicy.kind === 'exact'
+        ? profile.workspacePolicy.machine
+        : profile.workspacePolicy.allowedMachines.join(', ');
+    return `Review machines: ${machines} · ${profile.models.map((model) => `${model.runner}/${model.model}`).join(' or ')}`;
+  }
   return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model}${model.effort ? `/${model.effort}` : ''}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;
 }
 export function prReviewText(options: PRReviewOptions = DEFAULT_PR_REVIEW_OPTIONS): string {

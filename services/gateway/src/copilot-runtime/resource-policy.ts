@@ -66,7 +66,11 @@ export function buildCopilotWorkloadSnapshot(input: {
 
   for (const run of input.runs) {
     if (!ACTIVE_RUN_STATES.has(run.status)) continue;
-    const host = (run.slotId && slotHost.get(run.slotId)) || localHost;
+    const host =
+      (run.slotId && slotHost.get(run.slotId)) ||
+      run.reviewWorkspace?.machine ||
+      run.reviewWorkspaceTarget?.machine ||
+      localHost;
     const contexts = (run.agentContexts ?? []).filter((context) =>
       ACTIVE_AGENT_STATES.has(context.status),
     );
@@ -76,7 +80,7 @@ export function buildCopilotWorkloadSnapshot(input: {
       for (const context of contexts) {
         increment(
           byHost,
-          slotHost.get(context.slotId) ?? host,
+          (context.slotId && slotHost.get(context.slotId)) || host,
           roleBucket(context.role, run.flowType),
         );
       }

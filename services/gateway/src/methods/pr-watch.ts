@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 
 import {
-  assertPRExecutionProfile,
   assertPRMonitorConfig,
+  assertPRSlotExecutionProfile,
   Events,
   Methods,
   type MonitoredPRIdentity,
@@ -216,7 +216,7 @@ export async function routePRWatchMethod(
       (current.config.policy.mode === 'automatic-repair'
         ? current.config.policy.execution
         : undefined);
-    assertPRExecutionProfile(execution);
+    assertPRSlotExecutionProfile(execution);
     monitor = await service.requestRepair(id, ownerId, p.revision, {
       project: string(p.project ?? current.config.project, 'project'),
       execution,

@@ -2,6 +2,7 @@ import type { ReactiveController, ReactiveControllerHost } from 'lit';
 
 import {
   type ConfigGitHubAccountsResult,
+  type ConfigPoolsResult,
   type ConfigProjectsResult,
   Events,
   Methods,
@@ -17,6 +18,7 @@ export class PRAutomationController implements ReactiveController {
   monitors: PRWatchListResult = { monitors: [] };
   reviews: PRRulesListResult = { teams: [], rules: [], intents: [] };
   projectConfigs: ConfigProjectsResult['projects'] = [];
+  pools: ConfigPoolsResult['pools'] = [];
   githubAccounts: ConfigGitHubAccountsResult['accounts'] = [];
   accountsError = '';
   private accountsLoaded = false;
@@ -60,6 +62,7 @@ export class PRAutomationController implements ReactiveController {
       subscribe(() => this.host.requestUpdate()),
       gateway.onConnectionChange(() => {
         this.projectConfigs = [];
+        this.pools = [];
         this.githubAccounts = [];
         this.accountsError = '';
         this.accountsLoaded = false;
@@ -94,11 +97,12 @@ export class PRAutomationController implements ReactiveController {
       const epoch = gateway.connectionEpoch;
       if (!this.accountsLoaded) await this.refreshAccounts();
       if (!this.active || epoch !== gateway.connectionEpoch) continue;
-      const [monitors, reviews, push, projects] = await Promise.allSettled([
+      const [monitors, reviews, push, projects, pools] = await Promise.allSettled([
         gateway.request<PRWatchListResult>(Methods.PR_WATCH_LIST, {}),
         gateway.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
         gateway.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
         gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
+        gateway.request<ConfigPoolsResult>(Methods.CONFIG_POOLS, {}),
       ]);
       if (!this.active || epoch !== gateway.connectionEpoch) continue;
       const errors: string[] = [];
@@ -110,6 +114,8 @@ export class PRAutomationController implements ReactiveController {
       else errors.push(`Notifications: ${String(push.reason)}`);
       if (projects.status === 'fulfilled') this.projectConfigs = projects.value.projects;
       else errors.push(`Farm projects: ${String(projects.reason)}`);
+      if (pools.status === 'fulfilled') this.pools = pools.value.pools;
+      else errors.push(`Review machines: ${String(pools.reason)}`);
       this.error = errors.join('; ');
       this.loading = false;
       this.host.requestUpdate();

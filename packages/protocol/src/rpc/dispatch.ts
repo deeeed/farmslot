@@ -148,6 +148,8 @@ export interface DispatchCandidatesResult {
 // ─── Dispatch Queue param/result types ───
 
 export interface DispatchQueueAddParams {
+  /** Static-review machine selection, mutually exclusive with slot placement. */
+  reviewWorkspaceTarget?: import('../contracts/review-workspace.js').ReviewWorkspaceTarget;
   transport?: import('../contracts/agents.js').WorkerTransport;
   nativeProfile?: import('./native-profile.js').NativeProfileReference;
   skipPrepare?: boolean;
@@ -254,6 +256,14 @@ export interface DispatchQueueReorderResult {
 }
 
 export interface DispatchPreviewParams {
+  reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
+  runner?: string;
+  model?: string;
+  effort?: string;
+  transport?: import('../contracts/agents.js').WorkerTransport;
+  nativeProfile?: import('./native-profile.js').NativeProfileReference;
+  /** Static-review machine selection, mutually exclusive with slot placement. */
+  reviewWorkspaceTarget?: import('../contracts/review-workspace.js').ReviewWorkspaceTarget;
   slotId?: string;
   project: string;
   flowType: import('../contracts/index.js').FlowType;

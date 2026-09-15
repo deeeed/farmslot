@@ -8,6 +8,7 @@ export * from './integrations/pr-project-import.js';
 export * from './integrations/pr-review-requirements.js';
 export * from './integrations/pr-rule-config.js';
 export * from './integrations/pr-rule-predicates.js';
+export * from './integrations/pr-workflow-defaults.js';
 export * from './pairing/index.js';
 export * from './recipe/index.js';
 export * from './recipes/step-io.js';

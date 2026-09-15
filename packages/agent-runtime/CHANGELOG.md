@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run static reviewers with read-only source permissions and cancel native initialization safely.
+
 - `writeTaskDir` drops the transition `writeChecklistManifest` option; a task dir never carries a default-valued `checklist-target.json`.
 - Keep native worker state outside recyclable workspaces and support saved-conversation relocation across eligible sibling worktrees. Native sandboxed Git operations can write their repository metadata.
 

@@ -64,4 +64,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [055](055-persistent-pr-monitoring-and-review-intake.md) | Persistent PR monitoring and review intake                              | Proposed |
 | [056](056-runner-session-archive.md)                     | Opaque runner session archive at recycle (ADR-047 follow-up)            | Accepted |
 | [057](057-structured-runner-transports.md)               | Structured runner transports                                            | Accepted |
-| [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Proposed |
+| [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |

@@ -1,7 +1,7 @@
 export class NativeWorkerOperationUncertainError extends Error {
   override name = 'NativeWorkerOperationUncertainError';
   constructor(
-    readonly operation: 'launch' | 'delivery' | 'handoff',
+    readonly operation: 'launch' | 'delivery' | 'handoff' | 'observation',
     message: string,
     cause: unknown,
   ) {

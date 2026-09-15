@@ -364,18 +364,22 @@ export function reviewCard(
           </p>
           <p class="muted">
             ${review.sessionIntent === 'resume' ? 'Continue saved reviewer' : 'Fresh reviewer'} ·
-            ${review.scope} · ${review.validationDepth === 'full-live' ? 'Live QA' : 'Static code'}
-            ·
+            ${review.scope} ·
+            ${review.validationDepth === 'full-live' ? 'On-device review' : 'Review'} ·
             ${review.busySession === 'fresh'
-              ? 'Fresh slot fallback allowed'
+              ? 'Fresh reviewer fallback allowed'
               : 'Wait for saved reviewer'}
           </p>
           ${execution
             ? html`<p class="muted">
-                Slots:
-                ${execution.slotPolicy.kind === 'exact'
-                  ? execution.slotPolicy.slotId
-                  : execution.slotPolicy.allowedSlots.join(', ')}<br />Models:
+                ${execution.workspacePolicy ? 'Review machines:' : 'Slots:'}
+                ${execution.workspacePolicy
+                  ? execution.workspacePolicy.kind === 'exact'
+                    ? execution.workspacePolicy.machine
+                    : execution.workspacePolicy.allowedMachines.join(', ')
+                  : execution.slotPolicy.kind === 'exact'
+                    ? execution.slotPolicy.slotId
+                    : execution.slotPolicy.allowedSlots.join(', ')}<br />Models:
                 ${execution.models
                   .map(
                     (model) =>

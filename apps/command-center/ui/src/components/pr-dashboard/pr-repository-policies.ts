@@ -1,6 +1,7 @@
 import { html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
+import type { PoolConfig, ProjectConfig } from '@farmslot/protocol';
 import type {
   PRExecutionProfile,
   PRRepositoryReviewPolicy,
@@ -21,6 +22,8 @@ export class PRRepositoryPolicies extends LitElement {
   @property({ attribute: false }) value: PRRepositoryReviewPolicy[] = [];
   @property({ attribute: false }) projects: string[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) pools: PoolConfig[] = [];
+  @property({ attribute: false }) farms: ProjectConfig[] = [];
   @property({ attribute: false }) execution?: PRExecutionProfile;
   @property({ attribute: false }) review?: PRReviewOptions;
   @property({ type: Boolean }) disabled = false;
@@ -125,6 +128,8 @@ export class PRRepositoryPolicies extends LitElement {
               last update.
             </p>
             <pr-review-policy-editor
+              .pools=${this.pools}
+              .farms=${this.farms}
               .testIdPrefix=${`pr-repository-${index}`}
               .execution=${policy.execution}
               .review=${policy.review}

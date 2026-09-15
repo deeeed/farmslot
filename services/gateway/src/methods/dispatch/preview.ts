@@ -27,6 +27,11 @@ import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../../fleet/state.js';
+import {
+  assertReviewWorkspacePlacement,
+  inspectReviewWorkspaceTarget,
+} from '../../review-workspaces/admission.js';
+import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
 import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
@@ -38,6 +43,7 @@ import {
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
+import { resolveReviewWorkspaceOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../../security/work-originator.js';
 import {
   projectUsesExecutionTemplateCatalog,
@@ -67,7 +73,7 @@ import {
   validateSlotForDispatch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
-import { normalizeTicketRef } from './ticket-ref.js';
+import { normalizeTicketRef, resolvePrRef, validateTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
@@ -947,7 +953,73 @@ export async function dispatchPreview(
     overridePrincipalId?: string;
   } = {},
 ): Promise<DispatchPreviewResult> {
-  await normalizeRunCreateMode(params, await loadProjectConfig(params.project));
+  if ('workflowExecution' in params)
+    throw new Error('Workflow execution snapshots cannot be supplied in preview parameters');
+  const projectConfig = await loadProjectConfig(params.project);
+  if (params.flowType === 'review-pr') {
+    params = { ...params, ticketOrPr: normalizeTicketRef(params.ticketOrPr) };
+    if (projectConfig?.ci.repo)
+      params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
+    validateTicketRef(params.ticketOrPr, 'review-pr');
+  }
+  const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
+    purpose: 'preview',
+    ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
+      ? { ownerId: resolveReviewWorkspaceOwner() }
+      : {}),
+  });
+  params = workflowDefaults.params;
+  if (
+    (params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live') ||
+    params.reviewWorkspaceTarget
+  ) {
+    assertReviewWorkspacePlacement(params);
+    if (!params.runner || !params.model)
+      throw new Error('Workspace Review requires an explicit runner and model');
+    const admission =
+      workflowDefaults.admission ??
+      (await inspectReviewWorkspaceTarget(
+        {
+          project: params.project,
+          machine: params.reviewWorkspaceTarget!.machine,
+          runner: params.runner,
+          model: params.model,
+          effort: params.effort,
+          transport: params.transport,
+          nativeProfile: params.nativeProfile,
+        },
+        resolveReviewWorkspaceOwner(),
+      ));
+    const projectVars = await loadProjectVars(params.project);
+    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: 'review-pr',
+      platform: admission.pool.platform,
+      runMode: params.mode ?? 'autonomous',
+      explicitDomain: params.domain,
+      explicitId: admission.project.staticReview!.templateId,
+    });
+    return {
+      preview: {
+        slotId: null,
+        project: params.project,
+        flowType: 'review-pr',
+        branch: params.targetBranch ?? null,
+        runner: params.runner,
+        model: params.model,
+        taskId: params.ticketOrPr,
+        domain: params.domain,
+        executionTemplate: selected.reference,
+        reviewWorkspace: {
+          machine: admission.pool.machine,
+          executionNodeId: admission.executionNodeId,
+          active: admission.active,
+          limit: admission.limit,
+        },
+      },
+      pressureAdmission: admission.pressure,
+    };
+  }
+  await normalizeRunCreateMode(params, projectConfig);
   const fleet = await loadFleetStatus(true);
   const projectSlots = fleet.slots.filter(
     (s) => s.project === params.project && s.lifecycle !== 'disabled',
@@ -1178,8 +1250,7 @@ export function resolveDispatchPreviewFromFleet(
               project: params.project,
               flowType: params.flowType as FlowType,
               branch: slotInfo.branch || null,
-              runner: resolvePreviewRunner(slotInfo),
-              model: resolvePreviewModel(slotInfo),
+              ...resolvePreviewExecution(slotInfo, params),
               taskId: params.ticketOrPr,
               ...(params.domain ? { domain: params.domain } : {}),
             },
@@ -1257,8 +1328,7 @@ export function resolveDispatchPreviewFromFleet(
         project: params.project,
         flowType: params.flowType as FlowType,
         branch: null,
-        runner: resolvePreviewRunner(slotInfo),
-        model: resolvePreviewModel(slotInfo),
+        ...resolvePreviewExecution(slotInfo, params),
         taskId: params.ticketOrPr,
         ...(params.domain ? { domain: params.domain } : {}),
       },
@@ -1272,6 +1342,17 @@ export function resolveDispatchPreviewFromFleet(
 function sessionPrincipalId(): string {
   const originator = currentSessionOriginator();
   return originator.kind === 'principal' ? originator.principalId : 'system';
+}
+
+/** Keep explicit launch choices visible on both affinity and scored previews. */
+export function resolvePreviewExecution(
+  slotInfo: Pick<SlotStatus, 'runner' | 'model'>,
+  params: Pick<DispatchPreviewParams, 'runner' | 'model'>,
+): { runner: string; model: string } {
+  const runner = params.runner ? normalizeRunner(params.runner) : resolvePreviewRunner(slotInfo);
+  const model =
+    params.model ?? resolvePreviewModel(params.runner ? { runner, model: null } : slotInfo);
+  return { runner, model };
 }
 
 export function resolvePreviewRunner(slotInfo: Pick<SlotStatus, 'runner'>): string {

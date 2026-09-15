@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   assertPRMonitorConfig,
   type ConfigGitHubAccountsResult,
+  isPRWorkspaceExecutionProfile,
   monitoredPRUrl,
   parseGitHubPullUrl,
   type PRExecutionProfile,
@@ -184,6 +185,8 @@ export class PRMonitorForm extends LitElement {
               .value=${this.execution}
               .disabled=${this.disabled}
               @execution-change=${(event: CustomEvent<PRExecutionProfile>) => {
+                if (isPRWorkspaceExecutionProfile(event.detail))
+                  throw new Error('Repair requires a slot execution policy');
                 this.execution = event.detail;
               }}
             ></pr-execution-picker>`

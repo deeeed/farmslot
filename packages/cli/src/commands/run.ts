@@ -98,7 +98,9 @@ export async function executeRunCreate(
   } else {
     ctx.output.write(
       `${green('Run created')} ${bold(result.run.id.slice(0, 8))} for ${bold(
-        result.run.slotId || '(slot pending)',
+        result.run.reviewWorkspaceTarget
+          ? `workspace on ${result.run.reviewWorkspaceTarget.machine}`
+          : result.run.slotId || '(slot pending)',
       )} (${result.run.flowType})\n`,
     );
   }
@@ -230,6 +232,9 @@ export interface RunCreateCliOptions {
   ticket?: string;
   task?: string;
   slot?: string;
+  reviewMachine?: string;
+  reviewValidationDepth?: string;
+  effort?: string;
   skipPrepare?: boolean;
   prepareProfile?: string;
   mode?: string;
@@ -314,6 +319,21 @@ function buildPressureAdmissionParams(opts: RunCreateCliOptions): Record<string,
   return { pressureAdmissionRef: { machine, pressureGeneration: generation } };
 }
 
+/** Typed flags share the same wire placement as preview and direct run creation. */
+export function buildReviewDispatchParams(
+  opts: Pick<RunCreateCliOptions, 'slot' | 'reviewMachine' | 'reviewValidationDepth'>,
+) {
+  const depth = opts.reviewValidationDepth;
+  if (depth !== undefined && depth !== 'static-code' && depth !== 'full-live')
+    throw new Error('--review-validation-depth must be static-code or full-live');
+  if (opts.reviewMachine && (opts.slot || depth === 'full-live'))
+    throw new Error('--review-machine cannot be combined with --slot or full-live review');
+  return {
+    ...(opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {}),
+    ...(depth ? { reviewValidationDepth: depth } : {}),
+  };
+}
+
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
   if (opts.transport !== undefined && opts.transport !== 'native' && opts.transport !== 'tmux')
     throw new Error('--transport must be native or tmux');
@@ -328,6 +348,8 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
 
   const base = {
     slotId: opts.slot || undefined,
+    ...buildReviewDispatchParams(opts),
+    ...(opts.effort ? { effort: opts.effort } : {}),
     skipPrepare: opts.skipPrepare || undefined,
     prepareProfile: opts.prepareProfile || undefined,
     mode: opts.mode || undefined,
@@ -792,6 +814,9 @@ export function registerRunCommand(program: Command): void {
     .option('--ticket <ref>', 'Jira key/URL or GitHub issue/PR URL/ref')
     .option('--task <path>', 'Existing TASK.md to dispatch through the run pipeline')
     .option('--slot <id>', 'Specific slot ID')
+    .option('--review-machine <machine>', 'Machine for a static review workspace')
+    .option('--review-validation-depth <depth>', 'Review validation: static-code or full-live')
+    .option('--effort <effort>', 'Runner effort override')
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(
       '--prepare-profile <name>',

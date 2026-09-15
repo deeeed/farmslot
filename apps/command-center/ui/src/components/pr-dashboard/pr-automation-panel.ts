@@ -4,6 +4,7 @@ import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import {
+  isPRWorkspaceExecutionProfile,
   Methods,
   type MonitoredPRIdentity,
   monitoredPRKey,
@@ -479,7 +480,7 @@ export class PRAutomationPanel extends LitElement {
             : this.editor === 'rule'
               ? 'Trigger rule'
               : this.editor === 'request'
-                ? 'Request PR review / QA'
+                ? 'Request PR review'
                 : this.editor === 'policy'
                   ? 'Project publication monitoring'
                   : this.editor === 'repair'
@@ -510,6 +511,7 @@ export class PRAutomationPanel extends LitElement {
         : nothing}
       ${this.editor === 'team'
         ? html`<pr-team-form
+            .pools=${controller.pools}
             .initial=${this.selectedTeam?.config}
             .restoredDraft=${this.restoredDraft?.kind === 'team'
               ? this.restoredDraft.value
@@ -556,6 +558,8 @@ export class PRAutomationPanel extends LitElement {
           ></pr-team-form>`
         : this.editor === 'rule'
           ? html`<pr-rule-form
+              .pools=${controller.pools}
+              .farms=${controller.projectConfigs}
               .initial=${this.selectedRule?.config}
               .restoredDraft=${this.restoredDraft?.kind === 'rule'
                 ? this.restoredDraft.value
@@ -604,6 +608,8 @@ export class PRAutomationPanel extends LitElement {
               ></pr-monitor-form>`
             : this.editor === 'request'
               ? html` <pr-review-request-form
+                  .pools=${controller.pools}
+                  .farms=${controller.projectConfigs}
                   .prUrl=${this.selectedUrl}
                   .teams=${controller.reviews.teams}
                   .slots=${controller.slots}
@@ -657,6 +663,8 @@ export class PRAutomationPanel extends LitElement {
                     .value=${this.repairExecution}
                     .disabled=${disabled}
                     @execution-change=${(event: CustomEvent<PRExecutionProfile>) => {
+                      if (isPRWorkspaceExecutionProfile(event.detail))
+                        throw new Error('Repair requires a slot execution policy');
                       this.repairExecution = event.detail;
                     }}
                   ></pr-execution-picker>
@@ -687,7 +695,7 @@ export class PRAutomationPanel extends LitElement {
           this.openEditor('request');
         }}
       >
-        Request review / QA
+        Request review
       </button>
       ${selectedOnly && this.reviewBlockedReason
         ? html`<p class="muted" data-testid="pr-review-start-blocked">

@@ -38,6 +38,11 @@ import {
   clearStalePrepareProcess,
   slotRelease,
 } from '../methods/slot.js';
+import {
+  executeReviewWorkspaceStep,
+  reconcileReviewWorkspaceCleanup,
+  teardownReviewWorkspace,
+} from '../review-workspaces/pipeline.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
   routeTerminalRunTransition,
@@ -480,6 +485,7 @@ function terminalCollaborators(
     tickWorkGraph: (graphId) => schedulerTick({ graphId }),
     cleanupEvalHarness: (run) => cleanupEvalHarnessForTerminalRun(run),
     cleanupSlot,
+    cleanupWorkspace: (run) => teardownReviewWorkspace(run.id),
     emit: (run) => {
       // Not `broadcastFn`: that one also kicks off its own backlog settle and
       // scheduler tick, racing the awaited ones this transition is about to run.
@@ -1442,11 +1448,23 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
 }
 
 export async function recoverActiveRuns(): Promise<void> {
-  await recoverActiveRunsImpl(buildRecoveryDeps());
+  await Promise.all([
+    reconcileReviewWorkspaceCleanup(broadcastFn),
+    recoverActiveRunsImpl(buildRecoveryDeps()),
+  ]);
 }
 
+let workspaceCleanupTimer: ReturnType<typeof setInterval> | undefined;
 export function startOrphanReconciler(): void {
   startOrphanReconcilerImpl(buildRecoveryDeps());
+  if (!workspaceCleanupTimer) {
+    workspaceCleanupTimer = setInterval(() => {
+      reconcileReviewWorkspaceCleanup(broadcastFn).catch((error) => {
+        console.error(`[run-engine] workspace cleanup reconciliation failed: ${String(error)}`);
+      });
+    }, 30_000);
+    workspaceCleanupTimer.unref();
+  }
 }
 
 // ─── Step execution ───
@@ -1458,6 +1476,9 @@ interface StepIO {
 
 async function executeStep(runId: string, step: string, generation: number): Promise<StepIO> {
   const run = getRun(runId)!;
+  if (run.reviewWorkspaceTarget && run.flowType === 'review-pr') {
+    return executeReviewWorkspaceStep(runId, step, generation, broadcastFn);
+  }
 
   switch (step) {
     case S.GRADE:

@@ -1,8 +1,10 @@
 import { html, LitElement, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import type { PoolConfig, ProjectConfig } from '@farmslot/protocol';
 import {
   assertPRTriggerRuleConfig,
+  isPRWorkspaceExecutionProfile,
   type PRExecutionProfile,
   type PRMonitorPolicy,
   type PRRuleAction,
@@ -40,6 +42,8 @@ export class PRRuleForm extends LitElement {
   @property({ attribute: false }) initial?: PRTriggerRuleConfig;
   @property({ attribute: false }) teams: PRTeamProfile[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) pools: PoolConfig[] = [];
+  @property({ attribute: false }) farms: ProjectConfig[] = [];
   @property({ attribute: false }) restoredDraft?: PRRuleEditorDraft;
   @property({ type: Boolean }) disabled = false;
   @state() private draft = newRule();
@@ -291,6 +295,8 @@ export class PRRuleForm extends LitElement {
                     .disabled=${this.disabled}
                     @execution-change=${(event: CustomEvent<PRExecutionProfile>) => {
                       event.stopPropagation();
+                      if (isPRWorkspaceExecutionProfile(event.detail))
+                        throw new Error('Repair requires a slot execution policy');
                       this.monitorPolicy({ mode: 'automatic-repair', execution: event.detail });
                     }}
                   ></pr-execution-picker>`
@@ -342,6 +348,8 @@ export class PRRuleForm extends LitElement {
                   </p>`
                 : nothing}
               <pr-review-policy-editor
+                .pools=${this.pools}
+                .farms=${this.farms}
                 .execution=${review.execution}
                 .review=${review.review}
                 .inheritedExecution=${policy?.execution ?? team?.config.execution}

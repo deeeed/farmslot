@@ -4,6 +4,25 @@ import test from 'node:test';
 import { JsonLineProcess } from './process.js';
 import { NativeProcessTree } from './process-tree.js';
 
+test('aborting startup rejects pending protocol work and confirms process cleanup', async () => {
+  const abort = new AbortController();
+  let stopped = false;
+  const child = new JsonLineProcess(
+    process.execPath,
+    ['-e', 'setInterval(()=>{},1000)'],
+    { cwd: process.cwd(), signal: abort.signal },
+    () => {},
+    (_error, confirmed) => {
+      stopped = confirmed;
+    },
+  );
+  const pending = assert.rejects(child.request('initialize', {}), /closed/);
+  abort.abort();
+  await pending;
+  await child.close();
+  assert.equal(stopped, true);
+});
+
 test('a shutdown race is resolved only by fresh process absence after the child exits', async (t) => {
   let ready!: () => void;
   const started = new Promise<void>((resolve) => {

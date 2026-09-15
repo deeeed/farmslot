@@ -21,6 +21,22 @@ export const DEFAULT_PR_REVIEW_OPTIONS: Readonly<PRReviewOptions> = {
   validationDepth: 'static-code',
 };
 
+/** Preserve static intent ids while distinguishing runtime review of the same head. */
+export function prReviewPurpose(options?: PRReviewOptions): string {
+  return options?.validationDepth === 'full-live' ? 'full-live' : 'review';
+}
+
+export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): boolean {
+  const left = a ?? DEFAULT_PR_REVIEW_OPTIONS;
+  const right = b ?? DEFAULT_PR_REVIEW_OPTIONS;
+  return (
+    left.sessionIntent === right.sessionIntent &&
+    left.scope === right.scope &&
+    (left.busySession ?? 'wait') === (right.busySession ?? 'wait') &&
+    left.validationDepth === right.validationDepth
+  );
+}
+
 export type PRRuleField =
   | 'repository'
   | 'author'
@@ -350,6 +366,7 @@ export interface PRReviewIntent {
 }
 
 export interface PRRulePreviewItem {
+  policySources?: import('./config.js').PRWorkflowDefaultSources;
   subject: PRRuleSubject;
   match: PRRuleMatch;
   project?: string;

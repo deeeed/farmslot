@@ -76,6 +76,7 @@ import * as terminalOrderSmoke from './terminal-order-smoke.mjs';
 import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
 import * as warmReplacementSmoke from './warm-replacement-smoke.mjs';
+import * as workspaceReviewLifecycle from './workspace-review-lifecycle.mjs';
 
 export const SCENARIOS = {
   [nativeAdditionalProfiles.SCENARIO_ID]: nativeAdditionalProfiles,
@@ -108,6 +109,7 @@ export const SCENARIOS = {
   'native-node-broker-smoke': nativeNodeBrokerSmoke,
   'native-node-inventory': nativeNodeInventory,
   'native-workspace-smoke': nativeWorkspaceSmoke,
+  'workspace-review-lifecycle': workspaceReviewLifecycle,
   'native-worker-lifecycle': nativeWorkerLifecycle,
   [nativeWorkerProfile.SCENARIO_ID]: nativeWorkerProfile,
   [nativeWorkerProfileUi.SCENARIO_ID]: nativeWorkerProfileUi,

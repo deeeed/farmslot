@@ -57,6 +57,13 @@ export async function runCancel(params: RunCancelParams): Promise<RunCancelResul
 }
 
 export async function runCancelTransitionLocked(params: RunCancelParams): Promise<RunCancelResult> {
+  const current = getRun(params.runId);
+  if (current?.reviewWorkspace && ['done', 'failed', 'cancelled'].includes(current.status)) {
+    // Retrying cleanup must preserve the terminal result and never restart the reviewer.
+    const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
+    await teardownReviewWorkspace(current.id);
+    return { run: getRun(current.id)!, effects: [{ name: 'review-workspace', status: 'ok' }] };
+  }
   const { machineParkingService } = await import('../../machine-parking/service.js');
   const parkedCancel = await machineParkingService.prepareRunCancel(params.runId);
   const { run, effects } = await routeRunTransition(
@@ -313,6 +320,11 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
 }
 
 async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean }> {
+  if (run.reviewWorkspace) {
+    const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
+    await teardownReviewWorkspace(run.id);
+    return { released: true };
+  }
   const slotId = run.slotId;
   if (!slotId) return { released: false };
   if (run.transport === 'native') {
@@ -396,6 +408,11 @@ export async function runPauseTransitionLocked(
 ): Promise<RunPauseResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  if (existing.reviewWorkspaceTarget) {
+    throw new Error(
+      'Workspace review pause is unavailable; cancel the review to stop its owned worker',
+    );
+  }
   if (!options.machineParkingPause) assertNotMachineParkManaged(existing);
 
   // A gate park (ADR-054 `free-slot`, amending ADR-038) is its own branch, not a

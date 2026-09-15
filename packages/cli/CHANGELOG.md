@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Launch and preview static reviews with machine, depth and effort overrides, and show workspace placement.
+
 - `farmslot pr list` asks the gateway for a fresh GitHub read; `--cached` accepts the gateway's warm copy and prints when it was fetched.
 - `farmslot internal pr-recommendation --changes-requested` feeds the reviewer changes-requested fact into the shared recommendation rule.
 

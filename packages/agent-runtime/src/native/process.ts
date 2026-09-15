@@ -25,6 +25,7 @@ export class JsonLineProcess {
   private nextId = 0;
   private tree?: NativeProcessTree;
   private stopObservingTree?: () => void;
+  private stopObservingAbort?: () => void;
   private closed = false;
   private finish!: () => void;
   private finished = new Promise<void>((resolve) => {
@@ -47,6 +48,7 @@ export class JsonLineProcess {
       cwd: string;
       env?: NodeJS.ProcessEnv;
       onSpawn?: (pid: number, identity: string) => void;
+      signal?: AbortSignal;
     },
     onMessage: (message: Record<string, unknown>) => void,
     private readonly onExit: (error: Error | undefined, processStopped: boolean) => void,
@@ -125,6 +127,12 @@ export class JsonLineProcess {
         options.onSpawn?.(this.child.pid, identity);
       }
       this.child.stdin.write('\n');
+      if (options.signal) {
+        const abort = () => this.beginStop();
+        options.signal.addEventListener('abort', abort, { once: true });
+        this.stopObservingAbort = () => options.signal!.removeEventListener('abort', abort);
+        if (options.signal.aborted) abort();
+      }
     } catch (error) {
       this.fail(error instanceof Error ? error : new Error(String(error)));
       this.beginCleanup();
@@ -207,6 +215,7 @@ export class JsonLineProcess {
   }
 
   private settle(): void {
+    this.stopObservingAbort?.();
     // Detach host pipe handles even when cleanup failed and a descendant retained them.
     this.child.stdin.destroy();
     this.child.stdout.destroy();

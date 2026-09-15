@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -66,7 +67,7 @@ test('manager owns exact sessions and gates new input until the accepted turn ru
   }
 });
 
-test('closing during startup waits for and terminates the reserved input owner', async (t) => {
+test('closing during startup aborts initialization and terminates the reserved input owner', async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), 'native-manager-startup-'));
   const executable = join(cwd, 'codex');
   const release = join(cwd, 'release');
@@ -88,10 +89,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   process.env.PATH = `${cwd}${delimiter}${oldPath}`;
   const manager = new NativeSessionManager(join(cwd, 'state'));
   const creating = manager.create('owner', { runner: 'codex', cwd });
+  const cancelled = assert.rejects(creating, /Native runner closed/);
   t.after(async () => {
     try {
       await writeFile(release, 'ready');
-      await creating;
+      await cancelled;
       for (const session of manager.list('owner')) await manager.close('owner', session.id);
       // Clean the fixture even if a regression released its owner too early.
       try {
@@ -105,16 +107,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await rm(cwd, { recursive: true, force: true });
     }
   });
-  for (let attempt = 0; !manager.list('owner').length && attempt < 200; attempt++)
+  for (let attempt = 0; !existsSync(pidFile) && attempt < 200; attempt++)
     await new Promise((resolve) => setTimeout(resolve, 10));
+  assert(existsSync(pidFile), 'Fixture must enter native initialization before close');
   const reserved = manager.list('owner')[0];
   assert.ok(reserved);
   assert.equal(reserved.state, 'starting');
   const closing = manager.close('owner', reserved.id);
   assert.equal(manager.read('owner', reserved.id).session.state, 'closing');
-  await writeFile(release, 'ready');
-  await Promise.all([creating, closing]);
-  assert.equal(manager.read('owner', reserved.id).session.state, 'closed');
+  await Promise.all([cancelled, closing]);
+  const stopped = manager.read('owner', reserved.id).session;
+  assert.equal(stopped.state, 'failed');
+  assert.equal(stopped.processStopped, true);
   const pid = Number(await readFile(pidFile, 'utf8'));
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });

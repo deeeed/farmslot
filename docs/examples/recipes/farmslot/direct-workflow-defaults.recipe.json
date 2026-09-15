@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Direct workflow defaults",
+  "description": "Exercise real isolated gateway run creation, preview and queue endpoints with engine start disabled. Proves placement and persisted constraints without launching reviewers or performing runtime QA.",
+  "workflow": {
+    "entry": "direct-defaults",
+    "nodes": {
+      "direct-defaults": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-direct-workflow-defaults.mts direct",
+        "timeout_ms": 60000,
+        "intent": "The checkout CLI forwards explicit machine, runner, model, effort and transport selections. Omitted mode selects autonomous workspaces on create, preview and queue; conflicting explicit templates are refused on all three endpoints; preview skips full or authorized offline hosts and queued work dispatches on its healthy permitted alternative, an eligible full machine retains its capacity refusal ahead of an invalid fallback in both direct creation and queued dispatch, queueing preserves the allowed pool, explicit constraints cannot broaden it, and legacy full-live preview, queue and run creation preserve the runtime slot, validation depth and existing template.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

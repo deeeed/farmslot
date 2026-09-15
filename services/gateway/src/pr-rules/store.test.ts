@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,7 @@ import type {
   PRTriggerRule,
 } from '@farmslot/protocol';
 
+import { reviewIntentId } from './intents.js';
 import { PRRuleStore } from './store.js';
 
 const execution: PRExecutionProfile = {
@@ -31,17 +32,66 @@ const teamConfig: PRTeamConfig = {
   notificationPrincipalIds: [],
 };
 
-test('overlapping review policies with different continuity or QA depth hold one shared intent', async (t) => {
+test('overlapping static review policies with different continuity hold one shared intent', async (t) => {
   const { store } = await fixture(t);
   const first = await ruleFor(store, 'owner', true);
   const second = await ruleFor(store, 'owner', true);
   await store.applyPreview('owner', preview(first.team, first.rule));
   const changed = preview(second.team, second.rule);
-  changed.items[0].review = { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' };
+  changed.items[0].review = {
+    sessionIntent: 'reset',
+    scope: 'full',
+    validationDepth: 'static-code',
+  };
   await store.applyPreview('owner', changed);
   assert.equal(store.snapshot().intents.length, 1);
   assert.equal(store.snapshot().intents[0].status, 'needs-configuration');
   assert.match(store.snapshot().intents[0].waitingReason ?? '', /continuity or validation depth/);
+});
+
+test('a legacy full-live id cannot capture a new static review after restart', async (t) => {
+  const { store, file } = await fixture(t);
+  const first = await ruleFor(store, 'owner', true);
+  const live = preview(first.team, first.rule);
+  live.items[0].review = {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    validationDepth: 'full-live',
+  };
+  await store.applyPreview('owner', live);
+  const legacy = store.snapshot();
+  legacy.intents[0].id = reviewIntentId({ ...live.items[0], review: undefined });
+  const legacyId = legacy.intents[0].id;
+  await writeFile(file, JSON.stringify(legacy));
+  const restarted = await PRRuleStore.load(file);
+  const second = await ruleFor(restarted, 'owner', true);
+  await restarted.applyPreview('owner', preview(second.team, second.rule));
+  assert.equal(restarted.snapshot().intents.length, 2);
+  assert.equal(new Set(restarted.snapshot().intents.map((entry) => entry.id)).size, 2);
+  assert.equal(restarted.intent(legacyId)?.contributions[0].review?.validationDepth, 'full-live');
+});
+
+test('rescanning legacy full-live retains its durable id and eligible contribution', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  const live = preview(team, rule);
+  live.items[0].review = {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    validationDepth: 'full-live',
+  };
+  await store.applyPreview('owner', live);
+  const legacy = store.snapshot();
+  const legacyId = reviewIntentId({ ...live.items[0], review: undefined });
+  legacy.intents[0].id = legacyId;
+  await writeFile(file, JSON.stringify(legacy));
+  const restarted = await PRRuleStore.load(file);
+  await restarted.applyPreview('owner', { ...live, checkedAt: new Date().toISOString() });
+  const retained = restarted.intent(legacyId);
+  assert(retained);
+  assert.notEqual(retained.status, 'withdrawn');
+  assert.equal(retained.contributions[0].eligible, true);
+  assert.equal(restarted.snapshot().intents.length, 1);
 });
 
 async function fixture(t: test.TestContext) {

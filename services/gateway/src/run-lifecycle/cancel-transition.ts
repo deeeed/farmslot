@@ -31,6 +31,7 @@ export interface CancelCollaborators {
   tickWorkGraph(graphId: string): Promise<unknown>;
   releaseCapabilities(run: Run): Promise<void>;
   releaseSlot(run: Run): Promise<void>;
+  releaseWorkspace?(run: Run): Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(event: string, payload: unknown): void | Promise<void>;
 }
@@ -68,6 +69,17 @@ function cancelEffects(collaborators: CancelCollaborators): {
       },
     ],
     after: [
+      {
+        name: 'review-workspace',
+        severity: 'advisory',
+        apply: async ({ run }) => {
+          if (!run.reviewWorkspace) return 'skipped';
+          if (!collaborators.releaseWorkspace)
+            throw new Error('Workspace cancellation cleanup is unavailable');
+          await collaborators.releaseWorkspace(run);
+          return 'ok';
+        },
+      },
       {
         name: 'backlog-settle',
         severity: 'advisory',
@@ -206,6 +218,10 @@ async function broadcastTransitionEvent(event: string, payload: unknown): Promis
  */
 export function defaultCancelCollaborators(): CancelCollaborators {
   return {
+    releaseWorkspace: async (run) => {
+      const { teardownReviewWorkspace } = await import('../review-workspaces/pipeline.js');
+      await teardownReviewWorkspace(run.id);
+    },
     cancelEngine: cancelRunEngine,
     invalidateWarmSessions: invalidateWarmReviewerSessions,
     settleBacklog: (run) => markBacklogRunObserved(run),

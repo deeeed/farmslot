@@ -22,6 +22,7 @@ export * from './readiness.js';
 export * from './recipes.js';
 export * from './resource-posture.js';
 export * from './resources.js';
+export * from './review-workspace.js';
 export * from './reviews.js';
 export * from './roadmap.js';
 export * from './run-bundles.js';

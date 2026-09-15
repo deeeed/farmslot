@@ -1,0 +1,32 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Workspace review admission",
+  "description": "Exercise static review preview through an isolated production gateway with no device slots. Proves placement, configuration and owner checks, without launching a worker.",
+  "workflow": {
+    "entry": "workspace-preview",
+    "nodes": {
+      "workspace-preview": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-workspace-review-admission.mts preview",
+        "timeout_ms": 60000,
+        "intent": "Preview records the authorized machine, slotId null, host capacity and canonical static template without creating any slot or queued work.",
+        "next": "unsupported-placement"
+      },
+      "unsupported-placement": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-workspace-review-admission.mts rejections",
+        "timeout_ms": 60000,
+        "intent": "Missing or unsupported native transport, runner, model, effort, capacity opt-in and slot-pinned requests cannot authorize workspace review.",
+        "next": "missing-owner"
+      },
+      "missing-owner": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-workspace-review-admission.mts missing-owner",
+        "timeout_ms": 60000,
+        "intent": "A gateway without a configured native owner rejects preview without allocating resources.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

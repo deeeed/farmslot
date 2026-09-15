@@ -5,21 +5,35 @@ import {
   intersectPRExecutionProfiles,
   monitoredPRKey,
   prReviewBlockedReason,
+  type PRReviewContribution,
   type PRReviewIntent,
+  prReviewPurpose,
   type PRRulePreviewItem,
 } from '@farmslot/protocol';
 
 export function reviewIntentId(item: PRRulePreviewItem, round = 1): string {
+  const purpose = prReviewPurpose(item.review);
   return createHash('sha256')
     .update(
       JSON.stringify([
         monitoredPRKey(item.subject.pr),
         item.subject.headSha,
         item.reviewProfile,
+        ...(purpose !== 'review' ? [purpose] : []),
         ...(round > 1 ? [round] : []),
       ]),
     )
     .digest('hex');
+}
+
+/** Legacy intents keep their durable id; compare their actual requested purpose. */
+export function sameReviewPurpose(intent: PRReviewIntent, item: PRRulePreviewItem): boolean {
+  const contributions = intent.contributions.filter((source) => source.eligible);
+  const sources = contributions.length ? contributions : intent.contributions;
+  return (
+    sources.length > 0 &&
+    sources.every((source) => prReviewPurpose(source.review) === prReviewPurpose(item.review))
+  );
 }
 
 export function reviewSubjectRevision(item: PRRulePreviewItem): string {
@@ -38,6 +52,13 @@ export function updateReviewDisplay(intent: PRReviewIntent, item: PRRulePreviewI
       : undefined;
 }
 
+/** Retain the existing review eligibility policy for both validation depths. */
+export function contributionBlockedReason(
+  source: Pick<PRReviewContribution, 'reviewObservation'>,
+): string | undefined {
+  return prReviewBlockedReason(source.reviewObservation);
+}
+
 export function reconcileReviewIntent(intent: PRReviewIntent): void {
   if (intent.status === 'running' || intent.status === 'completed' || intent.status === 'failed')
     return;
@@ -47,9 +68,7 @@ export function reconcileReviewIntent(intent: PRReviewIntent): void {
     intent.waitingReason = 'No enabled rule currently authorizes this review';
     return;
   }
-  const unnecessary = contributors
-    .map((item) => prReviewBlockedReason(item.reviewObservation))
-    .find(Boolean);
+  const unnecessary = contributors.map(contributionBlockedReason).find(Boolean);
   if (unnecessary) {
     intent.status = 'held';
     // This summary is shared across owners; account-specific details stay in filtered contributions.
@@ -84,7 +103,7 @@ export function reconcileReviewIntent(intent: PRReviewIntent): void {
       (item) =>
         item.sessionIntent !== reviewOptions[0].sessionIntent ||
         item.scope !== reviewOptions[0].scope ||
-        item.validationDepth !== reviewOptions[0].validationDepth ||
+        prReviewPurpose(item) !== prReviewPurpose(reviewOptions[0]) ||
         (item.busySession ?? 'wait') !== (reviewOptions[0].busySession ?? 'wait'),
     )
   ) {
@@ -110,7 +129,7 @@ export function reviewIntentAuthorized(intent: PRReviewIntent): boolean {
     active.length > 0 &&
     active.every(
       (item) =>
-        !prReviewBlockedReason(item.reviewObservation) &&
+        !contributionBlockedReason(item) &&
         !item.configurationErrors.length &&
         !item.deferredAt &&
         (item.autoStart || Boolean(item.acceptedAt)),

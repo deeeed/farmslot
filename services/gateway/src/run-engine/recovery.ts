@@ -325,6 +325,17 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       console.log(`[run-engine] run ${run.id.slice(0, 8)} — paused, skipping recovery`);
       continue;
     }
+    if (run.reviewWorkspaceTarget && run.flowType === 'review-pr') {
+      if (run.status === 'blocked') continue;
+      // Native command/lease identities and workspace manifests reconcile inside the
+      // resource-specific pipeline. Slot watchers cannot observe this execution.
+      deps.startRun(run.id).catch((error) => {
+        console.error(
+          `[run-engine] workspace review recovery failed for ${run.id}: ${String(error)}`,
+        );
+      });
+      continue;
+    }
 
     // ADR-054 `free-slot`: the park published this run's slot for dispatch and
     // another run may already own it. Every slot-bound recovery below would act

@@ -7,6 +7,7 @@ export function buildDispatchPreviewParamsForRun(
     Run,
     | 'project'
     | 'flowType'
+    | 'reviewValidationDepth'
     | 'ticketOrPr'
     | 'familyId'
     | 'lane'
@@ -32,6 +33,7 @@ export function buildDispatchPreviewParamsForRun(
   return {
     project: run.project,
     flowType: run.flowType,
+    reviewValidationDepth: run.reviewValidationDepth,
     ticketOrPr: run.ticketOrPr,
     familyId: run.familyId,
     lane: run.lane,

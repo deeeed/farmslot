@@ -6,6 +6,9 @@ import type { NativeSessionResponse } from '@farmslot/protocol';
 
 import { JsonLineProcess } from './process.js';
 import type { NativeAdapter, NativeEventInput } from './types.js';
+import { validateNativeWorkerFilesystemPolicy } from './worker-launch.js';
+
+const READ_ONLY_PROFILE = 'farmslot-read-only-source';
 
 /** Git's shared metadata can live outside a linked worktree's writable root. */
 async function gitWritableRoot(cwd: string, env?: NodeJS.ProcessEnv): Promise<string | undefined> {
@@ -61,6 +64,12 @@ function questions(value: unknown) {
 }
 
 export const codexNativeAdapter: NativeAdapter = {
+  filesystemPolicyUnavailableReason: (version) => {
+    const parsed = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(version);
+    return parsed && (Number(parsed[1]) > 0 || Number(parsed[2]) >= 154)
+      ? undefined
+      : 'Read-only source review requires Codex 0.154.0 or newer';
+  },
   capabilities: {
     modes: ['default', 'plan'],
     streaming: true,
@@ -213,17 +222,46 @@ export const codexNativeAdapter: NativeAdapter = {
         options.safetyTier === 'dangerous'
           ? undefined
           : await gitWritableRoot(options.cwd, options.env);
+      const filesystemPolicy =
+        options.filesystemPolicy &&
+        validateNativeWorkerFilesystemPolicy({
+          ...options.filesystemPolicy,
+          readOnlyRoots: [...options.filesystemPolicy.readOnlyRoots, ...(gitRoot ? [gitRoot] : [])],
+        });
       const result = wireObject(
         await process.request(options.resumeSessionId ? 'thread/resume' : 'thread/start', {
           ...(options.resumeSessionId ? { threadId: options.resumeSessionId } : {}),
           cwd: options.cwd,
           model: options.model,
-          approvalPolicy:
-            options.safetyTier && options.safetyTier !== 'sandboxed' ? 'never' : 'untrusted',
-          sandbox: options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
-          ...(gitRoot ? { config: { 'sandbox_workspace_write.writable_roots': [gitRoot] } } : {}),
+          ...(options.filesystemPolicy
+            ? {
+                approvalPolicy: 'never',
+                config: {
+                  default_permissions: READ_ONLY_PROFILE,
+                  [`permissions.${READ_ONLY_PROFILE}`]: {
+                    filesystem: Object.fromEntries([
+                      ['/', 'read'],
+                      ...filesystemPolicy!.writableRoots.map((root) => [root, 'write']),
+                    ]),
+                  },
+                },
+              }
+            : {
+                approvalPolicy:
+                  options.safetyTier && options.safetyTier !== 'sandboxed' ? 'never' : 'untrusted',
+                sandbox:
+                  options.safetyTier === 'dangerous' ? 'danger-full-access' : 'workspace-write',
+                ...(gitRoot
+                  ? { config: { 'sandbox_workspace_write.writable_roots': [gitRoot] } }
+                  : {}),
+              }),
         }),
       );
+      if (
+        options.filesystemPolicy &&
+        wireObject(result.activePermissionProfile).id !== READ_ONLY_PROFILE
+      )
+        throw new Error('Native runner did not confirm the read-only source permissions profile');
       nativeSessionId = wireString(wireObject(result.thread).id);
       resolvedModel = optionalString(result.model) ?? options.model;
       if (options.mode === 'plan' && !resolvedModel)

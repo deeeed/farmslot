@@ -29,6 +29,8 @@ export interface EvalQueueCell {
 }
 
 export interface QueueItem {
+  /** Gateway-frozen direct-dispatch choices; public requests cannot supply this snapshot. */
+  workflowExecution?: import('./pr-monitoring.js').PRExecutionProfile;
   transport?: import('./agents.js').WorkerTransport;
   nativeProfile?: import('../rpc/native-profile.js').NativeProfileReference;
   skipPrepare?: boolean;
@@ -85,6 +87,8 @@ export interface QueueItem {
   /** Optional pre-fetched/manual ticket payload forwarded through queue dispatch. */
   ticketData?: import('./runs.js').RunTicketData;
   devChecklist?: string[];
+  /** Explicit machine placement for static review, mutually exclusive with slot placement. */
+  reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   slotId?: string; // preferred slot
   /** Slot-ID allow list resolved from UI filters at queue time. null = unrestricted. */
   allowedSlots?: string[] | null;
@@ -134,7 +138,13 @@ export interface DispatchRequest {
 }
 
 export interface DispatchPreview {
-  slotId: string;
+  slotId: string | null;
+  reviewWorkspace?: {
+    machine: string;
+    executionNodeId: string;
+    active: number;
+    limit: number;
+  };
   project: string;
   flowType: FlowType;
   branch: string | null;

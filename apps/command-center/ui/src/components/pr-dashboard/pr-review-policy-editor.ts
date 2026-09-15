@@ -3,7 +3,9 @@ import { customElement, property } from 'lit/decorators.js';
 
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
+  type PoolConfig,
   type PRExecutionProfile,
+  type ProjectConfig,
   type PRReviewOptions,
   type SlotStatus,
 } from '@farmslot/protocol';
@@ -11,7 +13,7 @@ import {
 import './pr-review-options-picker.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
-import { newPRExecution } from './pr-execution-picker.js';
+import { newPRExecution, newPRWorkspaceExecution } from './pr-execution-picker.js';
 
 export interface PRReviewPolicyChange {
   execution?: PRExecutionProfile;
@@ -25,6 +27,8 @@ export class PRReviewPolicyEditor extends LitElement {
   @property({ attribute: false }) inheritedExecution?: PRExecutionProfile;
   @property({ attribute: false }) inheritedReview?: PRReviewOptions;
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) pools: PoolConfig[] = [];
+  @property({ attribute: false }) farms: ProjectConfig[] = [];
   @property() project = '';
   @property({ type: Boolean }) allProjects = false;
   @property({ type: Boolean }) disabled = false;
@@ -42,8 +46,12 @@ export class PRReviewPolicyEditor extends LitElement {
   }
 
   render() {
-    const review = this.review ?? this.inheritedReview ?? DEFAULT_PR_REVIEW_OPTIONS;
-    const execution = this.execution ?? this.inheritedExecution;
+    const farm = this.farms.find((item) => item.name === this.project);
+    const selectedReview = this.review ?? this.inheritedReview;
+    const runtime = selectedReview?.validationDepth === 'full-live';
+    const defaults = runtime ? undefined : farm?.workflowDefaults?.['review-pr'];
+    const review = selectedReview ?? defaults?.review ?? DEFAULT_PR_REVIEW_OPTIONS;
+    const execution = this.execution ?? this.inheritedExecution ?? defaults?.execution;
     return html`<fieldset ?disabled=${this.disabled}>
       <label class="check"
         ><input
@@ -74,16 +82,20 @@ export class PRReviewPolicyEditor extends LitElement {
           @change=${(event: Event) =>
             this.change({
               execution: (event.target as HTMLInputElement).checked
-                ? structuredClone(execution ?? newPRExecution())
+                ? structuredClone(
+                    execution ?? (runtime ? newPRExecution() : newPRWorkspaceExecution()),
+                  )
                 : undefined,
             })}
-        />Set slots and models here</label
+        />Set execution and models here</label
       >
       ${execution
         ? html`<p class="muted">
-              ${this.execution ? 'Explicit slots and models' : 'Inherited slots and models'}
+              ${this.execution ? 'Explicit execution and models' : 'Inherited execution and models'}
             </p>
             <pr-execution-picker
+              .pools=${this.pools}
+              .resource=${runtime ? 'slot' : 'workspace'}
               .value=${execution}
               .slots=${this.slots}
               .project=${this.project}
@@ -95,11 +107,11 @@ export class PRReviewPolicyEditor extends LitElement {
               }}
             ></pr-execution-picker>`
         : html`<p class="attention">
-            Choose slots and models here or in a repository policy before starting reviews.
+            Configure execution here, in the repository policy, or in the farm defaults.
           </p>`}
       ${this.allProjects
         ? html`<p class="muted">
-            Each repository uses only slots compatible with its mapped project.
+            Each repository uses only resources compatible with its mapped project.
           </p>`
         : nothing}
     </fieldset>`;

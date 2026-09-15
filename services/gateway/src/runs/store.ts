@@ -57,7 +57,10 @@ import {
   runnerDefaultModel,
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
-import { resolveNativeWorkerOwner } from '../security/native-worker-owner.js';
+import {
+  resolveNativeWorkerOwner,
+  resolveReviewWorkspaceOwner,
+} from '../security/native-worker-owner.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
@@ -634,17 +637,23 @@ export function createRun(
      * Used by queue claim create so the Run file cannot land before the stamp.
      */
     deferBackgroundPersist?: boolean;
+    workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
   },
 ): Run {
   if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
     throw new Error('Run ownership cannot be supplied in run parameters');
+  if ('reviewWorkspace' in params || 'reviewWorkspaceSubject' in params) {
+    throw new Error('Workspace bindings cannot be supplied in run parameters');
+  }
   const parent = params.parentRunId ? runs.get(params.parentRunId) : undefined;
   const transport = params.transport ?? parent?.transport;
   if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
     throw new Error('Unknown worker transport');
   const nativeOwnerPrincipalId =
     transport === 'native'
-      ? resolveNativeWorkerOwner(options?.nativeOwnerPrincipalId ?? parent?.nativeOwnerPrincipalId)
+      ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(
+          options?.nativeOwnerPrincipalId ?? parent?.nativeOwnerPrincipalId,
+        )
       : undefined;
   const selectedProfile = params.nativeProfile;
   if (selectedProfile !== undefined && transport !== 'native')
@@ -789,6 +798,12 @@ export function createRun(
     effort: params.effort,
     scripted: params.scripted,
     slotId: params.slotId ?? null,
+    reviewWorkspaceTarget: params.reviewWorkspaceTarget
+      ? structuredClone(params.reviewWorkspaceTarget)
+      : undefined,
+    ...(options?.workflowExecution
+      ? { workflowExecution: structuredClone(options.workflowExecution) }
+      : {}),
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
     ...(pressureOverride ? { pressureOverride } : {}),
@@ -1161,6 +1176,11 @@ export function updateRunStep(id: string, stepName: string, partial: Partial<Run
 }
 
 function assertNativeWorkersReleased(run: Run): void {
+  if (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt) {
+    throw new Error(
+      'Review workspace ownership cannot leave the run store before checkout cleanup',
+    );
+  }
   if (run.agentContexts?.some((context) => nativeWorkerBindingIsHeld(context.nativeSession)))
     throw new Error(
       'Native worker ownership cannot leave the run store before confirmed close or transfer',

@@ -7,7 +7,6 @@ import {
   assertPRTeamConfig,
   assertPRTriggerRuleConfig,
   monitoredPRKey,
-  prReviewBlockedReason,
   type PRReviewContribution,
   type PRReviewIntent,
   type PRReviewRequest,
@@ -25,9 +24,11 @@ import { writeAtomicJSON } from '../core/atomic-json.js';
 
 import { admitRuleAction, withdrawRuleActions } from './actions.js';
 import {
+  contributionBlockedReason,
   reconcileReviewIntent,
   reviewIntentId,
   reviewSubjectRevision,
+  sameReviewPurpose,
   updateReviewDisplay,
 } from './intents.js';
 import { decodePRRuleStore } from './store-schema.js';
@@ -274,9 +275,7 @@ export class PRRuleStore {
       );
       if (!owned.length) throw new Error('No current matching rule authorizes this review');
       if (action === 'accept') {
-        const unnecessary = owned
-          .map((source) => prReviewBlockedReason(source.reviewObservation))
-          .find(Boolean);
+        const unnecessary = owned.map(contributionBlockedReason).find(Boolean);
         if (unnecessary) throw new Error(unnecessary);
         delete intent.dispatchHold;
       }
@@ -655,14 +654,29 @@ export class PRRuleStore {
           clearDeferred('review');
           continue;
         }
-        const id = reviewIntentId(item);
-        let intent = data.intents.find((entry) => entry.id === id);
+        let round = 1;
+        let id = reviewIntentId(item);
+        // An old review id may already name full-live review. Keep that record's identity
+        // and allocate a separate generation for a newly requested static review.
+        while (data.intents.some((entry) => entry.id === id && !sameReviewPurpose(entry, item))) {
+          id = reviewIntentId(item, ++round);
+        }
+        let intent =
+          data.intents.find((entry) => entry.id === id) ??
+          data.intents.find(
+            (entry) =>
+              entry.reviewProfile === item.reviewProfile &&
+              monitoredPRKey(entry.pr) === key &&
+              entry.headSha === item.subject.headSha &&
+              sameReviewPurpose(entry, item),
+          );
         if (intent?.status === 'completed' || intent?.status === 'failed') continue;
         const existing = intent?.contributions.find((source) => source.ruleId === rule.id);
         const hasPreviousReview = data.intents.some(
           (entry) =>
             (entry.status === 'completed' || entry.status === 'running') &&
             entry.reviewProfile === item.reviewProfile &&
+            sameReviewPurpose(entry, item) &&
             monitoredPRKey(entry.pr) === key &&
             entry.headSha !== item.subject.headSha &&
             entry.contributions.some((source) => source.ruleId === rule.id),
@@ -685,6 +699,7 @@ export class PRRuleStore {
         if (!intent) {
           intent = {
             id,
+            round,
             pr: item.subject.pr,
             headSha: item.subject.headSha,
             reviewProfile: item.reviewProfile,
@@ -723,7 +738,7 @@ export class PRRuleStore {
           .filter((source) => source.ruleId !== rule.id)
           .concat(contribution);
         intent.updatedAt = preview.checkedAt;
-        eligible.add(id);
+        eligible.add(intent.id);
         subjects[key].admitted = true;
         subjects[key].admittedActions!.push('review');
         clearDeferred('review');

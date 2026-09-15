@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add machine-owned static-review workspace placement and retained source/support bindings, while keeping runtime reviews and repairs on slots.
+
 - `run.rereviewLatestHead` starts a continuity review round on the PR's current head for a blocked or finished review-pr run.
 
 - `PRStatus` carries `reviewVerdicts` (each reviewer's standing APPROVED / CHANGES_REQUESTED), `reviewRequests` (teams and users GitHub still waits on) and `pushedAfterChangesRequested`.

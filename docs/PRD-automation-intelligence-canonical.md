@@ -290,6 +290,21 @@ Use the existing [webhook adapter](../services/gateway/src/webhook.ts), [dispatc
 
 Implement source/fact binding and side-effect-free previews first, then durable manual review intake, then authorized auto-start and monitor enrollment. Prove replay/restart/dedup behavior through real gateway queue/run endpoints, plus normal UI actions in both clients. Jira and other providers can later supply the same normalized subject/fact contract, but additional source adapters are outside V1.
 
+### 8. Separate static Review and farm-owned QA
+
+Implementation authorized under [ADR-058](adr/058-static-review-and-farm-owned-qa.md). This replaces the combined review/live-depth model in section 7 as the migration lands; existing running and completed records keep their original contract.
+
+- `review-pr` inspects frozen changes and existing recipe evidence without reserving a device slot. Shared queue admission accounts for host/runner capacity and explicit execution authority.
+- `qa` executes a thin farm-owned preset that selects a canonical skill-backed template and inputs. Skills and harnesses resolve PR, release or time-window changes into a dynamic recipe set and remain directly usable without Farmslot. Core orchestration does not interpret project-specific scope semantics.
+- Runtime proof and static verdicts remain separate. Successful app QA includes a real smoke path; headless QA asserts live command/controller behavior. Missing coverage or runtime cannot become passing QA.
+- Run QA is explicit by default. A saved profile may opt into automatic linked QA without granting publication or merge authority.
+- Farm/project defaults govern review eligibility, reviewer and execution settings, QA presets and review publication. Repository/team policy and permitted request overrides resolve through one shared path, with the effective settings visible in clients. Eligible needs-review PRs launch workspace reviews through existing intake.
+- Manual requests and automation may opt into publishing the completed review to its PR. Publish by default for explicitly opted-in projects and keep Farmslot-only results elsewhere. Apply permitted request/rule overrides, verify the reviewed commit is still current, and retain publication receipts across retries. Show publication state separately from review completion and runtime QA proof.
+- Migrate old tiers, validation depth, recipe strategies, intake identities and client controls together. Preserve historical results and execution constraints; ambiguous pending work requires a visible correction. No unlisted host/model fallback is permitted.
+- Farm agents and engineers consume the same materialized team process. Preserve source and recipe digests; farm-only task metadata and resource/gate wiring stay in infrastructure adapters.
+
+Acceptance requires the ADR's concurrent workspace-review, restart/cancellation, profile isolation, source equality, dynamic-scope recipe coverage, handoff and legacy-migration proofs through real gateway and client paths.
+
 ## Boundaries
 
 This chunk does **not** own:

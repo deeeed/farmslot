@@ -566,6 +566,7 @@ async function main(): Promise<void> {
       prepareProfile: item.prepareProfile,
       waitPolicy: item.waitPolicy,
       slotId: item.slotId,
+      reviewWorkspaceTarget: item.reviewWorkspaceTarget,
       allowedSlots:
         item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
       branch: item.branch ?? undefined,
@@ -598,6 +599,7 @@ async function main(): Promise<void> {
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const createQueuedRun = () =>
       runCreate(runParams, broadcastEvent, {
+        workflowExecution: item.workflowExecution,
         expectedExecutionTemplate: item.executionTemplate,
         beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
         beforeCreate,

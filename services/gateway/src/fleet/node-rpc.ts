@@ -70,13 +70,38 @@ export function handleNodeExecOutput(requestId: string, stream: string, data: st
  * Typed rather than matched on the message, so the classification survives a
  * reworded error.
  */
-export class NodeRpcTimeoutError extends Error {
+export type NodeTransportUnavailableReason =
+  | 'not-connected'
+  | 'disconnected'
+  | 'timeout'
+  | 'connection-replaced';
+
+/** Transport evidence only. Remote error codes never instantiate this local error. */
+export class NodeTransportUnavailableError extends Error {
+  readonly code = 'NODE_TRANSPORT_UNAVAILABLE';
   constructor(
     readonly machine: string,
+    readonly reason: NodeTransportUnavailableReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'NodeTransportUnavailableError';
+  }
+}
+
+export function isNodeTransportUnavailableError(
+  error: unknown,
+): error is NodeTransportUnavailableError {
+  return error instanceof NodeTransportUnavailableError;
+}
+
+export class NodeRpcTimeoutError extends NodeTransportUnavailableError {
+  constructor(
+    machine: string,
     readonly timeoutMs: number,
     detail = '',
   ) {
-    super(`Node ${machine} timeout after ${timeoutMs}ms${detail}`);
+    super(machine, 'timeout', `Node ${machine} timeout after ${timeoutMs}ms${detail}`);
     this.name = 'NodeRpcTimeoutError';
   }
 }
@@ -92,7 +117,13 @@ export function sendNodeRequest(
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (node.ws.readyState !== WebSocket.OPEN) {
-      return reject(new Error(`Node ${node.machine} WebSocket not open`));
+      return reject(
+        new NodeTransportUnavailableError(
+          node.machine,
+          'disconnected',
+          `Node ${node.machine} WebSocket not open`,
+        ),
+      );
     }
     const id = `gw-${++reqSeq}-${Date.now()}`;
     const TIMEOUT = opts?.timeout ?? 30_000;
@@ -137,7 +168,13 @@ function sendNodeRequestStreaming(
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (node.ws.readyState !== WebSocket.OPEN) {
-      return reject(new Error(`Node ${node.machine} WebSocket not open`));
+      return reject(
+        new NodeTransportUnavailableError(
+          node.machine,
+          'disconnected',
+          `Node ${node.machine} WebSocket not open`,
+        ),
+      );
     }
     const id = `gw-${++reqSeq}-${Date.now()}`;
     const effectiveTimeout = opts?.timeout ?? DEFAULT_STREAMING_TIMEOUT_MS;
@@ -171,7 +208,11 @@ async function waitForNode(machine: string, timeoutMs = 15_000): Promise<Connect
     if (node && node.ws.readyState === WebSocket.OPEN) return node;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  throw new Error(`No node connected for machine ${machine} after ${timeoutMs}ms`);
+  throw new NodeTransportUnavailableError(
+    machine,
+    'not-connected',
+    `No node connected for machine ${machine} after ${timeoutMs}ms`,
+  );
 }
 
 /**
