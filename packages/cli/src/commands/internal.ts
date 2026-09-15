@@ -564,6 +564,7 @@ export function registerInternalCommand(program: Command): void {
     .option('--actionable <n>', 'Unresolved actionable comment count', '0')
     .option('--all-passed', 'Every CI check passed')
     .option('--approved', 'The PR has reviewer approval')
+    .option('--changes-requested', 'A reviewer requested changes')
     .option('--raw', 'Print only the recommendation token')
     .action(
       async (
@@ -575,6 +576,7 @@ export function registerInternalCommand(program: Command): void {
           actionable: string;
           allPassed?: boolean;
           approved?: boolean;
+          changesRequested?: boolean;
           raw?: boolean;
         },
         cmd: Command,
@@ -600,6 +602,7 @@ export function registerInternalCommand(program: Command): void {
             actionableCount: Number(opts.actionable) || 0,
             allPassed: Boolean(opts.allPassed),
             approved: Boolean(opts.approved),
+            changesRequested: Boolean(opts.changesRequested),
             familyContext: null,
           });
           if (opts.raw) {

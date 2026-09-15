@@ -8,6 +8,9 @@ import {
   assertPRTriggerRuleConfig,
   Events,
   Methods,
+  type MonitoredPRIdentity,
+  type Run,
+  type RunRereviewLatestHeadResult,
 } from '@farmslot/protocol';
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
@@ -17,6 +20,7 @@ import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRReviewDispatcher } from '../pr-rules/dispatch.js';
 import { collectPRRuleSources } from '../pr-rules/github-sources.js';
 import { importPRProject } from '../pr-rules/project-import.js';
+import { buildRereviewRequest } from '../pr-rules/rereview-request.js';
 import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
@@ -79,6 +83,46 @@ export async function initPRRules(
   );
   if (poll) service.start();
   return service;
+}
+
+/**
+ * PRs with a live review intent across every owner, for the dashboard list.
+ * Scheduler-style access to the store: the list itself is not principal-scoped.
+ */
+export function listActiveReviewPRs(): MonitoredPRIdentity[] {
+  if (!service) return [];
+  const live = new Set(['held', 'needs-configuration', 'queued', 'running']);
+  return service.store
+    .snapshot()
+    .intents.filter((intent) => live.has(intent.status))
+    .map((intent) => intent.pr);
+}
+
+/**
+ * Review-intake fallback for "Re-review on latest head": submit a continuity
+ * round for the run's PR through the normal review queue.
+ */
+export async function submitRereviewRequest(
+  run: Run,
+  fallbackRepo: string | undefined,
+  headSha: string,
+): Promise<Pick<RunRereviewLatestHeadResult, 'submission' | 'intent' | 'schedulerError'>> {
+  if (!service) throw new Error('PR rules are not initialized');
+  const originator = currentSessionOriginator();
+  if (originator.kind !== 'principal') throw new Error('An authenticated principal is required');
+  const ownerId = originator.principalId;
+  const request = buildRereviewRequest(run, service.store.list(ownerId).teams, ownerId, {
+    fallbackRepo,
+    headSha,
+  });
+  assertPRReviewRequest(request);
+  const submission = await service.submit(ownerId, request);
+  dispatcher?.wake();
+  return {
+    submission,
+    intent: service.store.list(ownerId).intents.find((item) => item.id === submission.intentId),
+    schedulerError: service.schedulerError,
+  };
 }
 
 export async function prRulesMethod(method: string, value: unknown): Promise<unknown> {

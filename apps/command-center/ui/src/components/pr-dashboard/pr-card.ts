@@ -5,6 +5,15 @@ import type { PRRecommendation, PRStatus } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { prAttentionReasons } from './pr-attention.js';
+
+const REASON_TONE_COLOR = {
+  fail: colors.statusFail,
+  warn: colors.statusWarn,
+  ok: colors.statusOk,
+  muted: colors.textMuted,
+} as const;
+
 function recommendationStyle(rec: PRRecommendation): { bg: string; fg: string; label: string } {
   switch (rec) {
     case 'WORKING':
@@ -30,6 +39,8 @@ function recommendationStyle(rec: PRRecommendation): { bg: string; fg: string; l
 export class PRCard extends LitElement {
   @property({ type: Object }) pr!: PRStatus;
   @property({ type: Boolean }) forceExpanded = false;
+  /** The viewer explicitly took this PR over (Mine scope). */
+  @property({ type: Boolean }) adopted = false;
   @state() private _expanded = false;
 
   get _isExpanded() {
@@ -97,6 +108,16 @@ export class PRCard extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       margin-left: auto;
     }
+
+    .pr-author {
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 45%;
+    }
     .family-badge {
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: 10px;
@@ -112,6 +133,44 @@ export class PRCard extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       padding: 1px 6px;
       border-radius: 3px;
+      font-weight: 600;
+    }
+
+    .guard-badge {
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid ${unsafeCSS(colors.accent)};
+      color: ${unsafeCSS(colors.accent)};
+      white-space: nowrap;
+    }
+
+    .reason-chip {
+      display: inline-block;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 10px;
+      line-height: 1.4;
+      padding: 1px 6px;
+      margin-top: ${unsafeCSS(spacing.sm)};
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .reason-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      line-height: 1.5;
+    }
+    .reason-list li {
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .reason-list strong {
       font-weight: 600;
     }
 
@@ -257,8 +316,22 @@ export class PRCard extends LitElement {
     }
   `;
 
+  /**
+   * Clicking the card offers the selection to the board (detail pane + URL, so
+   * the view is shareable). When nothing claims it, as in the standalone dev
+   * harness, the click toggles the inline sections instead. A force-expanded
+   * card (the detail pane) has nothing left to toggle, so it ignores the click.
+   */
   private _toggle() {
-    this._expanded = !this._expanded;
+    const claimed = !this.dispatchEvent(
+      new CustomEvent('pr-select', {
+        detail: { pr: this.pr.pr, repo: this.pr.repo },
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+    if (!claimed && !this.forceExpanded) this._expanded = !this._expanded;
   }
 
   private _dispatchFix(e: Event) {
@@ -298,15 +371,43 @@ export class PRCard extends LitElement {
     const all = pr.allCheckSummary;
     const hasAllSummary = Boolean(all && all.total > 0 && all.total !== cs.total);
     const rec = recommendationStyle(pr.recommendation);
+    const reasons = prAttentionReasons(pr);
+    const reason = reasons[0];
 
     return html`
       <div class="card" @click=${this._toggle}>
         <div class="top-row">
           <span class="pr-number">#${pr.pr}</span>
           <span class="rec-badge" style="background:${rec.bg}; color:${rec.fg}">${rec.label}</span>
+          ${this.adopted
+            ? html`<span
+                class="guard-badge"
+                data-testid="pr-card-guard"
+                title="You took this PR over"
+                >under your guard</span
+              >`
+            : nothing}
+          ${pr.author
+            ? html`<span
+                class="pr-author"
+                data-testid="pr-card-author"
+                title=${`PR author: @${pr.author}`}
+                >@${pr.author}</span
+              >`
+            : nothing}
           ${pr.slot ? html`<span class="pr-slot">${pr.slot}</span>` : ''}
         </div>
         <div class="pr-title" title="${pr.title}">${pr.title}</div>
+        ${reason
+          ? html`<span
+              class="reason-chip"
+              data-testid="pr-attention-reason"
+              data-reason-kind=${reason.kind}
+              style="color:${REASON_TONE_COLOR[reason.tone]}"
+              title=${reason.detail}
+              >${reason.label}</span
+            >`
+          : nothing}
         ${pr.summary ? html`<div class="pr-summary">${pr.summary}</div>` : ''}
         ${pr.ownedFamily
           ? html`
@@ -427,6 +528,20 @@ export class PRCard extends LitElement {
         ${this._isExpanded
           ? html`
               <div class="details">
+                ${reasons.length
+                  ? html`<div class="detail-heading">Why it needs you</div>
+                      <ul class="reason-list" data-testid="pr-attention-reasons">
+                        ${reasons.map(
+                          (item) =>
+                            html`<li>
+                              <strong style="color:${REASON_TONE_COLOR[item.tone]}"
+                                >${item.label}</strong
+                              >
+                              · ${item.detail}
+                            </li>`,
+                        )}
+                      </ul>`
+                  : nothing}
                 <div class="detail-heading">Watched CI Checks</div>
                 <ul class="check-list">
                   ${pr.checks.map(

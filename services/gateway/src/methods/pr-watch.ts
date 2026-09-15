@@ -5,6 +5,7 @@ import {
   assertPRSlotExecutionProfile,
   Events,
   Methods,
+  type MonitoredPRIdentity,
   monitoredPRKey,
   type PRMonitorConfig,
   type PRProjectMonitorPolicy,
@@ -92,6 +93,15 @@ function string(value: unknown, name: string): string {
 function configuration(value: unknown): PRMonitorConfig {
   assertPRMonitorConfig(value);
   return value;
+}
+
+/** PRs with an active monitor across every owner, for the dashboard list. */
+export function listActiveMonitoredPRs(): MonitoredPRIdentity[] {
+  if (!service) return [];
+  return service.store
+    .snapshot()
+    .monitors.filter((monitor) => monitor.lifecycle === 'active')
+    .map((monitor) => monitor.config.pr);
 }
 
 export async function routePRWatchMethod(

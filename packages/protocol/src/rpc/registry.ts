@@ -318,6 +318,7 @@ export const Methods = {
   RUN_AUTO_RECOVERY_STOP: 'run.autoRecovery.stop',
   RUN_CI_WATCH_POKE: 'run.ciWatch.poke',
   RUN_REFRESH_REVIEW_GATE: 'run.refreshReviewGate',
+  RUN_REREVIEW_LATEST_HEAD: 'run.rereviewLatestHead',
   RUN_REFRESH_PUBLISH_PACKAGE: 'run.refreshPublishPackage',
   RUN_REFRESH_MIRROR: 'run.refreshMirror',
   RUN_REHYDRATE_PR_NUMBER: 'run.rehydratePrNumber',

@@ -1046,6 +1046,10 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "run.rereviewLatestHead": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
     "run.resolveDecision": {
       "surface": "typed-command",
       "command": "farmslot run",

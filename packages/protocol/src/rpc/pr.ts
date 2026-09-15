@@ -9,6 +9,8 @@ export interface PRStatusParams {
 
 export interface PRListParams {
   project?: string;
+  /** Bypass the gateway's warm list and refetch every PR from GitHub before answering. */
+  force?: boolean;
 }
 
 export interface PRReviewCommentsParams {
@@ -92,4 +94,8 @@ export interface PRStatusResult {
 
 export interface PRListResult {
   prs: PRStatus[];
+  /** ISO time the served list was fetched from GitHub. Absent only when no list exists yet. */
+  fetchedAt?: string;
+  /** True when the gateway answered from its warm list while a GitHub refresh is still running. */
+  refreshing?: boolean;
 }

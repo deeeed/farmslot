@@ -811,6 +811,19 @@ export function broadcast(frame: EventFrame, ownerId?: string): void {
   }
 }
 
+/**
+ * True while an authenticated dashboard (Command Center or Companion) is
+ * connected. Node agents and sockets that have not authenticated yet do not
+ * count: they never render PRs, so background PR polling gates on this.
+ */
+export function hasConnectedViewers(): boolean {
+  for (const [ws, state] of clients) {
+    if (ws.readyState !== WebSocket.OPEN) continue;
+    if (state.clientKind === 'ui' || state.clientKind === 'companion') return true;
+  }
+  return false;
+}
+
 export function broadcastEvent(event: string, payload: unknown): void {
   broadcast({
     type: 'event',

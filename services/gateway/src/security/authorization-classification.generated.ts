@@ -273,6 +273,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.refreshReviewGate': { classification: 'admin' },
   'run.rehydratePrNumber': { classification: 'admin' },
   'run.replayStep': { classification: 'admin' },
+  'run.rereviewLatestHead': { classification: 'admin' },
   'run.resolveDecision': { classification: 'admin' },
   'run.resume': { classification: 'admin' },
   'run.sessionCommand': { classification: 'admin' },

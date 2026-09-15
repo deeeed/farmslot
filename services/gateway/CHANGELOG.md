@@ -6,6 +6,16 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Bind owned native filesystem operations and responses to the authorized node connection.
 
+- `run.rereviewLatestHead` re-reviews a review-pr run whose review could not be posted because the head moved: when the run's reviewer session is still alive on its slot, a chained review-pr run hands the follow-up into that session (warm handoff) with the incremental repeat-review context attached; otherwise a manual review request (resume session, incremental scope, same slot/runner/model preferred) goes through the review queue. Reviewer continuity treats a review blocked at posting as the prior round.
+
+- `pr.list` / `pr.status` read each reviewer's standing verdict (GitHub `latestOpinionatedReviews`, so a changes-requested reviewer who later commented still shows as blocking) and outstanding review requests (batch GraphQL and per-PR GraphQL), and flag when the author pushed after the newest changes-requested verdict.
+
+- `pr.list` also returns PRs that have an active review intent or monitor, when a project declares their repository, so tracked PRs get the same checks, review state and recommendation as run-owned ones.
+
+- The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to re-fetch every PR from GitHub before answering, and broadcasts `pr.list.updated` after every refresh (with the list only when it changed). Project-scoped `pr.list` calls filter the same copy, or rediscover per project when the shared copy hit the candidate cap. A PR GitHub cannot be read for keeps its last known row (for up to an hour) rather than a blank placeholder, a PR GitHub reports gone is dropped, and a refresh that reads nothing keeps the whole copy and reports the failure to every client. One-shot readers (`farmslot pr list`, the Co-Pilot `list_pull_requests` tool) read GitHub fresh; the carry clock for unreadable rows survives restarts.
+
+- `pr.list` / `pr.status` recommend NEEDS_ATTENTION for a PR whose reviewer requested changes, so a human review round shows up on the board next to CI failures and conflicts; the ci-monitor dedup path keeps that signal.
+
 - After a pr-complete, dev, fix-bug or update-branch round finalizes on a PR, the gateway re-requests review from every reviewer whose latest verdict is still CHANGES_REQUESTED, so an addressed PR goes back into their queue instead of sitting on "changes requested"; the finalize step records who was re-requested.
 
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".

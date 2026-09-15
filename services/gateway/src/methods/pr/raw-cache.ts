@@ -19,9 +19,19 @@ export interface PRRawSnapshot {
   author?: string;
   checksStdout: string;
   prStateStdout: string;
+  /** Why the PR state read returned nothing (gh's message); absent when it succeeded. */
+  prStateError?: string;
   commentsStdout: string;
   reviewCommentsStdout: string;
   latestCommitStdout: string;
+  /**
+   * JSON lines, one per reviewer's latest *opinionated* review, i.e. the
+   * APPROVED / CHANGES_REQUESTED verdict that still counts toward
+   * reviewDecision even if they commented later
+   * (`{t:"review",author,state,submittedAt}`), and one per outstanding review
+   * request (`{t:"request",kind:"team"|"user",name}`).
+   */
+  reviewMetaStdout: string;
   fetchedAt: number;
 }
 
@@ -70,82 +80,116 @@ export async function getPRRawData(
     if (inflight) return inflight;
   }
   const fetchPromise = (async (): Promise<PRRawSnapshot> => {
-    const [checks, prState, comments, reviewComments, latestCommit] = await Promise.all([
-      ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(swallowGh(`pr.checks#${prNum}`)),
-      ghRequest(
-        [
-          'pr',
-          'view',
-          String(prNum),
-          '--repo',
-          ghRepo,
-          '--json',
-          'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
-          '--jq',
-          '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
-        ],
-        { force },
-      ).catch(swallowGh(`pr.view#${prNum}`)),
-      ghRequest(
-        [
-          'api',
-          '--paginate',
-          `repos/${ghRepo}/issues/${prNum}/comments`,
-          '--jq',
-          '.[] | {id: .id, author: .user.login, user_type: .user.type, body: .body[0:300], created_at: .created_at, html_url: .html_url}',
-        ],
-        { force },
-      ).catch(swallowGh(`issues.comments#${prNum}`)),
-      // Inline review comments via GraphQL — filters out resolved + outdated threads
-      // server-side so ci-watch / pr-complete don't waste cycles re-triaging the same
-      // findings the worker already addressed. REST `/pulls/N/comments` would return
-      // every comment regardless of thread resolution state, defaulting to 30 per page.
-      // `--paginate` walks the reviewThreads cursor so PRs with >100 threads (long
-      // review cycles on example-browser PRs) don't regress to the same data-loss
-      // mode this PR is fixing. Output shape matches the prior REST jq exactly so
-      // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
-      // need no changes.
-      (async () => {
-        const [owner, name] = ghRepo.split('/');
-        if (!owner || !name) return { stdout: '', stderr: '' };
-        return ghRequest(
+    // A malformed slug must fail visibly in the per-repo GraphQL calls, not send
+    // `name=undefined` and have swallowGh turn the rejection into empty data.
+    const [owner, name] = ghRepo.split('/');
+    const badSlug = !owner || !name;
+    const [checks, prState, comments, reviewComments, latestCommit, reviewMeta] = await Promise.all(
+      [
+        ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(
+          swallowGh(`pr.checks#${prNum}`),
+        ),
+        ghRequest(
           [
-            'api',
-            'graphql',
-            '--paginate',
-            '-f',
-            `query=query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }`,
-            '-F',
-            `owner=${owner}`,
-            '-F',
-            `name=${name}`,
-            '-F',
-            `pr=${prNum}`,
-            // GraphQL author.login is the bare handle ("cursor"), REST returns "cursor[bot]".
-            // Append [bot] suffix when __typename === Bot so existing botPatterns regex
-            // (e.g. `cursor\[bot\]`) keep matching without a config sweep.
-            // Note the doubled backslash before `(`: JS strips lone backslashes from
-            // unknown escape sequences, so `'\('` becomes `'('`. We need jq to receive
-            // a literal `\(...)` for its string interpolation, hence `'\\('`.
+            'pr',
+            'view',
+            String(prNum),
+            '--repo',
+            ghRepo,
+            '--json',
+            'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
             '--jq',
-            '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
+            '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
           ],
           { force },
-        );
-      })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
-      ghRequest(
-        ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
-        { force },
-      ).catch(swallowGh(`pulls.commits#${prNum}`)),
-    ]);
+        ).catch(swallowGh(`pr.view#${prNum}`)),
+        ghRequest(
+          [
+            'api',
+            '--paginate',
+            `repos/${ghRepo}/issues/${prNum}/comments`,
+            '--jq',
+            '.[] | {id: .id, author: .user.login, user_type: .user.type, body: .body[0:300], created_at: .created_at, html_url: .html_url}',
+          ],
+          { force },
+        ).catch(swallowGh(`issues.comments#${prNum}`)),
+        // Inline review comments via GraphQL — filters out resolved + outdated threads
+        // server-side so ci-watch / pr-complete don't waste cycles re-triaging the same
+        // findings the worker already addressed. REST `/pulls/N/comments` would return
+        // every comment regardless of thread resolution state, defaulting to 30 per page.
+        // `--paginate` walks the reviewThreads cursor so PRs with >100 threads (long
+        // review cycles on example-browser PRs) don't regress to the same data-loss
+        // mode this PR is fixing. Output shape matches the prior REST jq exactly so
+        // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
+        // need no changes.
+        (async () => {
+          if (badSlug) return { stdout: '', stderr: `malformed repo slug ${ghRepo}` };
+          return ghRequest(
+            [
+              'api',
+              'graphql',
+              '--paginate',
+              '-f',
+              `query=query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }`,
+              '-F',
+              `owner=${owner}`,
+              '-F',
+              `name=${name}`,
+              '-F',
+              `pr=${prNum}`,
+              // GraphQL author.login is the bare handle ("cursor"), REST returns "cursor[bot]".
+              // Append [bot] suffix when __typename === Bot so existing botPatterns regex
+              // (e.g. `cursor\[bot\]`) keep matching without a config sweep.
+              // Note the doubled backslash before `(`: JS strips lone backslashes from
+              // unknown escape sequences, so `'\('` becomes `'('`. We need jq to receive
+              // a literal `\(...)` for its string interpolation, hence `'\\('`.
+              '--jq',
+              '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
+            ],
+            { force },
+          );
+        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
+        ghRequest(
+          ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
+          { force },
+        ).catch(swallowGh(`pulls.commits#${prNum}`)),
+        // Each reviewer's standing verdict plus whom GitHub still waits on; drives
+        // the "fix pushed, awaiting re-review" and "waiting on <team>" signals.
+        // `latestOpinionatedReviews`, not `latestReviews`: a reviewer who
+        // requested changes and then left comments shows COMMENTED in the latter
+        // while their CHANGES_REQUESTED still blocks the PR.
+        (badSlug
+          ? Promise.resolve({ stdout: '', stderr: `malformed repo slug ${ghRepo}` })
+          : ghRequest(
+              [
+                'api',
+                'graphql',
+                '-f',
+                'query=query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }',
+                '-f',
+                `owner=${owner}`,
+                '-f',
+                `name=${name}`,
+                '-F',
+                `pr=${prNum}`,
+                '--jq',
+                '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
+              ],
+              { force },
+            )
+        ).catch(swallowGh(`pr.reviews#${prNum}`)),
+      ],
+    );
     const [stateLine, author] = prState.stdout.trimEnd().split('\n');
     const snap: PRRawSnapshot = {
       author: author || undefined,
       checksStdout: checks.stdout,
       prStateStdout: stateLine ?? '',
+      prStateError: stateLine ? undefined : prState.stderr || 'empty response',
       commentsStdout: comments.stdout,
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,
+      reviewMetaStdout: reviewMeta.stdout,
       fetchedAt: Date.now(),
     };
     prRawCache.set(key, snap);
@@ -276,6 +320,14 @@ interface GqlPullRequestNode {
   comments?: { nodes?: GqlIssueComment[] };
   reviewThreads?: { nodes?: GqlReviewThread[]; pageInfo?: GqlPageInfo };
   commits?: { nodes?: GqlCommitNode[] };
+  latestOpinionatedReviews?: {
+    nodes?: Array<{ author?: GqlAuthor | null; state?: string; submittedAt?: string | null }>;
+  };
+  reviewRequests?: {
+    nodes?: Array<{
+      requestedReviewer?: { __typename?: string; login?: string; slug?: string } | null;
+    }>;
+  };
 }
 
 interface GqlBatchResponse {
@@ -314,6 +366,7 @@ const EMPTY_PR_RAW_SNAPSHOT: PRRawSnapshot = {
   commentsStdout: '',
   reviewCommentsStdout: '',
   latestCommitStdout: '',
+  reviewMetaStdout: '',
   fetchedAt: 0,
 };
 
@@ -348,6 +401,10 @@ export function buildBatchQuery(prCount: number): string {
         `        } } }\n` +
         `      }\n` +
         `      commits(last: 1) { nodes { commit { committedDate } } }\n` +
+        `      latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } }\n` +
+        `      reviewRequests(first: 20) { nodes { requestedReviewer {\n` +
+        `        __typename ... on User { login } ... on Team { slug }\n` +
+        `      } } }\n` +
         `    }`,
     );
   }
@@ -493,6 +550,30 @@ export function synthesizeRawSnapshotFromGraphQL(
   const lastDate = commitNodes[0]?.commit?.committedDate ?? '';
   const latestCommitStdout = lastDate ? lastDate + '\n' : '';
 
+  // reviewMetaStdout: same JSON-per-line shape as the REST `--jq` projection.
+  const reviewMetaLines: string[] = [];
+  for (const review of node.latestOpinionatedReviews?.nodes ?? [])
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'review',
+        author: review.author?.login ?? '',
+        state: review.state ?? '',
+        submittedAt: review.submittedAt ?? null,
+      }),
+    );
+  for (const request of node.reviewRequests?.nodes ?? []) {
+    const who = request.requestedReviewer;
+    if (!who) continue;
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'request',
+        kind: who.__typename === 'Team' ? 'team' : 'user',
+        name: who.slug ?? who.login ?? '',
+      }),
+    );
+  }
+  const reviewMetaStdout = joinLinesOrEmpty(reviewMetaLines);
+
   return {
     author: node.author?.login || undefined,
     checksStdout,
@@ -500,6 +581,7 @@ export function synthesizeRawSnapshotFromGraphQL(
     commentsStdout,
     reviewCommentsStdout,
     latestCommitStdout,
+    reviewMetaStdout,
     fetchedAt: Date.now(),
   };
 }
@@ -509,7 +591,7 @@ export function synthesizeRawSnapshotFromGraphQL(
 // Relies on `ghRequest`'s 10MB stdout buffer; a 25-PR chunk with 100 contexts × 100
 // review threads × 50 comments could in principle approach that ceiling on monster
 // PRs. JSON.parse failure on truncation is caught below and falls back cleanly.
-async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
+async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
   const query = buildBatchQuery(chunk.prs.length);
   const args = [
     'api',
@@ -566,6 +648,7 @@ async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
     prRawCache.set(`${chunk.repo}#${prNum}`, snap);
+    seeded.add(`${chunk.repo}#${prNum}`);
   }
 }
 
@@ -576,16 +659,21 @@ export function isPRBatchTruncated(node: GqlPullRequestNode | null | undefined):
   return false;
 }
 
-export async function prefetchPRBatchViaGraphQL(prsByRepo: Map<string, number[]>): Promise<void> {
-  if (prsByRepo.size === 0) return;
+/** Returns the `repo#pr` keys whose raw snapshot this batch wrote; the rest need the per-PR path. */
+export async function prefetchPRBatchViaGraphQL(
+  prsByRepo: Map<string, number[]>,
+): Promise<Set<string>> {
+  const seeded = new Set<string>();
+  if (prsByRepo.size === 0) return seeded;
   const chunks = chunkPRsByRepo(prsByRepo);
-  if (chunks.length === 0) return;
+  if (chunks.length === 0) return seeded;
   const totalPRs = chunks.reduce((sum, c) => sum + c.prs.length, 0);
   const startedAt = Date.now();
-  await Promise.all(chunks.map(runBatchChunk));
+  await Promise.all(chunks.map((chunk) => runBatchChunk(chunk, seeded)));
   console.log(
-    `[pr.batch] repos=${prsByRepo.size} prs=${totalPRs} chunks=${chunks.length} duration_ms=${Date.now() - startedAt}`,
+    `[pr.batch] repos=${prsByRepo.size} prs=${totalPRs} chunks=${chunks.length} seeded=${seeded.size} duration_ms=${Date.now() - startedAt}`,
   );
+  return seeded;
 }
 
 export type PRJsonLine = Record<string, string | number | boolean | null | undefined> & {

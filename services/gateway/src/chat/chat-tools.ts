@@ -246,7 +246,9 @@ export async function executeTool(
         const limit = Math.max(1, Math.min(Number(args.limit ?? 20), 50));
         const project =
           typeof args.project === 'string' && args.project.trim() ? args.project.trim() : undefined;
-        const { prs } = await prList(project ? { project } : {});
+        // A tool result cannot receive the later pr.list.updated broadcast,
+        // so read GitHub fresh rather than serve the warm copy.
+        const { prs, fetchedAt } = await prList({ project, force: true });
         const priority: Record<string, number> = {
           NEEDS_ATTENTION: 0,
           READY: 1,
@@ -267,6 +269,7 @@ export async function executeTool(
         for (const pr of prs) buckets[pr.recommendation] = (buckets[pr.recommendation] ?? 0) + 1;
         result = {
           total: prs.length,
+          fetchedAt: fetchedAt ?? null,
           buckets,
           prs: sorted.slice(0, limit).map((pr) => ({
             pr: pr.pr,

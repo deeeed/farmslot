@@ -351,26 +351,35 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
     [prWorkspaceRouteContext.decisionKind],
   );
 
-  const fetchPRs = useCallback(async () => {
-    if (!client) {
-      setPRLoading(false);
-      return;
-    }
-    const isCurrent = currentFarmConnection(client);
-    if (!isCurrent()) return;
-    setRefreshing(true);
-    setPRLoading(true);
-    setPRError(null);
-    try {
-      const result = await client.request<PRListResult>(Methods.PR_LIST, {}, PR_LIST_TIMEOUT_MS);
-      if (isCurrent()) setPRs(result.prs);
-    } catch (err) {
+  // `force` makes the gateway re-read GitHub before answering; otherwise it
+  // serves its warm copy and pushes pr.list.updated when the refresh lands.
+  const fetchPRs = useCallback(
+    async (opts: { force?: boolean } = {}) => {
+      if (!client) {
+        setPRLoading(false);
+        return;
+      }
+      const isCurrent = currentFarmConnection(client);
       if (!isCurrent()) return;
-      setPRError(`Failed to load PR list: ${(err as Error).message}`);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [client, setPRError, setPRLoading, setPRs]);
+      setRefreshing(true);
+      setPRLoading(true);
+      setPRError(null);
+      try {
+        const result = await client.request<PRListResult>(
+          Methods.PR_LIST,
+          opts.force ? { force: true } : {},
+          PR_LIST_TIMEOUT_MS,
+        );
+        if (isCurrent()) setPRs(result.prs);
+      } catch (err) {
+        if (!isCurrent()) return;
+        setPRError(`Failed to load PR list: ${(err as Error).message}`);
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [client, setPRError, setPRLoading, setPRs],
+  );
 
   useEffect(() => {
     if (status === 'connected' && (!updatedAt || Date.now() - updatedAt > PR_LIST_TIMEOUT_MS)) {
@@ -474,7 +483,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
         {showStackTitle ? <View /> : <Text style={styles.screenTitle}>Pull Requests</Text>}
         <Pressable
           style={[styles.actionButton, styles.headerRefreshButton]}
-          onPress={fetchPRs}
+          onPress={() => void fetchPRs({ force: true })}
           disabled={refreshing}
         >
           <Text style={styles.actionText}>{refreshing ? 'Refreshing…' : 'Refresh'}</Text>
@@ -598,7 +607,10 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
                 : 'No PRs match this filter.'}
           </Text>
           {status === 'connected' ? (
-            <Pressable style={[styles.actionButton, styles.refreshButton]} onPress={fetchPRs}>
+            <Pressable
+              style={[styles.actionButton, styles.refreshButton]}
+              onPress={() => void fetchPRs({ force: true })}
+            >
               <Text style={styles.actionText}>Refresh</Text>
             </Pressable>
           ) : null}

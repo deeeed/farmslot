@@ -412,3 +412,37 @@ test('first-match: NEEDS_ATTENTION beats WAITING_FOR_MERGE when conflict present
 test('first-match: READY beats IN_REVIEW when all passed and approved', () => {
   assert.equal(computePRRecommendation(baseParams({ allPassed: true, approved: true })), 'READY');
 });
+
+// ─── changesRequested ────────────────────────────────────────────────────────
+
+test('changes requested → NEEDS_ATTENTION even when CI is green and approved flag is stale', () => {
+  assert.equal(
+    computePRRecommendation(baseParams({ changesRequested: true, allPassed: true })),
+    'NEEDS_ATTENTION',
+  );
+});
+
+test('changes requested with an active worker → WORKING (worker rule wins)', () => {
+  assert.equal(
+    computePRRecommendation(baseParams({ changesRequested: true, workerActive: true })),
+    'WORKING',
+  );
+});
+
+test('changes requested on a merged or closed PR keeps the terminal state', () => {
+  assert.equal(
+    computePRRecommendation(baseParams({ changesRequested: true, prState: 'MERGED' })),
+    'MERGED',
+  );
+  assert.equal(
+    computePRRecommendation(baseParams({ changesRequested: true, prState: 'CLOSED' })),
+    'CLOSED_WITHOUT_MERGE',
+  );
+});
+
+test('changesRequested omitted behaves as before (IN_REVIEW when not approved)', () => {
+  assert.equal(
+    computePRRecommendation(baseParams({ approved: false, allPassed: true })),
+    'IN_REVIEW',
+  );
+});

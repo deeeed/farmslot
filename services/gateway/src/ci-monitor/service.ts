@@ -416,6 +416,7 @@ export async function monitorCI(
         actionableCount: 0,
         allPassed,
         approved: pr.reviewDecision === 'APPROVED',
+        changesRequested: pr.reviewDecision === 'CHANGES_REQUESTED',
         familyContext: null,
       });
       mutateDedup(runId, (s) => {

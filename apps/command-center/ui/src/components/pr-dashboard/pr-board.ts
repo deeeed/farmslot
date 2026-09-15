@@ -1,7 +1,13 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type { PRRulePreview, PRRuleSubject, PRStatus } from '@farmslot/protocol';
+import type {
+  ConfigGitHubAccountsResult,
+  PRListResult,
+  PRRulePreview,
+  PRRuleSubject,
+  PRStatus,
+} from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import './pr-card.js';
@@ -27,6 +33,7 @@ import {
   workInventoryTableStyles,
 } from '../shared/work-inventory-table.js';
 
+import { prAttentionReasons } from './pr-attention.js';
 import type { PRAutomationInventory, PRAutomationPanel } from './pr-automation-panel.js';
 import {
   matchesPrKey,
@@ -38,9 +45,22 @@ import {
   type PRLayout,
 } from './pr-board-url-state.js';
 import { buildPRDashboardScopeSummary } from './pr-filters.js';
+import { PR_REVIEW_QUEUE_GROUPS, prReviewQueue } from './pr-review-queue.js';
 import { prReviewReadiness, reviewRunLabel } from './pr-review-status.js';
 import {
+  describeMineScope,
+  isAdopted,
+  isMineEntry,
+  loadMineScope,
+  type MineScope,
+  normalizeLogins,
+  parseLoginList,
+  saveMineScope,
+  withAdoption,
+} from './pr-scope-mine.js';
+import {
   buildPRWorkspaceEntries,
+  isTerminalPREntry,
   type PRPane,
   type PRScope,
   type PRSection,
@@ -101,7 +121,9 @@ function recommendationColor(rec: string | undefined): string {
   }
 }
 
-const COLUMNS: KanbanColumn[] = [
+// Merged / closed columns are history: rendered only behind the "Show history"
+// toggle so the default board holds PRs that can still need the operator.
+const ACTIVE_COLUMNS: KanbanColumn[] = [
   {
     id: 'working',
     label: 'Working',
@@ -132,6 +154,8 @@ const COLUMNS: KanbanColumn[] = [
     color: '#818cf8',
     filter: (pr) => pr.recommendation === 'WAITING_FOR_MERGE',
   },
+];
+const TERMINAL_COLUMNS: KanbanColumn[] = [
   {
     id: 'merged',
     label: 'Merged',
@@ -158,7 +182,12 @@ export class PRBoard extends LitElement {
     loading: true,
   };
   @state() private _section: PRSection = 'prs';
-  @state() private _scope: PRScope = 'all';
+  @state() private _scope: PRScope = 'mine';
+  /** Viewer-declared "Mine" definition; null until loaded or prefilled from configured accounts. */
+  @state() private _mine: MineScope | null = loadMineScope();
+  @state() private _mineEditing = false;
+  @state() private _mineNotice = '';
+  private _mineLoginsDraft = '';
   @state() private _pane: PRPane = 'overview';
   @state() private _showHistory = false;
   @state() private _details = new Map<string, PRStatus>();
@@ -173,6 +202,8 @@ export class PRBoard extends LitElement {
   private _detailSerial = 0;
   private _didInitialUpdate = false;
   @state() private _loading = false;
+  @state() private _gatewayRefreshing = false;
+  @state() private _gatewayRefreshError: string | null = null;
   @state() private _lastRefreshed = 0;
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _hydrating = false;
@@ -262,6 +293,81 @@ export class PRBoard extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       color: ${unsafeCSS(colors.textMuted)};
     }
+    .refresh-ago.refreshing {
+      color: ${unsafeCSS(colors.statusWarn)};
+      animation: pr-refresh-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pr-refresh-pulse {
+      0%,
+      100% {
+        opacity: 0.55;
+      }
+      50% {
+        opacity: 1;
+      }
+    }
+    farm-hydrating {
+      flex: 1;
+    }
+    .mine-editor {
+      display: flex;
+      flex-wrap: wrap;
+      gap: ${unsafeCSS(spacing.md)};
+      align-items: center;
+      padding: ${unsafeCSS(spacing.md)} 12px;
+      border-bottom: 1px solid #303047;
+      font: 12px ${unsafeCSS(fonts.mono)};
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .mine-editor label {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .mine-editor input[name='logins'] {
+      font: inherit;
+      min-width: 320px;
+      padding: 6px 8px;
+      color: ${unsafeCSS(colors.textPrimary)};
+      background: ${unsafeCSS(colors.bgInput)};
+      border: 1px solid #2a2a44;
+      border-radius: ${unsafeCSS(radii.sm)};
+    }
+    .mine-editor-notice {
+      flex-basis: 100%;
+      color: ${unsafeCSS(colors.statusWarn)};
+    }
+    .mine-editor-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .mine-editor-actions button {
+      font: inherit;
+      padding: 6px 10px;
+      color: ${unsafeCSS(colors.textPrimary)};
+      background: ${unsafeCSS(colors.bgCard)};
+      border: 1px solid #2a2a44;
+      border-radius: ${unsafeCSS(radii.sm)};
+      cursor: pointer;
+    }
+    .workspace-toolbar .mine-edit {
+      padding: 8px 9px;
+    }
+    .guard-toggle {
+      font: 12px ${unsafeCSS(fonts.mono)};
+      padding: 6px 10px;
+      margin: ${unsafeCSS(spacing.sm)} 0;
+      color: ${unsafeCSS(colors.accent)};
+      background: transparent;
+      border: 1px solid ${unsafeCSS(colors.accent)};
+      border-radius: ${unsafeCSS(radii.sm)};
+      cursor: pointer;
+    }
+    farm-hydrating.inline {
+      flex: none;
+      min-height: 0;
+      padding: ${unsafeCSS(spacing.sm)} 0;
+    }
 
     .rehydrating-banner {
       font-family: ${unsafeCSS(fonts.mono)};
@@ -278,16 +384,22 @@ export class PRBoard extends LitElement {
       min-height: 0;
     }
 
+    /* Columns share the available width; an empty one collapses to its header
+       so the columns holding PRs get the space. */
     .column {
-      flex: 1;
-      min-width: 220px;
-      max-width: 320px;
+      flex: 1 1 0;
+      min-width: 240px;
       display: flex;
       flex-direction: column;
       background: ${unsafeCSS(colors.bgSurface)};
       border-radius: ${unsafeCSS(radii.md)};
       border: 1px solid #1e1e36;
       overflow: hidden;
+    }
+
+    .column.empty {
+      flex: 0 0 150px;
+      min-width: 150px;
     }
 
     .column-header {
@@ -567,12 +679,13 @@ export class PRBoard extends LitElement {
     if (initial.connection === 'connected' && !this._hydrating && initial.bootstrapFailed.prs) {
       this._fetchPRs();
     }
+    void this._prefillMineScope();
     this._refreshInterval = window.setInterval(() => {
       if (
         document.visibilityState === 'visible' &&
         !this._automationEditing &&
         this._section === 'prs' &&
-        this._scope === 'all'
+        this._scope !== 'monitored'
       )
         void this._fetchPRs();
     }, 60_000);
@@ -654,6 +767,10 @@ export class PRBoard extends LitElement {
     this._globalFilters = s.globalFilters;
     this._hydrating = isHydrating(s, 'prs');
     this._bootstrapFailed = s.bootstrapFailed.prs;
+    this._gatewayRefreshing = s.prsRefreshing;
+    this._gatewayRefreshError = s.prsRefreshError;
+    // Cold loads mount before the socket is up; prefill once it is.
+    if (s.connection === 'connected' && !this._mine) void this._prefillMineScope();
     if (s.prsUpdatedAt > this._lastRefreshed) this._lastRefreshed = s.prsUpdatedAt;
     // Legacy URLs (bare `pr=123` without repo) can't be resolved until the
     // PR list lands. Re-run _readUrl once PRs arrive so a cold-reload on a
@@ -670,22 +787,23 @@ export class PRBoard extends LitElement {
     }
   }
 
-  private async _fetchPRs() {
+  private async _fetchPRs(force = false) {
     // Never race the shared bootstrap PR_LIST. This single gate covers
     // every caller: mount-time, hydration-complete transition, 60s poll,
     // and the manual Refresh button. `state.ts#fetchInitialState` owns
     // PR_LIST during the hydrating window and will update shared state.
+    // The gateway answers from its warm list; `force` (manual Refresh)
+    // makes it re-fetch from GitHub before replying.
     if (this._hydrating || this._loading) return;
     this._loading = true;
     try {
-      const result = await gateway.request<{ prs: PRStatus[] }>(
+      const result = await gateway.request<PRListResult>(
         Methods.PR_LIST,
-        {},
+        force ? { force: true } : {},
         PR_LIST_TIMEOUT_MS,
       );
-      updatePRs(result.prs);
+      updatePRs(result.prs, { fetchedAt: result.fetchedAt, refreshing: result.refreshing });
       this._lastRefreshError = null;
-      this._lastRefreshed = Date.now();
     } catch (err) {
       // Recover explicitly: retain the last known PR list but mark the slice
       // failed so the board shows the stale-data banner and retries on the
@@ -711,7 +829,7 @@ export class PRBoard extends LitElement {
       this._detailRequestKey = '';
       this._detailSerial++;
       this._detailLoading = false;
-      void this._fetchPRs();
+      void this._fetchPRs(true);
     }
   }
 
@@ -761,17 +879,159 @@ export class PRBoard extends LitElement {
     }
     return entries;
   }
+  /**
+   * Entries for the current section/scope, split into the ones to show and
+   * the merged/closed ones the history toggle hides. One pass over
+   * `_entries`, which rebuilds the workspace model each time it is read.
+   */
+  private _partitionEntries(): { visible: PRWorkspaceEntry[]; hiddenTerminal: number } {
+    const visible: PRWorkspaceEntry[] = [];
+    let hiddenTerminal = 0;
+    for (const entry of this._entries) {
+      const inSection =
+        this._section === 'reviews'
+          ? entry.reviews.length > 0 || entry.requests.length > 0
+          : this._scope === 'monitored'
+            ? entry.monitors.length > 0
+            : this._scope === 'mine'
+              ? isMineEntry(entry, this._mineScope)
+              : true;
+      // An explicit selection (detail link, or a PR that merged while open)
+      // stays visible whatever the scope, so its detail pane does not go blank.
+      if (!inSection && !prKeyEqual(entry.key, this._selectedPr)) continue;
+      if (
+        !this._showHistory &&
+        isTerminalPREntry(entry) &&
+        !prKeyEqual(entry.key, this._selectedPr)
+      )
+        hiddenTerminal += 1;
+      else visible.push(entry);
+    }
+    return { visible, hiddenTerminal };
+  }
   private get _visibleEntries() {
-    return this._entries.filter((entry) =>
-      this._section === 'reviews'
-        ? entry.reviews.length || entry.requests.length
-        : this._scope === 'monitored'
-          ? entry.monitors.length
-          : true,
-    );
+    return this._partitionEntries().visible;
   }
   private get _selectedEntry() {
     return this._visibleEntries.find((entry) => prKeyEqual(entry.key, this._selectedPr));
+  }
+  /** True while the PR slice has no data yet (bootstrap hydration or first fetch). */
+  private get _prsLoading() {
+    return this._hydrating || (this._loading && this._prs.length === 0);
+  }
+  private get _columns(): KanbanColumn[] {
+    return this._showHistory ? [...ACTIVE_COLUMNS, ...TERMINAL_COLUMNS] : ACTIVE_COLUMNS;
+  }
+  /**
+   * First visit on this browser: seed "Mine" with the gateway's configured
+   * GitHub logins so the default view is useful before anyone edits it.
+   */
+  private _minePrefillInflight = false;
+  private async _prefillMineScope() {
+    if (this._mine || this._minePrefillInflight || gateway.connectionState !== 'connected') return;
+    this._minePrefillInflight = true;
+    try {
+      const result = await gateway.request<ConfigGitHubAccountsResult>(
+        Methods.CONFIG_GITHUB_ACCOUNTS,
+        {},
+      );
+      if (this._mine) return;
+      const next: MineScope = {
+        logins: normalizeLogins(result.accounts.map((account) => account.login)),
+        includeRunOwned: true,
+        adopted: [],
+      };
+      // Persist so later loads are deterministic and skip the RPC.
+      saveMineScope(next);
+      this._mine = next;
+    } catch (error) {
+      // Operators cannot read configured accounts (admin-only method), and a
+      // gateway without accounts is valid too. Say so where the scope is
+      // edited instead of silently narrowing "Mine" to run-created PRs.
+      this._mineNotice = `Could not read the gateway's configured GitHub accounts (${
+        error instanceof Error ? error.message : String(error)
+      }); add your logins here.`;
+      this._mine = { logins: [], includeRunOwned: true, adopted: [] };
+    } finally {
+      this._minePrefillInflight = false;
+    }
+  }
+  private get _mineScope(): MineScope {
+    return this._mine ?? { logins: [], includeRunOwned: true, adopted: [] };
+  }
+  private _setAdopted(key: PRKey, adopted: boolean) {
+    const next = withAdoption(this._mineScope, key, adopted);
+    saveMineScope(next);
+    this._mine = next;
+  }
+  private _openMineEditor() {
+    this._mineLoginsDraft = (this._mine?.logins ?? []).join(', ');
+    this._mineEditing = true;
+  }
+  private _saveMineScope(includeRunOwned: boolean) {
+    const next: MineScope = {
+      logins: parseLoginList(this._mineLoginsDraft),
+      includeRunOwned,
+      adopted: this._mineScope.adopted,
+    };
+    saveMineScope(next);
+    this._mine = next;
+    this._mineNotice = '';
+    this._mineEditing = false;
+  }
+  private _renderMineEditor() {
+    const mine = this._mineScope;
+    return html`<form
+      class="mine-editor"
+      data-testid="pr-mine-editor"
+      @submit=${(event: Event) => {
+        event.preventDefault();
+        const form = event.currentTarget as HTMLFormElement;
+        const runOwned = form.querySelector<HTMLInputElement>('input[name=runOwned]')!.checked;
+        this._saveMineScope(runOwned);
+      }}
+    >
+      ${this._mineNotice
+        ? html`<span class="mine-editor-notice" data-testid="pr-mine-notice"
+            >${this._mineNotice}</span
+          >`
+        : nothing}
+      <label
+        >GitHub logins that count as mine
+        <input
+          name="logins"
+          data-testid="pr-mine-logins"
+          .value=${this._mineLoginsDraft}
+          placeholder="login, login"
+          @input=${(event: Event) => {
+            this._mineLoginsDraft = (event.target as HTMLInputElement).value;
+          }}
+        />
+      </label>
+      <label
+        ><input type="checkbox" name="runOwned" .checked=${mine.includeRunOwned} /> Include PRs a
+        farmslot run created (not PRs a run only worked on)</label
+      >
+      <span class="mine-editor-actions">
+        <button type="submit" data-testid="pr-mine-save">Save</button>
+        <button
+          type="button"
+          @click=${() => {
+            this._mineEditing = false;
+          }}
+        >
+          Cancel
+        </button>
+      </span>
+    </form>`;
+  }
+  private _selectFromCard(event: CustomEvent<{ repo: string; pr: number }>) {
+    event.preventDefault(); // claimed: the card must not also toggle inline
+    const key = { repo: event.detail.repo, pr: event.detail.pr };
+    this._navigate({
+      selected: prKeyEqual(this._selectedPr, key) ? null : key,
+      pane: 'overview',
+    });
   }
   private _navigate(patch: {
     section?: PRSection;
@@ -984,6 +1244,8 @@ export class PRBoard extends LitElement {
       entry.monitors.flatMap((m) => m.incidents.filter((i) => !i.resolvedAt).map((i) => i.id)),
     ).size;
     const readiness = prReviewReadiness(entry);
+    const queue = this._section === 'reviews' ? prReviewQueue(entry) : undefined;
+    const reason = !working && entry.status ? prAttentionReasons(entry.status)[0] : undefined;
     const label =
       this._section === 'reviews'
         ? `Run: ${readiness.blockedReason && !review?.runId ? 'Not needed' : reviewRunLabel(review?.status)}`
@@ -1021,34 +1283,51 @@ export class PRBoard extends LitElement {
         ></span
       >
       <span class="pr-row-statuses">
-        ${this._section === 'reviews'
+        ${this._section === 'reviews' && queue
           ? html`<span
-                class=${`review-badge review-tone-${readiness.tone}`}
+                class=${`review-badge review-tone-${queue.tone}`}
                 data-testid="pr-row-review-status"
-                title=${readiness.detail}
-                >${readiness.label}</span
-              ><span class="pr-author">${readiness.personal}</span>`
-          : nothing}
+                data-review-queue=${queue.group}
+                title=${`${queue.detail} GitHub: ${readiness.label}.`}
+                >${queue.label}</span
+              ><span class="pr-row-detail">${queue.detail}</span>`
+          : reason
+            ? html`<span
+                class=${`reason-chip reason-tone-${reason.tone}`}
+                data-testid="pr-row-attention-reason"
+                data-reason-kind=${reason.kind}
+                title=${reason.detail}
+                >${reason.label}</span
+              >`
+            : nothing}
         <span class="rec-chip" style="color:${color};border-color:${color}">${label}</span>
       </span>
     </button>`;
   }
-  private _renderListContent(entries: PRWorkspaceEntry[]) {
-    if (!entries.length)
-      return html`<p class="empty-col">
-        ${this._inventory.loading ? 'Loading PRs…' : 'No PRs match this view.'}
+  private _renderListContent(entries: PRWorkspaceEntry[], hiddenTerminal: number) {
+    if (!entries.length) {
+      if (this._prsLoading)
+        return html`<farm-hydrating
+          data-testid="pr-list-loading"
+          message="Fetching pull requests from GitHub…"
+        ></farm-hydrating>`;
+      if (this._inventory.loading)
+        return html`<farm-hydrating
+          data-testid="pr-list-loading"
+          message="Loading review rules and monitors…"
+        ></farm-hydrating>`;
+      return html`<p class="empty-col" data-testid="pr-list-empty">
+        ${hiddenTerminal
+          ? `No open PRs need you. ${hiddenTerminal} merged or closed PRs are hidden; enable “Show merged / closed & history” to see them.`
+          : this._section === 'reviews'
+            ? 'No PRs match your review teams or rules. Configure them under Automation.'
+            : 'No PRs match this view.'}
       </p>`;
+    }
     if (this._section === 'reviews' && this._sortMode === 'group') {
-      return (
-        [
-          'Needs review',
-          'Changes requested',
-          'Approved',
-          'Not ready for review',
-          'Review status unknown',
-        ] as const
-      ).map((group) => {
-        const rows = entries.filter((entry) => prReviewReadiness(entry).group === group);
+      const queued = entries.map((entry) => ({ entry, queue: prReviewQueue(entry) }));
+      return PR_REVIEW_QUEUE_GROUPS.map((group) => {
+        const rows = queued.filter((item) => item.queue.group === group).map((item) => item.entry);
         return rows.length
           ? html`<div class="list-group-header">
                 <span>${group}</span><span class="list-group-count">${rows.length}</span>
@@ -1069,10 +1348,11 @@ export class PRBoard extends LitElement {
           return activity(b) - activity(a);
         })
         .map((entry) => this._renderListRow(entry));
+    const columns = this._columns;
     const other = entries.filter(
-      (entry) => !entry.status || !COLUMNS.some((col) => col.filter(entry.status!)),
+      (entry) => !entry.status || !columns.some((col) => col.filter(entry.status!)),
     );
-    return html`${COLUMNS.map((col) => {
+    return html`${columns.map((col) => {
       const rows = entries.filter((entry) => entry.status && col.filter(entry.status));
       return rows.length
         ? html`<div class="list-group-header">
@@ -1089,12 +1369,17 @@ export class PRBoard extends LitElement {
   }
 
   private _renderBoard(filtered: PRStatus[]) {
+    if (this._prsLoading && !filtered.length)
+      return html`<farm-hydrating
+        data-testid="pr-list-loading"
+        message="Fetching pull requests from GitHub…"
+      ></farm-hydrating>`;
     return html`
       <div class="kanban">
-        ${COLUMNS.map((col) => {
+        ${this._columns.map((col) => {
           const prs = filtered.filter(col.filter);
           return html`
-            <div class="column">
+            <div class="column ${prs.length ? '' : 'empty'}" data-column=${col.id}>
               <div class="column-header">
                 <span class="column-dot" style="background:${col.color}"></span>
                 <span class="column-label">${col.label}</span>
@@ -1105,7 +1390,13 @@ export class PRBoard extends LitElement {
                 @pr-dispatch-fix=${(e: CustomEvent) => this._gotoDispatchComplete(e.detail)}
               >
                 ${prs.length > 0
-                  ? prs.map((pr) => html`<pr-card .pr=${pr}></pr-card>`)
+                  ? prs.map(
+                      (pr) =>
+                        html`<pr-card
+                          .pr=${pr}
+                          .adopted=${isAdopted(this._mineScope, { repo: pr.repo, pr: pr.pr })}
+                        ></pr-card>`,
+                    )
                   : html`<div class="empty-col">None</div>`}
               </div>
             </div>
@@ -1149,19 +1440,30 @@ export class PRBoard extends LitElement {
   }
 
   render() {
-    const entries = this._visibleEntries;
-    const selected = this._selectedEntry;
+    const { visible: entries, hiddenTerminal } = this._partitionEntries();
+    const selected = entries.find((entry) => prKeyEqual(entry.key, this._selectedPr));
     const management = this._section === 'automation';
     return html`
       <header class="board-header">
         <span class="board-title">Pull requests</span>
-        <span class="pr-count">${entries.length} PRs</span>${this._renderScopeSummary()}${this
-          ._lastRefreshed
-          ? html`<span class="refresh-ago">${this._formatAgo()}</span>`
-          : nothing}
+        <span class="pr-count" data-testid="pr-board-count"
+          >${this._prsLoading
+            ? 'Loading…'
+            : `${entries.length} PRs${
+                hiddenTerminal ? ` · ${hiddenTerminal} merged/closed hidden` : ''
+              }`}</span
+        >${this._renderScopeSummary()}${(this._loading || this._gatewayRefreshing) &&
+        this._prs.length
+          ? html`<span class="refresh-ago refreshing" role="status" aria-busy="true"
+              >Fetching PR info…</span
+            >`
+          : this._lastRefreshed
+            ? html`<span class="refresh-ago">${this._formatAgo()}</span>`
+            : nothing}
         ${this._bootstrapFailed
           ? html`<span class="rehydrating-banner"
-              >${this._lastRefreshError ?? 'PR refresh unavailable'} · showing available data</span
+              >${this._gatewayRefreshError ?? this._lastRefreshError ?? 'PR refresh unavailable'} ·
+              showing available data</span
             >`
           : nothing}
         ${this._inventory.error
@@ -1187,9 +1489,10 @@ export class PRBoard extends LitElement {
         <button
           data-testid="pr-automation-tab-reviews"
           aria-current=${this._section === 'reviews' ? 'page' : nothing}
+          title="PRs matched by your review teams and rules"
           @click=${() => this._navigate({ section: 'reviews' })}
         >
-          Reviews
+          Need Review
         </button>
         <button
           data-testid="pr-workspace-automation"
@@ -1208,6 +1511,26 @@ export class PRBoard extends LitElement {
           >
             ${this._section === 'prs'
               ? html`
+                  <button
+                    data-testid="pr-scope-mine"
+                    aria-pressed=${String(this._scope === 'mine')}
+                    title=${`Mine: ${describeMineScope(this._mineScope)}`}
+                    @click=${() => this._navigate({ scope: 'mine' })}
+                  >
+                    Mine
+                  </button>
+                  <button
+                    class="mine-edit"
+                    data-testid="pr-scope-mine-edit"
+                    title="Choose which GitHub logins and farmslot runs count as mine"
+                    aria-pressed=${String(this._mineEditing)}
+                    @click=${() => {
+                      if (this._mineEditing) this._mineEditing = false;
+                      else this._openMineEditor();
+                    }}
+                  >
+                    ⚙
+                  </button>
                   <button
                     data-testid="pr-scope-all"
                     aria-pressed=${String(this._scope === 'all')}
@@ -1248,7 +1571,7 @@ export class PRBoard extends LitElement {
                 @change=${(event: Event) =>
                   this._navigate({ history: (event.target as HTMLInputElement).checked })}
               />
-              Show history</label
+              Show merged / closed &amp; history</label
             >
             ${this._section === 'prs'
               ? html`<span class="layout-toggle">
@@ -1267,6 +1590,9 @@ export class PRBoard extends LitElement {
                 </span>`
               : nothing}
           </div>`}
+      ${!management && this._section === 'prs' && this._mineEditing
+        ? this._renderMineEditor()
+        : nothing}
       <div
         class="workspace ${management ? 'management' : ''} ${this._selectedPr ||
         this._automationEditing
@@ -1292,18 +1618,17 @@ export class PRBoard extends LitElement {
               </button>
             </div>
           </div>
+          ${this._prsLoading && entries.length
+            ? html`<farm-hydrating
+                class="inline"
+                data-testid="pr-list-loading"
+                message="Fetching pull requests from GitHub… showing tracked PRs meanwhile"
+              ></farm-hydrating>`
+            : nothing}
           ${this._layout === 'board' && this._section === 'prs'
             ? html`<div
-                @pr-open-modal=${(event: CustomEvent) =>
-                  this._navigate({
-                    selected: prKeyEqual(this._selectedPr, {
-                      repo: event.detail.repo,
-                      pr: event.detail.pr,
-                    })
-                      ? null
-                      : { repo: event.detail.repo, pr: event.detail.pr },
-                    pane: 'overview',
-                  })}
+                @pr-select=${(event: CustomEvent) => this._selectFromCard(event)}
+                @pr-open-modal=${(event: CustomEvent) => this._selectFromCard(event)}
               >
                 ${this._renderBoard(
                   entries.flatMap((entry) => (entry.status ? [entry.status] : [])),
@@ -1311,7 +1636,7 @@ export class PRBoard extends LitElement {
                   .filter((entry) => !entry.status)
                   .map((entry) => this._renderListRow(entry))}
               </div>`
-            : this._renderListContent(entries)}
+            : this._renderListContent(entries, hiddenTerminal)}
         </div>
         <div
           class="split-detail"
@@ -1355,6 +1680,24 @@ export class PRBoard extends LitElement {
                             ? 'Loading author…'
                             : 'Author unavailable'}
                       </p>
+                      ${!isMineEntry(selected, { ...this._mineScope, adopted: [] })
+                        ? html`<button
+                            class="guard-toggle"
+                            data-testid="pr-guard-toggle"
+                            title=${isAdopted(this._mineScope, selected.key)
+                              ? 'Stop counting this PR as yours'
+                              : 'Count this PR as yours on the Mine board even though you did not author it'}
+                            @click=${() =>
+                              this._setAdopted(
+                                selected.key,
+                                !isAdopted(this._mineScope, selected.key),
+                              )}
+                          >
+                            ${isAdopted(this._mineScope, selected.key)
+                              ? 'Release from my guard'
+                              : 'Take over (under my guard)'}
+                          </button>`
+                        : nothing}
                       ${this._pane === 'review' ? this._renderReviewStatus(selected) : nothing}
                       <div class="detail-tabs" role="tablist" aria-label="Selected PR">
                         ${(['overview', 'monitoring', 'review'] as const).map(
@@ -1377,7 +1720,11 @@ export class PRBoard extends LitElement {
               </div>`}
           ${!management && !this._automationEditing && this._pane === 'overview' && selected
             ? selected.status
-              ? html`<pr-card .pr=${selected.status} .forceExpanded=${true}></pr-card>`
+              ? html`<pr-card
+                  .pr=${selected.status}
+                  .forceExpanded=${true}
+                  .adopted=${isAdopted(this._mineScope, selected.key)}
+                ></pr-card>`
               : html`<p class="pr-count">
                     ${this._detailLoading
                       ? 'Loading PR details…'

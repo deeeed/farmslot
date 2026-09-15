@@ -27,6 +27,8 @@ export interface PRRecommendationParams {
   actionableCount: number;
   allPassed: boolean;
   approved: boolean;
+  /** GitHub reviewDecision === 'CHANGES_REQUESTED': a human reviewer is waiting on the author. */
+  changesRequested?: boolean;
   familyContext: PRFamilyContextForRecommendation | null;
 }
 
@@ -85,6 +87,7 @@ export function derivePRMergeState(params: PRMergeStateParams): PRFamilyMergeSta
  *   merge_conflict           → NEEDS_ATTENTION   (bash: MERGE CONFLICT [worker-active|action-needed])
  *   any_failed               → NEEDS_ATTENTION   (bash: CI FAILED [worker-active|action-needed])
  *   has_actionable           → NEEDS_ATTENTION   (bash: COMMENTS [worker-active|action-needed])
+ *   changes_requested        → NEEDS_ATTENTION   (TS only: a reviewer asked for changes)
  *   all_passed && !actionable → READY/WAITING   (bash: READY)
  *   else                     → IN_REVIEW         (bash: PENDING)
  *
@@ -100,6 +103,7 @@ export function computePRRecommendation(params: PRRecommendationParams): PRRecom
   if (params.mergeConflict) return 'NEEDS_ATTENTION';
   if (params.anyFailed) return 'NEEDS_ATTENTION';
   if (params.actionableCount > 0) return 'NEEDS_ATTENTION';
+  if (params.changesRequested) return 'NEEDS_ATTENTION';
   if (
     isPassiveMergeWaitCandidate({
       prState: params.prState,

@@ -13,7 +13,8 @@ import { parseHashRoute } from '../../utils/url-state.js';
 import type { PRKey } from './pr-board-url-state.js';
 
 export type PRSection = 'prs' | 'reviews' | 'automation';
-export type PRScope = 'all' | 'monitored';
+/** `mine` is the default: PRs the viewer declared as theirs (see pr-scope-mine.ts). */
+export type PRScope = 'mine' | 'all' | 'monitored';
 export type PRPane = 'overview' | 'monitoring' | 'review';
 export interface PRWorkspaceEntry {
   key: PRKey;
@@ -26,6 +27,15 @@ export interface PRWorkspaceEntry {
   reviews: PRReviewIntent[];
   requests: PRReviewSubmission[];
 }
+/**
+ * Merged or closed PRs are history, hidden unless the operator asks for it.
+ * A worker still active on one is live work (the recommendation says WORKING
+ * for the same reason), so it stays on the board until the worker finishes.
+ */
+export function isTerminalPREntry(entry: Pick<PRWorkspaceEntry, 'status'>): boolean {
+  const status = entry.status;
+  return status !== undefined && status.prState !== 'OPEN' && status.workerActive !== true;
+}
 export function prWorkspaceKey(key: PRKey): string {
   return `${(key.host ?? 'github.com').toLowerCase()}/${key.repo.toLowerCase()}#${key.pr}`;
 }
@@ -35,10 +45,13 @@ export function prWorkspaceNavigation(hash: string) {
   const editor = params.get('prEditor');
   const section = params.get('prSection');
   const pane = params.get('prPane');
+  const scopeParam = params.get('prScope');
   const scope: PRScope =
-    params.get('prScope') === 'monitored' || (!section && oldTab === 'monitors')
+    scopeParam === 'monitored' || (!section && oldTab === 'monitors')
       ? 'monitored'
-      : 'all';
+      : scopeParam === 'all'
+        ? 'all'
+        : 'mine';
   const resolvedSection: PRSection =
     section === 'prs' || section === 'reviews' || section === 'automation'
       ? section

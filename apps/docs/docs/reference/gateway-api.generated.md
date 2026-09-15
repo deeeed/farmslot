@@ -300,6 +300,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.refreshReviewGate`                 | run              | bounded-write | —      | —      | Run RefreshReviewGate gateway method.                 |
 | `run.rehydratePrNumber`                 | run              | bounded-write | —      | —      | Run RehydratePrNumber gateway method.                 |
 | `run.replayStep`                        | run              | bounded-write | —      | —      | Run ReplayStep gateway method.                        |
+| `run.rereviewLatestHead`                | run              | bounded-write | —      | —      | Run RereviewLatestHead gateway method.                |
 | `run.resolveDecision`                   | run              | high-impact   | —      | —      | Run ResolveDecision gateway method.                   |
 | `run.resume`                            | run              | lifecycle     | —      | —      | Run Resume gateway method.                            |
 | `run.sessionCommand`                    | run              | bounded-write | —      | —      | Run SessionCommand gateway method.                    |
@@ -414,6 +415,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `node.disconnected`             | node      | Node Disconnected gateway event.             |
 | `node.health.updated`           | node      | Node Health Updated gateway event.           |
 | `node.version.mismatch`         | node      | Node Version Mismatch gateway event.         |
+| `pr.list.updated`               | pr        | Pr List Updated gateway event.               |
 | `pr.updated`                    | pr        | Pr Updated gateway event.                    |
 | `prPush.updated`                | prPush    | PrPush Updated gateway event.                |
 | `prRules.updated`               | prRules   | PrRules Updated gateway event.               |
