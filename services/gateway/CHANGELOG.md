@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `pr.list` / `pr.status` read each PR's latest reviews and outstanding review requests (batch GraphQL and per-PR `gh pr view`), and flag when the author pushed after the newest changes-requested verdict.
+
 - `pr.list` also returns PRs that have an active review intent or monitor, when a project declares their repository, so tracked PRs get the same checks, review state and recommendation as run-owned ones.
 
 - The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to re-fetch every PR from GitHub before answering, and broadcasts `pr.list.updated` after every refresh (with the list only when it changed). Project-scoped `pr.list` calls filter the same copy, or rediscover per project when the shared copy hit the candidate cap. A PR GitHub cannot be read for keeps its last known row (for up to an hour) rather than a blank placeholder, a PR GitHub reports gone is dropped, and a refresh that reads nothing keeps the whole copy and reports the failure to every client. One-shot readers (`farmslot pr list`, the Co-Pilot `list_pull_requests` tool) read GitHub fresh; the carry clock for unreadable rows survives restarts.

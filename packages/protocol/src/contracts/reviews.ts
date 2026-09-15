@@ -32,6 +32,13 @@ export type PRFamilyMergeState =
   | 'merged'
   | 'closed_without_merge';
 
+export interface PRLatestReview {
+  reviewer: string;
+  /** APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | PENDING */
+  state: string;
+  submittedAt: string | null;
+}
+
 export interface PRStatus {
   pr: number;
   author?: string;
@@ -74,6 +81,16 @@ export interface PRStatus {
   mergeable: string;
   mergeConflict: boolean;
   reviewDecision: string;
+  /** Latest review per reviewer, as GitHub reports it (`latestReviews`). */
+  latestReviews?: PRLatestReview[];
+  /** Reviewers GitHub is still waiting on: team slugs and user logins. */
+  reviewRequests?: { teams: string[]; users: string[] };
+  /**
+   * A commit landed after the newest CHANGES_REQUESTED review and no later
+   * verdict replaced it: the author may have addressed the feedback and is
+   * waiting for a re-review.
+   */
+  pushedAfterChangesRequested?: boolean;
   recommendation: PRRecommendation;
   /** True when a dispatch worker is actively running against this PR. */
   workerActive?: boolean;

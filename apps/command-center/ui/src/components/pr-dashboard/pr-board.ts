@@ -976,6 +976,13 @@ export class PRBoard extends LitElement {
       </span>
     </form>`;
   }
+  private _selectFromCard(event: CustomEvent<{ repo: string; pr: number }>) {
+    const key = { repo: event.detail.repo, pr: event.detail.pr };
+    this._navigate({
+      selected: prKeyEqual(this._selectedPr, key) ? null : key,
+      pane: 'overview',
+    });
+  }
   private _navigate(patch: {
     section?: PRSection;
     scope?: PRScope;
@@ -1564,16 +1571,8 @@ export class PRBoard extends LitElement {
             : nothing}
           ${this._layout === 'board' && this._section === 'prs'
             ? html`<div
-                @pr-open-modal=${(event: CustomEvent) =>
-                  this._navigate({
-                    selected: prKeyEqual(this._selectedPr, {
-                      repo: event.detail.repo,
-                      pr: event.detail.pr,
-                    })
-                      ? null
-                      : { repo: event.detail.repo, pr: event.detail.pr },
-                    pane: 'overview',
-                  })}
+                @pr-select=${(event: CustomEvent) => this._selectFromCard(event)}
+                @pr-open-modal=${(event: CustomEvent) => this._selectFromCard(event)}
               >
                 ${this._renderBoard(
                   entries.flatMap((entry) => (entry.status ? [entry.status] : [])),

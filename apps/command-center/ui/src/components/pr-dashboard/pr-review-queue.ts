@@ -122,12 +122,20 @@ export function prReviewQueue(entry: PRWorkspaceEntry): PRReviewQueueItem {
         tone: 'ok',
       };
     case 'CHANGES_REQUESTED':
-      return {
-        group: 'Waiting on author',
-        label: 'Changes requested',
-        detail: 'A reviewer requested changes; your own review status is unknown.',
-        tone: 'fail',
-      };
+      return status?.pushedAfterChangesRequested
+        ? {
+            group: 'Re-review: author pushed since',
+            label: 'Author pushed since changes requested',
+            detail:
+              'Commits landed after the changes-requested review; check whether the feedback is addressed.',
+            tone: 'warn',
+          }
+        : {
+            group: 'Waiting on author',
+            label: 'Changes requested',
+            detail: 'A reviewer requested changes; your own review status is unknown.',
+            tone: 'fail',
+          };
     case 'REVIEW_REQUIRED':
       return {
         group: 'Not reviewed yet',

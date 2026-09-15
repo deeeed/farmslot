@@ -304,8 +304,20 @@ export class PRCard extends LitElement {
     }
   `;
 
+  /**
+   * Clicking the card selects it on the board (detail pane + URL) so the view
+   * is shareable; inside the detail pane, where the card is already the
+   * selection, the click toggles the inline sections instead.
+   */
   private _toggle() {
-    this._expanded = !this._expanded;
+    if (this.forceExpanded) return;
+    this.dispatchEvent(
+      new CustomEvent('pr-select', {
+        detail: { pr: this.pr.pr, repo: this.pr.repo },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _dispatchFix(e: Event) {

@@ -16,6 +16,7 @@ import {
   type MonitoredPRIdentity,
   type PRForSlotParams,
   type PRForSlotResult,
+  type PRLatestReview,
   type PRListParams,
   type PRListResult,
   type ProjectCICheckGroup,
@@ -56,6 +57,7 @@ import {
   getPRRawData,
   parseJsonLines,
   prefetchPRBatchViaGraphQL,
+  type PRJsonLine,
   shouldPrefetchPRRawData,
 } from './pr/raw-cache.js';
 
@@ -525,6 +527,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const issueComments = parseJsonLines(raw.commentsStdout);
   const reviewComments = parseJsonLines(raw.reviewCommentsStdout);
   const latestCommit = raw.latestCommitStdout.trim() || null;
+  const reviewMeta = summarizeReviewMeta(parseJsonLines(raw.reviewMetaStdout), latestCommit);
 
   // Build replied IDs set (review comments that have human replies)
   const repliedIds = new Set<number>();
@@ -619,6 +622,9 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     mergeable: mergeable || 'UNKNOWN',
     mergeConflict,
     reviewDecision: reviewDecision || '',
+    latestReviews: reviewMeta.latestReviews,
+    reviewRequests: reviewMeta.reviewRequests,
+    pushedAfterChangesRequested: reviewMeta.pushedAfterChangesRequested,
     recommendation,
     workerActive: Boolean(workerActive),
     ownedFamily: Boolean(ownedFamilyContext),
@@ -651,6 +657,51 @@ export {
   derivePRMergeState,
   isPassiveMergeWaitCandidate,
 } from '@farmslot/protocol';
+
+/**
+ * Fold the review-meta JSON lines into what the dashboard shows: the latest
+ * review per reviewer, outstanding requests, and whether the author pushed
+ * after the newest CHANGES_REQUESTED verdict that is still the reviewer's last
+ * word (a later APPROVED/DISMISSED from the same reviewer replaces it, so it
+ * does not appear here).
+ */
+export function summarizeReviewMeta(
+  lines: readonly PRJsonLine[],
+  latestCommitAt: string | null,
+): {
+  latestReviews: PRLatestReview[];
+  reviewRequests: { teams: string[]; users: string[] };
+  pushedAfterChangesRequested: boolean;
+} {
+  const latestReviews: PRLatestReview[] = [];
+  const teams: string[] = [];
+  const users: string[] = [];
+  for (const line of lines) {
+    if (line.t === 'review' && typeof line.author === 'string' && line.author) {
+      latestReviews.push({
+        reviewer: line.author,
+        state: typeof line.state === 'string' ? line.state : '',
+        submittedAt: typeof line.submittedAt === 'string' ? line.submittedAt : null,
+      });
+    } else if (line.t === 'request' && typeof line.name === 'string' && line.name) {
+      (line.kind === 'team' ? teams : users).push(line.name);
+    }
+  }
+  const commitAt = latestCommitAt ? Date.parse(latestCommitAt) : NaN;
+  const newestChangesRequested = latestReviews
+    .filter((review) => review.state === 'CHANGES_REQUESTED' && review.submittedAt)
+    .map((review) => Date.parse(review.submittedAt!))
+    .filter(Number.isFinite)
+    .reduce((max, at) => Math.max(max, at), Number.NEGATIVE_INFINITY);
+  return {
+    latestReviews,
+    reviewRequests: { teams, users },
+    pushedAfterChangesRequested:
+      Number.isFinite(commitAt) &&
+      Number.isFinite(newestChangesRequested) &&
+      commitAt > newestChangesRequested,
+  };
+}
 
 export function shouldIncludePRInDashboard(pr: PRStatus): boolean {
   return pr.prState === 'OPEN' || Boolean(pr.ownedFamily);

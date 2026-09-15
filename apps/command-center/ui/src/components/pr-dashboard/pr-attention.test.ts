@@ -59,11 +59,39 @@ test('blocking reasons follow the recommendation order: conflict, CI, bot commen
   assert.equal(reasons[2].label, '1 bot comment to address');
 });
 
-test('changes requested alone is a blocking reason', () => {
-  const reasons = prAttentionReasons(status({ reviewDecision: 'CHANGES_REQUESTED' }));
+test('changes requested alone is a blocking reason, naming the reviewer', () => {
+  const reasons = prAttentionReasons(
+    status({
+      reviewDecision: 'CHANGES_REQUESTED',
+      latestReviews: [
+        { reviewer: 'alice', state: 'CHANGES_REQUESTED', submittedAt: '2026-09-14T10:00:00Z' },
+      ],
+    }),
+  );
   assert.equal(reasons.length, 1);
   assert.equal(reasons[0].kind, 'changes-requested');
+  assert.equal(reasons[0].label, 'Changes requested by @alice');
   assert.equal(reasons[0].tone, 'fail');
+});
+
+test('a fix pushed after changes requested becomes "awaiting re-review", still first', () => {
+  const reasons = prAttentionReasons(
+    status({
+      reviewDecision: 'CHANGES_REQUESTED',
+      pushedAfterChangesRequested: true,
+      latestReviews: [
+        { reviewer: 'alice', state: 'CHANGES_REQUESTED', submittedAt: '2026-09-14T10:00:00Z' },
+      ],
+      reviewRequests: { teams: ['Engagement', 'QA'], users: ['bob'] },
+    }),
+  );
+  assert.deepEqual(
+    reasons.map((r) => r.kind),
+    ['awaiting-rereview', 'waiting-on'],
+  );
+  assert.equal(reasons[0].label, 'Fix pushed, awaiting re-review by @alice');
+  assert.equal(reasons[0].tone, 'warn');
+  assert.equal(reasons[1].label, 'Waiting on Engagement, QA +1');
 });
 
 test('an unwatched failing check is reported as a warning, with long names clipped', () => {

@@ -24,6 +24,11 @@ export interface PRRawSnapshot {
   commentsStdout: string;
   reviewCommentsStdout: string;
   latestCommitStdout: string;
+  /**
+   * JSON lines, one per latest review (`{t:"review",author,state,submittedAt}`)
+   * and per outstanding review request (`{t:"request",kind:"team"|"user",name}`).
+   */
+  reviewMetaStdout: string;
   fetchedAt: number;
 }
 
@@ -72,74 +77,94 @@ export async function getPRRawData(
     if (inflight) return inflight;
   }
   const fetchPromise = (async (): Promise<PRRawSnapshot> => {
-    const [checks, prState, comments, reviewComments, latestCommit] = await Promise.all([
-      ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(swallowGh(`pr.checks#${prNum}`)),
-      ghRequest(
-        [
-          'pr',
-          'view',
-          String(prNum),
-          '--repo',
-          ghRepo,
-          '--json',
-          'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
-          '--jq',
-          '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
-        ],
-        { force },
-      ).catch(swallowGh(`pr.view#${prNum}`)),
-      ghRequest(
-        [
-          'api',
-          '--paginate',
-          `repos/${ghRepo}/issues/${prNum}/comments`,
-          '--jq',
-          '.[] | {id: .id, author: .user.login, user_type: .user.type, body: .body[0:300], created_at: .created_at, html_url: .html_url}',
-        ],
-        { force },
-      ).catch(swallowGh(`issues.comments#${prNum}`)),
-      // Inline review comments via GraphQL — filters out resolved + outdated threads
-      // server-side so ci-watch / pr-complete don't waste cycles re-triaging the same
-      // findings the worker already addressed. REST `/pulls/N/comments` would return
-      // every comment regardless of thread resolution state, defaulting to 30 per page.
-      // `--paginate` walks the reviewThreads cursor so PRs with >100 threads (long
-      // review cycles on example-browser PRs) don't regress to the same data-loss
-      // mode this PR is fixing. Output shape matches the prior REST jq exactly so
-      // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
-      // need no changes.
-      (async () => {
-        const [owner, name] = ghRepo.split('/');
-        if (!owner || !name) return { stdout: '', stderr: '' };
-        return ghRequest(
+    const [checks, prState, comments, reviewComments, latestCommit, reviewMeta] = await Promise.all(
+      [
+        ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(
+          swallowGh(`pr.checks#${prNum}`),
+        ),
+        ghRequest(
           [
-            'api',
-            'graphql',
-            '--paginate',
-            '-f',
-            `query=query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }`,
-            '-F',
-            `owner=${owner}`,
-            '-F',
-            `name=${name}`,
-            '-F',
-            `pr=${prNum}`,
-            // GraphQL author.login is the bare handle ("cursor"), REST returns "cursor[bot]".
-            // Append [bot] suffix when __typename === Bot so existing botPatterns regex
-            // (e.g. `cursor\[bot\]`) keep matching without a config sweep.
-            // Note the doubled backslash before `(`: JS strips lone backslashes from
-            // unknown escape sequences, so `'\('` becomes `'('`. We need jq to receive
-            // a literal `\(...)` for its string interpolation, hence `'\\('`.
+            'pr',
+            'view',
+            String(prNum),
+            '--repo',
+            ghRepo,
+            '--json',
+            'state,mergeable,mergeStateStatus,title,reviewDecision,headRefName,createdAt,updatedAt,closedAt,mergedAt,author',
             '--jq',
-            '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
+            '([.state, .mergeable, .mergeStateStatus, .reviewDecision, .headRefName, (.createdAt // ""), (.updatedAt // ""), (.closedAt // ""), (.mergedAt // ""), .title] | @tsv), (.author.login // "")',
           ],
           { force },
-        );
-      })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
-      ghRequest(
-        ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
-        { force },
-      ).catch(swallowGh(`pulls.commits#${prNum}`)),
-    ]);
+        ).catch(swallowGh(`pr.view#${prNum}`)),
+        ghRequest(
+          [
+            'api',
+            '--paginate',
+            `repos/${ghRepo}/issues/${prNum}/comments`,
+            '--jq',
+            '.[] | {id: .id, author: .user.login, user_type: .user.type, body: .body[0:300], created_at: .created_at, html_url: .html_url}',
+          ],
+          { force },
+        ).catch(swallowGh(`issues.comments#${prNum}`)),
+        // Inline review comments via GraphQL — filters out resolved + outdated threads
+        // server-side so ci-watch / pr-complete don't waste cycles re-triaging the same
+        // findings the worker already addressed. REST `/pulls/N/comments` would return
+        // every comment regardless of thread resolution state, defaulting to 30 per page.
+        // `--paginate` walks the reviewThreads cursor so PRs with >100 threads (long
+        // review cycles on example-browser PRs) don't regress to the same data-loss
+        // mode this PR is fixing. Output shape matches the prior REST jq exactly so
+        // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
+        // need no changes.
+        (async () => {
+          const [owner, name] = ghRepo.split('/');
+          if (!owner || !name) return { stdout: '', stderr: '' };
+          return ghRequest(
+            [
+              'api',
+              'graphql',
+              '--paginate',
+              '-f',
+              `query=query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $endCursor) { pageInfo { hasNextPage endCursor } nodes { isResolved isOutdated comments(first: 50) { nodes { databaseId author { login __typename } body path line createdAt url replyTo { databaseId } } } } } } } }`,
+              '-F',
+              `owner=${owner}`,
+              '-F',
+              `name=${name}`,
+              '-F',
+              `pr=${prNum}`,
+              // GraphQL author.login is the bare handle ("cursor"), REST returns "cursor[bot]".
+              // Append [bot] suffix when __typename === Bot so existing botPatterns regex
+              // (e.g. `cursor\[bot\]`) keep matching without a config sweep.
+              // Note the doubled backslash before `(`: JS strips lone backslashes from
+              // unknown escape sequences, so `'\('` becomes `'('`. We need jq to receive
+              // a literal `\(...)` for its string interpolation, hence `'\\('`.
+              '--jq',
+              '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
+            ],
+            { force },
+          );
+        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
+        ghRequest(
+          ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
+          { force },
+        ).catch(swallowGh(`pulls.commits#${prNum}`)),
+        // Latest review per reviewer plus whom GitHub still waits on; drives the
+        // "fix pushed, awaiting re-review" and "waiting on <team>" signals.
+        ghRequest(
+          [
+            'pr',
+            'view',
+            String(prNum),
+            '--repo',
+            ghRepo,
+            '--json',
+            'latestReviews,reviewRequests',
+            '--jq',
+            '(.latestReviews[]? | {t: "review", author: .author.login, state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests[]? | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // .name // "")})',
+          ],
+          { force },
+        ).catch(swallowGh(`pr.reviews#${prNum}`)),
+      ],
+    );
     const [stateLine, author] = prState.stdout.trimEnd().split('\n');
     const snap: PRRawSnapshot = {
       author: author || undefined,
@@ -149,6 +174,7 @@ export async function getPRRawData(
       commentsStdout: comments.stdout,
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,
+      reviewMetaStdout: reviewMeta.stdout,
       fetchedAt: Date.now(),
     };
     prRawCache.set(key, snap);
@@ -279,6 +305,14 @@ interface GqlPullRequestNode {
   comments?: { nodes?: GqlIssueComment[] };
   reviewThreads?: { nodes?: GqlReviewThread[]; pageInfo?: GqlPageInfo };
   commits?: { nodes?: GqlCommitNode[] };
+  latestReviews?: {
+    nodes?: Array<{ author?: GqlAuthor | null; state?: string; submittedAt?: string | null }>;
+  };
+  reviewRequests?: {
+    nodes?: Array<{
+      requestedReviewer?: { __typename?: string; login?: string; slug?: string } | null;
+    }>;
+  };
 }
 
 interface GqlBatchResponse {
@@ -317,6 +351,7 @@ const EMPTY_PR_RAW_SNAPSHOT: PRRawSnapshot = {
   commentsStdout: '',
   reviewCommentsStdout: '',
   latestCommitStdout: '',
+  reviewMetaStdout: '',
   fetchedAt: 0,
 };
 
@@ -351,6 +386,10 @@ export function buildBatchQuery(prCount: number): string {
         `        } } }\n` +
         `      }\n` +
         `      commits(last: 1) { nodes { commit { committedDate } } }\n` +
+        `      latestReviews(first: 20) { nodes { author { login } state submittedAt } }\n` +
+        `      reviewRequests(first: 20) { nodes { requestedReviewer {\n` +
+        `        __typename ... on User { login } ... on Team { slug }\n` +
+        `      } } }\n` +
         `    }`,
     );
   }
@@ -496,6 +535,30 @@ export function synthesizeRawSnapshotFromGraphQL(
   const lastDate = commitNodes[0]?.commit?.committedDate ?? '';
   const latestCommitStdout = lastDate ? lastDate + '\n' : '';
 
+  // reviewMetaStdout: same JSON-per-line shape as the REST `--jq` projection.
+  const reviewMetaLines: string[] = [];
+  for (const review of node.latestReviews?.nodes ?? [])
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'review',
+        author: review.author?.login ?? '',
+        state: review.state ?? '',
+        submittedAt: review.submittedAt ?? null,
+      }),
+    );
+  for (const request of node.reviewRequests?.nodes ?? []) {
+    const who = request.requestedReviewer;
+    if (!who) continue;
+    reviewMetaLines.push(
+      JSON.stringify({
+        t: 'request',
+        kind: who.__typename === 'Team' ? 'team' : 'user',
+        name: who.slug ?? who.login ?? '',
+      }),
+    );
+  }
+  const reviewMetaStdout = joinLinesOrEmpty(reviewMetaLines);
+
   return {
     author: node.author?.login || undefined,
     checksStdout,
@@ -503,6 +566,7 @@ export function synthesizeRawSnapshotFromGraphQL(
     commentsStdout,
     reviewCommentsStdout,
     latestCommitStdout,
+    reviewMetaStdout,
     fetchedAt: Date.now(),
   };
 }
