@@ -435,6 +435,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.autoRecovery.stop`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.ciWatch.poke`           | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.refreshReviewGate`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `run.rereviewLatestHead`     | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.refreshPublishPackage`  | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.refreshMirror`          | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.rehydratePrNumber`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |

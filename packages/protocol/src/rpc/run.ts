@@ -410,6 +410,17 @@ export interface RunRefreshReviewGateResult {
   run: Run;
 }
 
+/** Start a new review round on the PR's current head for a blocked or finished review-pr run. */
+export interface RunRereviewLatestHeadParams {
+  runId: string;
+}
+
+export interface RunRereviewLatestHeadResult {
+  submission: import('../contracts/index.js').PRReviewSubmission;
+  intent?: import('../contracts/index.js').PRReviewIntent;
+  schedulerError?: string;
+}
+
 export interface RunRefreshPublishPackageParams {
   runId: string;
   decisionId?: string;

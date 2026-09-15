@@ -501,3 +501,21 @@ test('autoResolveEngineDecision never auto-dismisses review publication', () => 
     null,
   );
 });
+
+test('a review blocked at posting still counts as the prior round to resume from', () => {
+  const result = reviewDecision().payload as ReviewGatePayload;
+  const blocked = makeRun({
+    id: 'blocked-review',
+    flowType: 'review-pr',
+    status: 'blocked',
+    ticketOrPr: 'Owner/Repo#42',
+    decisions: [],
+    reviewResult: result,
+  });
+  const current = makeRun({
+    id: 'next-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+  });
+  assert.equal(findLatestPriorReviewRun(current, [blocked])?.id, blocked.id);
+});

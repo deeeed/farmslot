@@ -13,6 +13,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunRereviewLatestHeadResult,
   RunSessionCommandResult,
   RuntimePosturePreviewResult,
   RuntimePostureStatusResult,
@@ -840,6 +841,29 @@ export class RunDetail extends RunDetailState {
     }
   }
 
+  private async _rereviewLatestHead(run: Run) {
+    if (this._actionsBlocked()) return;
+    try {
+      const result = await gateway.request<RunRereviewLatestHeadResult>(
+        Methods.RUN_REREVIEW_LATEST_HEAD,
+        { runId: run.id },
+        30_000,
+      );
+      const pr = result.submission.request.pr;
+      const params = new URLSearchParams({
+        prSection: 'reviews',
+        prScope: 'all',
+        prPane: 'review',
+        pr: String(pr.number),
+        repo: pr.repo,
+        view: 'detail',
+      });
+      // The round lives in the review queue; follow it there.
+      location.hash = `prs?${params.toString()}`;
+    } catch (err) {
+      alert(`Re-review failed: ${(err as Error).message}`);
+    }
+  }
   private _requestCopilotRunDiagnosis(run: Run) {
     this.dispatchEvent(
       new CustomEvent('copilot-prompt-request', {
@@ -1000,6 +1024,7 @@ export class RunDetail extends RunDetailState {
           },
         }).catch((err) => alert(`Run ${action} failed: ${(err as Error).message}`)),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
+      _rereviewLatestHead: (run) => this._rereviewLatestHead(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _slotBranchForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',

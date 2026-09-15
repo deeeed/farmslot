@@ -43,6 +43,7 @@ import {
   type RunRefreshReviewGateParams,
   type RunRehydratePrNumberParams,
   type RunReplayStepParams,
+  type RunRereviewLatestHeadParams,
   type RunResolveDecisionParams,
   type RunResumeParams,
   type RunSessionCommandParams,
@@ -60,6 +61,7 @@ import {
 import { familyObservabilityGet, familyReportGenerate } from '../methods/family-observability.js';
 import { intelligenceActionsSummary } from '../methods/intelligence.js';
 import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../methods/operator.js';
+import { rereviewRunOnLatestHead } from '../methods/pr-rules.js';
 import {
   runCreate,
   runInteractiveDevResolve,
@@ -228,6 +230,8 @@ export async function routeRunMethod(
       return handled(runCIWatchPoke(p as RunCIWatchPokeParams));
     case Methods.RUN_REFRESH_REVIEW_GATE:
       return handled(runRefreshReviewGate(p as RunRefreshReviewGateParams, emit));
+    case Methods.RUN_REREVIEW_LATEST_HEAD:
+      return handled(rereviewRunOnLatestHead(p as RunRereviewLatestHeadParams));
     case Methods.RUN_REFRESH_PUBLISH_PACKAGE:
       return handled(runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit));
     case Methods.RUN_REFRESH_MIRROR:

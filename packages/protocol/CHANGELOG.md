@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `run.rereviewLatestHead` starts a continuity review round on the PR's current head for a blocked or finished review-pr run.
+
 - `PRStatus` carries `reviewVerdicts` (each reviewer's standing APPROVED / CHANGES_REQUESTED), `reviewRequests` (teams and users GitHub still waits on) and `pushedAfterChangesRequested`.
 
 - `pr.list` accepts `force` and returns `fetchedAt` / `refreshing`; new `pr.list.updated` event (`PRListUpdatedPayload`) carries the gateway's refreshed list.

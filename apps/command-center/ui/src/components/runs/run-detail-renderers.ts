@@ -76,6 +76,8 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (run: Run) => void;
   _confirmLifecycleAction: (run: Run, action: 'cancel' | 'delete') => void | Promise<void>;
   _requestCopilotRunDiagnosis: (run: Run) => void;
+  /** Blocked review-pr run whose review is stale: start a continuity round on the current head. */
+  _rereviewLatestHead: (run: Run) => void | Promise<void>;
   _buildRerunAlongsideHref: (run: Run) => string;
   _slotBranchForRun: (run: Run) => string;
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
@@ -924,6 +926,21 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       ? html`
           <div class="error-box">
             <div>${r.error}</div>
+            ${r.flowType === 'review-pr' &&
+            (r.status === 'blocked' || r.status === 'done' || r.status === 'failed') &&
+            /Review is stale|Review snapshot is unavailable/.test(r.error)
+              ? html`
+                  <button
+                    class="gate-action-btn"
+                    data-testid="run-rereview-latest-head"
+                    style="margin-top:${spacing.sm}; padding:4px 12px; font-size:11px"
+                    title="Start a new review round on the PR's current head, resuming this reviewer session when it is still available"
+                    @click=${() => ctx._rereviewLatestHead(r)}
+                  >
+                    Re-review on latest head
+                  </button>
+                `
+              : nothing}
             ${r.status === 'failed'
               ? html`
                   <button

@@ -147,9 +147,11 @@ export function findLatestPriorReviewRun(
   return (
     allRuns
       .filter((candidate) => {
+        // A review blocked at posting (stale head) still finished its review;
+        // it is the round to resume from, not something to ignore.
         if (
           candidate.id === current.id ||
-          !isTerminalRunStatus(candidate.status) ||
+          !(isTerminalRunStatus(candidate.status) || candidate.status === 'blocked') ||
           !reviewResultForRun(candidate)
         )
           return false;
