@@ -53,6 +53,21 @@ test('approvals distinguish "done" from "others still required"', () => {
   const stale = prReviewQueue(entry({ review: { ...approved, commit: 'head1' } }));
   assert.equal(stale.group, 'Re-review: author pushed since');
   assert.equal(stale.label, 'New commits since your review');
+  const staleButSatisfied = prReviewQueue(
+    entry({ review: { ...approved, commit: 'head1' }, decision: 'APPROVED' }),
+  );
+  assert.equal(
+    staleButSatisfied.group,
+    'Reviewed by you',
+    'satisfied requirements beat a moved head',
+  );
+  assert.match(staleButSatisfied.detail, /head moved/);
+});
+
+test('live PR state outranks a stale observation', () => {
+  const merged = prReviewQueue(entry({ state: 'open', review: null }, { prState: 'MERGED' }));
+  assert.equal(merged.group, 'Not ready');
+  assert.equal(merged.label, 'Merged');
 });
 
 test('without an observation the overall GitHub decision decides, and says so', () => {

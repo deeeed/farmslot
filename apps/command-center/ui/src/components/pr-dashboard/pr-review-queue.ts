@@ -30,9 +30,11 @@ export function prReviewQueue(entry: PRWorkspaceEntry): PRReviewQueueItem {
   const readiness = prReviewReadiness(entry);
   const observation = readiness.observation;
   const status = entry.status;
-  const state =
-    observation?.state ??
-    (status?.prState === 'MERGED' ? 'merged' : status?.prState === 'CLOSED' ? 'closed' : 'open');
+  // Live PR status wins over an older observation: a PR merged since the last
+  // review check must not route through the open-PR branches.
+  const liveState =
+    status?.prState === 'MERGED' ? 'merged' : status?.prState === 'CLOSED' ? 'closed' : undefined;
+  const state = liveState ?? observation?.state ?? 'open';
   if (state !== 'open')
     return {
       group: 'Not ready',
@@ -58,6 +60,19 @@ export function prReviewQueue(entry: PRWorkspaceEntry): PRReviewQueueItem {
         label: review ? 'Re-review requested' : 'Review requested',
         detail: `GitHub is asking ${who} for a review${review ? ' again' : ''}.`,
         tone: 'warn',
+      };
+    if (observation.decision === 'APPROVED' && review?.state !== 'CHANGES_REQUESTED')
+      // GitHub's requirements are satisfied; a head that moved since the
+      // viewer's approval does not reopen the queue (prReviewBlockedReason
+      // says the same). An explicit re-request was handled above.
+      return {
+        group: 'Reviewed by you',
+        label: review?.state === 'APPROVED' ? 'Approved' : 'Approved by others',
+        detail:
+          review?.state === 'APPROVED'
+            ? `${who} approved and GitHub's requirements are satisfied${atHead ? '' : ', even though the head moved since'}.`
+            : `GitHub's review requirements are satisfied without ${who}.`,
+        tone: 'ok',
       };
     if (review && !atHead && review.state === 'CHANGES_REQUESTED')
       return {

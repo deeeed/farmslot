@@ -134,6 +134,20 @@ test('an unwatched failure trails a waiting reason but replaces "ready"', () => 
   );
 });
 
+test('a stale review request on an approved, green PR trails "ready" instead of replacing it', () => {
+  const reasons = prAttentionReasons(
+    status({
+      allPassed: true,
+      reviewDecision: 'APPROVED',
+      reviewRequests: { teams: ['QA'], users: [] },
+    }),
+  );
+  assert.deepEqual(
+    reasons.map((r) => r.kind),
+    ['ready', 'waiting-on'],
+  );
+});
+
 test('running-check names come from the same set as the count', () => {
   const reasons = prAttentionReasons(
     status({

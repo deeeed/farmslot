@@ -82,6 +82,7 @@ interface BranchPRBinding {
  * fetchPRData doesn't have to re-resolve it and fail.
  */
 interface PRDashboardEntry {
+  pr: number;
   slot: string;
   project: string;
   workerActive: boolean;
@@ -241,8 +242,16 @@ export function trackedPRCandidates(
   const projectByRepo = new Map<string, { name: string; repo: string }>();
   for (const project of projects) {
     const repo = project.ci?.repo;
-    if (repo && !projectByRepo.has(repo.toLowerCase()))
-      projectByRepo.set(repo.toLowerCase(), { name: project.name, repo });
+    if (!repo) continue;
+    const existing = projectByRepo.get(repo.toLowerCase());
+    if (existing) {
+      // First project wins; its check groups and bot patterns shape the status.
+      console.warn(
+        `[pr.list] ${repo} is ci.repo of both ${existing.name} and ${project.name}; tracked PRs use ${existing.name}`,
+      );
+      continue;
+    }
+    projectByRepo.set(repo.toLowerCase(), { name: project.name, repo });
   }
   const seen = new Set<string>();
   const out: Array<{ pr: number; repo: string; project: string }> = [];
@@ -277,7 +286,10 @@ export async function fetchPRList(
 ): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
-  const prInfo = new Map<number, PRDashboardEntry>();
+  // Keyed by `repo#number`: PR numbers repeat across repos, and a farm can
+  // track the same number in two of them.
+  const prInfo = new Map<string, PRDashboardEntry>();
+  const candidateKey = (repo: string | undefined, pr: number) => `${repo ?? ''}#${pr}`;
 
   // Preload runs for summary + active detection
   const runs = getAllRuns();
@@ -324,7 +336,8 @@ export async function fetchPRList(
   for (const { slot, found } of slotBindings) {
     if (!found) continue;
     const run = runByPR.get(found.pr);
-    prInfo.set(found.pr, {
+    prInfo.set(candidateKey(found.repo, found.pr), {
+      pr: found.pr,
       slot: slot.slot,
       project: slot.project,
       workerActive: true,
@@ -341,18 +354,21 @@ export async function fetchPRList(
     if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
     if (opts.project && run.project !== opts.project) continue;
     if (run.prNumber == null) continue;
-    if (prInfo.has(run.prNumber)) continue;
     if (isTerminalRunStatus(run.status)) {
       const freshness = run.completedAt ?? run.updatedAt;
       const ageMs = freshness ? now - Date.parse(freshness) : Infinity;
       if (!Number.isFinite(ageMs) || ageMs > PR_DASHBOARD_TERMINAL_TTL_MS) continue;
     }
-    prInfo.set(run.prNumber, {
+    const repo = await resolveRepoForRun(run);
+    const key = candidateKey(repo, run.prNumber);
+    if (prInfo.has(key)) continue;
+    prInfo.set(key, {
+      pr: run.prNumber,
       slot: run.slotId ?? '',
       project: run.project,
       workerActive: ACTIVE_RUN_STATUSES.has(run.status),
       summary: run.summary ?? null,
-      repo: await resolveRepoForRun(run),
+      repo,
     });
   }
 
@@ -360,7 +376,7 @@ export async function fetchPRList(
   //    They get the same status and column placement as run-owned PRs instead
   //    of a bare "tracked" row. Dynamic imports keep pr.ts out of the
   //    rules/monitoring module graph, which already imports this file.
-  if (!opts.project) {
+  {
     const [{ listActiveReviewPRs }, { listActiveMonitoredPRs }] = await Promise.all([
       import('./pr-rules.js'),
       import('./pr-watch.js'),
@@ -370,8 +386,11 @@ export async function fetchPRList(
       projectList,
     )) {
       if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
-      if (prInfo.has(candidate.pr)) continue;
-      prInfo.set(candidate.pr, {
+      if (opts.project && candidate.project !== opts.project) continue;
+      const key = candidateKey(candidate.repo, candidate.pr);
+      if (prInfo.has(key)) continue;
+      prInfo.set(key, {
+        pr: candidate.pr,
         slot: '',
         project: candidate.project,
         workerActive: false,
@@ -399,14 +418,14 @@ export async function fetchPRList(
   // force, which would discard them and fan out over REST a second time.
   const prefetchNow = Date.now();
   const prsByRepo = new Map<string, number[]>();
-  for (const [prNum, info] of prInfo) {
+  for (const info of prInfo.values()) {
     const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
     if (!repo) continue;
     info.repo = repo;
-    if (!opts.force && !shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
+    if (!opts.force && !shouldPrefetchPRRawData(repo, info.pr, prefetchNow)) continue;
     const list = prsByRepo.get(repo);
-    if (list) list.push(prNum);
-    else prsByRepo.set(repo, [prNum]);
+    if (list) list.push(info.pr);
+    else prsByRepo.set(repo, [info.pr]);
   }
   let seeded = new Set<string>();
   try {
@@ -424,7 +443,8 @@ export async function fetchPRList(
   const failed: string[] = [];
   let gone = 0;
   const prs = await Promise.all(
-    Array.from(prInfo.entries()).map(async ([prNum, info]) => {
+    Array.from(prInfo.values()).map(async (info) => {
+      const prNum = info.pr;
       try {
         return await fetchPRData({
           prNum,

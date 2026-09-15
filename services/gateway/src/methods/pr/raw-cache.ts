@@ -80,6 +80,10 @@ export async function getPRRawData(
     if (inflight) return inflight;
   }
   const fetchPromise = (async (): Promise<PRRawSnapshot> => {
+    // A malformed slug must fail visibly in the per-repo GraphQL calls, not send
+    // `name=undefined` and have swallowGh turn the rejection into empty data.
+    const [owner, name] = ghRepo.split('/');
+    const badSlug = !owner || !name;
     const [checks, prState, comments, reviewComments, latestCommit, reviewMeta] = await Promise.all(
       [
         ghRequest(buildPRChecksArgs(prNum, ghRepo), { force }).catch(
@@ -119,8 +123,7 @@ export async function getPRRawData(
         // downstream consumers (matchBotComments, task-writer.buildPRCompleteContext)
         // need no changes.
         (async () => {
-          const [owner, name] = ghRepo.split('/');
-          if (!owner || !name) return { stdout: '', stderr: '' };
+          if (badSlug) return { stdout: '', stderr: `malformed repo slug ${ghRepo}` };
           return ghRequest(
             [
               'api',
@@ -155,22 +158,25 @@ export async function getPRRawData(
         // `latestOpinionatedReviews`, not `latestReviews`: a reviewer who
         // requested changes and then left comments shows COMMENTED in the latter
         // while their CHANGES_REQUESTED still blocks the PR.
-        ghRequest(
-          [
-            'api',
-            'graphql',
-            '-f',
-            'query=query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }',
-            '-f',
-            `owner=${ghRepo.split('/')[0]}`,
-            '-f',
-            `name=${ghRepo.split('/')[1]}`,
-            '-F',
-            `pr=${prNum}`,
-            '--jq',
-            '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
-          ],
-          { force },
+        (badSlug
+          ? Promise.resolve({ stdout: '', stderr: `malformed repo slug ${ghRepo}` })
+          : ghRequest(
+              [
+                'api',
+                'graphql',
+                '-f',
+                'query=query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }',
+                '-f',
+                `owner=${owner}`,
+                '-f',
+                `name=${name}`,
+                '-F',
+                `pr=${prNum}`,
+                '--jq',
+                '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
+              ],
+              { force },
+            )
         ).catch(swallowGh(`pr.reviews#${prNum}`)),
       ],
     );

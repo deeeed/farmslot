@@ -39,6 +39,8 @@ function recommendationStyle(rec: PRRecommendation): { bg: string; fg: string; l
 export class PRCard extends LitElement {
   @property({ type: Object }) pr!: PRStatus;
   @property({ type: Boolean }) forceExpanded = false;
+  /** The viewer explicitly took this PR over (Mine scope). */
+  @property({ type: Boolean }) adopted = false;
   @state() private _expanded = false;
 
   get _isExpanded() {
@@ -132,6 +134,26 @@ export class PRCard extends LitElement {
       padding: 1px 6px;
       border-radius: 3px;
       font-weight: 600;
+    }
+
+    .guard-badge {
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid ${unsafeCSS(colors.accent)};
+      color: ${unsafeCSS(colors.accent)};
+      white-space: nowrap;
+    }
+
+    .guard-badge {
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid ${unsafeCSS(colors.accent)};
+      color: ${unsafeCSS(colors.accent)};
+      white-space: nowrap;
     }
 
     .reason-chip {
@@ -305,19 +327,21 @@ export class PRCard extends LitElement {
   `;
 
   /**
-   * Clicking the card selects it on the board (detail pane + URL) so the view
-   * is shareable; inside the detail pane, where the card is already the
-   * selection, the click toggles the inline sections instead.
+   * Clicking the card offers the selection to the board (detail pane + URL, so
+   * the view is shareable). When nothing claims it, as in the standalone dev
+   * harness or inside the detail pane where the card already is the selection,
+   * the click toggles the inline sections instead.
    */
   private _toggle() {
-    if (this.forceExpanded) return;
-    this.dispatchEvent(
+    const claimed = !this.dispatchEvent(
       new CustomEvent('pr-select', {
         detail: { pr: this.pr.pr, repo: this.pr.repo },
         bubbles: true,
         composed: true,
+        cancelable: true,
       }),
     );
+    if (!claimed && !this.forceExpanded) this._expanded = !this._expanded;
   }
 
   private _dispatchFix(e: Event) {
@@ -365,6 +389,22 @@ export class PRCard extends LitElement {
         <div class="top-row">
           <span class="pr-number">#${pr.pr}</span>
           <span class="rec-badge" style="background:${rec.bg}; color:${rec.fg}">${rec.label}</span>
+          ${this.adopted
+            ? html`<span
+                class="guard-badge"
+                data-testid="pr-card-guard"
+                title="You took this PR over"
+                >under your guard</span
+              >`
+            : nothing}
+          ${this.adopted
+            ? html`<span
+                class="guard-badge"
+                data-testid="pr-card-guard"
+                title="You took this PR over"
+                >under your guard</span
+              >`
+            : nothing}
           ${pr.author
             ? html`<span
                 class="pr-author"

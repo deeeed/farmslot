@@ -10,6 +10,26 @@ import type { PRWorkspaceEntry } from './pr-workspace.js';
 export interface MineScope {
   logins: string[];
   includeRunOwned: boolean;
+  /** PRs the viewer explicitly took over, as `repo#number` (lower-case repo). */
+  adopted: string[];
+}
+
+export function adoptionKey(key: { repo: string; pr: number }): string {
+  return `${key.repo.toLowerCase()}#${key.pr}`;
+}
+
+export function isAdopted(scope: MineScope, key: { repo: string; pr: number }): boolean {
+  return scope.adopted.includes(adoptionKey(key));
+}
+
+export function withAdoption(
+  scope: MineScope,
+  key: { repo: string; pr: number },
+  adopted: boolean,
+): MineScope {
+  const id = adoptionKey(key);
+  const rest = scope.adopted.filter((item) => item !== id);
+  return { ...scope, adopted: adopted ? [...rest, id] : rest };
 }
 
 const MINE_SCOPE_KEY = 'farmslot:pr-mine-scope';
@@ -35,6 +55,9 @@ export function loadMineScope(): MineScope | null {
     return {
       logins: Array.isArray(value.logins) ? normalizeLogins(value.logins.map(String)) : [],
       includeRunOwned: value.includeRunOwned !== false,
+      adopted: Array.isArray(value.adopted)
+        ? value.adopted.map(String).map((item) => item.toLowerCase())
+        : [],
     };
   } catch {
     // A hand-edited or pre-schema value: fall back to the default rather than
@@ -49,17 +72,34 @@ export function saveMineScope(scope: MineScope): void {
     JSON.stringify({
       logins: normalizeLogins(scope.logins),
       includeRunOwned: scope.includeRunOwned,
+      adopted: scope.adopted,
     }),
   );
 }
 
+/** `owner/repo#123`: the run family started from an existing PR rather than creating one. */
+const PR_REF = /^[^\s/]+\/[^\s#]+#\d+$/;
+
+/**
+ * A farmslot run "created" the PR when its family root is a ticket or task,
+ * not a PR reference. A pr-complete or review run started on someone else's
+ * PR makes that PR run-owned without making it the viewer's.
+ */
+export function isRunCreatedPR(status: PRWorkspaceEntry['status']): boolean {
+  if (status?.ownedFamily !== true) return false;
+  const root = status.familyRootTicketOrPr?.trim() ?? '';
+  return root !== '' && !PR_REF.test(root);
+}
+
 export function isMineEntry(entry: PRWorkspaceEntry, scope: MineScope): boolean {
-  if (scope.includeRunOwned && entry.status?.ownedFamily === true) return true;
+  if (isAdopted(scope, entry.key)) return true;
+  if (scope.includeRunOwned && isRunCreatedPR(entry.status)) return true;
   const author = entry.author?.trim().toLowerCase();
   return author !== undefined && author !== '' && scope.logins.includes(author);
 }
 
 export function describeMineScope(scope: MineScope): string {
   const who = scope.logins.length ? scope.logins.map((l) => `@${l}`).join(', ') : 'no logins';
-  return scope.includeRunOwned ? `${who} + farmslot runs` : who;
+  const base = scope.includeRunOwned ? `${who} + PRs farmslot created` : who;
+  return scope.adopted.length ? `${base} + ${scope.adopted.length} taken over` : base;
 }

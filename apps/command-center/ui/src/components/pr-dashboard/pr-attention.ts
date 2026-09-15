@@ -142,7 +142,13 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         : 'CI has not finished yet.',
       tone: 'muted',
     });
-  reasons.push(...trailing);
+  if (!reasons.length && unwatched) {
+    // A red check, even unwatched, outranks "ready"; the rest trails as usual.
+    reasons.push(unwatched);
+    trailing.splice(trailing.indexOf(unwatched), 1);
+  }
+  // "Ready" is decided before the trailing notes: a stale review request on
+  // an approved, green PR is information, not a reason to hide the green.
   if (!reasons.length && pr.allPassed && pr.reviewDecision === 'APPROVED')
     reasons.push({
       kind: 'ready',
@@ -150,5 +156,6 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       detail: 'Nothing is blocking this PR; merge when ready.',
       tone: 'ok',
     });
+  reasons.push(...trailing);
   return reasons;
 }

@@ -172,9 +172,15 @@ export const prWorkspaceStyles = css`
     max-width: 340px;
     text-align: right;
   }
-  .pr-row-statuses .pr-author {
+  .pr-row-statuses .pr-author,
+  .pr-row-statuses .pr-row-detail {
     flex-basis: 100%;
     order: 3;
+  }
+  .pr-row-detail {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 12px;
+    overflow-wrap: anywhere;
   }
   .pr-row-statuses .rec-chip {
     max-width: none;
