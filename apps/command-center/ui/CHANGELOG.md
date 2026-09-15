@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The PRs page opens on a "Mine" scope (PRs by your GitHub logins plus farmslot-run PRs, editable per browser from the ⚙ next to the pill, prefilled from the gateway's configured GitHub accounts); "All PRs" and "Monitored" remain.
+
 - The PRs page shows a loading placeholder while pull requests are fetched from GitHub and a pulsing "Fetching PR info…" note during background refreshes; merged and closed PRs are hidden behind the "Show merged / closed & history" toggle with a hidden count in the header; each card and list row carries a reason chip (merge conflict, failing checks by name, bot comments, changes requested by a reviewer, waiting for review, checks running) with the full list under "Why it needs you"; board cards name the PR author, board columns share the available width and empty columns collapse to their header; the Reviews tab is now "Need Review". The list arrives from the gateway's warm copy, so reloads and reconnects no longer wait on GitHub; the "ago" stamp reflects the GitHub fetch time and "Fetching PR info…" also shows while the gateway refreshes in the background.
 
 - Explain dispatch settings in a collapsible guide and field hints; match the worker-interface choice to existing buttons and reset unsupported Conversation selections to Terminal.

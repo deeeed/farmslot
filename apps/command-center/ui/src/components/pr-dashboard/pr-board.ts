@@ -1,7 +1,13 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type { PRListResult, PRRulePreview, PRRuleSubject, PRStatus } from '@farmslot/protocol';
+import type {
+  ConfigGitHubAccountsResult,
+  PRListResult,
+  PRRulePreview,
+  PRRuleSubject,
+  PRStatus,
+} from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import './pr-card.js';
@@ -40,6 +46,14 @@ import {
 } from './pr-board-url-state.js';
 import { buildPRDashboardScopeSummary } from './pr-filters.js';
 import { prReviewReadiness, reviewRunLabel } from './pr-review-status.js';
+import {
+  describeMineScope,
+  isMineEntry,
+  loadMineScope,
+  type MineScope,
+  parseLoginList,
+  saveMineScope,
+} from './pr-scope-mine.js';
 import {
   buildPRWorkspaceEntries,
   isTerminalPREntry,
@@ -164,7 +178,11 @@ export class PRBoard extends LitElement {
     loading: true,
   };
   @state() private _section: PRSection = 'prs';
-  @state() private _scope: PRScope = 'all';
+  @state() private _scope: PRScope = 'mine';
+  /** Viewer-declared "Mine" definition; null until loaded or prefilled from configured accounts. */
+  @state() private _mine: MineScope | null = loadMineScope();
+  @state() private _mineEditing = false;
+  private _mineLoginsDraft = '';
   @state() private _pane: PRPane = 'overview';
   @state() private _showHistory = false;
   @state() private _details = new Map<string, PRStatus>();
@@ -285,6 +303,46 @@ export class PRBoard extends LitElement {
     }
     farm-hydrating {
       flex: 1;
+    }
+    .mine-editor {
+      display: flex;
+      flex-wrap: wrap;
+      gap: ${unsafeCSS(spacing.md)};
+      align-items: center;
+      padding: ${unsafeCSS(spacing.md)} 12px;
+      border-bottom: 1px solid #303047;
+      font: 12px ${unsafeCSS(fonts.mono)};
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .mine-editor label {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .mine-editor input[name='logins'] {
+      font: inherit;
+      min-width: 320px;
+      padding: 6px 8px;
+      color: ${unsafeCSS(colors.textPrimary)};
+      background: ${unsafeCSS(colors.bgInput)};
+      border: 1px solid #2a2a44;
+      border-radius: ${unsafeCSS(radii.sm)};
+    }
+    .mine-editor-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .mine-editor-actions button {
+      font: inherit;
+      padding: 6px 10px;
+      color: ${unsafeCSS(colors.textPrimary)};
+      background: ${unsafeCSS(colors.bgCard)};
+      border: 1px solid #2a2a44;
+      border-radius: ${unsafeCSS(radii.sm)};
+      cursor: pointer;
+    }
+    .workspace-toolbar .mine-edit {
+      padding: 8px 9px;
     }
     farm-hydrating.inline {
       flex: none;
@@ -602,12 +660,13 @@ export class PRBoard extends LitElement {
     if (initial.connection === 'connected' && !this._hydrating && initial.bootstrapFailed.prs) {
       this._fetchPRs();
     }
+    void this._prefillMineScope();
     this._refreshInterval = window.setInterval(() => {
       if (
         document.visibilityState === 'visible' &&
         !this._automationEditing &&
         this._section === 'prs' &&
-        this._scope === 'all'
+        this._scope !== 'monitored'
       )
         void this._fetchPRs();
     }, 60_000);
@@ -811,7 +870,11 @@ export class PRBoard extends LitElement {
       const inSection =
         this._section === 'reviews'
           ? entry.reviews.length > 0 || entry.requests.length > 0
-          : this._scope !== 'monitored' || entry.monitors.length > 0;
+          : this._scope === 'monitored'
+            ? entry.monitors.length > 0
+            : this._scope === 'mine'
+              ? isMineEntry(entry, this._mine ?? { logins: [], includeRunOwned: true })
+              : true;
       if (!inSection) continue;
       // An explicit selection (detail link, or a PR that merged while open)
       // stays visible so its detail pane does not go blank.
@@ -837,6 +900,80 @@ export class PRBoard extends LitElement {
   }
   private get _columns(): KanbanColumn[] {
     return this._showHistory ? [...ACTIVE_COLUMNS, ...TERMINAL_COLUMNS] : ACTIVE_COLUMNS;
+  }
+  /**
+   * First visit on this browser: seed "Mine" with the gateway's configured
+   * GitHub logins so the default view is useful before anyone edits it.
+   */
+  private async _prefillMineScope() {
+    if (this._mine || gateway.connectionState !== 'connected') return;
+    try {
+      const result = await gateway.request<ConfigGitHubAccountsResult>(
+        Methods.CONFIG_GITHUB_ACCOUNTS,
+        {},
+      );
+      if (this._mine) return;
+      this._mine = {
+        logins: result.accounts.map((account) => account.login),
+        includeRunOwned: true,
+      };
+    } catch (error) {
+      // No configured accounts is a valid state; "Mine" then means run-owned
+      // PRs only until the viewer adds logins. Report, do not hide.
+      console.warn(`[pr-board] could not prefill Mine from configured accounts: ${String(error)}`);
+      this._mine = { logins: [], includeRunOwned: true };
+    }
+  }
+  private _openMineEditor() {
+    this._mineLoginsDraft = (this._mine?.logins ?? []).join(', ');
+    this._mineEditing = true;
+  }
+  private _saveMineScope(includeRunOwned: boolean) {
+    const next: MineScope = { logins: parseLoginList(this._mineLoginsDraft), includeRunOwned };
+    saveMineScope(next);
+    this._mine = next;
+    this._mineEditing = false;
+  }
+  private _renderMineEditor() {
+    const mine = this._mine ?? { logins: [], includeRunOwned: true };
+    return html`<form
+      class="mine-editor"
+      data-testid="pr-mine-editor"
+      @submit=${(event: Event) => {
+        event.preventDefault();
+        const form = event.currentTarget as HTMLFormElement;
+        const runOwned = form.querySelector<HTMLInputElement>('input[name=runOwned]')!.checked;
+        this._saveMineScope(runOwned);
+      }}
+    >
+      <label
+        >GitHub logins that count as mine
+        <input
+          name="logins"
+          data-testid="pr-mine-logins"
+          .value=${this._mineLoginsDraft}
+          placeholder="login, login"
+          @input=${(event: Event) => {
+            this._mineLoginsDraft = (event.target as HTMLInputElement).value;
+          }}
+        />
+      </label>
+      <label
+        ><input type="checkbox" name="runOwned" .checked=${mine.includeRunOwned} /> Include PRs
+        produced by farmslot runs</label
+      >
+      <span class="mine-editor-actions">
+        <button type="submit" data-testid="pr-mine-save">Save</button>
+        <button
+          type="button"
+          @click=${() => {
+            this._mineEditing = false;
+          }}
+        >
+          Cancel
+        </button>
+      </span>
+    </form>`;
   }
   private _navigate(patch: {
     section?: PRSection;
@@ -1316,6 +1453,26 @@ export class PRBoard extends LitElement {
             ${this._section === 'prs'
               ? html`
                   <button
+                    data-testid="pr-scope-mine"
+                    aria-pressed=${String(this._scope === 'mine')}
+                    title=${`Mine: ${describeMineScope(this._mine ?? { logins: [], includeRunOwned: true })}`}
+                    @click=${() => this._navigate({ scope: 'mine' })}
+                  >
+                    Mine
+                  </button>
+                  <button
+                    class="mine-edit"
+                    data-testid="pr-scope-mine-edit"
+                    title="Choose which GitHub logins and farmslot runs count as mine"
+                    aria-pressed=${String(this._mineEditing)}
+                    @click=${() => {
+                      if (this._mineEditing) this._mineEditing = false;
+                      else this._openMineEditor();
+                    }}
+                  >
+                    ⚙
+                  </button>
+                  <button
                     data-testid="pr-scope-all"
                     aria-pressed=${String(this._scope === 'all')}
                     @click=${() => this._navigate({ scope: 'all' })}
@@ -1374,6 +1531,9 @@ export class PRBoard extends LitElement {
                 </span>`
               : nothing}
           </div>`}
+      ${!management && this._section === 'prs' && this._mineEditing
+        ? this._renderMineEditor()
+        : nothing}
       <div
         class="workspace ${management ? 'management' : ''} ${this._selectedPr ||
         this._automationEditing
