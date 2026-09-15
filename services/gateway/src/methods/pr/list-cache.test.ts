@@ -19,8 +19,8 @@ function pr(n: number, extra: Partial<PRStatus> = {}): PRStatus {
   return { pr: n, repo: 'org/app', title: `PR ${n}`, project: 'app', ...extra } as PRStatus;
 }
 
-function list(prs: PRStatus[], truncated = false) {
-  return { prs, truncated };
+function list(prs: PRStatus[], truncated = false, failed: string[] = []) {
+  return { prs, truncated, failed };
 }
 
 function isolate(): { dir: string; cleanup: () => void } {
@@ -271,6 +271,27 @@ test('a failed background refresh is announced with the retained fetch time', as
     assert.equal(events[1].error, 'gh down');
     assert.equal(events[1].fetchedAt, first.fetchedAt);
     assert.equal(events[1].prs, undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('PRs GitHub could not read keep their last known row instead of vanishing', async () => {
+  const { cleanup } = isolate();
+  try {
+    const merged = pr(1, { prState: 'MERGED', title: 'known merged' });
+    await servePRList(async () => list([merged, pr(2)]));
+    const partial = await servePRList(async () => list([pr(2)], false, ['org/app#1']), {
+      force: true,
+    });
+    assert.deepEqual(
+      partial.prs.map((p) => [p.pr, p.title]),
+      [
+        [2, 'PR 2'],
+        [1, 'known merged'],
+      ],
+    );
+    assert.equal(peekPRList()?.prs.length, 2, 'persisted copy carries the row too');
   } finally {
     cleanup();
   }

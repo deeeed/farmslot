@@ -98,6 +98,12 @@ interface FetchPRDataOptions {
   summary?: string | null;
   force?: boolean;
   repoOverride?: string;
+  /**
+   * Throw when GitHub returned no PR state instead of synthesising a
+   * placeholder row. The dashboard list uses this so a GitHub outage cannot
+   * overwrite the last known state of a PR with `PR #n` / OPEN defaults.
+   */
+  rejectIncomplete?: boolean;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -189,6 +195,8 @@ export interface PRListFetchResult {
   prs: PRStatus[];
   /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
   truncated: boolean;
+  /** `repo#pr` keys GitHub could not be read for; callers keep their last known state for them. */
+  failed: string[];
 }
 
 /**
@@ -284,7 +292,7 @@ export async function fetchPRList(
     });
   }
 
-  if (prInfo.size === 0) return { prs: [], truncated };
+  if (prInfo.size === 0) return { prs: [], truncated, failed: [] };
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request
   // per repo. Synthesized snapshots seed `prRawCache`, so the fetchPRData loop
@@ -322,6 +330,7 @@ export async function fetchPRList(
   // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
   // (truncated node, failed chunk) still has to reach GitHub, so force only
   // those; seeded PRs read the snapshot the batch just wrote.
+  const failed: string[] = [];
   const prs = await Promise.all(
     Array.from(prInfo.entries()).map(async ([prNum, info]) => {
       try {
@@ -334,24 +343,42 @@ export async function fetchPRList(
           summary: info.summary,
           repoOverride: info.repo,
           force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
+          rejectIncomplete: true,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
+        failed.push(`${info.repo}#${prNum}`);
+        console.warn(
+          `[pr.list] ${info.repo}#${prNum} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+        );
         return null;
       }
     }),
   );
+  if (failed.length > 0 && failed.length === prInfo.size)
+    throw new Error(`GitHub unavailable: all ${failed.length} PR reads failed`);
 
   return {
     prs: prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard),
     truncated,
+    failed,
   };
 }
 
 // ─── Core PR fetch logic ───
 
 async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
-  const { prNum, runs, project, slot, workerActive, summary, force, repoOverride } = opts;
+  const {
+    prNum,
+    runs,
+    project,
+    slot,
+    workerActive,
+    summary,
+    force,
+    repoOverride,
+    rejectIncomplete,
+  } = opts;
   const { project: resolvedProject, repo: ghRepo } = await resolveProjectRepo(
     project,
     repoOverride,
@@ -362,6 +389,8 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
   // share one network round-trip. force=true bypasses both caches.
   const raw = await getPRRawData(ghRepo, prNum, force);
+  if (rejectIncomplete && raw.prStateStdout.trim() === '')
+    throw new Error(`GitHub returned no state for ${ghRepo}#${prNum}`);
 
   // Parse checks
   const checkGroups = projectConfig?.ci?.checkGroups ?? [];

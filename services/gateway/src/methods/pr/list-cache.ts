@@ -27,8 +27,10 @@ export interface PRListSnapshot {
   truncated?: boolean;
 }
 
-/** `force` asks the fetcher to bypass its own GitHub caches. */
-type PRListFetcher = (force: boolean) => Promise<{ prs: PRStatus[]; truncated: boolean }>;
+/** `force` asks the fetcher to bypass its own GitHub caches; `failed` names PRs it could not read. */
+type PRListFetcher = (
+  force: boolean,
+) => Promise<{ prs: PRStatus[]; truncated: boolean; failed?: string[] }>;
 export type ServedPRList = PRListResult & { truncated: boolean };
 type Broadcast = (event: string, payload: unknown) => void;
 
@@ -110,11 +112,31 @@ function ageMs(snap: PRListSnapshot, now: number): number {
   return Number.isFinite(fetched) ? now - fetched : Number.POSITIVE_INFINITY;
 }
 
+/**
+ * PRs GitHub could not be read for keep the row from the previous copy, so a
+ * partial outage never turns a known MERGED PR into a blank OPEN placeholder.
+ */
+function withLastKnownState(prs: PRStatus[], failed: string[]): PRStatus[] {
+  if (failed.length === 0 || !snapshot) return prs;
+  const keys = new Set(failed);
+  const carried = snapshot.prs.filter((p) => keys.has(`${p.repo}#${p.pr}`));
+  if (carried.length)
+    console.warn(
+      `[pr.list] kept last known state for ${carried.length} PR(s): ${carried.map((p) => `${p.repo}#${p.pr}`).join(', ')}`,
+    );
+  return [...prs, ...carried];
+}
+
 function runRefresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
   const promise = (async () => {
     try {
-      const { prs, truncated } = await fetch(force);
-      const next: PRListSnapshot = { fetchedAt: new Date().toISOString(), prs, truncated };
+      const fetched = await fetch(force);
+      const prs = withLastKnownState(fetched.prs, fetched.failed ?? []);
+      const next: PRListSnapshot = {
+        fetchedAt: new Date().toISOString(),
+        prs,
+        truncated: fetched.truncated,
+      };
       const changed = !snapshot || JSON.stringify(snapshot.prs) !== JSON.stringify(prs);
       snapshot = next;
       persist(next);
