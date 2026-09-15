@@ -39,6 +39,7 @@ export {
 } from './config.js';
 export type { ExecOnSlotOptions, ExecOptions, ExecResult } from './exec.js';
 export { execArgvOnSlot, execFileArgv, execLocal, execOnSlot, isLocal } from './exec.js';
+export { farmCacheFile } from './farm-cache.js';
 export {
   expandDispatchCmd,
   expandHook,

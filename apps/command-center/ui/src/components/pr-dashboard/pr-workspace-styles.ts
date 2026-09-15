@@ -179,6 +179,27 @@ export const prWorkspaceStyles = css`
   .pr-row-statuses .rec-chip {
     max-width: none;
   }
+  .list-row .reason-chip {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    white-space: normal;
+    line-height: 1.4;
+    max-width: 220px;
+  }
+  .reason-tone-fail {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
+  .reason-tone-warn {
+    color: ${unsafeCSS(colors.statusWarn)};
+  }
+  .reason-tone-ok {
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .reason-tone-muted {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
   .review-badge {
     border: 1px solid currentColor;
     border-radius: 4px;

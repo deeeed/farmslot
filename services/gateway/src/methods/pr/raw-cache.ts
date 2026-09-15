@@ -19,6 +19,8 @@ export interface PRRawSnapshot {
   author?: string;
   checksStdout: string;
   prStateStdout: string;
+  /** Why the PR state read returned nothing (gh's message); absent when it succeeded. */
+  prStateError?: string;
   commentsStdout: string;
   reviewCommentsStdout: string;
   latestCommitStdout: string;
@@ -143,6 +145,7 @@ export async function getPRRawData(
       author: author || undefined,
       checksStdout: checks.stdout,
       prStateStdout: stateLine ?? '',
+      prStateError: stateLine ? undefined : prState.stderr || 'empty response',
       commentsStdout: comments.stdout,
       reviewCommentsStdout: reviewComments.stdout,
       latestCommitStdout: latestCommit.stdout,
@@ -509,7 +512,7 @@ export function synthesizeRawSnapshotFromGraphQL(
 // Relies on `ghRequest`'s 10MB stdout buffer; a 25-PR chunk with 100 contexts × 100
 // review threads × 50 comments could in principle approach that ceiling on monster
 // PRs. JSON.parse failure on truncation is caught below and falls back cleanly.
-async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
+async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
   const query = buildBatchQuery(chunk.prs.length);
   const args = [
     'api',
@@ -566,6 +569,7 @@ async function runBatchChunk(chunk: BatchedRepoChunk): Promise<void> {
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
     prRawCache.set(`${chunk.repo}#${prNum}`, snap);
+    seeded.add(`${chunk.repo}#${prNum}`);
   }
 }
 
@@ -576,16 +580,21 @@ export function isPRBatchTruncated(node: GqlPullRequestNode | null | undefined):
   return false;
 }
 
-export async function prefetchPRBatchViaGraphQL(prsByRepo: Map<string, number[]>): Promise<void> {
-  if (prsByRepo.size === 0) return;
+/** Returns the `repo#pr` keys whose raw snapshot this batch wrote; the rest need the per-PR path. */
+export async function prefetchPRBatchViaGraphQL(
+  prsByRepo: Map<string, number[]>,
+): Promise<Set<string>> {
+  const seeded = new Set<string>();
+  if (prsByRepo.size === 0) return seeded;
   const chunks = chunkPRsByRepo(prsByRepo);
-  if (chunks.length === 0) return;
+  if (chunks.length === 0) return seeded;
   const totalPRs = chunks.reduce((sum, c) => sum + c.prs.length, 0);
   const startedAt = Date.now();
-  await Promise.all(chunks.map(runBatchChunk));
+  await Promise.all(chunks.map((chunk) => runBatchChunk(chunk, seeded)));
   console.log(
-    `[pr.batch] repos=${prsByRepo.size} prs=${totalPRs} chunks=${chunks.length} duration_ms=${Date.now() - startedAt}`,
+    `[pr.batch] repos=${prsByRepo.size} prs=${totalPRs} chunks=${chunks.length} seeded=${seeded.size} duration_ms=${Date.now() - startedAt}`,
   );
+  return seeded;
 }
 
 export type PRJsonLine = Record<string, string | number | boolean | null | undefined> & {

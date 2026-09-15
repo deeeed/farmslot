@@ -49,6 +49,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { GitHubQueryBudgetError } from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
+import { servePRList } from './pr/list-cache.js';
 import {
   getPRRawData,
   parseJsonLines,
@@ -97,6 +98,12 @@ interface FetchPRDataOptions {
   summary?: string | null;
   force?: boolean;
   repoOverride?: string;
+  /**
+   * Throw when GitHub returned no PR state instead of synthesising a
+   * placeholder row. The dashboard list uses this so a GitHub outage cannot
+   * overwrite the last known state of a PR with `PR #n` / OPEN defaults.
+   */
+  rejectIncomplete?: boolean;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -155,7 +162,86 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
 
 // ─── prList — native TS ───
 
-export async function prList(params?: PRListParams): Promise<PRListResult> {
+/**
+ * Serve the dashboard list from the gateway's warm copy (see list-cache.ts);
+ * the full GitHub fan-out runs cold, on `force`, or in the background once the
+ * copy is older than PR_LIST_STALE_MS. Project scoping filters the warm list so
+ * every caller shares one fetch.
+ */
+export async function prList(
+  params?: PRListParams,
+  fetchList: (opts: {
+    force?: boolean;
+    project?: string;
+  }) => Promise<PRListFetchResult> = fetchPRList,
+): Promise<PRListResult> {
+  const { truncated, ...served } = await servePRList((force) => fetchList({ force }), {
+    force: params?.force,
+  });
+  if (!params?.project) return served;
+  if (truncated) {
+    // The shared copy hit MAX_PR_DASHBOARD_CANDIDATES before it could reach
+    // every run of this project, so filtering it could hide this project's
+    // PRs. Discover per project instead: uncached (bounded by the 60s raw
+    // cache), as every project-scoped call was before the warm list existed.
+    const scoped = await fetchList({ project: params.project, force: params.force });
+    if (scoped.truncated)
+      console.warn(
+        `[pr.list] project ${params.project} alone exceeds ${MAX_PR_DASHBOARD_CANDIDATES} candidates; list is incomplete`,
+      );
+    return {
+      prs: scoped.prs.filter((p) => p.project === params.project),
+      fetchedAt: new Date().toISOString(),
+      refreshing: false,
+    };
+  }
+  // Match on the PR's resolved project (PRStatus.project), not repo slug.
+  // Projects whose internal name differs from their GitHub owner/name
+  // (e.g. my-app-farm → owner/my-app) would drop out of the
+  // project-filtered dashboard if we substring-matched on repo.
+  return { ...served, prs: served.prs.filter((p) => p.project === params.project) };
+}
+
+/** GitHub says the PR no longer exists or is no longer visible to this token. */
+export class PRGoneError extends Error {}
+
+// `gh` reports a missing or invisible PR as `HTTP 404: Not Found (...)`; a bare
+// "not found" also appears in DNS/proxy failures, so only the coded forms count.
+const PR_GONE_PATTERN = /HTTP 404|Could not resolve to a PullRequest/i;
+
+/**
+ * Whether a dashboard fetch should be treated as a GitHub outage rather than a
+ * list. No candidate read succeeded, and either some read failed outright or
+ * more than one PR "disappeared" at once: GitHub answers 404 for anything a
+ * token can no longer see, so mass 404 is lost access, not mass deletion. A
+ * single gone PR with nothing else to read is just an empty farm.
+ */
+export function isListReadOutage(reads: {
+  candidates: number;
+  failed: number;
+  gone: number;
+}): boolean {
+  if (reads.candidates === 0 || reads.failed + reads.gone < reads.candidates) return false;
+  return reads.failed > 0 || reads.gone > 1;
+}
+
+export interface PRListFetchResult {
+  prs: PRStatus[];
+  /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
+  truncated: boolean;
+  /** `repo#pr` keys GitHub could not be read for; callers keep their last known state for them. */
+  failed: string[];
+}
+
+/**
+ * Full GitHub fan-out: discover candidate PRs from slots and runs, then fetch
+ * each. `force` re-fetches every candidate from GitHub through the GraphQL
+ * batch, bypassing the 60s raw cache; `project` limits run discovery to that
+ * project so the candidate cap cannot starve it.
+ */
+export async function fetchPRList(
+  opts: { force?: boolean; project?: string } = {},
+): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
   const prInfo = new Map<number, PRDashboardEntry>();
@@ -219,7 +305,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   const now = Date.now();
   for (const run of runByPR.values()) {
     if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
-    if (params?.project && run.project !== params.project) continue;
+    if (opts.project && run.project !== opts.project) continue;
     if (run.prNumber == null) continue;
     if (prInfo.has(run.prNumber)) continue;
     if (isTerminalRunStatus(run.status)) {
@@ -236,9 +322,9 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     });
   }
 
-  if (prInfo.size === 0) {
-    return { prs: [] };
-  }
+  // Slots alone can fill the cap too, so decide after both discovery passes.
+  const truncated = prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES;
+  if (prInfo.size === 0) return { prs: [], truncated, failed: [] };
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request
   // per repo. Synthesized snapshots seed `prRawCache`, so the fetchPRData loop
@@ -248,19 +334,24 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   // refetching a cached PR within the 60s TTL would just burn quota. Also skip
   // PRs with an inflight per-PR REST fetch (e.g. a concurrent pr.status from
   // the slot view): the inflight call will write a fresh snapshot and the batch
-  // overwrite would just waste both REST and GraphQL quota.
+  // overwrite would just waste both REST and GraphQL quota. `force` (operator
+  // Refresh) prefetches every candidate so the answer is what GitHub says now;
+  // the fetchPRData loop then reads those fresh snapshots without its own
+  // force, which would discard them and fan out over REST a second time.
   const prefetchNow = Date.now();
   const prsByRepo = new Map<string, number[]>();
   for (const [prNum, info] of prInfo) {
     const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
     if (!repo) continue;
-    if (!shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
+    info.repo = repo;
+    if (!opts.force && !shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
     const list = prsByRepo.get(repo);
     if (list) list.push(prNum);
     else prsByRepo.set(repo, [prNum]);
   }
+  let seeded = new Set<string>();
   try {
-    await prefetchPRBatchViaGraphQL(prsByRepo);
+    seeded = await prefetchPRBatchViaGraphQL(prsByRepo);
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     console.warn(
@@ -268,7 +359,11 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     );
   }
 
-  // Fetch all PRs in parallel
+  // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
+  // (truncated node, failed chunk) still has to reach GitHub, so force only
+  // those; seeded PRs read the snapshot the batch just wrote.
+  const failed: string[] = [];
+  let gone = 0;
   const prs = await Promise.all(
     Array.from(prInfo.entries()).map(async ([prNum, info]) => {
       try {
@@ -280,30 +375,51 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
           workerActive: info.workerActive,
           summary: info.summary,
           repoOverride: info.repo,
+          force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
+          rejectIncomplete: true,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
+        if (error instanceof PRGoneError) {
+          // Deleted or no longer visible: drop the row, do not carry it.
+          gone += 1;
+          console.warn(`[pr.list] ${error.message}`);
+          return null;
+        }
+        failed.push(`${info.repo}#${prNum}`);
+        console.warn(
+          `[pr.list] ${info.repo}#${prNum} unavailable: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`,
+        );
         return null;
       }
     }),
   );
+  if (isListReadOutage({ candidates: prInfo.size, failed: failed.length, gone }))
+    throw new Error(
+      `GitHub unavailable: ${failed.length} of ${prInfo.size} PR reads failed and ${gone} returned 404`,
+    );
 
-  let result = prs.filter((p): p is PRStatus => p !== null);
-  result = result.filter(shouldIncludePRInDashboard);
-  if (params?.project) {
-    // Match on the PR's resolved project (PRStatus.project), not repo slug.
-    // Projects whose internal name differs from their GitHub owner/name
-    // (e.g. my-app-farm → owner/my-app) would drop out of the
-    // project-filtered dashboard if we substring-matched on repo.
-    result = result.filter((p) => p.project === params.project);
-  }
-  return { prs: result };
+  return {
+    prs: prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard),
+    truncated,
+    failed,
+  };
 }
 
 // ─── Core PR fetch logic ───
 
 async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
-  const { prNum, runs, project, slot, workerActive, summary, force, repoOverride } = opts;
+  const {
+    prNum,
+    runs,
+    project,
+    slot,
+    workerActive,
+    summary,
+    force,
+    repoOverride,
+    rejectIncomplete,
+  } = opts;
   const { project: resolvedProject, repo: ghRepo } = await resolveProjectRepo(
     project,
     repoOverride,
@@ -314,6 +430,12 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
   // share one network round-trip. force=true bypasses both caches.
   const raw = await getPRRawData(ghRepo, prNum, force);
+  if (rejectIncomplete && raw.prStateStdout.trim() === '') {
+    const why = raw.prStateError ?? 'empty response';
+    if (PR_GONE_PATTERN.test(why))
+      throw new PRGoneError(`${ghRepo}#${prNum} is gone: ${why.slice(0, 120)}`);
+    throw new Error(`GitHub returned no state for ${ghRepo}#${prNum}: ${why.slice(0, 120)}`);
+  }
 
   // Parse checks
   const checkGroups = projectConfig?.ci?.checkGroups ?? [];
@@ -378,6 +500,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const ownedFamilyContext = familyContext?.ownedPrFamily ? familyContext : null;
 
   const approved = reviewDecision === 'APPROVED';
+  const changesRequested = reviewDecision === 'CHANGES_REQUESTED';
   const recommendation = computePRRecommendation({
     prState: (prState as 'OPEN' | 'CLOSED' | 'MERGED') || 'OPEN',
     workerActive: Boolean(workerActive),
@@ -386,6 +509,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     actionableCount: actionable.length,
     allPassed,
     approved,
+    changesRequested,
     familyContext: ownedFamilyContext,
   });
   const mergeState = derivePRMergeState({

@@ -414,6 +414,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `node.disconnected`             | node      | Node Disconnected gateway event.             |
 | `node.health.updated`           | node      | Node Health Updated gateway event.           |
 | `node.version.mismatch`         | node      | Node Version Mismatch gateway event.         |
+| `pr.list.updated`               | pr        | Pr List Updated gateway event.               |
 | `pr.updated`                    | pr        | Pr Updated gateway event.                    |
 | `prPush.updated`                | prPush    | PrPush Updated gateway event.                |
 | `prRules.updated`               | prRules   | PrRules Updated gateway event.               |

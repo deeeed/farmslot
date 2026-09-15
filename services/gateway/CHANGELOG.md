@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to re-fetch every PR from GitHub before answering, and broadcasts `pr.list.updated` after every refresh (with the list only when it changed). Project-scoped `pr.list` calls filter the same copy, or rediscover per project when the shared copy hit the candidate cap. A PR GitHub cannot be read for keeps its last known row (for up to an hour) rather than a blank placeholder, a PR GitHub reports gone is dropped, and a refresh that reads nothing keeps the whole copy and reports the failure to every client. One-shot readers (`farmslot pr list`, the Co-Pilot `list_pull_requests` tool) read GitHub fresh; the carry clock for unreadable rows survives restarts.
+
+- `pr.list` / `pr.status` recommend NEEDS_ATTENTION for a PR whose reviewer requested changes, so a human review round shows up on the board next to CI failures and conflicts; the ci-monitor dedup path keeps that signal.
+
 - After a pr-complete, dev, fix-bug or update-branch round finalizes on a PR, the gateway re-requests review from every reviewer whose latest verdict is still CHANGES_REQUESTED, so an addressed PR goes back into their queue instead of sitting on "changes requested"; the finalize step records who was re-requested.
 
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".

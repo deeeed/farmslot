@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- The PR dashboard takes the gateway's refreshed list from `pr.list.updated`, shows a gateway-side refresh failure as the list error, and the Refresh button asks the gateway to re-read GitHub.
 - Continue native conversations from Co-Pilot and worker runs with streamed history, tool and permission details, approvals, custom question answers and turn controls; preserve focused drafts through reconnect and keep the existing terminal option.
 - Choose native runner configurations, resume saved conversations, and expand unavailable-node diagnostics when needed.
 
