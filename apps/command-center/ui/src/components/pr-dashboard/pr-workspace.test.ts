@@ -9,7 +9,12 @@ import {
   prKeyEqual,
   prReviewDispatchHash,
 } from './pr-board-url-state.js';
-import { buildPRWorkspaceEntries, prWorkspaceKey, prWorkspaceNavigation } from './pr-workspace.js';
+import {
+  buildPRWorkspaceEntries,
+  isTerminalPREntry,
+  prWorkspaceKey,
+  prWorkspaceNavigation,
+} from './pr-workspace.js';
 
 const status = {
   repo: 'Org/App',
@@ -205,5 +210,28 @@ test('review discovery author and title appear without fetching viewer data or u
   assert.equal(
     buildPRWorkspaceEntries([], [monitor], [review], [], [], filters, false)[0].author,
     undefined,
+  );
+});
+
+test('isTerminalPREntry hides merged and closed PRs but keeps open and status-less entries', () => {
+  assert.equal(isTerminalPREntry({ status: undefined }), false);
+  assert.equal(
+    isTerminalPREntry({ status: { ...status, prState: 'OPEN', recommendation: 'READY' } }),
+    false,
+  );
+  assert.equal(
+    isTerminalPREntry({ status: { ...status, prState: 'MERGED', recommendation: 'MERGED' } }),
+    true,
+  );
+  assert.equal(
+    isTerminalPREntry({
+      status: { ...status, prState: 'CLOSED', recommendation: 'CLOSED_WITHOUT_MERGE' },
+    }),
+    true,
+  );
+  // A worker still active on a merged PR keeps recommendation WORKING; prState decides.
+  assert.equal(
+    isTerminalPREntry({ status: { ...status, prState: 'MERGED', recommendation: 'WORKING' } }),
+    true,
   );
 });

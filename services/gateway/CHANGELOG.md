@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `pr.list` / `pr.status` recommend NEEDS_ATTENTION for a PR whose reviewer requested changes, so a human review round shows up on the board next to CI failures and conflicts; the ci-monitor dedup path keeps that signal.
+
 - After a pr-complete, dev, fix-bug or update-branch round finalizes on a PR, the gateway re-requests review from every reviewer whose latest verdict is still CHANGES_REQUESTED, so an addressed PR goes back into their queue instead of sitting on "changes requested"; the finalize step records who was re-requested.
 
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".

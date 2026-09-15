@@ -26,6 +26,16 @@ export interface PRWorkspaceEntry {
   reviews: PRReviewIntent[];
   requests: PRReviewSubmission[];
 }
+/** Merged or closed PRs are history: hidden from the PRs section unless the operator asks for it. */
+export function isTerminalPREntry(entry: Pick<PRWorkspaceEntry, 'status'>): boolean {
+  const status = entry.status;
+  if (!status) return false;
+  return (
+    status.recommendation === 'MERGED' ||
+    status.recommendation === 'CLOSED_WITHOUT_MERGE' ||
+    status.prState !== 'OPEN'
+  );
+}
 export function prWorkspaceKey(key: PRKey): string {
   return `${(key.host ?? 'github.com').toLowerCase()}/${key.repo.toLowerCase()}#${key.pr}`;
 }

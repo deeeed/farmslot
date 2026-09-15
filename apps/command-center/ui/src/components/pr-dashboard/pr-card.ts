@@ -5,6 +5,15 @@ import type { PRRecommendation, PRStatus } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { prAttentionReasons } from './pr-attention.js';
+
+const REASON_TONE_COLOR = {
+  fail: colors.statusFail,
+  warn: colors.statusWarn,
+  ok: colors.statusOk,
+  muted: colors.textMuted,
+} as const;
+
 function recommendationStyle(rec: PRRecommendation): { bg: string; fg: string; label: string } {
   switch (rec) {
     case 'WORKING':
@@ -112,6 +121,34 @@ export class PRCard extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       padding: 1px 6px;
       border-radius: 3px;
+      font-weight: 600;
+    }
+
+    .reason-chip {
+      display: inline-block;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 10px;
+      line-height: 1.4;
+      padding: 1px 6px;
+      margin-top: ${unsafeCSS(spacing.sm)};
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .reason-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      line-height: 1.5;
+    }
+    .reason-list li {
+      color: ${unsafeCSS(colors.textSecondary)};
+    }
+    .reason-list strong {
       font-weight: 600;
     }
 
@@ -298,6 +335,8 @@ export class PRCard extends LitElement {
     const all = pr.allCheckSummary;
     const hasAllSummary = Boolean(all && all.total > 0 && all.total !== cs.total);
     const rec = recommendationStyle(pr.recommendation);
+    const reasons = prAttentionReasons(pr);
+    const reason = reasons[0];
 
     return html`
       <div class="card" @click=${this._toggle}>
@@ -307,6 +346,16 @@ export class PRCard extends LitElement {
           ${pr.slot ? html`<span class="pr-slot">${pr.slot}</span>` : ''}
         </div>
         <div class="pr-title" title="${pr.title}">${pr.title}</div>
+        ${reason
+          ? html`<span
+              class="reason-chip"
+              data-testid="pr-attention-reason"
+              data-reason-kind=${reason.kind}
+              style="color:${REASON_TONE_COLOR[reason.tone]}"
+              title=${reason.detail}
+              >${reason.label}</span
+            >`
+          : nothing}
         ${pr.summary ? html`<div class="pr-summary">${pr.summary}</div>` : ''}
         ${pr.ownedFamily
           ? html`
@@ -427,6 +476,20 @@ export class PRCard extends LitElement {
         ${this._isExpanded
           ? html`
               <div class="details">
+                ${reasons.length
+                  ? html`<div class="detail-heading">Why it needs you</div>
+                      <ul class="reason-list" data-testid="pr-attention-reasons">
+                        ${reasons.map(
+                          (item) =>
+                            html`<li>
+                              <strong style="color:${REASON_TONE_COLOR[item.tone]}"
+                                >${item.label}</strong
+                              >
+                              · ${item.detail}
+                            </li>`,
+                        )}
+                      </ul>`
+                  : nothing}
                 <div class="detail-heading">Watched CI Checks</div>
                 <ul class="check-list">
                   ${pr.checks.map(

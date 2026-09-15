@@ -378,6 +378,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const ownedFamilyContext = familyContext?.ownedPrFamily ? familyContext : null;
 
   const approved = reviewDecision === 'APPROVED';
+  const changesRequested = reviewDecision === 'CHANGES_REQUESTED';
   const recommendation = computePRRecommendation({
     prState: (prState as 'OPEN' | 'CLOSED' | 'MERGED') || 'OPEN',
     workerActive: Boolean(workerActive),
@@ -386,6 +387,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     actionableCount: actionable.length,
     allPassed,
     approved,
+    changesRequested,
     familyContext: ownedFamilyContext,
   });
   const mergeState = derivePRMergeState({
