@@ -88,13 +88,14 @@ test('an unwatched failure never outranks the blocker that put the PR in Needs A
   assert.equal(reasons[1].tone, 'warn');
 });
 
-test('an unwatched failure trails the ready or waiting reason instead of leading it', () => {
+test('an unwatched failure trails a waiting reason but replaces "ready"', () => {
   const ready = prAttentionReasons(
     status({ allPassed: true, reviewDecision: 'APPROVED', allFailedNames: ['docs-build'] }),
   );
   assert.deepEqual(
     ready.map((r) => r.kind),
-    ['ready', 'ci-failed'],
+    ['ci-failed'],
+    'an approved, green PR with a red unwatched check is not announced as ready',
   );
   const waiting = prAttentionReasons(
     status({ reviewDecision: 'REVIEW_REQUIRED', allFailedNames: ['docs-build'] }),

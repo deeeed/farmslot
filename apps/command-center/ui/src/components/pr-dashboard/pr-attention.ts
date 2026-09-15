@@ -77,7 +77,8 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
     });
   // Not a watched check, so it never drives the recommendation: always listed
   // after whatever does, so the first chip explains the column. It leads only
-  // when it is the sole thing worth saying.
+  // when nothing blocks and no review or check is still outstanding: a red
+  // check is worth more than "Approved, CI green" on an unexpanded card.
   const unwatched: PRAttentionReason | undefined =
     !pr.anyFailed && pr.allFailedNames?.length
       ? {
@@ -109,6 +110,7 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         : 'CI has not finished yet.',
       tone: 'muted',
     });
+  if (unwatched) reasons.push(unwatched);
   if (!reasons.length && pr.allPassed && pr.reviewDecision === 'APPROVED')
     reasons.push({
       kind: 'ready',
@@ -116,6 +118,5 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       detail: 'Nothing is blocking this PR; merge when ready.',
       tone: 'ok',
     });
-  if (unwatched) reasons.push(unwatched);
   return reasons;
 }

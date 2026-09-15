@@ -214,8 +214,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       client.subscribe(Events.PR_LIST_UPDATED, (payload) => {
         const data = payload as PRListUpdatedPayload;
         const prs = usePRStore.getState();
-        if (data.error) prs.setError(`PR refresh failed on the gateway: ${data.error}`);
-        else if (data.prs) prs.setPRs(data.prs);
+        if (data.error) {
+          prs.setError(`PR refresh failed on the gateway: ${data.error}`);
+          return;
+        }
+        // A successful refresh, changed list or not, clears an earlier failure.
+        prs.setError(null);
+        if (data.prs) prs.setPRs(data.prs);
       });
 
       let decisionRefreshInFlight: Promise<void> | null = null;

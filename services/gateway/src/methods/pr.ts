@@ -205,7 +205,25 @@ export async function prList(
 /** GitHub says the PR no longer exists or is no longer visible to this token. */
 export class PRGoneError extends Error {}
 
-const PR_GONE_PATTERN = /HTTP 404|Not Found|Could not resolve to a PullRequest/i;
+// `gh` reports a missing or invisible PR as `HTTP 404: Not Found (...)`; a bare
+// "not found" also appears in DNS/proxy failures, so only the coded forms count.
+const PR_GONE_PATTERN = /HTTP 404|Could not resolve to a PullRequest/i;
+
+/**
+ * Whether a dashboard fetch should be treated as a GitHub outage rather than a
+ * list. No candidate read succeeded, and either some read failed outright or
+ * more than one PR "disappeared" at once: GitHub answers 404 for anything a
+ * token can no longer see, so mass 404 is lost access, not mass deletion. A
+ * single gone PR with nothing else to read is just an empty farm.
+ */
+export function isListReadOutage(reads: {
+  candidates: number;
+  failed: number;
+  gone: number;
+}): boolean {
+  if (reads.candidates === 0 || reads.failed + reads.gone < reads.candidates) return false;
+  return reads.failed > 0 || reads.gone > 1;
+}
 
 export interface PRListFetchResult {
   prs: PRStatus[];
@@ -345,6 +363,7 @@ export async function fetchPRList(
   // (truncated node, failed chunk) still has to reach GitHub, so force only
   // those; seeded PRs read the snapshot the batch just wrote.
   const failed: string[] = [];
+  let gone = 0;
   const prs = await Promise.all(
     Array.from(prInfo.entries()).map(async ([prNum, info]) => {
       try {
@@ -363,6 +382,7 @@ export async function fetchPRList(
         if (error instanceof GitHubQueryBudgetError) throw error;
         if (error instanceof PRGoneError) {
           // Deleted or no longer visible: drop the row, do not carry it.
+          gone += 1;
           console.warn(`[pr.list] ${error.message}`);
           return null;
         }
@@ -374,9 +394,10 @@ export async function fetchPRList(
       }
     }),
   );
-  // One unreadable candidate is a PR problem; every candidate unreadable is GitHub.
-  if (failed.length > 1 && failed.length === prInfo.size)
-    throw new Error(`GitHub unavailable: all ${failed.length} PR reads failed`);
+  if (isListReadOutage({ candidates: prInfo.size, failed: failed.length, gone }))
+    throw new Error(
+      `GitHub unavailable: ${failed.length} of ${prInfo.size} PR reads failed and ${gone} returned 404`,
+    );
 
   return {
     prs: prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard),

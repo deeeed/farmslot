@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { PRStatus } from '@farmslot/protocol';
 
-import { prList, type PRListFetchResult } from '../pr.js';
+import { isListReadOutage, prList, type PRListFetchResult } from '../pr.js';
 
 import { resetPRListCacheForTests, servePRList } from './list-cache.js';
 
@@ -58,4 +58,29 @@ test('project-scoped pr.list filters the warm copy, or rediscovers per project o
     else process.env.FARMSLOT_DIR = previous;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a fetch is an outage only when nothing could be read and it was not one deleted PR', () => {
+  assert.equal(isListReadOutage({ candidates: 0, failed: 0, gone: 0 }), false, 'empty farm');
+  assert.equal(isListReadOutage({ candidates: 1, failed: 0, gone: 1 }), false, 'one deleted PR');
+  assert.equal(
+    isListReadOutage({ candidates: 1, failed: 1, gone: 0 }),
+    true,
+    'lone transient failure',
+  );
+  assert.equal(
+    isListReadOutage({ candidates: 3, failed: 0, gone: 3 }),
+    true,
+    'mass 404 is lost access',
+  );
+  assert.equal(
+    isListReadOutage({ candidates: 3, failed: 1, gone: 2 }),
+    true,
+    'nothing read at all',
+  );
+  assert.equal(
+    isListReadOutage({ candidates: 3, failed: 2, gone: 0 }),
+    false,
+    'one read succeeded',
+  );
 });
