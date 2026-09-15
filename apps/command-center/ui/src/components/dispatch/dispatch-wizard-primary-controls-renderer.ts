@@ -11,6 +11,7 @@ import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effor
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
+import { DISPATCH_HELP } from './dispatch-wizard-help.js';
 
 type DispatchMode = 'interactive' | 'autonomous';
 type ReviewTier = '' | 'light' | 'standard' | 'full';
@@ -86,23 +87,45 @@ export function renderDispatchWizardPrimaryControls(
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${renderRunnerModelConfig(ctx)}
-    <label class="section-label"
-      >Worker interface
-      <select
+    <div>
+      <div class="section-label" id="worker-interface-label" title=${DISPATCH_HELP.interface.text}>
+        Worker interface
+      </div>
+      <div
+        class="pill-row"
+        role="group"
+        aria-labelledby="worker-interface-label"
         data-testid="dispatch-transport"
-        .value=${ctx.transport}
-        @change=${(event: Event) =>
-          ctx.setTransport((event.target as HTMLSelectElement).value as 'tmux' | 'native')}
       >
-        <option value="tmux">Terminal (tmux)</option>
-        <option value="native" ?disabled=${!ctx.nativeWorkerAvailable}>
-          Conversation (native)
-        </option>
-      </select>
-    </label>
-    ${ctx.nativeCatalogError ? html`<p role="status">${ctx.nativeCatalogError}</p>` : nothing}
+        <button
+          type="button"
+          class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
+          data-transport="tmux"
+          aria-pressed=${ctx.transport === 'tmux'}
+          @click=${() => ctx.setTransport('tmux')}
+        >
+          Terminal
+        </button>
+        <button
+          type="button"
+          class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
+          data-transport="native"
+          aria-pressed=${ctx.transport === 'native'}
+          ?disabled=${!ctx.nativeWorkerAvailable}
+          title=${ctx.nativeWorkerAvailable
+            ? 'Messages, tools and approvals in Farmslot'
+            : 'Native workers are unavailable for this runner'}
+          @click=${() => ctx.setTransport('native')}
+        >
+          Conversation
+        </button>
+      </div>
+    </div>
+    ${ctx.nativeCatalogError
+      ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
+      : nothing}
     ${ctx.transport === 'native'
-      ? html`<p>
+      ? html`<p class="section-help" data-testid="dispatch-interface-help">
           Messages, tools and approvals appear in Farmslot. The selected runner keeps its own login
           and model.
         </p>`
@@ -115,7 +138,7 @@ export function renderDispatchWizardPrimaryControls(
 function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.ticket.text}>
         Ticket /
         PR${ctx.matchingProject
           ? html` <span
@@ -146,7 +169,7 @@ function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderFlowSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.flow.text}>
         Flow${ctx.autoFlowType
           ? html` <span style="color:${colors.accent}; text-transform:none; letter-spacing:normal"
               >auto</span
@@ -172,7 +195,7 @@ function renderFlowSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderProjectSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.project.text}>
         Project${ctx.autoProject
           ? html` <span style="color:${colors.accent}; text-transform:none; letter-spacing:normal"
               >auto</span
@@ -199,7 +222,7 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   if (!ctx.project || ctx.projectApps.length <= 1) return nothing;
   return html`
     <div>
-      <div class="section-label">App</div>
+      <div class="section-label" title=${DISPATCH_HELP.project.text}>App</div>
       <div class="pill-row">
         ${ctx.projectApps.map(
           (app) => html`
@@ -236,7 +259,7 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
   if (ctx.flowType !== 'review-pr') return nothing;
   return html`
     <div class="config-group">
-      <div class="section-label">Review Tier</div>
+      <div class="section-label" title=${DISPATCH_HELP.review.text}>Review Tier</div>
       <div class="pill-row">
         ${(['', 'light', 'standard', 'full'] as ReviewTier[]).map(
           (tier) => html`
@@ -277,7 +300,7 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
   const profiles = ctx.prepareProfiles;
   return html`
-    <div class="config-group" style="margin-top: 4px">
+    <div class="config-group" style="margin-top: 4px" title=${DISPATCH_HELP.prepare.text}>
       ${profiles.length > 0 ? html`<div class="section-label">Prepare</div>` : nothing}
       <slot-prepare-options
         variant="dispatch"
@@ -304,7 +327,7 @@ function renderInteractiveDevProfile(ctx: DispatchWizardPrimaryControlsRenderCon
   if (ctx.flowType !== 'dev' || ctx.mode !== 'interactive') return nothing;
   return html`
     <div class="config-group">
-      <div class="section-label">Interactive dev</div>
+      <div class="section-label" title=${DISPATCH_HELP.interactive.text}>Interactive dev</div>
       <div class="pill-row">
         <button
           class="pill ${ctx.devInteractiveProfile === 'lightweight' ? 'selected' : ''}"
