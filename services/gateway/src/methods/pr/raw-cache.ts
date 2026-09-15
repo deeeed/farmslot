@@ -25,8 +25,11 @@ export interface PRRawSnapshot {
   reviewCommentsStdout: string;
   latestCommitStdout: string;
   /**
-   * JSON lines, one per latest review (`{t:"review",author,state,submittedAt}`)
-   * and per outstanding review request (`{t:"request",kind:"team"|"user",name}`).
+   * JSON lines, one per reviewer's latest *opinionated* review, i.e. the
+   * APPROVED / CHANGES_REQUESTED verdict that still counts toward
+   * reviewDecision even if they commented later
+   * (`{t:"review",author,state,submittedAt}`), and one per outstanding review
+   * request (`{t:"request",kind:"team"|"user",name}`).
    */
   reviewMetaStdout: string;
   fetchedAt: number;
@@ -147,19 +150,25 @@ export async function getPRRawData(
           ['api', `repos/${ghRepo}/pulls/${prNum}/commits`, '--jq', '.[-1].commit.committer.date'],
           { force },
         ).catch(swallowGh(`pulls.commits#${prNum}`)),
-        // Latest review per reviewer plus whom GitHub still waits on; drives the
-        // "fix pushed, awaiting re-review" and "waiting on <team>" signals.
+        // Each reviewer's standing verdict plus whom GitHub still waits on; drives
+        // the "fix pushed, awaiting re-review" and "waiting on <team>" signals.
+        // `latestOpinionatedReviews`, not `latestReviews`: a reviewer who
+        // requested changes and then left comments shows COMMENTED in the latter
+        // while their CHANGES_REQUESTED still blocks the PR.
         ghRequest(
           [
-            'pr',
-            'view',
-            String(prNum),
-            '--repo',
-            ghRepo,
-            '--json',
-            'latestReviews,reviewRequests',
+            'api',
+            'graphql',
+            '-f',
+            'query=query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } } } } }',
+            '-f',
+            `owner=${ghRepo.split('/')[0]}`,
+            '-f',
+            `name=${ghRepo.split('/')[1]}`,
+            '-F',
+            `pr=${prNum}`,
             '--jq',
-            '(.latestReviews[]? | {t: "review", author: .author.login, state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests[]? | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // .name // "")})',
+            '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
           ],
           { force },
         ).catch(swallowGh(`pr.reviews#${prNum}`)),
@@ -305,7 +314,7 @@ interface GqlPullRequestNode {
   comments?: { nodes?: GqlIssueComment[] };
   reviewThreads?: { nodes?: GqlReviewThread[]; pageInfo?: GqlPageInfo };
   commits?: { nodes?: GqlCommitNode[] };
-  latestReviews?: {
+  latestOpinionatedReviews?: {
     nodes?: Array<{ author?: GqlAuthor | null; state?: string; submittedAt?: string | null }>;
   };
   reviewRequests?: {
@@ -386,7 +395,7 @@ export function buildBatchQuery(prCount: number): string {
         `        } } }\n` +
         `      }\n` +
         `      commits(last: 1) { nodes { commit { committedDate } } }\n` +
-        `      latestReviews(first: 20) { nodes { author { login } state submittedAt } }\n` +
+        `      latestOpinionatedReviews(first: 20) { nodes { author { login } state submittedAt } }\n` +
         `      reviewRequests(first: 20) { nodes { requestedReviewer {\n` +
         `        __typename ... on User { login } ... on Team { slug }\n` +
         `      } } }\n` +
@@ -537,7 +546,7 @@ export function synthesizeRawSnapshotFromGraphQL(
 
   // reviewMetaStdout: same JSON-per-line shape as the REST `--jq` projection.
   const reviewMetaLines: string[] = [];
-  for (const review of node.latestReviews?.nodes ?? [])
+  for (const review of node.latestOpinionatedReviews?.nodes ?? [])
     reviewMetaLines.push(
       JSON.stringify({
         t: 'review',

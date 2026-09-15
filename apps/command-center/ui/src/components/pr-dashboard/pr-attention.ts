@@ -70,7 +70,7 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       tone: 'warn',
     });
   if (pr.reviewDecision === 'CHANGES_REQUESTED') {
-    const requesters = (pr.latestReviews ?? [])
+    const requesters = (pr.reviewVerdicts ?? [])
       .filter((review) => review.state === 'CHANGES_REQUESTED')
       .map((review) => `@${review.reviewer}`);
     const who = requesters.length ? joinNames(requesters) : 'a reviewer';

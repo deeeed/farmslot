@@ -16,11 +16,11 @@ import {
   type MonitoredPRIdentity,
   type PRForSlotParams,
   type PRForSlotResult,
-  type PRLatestReview,
   type PRListParams,
   type PRListResult,
   type ProjectCICheckGroup,
   type ProjectConfig,
+  type PRReviewVerdict,
   type PRStatus,
   type PRStatusParams,
   type PRStatusResult,
@@ -622,7 +622,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     mergeable: mergeable || 'UNKNOWN',
     mergeConflict,
     reviewDecision: reviewDecision || '',
-    latestReviews: reviewMeta.latestReviews,
+    reviewVerdicts: reviewMeta.reviewVerdicts,
     reviewRequests: reviewMeta.reviewRequests,
     pushedAfterChangesRequested: reviewMeta.pushedAfterChangesRequested,
     recommendation,
@@ -659,26 +659,25 @@ export {
 } from '@farmslot/protocol';
 
 /**
- * Fold the review-meta JSON lines into what the dashboard shows: the latest
- * review per reviewer, outstanding requests, and whether the author pushed
- * after the newest CHANGES_REQUESTED verdict that is still the reviewer's last
- * word (a later APPROVED/DISMISSED from the same reviewer replaces it, so it
- * does not appear here).
+ * Fold the review-meta JSON lines into what the dashboard shows: each
+ * reviewer's standing verdict, outstanding requests, and whether the author
+ * pushed after the newest CHANGES_REQUESTED verdict (a later APPROVED or a
+ * dismissal from that reviewer replaces it upstream, so it is not listed).
  */
 export function summarizeReviewMeta(
   lines: readonly PRJsonLine[],
   latestCommitAt: string | null,
 ): {
-  latestReviews: PRLatestReview[];
+  reviewVerdicts: PRReviewVerdict[];
   reviewRequests: { teams: string[]; users: string[] };
   pushedAfterChangesRequested: boolean;
 } {
-  const latestReviews: PRLatestReview[] = [];
+  const reviewVerdicts: PRReviewVerdict[] = [];
   const teams: string[] = [];
   const users: string[] = [];
   for (const line of lines) {
     if (line.t === 'review' && typeof line.author === 'string' && line.author) {
-      latestReviews.push({
+      reviewVerdicts.push({
         reviewer: line.author,
         state: typeof line.state === 'string' ? line.state : '',
         submittedAt: typeof line.submittedAt === 'string' ? line.submittedAt : null,
@@ -688,13 +687,13 @@ export function summarizeReviewMeta(
     }
   }
   const commitAt = latestCommitAt ? Date.parse(latestCommitAt) : NaN;
-  const newestChangesRequested = latestReviews
+  const newestChangesRequested = reviewVerdicts
     .filter((review) => review.state === 'CHANGES_REQUESTED' && review.submittedAt)
     .map((review) => Date.parse(review.submittedAt!))
     .filter(Number.isFinite)
     .reduce((max, at) => Math.max(max, at), Number.NEGATIVE_INFINITY);
   return {
-    latestReviews,
+    reviewVerdicts,
     reviewRequests: { teams, users },
     pushedAfterChangesRequested:
       Number.isFinite(commitAt) &&

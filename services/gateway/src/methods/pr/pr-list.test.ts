@@ -128,7 +128,7 @@ test('review meta folds into latest reviews, requests, and the pushed-after-chan
   ];
   const pushed = summarizeReviewMeta(lines, '2026-09-14T12:00:00Z');
   assert.deepEqual(pushed.reviewRequests, { teams: ['Engagement'], users: ['bob'] });
-  assert.equal(pushed.latestReviews.length, 2);
+  assert.equal(pushed.reviewVerdicts.length, 2);
   assert.equal(pushed.pushedAfterChangesRequested, true);
   const notPushed = summarizeReviewMeta(lines, '2026-09-14T09:00:00Z');
   assert.equal(notPushed.pushedAfterChangesRequested, false);

@@ -32,9 +32,10 @@ export type PRFamilyMergeState =
   | 'merged'
   | 'closed_without_merge';
 
-export interface PRLatestReview {
+/** A reviewer's standing verdict: the review that still counts toward reviewDecision. */
+export interface PRReviewVerdict {
   reviewer: string;
-  /** APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | PENDING */
+  /** APPROVED | CHANGES_REQUESTED (GitHub `latestOpinionatedReviews`). */
   state: string;
   submittedAt: string | null;
 }
@@ -81,8 +82,11 @@ export interface PRStatus {
   mergeable: string;
   mergeConflict: boolean;
   reviewDecision: string;
-  /** Latest review per reviewer, as GitHub reports it (`latestReviews`). */
-  latestReviews?: PRLatestReview[];
+  /**
+   * Each reviewer's standing verdict. Later plain comments from the same
+   * reviewer do not replace it, which is why this is not `latestReviews`.
+   */
+  reviewVerdicts?: PRReviewVerdict[];
   /** Reviewers GitHub is still waiting on: team slugs and user logins. */
   reviewRequests?: { teams: string[]; users: string[] };
   /**

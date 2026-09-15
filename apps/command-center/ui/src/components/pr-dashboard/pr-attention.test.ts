@@ -63,7 +63,7 @@ test('changes requested alone is a blocking reason, naming the reviewer', () => 
   const reasons = prAttentionReasons(
     status({
       reviewDecision: 'CHANGES_REQUESTED',
-      latestReviews: [
+      reviewVerdicts: [
         { reviewer: 'alice', state: 'CHANGES_REQUESTED', submittedAt: '2026-09-14T10:00:00Z' },
       ],
     }),
@@ -79,7 +79,7 @@ test('a fix pushed after changes requested becomes "awaiting re-review", still f
     status({
       reviewDecision: 'CHANGES_REQUESTED',
       pushedAfterChangesRequested: true,
-      latestReviews: [
+      reviewVerdicts: [
         { reviewer: 'alice', state: 'CHANGES_REQUESTED', submittedAt: '2026-09-14T10:00:00Z' },
       ],
       reviewRequests: { teams: ['Engagement', 'QA'], users: ['bob'] },
