@@ -49,11 +49,12 @@ try {
   await chooseRunner(supported.runner);
   await choose('tmux');
   await choose('native');
-  await choose('tmux');
   const unsupported = runners.find((runner) => !runner.supportsWorkers);
   if (unsupported) {
     await chooseRunner(unsupported.runner);
     const button = root.querySelector('[data-transport=native]');
+    if (view._transport !== 'tmux' || button.getAttribute('aria-pressed') !== 'false')
+      throw new Error('Unsupported runner kept Conversation selected');
     if (!button.disabled) throw new Error('Unsupported runner enables native workers');
     button.click();
     await view.updateComplete;

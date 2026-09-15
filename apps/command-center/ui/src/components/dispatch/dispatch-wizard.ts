@@ -1336,9 +1336,22 @@ export class DispatchWizard extends DispatchWizardState {
     });
   }
 
+  private _setTransport(transport: 'tmux' | 'native') {
+    this._transport = transport;
+    if (transport === 'tmux') {
+      this._nativeProfileSelection = null;
+      this._nativeAutomaticSlot = false;
+    }
+    this._applyVisibleCandidates();
+    this._transportChosen = true;
+    this._error = '';
+  }
+
   private _setRunner(runner: string) {
     if (runner === this._runner) return;
     this._runner = runner;
+    if (this._transport === 'native' && !this._nativeWorkerRunners.includes(runner))
+      this._setTransport('tmux');
     this._model = DEFAULT_MODEL[runner] ?? '';
     this._effort = '';
     this._recomputeVariantCollision();
@@ -1425,16 +1438,7 @@ export class DispatchWizard extends DispatchWizardState {
           }}
         ></dispatch-native-profiles>`,
       ),
-      setTransport: (transport) => {
-        this._transport = transport;
-        if (transport === 'tmux') {
-          this._nativeProfileSelection = null;
-          this._nativeAutomaticSlot = false;
-        }
-        this._applyVisibleCandidates();
-        this._transportChosen = true;
-        this._error = '';
-      },
+      setTransport: (transport) => this._setTransport(transport),
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
       connectionStale: this._connectionStale,
