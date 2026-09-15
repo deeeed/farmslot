@@ -4,7 +4,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import {
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CODEX_MODEL,
+  isPRWorkspaceExecutionProfile,
+  type PoolConfig,
   type PRExecutionProfile,
+  type PRSlotExecutionProfile,
+  type PRWorkspaceExecutionProfile,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -17,10 +21,18 @@ import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js'
 
 import { prAutomationStyles } from './pr-automation-styles.js';
 
-export function newPRExecution(): PRExecutionProfile {
+export function newPRExecution(): PRSlotExecutionProfile {
   return {
     slotPolicy: { kind: 'pool', allowedSlots: [] },
     models: [{ runner: 'codex', model: DEFAULT_CODEX_MODEL, effort: DEFAULT_CODEX_EFFORT }],
+  };
+}
+
+export function newPRWorkspaceExecution(): PRWorkspaceExecutionProfile {
+  return {
+    workspacePolicy: { kind: 'pool', allowedMachines: [] },
+    transport: 'native',
+    models: newPRExecution().models,
   };
 }
 
@@ -28,6 +40,8 @@ export function newPRExecution(): PRExecutionProfile {
 export class PRExecutionPicker extends LitElement {
   @property({ attribute: false }) value: PRExecutionProfile = newPRExecution();
   @property({ attribute: false }) slots: SlotStatus[] = [];
+  @property({ attribute: false }) pools: PoolConfig[] = [];
+  @property() resource: 'workspace' | 'slot' = 'slot';
   @property() project = '';
   @property({ type: Boolean }) allProjects = false;
   @property({ type: Boolean }) disabled = false;
@@ -40,6 +54,7 @@ export class PRExecutionPicker extends LitElement {
     );
   }
   private toggleSlot(slotId: string, selected: boolean) {
+    if (isPRWorkspaceExecutionProfile(this.value)) return;
     const slots =
       this.value.slotPolicy.kind === 'exact'
         ? [this.value.slotPolicy.slotId]
@@ -54,7 +69,7 @@ export class PRExecutionPicker extends LitElement {
     });
   }
   private applySelection(selected: string[]) {
-    if (this.disabled) return;
+    if (this.disabled || isPRWorkspaceExecutionProfile(this.value)) return;
     if (this.picker === 'allowed')
       this.change({
         ...this.value,
@@ -81,6 +96,124 @@ export class PRExecutionPicker extends LitElement {
     </div>`;
   }
   render() {
+    if (this.resource === 'slot' && isPRWorkspaceExecutionProfile(this.value)) {
+      return html`<fieldset ?disabled=${this.disabled}>
+        <p class="attention">
+          On-device review needs runtime slots. This policy currently selects review machines.
+        </p>
+        <button
+          type="button"
+          data-testid="pr-execution-use-slots"
+          @click=${() =>
+            this.change({
+              ...newPRExecution(),
+              models: this.value.models.map(({ allowedMachines: _machines, ...model }) => model),
+            })}
+        >
+          Choose runtime slots
+        </button>
+      </fieldset>`;
+    }
+    if (this.resource === 'workspace' && !isPRWorkspaceExecutionProfile(this.value)) {
+      return html`<fieldset ?disabled=${this.disabled}>
+        <p class="attention">
+          This saved policy selects device slots. Static Review needs an explicit machine selection.
+        </p>
+        <button
+          type="button"
+          data-testid="pr-execution-use-workspace"
+          @click=${() =>
+            this.change({
+              ...newPRWorkspaceExecution(),
+              models: this.value.models.map(({ allowedSlots: _slots, ...model }) => model),
+            })}
+        >
+          Choose review machines
+        </button>
+      </fieldset>`;
+    }
+    if (isPRWorkspaceExecutionProfile(this.value)) {
+      const policy = this.value.workspacePolicy;
+      const value = this.value;
+      const selected = policy.kind === 'exact' ? [policy.machine] : policy.allowedMachines;
+      const pools = this.pools.filter(
+        (pool) =>
+          pool.reviewWorkspaces &&
+          (this.allProjects ||
+            pool.project === this.project ||
+            pool.slots.some((slot) => slot.project === this.project)),
+      );
+      const toggle = (machine: string, checked: boolean) => {
+        const machines = checked
+          ? [...new Set([...selected, machine])]
+          : selected.filter((entry) => entry !== machine);
+        this.change({
+          ...value,
+          workspacePolicy:
+            machines.length === 1
+              ? { kind: 'exact', machine: machines[0] }
+              : { kind: 'pool', allowedMachines: machines },
+        });
+      };
+      return html`<fieldset ?disabled=${this.disabled}>
+        <legend>Review machines</legend>
+        ${pools.map(
+          (pool) =>
+            html`<label class="check"
+              ><input
+                type="checkbox"
+                data-testid=${`pr-review-machine-${pool.machine}`}
+                .checked=${selected.includes(pool.machine)}
+                @change=${(event: Event) =>
+                  toggle(pool.machine, (event.target as HTMLInputElement).checked)}
+              />${pool.machine} · up to ${pool.reviewWorkspaces!.maxConcurrent} reviews</label
+            >`,
+        )}
+        ${selected
+          .filter((machine) => !pools.some((pool) => pool.machine === machine))
+          .map(
+            (machine) =>
+              html`<p class="attention">
+                ${machine} is unavailable for this farm.
+                <button type="button" @click=${() => toggle(machine, false)}>Remove</button>
+              </p>`,
+          )}
+        ${!selected.length
+          ? html`<p class="attention">Select a configured review machine.</p>`
+          : nothing}
+        ${!pools.length
+          ? html`<p class="muted">
+              Enable workspace review capacity on a machine assigned to this farm.
+            </p>`
+          : nothing}
+        <p class="muted">
+          Static review runs in an isolated workspace. Device slots remain available.
+        </p>
+        ${this.value.models.map(
+          (model, index) =>
+            html`<runner-model-effort-picker
+              .runner=${model.runner}
+              .model=${model.model}
+              .effort=${(model.effort ?? '') as EffortLevel}
+              .disabled=${this.disabled}
+              @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) =>
+                this.change({
+                  ...this.value,
+                  models: this.value.models.map((entry, i) =>
+                    i === index
+                      ? {
+                          ...entry,
+                          runner: event.detail.runner,
+                          model: event.detail.model,
+                          effort: event.detail.effort || undefined,
+                        }
+                      : entry,
+                  ),
+                })}
+            ></runner-model-effort-picker>`,
+        )}
+      </fieldset>`;
+    }
     const selected =
       this.value.slotPolicy.kind === 'exact'
         ? [this.value.slotPolicy.slotId]
@@ -105,7 +238,7 @@ export class PRExecutionPicker extends LitElement {
           Choose slots${selected.length ? ` · ${selected.length} selected` : ''}
         </button>
         ${!selected.length
-          ? html`<span class="attention">Choose at least one slot before starting reviews.</span>`
+          ? html`<span class="attention">Choose at least one runtime slot.</span>`
           : nothing}
       </div>
       ${this.slotSummary(selected)}
@@ -118,9 +251,7 @@ export class PRExecutionPicker extends LitElement {
               <button type="button" @click=${() => this.toggleSlot(id, false)}>Remove</button>
             </p>`,
         )}
-      <p class="muted">
-        One slot runs each review. Slots remain available for other PRs between rounds.
-      </p>
+      <p class="muted">Each runtime run uses one configured slot.</p>
       ${this.value.models.map(
         (model, index) =>
           html` <div class="card">
@@ -208,7 +339,7 @@ export class PRExecutionPicker extends LitElement {
               ? selected
               : (this.value.models[this.picker]?.allowedSlots ?? selected)}
             heading=${this.picker === 'allowed' ? 'Allowed review slots' : 'Slots for this model'}
-            description="Search or filter existing farm slots. One slot runs each review."
+            description="Search or filter runtime slots for this farm."
             clearLabel=${this.picker === 'allowed' ? 'Clear selection' : 'Use all allowed slots'}
             @slot-selector-change=${(event: CustomEvent<SlotSelectorChangeDetail>) => {
               event.stopPropagation();

@@ -1,9 +1,14 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 
-import type { PRExecutionProfile, PRReviewOptions, SlotStatus } from '@farmslot/protocol';
+import {
+  isPRWorkspaceExecutionProfile,
+  type PRExecutionProfile,
+  type PRReviewOptions,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
-import { newPRExecution, togglePRSlot } from '../../../lib/pr-automation';
+import { newPRExecution, prExecutionText, togglePRSlot } from '../../../lib/pr-automation';
 import { styles } from '../styles/pr-automation-styles';
 
 import { PRButton, PRInput } from './PRControls';
@@ -90,6 +95,14 @@ export function PRExecutionFields({
   project: string;
   disabled: boolean;
 }) {
+  if (isPRWorkspaceExecutionProfile(value)) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.title}>Review workspace</Text>
+        <Text style={styles.text}>{prExecutionText(value)}</Text>
+      </View>
+    );
+  }
   const selected =
     value.slotPolicy.kind === 'exact' ? [value.slotPolicy.slotId] : value.slotPolicy.allowedSlots;
   const available = slots.filter((slot) => slot.project === project && !slot.missingFromPool);

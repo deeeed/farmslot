@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import type { PRExecutionProfile, PRRulePreview } from '@farmslot/protocol';
+import {
+  intersectPRExecutionProfiles,
+  type PRExecutionProfile,
+  type PRRulePreview,
+  type PRWorkspaceExecutionProfile,
+} from '@farmslot/protocol';
 
 import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
@@ -13,14 +18,21 @@ import { PRReviewDispatcher } from './dispatch.js';
 import { PRRuleService } from './service.js';
 import { PRRuleStore } from './store.js';
 
-const execution: PRExecutionProfile = {
-  slotPolicy: { kind: 'exact', slotId: 'test-slot' },
+const execution: PRWorkspaceExecutionProfile = {
+  workspacePolicy: { kind: 'exact', machine: 'test-machine' },
+  transport: 'native',
   models: [{ runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
 };
 
 let prNumber = 100;
 
 async function fixture(t: test.TestContext, profile: PRExecutionProfile = execution) {
+  const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'owner';
+  t.after(() => {
+    if (nativeOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = nativeOwner;
+  });
   const dir = await mkdtemp(join(tmpdir(), 'pr-review-dispatch-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, 'rules.json');
@@ -99,8 +111,8 @@ async function fixture(t: test.TestContext, profile: PRExecutionProfile = execut
       ),
       () => true,
       () => {},
-      async () => ({
-        choices: [{ slotId: 'test-slot', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+      async (_project, _repo, profiles) => ({
+        choices: intersectPRExecutionProfiles(profiles),
         errors: [],
       }),
     );
@@ -133,23 +145,33 @@ test('review admission reuses one durable queue entry across concurrent ticks an
   assert.equal(next.store.intent(intent.id)?.queueItemId, queued[0].id);
 });
 
-test('review settings survive queue restart and edits replace unstarted instructions', async (t) => {
+test('changing static review to full-live creates distinct work that survives restart', async (t) => {
   const { store, intent, dispatcher, preview, restart } = await fixture(t);
   await dispatcher.reconcile();
   const first = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
   preview.items[0].review = { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' };
+  preview.items[0].execution = {
+    slotPolicy: { kind: 'exact', slotId: 'test-slot' },
+    models: execution.models,
+  };
   await store.applyPreview('owner', preview);
   await dispatcher.reconcile();
-  const current = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
+  const current = getQueueSnapshot().find(
+    (item) => item.flowType === 'review-pr' && item.reviewValidationDepth === 'full-live',
+  )!;
   assert.notEqual(first.id, current.id);
+  assert.notEqual(current.prWork?.sourceId, intent.id);
   assert.equal(current.reviewValidationDepth, 'full-live');
   assert.deepEqual(current.prWork?.review?.options, preview.items[0].review);
   assert.equal((await dispatcher.prepare(first)).ready, false);
   const next = await restart();
   await next.dispatcher.reconcile();
-  assert.deepEqual(next.store.intent(intent.id)?.contributions[0].review, preview.items[0].review);
+  assert.deepEqual(
+    next.store.intent(current.prWork!.sourceId)?.contributions[0].review,
+    preview.items[0].review,
+  );
   assert.equal(
-    getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)?.id,
+    getQueueSnapshot().find((item) => item.prWork?.sourceId === current.prWork?.sourceId)?.id,
     current.id,
   );
 });
@@ -230,7 +252,7 @@ test('completed artifact-only review reconciles from recorded evidence across re
 test('narrower constraints arriving during model resolution cannot be certified with stale choices', async (t) => {
   const pool: PRExecutionProfile = {
     ...execution,
-    slotPolicy: { kind: 'pool', allowedSlots: ['test-slot', 'other-slot'] },
+    workspacePolicy: { kind: 'pool', allowedMachines: ['test-machine', 'other-machine'] },
   };
   const { store, intent, dispatcher, rule, preview } = await fixture(t, pool);
   await dispatcher.reconcile();
@@ -257,12 +279,20 @@ test('narrower constraints arriving during model resolution cannot be certified 
       entered();
       await gate;
       return {
-        choices: [{ slotId: 'test-slot', runner: 'codex', model: 'gpt-6-astra', effort: 'high' }],
+        choices: [
+          {
+            machine: 'test-machine',
+            transport: 'native' as const,
+            runner: 'codex',
+            model: 'gpt-6-astra',
+            effort: 'high',
+          },
+        ],
         errors: [],
       };
     },
   );
-  const selected = { ...queued, slotId: 'test-slot' };
+  const selected = { ...queued, reviewWorkspaceTarget: { machine: 'test-machine' } };
   const pending = racing.refreshBeforeCreate(selected);
   await started;
   let second = await store.saveRule('owner', { ...rule.config, name: 'Narrower review' });
@@ -273,7 +303,7 @@ test('narrower constraints arriving during model resolution cannot be certified 
     ruleRevision: second.revision,
     items: preview.items.map((item) => ({
       ...item,
-      execution: { ...execution, slotPolicy: { kind: 'exact', slotId: 'other-slot' } },
+      execution: { ...execution, workspacePolicy: { kind: 'exact', machine: 'other-machine' } },
     })),
   });
   assert.equal(store.intent(intent.id)?.status, 'queued');

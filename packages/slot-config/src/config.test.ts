@@ -1069,9 +1069,9 @@ test('resource claim scope defaults to slot and rejects an unknown value', () =>
 
 test('host-pressure admission is opt-in, validated, and normalized', () => {
   const slotActions = {
-    'browser-start': { command: 'start' },
-    'browser-health': { command: 'health' },
-    'browser-stop': { command: 'stop' },
+    'browser-start': { label: 'Start browser', command: 'start' },
+    'browser-health': { label: 'Check browser', command: 'health' },
+    'browser-stop': { label: 'Stop browser', command: 'stop' },
   };
   const provider = {
     label: 'Browser CDP',

@@ -1,3 +1,5 @@
+import { WebSocket } from 'ws';
+
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CLOSE,
@@ -12,6 +14,7 @@ import { NATIVE_PROFILE_METHODS } from '@farmslot/agent-runtime/native/profile-s
 import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import {
+  type ExecResult,
   Methods,
   type NativeSessionInfo,
   type NativeSessionListResult,
@@ -19,14 +22,145 @@ import {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../../core/method-error.js';
-import { getAllNodes, getNode } from '../../fleet/machine-registry.js';
-import { sendNodeRequest } from '../../fleet/node-rpc.js';
+import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
+import {
+  isNodeTransportUnavailableError,
+  NodeTransportUnavailableError,
+  sendNodeRequest,
+} from '../../fleet/node-rpc.js';
 import { loadCredentialStore } from '../../security/credential-store.js';
 import { nativeOwnerAssignedMachines } from '../../security/native-node.js';
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
+
+type AuthorizedNativeNode = ConnectedNode & {
+  nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;
+  nativeAuthority: NonNullable<ConnectedNode['nativeAuthority']>;
+};
+
+function hasIssuedOfflineAssignment(owner: string, machine: string, principalId?: string): boolean {
+  const store = loadCredentialStore();
+  const nodes = store.principals.filter(
+    (principal) => principal.subject.type === 'node' && principal.subject.machine === machine,
+  );
+  const node = nodes.length === 1 ? nodes[0] : undefined;
+  return Boolean(
+    store.principals.some(
+      (principal) => principal.id === owner && principal.subject.type !== 'node',
+    ) &&
+    node?.subject.type === 'node' &&
+    node.subject.nativeOwnerPrincipalId === owner &&
+    (!principalId || node.id === principalId) &&
+    store.credentials.some(
+      (credential) => credential.principalId === node.id && !credential.revokedAt,
+    ),
+  );
+}
+
+/** An offline assignment permits waiting only; it never authorizes a request without a live node. */
+export function resolveNativeExecutionNode(owner: string, machine: string): AuthorizedNativeNode {
+  const node = getNode(machine);
+  if (!node && hasIssuedOfflineAssignment(owner, machine))
+    throw new NodeTransportUnavailableError(
+      machine,
+      'not-connected',
+      'Native execution node is temporarily unavailable',
+    );
+  if (!node || node.nativeSessions?.ownerPrincipalId !== owner || !node.nativeAuthority)
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Native execution node is unavailable for this owner',
+    );
+  if (
+    node.ws.readyState !== WebSocket.OPEN &&
+    hasIssuedOfflineAssignment(owner, machine, node.nativeAuthority.principalId)
+  )
+    throw new NodeTransportUnavailableError(
+      machine,
+      'disconnected',
+      'Native execution node connection is unavailable',
+    );
+  if (!node.nativeAuthority.valid())
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Native execution node is unavailable for this owner',
+    );
+  return node as AuthorizedNativeNode;
+}
+
+function assertNativeConnection(
+  owner: string,
+  machine: string,
+  expected: AuthorizedNativeNode,
+): void {
+  let current: AuthorizedNativeNode;
+  try {
+    current = resolveNativeExecutionNode(owner, machine);
+  } catch (error) {
+    if (error instanceof GatewayMethodError)
+      throw new GatewayMethodError(
+        error.code,
+        'Native execution node authority changed while awaiting its response',
+      );
+    throw error;
+  }
+  if (current.nativeAuthority.principalId !== expected.nativeAuthority.principalId)
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Native execution node authority changed while awaiting its response',
+    );
+  if (current !== expected)
+    throw new NodeTransportUnavailableError(
+      machine,
+      'connection-replaced',
+      'Native execution node connection changed while awaiting its response',
+    );
+}
+
+/** Filesystem helpers use the same native owner and connection checks as worker commands. */
+export async function requestNativeNode(
+  owner: string,
+  machine: string,
+  method: string,
+  params: unknown,
+  timeout: number,
+): Promise<unknown> {
+  const node = resolveNativeExecutionNode(owner, machine);
+  if (!node.nativeSessions.supportsWorkers || !node.nativeSessions.supportsEnsure)
+    throw new GatewayMethodError(
+      'NATIVE_SESSION_ERROR',
+      'Native node does not support owned worker operations',
+    );
+  let result: unknown;
+  try {
+    result = await sendNodeRequest(node, method, params, {
+      timeout,
+      requireSameConnection: true,
+    });
+  } catch (error) {
+    if (isNodeTransportUnavailableError(error)) assertNativeConnection(owner, machine, node);
+    throw error;
+  }
+  assertNativeConnection(owner, machine, node);
+  return result;
+}
+
+export async function execNativeNodeArgv(
+  owner: string,
+  machine: string,
+  argv: string[],
+  timeout: number,
+): Promise<ExecResult> {
+  return (await requestNativeNode(
+    owner,
+    machine,
+    'exec',
+    { argv, timeout },
+    timeout + 10_000,
+  )) as ExecResult;
+}
 
 export async function routeNativeExecution(
   owner: string,
@@ -61,12 +195,7 @@ export async function routeNativeExecution(
       ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
       : routeNativeSession(nativeSessionManager, owner, method, params);
   }
-  const node = getNode(executionNodeId);
-  if (!node || node.nativeSessions?.ownerPrincipalId !== owner || !node.nativeAuthority?.valid())
-    throw new GatewayMethodError(
-      'NATIVE_SESSION_ERROR',
-      'Native execution node is unavailable for this owner',
-    );
+  const node = resolveNativeExecutionNode(owner, executionNodeId);
   if (needsProfiles && !node.nativeSessions.supportsProfiles)
     throw new GatewayMethodError(
       'NATIVE_SESSION_ERROR',
@@ -82,17 +211,22 @@ export async function routeNativeExecution(
       'NATIVE_SESSION_ERROR',
       'Native execution node upgrade required for worker launch configuration',
     );
-  const result = await sendNodeRequest(
-    node,
-    'native.session',
-    { owner, method, params },
-    { timeout: 60_000, requireSameConnection: true },
-  );
-  if (getNode(executionNodeId) !== node || !node.nativeAuthority.valid())
-    throw new GatewayMethodError(
-      'NATIVE_SESSION_ERROR',
-      'Native execution node authority changed while awaiting its response',
+  let result: unknown;
+  try {
+    result = await sendNodeRequest(
+      node,
+      'native.session',
+      { owner, method, params },
+      { timeout: 60_000, requireSameConnection: true },
     );
+  } catch (error) {
+    // A timeout is retryable only while the same issued owner still has authority.
+    // Structured node/protocol failures remain terminal regardless of connection state.
+    if (isNodeTransportUnavailableError(error))
+      assertNativeConnection(owner, executionNodeId, node);
+    throw error;
+  }
+  assertNativeConnection(owner, executionNodeId, node);
   if (method === NATIVE_WORKER_STATE) {
     if (
       !result ||

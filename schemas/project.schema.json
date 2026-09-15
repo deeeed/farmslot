@@ -594,11 +594,36 @@
       },
       "additionalProperties": false
     },
+    "workflow_defaults": {
+      "type": "object",
+      "description": "Farm defaults for static-review execution and options. Request, rule, repository and team choices take precedence. Explicit full-live reviews retain their slot policies.",
+      "properties": {
+        "review-pr": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "execution": {
+              "$ref": "#/$defs/workflowWorkspaceExecution"
+            },
+            "review": {
+              "$ref": "#/$defs/workflowReviewOptions"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "static_review": {
       "type": "object",
-      "description": "Optional project guidance frozen into static PR-review task inputs without running project prepare.",
+      "description": "Canonical static-review template and optional frozen fixture guidance, without project prepare.",
       "additionalProperties": false,
       "properties": {
+        "template_id": {
+          "type": "string",
+          "pattern": "^\\S+$",
+          "description": "Exact canonical execution-template catalog id for static review."
+        },
         "instruction_files": {
           "type": "array",
           "description": "Relative paths under the project's fixtures directory.",
@@ -606,6 +631,172 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "domain": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$",
+          "description": "Farm default domain for slot-independent static review."
+        },
+        "support": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Frozen canonical skill, library and installed Node runtime sources. No bootstrap commands.",
+          "properties": {
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "root", "entry"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                  },
+                  "root": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": ["projectPath"],
+                        "properties": {
+                          "projectPath": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["env"],
+                        "properties": {
+                          "env": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "subpath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\x00\\r\\n]+$"
+                  },
+                  "entry": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!\\.\\.?$)[^/\\\\\\x00\\r\\n]+$"
+                  }
+                }
+              }
+            },
+            "libraries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "root"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                  },
+                  "root": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": ["projectPath"],
+                        "properties": {
+                          "projectPath": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["env"],
+                        "properties": {
+                          "env": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "subpath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\x00\\r\\n]+$"
+                  }
+                }
+              }
+            },
+            "runtime": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "root", "entry"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                },
+                "root": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["projectPath"],
+                      "properties": {
+                        "projectPath": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["env"],
+                      "properties": {
+                        "env": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "subpath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\x00\\r\\n]+$"
+                },
+                "entry": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\\\\\x00\\r\\n]+\\.(?:js|mjs|cjs)$"
+                }
+              }
+            },
+            "environment": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "not": {
+                  "enum": ["PATH", "NODE_OPTIONS", "NODE_PATH", "GIT_CEILING_DIRECTORIES"]
+                }
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -1894,6 +2085,160 @@
             },
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowWorkspaceExecution": {
+      "type": "object",
+      "required": ["workspacePolicy", "models"],
+      "properties": {
+        "workspacePolicy": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "machine"],
+              "properties": {
+                "kind": {
+                  "const": "exact"
+                },
+                "machine": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "allowedMachines"],
+              "properties": {
+                "kind": {
+                  "const": "pool"
+                },
+                "allowedMachines": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["runner", "model"],
+            "properties": {
+              "runner": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "allowedMachines": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "transport": {
+          "enum": ["tmux", "native"]
+        },
+        "nativeProfile": {
+          "$ref": "#/$defs/workflowNativeProfile"
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "required": ["nativeProfile"]
+      },
+      "then": {
+        "required": ["transport"],
+        "properties": {
+          "transport": {
+            "const": "native"
+          }
+        }
+      }
+    },
+    "workflowNativeProfile": {
+      "type": "object",
+      "required": ["executionNodeId", "runner", "profileId", "accountContextId"],
+      "properties": {
+        "executionNodeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        "runner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        "profileId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "accountContextId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowReviewOptions": {
+      "type": "object",
+      "required": ["sessionIntent", "scope", "validationDepth"],
+      "properties": {
+        "sessionIntent": {
+          "enum": ["resume", "reset"]
+        },
+        "scope": {
+          "enum": ["incremental", "full"]
+        },
+        "validationDepth": {
+          "const": "static-code"
+        },
+        "busySession": {
+          "enum": ["wait", "fresh"]
         }
       },
       "additionalProperties": false

@@ -5,6 +5,8 @@ import type {
   SafetyTier,
 } from '@farmslot/protocol';
 
+import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
+
 export type NativeEventInput = Omit<
   NativeSessionEvent,
   'sequence' | 'at' | 'sessionId' | 'generation'
@@ -12,6 +14,7 @@ export type NativeEventInput = Omit<
 export interface NativeAdapterOptions {
   cwd: string;
   onSpawn?: (pid: number, identity: string) => void;
+  signal?: AbortSignal;
   executable: string;
   model?: string;
   mode?: 'default' | 'plan';
@@ -19,6 +22,7 @@ export interface NativeAdapterOptions {
   env?: NodeJS.ProcessEnv;
   effort?: string;
   safetyTier?: SafetyTier;
+  filesystemPolicy?: NativeWorkerFilesystemPolicy;
 }
 export interface NativeAdapterSession {
   nativeSessionId: string;
@@ -30,6 +34,8 @@ export interface NativeAdapterSession {
 }
 export interface NativeAdapter {
   capabilities: NativeSessionCapabilities;
+  /** A missing capability is unsupported, never a request for advisory prompt restrictions. */
+  filesystemPolicyUnavailableReason?: (version: string) => string | undefined;
   /** Compatibility policy based on the native executable's version metadata. */
   workspaceResumeUnavailableReason?: (version: string) => string | undefined;
   resumeUnavailableReason?: (version: string) => string | undefined;

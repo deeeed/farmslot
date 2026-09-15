@@ -7,6 +7,8 @@ export interface ProjectCommandEnvOptions {
   domain?: string;
   /** Slot-aware expansion for domain values only. Base values remain literal. */
   expandDomainValue?: (value: string) => string;
+  /** Frozen launch bindings replace project values before placeholder validation. */
+  overrides?: Record<string, string>;
 }
 
 function shellQuote(value: string): string {
@@ -21,7 +23,11 @@ export function resolveProjectCommandEnv(
   set: Record<string, string>;
 } {
   const raw = projectJson.command_env;
-  if (!raw || typeof raw !== 'object') return { unset: [], set: {} };
+  const finish = (unset: string[], set: Record<string, string>) => ({
+    unset: unset.filter((name) => !Object.hasOwn(options.overrides ?? {}, name)),
+    set: { ...set, ...options.overrides },
+  });
+  if (!raw || typeof raw !== 'object') return finish([], {});
   const rawUnset = Array.isArray(raw.unset) ? raw.unset : [];
   const unset = rawUnset.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
   const rawSet = raw.set && typeof raw.set === 'object' && !Array.isArray(raw.set) ? raw.set : {};
@@ -29,7 +35,7 @@ export function resolveProjectCommandEnv(
     Object.entries(rawSet).map(([key, value]) => [key.trim(), String(value)]),
   );
   const domainMutation = options.domain ? raw.domains?.[options.domain] : undefined;
-  if (!domainMutation) return { unset, set };
+  if (!domainMutation) return finish(unset, set);
 
   const mergedUnset = new Set(unset);
   const mergedSet = { ...set };
@@ -41,6 +47,7 @@ export function resolveProjectCommandEnv(
   }
   for (const [rawName, rawValue] of Object.entries(domainMutation.set ?? {})) {
     const name = rawName.trim();
+    if (Object.hasOwn(options.overrides ?? {}, name)) continue;
     const value = options.expandDomainValue
       ? options.expandDomainValue(String(rawValue))
       : String(rawValue);
@@ -52,7 +59,7 @@ export function resolveProjectCommandEnv(
     mergedUnset.delete(name);
     mergedSet[name] = value;
   }
-  return { unset: [...mergedUnset], set: mergedSet };
+  return finish([...mergedUnset], mergedSet);
 }
 
 export function buildProjectCommandEnvPrefix(

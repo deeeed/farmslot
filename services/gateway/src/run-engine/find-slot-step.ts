@@ -1027,6 +1027,7 @@ export async function executeFindSlotStep(
   // a green-to-green generation move into a launch-time failure.
   await consumeRunPressureAdmissionRef(runId, getRun(runId) ?? run);
   const slotId = result.preview.slotId;
+  if (!slotId) throw new Error('Workspace review must use its workspace allocation path');
   updateRun(runId, { slotId });
   // Mark slot as claimed by this run
   await claimSelectedSlot(slotId, runId, 'preparing');

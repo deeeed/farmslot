@@ -1,4 +1,4 @@
-import { html, LitElement } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
 import { DEFAULT_PR_REVIEW_OPTIONS, type PRReviewOptions } from '@farmslot/protocol';
@@ -10,11 +10,20 @@ export class PRReviewOptionsPicker extends LitElement {
   @property({ attribute: false }) value: PRReviewOptions = { ...DEFAULT_PR_REVIEW_OPTIONS };
   @property({ type: Boolean }) disabled = false;
   @property() testIdPrefix = 'pr-review';
-  static styles = prAutomationStyles;
+  @property() presentation: 'all' | 'workflow' | 'reviewer' = 'all';
+  static styles = [
+    prAutomationStyles,
+    css`
+      [hidden] {
+        display: none;
+      }
+    `,
+  ];
   private change(patch: Partial<PRReviewOptions>) {
+    const next = { ...this.value, ...patch };
     this.dispatchEvent(
       new CustomEvent('review-options-change', {
-        detail: { ...this.value, ...patch },
+        detail: next,
         bubbles: true,
         composed: true,
       }),
@@ -23,7 +32,7 @@ export class PRReviewOptionsPicker extends LitElement {
   render() {
     return html`<fieldset ?disabled=${this.disabled}>
       <div class="grid">
-        <fieldset>
+        <fieldset ?hidden=${this.presentation === 'workflow'}>
           <legend>Reviewer session</legend>
           <div class="row">
             <button
@@ -43,7 +52,7 @@ export class PRReviewOptionsPicker extends LitElement {
             </button>
           </div>
         </fieldset>
-        <fieldset>
+        <fieldset ?hidden=${this.presentation === 'workflow'}>
           <legend>Review scope</legend>
           <div class="row">
             <button
@@ -62,15 +71,16 @@ export class PRReviewOptionsPicker extends LitElement {
             </button>
           </div>
         </fieldset>
-        <fieldset>
-          <legend>Validation</legend>
+        <fieldset ?hidden=${this.presentation === 'reviewer'}>
+          <legend>Workflow</legend>
           <div class="row">
             <button
               type="button"
+              data-testid="pr-review-workflow-review"
               aria-pressed=${String(this.value.validationDepth === 'static-code')}
               @click=${() => this.change({ validationDepth: 'static-code' })}
             >
-              Static code
+              Static review
             </button>
             <button
               type="button"
@@ -78,12 +88,17 @@ export class PRReviewOptionsPicker extends LitElement {
               aria-pressed=${String(this.value.validationDepth === 'full-live')}
               @click=${() => this.change({ validationDepth: 'full-live' })}
             >
-              Review and live QA
+              On-device review
             </button>
           </div>
+          <p class="muted">
+            ${this.value.validationDepth === 'full-live'
+              ? 'On-device review uses a runtime slot.'
+              : 'Static review uses an isolated workspace without a device slot.'}
+          </p>
         </fieldset>
-        <fieldset>
-          <legend>When the saved reviewer's slot is busy</legend>
+        <fieldset ?hidden=${this.presentation === 'workflow'}>
+          <legend>When the saved reviewer is unavailable</legend>
           <div class="row">
             <button
               type="button"
@@ -97,14 +112,15 @@ export class PRReviewOptionsPicker extends LitElement {
               aria-pressed=${String(this.value.busySession === 'fresh')}
               @click=${() => this.change({ busySession: 'fresh' })}
             >
-              Allow fresh slot
+              Allow fresh reviewer
             </button>
           </div>
         </fieldset>
       </div>
-      <p class="muted">
+      <p class="muted" ?hidden=${this.presentation === 'workflow'}>
         Initial rounds start fresh. Full independent reviews reset reviewer reasoning. Between
-        rounds, slots can review other PRs.
+        rounds, compatible saved sessions can be reused. Unsupported continuation starts a fresh
+        review and keeps the previous findings.
       </p>
     </fieldset>`;
   }

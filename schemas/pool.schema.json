@@ -109,6 +109,15 @@
       "type": "string",
       "description": "Free-form notes about this machine's setup or quirks."
     },
+    "review_workspaces": {
+      "type": "object",
+      "description": "Opt in to static reviews on this machine without occupying slots.",
+      "additionalProperties": false,
+      "required": ["max_concurrent"],
+      "properties": {
+        "max_concurrent": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
     "tmux_workers": {
       "$ref": "#/$defs/tmuxWorkers",
       "description": "Optional inventory/control policy for general tmux worker panes on this machine. Omit to expose every tmux pane."

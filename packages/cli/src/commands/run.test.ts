@@ -658,3 +658,29 @@ test('run session --json forwards the exact context and returns the RPC result v
     server.close();
   }
 });
+
+test('static review flags preserve machine, native runner and effort while refusing mixed placement', () => {
+  const base = { project: 'review', flowType: 'review-pr', ticket: 'owner/repo#42' };
+  const params = buildRunCreateParams({
+    ...base,
+    reviewMachine: 'node',
+    transport: 'native',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+  });
+  assert.deepEqual(params.reviewWorkspaceTarget, { machine: 'node' });
+  assert.equal(params.transport, 'native');
+  assert.equal(params.effort, 'high');
+  assert.equal(
+    buildRunCreateParams({ ...base, slot: 'runtime', reviewValidationDepth: 'full-live' })
+      .reviewValidationDepth,
+    'full-live',
+  );
+  for (const patch of [
+    { slot: 'runtime' },
+    { reviewValidationDepth: 'full-live' },
+    { reviewValidationDepth: 'invalid' },
+  ])
+    assert.throws(() => buildRunCreateParams({ ...base, reviewMachine: 'node', ...patch }));
+});

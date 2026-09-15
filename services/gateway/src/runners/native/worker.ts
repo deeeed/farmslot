@@ -284,8 +284,10 @@ export async function cancelNativeWorkerContext(
     },
   );
   await persistRunNow(ownedRun(runId), 'native worker stop');
-  if (binding.handoffFrom && !binding.handoffCompletedAt)
+  if (binding.handoffFrom && !binding.handoffCompletedAt) {
+    if (!current?.slotId) throw new Error('Retained slot handoff has no owned slot');
     await finishNativeHandoffSource(runId, binding, current!.slotId, options.machineTransitionHeld);
+  }
 }
 
 export async function cancelNativeRunWorkers(

@@ -14,7 +14,12 @@ import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
-import { executeRunCreate, type RunCreateCliOptions, runWizardDispatch } from './run.js';
+import {
+  buildReviewDispatchParams,
+  executeRunCreate,
+  type RunCreateCliOptions,
+  runWizardDispatch,
+} from './run.js';
 
 const DISPATCH_MODES = new Set(['interactive', 'autonomous', 'validation']);
 
@@ -151,6 +156,12 @@ export function registerDispatchCommand(program: Command): void {
     .requiredOption('--flow-type <type>', 'Flow type (fix-bug, review-pr, dev, pr-complete)')
     .requiredOption('--ticket <id>', 'Ticket or PR identifier')
     .option('--slot <id>', 'Specific slot ID')
+    .option('--review-machine <machine>', 'Machine for a static review workspace')
+    .option('--review-validation-depth <depth>', 'Review validation: static-code or full-live')
+    .option('--runner <name>', 'Runner override')
+    .option('--model <name>', 'Model override')
+    .option('--effort <effort>', 'Runner effort override')
+    .option('--transport <name>', 'Worker transport: tmux or native')
     .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
     .option('--execution-template <id>', 'Exact execution-template id')
     .option('--domain <name>', 'Domain overlay carried by the dispatch')
@@ -166,6 +177,11 @@ export function registerDispatchCommand(program: Command): void {
               flowType: opts.flowType,
               ticketOrPr: opts.ticket,
               slotId: opts.slot,
+              ...buildReviewDispatchParams(opts),
+              ...(opts.runner ? { runner: opts.runner } : {}),
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.effort ? { effort: opts.effort } : {}),
+              ...(opts.transport ? { transport: opts.transport } : {}),
               ...(opts.mode ? { mode: parseDispatchMode(opts.mode) } : {}),
               ...(opts.executionTemplate ? { executionTemplateId: opts.executionTemplate } : {}),
               ...(opts.domain ? { domain: opts.domain } : {}),
@@ -179,7 +195,9 @@ export function registerDispatchCommand(program: Command): void {
           output.write(
             [
               `${bold('Dispatch Preview')}`,
-              `  Slot:      ${green(p.slotId)}`,
+              p.reviewWorkspace
+                ? `  Workspace: ${green(p.reviewWorkspace.machine)}`
+                : `  Slot:      ${p.slotId ? green(p.slotId) : dim('(unassigned)')}`,
               `  Project:   ${p.project}`,
               `  Flow:      ${p.flowType}`,
               `  Branch:    ${p.branch || dim('(none)')}`,

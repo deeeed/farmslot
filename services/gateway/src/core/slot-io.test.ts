@@ -21,7 +21,32 @@ import {
   slotCopyFile,
   slotFileExists,
   slotReadFileBuffer,
+  slotWriteFileBuffer,
+  slotWriteFiles,
 } from './slot-io.js';
+
+test('owned remote file operations use their supplied transport and never fall back after denial', async () => {
+  const calls: string[] = [];
+  const io = {
+    host: 'missing.invalid',
+    machine: 'unregistered-owner-fixture',
+    sshTarget: '',
+    nodeRequest: async (method: string) => {
+      calls.push(method);
+      throw new Error('Owner revoked');
+    },
+  };
+  await assert.rejects(slotFileExists(io, '/owned/task'), /Owner revoked/);
+  await assert.rejects(
+    slotWriteFiles(io, '/owned/task', [{ path: 'TASK.md', content: '' }]),
+    /Owner revoked/,
+  );
+  await assert.rejects(
+    slotWriteFileBuffer(io, '/owned/task/input', Buffer.from('x')),
+    /Owner revoked/,
+  );
+  assert.deepEqual(calls, ['fs.exists', 'fs.writeFiles', 'fs.writeChunk']);
+});
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;

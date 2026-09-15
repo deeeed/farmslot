@@ -340,3 +340,38 @@ test('a missing run is a hard error, not a guard refusal', async () => {
     /Run not found/,
   );
 });
+
+for (const kind of ['complete', 'fail', 'block'] as const) {
+  test(`${kind} cleans owned review workspaces without a slot lease`, async () => {
+    let cleanedStatus: Run['status'] | undefined;
+    const harness = drive(
+      run({
+        slotId: null,
+        reviewWorkspace: {
+          workspaceId: 'review',
+          machine: 'node',
+          executionNodeId: 'local',
+          checkoutPath: '/tmp/owned-review/source',
+          taskPath: '/tmp/owned-review/task',
+          artifactPath: '/tmp/owned-review/task/artifacts',
+        },
+      }),
+      { runId: 'run_1', kind, actor: 'engine', patch: TERMINAL_PATCHES[kind] },
+      {
+        cleanupWorkspace: async (current) => {
+          cleanedStatus = current.status;
+        },
+      },
+    );
+    const result = await harness.result;
+    assert.equal(cleanedStatus, TERMINAL_PATCHES[kind].status);
+    assert.equal(
+      result.effects.find((effect) => effect.name === 'review-workspace-cleanup')?.status,
+      'ok',
+    );
+    assert.equal(
+      harness.log.some((entry) => entry.startsWith('cleanupSlot')),
+      false,
+    );
+  });
+}

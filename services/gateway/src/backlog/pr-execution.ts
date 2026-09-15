@@ -1,20 +1,43 @@
 import {
   intersectPRExecutionProfiles,
+  isPRWorkspaceExecutionChoice,
   type PRExecutionChoice,
   type PRExecutionProfile,
+  type PRSlotExecutionChoice,
+  type PRSlotExecutionProfile,
   type PRSourceAccount,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
+import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { inspectReviewWorkspaceTarget } from '../review-workspaces/admission.js';
 import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
 
+export interface PRExecutionContext {
+  ownerId: string;
+}
+
+export function resolvePRExecution(
+  project: string,
+  repo: string,
+  profiles: PRSlotExecutionProfile[],
+  context?: PRExecutionContext,
+): Promise<{ choices: PRSlotExecutionChoice[]; errors: string[] }>;
+export function resolvePRExecution(
+  project: string,
+  repo: string,
+  profiles: PRExecutionProfile[],
+  context?: PRExecutionContext,
+): Promise<{ choices: PRExecutionChoice[]; errors: string[] }>;
 export async function resolvePRExecution(
   project: string,
   repo: string,
   profiles: PRExecutionProfile[],
+  context?: PRExecutionContext,
 ): Promise<{ choices: PRExecutionChoice[]; errors: string[] }> {
   const config = await loadProjectConfig(project);
   if (!config || config.ci.repo.toLowerCase() !== repo.toLowerCase())
@@ -23,8 +46,27 @@ export async function resolvePRExecution(
   if (!choices.length)
     return {
       choices: [],
-      errors: ['Slot/model/effort constraints have no common execution choice'],
+      errors: ['Execution target/model/effort constraints have no common execution choice'],
     };
+  if (choices.some(isPRWorkspaceExecutionChoice)) {
+    if (!context?.ownerId)
+      return { choices: [], errors: ['Workspace review requires an execution owner'] };
+    const supported: PRExecutionChoice[] = [];
+    const errors: string[] = [];
+    for (const choice of choices) {
+      if (!isPRWorkspaceExecutionChoice(choice)) continue;
+      try {
+        await inspectReviewWorkspaceTarget({ project, ...choice }, context.ownerId);
+        supported.push(choice);
+      } catch (error) {
+        // Rejected alternatives become operator-visible configuration failures; unexpected failures propagate.
+        if (!(error instanceof GatewayMethodError) && !isNodeTransportUnavailableError(error))
+          throw error;
+        errors.push(`${choice.machine}: ${error.message}`);
+      }
+    }
+    return { choices: supported, errors: supported.length ? [] : errors };
+  }
   const fleet = await loadFleetStatus();
   const errors: string[] = [];
   const supported = choices.filter((choice) => {

@@ -107,7 +107,7 @@ export interface AgentContext {
   role: AgentRole;
   label: string;
   status: AgentContextStatus;
-  slotId: string;
+  slotId: string | null;
   runId: string;
   taskFile?: string | null;
   signalFile?: string | null;

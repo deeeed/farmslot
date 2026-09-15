@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add machine-owned static-review workspace placement and retained source/support bindings, while keeping runtime reviews and repairs on slots.
+
 - `RunDecision.payloadTrimmed` names the payload keys `run.list` left out; absent on `run.get`, `run.forSlot` and run events.
 
 - Define authenticated administration of native node owner assignments and the authenticated client workspace-access capability.

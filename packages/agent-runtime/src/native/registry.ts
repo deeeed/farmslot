@@ -13,6 +13,7 @@ export interface NativeRunnerDefinition {
   adapter: NativeAdapter;
   binary: string;
   supportsWorkers?: boolean;
+  supportsReadOnlyWorkspace?: boolean;
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
@@ -29,6 +30,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     adapter: codexNativeAdapter,
     binary: 'codex',
     supportsWorkers: true,
+    supportsReadOnlyWorkspace: true,
     defaultEffort: 'low',
     account: {
       environment: (directory) => ({ CODEX_HOME: directory }),

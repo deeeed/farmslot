@@ -105,7 +105,7 @@ export function synthesizePrimaryContext(run: Run): AgentContext | null {
     role,
     label: agentRoleLabel(role),
     status: statusFromRun(run.status),
-    slotId: run.slotId ?? '',
+    slotId: run.slotId,
     runId: run.id,
     taskFile,
     signalFile: signalFileForTask(taskFile),
@@ -356,7 +356,7 @@ export async function upsertAgentContext(
   const applyMutation = async () => {
     if (options?.guard && !(await options.guard())) return null;
     const run = getRun(runId);
-    if (!run || !run.slotId) return null;
+    if (!run || (!run.slotId && !run.reviewWorkspace)) return null;
     const slotId = run.slotId;
     const now = new Date().toISOString();
     let nextContext: AgentContext | undefined;

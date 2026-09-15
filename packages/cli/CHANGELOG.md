@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Launch and preview static reviews with machine, depth and effort overrides, and show workspace placement.
+
 - Configure server-owned native account assignments when creating nodes or with `principal bind-native-owner`.
 
 - `farmslot run` reads the task flow from `inputs/handoff.json`, falling back to the pre-0.9 `inputs/template-provenance.json`.

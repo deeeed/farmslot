@@ -28,6 +28,7 @@ export async function prepareNativeFix(input: {
   const binding = primary?.nativeSession;
   if (
     !run ||
+    !run.slotId ||
     run.transport !== 'native' ||
     !primary ||
     !binding?.acceptedAt ||
@@ -77,7 +78,7 @@ export async function prepareNativeFix(input: {
       mirrorIf: (slot) => slot.current_run_id === run.id,
     },
   );
-  if (!context) throw new Error('Native fix context was not persisted');
+  if (!context?.slotId) throw new Error('Native fix context has no owned slot');
   assertNativeReviewOperationCurrent();
   await persistRunNow(
     updateRun(run.id, { activeTaskFile: input.taskFile }),
@@ -100,6 +101,7 @@ export async function deliverNativeFix(
   if (
     !run ||
     !context ||
+    !context.slotId ||
     context.role !== 'self-review-fix' ||
     !resolved ||
     !context.nativeCommandId ||

@@ -47,6 +47,8 @@ export interface TerminalTransitionCollaborators {
    * would take the slot out from under whoever holds it now.
    */
   cleanupSlot: ((run: Run) => Promise<void>) | null;
+  /** Owned static workspace cleanup is independent of a slot lease. */
+  cleanupWorkspace?: (run: Run) => Promise<void>;
   /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
   emit(run: Run): void | Promise<void>;
 }
@@ -85,6 +87,17 @@ function terminalEffects(collaborators: TerminalTransitionCollaborators): RunTra
       // candidate package, and a reset slot no longer has one.
       apply: async ({ run }) => {
         await collaborators.cleanupEvalHarness(run);
+      },
+    },
+    {
+      name: 'review-workspace-cleanup',
+      severity: 'advisory',
+      apply: async ({ run }) => {
+        if (!run.reviewWorkspace) return 'skipped';
+        if (!collaborators.cleanupWorkspace)
+          throw new Error('Workspace terminal cleanup is unavailable');
+        await collaborators.cleanupWorkspace(run);
+        return 'ok';
       },
     },
     {

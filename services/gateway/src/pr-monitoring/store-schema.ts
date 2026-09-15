@@ -1,8 +1,8 @@
 import Ajv from 'ajv';
 
 import {
-  assertPRExecutionProfile,
   assertPRMonitorConfig,
+  assertPRSlotExecutionProfile,
   monitoredPRKey,
 } from '@farmslot/protocol';
 
@@ -241,7 +241,7 @@ export function decodeMonitorStore(value: unknown): PRMonitorStoreData {
     assertPRMonitorConfig(monitor.config);
     const repairIds = new Set<string>();
     for (const repair of monitor.repairs ?? []) {
-      assertPRExecutionProfile(repair.execution);
+      assertPRSlotExecutionProfile(repair.execution);
       if (
         repairIds.has(repair.id) ||
         repair.incidentIds.some((id) => !monitor.incidents.some((incident) => incident.id === id))

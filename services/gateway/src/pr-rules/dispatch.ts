@@ -4,8 +4,11 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
+  isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
   monitoredPRKey,
+  type PRExecutionChoice,
+  type PRExecutionProfile,
   type PRReviewIntent,
   type QueueItem,
   reviewResultForRun,
@@ -25,7 +28,7 @@ import {
   type PRQueuePreparation,
   runOwnsPR,
 } from '../backlog/pr-admission.js';
-import { resolvePRExecution } from '../backlog/pr-execution.js';
+import { type PRExecutionContext, resolvePRExecution } from '../backlog/pr-execution.js';
 import { getAllRuns, runRecordPath } from '../runs/store.js';
 
 import { reviewIntentAuthorized } from './intents.js';
@@ -75,7 +78,12 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     private readonly rules: Pick<PRRuleService, 'refreshTarget' | 'refreshSubmission'>,
     private readonly authorized: (ownerId: string) => boolean,
     private readonly changed: () => void,
-    private readonly resolveExecution: typeof resolvePRExecution = resolvePRExecution,
+    private readonly resolveExecution: (
+      project: string,
+      repo: string,
+      profiles: PRExecutionProfile[],
+      context?: PRExecutionContext,
+    ) => Promise<{ choices: PRExecutionChoice[]; errors: string[] }> = resolvePRExecution,
   ) {}
 
   start(): void {
@@ -179,7 +187,22 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       const profiles = intent.contributions
         .filter((item) => item.eligible)
         .flatMap((item) => (item.execution ? [item.execution] : []));
-      const resolved = await this.resolveExecution(source.project, intent.pr.repo, profiles);
+      const resolved = await this.resolveExecution(source.project, intent.pr.repo, profiles, {
+        ownerId: source.ownerId,
+      });
+      const workspaceRequired = review.options.validationDepth !== 'full-live';
+      if (
+        resolved.choices.some(
+          (choice) => isPRWorkspaceExecutionChoice(choice) !== workspaceRequired,
+        )
+      ) {
+        resolved.choices = [];
+        resolved.errors = [
+          workspaceRequired
+            ? 'Select workspace machines for static Review; existing slot constraints need explicit migration'
+            : 'Full-live review requires runtime slots',
+        ];
+      }
       resolved.choices = preferRetainedReviewer(
         intent,
         source.project,
@@ -223,8 +246,20 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             flowType: 'review-pr',
             project: source.project,
             ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
-            allowedSlots: [...new Set(resolved.choices.map((choice) => choice.slotId))],
+            ...(isPRWorkspaceExecutionChoice(resolved.choices[0])
+              ? { reviewWorkspaceTarget: { machine: resolved.choices[0].machine } }
+              : {
+                  allowedSlots: [
+                    ...new Set(
+                      resolved.choices
+                        .filter((choice) => !isPRWorkspaceExecutionChoice(choice))
+                        .map((choice) => choice.slotId!),
+                    ),
+                  ],
+                }),
             runner: resolved.choices[0].runner,
+            transport: resolved.choices[0].transport,
+            nativeProfile: resolved.choices[0].nativeProfile,
             model: resolved.choices[0].model,
             effort: resolved.choices[0].effort,
             completionPolicy: 'artifact-only',
@@ -276,8 +311,20 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       project,
       intent.pr.repo,
       active.flatMap((source) => (source.execution ? [source.execution] : [])),
+      { ownerId: active[0].ownerId },
     );
     resolved.choices = preferRetainedReviewer(intent, project, resolved.choices, getAllRuns());
+    const workspaceRequired = active[0].review?.validationDepth !== 'full-live';
+    if (
+      resolved.choices.some((choice) => isPRWorkspaceExecutionChoice(choice) !== workspaceRequired)
+    ) {
+      return {
+        ready: false,
+        reason: workspaceRequired
+          ? 'Select workspace machines for static Review'
+          : 'Full-live review requires runtime slots',
+      };
+    }
     return resolved.choices.length
       ? { ready: true, choices: resolved.choices }
       : { ready: false, reason: resolved.errors.join('; ') };
@@ -307,11 +354,27 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     const latestIntent = this.store.intent(intent.id);
     if (!latestIntent || fingerprint(latestIntent) !== resolvedFingerprint)
       throw new Error('PR constraints changed during execution resolution; retry admission');
-    const selection = JSON.stringify([item.slotId, item.runner, item.model, item.effort]);
+    const selection = JSON.stringify([
+      item.slotId ?? null,
+      item.reviewWorkspaceTarget?.machine ?? null,
+      item.runner,
+      item.model,
+      item.effort,
+      item.transport ?? null,
+      item.nativeProfile ?? null,
+    ]);
     if (
       !prepared.choices.some(
         (choice) =>
-          JSON.stringify([choice.slotId, choice.runner, choice.model, choice.effort]) === selection,
+          JSON.stringify([
+            choice.slotId ?? null,
+            choice.machine ?? null,
+            choice.runner,
+            choice.model,
+            choice.effort,
+            choice.transport ?? null,
+            choice.nativeProfile ?? null,
+          ]) === selection,
       )
     )
       throw new Error('Selected slot/model/effort is no longer authorized');
@@ -331,7 +394,16 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       !proof ||
       Date.now() - proof.checkedAt > 60_000 ||
       proof.fingerprint !== fingerprint(intent) ||
-      proof.selection !== JSON.stringify([item.slotId, item.runner, item.model, item.effort])
+      proof.selection !==
+        JSON.stringify([
+          item.slotId ?? null,
+          item.reviewWorkspaceTarget?.machine ?? null,
+          item.runner,
+          item.model,
+          item.effort,
+          item.transport ?? null,
+          item.nativeProfile ?? null,
+        ])
     )
       throw new Error('PR review admission changed; revalidate before dispatch');
     const reason = this.refusal(intent, item);

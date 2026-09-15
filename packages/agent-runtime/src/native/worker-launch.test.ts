@@ -33,3 +33,42 @@ test('worker environments remove inherited and configured control-plane credenti
     process.env = originalEnvironment;
   }
 });
+
+test('filesystem launch contract rejects overlapping source grants and binds grants into its digest', async () => {
+  const {
+    decodeNativeWorkerLaunch,
+    nativeWorkerLaunchDigest,
+    validateNativeWorkerFilesystemPolicy,
+  } = await import('./worker-launch.js');
+  const launch = {
+    leaseId: '10000000-0000-4000-8000-000000000001',
+    safetyTier: 'sandboxed',
+    environment: { set: {}, unset: [] },
+    filesystemPolicy: { readOnlyRoots: ['/repo'], writableRoots: ['/task', '/output'] },
+  };
+  const decoded = decodeNativeWorkerLaunch(launch);
+  assert.deepEqual(decoded.filesystemPolicy, launch.filesystemPolicy);
+  assert.notEqual(
+    nativeWorkerLaunchDigest(decoded),
+    nativeWorkerLaunchDigest({ ...decoded, filesystemPolicy: undefined }),
+  );
+  assert.notEqual(
+    nativeWorkerLaunchDigest(decoded),
+    nativeWorkerLaunchDigest({
+      ...decoded,
+      filesystemPolicy: { ...launch.filesystemPolicy, writableRoots: ['/other'] },
+    }),
+  );
+  for (const writableRoots of [['/'], ['/repo'], ['/repo/output'], ['/repo/../repo']]) {
+    assert.throws(
+      () => validateNativeWorkerFilesystemPolicy({ ...launch.filesystemPolicy, writableRoots }),
+      /overlap/,
+    );
+  }
+  for (const invalid of [
+    {},
+    { ...launch.filesystemPolicy, writableRoots: ['relative'] },
+    { ...launch.filesystemPolicy, writableRoots: [] },
+  ])
+    assert.throws(() => validateNativeWorkerFilesystemPolicy(invalid), /absolute paths/);
+});

@@ -10,6 +10,7 @@ import {
   type ActiveResourcePointer,
   type FleetStatus,
   type FleetSummary,
+  normalizeProjectWorkflowDefaults,
   type PoolConfig,
   type ProjectConfig,
   type ReadinessRecord,
@@ -30,7 +31,9 @@ import {
   normalizeRawProjectBacklog,
   normalizeRawProjectPrepare,
   normalizeRawProjectRoadmap,
+  normalizeRawReviewWorkspaces,
   normalizeRawRuntimeCapabilities,
+  normalizeRawStaticReview,
   poolDir,
   projectsDir,
 } from '../core/config.js';
@@ -704,6 +707,10 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
         const content = await readFile(path.join(directory, file), 'utf-8');
         const raw = JSON.parse(content);
         const tmuxWorkers = normalizeTmuxWorkerFilters(raw.tmux_workers ?? raw.tmuxWorkers);
+        const reviewWorkspaces = normalizeRawReviewWorkspaces(
+          raw.review_workspaces,
+          path.join(directory, file),
+        );
         pools.push({
           machine: raw.machine,
           project: raw.project,
@@ -712,6 +719,7 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
           host: raw.host,
           sshUser: raw.ssh_user,
           ...(tmuxWorkers ? { tmuxWorkers } : {}),
+          ...(reviewWorkspaces ? { reviewWorkspaces } : {}),
           slots: (raw.slots || []).map((s: any) => ({
             id: s.id,
             enabled: s.enabled,
@@ -722,8 +730,12 @@ export async function loadPoolConfigs(directory = poolDir): Promise<PoolConfig[]
             resources: s.resources,
           })),
         });
-      } catch {
-        /* skip invalid files */
+      } catch (error) {
+        // Reject this pool so malformed capacity cannot authorize reviewer admission.
+        // Other machine configs remain available, and the operator sees the failure.
+        console.error(
+          `[state] pool ${file}: skipped, its config could not be loaded: ${(error as Error).message}`,
+        );
       }
     }
   } catch {
@@ -766,6 +778,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const configPath = path.join(projectsDir, dir, 'project.json');
         const content = await readFile(configPath, 'utf-8');
         const raw = JSON.parse(content);
+        const staticReview = normalizeRawStaticReview(raw.static_review, configPath);
+        const workflowDefaults = normalizeProjectWorkflowDefaults(raw.workflow_defaults);
         const ciCheckGroups = normalizeProjectCICheckGroups(raw.ci);
         const resources = normalizeProjectResources(raw.resources);
         const slotActions = normalizeSlotActions(raw.slot_actions);
@@ -900,6 +914,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
           ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
+          ...(staticReview ? { staticReview } : {}),
+          ...(workflowDefaults ? { workflowDefaults } : {}),
           ...(raw.execution_templates &&
           typeof raw.execution_templates === 'object' &&
           !Array.isArray(raw.execution_templates)

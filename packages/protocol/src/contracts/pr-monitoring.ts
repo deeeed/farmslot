@@ -1,3 +1,6 @@
+import type { NativeProfileReference } from '../rpc/native-profile.js';
+
+import type { WorkerTransport } from './agents.js';
 import type { BacklogLaunchSlotPolicy } from './backlog.js';
 
 export interface MonitoredPRIdentity {
@@ -18,14 +21,31 @@ export interface PRExecutionModel {
   effort?: string;
   /** Further restrict this model to slots within the profile's slot policy. */
   allowedSlots?: string[];
+  /** Further restrict this model to machines within the profile's workspace policy. */
+  allowedMachines?: string[];
 }
 
-export interface PRExecutionChoice {
+export interface PRSlotExecutionChoice {
   slotId: string;
+  machine?: never;
   runner: string;
   model: string;
   effort?: string;
+  transport?: never;
+  nativeProfile?: never;
 }
+
+export interface PRWorkspaceExecutionChoice {
+  machine: string;
+  slotId?: never;
+  runner: string;
+  model: string;
+  effort?: string;
+  transport?: WorkerTransport;
+  nativeProfile?: NativeProfileReference;
+}
+
+export type PRExecutionChoice = PRSlotExecutionChoice | PRWorkspaceExecutionChoice;
 
 /** Gateway-owned linkage; public run/queue mutation requests cannot supply it. */
 export interface PRWorkReference {
@@ -44,15 +64,30 @@ export interface PRWorkReference {
   };
 }
 
-export interface PRExecutionProfile {
+export interface PRSlotExecutionProfile {
   slotPolicy: Extract<BacklogLaunchSlotPolicy, { kind: 'exact' | 'pool' }>;
+  workspacePolicy?: never;
   /** Ordered alternatives. One review selects one allowed combination. */
   models: PRExecutionModel[];
+  transport?: never;
+  nativeProfile?: never;
 }
+
+export interface PRWorkspaceExecutionProfile {
+  workspacePolicy: { kind: 'exact'; machine: string } | { kind: 'pool'; allowedMachines: string[] };
+  slotPolicy?: never;
+  /** Ordered alternatives for static review without a device slot. */
+  models: PRExecutionModel[];
+  /** Explicit transport selection; omission never authorizes a native fallback. */
+  transport?: WorkerTransport;
+  nativeProfile?: NativeProfileReference;
+}
+
+export type PRExecutionProfile = PRSlotExecutionProfile | PRWorkspaceExecutionProfile;
 
 export type PRMonitorPolicy =
   | { mode: 'notify-only' }
-  | { mode: 'automatic-repair'; execution: PRExecutionProfile };
+  | { mode: 'automatic-repair'; execution: PRSlotExecutionProfile };
 
 export interface PRMonitorConfig {
   pr: MonitoredPRIdentity;
@@ -131,7 +166,7 @@ export interface PRMonitorRepair {
   mode: 'automatic' | 'manual';
   state: 'pending' | 'queued' | 'running' | 'blocked' | 'finished' | 'cancelled';
   project: string;
-  execution: PRExecutionProfile;
+  execution: PRSlotExecutionProfile;
   headSha: string;
   incidentIds: string[];
   createdAt: string;

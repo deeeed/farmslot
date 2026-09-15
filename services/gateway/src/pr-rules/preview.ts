@@ -1,6 +1,6 @@
 import {
-  DEFAULT_PR_REVIEW_OPTIONS,
   evaluatePRRulePredicate,
+  type ProjectWorkflowDefaults,
   type PRRuleAction,
   type PRRulePredicate,
   type PRRulePreview,
@@ -9,6 +9,7 @@ import {
   type PRRuleSubject,
   type PRTeamProfile,
   type PRTriggerRule,
+  resolvePRWorkflowDefaults,
 } from '@farmslot/protocol';
 
 export interface PRSourceScan {
@@ -23,6 +24,7 @@ export function buildPRRulePreview(
   team: PRTeamProfile,
   rule: PRTriggerRule,
   scan: PRSourceScan,
+  farmDefaults: Readonly<Record<string, ProjectWorkflowDefaults | undefined>> = {},
 ): PRRulePreview {
   const review = rule.config.actions.find((action) => action.kind === 'review');
   const monitor = rule.config.actions.find((action) => action.kind === 'monitor');
@@ -37,7 +39,16 @@ export function buildPRRulePreview(
     sourceErrors: scan.errors,
     ignoredItems: scan.ignoredItems,
     items: scan.subjects.map((subject) => {
-      const item = buildPRReviewPreviewItem(team, subject, rule.config.predicate, review);
+      const project = team.config.repositories.find(
+        (policy) => policy.repo.toLowerCase() === subject.pr.repo.toLowerCase(),
+      )?.project;
+      const item = buildPRReviewPreviewItem(
+        team,
+        subject,
+        rule.config.predicate,
+        review,
+        project ? farmDefaults[project] : undefined,
+      );
       if (monitor?.policy.mode === 'automatic-repair' && !item.project)
         item.actionErrors = { monitor: ['Automatic repair needs a Farmslot project mapping'] };
       return item;
@@ -50,6 +61,8 @@ export function buildPRReviewPreviewItem(
   subject: PRRuleSubject,
   predicate: PRRulePredicate,
   review?: Extract<PRRuleAction, { kind: 'review' }>,
+  farm?: ProjectWorkflowDefaults,
+  source: 'rule' | 'request' = 'rule',
 ): PRRulePreviewItem {
   const policy = team.config.repositories.find(
     (item) => item.repo.toLowerCase() === subject.pr.repo.toLowerCase(),
@@ -72,11 +85,19 @@ export function buildPRReviewPreviewItem(
         ],
       }
     : { kind: 'all' as const, items: [team.config.predicate, predicate] };
-  const execution = review?.execution ?? policy?.execution ?? team.config.execution;
+  const resolved = resolvePRWorkflowDefaults({
+    [source]: review,
+    repository: policy,
+    team: team.config,
+    farm,
+  });
+  const execution = resolved.execution;
   const errors = review
     ? [
         !policy?.project ? 'No Farmslot project mapping' : undefined,
-        !execution ? 'No slot/model execution profile' : undefined,
+        !execution
+          ? 'No execution profile in request, repository, team or farm defaults'
+          : undefined,
       ].filter((item): item is string => item !== undefined)
     : [];
   const match = evaluatePRRulePredicate(effectivePredicate, subject);
@@ -86,7 +107,8 @@ export function buildPRReviewPreviewItem(
     project: policy?.project,
     reviewProfile: policy?.reviewProfile ?? 'standard',
     execution,
-    review: review?.review ?? policy?.review ?? team.config.review ?? DEFAULT_PR_REVIEW_OPTIONS,
+    review: resolved.review,
+    policySources: resolved.sources,
     configurationErrors: errors,
     policySummary: repositoryPolicySummary(policy, subject),
   };

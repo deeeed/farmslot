@@ -42,6 +42,12 @@ export interface SlotLocality {
   host: string;
   machine: string;
   sshTarget: string;
+  /** Trusted server-side transport for operations bound to an execution owner. */
+  nodeRequest?: (
+    method: string,
+    params: unknown,
+    options?: { timeout?: number },
+  ) => Promise<unknown>;
 }
 
 export interface SlotCopyDirOptions {
@@ -87,6 +93,12 @@ function requireNode(machine: string) {
   return node;
 }
 
+function requestFor(ctx: SlotLocality): NonNullable<SlotLocality['nodeRequest']> {
+  if (ctx.nodeRequest) return ctx.nodeRequest;
+  const node = requireNode(ctx.machine);
+  return (method, params, options) => sendNodeRequest(node, method, params, options);
+}
+
 function nodePathParams(fullPath: string): { root: string; relPath: string } {
   // '~' is resolved by the node's own expandTilde (commands/fs.ts confinedPath),
   // so home-relative paths like ~/farmslot-node/support/... are valid remote
@@ -119,7 +131,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
   if (local(ctx)) {
     return readFile(filePath, 'utf-8');
   }
-  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.read', {
+  const result = (await requestFor(ctx)('fs.read', {
     ...nodePathParams(filePath),
   })) as { content: string };
   return result.content;
@@ -127,7 +139,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
 
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
   if (local(ctx)) return realpath(filePath);
-  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.realpath', {
+  const result = (await requestFor(ctx)('fs.realpath', {
     ...nodePathParams(filePath),
   })) as { path: string };
   return result.path;
@@ -139,7 +151,7 @@ export async function slotFileExists(ctx: SlotLocality, filePath: string): Promi
   if (local(ctx)) {
     return existsSync(filePath);
   }
-  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.exists', {
+  const result = (await requestFor(ctx)('fs.exists', {
     ...nodePathParams(filePath),
   })) as { exists: boolean };
   return result.exists;
@@ -151,7 +163,7 @@ export async function slotListDir(ctx: SlotLocality, dirPath: string): Promise<s
   if (local(ctx)) {
     return readdir(dirPath);
   }
-  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.list', {
+  const result = (await requestFor(ctx)('fs.list', {
     ...nodePathParams(dirPath),
   })) as { entries: Array<{ name: string }> };
   return result.entries.map((e) => e.name);
@@ -168,7 +180,7 @@ export async function slotWriteFile(
     await fsWriteFile(filePath, data, 'utf-8');
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.write', {
+  await requestFor(ctx)('fs.write', {
     ...nodePathParams(filePath),
     content: data,
   });
@@ -200,7 +212,7 @@ export async function slotWriteFiles(
     }
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', {
+  await requestFor(ctx)('fs.writeFiles', {
     root: baseDir,
     relPath: '.',
     files,
@@ -214,7 +226,7 @@ export async function slotMkdir(ctx: SlotLocality, dirPath: string): Promise<voi
     await mkdir(dirPath, { recursive: true });
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.mkdir', { ...nodePathParams(dirPath) });
+  await requestFor(ctx)('fs.mkdir', { ...nodePathParams(dirPath) });
 }
 
 export async function slotDeletePath(ctx: SlotLocality, targetPath: string): Promise<void> {
@@ -222,7 +234,7 @@ export async function slotDeletePath(ctx: SlotLocality, targetPath: string): Pro
     await rm(targetPath, { recursive: true, force: true });
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.delete', { ...nodePathParams(targetPath) });
+  await requestFor(ctx)('fs.delete', { ...nodePathParams(targetPath) });
 }
 
 export interface SlotStatResult {
@@ -242,7 +254,7 @@ export async function slotStat(ctx: SlotLocality, targetPath: string): Promise<S
       mtimeMs: info.mtimeMs,
     };
   }
-  return (await sendNodeRequest(requireNode(ctx.machine), 'fs.stat', {
+  return (await requestFor(ctx)('fs.stat', {
     ...nodePathParams(targetPath),
   })) as SlotStatResult;
 }
@@ -283,13 +295,13 @@ export async function slotCopyFile(
     await copyFile(remotePath, localPath);
     return;
   }
-  const node = requireNode(ctx.machine);
+  const request = requestFor(ctx);
   const pathParams = nodePathParams(remotePath);
   const threshold = options.smallFileThresholdBytes ?? FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
 
   let size = 0;
   try {
-    const st = (await sendNodeRequest(node, 'fs.stat', pathParams, {
+    const st = (await request('fs.stat', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { size: number; isFile: boolean };
     size = st.size;
@@ -305,7 +317,7 @@ export async function slotCopyFile(
 
   const useChunked = options.forceChunked || size > threshold;
   if (!useChunked) {
-    const result = (await sendNodeRequest(node, 'fs.readBase64', pathParams, {
+    const result = (await request('fs.readBase64', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { content: string };
     await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
@@ -330,15 +342,14 @@ export async function slotCopyFile(
     abortSignal: options.abortSignal,
     fetchRemoteSha256: verifyHash
       ? async () => {
-          const hashed = (await sendNodeRequest(node, 'fs.hash', pathParams, {
+          const hashed = (await request('fs.hash', pathParams, {
             timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
           })) as { sha256: string };
           return hashed.sha256;
         }
       : undefined,
     readChunk: async (offset, length) => {
-      const chunk = (await sendNodeRequest(
-        node,
+      const chunk = (await request(
         'fs.readChunk',
         { ...pathParams, offset, length },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
@@ -394,7 +405,7 @@ export async function slotReadFileBuffer(
     options.onTransport?.({ mode: 'local', readChunkCount: 0 });
     return buf;
   }
-  const node = requireNode(ctx.machine);
+  const request = requestFor(ctx);
   if ((options.root == null) !== (options.relPath == null)) {
     throw new Error('slotReadFileBuffer remote root and relPath must be provided together');
   }
@@ -404,7 +415,7 @@ export async function slotReadFileBuffer(
       : nodePathParams(remotePath);
   let size = 0;
   try {
-    const st = (await sendNodeRequest(node, 'fs.stat', pathParams, {
+    const st = (await request('fs.stat', pathParams, {
       timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
     })) as { size: number };
     size = st.size;
@@ -419,12 +430,16 @@ export async function slotReadFileBuffer(
   const threshold = FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES;
   // One-shot for known-small OR unknown size (stat missed). Known-large uses chunked progress.
   if (!options.forceChunked && (size === 0 || size <= threshold)) {
-    const result = (await sendNodeRequest(node, 'fs.readBase64', {
-      ...pathParams,
-      maxBytes: options.maxBytes,
-    }, {
-      timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
-    })) as { content: string };
+    const result = (await request(
+      'fs.readBase64',
+      {
+        ...pathParams,
+        maxBytes: options.maxBytes,
+      },
+      {
+        timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
+      },
+    )) as { content: string };
     options.onTransport?.({
       mode: 'oneshot',
       readChunkCount: 0,
@@ -445,8 +460,7 @@ export async function slotReadFileBuffer(
     onProgress: options.onProgress,
     readChunk: async (offset, length) => {
       readChunkCount += 1;
-      return (await sendNodeRequest(
-        node,
+      return (await request(
         'fs.readChunk',
         { ...pathParams, offset, length },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
@@ -487,7 +501,7 @@ export async function slotWriteFileBuffer(
     }
     return;
   }
-  const node = requireNode(ctx.machine);
+  const request = requestFor(ctx);
   const pathParams = nodePathParams(remotePath);
   const totalBytes = data.byteLength;
   const modePayload =
@@ -495,8 +509,7 @@ export async function slotWriteFileBuffer(
       ? { mode: options.mode }
       : {};
   if (totalBytes <= FILE_TRANSFER_SMALL_FILE_THRESHOLD_BYTES) {
-    const written = (await sendNodeRequest(
-      node,
+    const written = (await request(
       'fs.writeChunk',
       {
         ...pathParams,
@@ -507,10 +520,7 @@ export async function slotWriteFileBuffer(
       },
       { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
     )) as { bytesWritten?: number };
-    if (
-      typeof written.bytesWritten === 'number' &&
-      written.bytesWritten !== totalBytes
-    ) {
+    if (typeof written.bytesWritten === 'number' && written.bytesWritten !== totalBytes) {
       throw new Error(
         `fs.writeChunk short write: got ${written.bytesWritten}, expected ${totalBytes}`,
       );
@@ -540,10 +550,7 @@ export async function slotWriteFileBuffer(
     state: 'running',
     cancellable: true,
   });
-  const publish = (
-    state: 'running' | 'done' | 'failed' | 'cancelled',
-    error?: string,
-  ) => {
+  const publish = (state: 'running' | 'done' | 'failed' | 'cancelled', error?: string) => {
     emitFileTransferProgress(
       {
         transferId,
@@ -570,8 +577,7 @@ export async function slotWriteFileBuffer(
       }
       const end = Math.min(offset + FILE_TRANSFER_CHUNK_MAX_BYTES, totalBytes);
       const slice = data.subarray(offset, end);
-      const written = (await sendNodeRequest(
-        node,
+      const written = (await request(
         'fs.writeChunk',
         {
           ...pathParams,
@@ -582,10 +588,7 @@ export async function slotWriteFileBuffer(
         },
         { timeout: FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS },
       )) as { bytesWritten?: number };
-      if (
-        typeof written.bytesWritten === 'number' &&
-        written.bytesWritten !== slice.byteLength
-      ) {
+      if (typeof written.bytesWritten === 'number' && written.bytesWritten !== slice.byteLength) {
         throw new Error(
           `fs.writeChunk short write at offset ${offset}: got ${written.bytesWritten}, expected ${slice.byteLength}`,
         );
@@ -596,12 +599,8 @@ export async function slotWriteFileBuffer(
     }
     publish('done');
   } catch (err) {
-    const cancelled =
-      err instanceof FileTransferCancelledError || abort.signal.aborted;
-    publish(
-      cancelled ? 'cancelled' : 'failed',
-      err instanceof Error ? err.message : String(err),
-    );
+    const cancelled = err instanceof FileTransferCancelledError || abort.signal.aborted;
+    publish(cancelled ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err));
     throw cancelled && !(err instanceof FileTransferCancelledError)
       ? new FileTransferCancelledError(transferId)
       : err;
@@ -721,9 +720,9 @@ export async function slotCopyDir(
   // Check remote dir exists
   if (!(await slotFileExists(ctx, remoteDir))) return 0;
 
-  const node = requireNode(ctx.machine);
+  const request = requestFor(ctx);
   await assertConcreteDirRoot(remoteDir, async (inputPath) => {
-    const result = (await sendNodeRequest(node, 'fs.realpath', {
+    const result = (await request('fs.realpath', {
       ...nodePathParams(inputPath),
     })) as {
       path: string;
@@ -741,7 +740,7 @@ export async function slotCopyDir(
     depth: number,
   ): Promise<{ files: number; bytes: number }> {
     if (depth > MAX_ARTIFACT_TREE_DEPTH) return { files: 0, bytes: 0 };
-    const listResult = (await sendNodeRequest(node, 'fs.list', {
+    const listResult = (await request('fs.list', {
       root: remoteDir,
       relPath: path.relative(remoteDir, sourceDir) || '.',
     })) as { entries: Array<{ name: string; type: string; size?: number }> };
@@ -784,7 +783,7 @@ export async function slotCopyDir(
       throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
     }
     aggregate.throwIfCancelled();
-    const listResult = (await sendNodeRequest(node, 'fs.list', {
+    const listResult = (await request('fs.list', {
       root: remoteDir,
       relPath: path.relative(remoteDir, sourceDir) || '.',
     })) as {

@@ -40,6 +40,7 @@ import {
   type NativeWorkerLaunch,
   nativeWorkerLaunchDigest,
   type NativeWorkerResumeParams,
+  validateNativeWorkerFilesystemPolicy,
 } from './worker-launch.js';
 
 const exec = promisify(execFile);
@@ -153,6 +154,7 @@ interface SessionRecord {
   events: NativeSessionEvent[];
   adapter?: NativeAdapterSession;
   startup?: Promise<NativeAdapterSession>;
+  startupAbort?: AbortController;
   /** An uncertain initial journal write cannot become a successful retry in this host. */
   reservationError?: Error;
   workerLeaseError?: Error;
@@ -328,6 +330,8 @@ export class NativeSessionManager {
     if (!transport) throw new Error(`Runner has no native transport: ${params.runner}`);
     if (workerLaunch && !transport.supportsWorkers)
       throw new Error('Native worker execution is not supported for this runner');
+    if (workerLaunch?.filesystemPolicy && !transport.supportsReadOnlyWorkspace)
+      throw new Error('Native runner cannot enforce a read-only source workspace');
     if (!isAbsolute(params.cwd) || !(await stat(params.cwd)).isDirectory())
       throw new Error('Native cwd must be an existing absolute directory');
     let previous: SessionRecord | undefined;
@@ -399,6 +403,24 @@ export class NativeSessionManager {
     );
     const unavailable = transport.adapter.resumeUnavailableReason?.(resolved.version);
     if (params.resumeSessionId && unavailable) throw new Error(unavailable);
+    let filesystemPolicy = workerLaunch?.filesystemPolicy;
+    if (filesystemPolicy) {
+      const unsupported = transport.adapter.filesystemPolicyUnavailableReason?.(resolved.version);
+      if (!transport.adapter.filesystemPolicyUnavailableReason || unsupported)
+        throw new Error(unsupported ?? 'Native runner cannot enforce filesystem policy');
+      filesystemPolicy = validateNativeWorkerFilesystemPolicy({
+        readOnlyRoots: await Promise.all(
+          [...filesystemPolicy.readOnlyRoots, this.root].map((root) => realpath(root)),
+        ),
+        writableRoots: await Promise.all(
+          filesystemPolicy.writableRoots.map((root) => realpath(root)),
+        ),
+      });
+      if (!filesystemPolicy.readOnlyRoots.includes(await realpath(params.cwd)))
+        throw new Error('Native worker cwd must be an explicit read-only source root');
+      if (workerLaunch?.safetyTier !== 'sandboxed')
+        throw new Error('Read-only native workers require sandboxed execution');
+    }
     if (relocation) {
       const unavailable = transport.adapter.workspaceResumeUnavailableReason?.(resolved.version);
       if (unavailable) throw new Error(unavailable);
@@ -450,6 +472,9 @@ export class NativeSessionManager {
         ...transport.adapter.capabilities,
         resumeAcrossWorkspaces:
           transport.adapter.capabilities.resumeAcrossWorkspaces === true &&
+          // A source policy pins exact paths in the launch digest. Relocation must
+          // not silently rewrite its grants while resuming the saved conversation.
+          !workerLaunch?.filesystemPolicy &&
           !transport.adapter.workspaceResumeUnavailableReason?.(resolved.version),
       },
     };
@@ -476,9 +501,11 @@ export class NativeSessionManager {
       throw error;
     }
     try {
+      record.startupAbort = new AbortController();
       record.startup = transport.adapter.start(
         {
           ...params,
+          signal: record.startupAbort.signal,
           mode,
           model: info.model,
           effort,
@@ -491,7 +518,7 @@ export class NativeSessionManager {
           executable: resolved.executable,
           env: nativeEnvironment(resolved.executable, environment),
           ...(workerLaunch
-            ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier }
+            ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }
             : {}),
         },
         (event) => this.append(record, event),
@@ -961,6 +988,17 @@ export class NativeSessionManager {
     }
     record.info.state = 'closing';
     this.persist(record);
+    if (!record.adapter && record.startup) {
+      record.startupAbort?.abort();
+      try {
+        await record.startup;
+      } catch (error) {
+        // Startup rejection is expected after cancellation only when the process
+        // adapter has independently confirmed that its entire owned tree stopped.
+        if (record.info.processStopped && ['closed', 'failed'].includes(record.info.state)) return;
+        throw error;
+      }
+    }
     const adapter = record.adapter ?? (await record.startup);
     await adapter?.close();
     if (!['closed', 'failed'].includes(this.owned(owner, id).info.state))

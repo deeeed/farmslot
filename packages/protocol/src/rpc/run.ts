@@ -77,6 +77,8 @@ export interface RunCreateParams {
   taskTemplate?: import('../contracts/index.js').TaskTemplateSelection;
   /** Exact shared-catalog template id. Valid only for configured projects. */
   executionTemplateId?: string;
+  /** Static-review machine selection, mutually exclusive with slot placement. */
+  reviewWorkspaceTarget?: import('../contracts/review-workspace.js').ReviewWorkspaceTarget;
   slotId?: string;
   taskFile?: string;
   branch?: string;

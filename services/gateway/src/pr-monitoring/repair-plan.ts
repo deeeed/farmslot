@@ -2,16 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  assertPRExecutionProfile,
-  type PRExecutionProfile,
+  assertPRSlotExecutionProfile,
   type PRMonitor,
   type PRMonitorIncident,
   type PRMonitorRepair,
+  type PRSlotExecutionProfile,
 } from '@farmslot/protocol';
 
 export interface ManualRepairSelection {
   project: string;
-  execution: PRExecutionProfile;
+  execution: PRSlotExecutionProfile;
 }
 
 export function monitorRepairIsOpen(repair: PRMonitorRepair): boolean {
@@ -70,7 +70,7 @@ export function planMonitorRepair(
     manual?.execution ?? (policy.mode === 'automatic-repair' ? policy.execution : undefined);
   if (!project || !execution)
     throw new Error('Repair needs a project and explicit slot/model configuration');
-  assertPRExecutionProfile(execution);
+  assertPRSlotExecutionProfile(execution);
   const eligible = monitor.incidents.filter((incident) => {
     if (incident.resolvedAt) return false;
     if (manual) {

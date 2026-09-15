@@ -2045,6 +2045,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Effective direct-dispatch policy retained from admission or its queued request. */
+  workflowExecution?: import('./pr-monitoring.js').PRExecutionProfile;
   id: string;
   /** Authenticated creator, retained for background actions that touch another run's resources. */
   createdByPrincipalId?: string;
@@ -2103,6 +2105,13 @@ export interface Run {
   /** Worker scripted-runner config when metrics.runner='scripted'. */
   scripted?: ScriptedRunnerConfig;
   slotId: string | null;
+  /** Explicit workspace placement, mutually exclusive with a slot binding. */
+  reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
+  /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */
+  reviewWorkspace?: import('./review-workspace.js').ReviewWorkspaceBinding;
+  reviewWorkspaceSubject?: import('./review-workspace.js').ReviewWorkspaceSubject;
+  /** Retained cleanup failure; capacity stays reserved until owned process closure is confirmed. */
+  reviewWorkspaceCleanupError?: string;
   branch: string | null;
   /** Completion side-effect policy; artifact-only suppresses publication/PR mutation paths. */
   completionPolicy?: RunCompletionPolicy;

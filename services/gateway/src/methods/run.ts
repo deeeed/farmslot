@@ -55,6 +55,13 @@ import type { MachineParkGateRestoreResult } from '../machine-parking/service.js
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
 import {
+  assertReviewWorkspaceAdmitted,
+  assertReviewWorkspacePlacement,
+  inspectReviewWorkspaceTarget,
+  type ReviewWorkspaceAdmission,
+} from '../review-workspaces/admission.js';
+import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
+import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
   isPublishedStatus,
@@ -113,7 +120,10 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
-import { assertNativeRunOwner } from '../security/native-worker-owner.js';
+import {
+  assertNativeRunOwner,
+  resolveReviewWorkspaceOwner,
+} from '../security/native-worker-owner.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -227,6 +237,7 @@ function buildInteractiveDevTicketData(
 }
 
 interface RunCreateInternalOptions {
+  workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
   beforeCreateAsync?: () => Promise<void>;
   expectedExecutionTemplate?: ExecutionTemplateReference;
   /**
@@ -281,6 +292,8 @@ export async function runCreate(
 ): Promise<RunCreateResult> {
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
+  if ('workflowExecution' in params)
+    throw new Error('Workflow execution snapshots cannot be supplied in run parameters');
 
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
@@ -290,17 +303,54 @@ export async function runCreate(
 
   // Load project config once — used for PR-ref resolution and safety-tier default.
   const projectConfig = await loadProjectConfig(params.project);
+  // Resolve PR references before selecting static workspace placement.
+  if (PR_BOUND_FLOW_TYPES.has(params.flowType)) {
+    if (projectConfig?.ci?.repo)
+      params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
+    validateTicketRef(params.ticketOrPr, params.flowType);
+  }
+  const workflowDefaults = await resolveDirectWorkflowDefaults(params, projectConfig, {
+    purpose: 'run',
+    execution: options.workflowExecution,
+    ...(params.flowType === 'review-pr' && params.reviewValidationDepth !== 'full-live'
+      ? { ownerId: resolveReviewWorkspaceOwner() }
+      : {}),
+  });
+  params = workflowDefaults.params;
   const initialContext = params.ticketOrPr;
+  assertReviewWorkspacePlacement(params);
+  let workspaceAdmission: ReviewWorkspaceAdmission | undefined;
+  if (params.reviewWorkspaceTarget) {
+    if (!params.runner || !params.model)
+      throw new GatewayMethodError(
+        'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+        'Workspace Review requires an explicit runner and model',
+      );
+    workspaceAdmission =
+      workflowDefaults.admission ??
+      (await inspectReviewWorkspaceTarget(
+        {
+          project: params.project,
+          machine: params.reviewWorkspaceTarget.machine,
+          runner: params.runner,
+          model: params.model,
+          effort: params.effort,
+          transport: params.transport,
+          nativeProfile: params.nativeProfile,
+        },
+        resolveReviewWorkspaceOwner(),
+      ));
+    params.executionTemplateId =
+      params.executionTemplateId ?? workspaceAdmission.project.staticReview!.templateId;
+    if (params.executionTemplateId !== workspaceAdmission.project.staticReview!.templateId)
+      throw new GatewayMethodError(
+        'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+        'Select the configured static-review template',
+      );
+    params.completionPolicy = 'artifact-only';
+  }
   const devInteractiveProfile = interactiveDevProfileFor(params);
   if (devInteractiveProfile) params.devInteractiveProfile = devInteractiveProfile;
-
-  // For PR flows, resolve bare numbers and branch names to owner/repo#number
-  const PR_FLOWS = ['review-pr', 'pr-complete', 'update-branch'];
-  if (PR_FLOWS.includes(params.flowType)) {
-    if (projectConfig?.ci?.repo) {
-      params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
-    }
-  }
 
   // Safety-tier resolution (ADR-023 §3): explicit dispatch param > project
   // policy > runner intrinsic fallback. Applied before createRun so the run
@@ -319,6 +369,16 @@ export async function runCreate(
     );
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
+  if (workspaceAdmission) {
+    const projectVars = await loadProjectVars(params.project);
+    executionTemplateSnapshot = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: 'review-pr',
+      platform: workspaceAdmission.pool.platform,
+      runMode: params.mode ?? 'autonomous',
+      explicitDomain: params.domain,
+      explicitId: params.executionTemplateId,
+    }).reference;
+  }
   if (projectConfig?.executionTemplates && params.slotId) {
     const [projectVars, slotVars] = await Promise.all([
       loadProjectVars(params.project),
@@ -403,7 +463,8 @@ export async function runCreate(
     ) {
       params.familyRootTicketOrPr = params.familyRootTicketOrPr ?? params.ticketOrPr;
     } else {
-      validateTicketRef(params.ticketOrPr, params.flowType);
+      if (!PR_BOUND_FLOW_TYPES.has(params.flowType))
+        validateTicketRef(params.ticketOrPr, params.flowType);
       assertTicketRefMatchesProjectRepo(params.ticketOrPr, params.project, projectConfig?.ci?.repo);
     }
   }
@@ -488,9 +549,9 @@ export async function runCreate(
       'nudgeReuse requires slotId — pick the busy branch-matched slot in the wizard before requesting a nudge',
     );
   }
-  if (params.nudgeReuse && !PR_FLOWS.includes(params.flowType)) {
+  if (params.nudgeReuse && !PR_BOUND_FLOW_TYPES.has(params.flowType)) {
     throw new Error(
-      `nudgeReuse only supports PR-bound flows (${PR_FLOWS.join(', ')}); got ${params.flowType}`,
+      `nudgeReuse only supports PR-bound flows (${[...PR_BOUND_FLOW_TYPES].join(', ')}); got ${params.flowType}`,
     );
   }
   // Fresh replacement always requires an explicit slot pin. The selected row
@@ -515,12 +576,28 @@ export async function runCreate(
   };
   // Last ownership check at the durable create boundary (after all awaits above).
   if (options.beforeCreateAsync) await options.beforeCreateAsync();
+  if (workspaceAdmission && params.reviewWorkspaceTarget) {
+    workspaceAdmission = await inspectReviewWorkspaceTarget(
+      {
+        project: params.project,
+        machine: params.reviewWorkspaceTarget.machine,
+        runner: params.runner!,
+        model: params.model!,
+        effort: params.effort,
+        transport: params.transport,
+        nativeProfile: params.nativeProfile,
+      },
+      resolveReviewWorkspaceOwner(),
+    );
+  }
   options.beforeCreate?.();
+  if (workspaceAdmission) assertReviewWorkspaceAdmitted(workspaceAdmission);
   // Defer background persist on the claim handoff path so the Run file cannot
   // appear on disk before durableStamp writes the queue runId (restart would
   // otherwise redispatch an unstamped row while the Run already exists).
   let run = createRun(createParams, {
     deferBackgroundPersist: Boolean(options.awaitPersist),
+    workflowExecution: options.workflowExecution ?? workflowDefaults.execution,
   });
   // Apply the resolved execution-template snapshot before the first durable
   // handoff write so a crash cannot leave a stamped Run without the queue-time

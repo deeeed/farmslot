@@ -13,6 +13,7 @@ import {
   type HostPressureAdmissionMode,
   isRuntimeCapabilityClaimScope,
   isValidDomainName,
+  normalizeProjectWorkflowDefaults,
   type PoolSlotMode,
   PREPARE_PHASES,
   PREPARE_REQUIREMENTS,
@@ -21,7 +22,9 @@ import {
   type ProjectConfig,
   type ProjectExecutionTemplatesConfig,
   type ProjectHostPressureAdmissionConfig,
+  type ProjectWorkflowDefaults,
   type ReviewSessionPolicy,
+  type ReviewWorkspaceSupportConfig,
   RUNTIME_CAPABILITY_AFFECTED_OWNERSHIPS,
   RUNTIME_CAPABILITY_AFFECTED_RELEASE_EFFECTS,
   type RuntimeCapabilityAffectedOwnership,
@@ -116,7 +119,32 @@ export interface RawPoolJson {
    * example a project harness binary), never in project.json.
    */
   env?: Record<string, string>;
+  /** Opt in to static reviews on this machine without occupying slots. */
+  review_workspaces?: { max_concurrent: number };
   slots: RawPoolSlot[];
+}
+
+/** Reject malformed opt-in capacity before exposing it to admission. */
+export function normalizeRawReviewWorkspaces(
+  raw: unknown,
+  poolConfig: string,
+): import('@farmslot/protocol').PoolConfig['reviewWorkspaces'] {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${poolConfig}: review_workspaces must be an object`);
+  }
+  const config = raw as Record<string, unknown>;
+  if (Object.keys(config).some((key) => key !== 'max_concurrent')) {
+    throw new Error(`${poolConfig}: review_workspaces only accepts max_concurrent`);
+  }
+  if (
+    typeof config.max_concurrent !== 'number' ||
+    !Number.isSafeInteger(config.max_concurrent) ||
+    config.max_concurrent <= 0
+  ) {
+    throw new Error(`${poolConfig}: review_workspaces.max_concurrent must be a positive integer`);
+  }
+  return { maxConcurrent: config.max_concurrent };
 }
 
 export interface RawPoolSlot {
@@ -203,6 +231,7 @@ export interface RawProjectJson {
     >;
   };
   execution_templates?: ProjectExecutionTemplatesConfig;
+  workflow_defaults?: ProjectWorkflowDefaults;
   eval_harnesses?: Record<
     string,
     {
@@ -223,6 +252,10 @@ export interface RawProjectJson {
     review_input_timeout_ms?: number;
   };
   static_review?: {
+    domain?: string;
+    support?: ReviewWorkspaceSupportConfig;
+    /** Exact canonical execution-template catalog id for static review. */
+    template_id?: string;
     /** Project-fixture files copied into a static review task as frozen reviewer guidance. */
     instruction_files?: string[];
   };
@@ -799,6 +832,8 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateRuntimeCapabilitiesConfig(projectJson, projectConfig);
   validateCommandEnvConfig(projectJson, projectConfig);
   validateExecutionTemplatesConfig(projectJson, projectConfig);
+  normalizeRawStaticReview(projectJson.static_review, projectConfig);
+  normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
 
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
@@ -883,6 +918,150 @@ export function validateCommandEnvConfig(projectJson: RawProjectJson, projectCon
       throw new Error(`${projectConfig}: command_env.domains key "${domain}" is invalid`);
     }
     validateEnvironmentMutation(mutation, `command_env.domains.${domain}`, projectConfig);
+  }
+}
+
+/** Validate and project the static-review config without resolving the template catalog. */
+export function normalizeRawStaticReview(
+  raw: unknown,
+  projectConfig: string,
+): ProjectConfig['staticReview'] {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${projectConfig}: static_review must be an object`);
+  }
+  const config = raw as Record<string, unknown>;
+  if (
+    Object.keys(config).some(
+      (key) => !['template_id', 'instruction_files', 'domain', 'support'].includes(key),
+    )
+  ) {
+    throw new Error(
+      `${projectConfig}: static_review only accepts template_id, instruction_files, domain and support`,
+    );
+  }
+  if (
+    config.template_id !== undefined &&
+    (typeof config.template_id !== 'string' || !/^\S+$/.test(config.template_id))
+  ) {
+    throw new Error(
+      `${projectConfig}: static_review.template_id must be a non-empty catalog id without whitespace`,
+    );
+  }
+  if (
+    config.instruction_files !== undefined &&
+    (!Array.isArray(config.instruction_files) ||
+      config.instruction_files.some((file) => typeof file !== 'string' || !file.trim()))
+  ) {
+    throw new Error(
+      `${projectConfig}: static_review.instruction_files must be an array of non-empty strings`,
+    );
+  }
+  if (
+    config.domain !== undefined &&
+    (typeof config.domain !== 'string' || !isValidDomainName(config.domain))
+  )
+    throw new Error(`${projectConfig}: static_review.domain must be a valid domain`);
+  if (config.support !== undefined) validateStaticReviewSupport(config.support, projectConfig);
+  return {
+    ...(config.domain !== undefined ? { domain: config.domain as string } : {}),
+    ...(config.support !== undefined
+      ? { support: structuredClone(config.support) as ReviewWorkspaceSupportConfig }
+      : {}),
+    ...(config.template_id !== undefined ? { templateId: config.template_id as string } : {}),
+    ...(config.instruction_files !== undefined
+      ? { instructionFiles: [...(config.instruction_files as string[])] }
+      : {}),
+  };
+}
+
+export function validateStaticReviewSupport(
+  raw: unknown,
+  projectConfig: string,
+): asserts raw is ReviewWorkspaceSupportConfig {
+  const object = (value: unknown, allowed: string[], field: string): Record<string, unknown> => {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).some((key) => !allowed.includes(key))
+    )
+      throw new Error(`${projectConfig}: ${field} has unsupported fields or is not an object`);
+    return value as Record<string, unknown>;
+  };
+  const config = object(
+    raw,
+    ['skills', 'libraries', 'runtime', 'environment'],
+    'static_review.support',
+  );
+  for (const kind of ['skills', 'libraries', 'runtime'] as const) {
+    if (config[kind] === undefined) continue;
+    if (kind !== 'runtime' && !Array.isArray(config[kind]))
+      throw new Error(`${projectConfig}: static_review.support.${kind} must be an array`);
+    const sources = kind === 'runtime' ? [config[kind]] : (config[kind] as unknown[]);
+    const names = new Set<string>();
+    for (const item of sources) {
+      const field = `static_review.support.${kind}`;
+      const source = object(
+        item,
+        ['name', 'root', 'subpath', ...(kind === 'libraries' ? [] : ['entry'])],
+        field,
+      );
+      if (
+        typeof source.name !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(source.name) ||
+        names.has(source.name)
+      )
+        throw new Error(`${projectConfig}: ${field} requires unique safe names`);
+      names.add(source.name);
+      validateExecutionTemplatesConfig(
+        {
+          execution_templates: {
+            sources: [
+              {
+                id: source.name,
+                kind: 'workspace',
+                root: source.root,
+                ...(source.subpath !== undefined ? { subpath: source.subpath } : {}),
+              },
+            ],
+          },
+        } as RawProjectJson,
+        projectConfig,
+      );
+      if (kind !== 'libraries') {
+        if (typeof source.entry !== 'string')
+          throw new Error(`${projectConfig}: ${field}.entry must be a relative file`);
+        validateSafeRelativePath(source.entry, `${field}.entry`, projectConfig);
+        if (
+          source.entry.split(/[\\/]/).some((part) => !part || part === '.') ||
+          /[\0\r\n]/.test(source.entry)
+        )
+          throw new Error(`${projectConfig}: ${field}.entry must be a confined relative file`);
+        if (kind === 'skills' && /[\\/]/.test(source.entry))
+          throw new Error(`${projectConfig}: skill entry must be at its source root`);
+        if (kind === 'runtime' && !/\.(js|mjs|cjs)$/.test(source.entry))
+          throw new Error(`${projectConfig}: runtime entry must be compiled Node code`);
+      }
+    }
+  }
+  if (config.environment !== undefined) {
+    if (
+      !config.environment ||
+      typeof config.environment !== 'object' ||
+      Array.isArray(config.environment)
+    )
+      throw new Error(`${projectConfig}: support environment must be an object`);
+    for (const [name, value] of Object.entries(config.environment)) {
+      if (
+        !ENV_NAME_RE.test(name) ||
+        ['PATH', 'NODE_OPTIONS', 'NODE_PATH', 'GIT_CEILING_DIRECTORIES'].includes(name) ||
+        typeof value !== 'string' ||
+        value.includes('\0') ||
+        /{{(?!support}})/.test(value)
+      )
+        throw new Error(`${projectConfig}: unsupported support environment binding ${name}`);
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,7 +10,7 @@ import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatc
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { PRRepairDispatcher } from './dispatch.js';
-import { planMonitorRepair } from './repair-plan.js';
+import { type ManualRepairSelection, planMonitorRepair } from './repair-plan.js';
 import { PRMonitorStore } from './store.js';
 
 const execution = {
@@ -91,6 +91,35 @@ async function fixture(t: test.TestContext) {
     },
   };
 }
+
+test('manual repair rejects workspace review authority without mutating the monitor', async (t) => {
+  const { store, monitor } = await fixture(t);
+  const before = store.get(monitor.id, 'owner');
+  await assert.rejects(
+    store.ensureRepair(monitor.id, 'owner', {
+      project: 'project',
+      execution: {
+        workspacePolicy: { kind: 'exact', machine: 'review-node' },
+        models: execution.models,
+      },
+    } as unknown as ManualRepairSelection),
+    /must use a slot policy/,
+  );
+  assert.deepEqual(store.get(monitor.id, 'owner'), before);
+  assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === monitor.id));
+});
+
+test('persisted repair requests reject workspace authority on reload', async (t) => {
+  const { store, monitor, file } = await fixture(t);
+  await store.ensureRepair(monitor.id, 'owner', { project: 'project', execution });
+  const persisted = JSON.parse(await readFile(file, 'utf8'));
+  persisted.monitors[0].repairs[0].execution = {
+    workspacePolicy: { kind: 'pool', allowedMachines: ['review-node'] },
+    models: execution.models,
+  };
+  await writeFile(file, JSON.stringify(persisted));
+  await assert.rejects(PRMonitorStore.load(file), /must use a slot policy/);
+});
 
 test('active PR work prevents planning a new automatic repair', async (t) => {
   const { store, monitor, dispatcher } = await fixture(t);

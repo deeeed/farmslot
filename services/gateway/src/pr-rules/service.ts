@@ -16,6 +16,7 @@ import {
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
+import { loadProjectConfig } from '../fleet/state.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { getAllRuns } from '../runs/store.js';
@@ -152,10 +153,29 @@ export class PRRuleService {
     this.assertAuthorized(ownerId);
     const rule = this.store.rule(id, ownerId);
     const team = this.store.team(rule.config.teamId, ownerId);
+    const scan = target
+      ? await this.collectTarget(team, rule, target)
+      : await this.collect(team, rule);
+    const mappedProjects = new Set(
+      scan.subjects.flatMap((subject) => {
+        const project = team.config.repositories.find(
+          (policy) => policy.repo.toLowerCase() === subject.pr.repo.toLowerCase(),
+        )?.project;
+        return project ? [project] : [];
+      }),
+    );
+    const projects = new Map(
+      await Promise.all(
+        [...mappedProjects].map(
+          async (project) => [project, await loadProjectConfig(project)] as const,
+        ),
+      ),
+    );
     const result = buildPRRulePreview(
       team,
       rule,
-      target ? await this.collectTarget(team, rule, target) : await this.collect(team, rule),
+      scan,
+      Object.fromEntries([...projects].map(([name, project]) => [name, project?.workflowDefaults])),
     );
     const validations = new Map<string, string[]>();
     const reviewAction = rule.config.actions.find((action) => action.kind === 'review');
@@ -175,7 +195,9 @@ export class PRRuleService {
         let errors = validations.get(key);
         if (!errors) {
           errors = (
-            await resolvePRExecution(item.project, item.subject.pr.repo, [profile.execution])
+            await resolvePRExecution(item.project, item.subject.pr.repo, [profile.execution], {
+              ownerId,
+            })
           ).errors;
           validations.set(key, errors);
         }
@@ -565,6 +587,10 @@ export class PRRuleService {
       const scan = await this.collectSubmission(team, submission.request.pr);
       if (!scan.complete || scan.subjects.length !== 1)
         throw new Error(scan.errors.join('; ') || 'Requested PR observation is incomplete');
+      const projectName = team.config.repositories.find(
+        (policy) => policy.repo.toLowerCase() === submission.request.pr.repo.toLowerCase(),
+      )?.project;
+      const project = projectName ? await loadProjectConfig(projectName) : null;
       const item = buildPRReviewPreviewItem(
         team,
         scan.subjects[0],
@@ -581,11 +607,16 @@ export class PRRuleService {
           execution: submission.request.execution,
           review: submission.request.review,
         },
+        project?.workflowDefaults,
+        'request',
       );
       if (item.project && item.execution)
         item.configurationErrors.push(
-          ...(await resolvePRExecution(item.project, item.subject.pr.repo, [item.execution]))
-            .errors,
+          ...(
+            await resolvePRExecution(item.project, item.subject.pr.repo, [item.execution], {
+              ownerId,
+            })
+          ).errors,
         );
       this.assertAuthorized(ownerId);
       result = { item };

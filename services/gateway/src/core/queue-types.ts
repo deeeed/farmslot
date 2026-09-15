@@ -14,6 +14,7 @@ export type InternalDispatchQueueAddParams = DispatchQueueAddParams &
     | 'launchSlotPolicy'
     | 'launchAttempt'
     | 'executionTemplate'
+    | 'workflowExecution'
   > & {
     autoDispatch?: boolean;
   };

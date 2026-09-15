@@ -8,6 +8,29 @@ import {
   withMachineEnv,
 } from './project-env.js';
 
+test('frozen launch bindings override slot paths before expansion without hiding other unresolved values', () => {
+  const project = {
+    command_env: {
+      unset: ['LIBRARY'],
+      domains: { trading: { set: { LIBRARY: '{{slot_library}}', DOMAIN: 'trading' } } },
+    },
+  };
+  assert.deepEqual(
+    resolveProjectCommandEnv(project, {
+      domain: 'trading',
+      overrides: { LIBRARY: '/frozen/library' },
+    }),
+    {
+      unset: [],
+      set: { LIBRARY: '/frozen/library', DOMAIN: 'trading' },
+    },
+  );
+  assert.throws(
+    () => resolveProjectCommandEnv(project, { domain: 'trading', overrides: { OTHER: '/frozen' } }),
+    /unresolved placeholder/,
+  );
+});
+
 test('command_env with no domain preserves the existing base output', () => {
   const project = {
     command_env: {

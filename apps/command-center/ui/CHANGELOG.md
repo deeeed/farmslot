@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Launch static PR reviews on configured machines, inherit farm defaults, and keep on-device review on runtime slots.
+
 - Explain dispatch settings in a collapsible guide and field hints; match the worker-interface choice to existing buttons and reset unsupported Conversation selections to Terminal.
 
 - The run page keeps its direct `run.get` copy when the shared list row has trimmed decision payloads and renders the gate, review and recipe panels from it, refetching when the row moves on; gate approvals and step replays are no longer paused behind "Run refresh failed" on large fleets.

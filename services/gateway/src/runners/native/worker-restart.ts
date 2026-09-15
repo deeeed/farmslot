@@ -24,7 +24,7 @@ export async function restartNativeWorkerContexts(
     const binding = context.nativeSession;
     if (!binding) continue;
     if (!binding.closedAt && !binding.releasedAt) throw new Error('Native stop was not confirmed');
-    await unwatchContext(context.slotId, context.id, { expectedRunId: runId });
+    if (context.slotId) await unwatchContext(context.slotId, context.id, { expectedRunId: runId });
     assertCurrent();
     const updated = updateRunAgentContexts(runId, (_current, contexts) =>
       contexts.map((latest) => {

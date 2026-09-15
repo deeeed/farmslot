@@ -2,6 +2,8 @@ import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
 import type { FailureCategory } from './chat.js';
 import type { ProjectExecutionTemplatesConfig } from './execution-templates.js';
+import type { PRExecutionProfile, PRWorkspaceExecutionProfile } from './pr-monitoring.js';
+import type { PRReviewOptions } from './pr-rules.js';
 import type { ResourceDefinition, SlotActionDefinition } from './resources.js';
 import type { FlowType } from './runs.js';
 import type { ProjectRuntimeCapabilitiesConfig } from './runtime-capabilities.js';
@@ -9,6 +11,22 @@ import type { PoolSlotMode } from './slots.js';
 import type { TaskSchema } from './task.js';
 
 // ─── Config ───
+
+export interface PRWorkflowPolicy {
+  execution?: PRExecutionProfile;
+  review?: PRReviewOptions;
+}
+
+/** Farm defaults for static review. Explicit full-live requests keep their slot policies. */
+export interface ProjectWorkflowDefaults {
+  'review-pr'?: { execution?: PRWorkspaceExecutionProfile; review?: PRReviewOptions };
+}
+
+export type PRWorkflowDefaultSource = 'request' | 'rule' | 'repository' | 'team' | 'farm';
+export interface PRWorkflowDefaultSources {
+  execution: PRWorkflowDefaultSource | null;
+  review: PRWorkflowDefaultSource | 'built-in';
+}
 
 export interface PoolConfig {
   machine: string;
@@ -18,6 +36,8 @@ export interface PoolConfig {
   host: string;
   sshUser: string;
   tmuxWorkers?: TmuxWorkerFilterConfig;
+  /** Machine-owned opt-in capacity for static reviews without slots. */
+  reviewWorkspaces?: { maxConcurrent: number };
   slots: Array<{
     id: string;
     enabled: boolean;
@@ -149,6 +169,7 @@ export interface ProjectConfig {
   apps?: string[];
   paths: { runtimeDir: string; artifactDir: string };
   defaults: Record<string, { runner: string; model: string }>;
+  workflowDefaults?: ProjectWorkflowDefaults;
   hooks: Record<string, string | Record<string, string>>;
   health: Record<string, string>;
   ci: {
@@ -208,6 +229,13 @@ export interface ProjectConfig {
   backlog?: ProjectBacklogConfig;
   roadmap?: ProjectRoadmapConfig;
   prepare?: ProjectPrepareConfig;
+  /** Canonical static-review template and compatible frozen fixture guidance. */
+  staticReview?: {
+    templateId?: string;
+    instructionFiles?: string[];
+    domain?: string;
+    support?: import('./review-workspace.js').ReviewWorkspaceSupportConfig;
+  };
   /** Project-owned resources that may be leased after core prepare. */
   runtimeCapabilities?: ProjectRuntimeCapabilitiesConfig;
   /** Project-owned non-LLM commands addressable by scripted.commandRef. */

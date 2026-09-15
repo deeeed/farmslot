@@ -5,7 +5,11 @@ import type {
   PRTriggerRuleConfig,
 } from '../contracts/pr-rules.js';
 
-import { assertMonitoredPRIdentity, assertPRExecutionProfile } from './pr-monitoring.js';
+import {
+  assertMonitoredPRIdentity,
+  assertPRExecutionProfile,
+  assertPRSlotExecutionProfile,
+} from './pr-monitoring.js';
 import { assertPRImportedProjectView, parsePRProjectURL } from './pr-project-import.js';
 import { assertPRRulePredicate } from './pr-rule-predicates.js';
 
@@ -201,7 +205,7 @@ export function assertPRTriggerRuleConfig(value: unknown): asserts value is PRTr
       if (action.policy.mode === 'notify-only') keys(action.policy, ['mode']);
       else if (action.policy.mode === 'automatic-repair') {
         keys(action.policy, ['mode', 'execution']);
-        assertPRExecutionProfile(action.policy.execution);
+        assertPRSlotExecutionProfile(action.policy.execution);
       } else throw new Error('Unsupported monitor policy');
     } else throw new Error('Unsupported rule action');
   }

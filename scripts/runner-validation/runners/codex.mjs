@@ -4,10 +4,72 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
+import { listSessionCandidates, runnerSessionIdForPath } from '../lib/session-attribution.mjs';
 
 export const RUNNER_ID = 'codex';
 export const OBSERVABILITY_SCOPE = 'event-driven';
 export const OBSERVABILITY_TRANSPORT = 'hooks';
+
+/** Pause the real native server before startup so gateway launch recovery can be exercised. */
+export function prepareLaunchBarrier(directory) {
+  const executable = execFileSync('which', ['codex'], { encoding: 'utf8' }).trim();
+  const marker = path.join(directory, 'native-launch.json');
+  const release = path.join(directory, 'native-launch-release');
+  fs.writeFileSync(
+    path.join(directory, 'codex'),
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+if (args[0] === 'app-server' && !fs.existsSync(${JSON.stringify(release)})) {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid, args }));
+  const deadline = Date.now() + 30000;
+  while (!fs.existsSync(${JSON.stringify(release)})) {
+    if (Date.now() >= deadline) throw new Error('Native launch barrier timed out');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+}
+const result = spawnSync(${JSON.stringify(executable)}, args, { stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
+  return { marker, release };
+}
+
+/** Code-mode failures can lack item/commandExecution events. Read their structured tool receipt. */
+export function readCommandProbe({ repo, sessionId, command }) {
+  const files = listSessionCandidates(RUNNER_ID, repo).filter(
+    (file) => runnerSessionIdForPath(RUNNER_ID, file) === sessionId,
+  );
+  if (files.length !== 1)
+    throw new Error('Expected one native transcript for the reviewed workspace');
+  const rows = fs
+    .readFileSync(files[0], 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line).payload);
+  const call = rows.find(
+    (row) =>
+      row.type === 'custom_tool_call' &&
+      row.name === 'exec' &&
+      typeof row.input === 'string' &&
+      row.input.includes(JSON.stringify(command)),
+  );
+  if (!call) throw new Error('Native transcript has no command probe call');
+  const output = rows.find(
+    (row) => row.type === 'custom_tool_call_output' && row.call_id === call.call_id,
+  );
+  if (!Array.isArray(output?.output))
+    throw new Error('Native command probe has no structured output');
+  const receipts = output.output
+    .filter((entry) => entry.type === 'input_text' && entry.text.trim().startsWith('{'))
+    .map((entry) => JSON.parse(entry.text));
+  const result = receipts.find((entry) => Number.isInteger(entry.exit_code));
+  if (!result) throw new Error('Native command probe has no structured exit code');
+  return { sessionId, callId: call.call_id, command, exitCode: result.exit_code, source: files[0] };
+}
 
 export const REGISTERED_EVENTS = [
   'SessionStart',

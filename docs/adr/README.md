@@ -1,8 +1,8 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-12
-**Stale by:** 2026-10-12
+**Last updated:** 2026-09-15
+**Stale by:** 2026-10-15
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
@@ -64,3 +64,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [055](055-persistent-pr-monitoring-and-review-intake.md) | Persistent PR monitoring and review intake                              | Proposed |
 | [056](056-runner-session-archive.md)                     | Opaque runner session archive at recycle (ADR-047 follow-up)            | Accepted |
 | [057](057-structured-runner-transports.md)               | Structured runner transports                                            | Accepted |
+| [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |

@@ -1,5 +1,6 @@
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
+  isPRWorkspaceExecutionChoice,
   type PRExecutionChoice,
   type PRReviewIntent,
   type Run,
@@ -55,6 +56,7 @@ export function preferRetainedReviewer(
   );
   const retained = choices.filter(
     (choice) =>
+      !isPRWorkspaceExecutionChoice(choice) &&
       resolveRepeatReviewResumePlan(
         {
           ...identity,

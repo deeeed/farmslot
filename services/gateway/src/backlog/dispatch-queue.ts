@@ -8,20 +8,29 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  assertPRExecutionProfile,
   type DispatchQueueUpdateParams,
+  isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
   normalizeRunTags,
   parseNativeProfileReference,
   type PressureAdmissionDecision,
   type PRExecutionChoice,
+  prExecutionChoices,
+  type PRSlotExecutionChoice,
   type QueueClaim,
   type QueueItem,
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
+import {
+  isNodeTransportUnavailableError,
+  type NodeTransportUnavailableError,
+} from '../fleet/node-rpc.js';
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
@@ -30,9 +39,18 @@ import {
   resolveDispatchPreviewFromFleet,
 } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import {
+  assertReviewWorkspaceAdmitted,
+  assertReviewWorkspacePlacement,
+  inspectReviewWorkspaceTarget,
+} from '../review-workspaces/admission.js';
+import { constrainDirectWorkflowExecution } from '../review-workspaces/direct-defaults.js';
 import { normalizeRunner } from '../runners/registry.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
-import { requireNativeProfileOwner } from '../security/native-worker-owner.js';
+import {
+  requireNativeProfileOwner,
+  resolveReviewWorkspaceOwner,
+} from '../security/native-worker-owner.js';
 import { runWithSystemOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 import { preparePRQueueAdmission } from './pr-admission.js';
@@ -416,6 +434,7 @@ export function addItem(
   params: InternalDispatchQueueAddParams,
   originator: WorkOriginator,
 ): QueueItem {
+  if (params.workflowExecution) assertPRExecutionProfile(params.workflowExecution);
   const transport =
     params.transport ?? (params.parentRunId ? getRun(params.parentRunId)?.transport : undefined);
   if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
@@ -428,7 +447,14 @@ export function addItem(
   if (nativeProfile && params.runner && normalizeRunner(params.runner) !== nativeProfile.runner)
     throw new Error('Selected native profile belongs to another worker runner');
   if (transport === 'native') {
-    requireNativeProfileOwner(originator.kind === 'principal' ? originator.principalId : undefined);
+    if (params.reviewWorkspaceTarget)
+      resolveReviewWorkspaceOwner(
+        originator.kind === 'principal' ? originator.principalId : undefined,
+      );
+    else
+      requireNativeProfileOwner(
+        originator.kind === 'principal' ? originator.principalId : undefined,
+      );
     if (params.queueKind && params.queueKind !== 'dispatch')
       throw new Error('Native worker transport is only supported for dispatch queue items');
   }
@@ -504,6 +530,12 @@ export function addItem(
     ticketData: params.ticketData,
     devChecklist: params.devChecklist,
     slotId: params.slotId,
+    reviewWorkspaceTarget: params.reviewWorkspaceTarget
+      ? structuredClone(params.reviewWorkspaceTarget)
+      : undefined,
+    ...(params.workflowExecution
+      ? { workflowExecution: structuredClone(params.workflowExecution) }
+      : {}),
     allowedSlots: normalizeAllowedSlots(params.allowedSlots),
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
@@ -822,6 +854,15 @@ export function updateItem(
   if (item.status !== 'queued') {
     throw new Error(`Cannot update queue item ${params.itemId}: item is ${item.status}`);
   }
+  const workflowExecution =
+    item.workflowExecution && (params.slotId !== undefined || params.allowedSlots !== undefined)
+      ? constrainDirectWorkflowExecution(item.workflowExecution, {
+          flowType: item.flowType,
+          project: item.project,
+          slotId: params.slotId ?? undefined,
+          allowedSlots: params.allowedSlots ?? undefined,
+        })
+      : item.workflowExecution;
   if (params.priority !== undefined) item.priority = params.priority;
   if (params.label !== undefined) item.label = params.label;
   if (params.slotId !== undefined) item.slotId = params.slotId ?? undefined;
@@ -829,6 +870,7 @@ export function updateItem(
     assertAllowedSlots(params.allowedSlots, 'update queue dispatch');
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
   }
+  if (workflowExecution) item.workflowExecution = workflowExecution;
   setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();
@@ -917,8 +959,17 @@ export function buildQueuePreviewParams(item: QueueItem) {
       : undefined;
   return {
     slotId: item.slotId,
+    ...(item.reviewWorkspaceTarget !== undefined
+      ? { reviewWorkspaceTarget: item.reviewWorkspaceTarget }
+      : {}),
+    ...(item.runner !== undefined ? { runner: item.runner } : {}),
+    ...(item.model !== undefined ? { model: item.model } : {}),
+    ...(item.effort !== undefined ? { effort: item.effort } : {}),
+    ...(item.transport !== undefined ? { transport: item.transport } : {}),
+    ...(item.nativeProfile !== undefined ? { nativeProfile: item.nativeProfile } : {}),
     project: item.project,
     flowType: item.flowType,
+    reviewValidationDepth: item.reviewValidationDepth,
     ticketOrPr: item.ticketOrPr,
     familyId: item.familyId,
     lane: item.lane,
@@ -1072,8 +1123,10 @@ export async function selectPRQueueExecution(
   item: QueueItem,
   choices: PRExecutionChoice[],
 ): Promise<string | null> {
-  const groups = new Map<string, PRExecutionChoice[]>();
-  for (const choice of choices) {
+  const groups = new Map<string, PRSlotExecutionChoice[]>();
+  for (const choice of choices.filter(
+    (entry): entry is PRSlotExecutionChoice => !isPRWorkspaceExecutionChoice(entry),
+  )) {
     const key = JSON.stringify([choice.runner, choice.model, choice.effort]);
     groups.set(key, [...(groups.get(key) ?? []), choice]);
   }
@@ -1122,6 +1175,75 @@ export async function selectPRQueueExecution(
 }
 
 // ─── Auto-dispatch ───
+
+async function selectQueuedReviewWorkspace(
+  item: QueueItem,
+  claim: QueueClaim,
+  choices?: PRExecutionChoice[],
+): Promise<boolean> {
+  const owner = queueRecordOriginator(item.id);
+  if (owner?.kind !== 'principal')
+    throw new GatewayMethodError('AUTH_FORBIDDEN', 'Workspace review has no retained principal');
+  const candidates = choices
+    ? choices.filter(isPRWorkspaceExecutionChoice)
+    : item.reviewWorkspaceTarget
+      ? [
+          {
+            machine: item.reviewWorkspaceTarget.machine,
+            runner: item.runner ?? '',
+            model: item.model ?? '',
+            effort: item.effort,
+            transport: item.transport,
+            nativeProfile: item.nativeProfile,
+          },
+        ]
+      : [];
+  if (!candidates.length)
+    throw new GatewayMethodError(
+      'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
+      'Select an authorized review machine; static Review cannot consume a device slot',
+    );
+  let reason: GatewayMethodError | NodeTransportUnavailableError | undefined;
+  let waitingReason: GatewayMethodError | undefined;
+  for (const choice of candidates) {
+    let eligible = false;
+    try {
+      const proposed = { ...item, reviewWorkspaceTarget: { machine: choice.machine } };
+      assertReviewWorkspacePlacement(proposed);
+      const admission = await inspectReviewWorkspaceTarget(
+        {
+          project: item.project,
+          machine: choice.machine,
+          runner: choice.runner,
+          model: choice.model,
+          effort: choice.effort,
+          transport: choice.transport,
+          nativeProfile: choice.nativeProfile,
+        },
+        owner.principalId,
+      );
+      eligible = true;
+      assertQueueClaimHeld(claim, 'workspace-selection');
+      assertReviewWorkspaceAdmitted(admission);
+      item.reviewWorkspaceTarget = { machine: choice.machine };
+      item.runner = choice.runner;
+      item.model = choice.model;
+      item.effort = choice.effort;
+      item.transport = choice.transport;
+      item.nativeProfile = choice.nativeProfile;
+      item.executionTemplateId = admission.project.staticReview!.templateId;
+      return true;
+    } catch (error) {
+      if (!(error instanceof GatewayMethodError) && !isNodeTransportUnavailableError(error))
+        throw error;
+      // Each candidate is explicitly authorized. An unavailable one may yield to the next listed choice.
+      if (eligible && error instanceof GatewayMethodError) waitingReason ??= error;
+      reason = error;
+    }
+  }
+  if (waitingReason ?? reason) throw waitingReason ?? reason;
+  return false;
+}
 
 export function canDispatchQueuedItemToSlot(slot: SlotStatus): boolean {
   // Ghost slots (absent from live pools) fail run creation with SLOT_NOT_FOUND.
@@ -1215,7 +1337,9 @@ async function tryDispatchNextOnce(): Promise<void> {
   for (const pendingItem of pending) {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
-    let prChoices: PRExecutionChoice[] | undefined;
+    let prChoices: PRExecutionChoice[] | undefined = item.workflowExecution
+      ? prExecutionChoices(item.workflowExecution)
+      : undefined;
     if (item.prWork) {
       const admission = await preparePRQueueAdmission(item);
       if (!liveQueuedItem(item.id)) continue;
@@ -1246,14 +1370,25 @@ async function tryDispatchNextOnce(): Promise<void> {
     if (!claim) continue;
 
     let slot: SlotStatus | undefined;
+    let workspaceSelected = false;
     try {
-      const selectionSlots = prChoices ? (await loadFleetStatus()).slots : fleet.slots;
-      const slotId = prChoices
-        ? await selectPRQueueExecution(selectionSlots, item, prChoices)
-        : await selectQueueDispatchSlot(selectionSlots, item);
+      if (
+        (item.flowType === 'review-pr' && item.reviewValidationDepth !== 'full-live') ||
+        item.reviewWorkspaceTarget
+      ) {
+        workspaceSelected = await selectQueuedReviewWorkspace(item, claim, prChoices);
+      } else {
+        const selectionSlots = prChoices ? (await loadFleetStatus()).slots : fleet.slots;
+        const slotId = prChoices
+          ? await selectPRQueueExecution(selectionSlots, item, prChoices)
+          : await selectQueueDispatchSlot(selectionSlots, item);
+        slot = selectionSlots.find((s) => s.slot === slotId);
+      }
       if (stopIfClaimLost(claim, 'slot-selection')) return;
-      slot = selectionSlots.find((s) => s.slot === slotId);
     } catch (error) {
+      item.waitingReason = error instanceof Error ? error.message : String(error);
+      schedulePersist('execution-selection-wait');
+      broadcastQueue();
       releaseQueueClaim(claim, { quiet: true });
       console.debug(
         `[dispatch-queue] skipping queued item ${item.id.slice(0, 8)}: ${(error as Error).message}`,
@@ -1261,7 +1396,7 @@ async function tryDispatchNextOnce(): Promise<void> {
       continue;
     }
 
-    if (!slot || !canDispatchQueuedItemToSlot(slot)) {
+    if (!workspaceSelected && (!slot || !canDispatchQueuedItemToSlot(slot))) {
       if (
         item.prWork &&
         item.waitingReason !== 'Waiting for an allowed slot and model to become available'
@@ -1275,13 +1410,15 @@ async function tryDispatchNextOnce(): Promise<void> {
     }
     if (stopIfClaimLost(claim, 'slot-eligibility')) return;
 
-    item.slotId = slot.slot;
+    if (slot) item.slotId = slot.slot;
     delete item.waitingReason;
     // Promote the quiet claim: one durable write + broadcast for the real dispatch.
     renewQueueClaim(claim);
     schedulePersist('mark-dispatching');
     broadcastQueue();
-    console.log(`[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → slot ${slot.slot}`);
+    console.log(
+      `[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → ${workspaceSelected ? `workspace on ${item.reviewWorkspaceTarget!.machine}` : `slot ${slot!.slot}`}`,
+    );
 
     // Re-validate + renew before entering createAndStartRun so long pre-create
     // work cannot expire an uncontested claim; callback re-validates again

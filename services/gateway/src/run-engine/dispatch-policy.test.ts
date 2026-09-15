@@ -117,3 +117,11 @@ test('resolveCIWatchChainFlowType maps dispatch actions to follow-up flows', () 
   assert.equal(resolveCIWatchChainFlowType('skip'), null);
   assert.equal(resolveCIWatchChainFlowType(undefined), null);
 });
+
+test('runtime review depth reaches the slot-selection preview', () => {
+  const params = buildDispatchPreviewParamsForRun(
+    makeRun({ flowType: 'review-pr', reviewValidationDepth: 'full-live', slotId: 'runtime' }),
+  );
+  assert.equal(params.reviewValidationDepth, 'full-live');
+  assert.equal(params.slotId, 'runtime');
+});
