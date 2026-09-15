@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
-import type { PRRulePreview, PRRuleSubject, PRStatus } from '@farmslot/protocol';
+import type { PRListResult, PRRulePreview, PRRuleSubject, PRStatus } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import './pr-card.js';
@@ -179,6 +179,7 @@ export class PRBoard extends LitElement {
   private _detailSerial = 0;
   private _didInitialUpdate = false;
   @state() private _loading = false;
+  @state() private _gatewayRefreshing = false;
   @state() private _lastRefreshed = 0;
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _hydrating = false;
@@ -681,6 +682,7 @@ export class PRBoard extends LitElement {
     this._globalFilters = s.globalFilters;
     this._hydrating = isHydrating(s, 'prs');
     this._bootstrapFailed = s.bootstrapFailed.prs;
+    this._gatewayRefreshing = s.prsRefreshing;
     if (s.prsUpdatedAt > this._lastRefreshed) this._lastRefreshed = s.prsUpdatedAt;
     // Legacy URLs (bare `pr=123` without repo) can't be resolved until the
     // PR list lands. Re-run _readUrl once PRs arrive so a cold-reload on a
@@ -697,22 +699,23 @@ export class PRBoard extends LitElement {
     }
   }
 
-  private async _fetchPRs() {
+  private async _fetchPRs(force = false) {
     // Never race the shared bootstrap PR_LIST. This single gate covers
     // every caller: mount-time, hydration-complete transition, 60s poll,
     // and the manual Refresh button. `state.ts#fetchInitialState` owns
     // PR_LIST during the hydrating window and will update shared state.
+    // The gateway answers from its warm list; `force` (manual Refresh)
+    // makes it re-fetch from GitHub before replying.
     if (this._hydrating || this._loading) return;
     this._loading = true;
     try {
-      const result = await gateway.request<{ prs: PRStatus[] }>(
+      const result = await gateway.request<PRListResult>(
         Methods.PR_LIST,
-        {},
+        force ? { force: true } : {},
         PR_LIST_TIMEOUT_MS,
       );
-      updatePRs(result.prs);
+      updatePRs(result.prs, { fetchedAt: result.fetchedAt, refreshing: result.refreshing });
       this._lastRefreshError = null;
-      this._lastRefreshed = Date.now();
     } catch (err) {
       // Recover explicitly: retain the last known PR list but mark the slice
       // failed so the board shows the stale-data banner and retries on the
@@ -738,7 +741,7 @@ export class PRBoard extends LitElement {
       this._detailRequestKey = '';
       this._detailSerial++;
       this._detailLoading = false;
-      void this._fetchPRs();
+      void this._fetchPRs(true);
     }
   }
 
@@ -1233,7 +1236,8 @@ export class PRBoard extends LitElement {
                   ? ` · ${this._hiddenTerminalCount} merged/closed hidden`
                   : ''
               }`}</span
-        >${this._renderScopeSummary()}${this._loading && this._prs.length
+        >${this._renderScopeSummary()}${(this._loading || this._gatewayRefreshing) &&
+        this._prs.length
           ? html`<span class="refresh-ago refreshing" role="status" aria-busy="true"
               >Fetching PR info…</span
             >`

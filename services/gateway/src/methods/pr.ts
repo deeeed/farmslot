@@ -49,6 +49,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { GitHubQueryBudgetError } from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
+import { servePRList } from './pr/list-cache.js';
 import {
   getPRRawData,
   parseJsonLines,
@@ -155,7 +156,24 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
 
 // ─── prList — native TS ───
 
+/**
+ * Serve the dashboard list from the gateway's warm copy (see list-cache.ts);
+ * the full GitHub fan-out runs cold, on `force`, or in the background once the
+ * copy is older than PR_LIST_STALE_MS. Project scoping filters the warm list so
+ * every caller shares one fetch.
+ */
 export async function prList(params?: PRListParams): Promise<PRListResult> {
+  const served = await servePRList(fetchPRList, { force: params?.force });
+  if (!params?.project) return served;
+  // Match on the PR's resolved project (PRStatus.project), not repo slug.
+  // Projects whose internal name differs from their GitHub owner/name
+  // (e.g. my-app-farm → owner/my-app) would drop out of the
+  // project-filtered dashboard if we substring-matched on repo.
+  return { ...served, prs: served.prs.filter((p) => p.project === params.project) };
+}
+
+/** Full GitHub fan-out: discover candidate PRs from slots and runs, then fetch each. */
+export async function fetchPRList(): Promise<PRStatus[]> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
   const prInfo = new Map<number, PRDashboardEntry>();
@@ -219,7 +237,6 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   const now = Date.now();
   for (const run of runByPR.values()) {
     if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
-    if (params?.project && run.project !== params.project) continue;
     if (run.prNumber == null) continue;
     if (prInfo.has(run.prNumber)) continue;
     if (isTerminalRunStatus(run.status)) {
@@ -236,9 +253,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     });
   }
 
-  if (prInfo.size === 0) {
-    return { prs: [] };
-  }
+  if (prInfo.size === 0) return [];
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request
   // per repo. Synthesized snapshots seed `prRawCache`, so the fetchPRData loop
@@ -288,16 +303,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     }),
   );
 
-  let result = prs.filter((p): p is PRStatus => p !== null);
-  result = result.filter(shouldIncludePRInDashboard);
-  if (params?.project) {
-    // Match on the PR's resolved project (PRStatus.project), not repo slug.
-    // Projects whose internal name differs from their GitHub owner/name
-    // (e.g. my-app-farm → owner/my-app) would drop out of the
-    // project-filtered dashboard if we substring-matched on repo.
-    result = result.filter((p) => p.project === params.project);
-  }
-  return { prs: result };
+  return prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard);
 }
 
 // ─── Core PR fetch logic ───

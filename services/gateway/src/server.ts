@@ -811,6 +811,12 @@ export function broadcast(frame: EventFrame, ownerId?: string): void {
   }
 }
 
+/** True while at least one WebSocket client is open; background pollers gate on it. */
+export function hasConnectedClients(): boolean {
+  for (const ws of clients.keys()) if (ws.readyState === WebSocket.OPEN) return true;
+  return false;
+}
+
 export function broadcastEvent(event: string, payload: unknown): void {
   broadcast({
     type: 'event',

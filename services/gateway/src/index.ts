@@ -81,6 +81,8 @@ import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pres
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
+import { fetchPRList } from './methods/pr.js';
+import { loadPRListCache, startPRListRefresher } from './methods/pr/list-cache.js';
 import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
 import { initPRMonitorDispatch, initPRMonitoring } from './methods/pr-watch.js';
@@ -133,6 +135,7 @@ import {
   broadcastEvent,
   broadcastPrincipalEvent,
   createWebSocketServer,
+  hasConnectedClients,
   initServerGlobals,
 } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook, setGitHubRuleEventRouter } from './webhook.js';
@@ -352,6 +355,13 @@ async function main(): Promise<void> {
   // may fire a gh call during startup (run-engine recovery, pr-linkage, etc.).
   initGitHubClient(observedBroadcast);
   loadBindingsCache();
+  // Warm PR dashboard list: serve the last snapshot immediately, refresh in
+  // the background while a client is connected, push changes as pr.list.updated.
+  loadPRListCache();
+  startPRListRefresher(fetchPRList, {
+    broadcast: observedBroadcast,
+    hasClients: hasConnectedClients,
+  });
   // Restore PR ownership before periodic monitoring can perform its first check.
   await loadAllRuns();
   const prMonitoring = await initPRMonitoring(

@@ -59,6 +59,7 @@ export const Events = {
 
   // PR updates
   PR_UPDATED: 'pr.updated',
+  PR_LIST_UPDATED: 'pr.list.updated',
   PR_WATCH_UPDATED: 'prWatch.updated',
   PR_WATCH_POLICY_UPDATED: 'prWatch.policy.updated',
   PR_RULES_UPDATED: 'prRules.updated',
@@ -199,6 +200,12 @@ export interface WorkerSessionHistoryDeltaEventPayload extends WorkerSessionHist
 
 export interface PRUpdatedPayload {
   pr: PRStatus;
+}
+
+/** The gateway's warm PR list changed after a GitHub refresh; replaces the client's list. */
+export interface PRListUpdatedPayload {
+  prs: PRStatus[];
+  fetchedAt: string;
 }
 
 export interface DecisionNewPayload {
