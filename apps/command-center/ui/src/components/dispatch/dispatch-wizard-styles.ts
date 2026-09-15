@@ -42,6 +42,41 @@ export const dispatchWizardStyles = css`
   }
 
   /* ── Sections ── */
+  .dispatch-guide {
+    max-width: 620px;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .dispatch-guide summary {
+    width: fit-content;
+    cursor: pointer;
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .dispatch-guide summary:focus-visible {
+    outline: 2px solid ${unsafeCSS(colors.accent)};
+    outline-offset: 3px;
+  }
+  .dispatch-guide dl {
+    max-height: min(45vh, 360px);
+    overflow-y: auto;
+    margin: 8px 0 0;
+    padding: 12px;
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: 4px;
+    background: ${unsafeCSS(colors.bgCard)};
+  }
+  .dispatch-guide dl > div + div {
+    margin-top: 12px;
+  }
+  .dispatch-guide dt {
+    font-weight: 600;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .dispatch-guide dd {
+    margin: 3px 0 0;
+  }
+
   .section-label {
     font-size: 10px;
     color: ${unsafeCSS(colors.textMuted)};

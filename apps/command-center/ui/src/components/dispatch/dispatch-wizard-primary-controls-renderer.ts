@@ -11,6 +11,7 @@ import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effor
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
+import { DISPATCH_HELP } from './dispatch-wizard-help.js';
 
 type DispatchMode = 'interactive' | 'autonomous';
 type ReviewTier = '' | 'light' | 'standard' | 'full';
@@ -87,7 +88,9 @@ export function renderDispatchWizardPrimaryControls(
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${renderRunnerModelConfig(ctx)}
     <div>
-      <div class="section-label" id="worker-interface-label">Worker interface</div>
+      <div class="section-label" id="worker-interface-label" title=${DISPATCH_HELP.interface.text}>
+        Worker interface
+      </div>
       <div
         class="pill-row"
         role="group"
@@ -133,7 +136,7 @@ export function renderDispatchWizardPrimaryControls(
 function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.ticket.text}>
         Ticket /
         PR${ctx.matchingProject
           ? html` <span
@@ -164,7 +167,7 @@ function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderFlowSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.flow.text}>
         Flow${ctx.autoFlowType
           ? html` <span style="color:${colors.accent}; text-transform:none; letter-spacing:normal"
               >auto</span
@@ -190,7 +193,7 @@ function renderFlowSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderProjectSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
-      <div class="section-label">
+      <div class="section-label" title=${DISPATCH_HELP.project.text}>
         Project${ctx.autoProject
           ? html` <span style="color:${colors.accent}; text-transform:none; letter-spacing:normal"
               >auto</span
@@ -217,7 +220,7 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
   if (!ctx.project || ctx.projectApps.length <= 1) return nothing;
   return html`
     <div>
-      <div class="section-label">App</div>
+      <div class="section-label" title=${DISPATCH_HELP.project.text}>App</div>
       <div class="pill-row">
         ${ctx.projectApps.map(
           (app) => html`
@@ -254,7 +257,7 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
   if (ctx.flowType !== 'review-pr') return nothing;
   return html`
     <div class="config-group">
-      <div class="section-label">Review Tier</div>
+      <div class="section-label" title=${DISPATCH_HELP.review.text}>Review Tier</div>
       <div class="pill-row">
         ${(['', 'light', 'standard', 'full'] as ReviewTier[]).map(
           (tier) => html`
@@ -295,7 +298,7 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
   const profiles = ctx.prepareProfiles;
   return html`
-    <div class="config-group" style="margin-top: 4px">
+    <div class="config-group" style="margin-top: 4px" title=${DISPATCH_HELP.prepare.text}>
       ${profiles.length > 0 ? html`<div class="section-label">Prepare</div>` : nothing}
       <slot-prepare-options
         variant="dispatch"
@@ -322,7 +325,7 @@ function renderInteractiveDevProfile(ctx: DispatchWizardPrimaryControlsRenderCon
   if (ctx.flowType !== 'dev' || ctx.mode !== 'interactive') return nothing;
   return html`
     <div class="config-group">
-      <div class="section-label">Interactive dev</div>
+      <div class="section-label" title=${DISPATCH_HELP.interactive.text}>Interactive dev</div>
       <div class="pill-row">
         <button
           class="pill ${ctx.devInteractiveProfile === 'lightweight' ? 'selected' : ''}"

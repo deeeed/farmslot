@@ -32,6 +32,7 @@ import {
 import { renderDispatchCandidateSelection } from './dispatch-wizard-candidates-renderer.js';
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
+import { renderDispatchHelp } from './dispatch-wizard-help.js';
 import { renderDispatchPressurePanel } from './dispatch-wizard-pressure-renderer.js';
 import { renderDispatchWizardPrimaryControls } from './dispatch-wizard-primary-controls-renderer.js';
 import {
@@ -180,6 +181,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         ? 'rehydrating'
         : ''}"
     >
+      ${renderDispatchHelp()}
       ${renderComparisonFlowPanel({
         comparisonFlow: ctx.comparisonFlow,
         comparisonBaselineSelected,

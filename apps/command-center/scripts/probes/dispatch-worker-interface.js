@@ -2,6 +2,33 @@
 const view = document.querySelector('dispatch-wizard');
 if (!view) throw new Error('Open the Dispatch page');
 const root = view.shadowRoot;
+const guide = root.querySelector('[data-testid=dispatch-guide]');
+if (!guide || guide.open) throw new Error('Dispatch guide must start collapsed');
+const summary = guide.querySelector('summary');
+summary.click();
+if (!guide.open) throw new Error('Dispatch guide did not open');
+const labels = [...guide.querySelectorAll('dt')].map((item) => item.textContent.trim());
+for (const label of [
+  'Dispatch as',
+  'Ticket / PR',
+  'Flow',
+  'Project / App',
+  'Runner / Model / Effort',
+  'Worker interface',
+  'Account profile',
+  'Prepare',
+  'Review Tier / Validation',
+  'Interactive dev',
+  'Slots',
+  'Dispatch / Queue',
+]) {
+  if (!labels.includes(label)) throw new Error('Missing dispatch explanation: ' + label);
+}
+if (!guide.textContent.includes('standalone conversations'))
+  throw new Error('Worker capability limitation is not explained');
+summary.click();
+if (guide.open) throw new Error('Dispatch guide did not close');
+
 const group = root.querySelector('[data-testid=dispatch-transport]');
 if (!group || group.localName !== 'div' || group.getAttribute('role') !== 'group')
   throw new Error('Worker interface must use the shared button group');
@@ -13,7 +40,7 @@ if (root.querySelector('select[data-testid=dispatch-transport]'))
 const originalRunner = view._runner;
 const originalTransport = view._transport;
 const wait = async (check) => {
-  const until = Date.now() + 10000;
+  const until = Date.now() + 30000;
   while (!check()) {
     if (Date.now() > until) throw new Error('Worker interface did not update');
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -69,4 +96,5 @@ return {
   choices: buttons.map((button) => button.textContent.trim()),
   transport: view._transport,
   dispatched: false,
+  helpSections: labels.length,
 };

@@ -1350,7 +1350,11 @@ export class DispatchWizard extends DispatchWizardState {
   private _setRunner(runner: string) {
     if (runner === this._runner) return;
     this._runner = runner;
-    if (this._transport === 'native' && !this._nativeWorkerRunners.includes(runner))
+    if (
+      this._nativeCatalogReady &&
+      this._transport === 'native' &&
+      !this._nativeWorkerRunners.includes(runner)
+    )
       this._setTransport('tmux');
     this._model = DEFAULT_MODEL[runner] ?? '';
     this._effort = '';
