@@ -354,7 +354,10 @@ export class PRCard extends LitElement {
           <span class="pr-number">#${pr.pr}</span>
           <span class="rec-badge" style="background:${rec.bg}; color:${rec.fg}">${rec.label}</span>
           ${pr.author
-            ? html`<span class="pr-author" data-testid="pr-card-author" title="PR author"
+            ? html`<span
+                class="pr-author"
+                data-testid="pr-card-author"
+                title=${`PR author: @${pr.author}`}
                 >@${pr.author}</span
               >`
             : nothing}
