@@ -121,9 +121,11 @@ export function renderDispatchWizardPrimaryControls(
         </button>
       </div>
     </div>
-    ${ctx.nativeCatalogError ? html`<p role="status">${ctx.nativeCatalogError}</p>` : nothing}
+    ${ctx.nativeCatalogError
+      ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
+      : nothing}
     ${ctx.transport === 'native'
-      ? html`<p>
+      ? html`<p class="section-help" data-testid="dispatch-interface-help">
           Messages, tools and approvals appear in Farmslot. The selected runner keeps its own login
           and model.
         </p>`

@@ -76,6 +76,10 @@ try {
   await chooseRunner(supported.runner);
   await choose('tmux');
   await choose('native');
+  if (
+    !root.querySelector('[data-testid=dispatch-interface-help]')?.classList.contains('section-help')
+  )
+    throw new Error('Conversation hint does not match field typography');
   const unsupported = runners.find((runner) => !runner.supportsWorkers);
   if (unsupported) {
     await chooseRunner(unsupported.runner);
