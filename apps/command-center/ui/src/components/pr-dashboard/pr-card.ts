@@ -106,6 +106,13 @@ export class PRCard extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       margin-left: auto;
     }
+
+    .pr-author {
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      overflow-wrap: anywhere;
+    }
     .family-badge {
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: 10px;
@@ -343,6 +350,11 @@ export class PRCard extends LitElement {
         <div class="top-row">
           <span class="pr-number">#${pr.pr}</span>
           <span class="rec-badge" style="background:${rec.bg}; color:${rec.fg}">${rec.label}</span>
+          ${pr.author
+            ? html`<span class="pr-author" data-testid="pr-card-author" title="PR author"
+                >@${pr.author}</span
+              >`
+            : nothing}
           ${pr.slot ? html`<span class="pr-slot">${pr.slot}</span>` : ''}
         </div>
         <div class="pr-title" title="${pr.title}">${pr.title}</div>
