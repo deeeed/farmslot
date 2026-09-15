@@ -61,7 +61,6 @@ import {
 import { familyObservabilityGet, familyReportGenerate } from '../methods/family-observability.js';
 import { intelligenceActionsSummary } from '../methods/intelligence.js';
 import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../methods/operator.js';
-import { rereviewRunOnLatestHead } from '../methods/pr-rules.js';
 import {
   runCreate,
   runInteractiveDevResolve,
@@ -104,6 +103,7 @@ import {
 } from '../methods/run/lifecycle-control.js';
 import { runProposeImprovement } from '../methods/run/propose-improvement.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
+import { runRereviewLatestHead } from '../methods/run/rereview.js';
 import { runSessionCommand } from '../methods/run/session-command.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
 import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
@@ -231,7 +231,7 @@ export async function routeRunMethod(
     case Methods.RUN_REFRESH_REVIEW_GATE:
       return handled(runRefreshReviewGate(p as RunRefreshReviewGateParams, emit));
     case Methods.RUN_REREVIEW_LATEST_HEAD:
-      return handled(rereviewRunOnLatestHead(p as RunRereviewLatestHeadParams));
+      return handled(runRereviewLatestHead(p as RunRereviewLatestHeadParams));
     case Methods.RUN_REFRESH_PUBLISH_PACKAGE:
       return handled(runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit));
     case Methods.RUN_REFRESH_MIRROR:

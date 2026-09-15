@@ -7,7 +7,12 @@
 // diff plus the unresolved findings. The request goes through the same intake
 // as "Request review / QA", so admission, authorization and the queue apply.
 
-import { parseGitHubRef, type PRReviewRequest, type Run } from '@farmslot/protocol';
+import {
+  parseGitHubRef,
+  type PRReviewRequest,
+  type Run,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
 export interface RereviewTeamCandidate {
   id: string;
@@ -64,18 +69,40 @@ export function selectRereviewTeam(
   return pool[0];
 }
 
-export function buildRereviewRequest(
-  run: RereviewRun,
-  teams: readonly RereviewTeamCandidate[],
-  ownerId: string,
-  options: { fallbackRepo?: string; now?: number } = {},
-): PRReviewRequest {
+export function assertRereviewable(run: Pick<Run, 'id' | 'flowType' | 'status'>): void {
   if (run.flowType !== 'review-pr')
     throw new Error(`Run ${run.id} is a ${run.flowType} run, not a review`);
   if (run.status !== 'blocked' && run.status !== 'done' && run.status !== 'failed')
     throw new Error(
       `Run ${run.id} is ${run.status}; re-review applies to a finished or blocked review`,
     );
+}
+
+/**
+ * The slot that still hosts this run's reviewer session: its review agent
+ * context is bound to the run and the worker is still up. That session can
+ * take the follow-up directly instead of a fresh launch.
+ */
+export function liveReviewSessionSlot(
+  run: Pick<Run, 'id' | 'slotId'>,
+  slots: readonly Pick<SlotStatus, 'slot' | 'agent' | 'agentContexts'>[],
+): Pick<SlotStatus, 'slot' | 'agent' | 'agentContexts'> | undefined {
+  if (!run.slotId) return undefined;
+  const slot = slots.find((item) => item.slot === run.slotId);
+  if (!slot || slot.agent !== 'working') return undefined;
+  const hosts = (slot.agentContexts ?? []).some(
+    (context) => context.runId === run.id && context.role === 'review',
+  );
+  return hosts ? slot : undefined;
+}
+
+export function buildRereviewRequest(
+  run: RereviewRun,
+  teams: readonly RereviewTeamCandidate[],
+  ownerId: string,
+  options: { fallbackRepo?: string; now?: number } = {},
+): PRReviewRequest {
+  assertRereviewable(run);
   const target = rereviewTarget(run, options.fallbackRepo);
   const team = selectRereviewTeam(teams, target.repo, run.project);
   const runner = run.metrics.runner;

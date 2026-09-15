@@ -849,7 +849,13 @@ export class RunDetail extends RunDetailState {
         { runId: run.id },
         30_000,
       );
-      const pr = result.submission.request.pr;
+      if (result.mode === 'warm-handoff' && result.runId) {
+        // The follow-up went to the retained reviewer session; watch it there.
+        location.hash = `runs?run=${result.runId}`;
+        return;
+      }
+      const pr = result.submission?.request.pr;
+      if (!pr) throw new Error('The gateway did not return a review round to follow');
       const params = new URLSearchParams({
         prSection: 'reviews',
         prScope: 'all',

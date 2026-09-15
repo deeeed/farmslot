@@ -9,12 +9,12 @@ import {
   Events,
   Methods,
   type MonitoredPRIdentity,
-  type RunRereviewLatestHeadParams,
+  type Run,
   type RunRereviewLatestHeadResult,
 } from '@farmslot/protocol';
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
-import { farmslotRoot, loadProjectConfig } from '../fleet/state.js';
+import { farmslotRoot } from '../fleet/state.js';
 import { verifyPRSourceAccountChange } from '../pr-monitoring/github-account.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
 import { PRReviewDispatcher } from '../pr-rules/dispatch.js';
@@ -24,7 +24,6 @@ import { buildRereviewRequest } from '../pr-rules/rereview-request.js';
 import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
-import { getRun } from '../runs/store.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
@@ -100,19 +99,17 @@ export function listActiveReviewPRs(): MonitoredPRIdentity[] {
 }
 
 /**
- * Re-review a blocked or finished review-pr run on the PR's current head by
- * submitting a continuity round through the normal review intake.
+ * Review-intake fallback for "Re-review on latest head": submit a continuity
+ * round for the run's PR through the normal review queue.
  */
-export async function rereviewRunOnLatestHead(
-  params: RunRereviewLatestHeadParams,
-): Promise<RunRereviewLatestHeadResult> {
+export async function submitRereviewRequest(
+  run: Run,
+  fallbackRepo: string | undefined,
+): Promise<Pick<RunRereviewLatestHeadResult, 'submission' | 'intent' | 'schedulerError'>> {
   if (!service) throw new Error('PR rules are not initialized');
   const originator = currentSessionOriginator();
   if (originator.kind !== 'principal') throw new Error('An authenticated principal is required');
   const ownerId = originator.principalId;
-  const run = getRun(params.runId);
-  if (!run) throw new Error(`Run not found: ${params.runId}`);
-  const fallbackRepo = (await loadProjectConfig(run.project))?.ci?.repo;
   const request = buildRereviewRequest(run, service.store.list(ownerId).teams, ownerId, {
     fallbackRepo,
   });

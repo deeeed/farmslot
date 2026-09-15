@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildRereviewRequest,
+  liveReviewSessionSlot,
   type RereviewRun,
   rereviewTarget,
   selectRereviewTeam,
@@ -103,4 +104,28 @@ test('only finished or blocked review-pr runs can be re-reviewed', () => {
     () => rereviewTarget({ ticketOrPr: 'not-a-ref', prNumber: undefined }),
     /does not identify/,
   );
+});
+
+test('the live reviewer session is the run slot whose working review context is bound to the run', () => {
+  const ctx = (runId: string, role = 'review') => ({ id: role, role, runId }) as never;
+  const slots = [
+    { slot: 'mini-mm-2', agent: 'working', agentContexts: [ctx('run-1')] },
+    { slot: 'mini-mm-3', agent: 'idle', agentContexts: [ctx('run-1')] },
+    { slot: 'mini-mm-4', agent: 'working', agentContexts: [ctx('other')] },
+  ] as never;
+  assert.equal(
+    liveReviewSessionSlot({ id: 'run-1', slotId: 'mini-mm-2' }, slots)?.slot,
+    'mini-mm-2',
+  );
+  assert.equal(
+    liveReviewSessionSlot({ id: 'run-1', slotId: 'mini-mm-3' }, slots),
+    undefined,
+    'worker gone',
+  );
+  assert.equal(
+    liveReviewSessionSlot({ id: 'run-1', slotId: 'mini-mm-4' }, slots),
+    undefined,
+    'another run owns it',
+  );
+  assert.equal(liveReviewSessionSlot({ id: 'run-1', slotId: null }, slots), undefined);
 });

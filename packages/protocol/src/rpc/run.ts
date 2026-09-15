@@ -416,7 +416,17 @@ export interface RunRereviewLatestHeadParams {
 }
 
 export interface RunRereviewLatestHeadResult {
-  submission: import('../contracts/index.js').PRReviewSubmission;
+  /**
+   * `warm-handoff`: a chained review-pr run was started on the same slot and
+   * the follow-up was handed to the still-alive reviewer session (`runId`).
+   * `review-intake`: the session is gone; a continuity round was submitted
+   * through the review queue (`submission` / `intent`).
+   */
+  mode: 'warm-handoff' | 'review-intake';
+  runId?: string;
+  /** PR head the warm re-review targets. */
+  headSha?: string;
+  submission?: import('../contracts/index.js').PRReviewSubmission;
   intent?: import('../contracts/index.js').PRReviewIntent;
   schedulerError?: string;
 }
