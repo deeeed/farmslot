@@ -299,6 +299,7 @@ export async function fetchPRList(
   for (const [prNum, info] of prInfo) {
     const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
     if (!repo) continue;
+    info.repo = repo;
     if (!opts.force && !shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
     const list = prsByRepo.get(repo);
     if (list) list.push(prNum);
@@ -313,7 +314,10 @@ export async function fetchPRList(
     );
   }
 
-  // Fetch all PRs in parallel
+  // Fetch all PRs in parallel. Under `force`, a PR the batch could not seed
+  // (truncated node, failed chunk) still has to reach GitHub, so force only
+  // those; seeded PRs read the snapshot the batch just wrote.
+  const seededNow = Date.now();
   const prs = await Promise.all(
     Array.from(prInfo.entries()).map(async ([prNum, info]) => {
       try {
@@ -325,6 +329,10 @@ export async function fetchPRList(
           workerActive: info.workerActive,
           summary: info.summary,
           repoOverride: info.repo,
+          force:
+            opts.force === true &&
+            info.repo !== undefined &&
+            shouldPrefetchPRRawData(info.repo, prNum, seededNow),
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
