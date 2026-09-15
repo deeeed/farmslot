@@ -21,7 +21,15 @@ export interface RereviewTeamCandidate {
 
 export type RereviewRun = Pick<
   Run,
-  'id' | 'flowType' | 'status' | 'project' | 'ticketOrPr' | 'prNumber' | 'slotId' | 'effort'
+  | 'id'
+  | 'flowType'
+  | 'status'
+  | 'project'
+  | 'ticketOrPr'
+  | 'prNumber'
+  | 'slotId'
+  | 'effort'
+  | 'reviewValidationDepth'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
 
 /** Repo slug and number of the PR a review-pr run reviewed. */
@@ -96,13 +104,17 @@ export function liveReviewSessionSlot(
   return hosts ? slot : undefined;
 }
 
+/**
+ * The caller has already checked the run with `assertRereviewable`. `headSha`
+ * is the PR head being re-reviewed: repeated clicks at the same head collapse
+ * into one request, a moved head opens a new round.
+ */
 export function buildRereviewRequest(
   run: RereviewRun,
   teams: readonly RereviewTeamCandidate[],
   ownerId: string,
-  options: { fallbackRepo?: string; now?: number } = {},
+  options: { fallbackRepo?: string; headSha: string },
 ): PRReviewRequest {
-  assertRereviewable(run);
   const target = rereviewTarget(run, options.fallbackRepo);
   const team = selectRereviewTeam(teams, target.repo, run.project);
   const runner = run.metrics.runner;
@@ -110,7 +122,7 @@ export function buildRereviewRequest(
   return {
     teamId: team.id,
     pr: { host: 'github.com', repo: target.repo, number: target.number },
-    idempotencyKey: `rereview:${run.id}:${options.now ?? Date.now()}`,
+    idempotencyKey: `rereview:${run.id}:${options.headSha}`,
     autoStart: true,
     // Same slot, runner and model as the blocked round so the retained
     // reviewer session is the preferred choice; the team/rule config decides
@@ -126,7 +138,8 @@ export function buildRereviewRequest(
     review: {
       sessionIntent: 'resume',
       scope: 'incremental',
-      validationDepth: 'static-code',
+      // Same depth as the review being redone; a dead session is no reason to go shallower.
+      validationDepth: run.reviewValidationDepth ?? 'static-code',
       busySession: 'wait',
     },
     source: { client: 'command-center', reference: `run:${run.id}`, requester: ownerId },

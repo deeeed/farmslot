@@ -17,6 +17,8 @@
 
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
+  isTerminalRunStatus,
+  type Run,
   type RunRereviewLatestHeadParams,
   type RunRereviewLatestHeadResult,
 } from '@farmslot/protocol';
@@ -40,6 +42,16 @@ import { applyChainedRunEngineFlags, startRun } from '../../run-engine/orchestra
 import { createRun, getAllRuns, getRun, updateRun } from '../../runs/store.js';
 import { submitRereviewRequest } from '../pr-rules.js';
 
+/** Mark a review that could not be posted as superseded so it stops owning the PR. */
+function supersedeBlockedReview(run: Run, successor: string): void {
+  if (run.status !== 'blocked') return;
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    error: `${run.error ?? 'Review blocked.'} Superseded by re-review ${successor}.`,
+  });
+}
+
 export async function runRereviewLatestHead(
   params: RunRereviewLatestHeadParams,
 ): Promise<RunRereviewLatestHeadResult> {
@@ -48,18 +60,36 @@ export async function runRereviewLatestHead(
   assertRereviewable(run);
   const fallbackRepo = (await loadProjectConfig(run.project))?.ci?.repo;
   const target = rereviewTarget(run, fallbackRepo);
+  // The head is fetched once for both paths: it keys the intake request and
+  // seeds the warm continuation.
+  const live = await fetchGitHubPR(`${target.repo}#${target.number}`);
+
+  // A second click while the first chained round is still going returns it.
+  const existing = getAllRuns().find(
+    (candidate) =>
+      candidate.parentRunId === run.id &&
+      candidate.flowType === 'review-pr' &&
+      !isTerminalRunStatus(candidate.status) &&
+      candidate.repeatReviewContext?.currentHeadSha === live.headSha,
+  );
+  if (existing) return { mode: 'warm-handoff', runId: existing.id, headSha: live.headSha };
+
   const slot = liveReviewSessionSlot(run, (await loadFleetStatus()).slots);
   const runner = run.metrics.runner;
   const model = run.metrics.model;
   if (!slot || !runner || !model) {
-    const intake = await submitRereviewRequest(run, fallbackRepo);
+    // The blocked review still owns the PR for queue admission; retire it or
+    // the replacement waits on the run it replaces.
+    supersedeBlockedReview(run, 'via review intake');
+    const intake = await submitRereviewRequest(run, fallbackRepo, live.headSha);
     return { mode: 'review-intake', ...intake };
   }
 
-  const live = await fetchGitHubPR(`${target.repo}#${target.number}`);
   const child = createRun({
     flowType: 'review-pr',
     project: run.project,
+    // Original casing for display; the continuation context below compares
+    // repositories lower-cased, as engine-decisions does.
     ticketOrPr: `${target.repo}#${target.number}`,
     slotId: slot.slot,
     branch: run.branch ?? undefined,
@@ -68,9 +98,10 @@ export async function runRereviewLatestHead(
     effort: run.effort,
     mode: 'autonomous',
     safetyTier: run.safetyTier,
-    completionPolicy: 'artifact-only',
+    // Keep the parent's completion policy: the operator was trying to post
+    // this review, so the child must offer the same posting gate.
+    completionPolicy: run.completionPolicy,
     reviewScope: 'incremental',
-    reviewValidationDepth: run.reviewValidationDepth ?? 'static-code',
     prNumber: target.number,
     ...buildFollowUpLineage(run),
     ...buildFollowUpClassification(run),
@@ -89,7 +120,11 @@ export async function runRereviewLatestHead(
       },
       getAllRuns(),
     ),
-    { ...DEFAULT_PR_REVIEW_OPTIONS, busySession: 'wait' },
+    {
+      ...DEFAULT_PR_REVIEW_OPTIONS,
+      validationDepth: run.reviewValidationDepth ?? DEFAULT_PR_REVIEW_OPTIONS.validationDepth,
+      busySession: 'wait',
+    },
   );
   updateRun(child.id, {
     repeatReviewContext: context,
@@ -97,6 +132,7 @@ export async function runRereviewLatestHead(
     reviewValidationDepth: context.validationDepth,
   });
   applyChainedRunEngineFlags(child.id, { skipPrepare: true, warmSessionReuse: true });
+  supersedeBlockedReview(run, child.id);
   console.log(
     `[run] re-review ${run.id.slice(0, 8)} → ${child.id.slice(0, 8)} on ${slot.slot}: warm handoff to the retained ${runner} session, ${context.priorReviewedHeadSha?.slice(0, 7) ?? '?'} → ${live.headSha.slice(0, 7)}`,
   );

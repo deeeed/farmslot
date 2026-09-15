@@ -155,11 +155,14 @@ export function findLatestPriorReviewRun(
           !reviewResultForRun(candidate)
         )
           return false;
+        // An intake-owned round only chains onto intake rounds of the same
+        // owner and profile; a manual review (no prWork) of the same PR is a
+        // valid predecessor for either.
         const requested = current.prWork?.review;
         if (
           requested &&
-          (candidate.prWork?.kind !== 'review' ||
-            candidate.prWork.review?.ownerId !== requested.ownerId ||
+          candidate.prWork?.kind === 'review' &&
+          (candidate.prWork.review?.ownerId !== requested.ownerId ||
             candidate.prWork.review.profile !== requested.profile)
         )
           return false;

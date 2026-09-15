@@ -105,6 +105,7 @@ export function listActiveReviewPRs(): MonitoredPRIdentity[] {
 export async function submitRereviewRequest(
   run: Run,
   fallbackRepo: string | undefined,
+  headSha: string,
 ): Promise<Pick<RunRereviewLatestHeadResult, 'submission' | 'intent' | 'schedulerError'>> {
   if (!service) throw new Error('PR rules are not initialized');
   const originator = currentSessionOriginator();
@@ -112,6 +113,7 @@ export async function submitRereviewRequest(
   const ownerId = originator.principalId;
   const request = buildRereviewRequest(run, service.store.list(ownerId).teams, ownerId, {
     fallbackRepo,
+    headSha,
   });
   assertPRReviewRequest(request);
   const submission = await service.submit(ownerId, request);

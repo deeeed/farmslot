@@ -841,8 +841,10 @@ export class RunDetail extends RunDetailState {
     }
   }
 
+  @state() private _rereviewInFlight = false;
   private async _rereviewLatestHead(run: Run) {
-    if (this._actionsBlocked()) return;
+    if (this._actionsBlocked() || this._rereviewInFlight) return;
+    this._rereviewInFlight = true;
     try {
       const result = await gateway.request<RunRereviewLatestHeadResult>(
         Methods.RUN_REREVIEW_LATEST_HEAD,
@@ -868,6 +870,8 @@ export class RunDetail extends RunDetailState {
       location.hash = `prs?${params.toString()}`;
     } catch (err) {
       alert(`Re-review failed: ${(err as Error).message}`);
+    } finally {
+      this._rereviewInFlight = false;
     }
   }
   private _requestCopilotRunDiagnosis(run: Run) {
@@ -1031,6 +1035,7 @@ export class RunDetail extends RunDetailState {
         }).catch((err) => alert(`Run ${action} failed: ${(err as Error).message}`)),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _rereviewLatestHead: (run) => this._rereviewLatestHead(run),
+      _rereviewInFlight: this._rereviewInFlight,
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _slotBranchForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Gateway API reference lists `run.rereviewLatestHead`.
 - Gateway API reference lists the `pr.list.updated` event.
 - Task directory contract and agent-runtime reference: the gateway no longer writes a default-valued `checklist-target.json`; absent means `CHECKLIST.md` + `SIGNAL.json`.
 - Document native worker creation and node owner assignment commands.

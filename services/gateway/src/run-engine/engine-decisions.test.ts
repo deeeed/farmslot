@@ -519,3 +519,43 @@ test('a review blocked at posting still counts as the prior round to resume from
   });
   assert.equal(findLatestPriorReviewRun(current, [blocked])?.id, blocked.id);
 });
+
+test('an intake-owned round chains onto a manual review of the same PR', () => {
+  const result = reviewDecision().payload as ReviewGatePayload;
+  const manual = makeRun({
+    id: 'manual-review',
+    flowType: 'review-pr',
+    status: 'done',
+    ticketOrPr: 'Owner/Repo#42',
+    decisions: [],
+    reviewResult: result,
+  });
+  const intake = makeRun({
+    id: 'intake-review',
+    flowType: 'review-pr',
+    ticketOrPr: 'Owner/Repo#42',
+    prWork: {
+      kind: 'review',
+      id: 'review:intent',
+      sourceId: 'intent',
+      pr: { host: 'github.com', repo: 'Owner/Repo', number: 42 },
+      headSha: 'bbbbbbbbbbbbbbbb',
+      review: {
+        profile: 'standard',
+        ownerId: 'owner',
+        options: { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'static-code' },
+      },
+    },
+  });
+  assert.equal(findLatestPriorReviewRun(intake, [manual])?.id, manual.id);
+  const otherOwner = makeRun({
+    ...manual,
+    id: 'other-owner-review',
+    prWork: { ...intake.prWork!, review: { ...intake.prWork!.review!, ownerId: 'someone-else' } },
+  });
+  assert.equal(
+    findLatestPriorReviewRun(intake, [otherOwner]),
+    null,
+    'intake rounds of another owner are not chained',
+  );
+});
