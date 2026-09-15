@@ -13,11 +13,13 @@ import {
   derivePRMergeState,
   isSlotRefreshStaleBranch,
   isTerminalRunStatus,
+  type MonitoredPRIdentity,
   type PRForSlotParams,
   type PRForSlotResult,
   type PRListParams,
   type PRListResult,
   type ProjectCICheckGroup,
+  type ProjectConfig,
   type PRStatus,
   type PRStatusParams,
   type PRStatusResult,
@@ -225,6 +227,35 @@ export function isListReadOutage(reads: {
   return reads.failed > 0 || reads.gone > 1;
 }
 
+/**
+ * Map tracked PR identities onto dashboard candidates. Only GitHub PRs in a
+ * repo some project declares as `ci.repo` qualify: status fetching needs that
+ * project's check groups and bot patterns. Duplicates collapse.
+ */
+export function trackedPRCandidates(
+  identities: readonly MonitoredPRIdentity[],
+  projects: readonly Pick<ProjectConfig, 'name' | 'ci'>[],
+): Array<{ pr: number; repo: string; project: string }> {
+  const projectByRepo = new Map<string, { name: string; repo: string }>();
+  for (const project of projects) {
+    const repo = project.ci?.repo;
+    if (repo && !projectByRepo.has(repo.toLowerCase()))
+      projectByRepo.set(repo.toLowerCase(), { name: project.name, repo });
+  }
+  const seen = new Set<string>();
+  const out: Array<{ pr: number; repo: string; project: string }> = [];
+  for (const identity of identities) {
+    if ((identity.host ?? 'github.com').toLowerCase() !== 'github.com') continue;
+    const match = projectByRepo.get(identity.repo.toLowerCase());
+    if (!match) continue;
+    const key = `${match.repo}#${identity.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ pr: identity.number, repo: match.repo, project: match.name });
+  }
+  return out;
+}
+
 export interface PRListFetchResult {
   prs: PRStatus[];
   /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
@@ -262,8 +293,9 @@ export async function fetchPRList(
   ]);
   // Index: prNumber → most recent run with that PR
   const runByPR = buildLatestRunByPrNumber(runs);
+  const projectList = await loadProjectConfigs();
   const projectConfigs = Object.fromEntries(
-    (await loadProjectConfigs()).map((p) => [
+    projectList.map((p) => [
       p.name,
       {
         defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
@@ -320,6 +352,31 @@ export async function fetchPRList(
       summary: run.summary ?? null,
       repo: await resolveRepoForRun(run),
     });
+  }
+
+  // 3. PRs the operator tracks without a run: review-rule intents and monitors.
+  //    They get the same status and column placement as run-owned PRs instead
+  //    of a bare "tracked" row. Dynamic imports keep pr.ts out of the
+  //    rules/monitoring module graph, which already imports this file.
+  if (!opts.project) {
+    const [{ listActiveReviewPRs }, { listActiveMonitoredPRs }] = await Promise.all([
+      import('./pr-rules.js'),
+      import('./pr-watch.js'),
+    ]);
+    for (const candidate of trackedPRCandidates(
+      [...listActiveReviewPRs(), ...listActiveMonitoredPRs()],
+      projectList,
+    )) {
+      if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
+      if (prInfo.has(candidate.pr)) continue;
+      prInfo.set(candidate.pr, {
+        slot: '',
+        project: candidate.project,
+        workerActive: false,
+        summary: null,
+        repo: candidate.repo,
+      });
+    }
   }
 
   // Slots alone can fill the cap too, so decide after both discovery passes.
