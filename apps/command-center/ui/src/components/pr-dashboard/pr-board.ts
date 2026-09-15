@@ -307,16 +307,22 @@ export class PRBoard extends LitElement {
       min-height: 0;
     }
 
+    /* Columns share the available width; an empty one collapses to its header
+       so the columns holding PRs get the space. */
     .column {
-      flex: 1;
-      min-width: 220px;
-      max-width: 320px;
+      flex: 1 1 0;
+      min-width: 240px;
       display: flex;
       flex-direction: column;
       background: ${unsafeCSS(colors.bgSurface)};
       border-radius: ${unsafeCSS(radii.md)};
       border: 1px solid #1e1e36;
       overflow: hidden;
+    }
+
+    .column.empty {
+      flex: 0 0 150px;
+      min-width: 150px;
     }
 
     .column-header {
@@ -1183,7 +1189,7 @@ export class PRBoard extends LitElement {
         ${this._columns.map((col) => {
           const prs = filtered.filter(col.filter);
           return html`
-            <div class="column">
+            <div class="column ${prs.length ? '' : 'empty'}" data-column=${col.id}>
               <div class="column-header">
                 <span class="column-dot" style="background:${col.color}"></span>
                 <span class="column-label">${col.label}</span>
