@@ -26,9 +26,14 @@ export interface PRWorkspaceEntry {
   reviews: PRReviewIntent[];
   requests: PRReviewSubmission[];
 }
-/** Merged or closed PRs are history: hidden from the PRs section unless the operator asks for it. */
+/**
+ * Merged or closed PRs are history, hidden unless the operator asks for it.
+ * A worker still active on one is live work (the recommendation says WORKING
+ * for the same reason), so it stays on the board until the worker finishes.
+ */
 export function isTerminalPREntry(entry: Pick<PRWorkspaceEntry, 'status'>): boolean {
-  return entry.status !== undefined && entry.status.prState !== 'OPEN';
+  const status = entry.status;
+  return status !== undefined && status.prState !== 'OPEN' && status.workerActive !== true;
 }
 export function prWorkspaceKey(key: PRKey): string {
   return `${(key.host ?? 'github.com').toLowerCase()}/${key.repo.toLowerCase()}#${key.pr}`;

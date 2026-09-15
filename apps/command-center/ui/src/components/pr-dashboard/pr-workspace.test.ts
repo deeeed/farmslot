@@ -229,9 +229,17 @@ test('isTerminalPREntry hides merged and closed PRs but keeps open and status-le
     }),
     true,
   );
-  // A worker still active on a merged PR keeps recommendation WORKING; only prState decides.
+  // A worker still active on a merged PR is live work, not history.
   assert.equal(
-    isTerminalPREntry({ status: { ...status, prState: 'MERGED', recommendation: 'WORKING' } }),
+    isTerminalPREntry({
+      status: { ...status, prState: 'MERGED', recommendation: 'WORKING', workerActive: true },
+    }),
+    false,
+  );
+  assert.equal(
+    isTerminalPREntry({
+      status: { ...status, prState: 'MERGED', recommendation: 'MERGED', workerActive: false },
+    }),
     true,
   );
 });

@@ -35,17 +35,28 @@ export function registerPRCommand(program: Command): void {
   pr.command('list')
     .description('List active PRs')
     .option('--project <name>', 'Filter by project')
+    .option('--cached', "Accept the gateway's warm copy instead of waiting for a fresh GitHub read")
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
+        // A one-shot command exits before any background refresh lands, so
+        // it asks for fresh data unless the caller opts into the warm copy.
         const result = await withProgress(
           'Fetching PRs',
-          () => client.call<PRListResult>('pr.list', { project: opts.project }),
+          () =>
+            client.call<PRListResult>('pr.list', {
+              project: opts.project,
+              force: !opts.cached,
+            }),
           !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
         } else {
+          if (opts.cached && result.fetchedAt)
+            output.write(
+              `Fetched ${result.fetchedAt}${result.refreshing ? ' (gateway refreshing)' : ''}`,
+            );
           output.write(formatPRList(result.prs));
         }
       } catch (err) {

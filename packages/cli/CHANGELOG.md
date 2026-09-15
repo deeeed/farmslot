@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot pr list` asks the gateway for a fresh GitHub read; `--cached` accepts the gateway's warm copy and prints when it was fetched.
 - `farmslot internal pr-recommendation --changes-requested` feeds the reviewer changes-requested fact into the shared recommendation rule.
 
 - Configure server-owned native account assignments when creating nodes or with `principal bind-native-owner`.
