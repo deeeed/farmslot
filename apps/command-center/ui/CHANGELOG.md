@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- A review run blocked with "Review is stale" shows **Re-review on latest head**, which starts the new round and opens it in Need Review.
+- A review run finished or blocked with "Review is stale" shows **Re-review on latest head**; it follows the chained run when the reviewer session was handed the follow-up, or opens the queued round in Need Review.
 
 - The PRs page opens on a "Mine" scope (PRs by your GitHub logins plus farmslot-run PRs, editable per browser from the ⚙ next to the pill, prefilled from the gateway's configured GitHub accounts); "Mine" counts PRs a run created, not PRs a run only worked on, and any PR you explicitly take over ("under my guard") from its detail pane; "All PRs" and "Monitored" remain. Clicking a card selects it and updates the URL. Reason chips name who requested changes, say "Fix pushed, awaiting re-review" once the author pushed after that verdict, and list who GitHub is still waiting on. "Need Review" groups PRs by what you must do next: re-review because the author pushed since your changes-requested, not reviewed yet, waiting on the author, reviewed by you, not ready.
 

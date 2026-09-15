@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- `run.rereviewLatestHead` submits a manual review request (resume session, incremental scope, same slot/runner/model preferred) for a review-pr run whose review could not be posted because the head moved; reviewer continuity now treats a review blocked at posting as the prior round.
+- `run.rereviewLatestHead` re-reviews a review-pr run whose review could not be posted because the head moved: when the run's reviewer session is still alive on its slot, a chained review-pr run hands the follow-up into that session (warm handoff) with the incremental repeat-review context attached; otherwise a manual review request (resume session, incremental scope, same slot/runner/model preferred) goes through the review queue. Reviewer continuity treats a review blocked at posting as the prior round.
 
 - `pr.list` / `pr.status` read each reviewer's standing verdict (GitHub `latestOpinionatedReviews`, so a changes-requested reviewer who later commented still shows as blocking) and outstanding review requests (batch GraphQL and per-PR GraphQL), and flag when the author pushed after the newest changes-requested verdict.
 
