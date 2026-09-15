@@ -5,6 +5,8 @@ export type PRAttentionKind =
   | 'ci-failed'
   | 'bot-comments'
   | 'changes-requested'
+  | 'awaiting-rereview'
+  | 'waiting-on'
   | 'review-required'
   | 'ci-pending'
   | 'ready';
@@ -67,14 +69,27 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       ])}.`,
       tone: 'warn',
     });
-  if (pr.reviewDecision === 'CHANGES_REQUESTED')
-    reasons.push({
-      kind: 'changes-requested',
-      label: 'Changes requested by reviewer',
-      detail:
-        'A human reviewer asked for changes on GitHub. Address the feedback, then re-request review.',
-      tone: 'fail',
-    });
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') {
+    const requesters = (pr.reviewVerdicts ?? [])
+      .filter((review) => review.state === 'CHANGES_REQUESTED')
+      .map((review) => `@${review.reviewer}`);
+    const who = requesters.length ? joinNames(requesters) : 'a reviewer';
+    reasons.push(
+      pr.pushedAfterChangesRequested
+        ? {
+            kind: 'awaiting-rereview',
+            label: `Fix pushed, awaiting re-review by ${who}`,
+            detail: `${who} requested changes and commits landed since. GitHub still says CHANGES_REQUESTED until they review again; nudge them if it has been a while.`,
+            tone: 'warn',
+          }
+        : {
+            kind: 'changes-requested',
+            label: `Changes requested by ${who}`,
+            detail: `${who} asked for changes on GitHub. Address the feedback, then re-request review.`,
+            tone: 'fail',
+          },
+    );
+  }
   // Not a watched check, so it never drives the recommendation: always listed
   // after whatever does, so the first chip explains the column. It leads only
   // when nothing blocks and no review or check is still outstanding: a red
@@ -88,7 +103,24 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
           tone: 'warn',
         }
       : undefined;
-  if (reasons.length) return unwatched ? [...reasons, unwatched] : reasons;
+  // Who GitHub is still waiting on; appended to every outcome, never the lead.
+  const waitingOn: PRAttentionReason | undefined =
+    pr.reviewRequests && (pr.reviewRequests.teams.length || pr.reviewRequests.users.length)
+      ? {
+          kind: 'waiting-on',
+          label: `Waiting on ${joinNames([
+            ...pr.reviewRequests.teams,
+            ...pr.reviewRequests.users.map((login) => `@${login}`),
+          ])}`,
+          detail: `Review still requested from ${[
+            ...pr.reviewRequests.teams,
+            ...pr.reviewRequests.users.map((login) => `@${login}`),
+          ].join(', ')}.`,
+          tone: 'muted',
+        }
+      : undefined;
+  const trailing = [unwatched, waitingOn].filter((r): r is PRAttentionReason => r !== undefined);
+  if (reasons.length) return [...reasons, ...trailing];
   if (pr.reviewDecision === 'REVIEW_REQUIRED')
     reasons.push({
       kind: 'review-required',
@@ -110,7 +142,13 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
         : 'CI has not finished yet.',
       tone: 'muted',
     });
-  if (unwatched) reasons.push(unwatched);
+  if (!reasons.length && unwatched) {
+    // A red check, even unwatched, outranks "ready"; the rest trails as usual.
+    reasons.push(unwatched);
+    trailing.splice(trailing.indexOf(unwatched), 1);
+  }
+  // "Ready" is decided before the trailing notes: a stale review request on
+  // an approved, green PR is information, not a reason to hide the green.
   if (!reasons.length && pr.allPassed && pr.reviewDecision === 'APPROVED')
     reasons.push({
       kind: 'ready',
@@ -118,5 +156,6 @@ export function prAttentionReasons(pr: PRStatus): PRAttentionReason[] {
       detail: 'Nothing is blocking this PR; merge when ready.',
       tone: 'ok',
     });
+  reasons.push(...trailing);
   return reasons;
 }

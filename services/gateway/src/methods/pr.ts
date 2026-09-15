@@ -13,11 +13,14 @@ import {
   derivePRMergeState,
   isSlotRefreshStaleBranch,
   isTerminalRunStatus,
+  type MonitoredPRIdentity,
   type PRForSlotParams,
   type PRForSlotResult,
   type PRListParams,
   type PRListResult,
   type ProjectCICheckGroup,
+  type ProjectConfig,
+  type PRReviewVerdict,
   type PRStatus,
   type PRStatusParams,
   type PRStatusResult,
@@ -54,6 +57,7 @@ import {
   getPRRawData,
   parseJsonLines,
   prefetchPRBatchViaGraphQL,
+  type PRJsonLine,
   shouldPrefetchPRRawData,
 } from './pr/raw-cache.js';
 
@@ -78,6 +82,7 @@ interface BranchPRBinding {
  * fetchPRData doesn't have to re-resolve it and fail.
  */
 interface PRDashboardEntry {
+  pr: number;
   slot: string;
   project: string;
   workerActive: boolean;
@@ -225,6 +230,43 @@ export function isListReadOutage(reads: {
   return reads.failed > 0 || reads.gone > 1;
 }
 
+/**
+ * Map tracked PR identities onto dashboard candidates. Only GitHub PRs in a
+ * repo some project declares as `ci.repo` qualify: status fetching needs that
+ * project's check groups and bot patterns. Duplicates collapse.
+ */
+export function trackedPRCandidates(
+  identities: readonly MonitoredPRIdentity[],
+  projects: readonly Pick<ProjectConfig, 'name' | 'ci'>[],
+): Array<{ pr: number; repo: string; project: string }> {
+  const projectByRepo = new Map<string, { name: string; repo: string }>();
+  for (const project of projects) {
+    const repo = project.ci?.repo;
+    if (!repo) continue;
+    const existing = projectByRepo.get(repo.toLowerCase());
+    if (existing) {
+      // First project wins; its check groups and bot patterns shape the status.
+      console.warn(
+        `[pr.list] ${repo} is ci.repo of both ${existing.name} and ${project.name}; tracked PRs use ${existing.name}`,
+      );
+      continue;
+    }
+    projectByRepo.set(repo.toLowerCase(), { name: project.name, repo });
+  }
+  const seen = new Set<string>();
+  const out: Array<{ pr: number; repo: string; project: string }> = [];
+  for (const identity of identities) {
+    if ((identity.host ?? 'github.com').toLowerCase() !== 'github.com') continue;
+    const match = projectByRepo.get(identity.repo.toLowerCase());
+    if (!match) continue;
+    const key = `${match.repo}#${identity.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ pr: identity.number, repo: match.repo, project: match.name });
+  }
+  return out;
+}
+
 export interface PRListFetchResult {
   prs: PRStatus[];
   /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
@@ -244,7 +286,10 @@ export async function fetchPRList(
 ): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
-  const prInfo = new Map<number, PRDashboardEntry>();
+  // Keyed by `repo#number`: PR numbers repeat across repos, and a farm can
+  // track the same number in two of them.
+  const prInfo = new Map<string, PRDashboardEntry>();
+  const candidateKey = (repo: string | undefined, pr: number) => `${repo ?? ''}#${pr}`;
 
   // Preload runs for summary + active detection
   const runs = getAllRuns();
@@ -262,8 +307,9 @@ export async function fetchPRList(
   ]);
   // Index: prNumber → most recent run with that PR
   const runByPR = buildLatestRunByPrNumber(runs);
+  const projectList = await loadProjectConfigs();
   const projectConfigs = Object.fromEntries(
-    (await loadProjectConfigs()).map((p) => [
+    projectList.map((p) => [
       p.name,
       {
         defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
@@ -290,7 +336,8 @@ export async function fetchPRList(
   for (const { slot, found } of slotBindings) {
     if (!found) continue;
     const run = runByPR.get(found.pr);
-    prInfo.set(found.pr, {
+    prInfo.set(candidateKey(found.repo, found.pr), {
+      pr: found.pr,
       slot: slot.slot,
       project: slot.project,
       workerActive: true,
@@ -307,19 +354,52 @@ export async function fetchPRList(
     if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
     if (opts.project && run.project !== opts.project) continue;
     if (run.prNumber == null) continue;
-    if (prInfo.has(run.prNumber)) continue;
     if (isTerminalRunStatus(run.status)) {
       const freshness = run.completedAt ?? run.updatedAt;
       const ageMs = freshness ? now - Date.parse(freshness) : Infinity;
       if (!Number.isFinite(ageMs) || ageMs > PR_DASHBOARD_TERMINAL_TTL_MS) continue;
     }
-    prInfo.set(run.prNumber, {
+    // resolveRepoForRun returns undefined when the project declares ci.repo
+    // (fetchPRData resolves it later); the key needs the repo now.
+    const repo = (await resolveRepoForRun(run)) ?? (await loadProjectConfig(run.project))?.ci?.repo;
+    const key = candidateKey(repo, run.prNumber);
+    if (prInfo.has(key)) continue;
+    prInfo.set(key, {
+      pr: run.prNumber,
       slot: run.slotId ?? '',
       project: run.project,
       workerActive: ACTIVE_RUN_STATUSES.has(run.status),
       summary: run.summary ?? null,
-      repo: await resolveRepoForRun(run),
+      repo,
     });
+  }
+
+  // 3. PRs the operator tracks without a run: review-rule intents and monitors.
+  //    They get the same status and column placement as run-owned PRs instead
+  //    of a bare "tracked" row. Dynamic imports keep pr.ts out of the
+  //    rules/monitoring module graph, which already imports this file.
+  {
+    const [{ listActiveReviewPRs }, { listActiveMonitoredPRs }] = await Promise.all([
+      import('./pr-rules.js'),
+      import('./pr-watch.js'),
+    ]);
+    for (const candidate of trackedPRCandidates(
+      [...listActiveReviewPRs(), ...listActiveMonitoredPRs()],
+      projectList,
+    )) {
+      if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
+      if (opts.project && candidate.project !== opts.project) continue;
+      const key = candidateKey(candidate.repo, candidate.pr);
+      if (prInfo.has(key)) continue;
+      prInfo.set(key, {
+        pr: candidate.pr,
+        slot: '',
+        project: candidate.project,
+        workerActive: false,
+        summary: null,
+        repo: candidate.repo,
+      });
+    }
   }
 
   // Slots alone can fill the cap too, so decide after both discovery passes.
@@ -340,14 +420,14 @@ export async function fetchPRList(
   // force, which would discard them and fan out over REST a second time.
   const prefetchNow = Date.now();
   const prsByRepo = new Map<string, number[]>();
-  for (const [prNum, info] of prInfo) {
+  for (const info of prInfo.values()) {
     const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
     if (!repo) continue;
     info.repo = repo;
-    if (!opts.force && !shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
+    if (!opts.force && !shouldPrefetchPRRawData(repo, info.pr, prefetchNow)) continue;
     const list = prsByRepo.get(repo);
-    if (list) list.push(prNum);
-    else prsByRepo.set(repo, [prNum]);
+    if (list) list.push(info.pr);
+    else prsByRepo.set(repo, [info.pr]);
   }
   let seeded = new Set<string>();
   try {
@@ -365,7 +445,8 @@ export async function fetchPRList(
   const failed: string[] = [];
   let gone = 0;
   const prs = await Promise.all(
-    Array.from(prInfo.entries()).map(async ([prNum, info]) => {
+    Array.from(prInfo.values()).map(async (info) => {
+      const prNum = info.pr;
       try {
         return await fetchPRData({
           prNum,
@@ -468,6 +549,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const issueComments = parseJsonLines(raw.commentsStdout);
   const reviewComments = parseJsonLines(raw.reviewCommentsStdout);
   const latestCommit = raw.latestCommitStdout.trim() || null;
+  const reviewMeta = summarizeReviewMeta(parseJsonLines(raw.reviewMetaStdout), latestCommit);
 
   // Build replied IDs set (review comments that have human replies)
   const repliedIds = new Set<number>();
@@ -562,6 +644,9 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     mergeable: mergeable || 'UNKNOWN',
     mergeConflict,
     reviewDecision: reviewDecision || '',
+    reviewVerdicts: reviewMeta.reviewVerdicts,
+    reviewRequests: reviewMeta.reviewRequests,
+    pushedAfterChangesRequested: reviewMeta.pushedAfterChangesRequested,
     recommendation,
     workerActive: Boolean(workerActive),
     ownedFamily: Boolean(ownedFamilyContext),
@@ -594,6 +679,50 @@ export {
   derivePRMergeState,
   isPassiveMergeWaitCandidate,
 } from '@farmslot/protocol';
+
+/**
+ * Fold the review-meta JSON lines into what the dashboard shows: each
+ * reviewer's standing verdict, outstanding requests, and whether the author
+ * pushed after the newest CHANGES_REQUESTED verdict (a later APPROVED or a
+ * dismissal from that reviewer replaces it upstream, so it is not listed).
+ */
+export function summarizeReviewMeta(
+  lines: readonly PRJsonLine[],
+  latestCommitAt: string | null,
+): {
+  reviewVerdicts: PRReviewVerdict[];
+  reviewRequests: { teams: string[]; users: string[] };
+  pushedAfterChangesRequested: boolean;
+} {
+  const reviewVerdicts: PRReviewVerdict[] = [];
+  const teams: string[] = [];
+  const users: string[] = [];
+  for (const line of lines) {
+    if (line.t === 'review' && typeof line.author === 'string' && line.author) {
+      reviewVerdicts.push({
+        reviewer: line.author,
+        state: typeof line.state === 'string' ? line.state : '',
+        submittedAt: typeof line.submittedAt === 'string' ? line.submittedAt : null,
+      });
+    } else if (line.t === 'request' && typeof line.name === 'string' && line.name) {
+      (line.kind === 'team' ? teams : users).push(line.name);
+    }
+  }
+  const commitAt = latestCommitAt ? Date.parse(latestCommitAt) : NaN;
+  const newestChangesRequested = reviewVerdicts
+    .filter((review) => review.state === 'CHANGES_REQUESTED' && review.submittedAt)
+    .map((review) => Date.parse(review.submittedAt!))
+    .filter(Number.isFinite)
+    .reduce((max, at) => Math.max(max, at), Number.NEGATIVE_INFINITY);
+  return {
+    reviewVerdicts,
+    reviewRequests: { teams, users },
+    pushedAfterChangesRequested:
+      Number.isFinite(commitAt) &&
+      Number.isFinite(newestChangesRequested) &&
+      commitAt > newestChangesRequested,
+  };
+}
 
 export function shouldIncludePRInDashboard(pr: PRStatus): boolean {
   return pr.prState === 'OPEN' || Boolean(pr.ownedFamily);

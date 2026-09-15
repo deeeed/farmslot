@@ -8,6 +8,7 @@ import {
   assertPRTriggerRuleConfig,
   Events,
   Methods,
+  type MonitoredPRIdentity,
 } from '@farmslot/protocol';
 
 import { initPRQueueAdmission } from '../backlog/pr-admission.js';
@@ -79,6 +80,19 @@ export async function initPRRules(
   );
   if (poll) service.start();
   return service;
+}
+
+/**
+ * PRs with a live review intent across every owner, for the dashboard list.
+ * Scheduler-style access to the store: the list itself is not principal-scoped.
+ */
+export function listActiveReviewPRs(): MonitoredPRIdentity[] {
+  if (!service) return [];
+  const live = new Set(['held', 'needs-configuration', 'queued', 'running']);
+  return service.store
+    .snapshot()
+    .intents.filter((intent) => live.has(intent.status))
+    .map((intent) => intent.pr);
 }
 
 export async function prRulesMethod(method: string, value: unknown): Promise<unknown> {

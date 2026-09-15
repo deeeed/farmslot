@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `PRStatus` carries `reviewVerdicts` (each reviewer's standing APPROVED / CHANGES_REQUESTED), `reviewRequests` (teams and users GitHub still waits on) and `pushedAfterChangesRequested`.
+
 - `pr.list` accepts `force` and returns `fetchedAt` / `refreshing`; new `pr.list.updated` event (`PRListUpdatedPayload`) carries the gateway's refreshed list.
 
 - `computePRRecommendation` accepts `changesRequested`; a PR whose GitHub review decision is CHANGES_REQUESTED is recommended NEEDS_ATTENTION (after conflict, failing checks and actionable comments) instead of IN_REVIEW.
