@@ -163,8 +163,17 @@ export async function prStatus(params: PRStatusParams): Promise<PRStatusResult> 
  * every caller shares one fetch.
  */
 export async function prList(params?: PRListParams): Promise<PRListResult> {
-  const served = await servePRList(fetchPRList, { force: params?.force });
+  const { truncated, ...served } = await servePRList((force) => fetchPRList({ force }), {
+    force: params?.force,
+  });
   if (!params?.project) return served;
+  if (truncated) {
+    // The shared copy hit MAX_PR_DASHBOARD_CANDIDATES before it could reach
+    // every run of this project, so filtering it could hide this project's
+    // PRs. Discover per project instead (uncached, as before the warm list).
+    const scoped = await fetchPRList({ project: params.project, force: params.force });
+    return { prs: scoped.prs, fetchedAt: new Date().toISOString(), refreshing: false };
+  }
   // Match on the PR's resolved project (PRStatus.project), not repo slug.
   // Projects whose internal name differs from their GitHub owner/name
   // (e.g. my-app-farm → owner/my-app) would drop out of the
@@ -172,8 +181,21 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   return { ...served, prs: served.prs.filter((p) => p.project === params.project) };
 }
 
-/** Full GitHub fan-out: discover candidate PRs from slots and runs, then fetch each. */
-export async function fetchPRList(): Promise<PRStatus[]> {
+export interface PRListFetchResult {
+  prs: PRStatus[];
+  /** True when candidate discovery stopped at MAX_PR_DASHBOARD_CANDIDATES. */
+  truncated: boolean;
+}
+
+/**
+ * Full GitHub fan-out: discover candidate PRs from slots and runs, then fetch
+ * each. `force` re-fetches every candidate from GitHub through the GraphQL
+ * batch, bypassing the 60s raw cache; `project` limits run discovery to that
+ * project so the candidate cap cannot starve it.
+ */
+export async function fetchPRList(
+  opts: { force?: boolean; project?: string } = {},
+): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
   const prInfo = new Map<number, PRDashboardEntry>();
@@ -235,8 +257,13 @@ export async function fetchPRList(): Promise<PRStatus[]> {
   //    Skip terminal runs older than PR_DASHBOARD_TERMINAL_TTL_MS — otherwise ancient/closed
   //    PRs pile up and blow the UI 15s timeout via sequential GitHub fetches in step 3.
   const now = Date.now();
+  let truncated = false;
   for (const run of runByPR.values()) {
-    if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) break;
+    if (prInfo.size >= MAX_PR_DASHBOARD_CANDIDATES) {
+      truncated = true;
+      break;
+    }
+    if (opts.project && run.project !== opts.project) continue;
     if (run.prNumber == null) continue;
     if (prInfo.has(run.prNumber)) continue;
     if (isTerminalRunStatus(run.status)) {
@@ -253,7 +280,7 @@ export async function fetchPRList(): Promise<PRStatus[]> {
     });
   }
 
-  if (prInfo.size === 0) return [];
+  if (prInfo.size === 0) return { prs: [], truncated };
 
   // ADR-028: collapse the per-PR REST fan-out into one aliased GraphQL request
   // per repo. Synthesized snapshots seed `prRawCache`, so the fetchPRData loop
@@ -263,13 +290,16 @@ export async function fetchPRList(): Promise<PRStatus[]> {
   // refetching a cached PR within the 60s TTL would just burn quota. Also skip
   // PRs with an inflight per-PR REST fetch (e.g. a concurrent pr.status from
   // the slot view): the inflight call will write a fresh snapshot and the batch
-  // overwrite would just waste both REST and GraphQL quota.
+  // overwrite would just waste both REST and GraphQL quota. `force` (operator
+  // Refresh) prefetches every candidate so the answer is what GitHub says now;
+  // the fetchPRData loop then reads those fresh snapshots without its own
+  // force, which would discard them and fan out over REST a second time.
   const prefetchNow = Date.now();
   const prsByRepo = new Map<string, number[]>();
   for (const [prNum, info] of prInfo) {
     const repo = info.repo ?? (await loadProjectConfig(info.project))?.ci?.repo;
     if (!repo) continue;
-    if (!shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
+    if (!opts.force && !shouldPrefetchPRRawData(repo, prNum, prefetchNow)) continue;
     const list = prsByRepo.get(repo);
     if (list) list.push(prNum);
     else prsByRepo.set(repo, [prNum]);
@@ -303,7 +333,10 @@ export async function fetchPRList(): Promise<PRStatus[]> {
     }),
   );
 
-  return prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard);
+  return {
+    prs: prs.filter((p): p is PRStatus => p !== null).filter(shouldIncludePRInDashboard),
+    truncated,
+  };
 }
 
 // ─── Core PR fetch logic ───

@@ -358,7 +358,7 @@ async function main(): Promise<void> {
   // Warm PR dashboard list: serve the last snapshot immediately, refresh in
   // the background while a client is connected, push changes as pr.list.updated.
   loadPRListCache();
-  startPRListRefresher(fetchPRList, {
+  startPRListRefresher((force) => fetchPRList({ force }), {
     broadcast: observedBroadcast,
     hasClients: hasConnectedClients,
   });

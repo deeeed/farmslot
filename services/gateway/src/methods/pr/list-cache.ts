@@ -23,9 +23,13 @@ import { farmslotRoot } from '../../core/config.js';
 export interface PRListSnapshot {
   fetchedAt: string;
   prs: PRStatus[];
+  /** Candidate discovery hit its cap; project-scoped callers must not trust a filter of this copy. */
+  truncated?: boolean;
 }
 
-type PRListFetcher = () => Promise<PRStatus[]>;
+/** `force` asks the fetcher to bypass its own GitHub caches. */
+type PRListFetcher = (force: boolean) => Promise<{ prs: PRStatus[]; truncated: boolean }>;
+export type ServedPRList = PRListResult & { truncated: boolean };
 type Broadcast = (event: string, payload: unknown) => void;
 
 const CACHE_DIR_NAME = '.farm-cache';
@@ -104,16 +108,21 @@ function ageMs(snap: PRListSnapshot, now: number): number {
   return Number.isFinite(fetched) ? now - fetched : Number.POSITIVE_INFINITY;
 }
 
-function refresh(fetch: PRListFetcher): Promise<PRListSnapshot> {
+function refresh(fetch: PRListFetcher, force: boolean): Promise<PRListSnapshot> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const prs = await fetch();
-      const next: PRListSnapshot = { fetchedAt: new Date().toISOString(), prs };
+      const { prs, truncated } = await fetch(force);
+      const next: PRListSnapshot = { fetchedAt: new Date().toISOString(), prs, truncated };
       const changed = !snapshot || JSON.stringify(snapshot.prs) !== JSON.stringify(prs);
       snapshot = next;
       persist(next);
-      if (changed) broadcastFn(Events.PR_LIST_UPDATED, next satisfies PRListUpdatedPayload);
+      // Always announce completion so clients that were told `refreshing`
+      // can clear it; ship the list only when it differs.
+      const payload: PRListUpdatedPayload = changed
+        ? { fetchedAt: next.fetchedAt, prs }
+        : { fetchedAt: next.fetchedAt };
+      broadcastFn(Events.PR_LIST_UPDATED, payload);
       return next;
     } finally {
       inflight = null;
@@ -136,15 +145,25 @@ function logBackgroundFailure(err: unknown): void {
 export async function servePRList(
   fetch: PRListFetcher,
   opts: { force?: boolean; now?: number } = {},
-): Promise<PRListResult> {
+): Promise<ServedPRList> {
   if (!loaded) loadPRListCache();
   if (opts.force || !snapshot) {
-    const fresh = await refresh(fetch);
-    return { prs: fresh.prs, fetchedAt: fresh.fetchedAt, refreshing: false };
+    const fresh = await refresh(fetch, opts.force === true);
+    return {
+      prs: fresh.prs,
+      fetchedAt: fresh.fetchedAt,
+      refreshing: false,
+      truncated: fresh.truncated === true,
+    };
   }
   if (ageMs(snapshot, opts.now ?? Date.now()) > PR_LIST_STALE_MS && !inflight)
-    refresh(fetch).catch(logBackgroundFailure);
-  return { prs: snapshot.prs, fetchedAt: snapshot.fetchedAt, refreshing: inflight !== null };
+    refresh(fetch, false).catch(logBackgroundFailure);
+  return {
+    prs: snapshot.prs,
+    fetchedAt: snapshot.fetchedAt,
+    refreshing: inflight !== null,
+    truncated: snapshot.truncated === true,
+  };
 }
 
 /** Current warm copy, for callers that must not trigger a fetch. */
@@ -171,7 +190,7 @@ export function startPRListRefresher(
   const tick = () => {
     if (!opts.hasClients() || inflight) return;
     if (snapshot && ageMs(snapshot, Date.now()) <= PR_LIST_STALE_MS) return;
-    refresh(fetch).catch(logBackgroundFailure);
+    refresh(fetch, false).catch(logBackgroundFailure);
   };
   const initial = setTimeout(tick, opts.initialDelayMs ?? 3_000);
   initial.unref();

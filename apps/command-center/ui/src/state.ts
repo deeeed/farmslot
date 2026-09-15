@@ -484,6 +484,14 @@ export function updatePR(pr: PRStatus): void {
   notify();
 }
 
+/** A gateway refresh finished with no list change. */
+export function markPRsRefreshed(fetchedAt: string): void {
+  const fetched = Date.parse(fetchedAt);
+  if (Number.isFinite(fetched) && fetched > state.prsUpdatedAt) state.prsUpdatedAt = fetched;
+  state.prsRefreshing = false;
+  notify();
+}
+
 export function markPRsRefreshFailed(): void {
   state.bootstrapFailed = { ...state.bootstrapFailed, prs: true };
   notify();
@@ -779,9 +787,12 @@ export function initState(): void {
   gateway.subscribe<PRUpdatedPayload>(Events.PR_UPDATED, (p) => {
     if (p.pr) deferEvent('prs', () => updatePR(p.pr!));
   });
-  // The gateway refreshed its warm PR list from GitHub; it replaces ours.
+  // The gateway refreshed its warm PR list from GitHub: a changed list
+  // replaces ours; an unchanged one only clears the refreshing flag.
   gateway.subscribe<PRListUpdatedPayload>(Events.PR_LIST_UPDATED, (p) => {
-    if (p.prs) deferEvent('prs', () => updatePRs(p.prs, { fetchedAt: p.fetchedAt }));
+    deferEvent('prs', () =>
+      p.prs ? updatePRs(p.prs, { fetchedAt: p.fetchedAt }) : markPRsRefreshed(p.fetchedAt),
+    );
   });
 
   // Decision events (file-based + run-based).

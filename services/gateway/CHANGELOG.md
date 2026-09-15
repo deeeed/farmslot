@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to wait for GitHub, and broadcasts `pr.list.updated` when the list changes. Project-scoped `pr.list` calls filter the same copy.
+- The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to re-fetch every PR from GitHub before answering, and broadcasts `pr.list.updated` after every refresh (with the list only when it changed). Project-scoped `pr.list` calls filter the same copy, or rediscover per project when the shared copy hit the candidate cap.
 
 - `pr.list` / `pr.status` recommend NEEDS_ATTENTION for a PR whose reviewer requested changes, so a human review round shows up on the board next to CI failures and conflicts; the ci-monitor dedup path keeps that signal.
 

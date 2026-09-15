@@ -202,10 +202,14 @@ export interface PRUpdatedPayload {
   pr: PRStatus;
 }
 
-/** The gateway's warm PR list changed after a GitHub refresh; replaces the client's list. */
+/**
+ * The gateway finished refreshing its warm PR list from GitHub. `prs` is
+ * present only when the list changed and replaces the client's copy; without
+ * it the client just records the new fetch time and clears `refreshing`.
+ */
 export interface PRListUpdatedPayload {
-  prs: PRStatus[];
   fetchedAt: string;
+  prs?: PRStatus[];
 }
 
 export interface DecisionNewPayload {
