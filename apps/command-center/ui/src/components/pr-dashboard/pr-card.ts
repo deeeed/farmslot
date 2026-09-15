@@ -111,7 +111,10 @@ export class PRCard extends LitElement {
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
       color: ${unsafeCSS(colors.textSecondary)};
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 45%;
     }
     .family-badge {
       font-family: ${unsafeCSS(fonts.mono)};
