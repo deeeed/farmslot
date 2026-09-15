@@ -365,3 +365,29 @@ test('a row GitHub keeps failing to read is carried for an hour, then dropped', 
     cleanup();
   }
 });
+
+test('the carry clock survives a gateway restart', async () => {
+  const { dir, cleanup } = isolate();
+  try {
+    const t0 = Date.parse('2026-09-15T10:00:00.000Z');
+    await servePRList(async () => list([pr(1), pr(2)]), { now: t0 });
+    const failing = async () => list([pr(2)], false, ['org/app#1']);
+    await servePRList(failing, { force: true, now: t0 + 1_000 });
+    const stored = JSON.parse(readFileSync(path.join(dir, '.farm-cache', 'pr-list.json'), 'utf-8'));
+    assert.deepEqual(stored.carriedSince, { 'org/app#1': t0 + 1_000 });
+    // "Restart": drop memory, reload from disk, then keep failing past the cap.
+    resetPRListCacheForTests();
+    loadPRListCache();
+    const afterRestart = await servePRList(failing, {
+      force: true,
+      now: t0 + 1_000 + PR_LIST_CARRY_MAX_MS + 1,
+    });
+    assert.deepEqual(
+      afterRestart.prs.map((p) => p.pr),
+      [2],
+      'the hour counts from the first failure before the restart',
+    );
+  } finally {
+    cleanup();
+  }
+});

@@ -55,6 +55,8 @@ function cacheFile(): string {
 
 interface StoredPRList extends PRListSnapshot {
   version: number;
+  /** `repo#pr` → epoch ms the row first had to be carried; survives restarts so the 1h cap holds. */
+  carriedSince?: Record<string, number>;
 }
 
 /** The fields clients dereference without guards; anything else is tolerated. */
@@ -96,9 +98,12 @@ export function loadPRListCache(): void {
   }
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf-8'));
-    snapshot = isStoredPRList(parsed)
-      ? { fetchedAt: parsed.fetchedAt, prs: parsed.prs, truncated: parsed.truncated }
-      : null;
+    carriedSince.clear();
+    if (isStoredPRList(parsed)) {
+      snapshot = { fetchedAt: parsed.fetchedAt, prs: parsed.prs, truncated: parsed.truncated };
+      for (const [key, since] of Object.entries(parsed.carriedSince ?? {}))
+        if (typeof since === 'number' && Number.isFinite(since)) carriedSince.set(key, since);
+    } else snapshot = null;
     if (snapshot)
       console.log(
         `[pr.list] warm list: ${snapshot.prs.length} PR(s) fetched ${snapshot.fetchedAt} (${file})`,
@@ -115,7 +120,11 @@ function persist(next: PRListSnapshot): void {
   const file = cacheFile();
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    const stored: StoredPRList = { version: PR_LIST_SNAPSHOT_VERSION, ...next };
+    const stored: StoredPRList = {
+      version: PR_LIST_SNAPSHOT_VERSION,
+      ...next,
+      ...(carriedSince.size ? { carriedSince: Object.fromEntries(carriedSince) } : {}),
+    };
     writeFileSync(tmp, JSON.stringify(stored), 'utf-8');
     renameSync(tmp, file);
   } catch (err) {
