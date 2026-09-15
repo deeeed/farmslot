@@ -1,5 +1,5 @@
 import { html } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import type {
   CiCheckUpdatedPayload,
@@ -13,6 +13,7 @@ import type {
   RunDecision,
   RunGetResult,
   RunListResult,
+  RunRereviewLatestHeadResult,
   RunSessionCommandResult,
   RuntimePosturePreviewResult,
   RuntimePostureStatusResult,
@@ -840,6 +841,39 @@ export class RunDetail extends RunDetailState {
     }
   }
 
+  @state() private _rereviewInFlight = false;
+  private async _rereviewLatestHead(run: Run) {
+    if (this._actionsBlocked() || this._rereviewInFlight) return;
+    this._rereviewInFlight = true;
+    try {
+      const result = await gateway.request<RunRereviewLatestHeadResult>(
+        Methods.RUN_REREVIEW_LATEST_HEAD,
+        { runId: run.id },
+        30_000,
+      );
+      if (result.mode === 'warm-handoff' && result.runId) {
+        // The follow-up went to the retained reviewer session; watch it there.
+        location.hash = `runs?run=${result.runId}`;
+        return;
+      }
+      const pr = result.submission?.request.pr;
+      if (!pr) throw new Error('The gateway did not return a review round to follow');
+      const params = new URLSearchParams({
+        prSection: 'reviews',
+        prScope: 'all',
+        prPane: 'review',
+        pr: String(pr.number),
+        repo: pr.repo,
+        view: 'detail',
+      });
+      // The round lives in the review queue; follow it there.
+      location.hash = `prs?${params.toString()}`;
+    } catch (err) {
+      alert(`Re-review failed: ${(err as Error).message}`);
+    } finally {
+      this._rereviewInFlight = false;
+    }
+  }
   private _requestCopilotRunDiagnosis(run: Run) {
     this.dispatchEvent(
       new CustomEvent('copilot-prompt-request', {
@@ -1000,6 +1034,8 @@ export class RunDetail extends RunDetailState {
           },
         }).catch((err) => alert(`Run ${action} failed: ${(err as Error).message}`)),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
+      _rereviewLatestHead: (run) => this._rereviewLatestHead(run),
+      _rereviewInFlight: this._rereviewInFlight,
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _slotBranchForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',

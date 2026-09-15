@@ -300,6 +300,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.refreshReviewGate`                 | run              | bounded-write | —      | —      | Run RefreshReviewGate gateway method.                 |
 | `run.rehydratePrNumber`                 | run              | bounded-write | —      | —      | Run RehydratePrNumber gateway method.                 |
 | `run.replayStep`                        | run              | bounded-write | —      | —      | Run ReplayStep gateway method.                        |
+| `run.rereviewLatestHead`                | run              | bounded-write | —      | —      | Run RereviewLatestHead gateway method.                |
 | `run.resolveDecision`                   | run              | high-impact   | —      | —      | Run ResolveDecision gateway method.                   |
 | `run.resume`                            | run              | lifecycle     | —      | —      | Run Resume gateway method.                            |
 | `run.sessionCommand`                    | run              | bounded-write | —      | —      | Run SessionCommand gateway method.                    |

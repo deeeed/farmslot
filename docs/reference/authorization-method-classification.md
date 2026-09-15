@@ -257,6 +257,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.refreshReviewGate`                 | admin          |                                                          |
 | `run.rehydratePrNumber`                 | admin          |                                                          |
 | `run.replayStep`                        | admin          |                                                          |
+| `run.rereviewLatestHead`                | admin          |                                                          |
 | `run.resolveDecision`                   | admin          |                                                          |
 | `run.resume`                            | admin          |                                                          |
 | `run.sessionCommand`                    | admin          |                                                          |
