@@ -98,6 +98,7 @@ test('buildQueuePreviewParams preserves family/lane/variant identity', () => {
   const item: QueueItem = {
     id: 'queue-1',
     flowType: 'review-pr',
+    reviewValidationDepth: 'full-live',
     project: 'farmslot-farm',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-1',
@@ -116,6 +117,7 @@ test('buildQueuePreviewParams preserves family/lane/variant identity', () => {
     slotId: undefined,
     project: 'farmslot-farm',
     flowType: 'review-pr',
+    reviewValidationDepth: 'full-live',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-1',
     lane: 'comparison',
