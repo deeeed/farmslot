@@ -7,6 +7,7 @@ import {
   Methods,
   type MonitoredPRIdentity,
   monitoredPRKey,
+  type PRMonitor,
   type PRMonitorConfig,
   type PRProjectMonitorPolicy,
 } from '@farmslot/protocol';
@@ -93,6 +94,11 @@ function string(value: unknown, name: string): string {
 function configuration(value: unknown): PRMonitorConfig {
   assertPRMonitorConfig(value);
   return value;
+}
+
+/** Every persisted monitor, for retrospective feedback capture. Empty until monitoring is initialised. */
+export function monitorsSnapshot(): PRMonitor[] {
+  return service ? service.store.snapshot().monitors : [];
 }
 
 /** PRs with an active monitor across every owner, for the dashboard list. */

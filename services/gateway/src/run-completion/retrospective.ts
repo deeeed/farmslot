@@ -17,6 +17,10 @@ import {
 import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
+import {
+  collectFeedbackCandidates,
+  repositorySlugFromUrl,
+} from '../intelligence/feedback-candidates.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
@@ -174,10 +178,12 @@ export function initRunCompletionRetrospective(broadcast: BroadcastFn): void {
 
 const LEARNING_SUMMARY_MAX_CHARS = 1200;
 
-interface CommentsTriageEntry {
+export interface CommentsTriageEntry {
   triage?: string;
   fixed_in_commit?: string | null;
   path?: string;
+  line?: number;
+  body?: string;
   source?: string;
   author?: string;
   source_kind?: string;
@@ -189,7 +195,7 @@ interface CommentsTriageEntry {
   review_id?: string | number;
 }
 
-function normalizeCommentSource(entry: CommentsTriageEntry): 'bot' | 'human' | 'unknown' {
+export function normalizeCommentSource(entry: CommentsTriageEntry): 'bot' | 'human' | 'unknown' {
   const sourceKind = entry.source_kind ?? entry.source;
   const authorType = entry.author_type;
   if (typeof sourceKind === 'string') {
@@ -215,12 +221,11 @@ function normalizeCommentSource(entry: CommentsTriageEntry): 'bot' | 'human' | '
  * Accepts the absolute task dir (the parent of `artifacts/`). Returns null if
  * the file is missing, malformed, or not an array.
  */
-export async function readCommentsTriageSummary(
+export async function readCommentsTriageEntries(
   taskDir: string,
-): Promise<CommentsTriageSummary | null> {
+): Promise<CommentsTriageEntry[] | null> {
   const text = await readTextFromArtifacts(taskDir, 'comments-triage.json');
   if (!text) return null;
-  let entries: CommentsTriageEntry[];
   try {
     const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) {
@@ -231,7 +236,7 @@ export async function readCommentsTriageSummary(
     }
     // Guard against null/non-object entries so a malformed row doesn't throw
     // when callbacks dereference `.triage`.
-    entries = parsed.filter((e): e is CommentsTriageEntry => e != null && typeof e === 'object');
+    return parsed.filter((e): e is CommentsTriageEntry => e != null && typeof e === 'object');
   } catch (err) {
     // Malformed comments-triage.json — treat as missing rather than crash the
     // retrospective flow. Worker is expected to emit valid JSON; log the
@@ -241,6 +246,13 @@ export async function readCommentsTriageSummary(
     );
     return null;
   }
+}
+
+export async function readCommentsTriageSummary(
+  taskDir: string,
+): Promise<CommentsTriageSummary | null> {
+  const entries = await readCommentsTriageEntries(taskDir);
+  if (!entries) return null;
   const summary: CommentsTriageSummary = {
     total: entries.length,
     real: entries.filter((e) => e.triage === 'REAL').length,
@@ -348,6 +360,7 @@ export async function createRetrospective(run: Run, report: string | null): Prom
     deltaLearnings: isFamilyTerminalFlow ? (ownLearnings ?? undefined) : undefined,
     familyLearnings,
     commentsTriageSummary: commentsTriageSummary ?? undefined,
+    ...(needsFamilyScan ? { familyRuns: [run, ...familyCandidates] } : {}),
   });
 
   const summary = report
@@ -524,6 +537,26 @@ export function inferRetrospectiveOutcome(
   return 'unknown';
 }
 
+function familyRunsFor(run: Run): Run[] {
+  const family = getFamilyRuns(run, getAllRuns());
+  return uniqueRuns([
+    run,
+    family.rootRun,
+    ...(family.parentRun ? [family.parentRun] : []),
+    ...family.otherFamilyRuns,
+  ]);
+}
+
+async function projectRepositoryFor(project: string): Promise<string | null> {
+  const vars = await loadProjectVars(project).catch((err: Error) => {
+    // A run whose project config is gone (deleted farm, renamed project) still
+    // gets a retrospective; the PR is then keyed from `ticketOrPr` only.
+    console.warn(`[run-completion] loadProjectVars(${project}) failed: ${err.message}`);
+    return null;
+  });
+  return repositorySlugFromUrl((vars?.projectJson as { repo_url?: string } | undefined)?.repo_url);
+}
+
 export async function buildRetrospectivePayload(
   run: Run,
   report: string | null,
@@ -533,6 +566,7 @@ export async function buildRetrospectivePayload(
     deltaLearnings?: string;
     familyLearnings?: string;
     commentsTriageSummary?: CommentsTriageSummary;
+    familyRuns?: Run[];
   },
 ): Promise<RetrospectivePayload> {
   const ownLearnings = await readTaskArtifactText(run, 'learnings.md');
@@ -581,6 +615,15 @@ export async function buildRetrospectivePayload(
   // reused here so the retrospective shows the full worker → reviews → cost story.
   const gateSummary = buildGateSummary(run, GATE_SUMMARY_KINDS.review);
 
+  // Deduplicated PR feedback (worker triage + PR monitor incidents) with
+  // attribution and ledger consumption state, so accept/curation sees which
+  // human requests already have a recorded destination.
+  const feedback = await collectFeedbackCandidates(
+    run,
+    context?.familyRuns ?? familyRunsFor(run),
+    await projectRepositoryFor(run.project),
+  );
+
   return {
     kind: 'retrospective',
     outcome,
@@ -596,6 +639,9 @@ export async function buildRetrospectivePayload(
     ...(context?.rootRun ? { rootRunId: context.rootRun.id } : {}),
     ...(context?.commentsTriageSummary
       ? { commentsTriageSummary: context.commentsTriageSummary }
+      : {}),
+    ...(feedback && feedback.candidates.length
+      ? { feedbackCandidates: feedback.candidates, feedbackSummary: feedback.summary }
       : {}),
     ...(report?.trim()
       ? { reportExcerpt: report.trim().slice(0, LEARNING_SUMMARY_MAX_CHARS) }

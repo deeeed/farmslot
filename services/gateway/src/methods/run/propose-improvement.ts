@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   Events,
+  type FeedbackCandidate,
   type ImprovementDiffPayload,
   type Run,
   type RunProposeImprovementParams,
@@ -102,6 +103,22 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
   return sections.join('\n\n');
 }
 
+/** Human feedback from the run's latest retrospective that no canonical rule has consumed yet. */
+function unconsumedRetrospectiveFeedback(run: Run): FeedbackCandidate[] {
+  const retrospective = [...(run.decisions ?? [])]
+    .reverse()
+    .find(
+      (decision) => decision.type === 'retrospective' && decision.payload?.kind === 'retrospective',
+    );
+  const payload = retrospective?.payload;
+  if (!payload || payload.kind !== 'retrospective') return [];
+  return (payload.feedbackCandidates ?? []).filter(
+    (candidate) =>
+      candidate.authorKind === 'human' &&
+      (!candidate.consumedBy?.length || candidate.revisedSinceConsumed),
+  );
+}
+
 /**
  * MANUAL-000075: every improvement analysis first routes the learnings through
  * the system/domain classifier. SYSTEM entries continue into the improvement
@@ -122,7 +139,9 @@ async function routeThenAnalyze(
   const routed = await router.routeLearnings(run.project, learnings);
   let emissionError: string | null = null;
   try {
-    await router.emitLearningsDraftDecision(runId, routed);
+    await router.emitLearningsDraftDecision(runId, routed, {
+      feedbackCandidates: unconsumedRetrospectiveFeedback(getRun(runId) ?? run),
+    });
   } catch (err) {
     // The draft card failing (e.g. inbox IO) must not take the system arm down
     // with it; the payload is logged for recovery and the terminal message

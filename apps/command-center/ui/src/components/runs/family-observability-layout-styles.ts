@@ -128,6 +128,36 @@ export const familyObservabilityLayoutStyles = css`
     gap: ${unsafeCSS(spacing.sm)};
     margin-top: ${unsafeCSS(spacing.sm)};
   }
+  .feedback-list {
+    display: grid;
+    gap: ${unsafeCSS(spacing.sm)};
+    margin-top: ${unsafeCSS(spacing.sm)};
+  }
+  .feedback-candidate {
+    border-left: 2px solid ${unsafeCSS(colors.textMuted)};
+    padding-left: ${unsafeCSS(spacing.sm)};
+    font-size: 11px;
+  }
+  .feedback-candidate[data-author-kind='human'] {
+    border-left-color: ${unsafeCSS(colors.accent)};
+  }
+  .feedback-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: ${unsafeCSS(spacing.xs)};
+    align-items: baseline;
+  }
+  .feedback-kind {
+    font-family: ${unsafeCSS(fonts.mono)};
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+  .feedback-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: ${unsafeCSS(spacing.sm)};
+    font-size: 10px;
+  }
   .retro-effect {
     display: grid;
     gap: 3px;

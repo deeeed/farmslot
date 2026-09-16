@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated "Recorded in canonical library" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts.
+
 - Correlate review worktrees in terminal inventory and support confirmed termination of unmanaged tmux sessions with identity checks.
 - Publish findings outside PR diff hunks in the review body instead of failing the entire review; keep valid findings inline and preserve retry safety.
 

@@ -140,6 +140,8 @@ export interface PRMonitorSignal {
   summary: string;
   url: string;
   checkName?: string;
+  /** Commit the reviewer commented on, when the provider reports it (review threads). */
+  reviewedCommit?: string;
 }
 
 export interface PRMonitorIncident {

@@ -893,6 +893,91 @@ export interface CommentsTriageSummary {
   actionablePaths?: string[];
 }
 
+/** Who wrote a piece of PR feedback. Bot and human feedback stay distinguishable; unknown is never coerced. */
+export type FeedbackAuthorKind = 'human' | 'bot' | 'unknown';
+
+/**
+ * How a feedback candidate relates to Farmslot work. A human request for
+ * changes is a signal to investigate, never automatic proof that a worker
+ * introduced the defect: review-only and follow-up-only runs must not be
+ * blamed for another author's implementation.
+ */
+export type FeedbackAttributionKind =
+  | 'family-change'
+  | 'follow-up-only'
+  | 'review-only'
+  | 'unknown';
+
+/** A recorded consumption: which rule/destination absorbed a feedback candidate. */
+export interface FeedbackConsumption {
+  /** Canonical knowledge destination, e.g. `git@github.com:Org/library.git:review/antipatterns.md`. */
+  destination: string;
+  /** Rule lesson or draft slug that consumed the candidate. */
+  rule: string;
+  /** Candidate revision that was consumed; a later edit keeps this link but shows as revised. */
+  revision: string;
+  /** sha256 of the comment body alone, so a triage-only re-read of the same text is not a revision. */
+  bodyRevision?: string;
+  recordedAt: string;
+  decisionId?: string;
+  commit?: string;
+}
+
+/**
+ * One deduplicated unit of PR feedback captured for the learning loop.
+ * Identity is the provider comment/review id, so repeated scans and repair
+ * pushes reuse the same candidate; an edited comment changes `revision` only.
+ */
+export interface FeedbackCandidate {
+  /** sha256 of `sourceKey` — stable across revisions and scans. */
+  id: string;
+  /** `<host>/<owner>/<repo>#<number>:<kind>:<providerId>` */
+  sourceKey: string;
+  provider: 'github';
+  repository: string;
+  prNumber: number;
+  kind: 'review-comment' | 'review';
+  /** Provider signal revision when observed by the PR monitor, else the body hash. */
+  revision: string;
+  /** sha256 of the collapsed comment body when the body is known. */
+  bodyRevision?: string;
+  authorLogin?: string;
+  authorKind: FeedbackAuthorKind;
+  sourceKind?: string;
+  reviewState?: string;
+  path?: string;
+  excerpt?: string;
+  url?: string;
+  /** Commit the reviewer was looking at, when the provider reports it. */
+  reviewedCommit?: string;
+  /** PR head at the time the candidate was last observed. */
+  observedHead?: string;
+  resolution: {
+    state: 'open' | 'resolved' | 'fixed' | 'unknown';
+    triage?: string;
+    fixedInCommit?: string;
+  };
+  /** Runs whose triage or PR monitor carried this feedback. */
+  runIds: string[];
+  familyId?: string;
+  /** Family runs that produced code changes (dev/fix-bug roots, follow-up pushes). */
+  familyChangeRunIds: string[];
+  attribution: { kind: FeedbackAttributionKind; note: string };
+  sources: Array<'comments-triage' | 'pr-monitor'>;
+  consumedBy?: FeedbackConsumption[];
+  /** Set when a consumption was recorded against an earlier revision of this candidate. */
+  revisedSinceConsumed?: boolean;
+}
+
+export interface FeedbackCandidateSummary {
+  total: number;
+  human: number;
+  bot: number;
+  unknown: number;
+  consumed: number;
+  open: number;
+}
+
 export interface RetrospectivePayload {
   kind: 'retrospective';
   outcome: 'success' | 'failure' | 'partial' | 'cancelled' | 'unknown';
@@ -918,6 +1003,9 @@ export interface RetrospectivePayload {
   commentsTriageSummary?: CommentsTriageSummary;
   /** Consolidated "what happened" snapshot, shared with the publication gate. */
   gateSummary?: GateSummary;
+  /** Deduplicated PR feedback captured for this run/family, with attribution and consumption state. */
+  feedbackCandidates?: FeedbackCandidate[];
+  feedbackSummary?: FeedbackCandidateSummary;
 }
 
 /** Engine-collision decision payload — surfaces the prior runs that own the colliding
@@ -947,10 +1035,12 @@ export interface ReviewContinuationPayload {
  * Farmslot never writes to the skills repo — the draft carries the exact text
  * and target path for a human to open as a PR there (MANUAL-000075). */
 export interface LearningsAntipatternDraft {
-  /** Stable slug identifying the antipattern (also the target file name). */
+  /** Stable slug identifying the antipattern (the proposed rule heading). */
   id: string;
-  /** Skills-repo-relative path, e.g. domains/agentic/skills/recipe-pr-qa-review/references/antipatterns/<repo-key>/<slug>.md */
+  /** Repository-relative path inside the canonical knowledge library, e.g. review/antipatterns.md. */
   targetPath: string;
+  /** Canonical library repository the draft belongs in. */
+  targetRepo?: string;
   symptom: string;
   cause: string;
   action: string;
@@ -969,6 +1059,14 @@ export type LearningsDraftReceipt =
   | { status: 'already-processed'; packageId: string }
   | { status: 'skipped'; reason: string };
 
+/** Where a project's domain lessons land. Resolved from project configuration, never guessed. */
+export interface KnowledgeDestination {
+  repo: string;
+  path: string;
+  library?: string;
+  source: 'vars.knowledge_destination' | 'static_review';
+}
+
 export interface LearningsDraftPayload {
   kind: 'learnings-draft';
   project: string;
@@ -977,6 +1075,9 @@ export interface LearningsDraftPayload {
   holds: LearningsHold[];
   /** Inbox processed.jsonl outcome when a captured package correlates to the run. */
   receipt?: LearningsDraftReceipt;
+  destination?: KnowledgeDestination;
+  /** Unconsumed human feedback from the source family, shown beside the drafts for curation. */
+  feedbackCandidates?: FeedbackCandidate[];
 }
 
 export type RunDecisionPayload =

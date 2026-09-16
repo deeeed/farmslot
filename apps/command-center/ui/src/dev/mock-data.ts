@@ -2315,7 +2315,7 @@ export function mockDecisions(): PendingDecision[] {
       slotId: 'runner-mobile-1',
       title: 'Learnings routed: domain drafts & holds',
       description:
-        '1 domain antipattern draft for the recipe-pr-qa-review skill — open a PR on the skills repo to land it; 1 entry held for teaching — nothing was dropped. Farmslot never writes to the skills repo — this card is the human gate.',
+        '1 domain antipattern draft for review/antipatterns.md in git@github.com:example/recipe-library.git — open a PR on the library to land it; 1 entry held for teaching — nothing was dropped. Farmslot never writes to the library — this card is the human gate.',
       context: {},
       payload: {
         kind: 'learnings-draft',
@@ -2324,8 +2324,8 @@ export function mockDecisions(): PendingDecision[] {
         drafts: [
           {
             id: 'forced-gc-before-node-counts',
-            targetPath:
-              'domains/agentic/skills/recipe-pr-qa-review/references/antipatterns/example-mobile/forced-gc-before-node-counts.md',
+            targetPath: 'review/antipatterns.md',
+            targetRepo: 'git@github.com:example/recipe-library.git',
             symptom: 'Node counts climb every navigation cycle and look like a memory leak.',
             cause:
               'Performance.getMetrics counts unreachable-but-uncollected objects, so DOM churn inflates the number.',

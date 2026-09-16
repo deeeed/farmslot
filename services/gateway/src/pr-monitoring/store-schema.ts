@@ -25,6 +25,7 @@ const signal = {
     summary: text,
     url: text,
     checkName: text,
+    reviewedCommit: text,
   },
 };
 

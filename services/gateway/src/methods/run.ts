@@ -1643,6 +1643,15 @@ async function resolveRunDecision(
     };
   }
 
+  // Human gate for routed domain drafts: bind the consumed feedback to the
+  // rule BEFORE resolving, so a ledger failure leaves the card pending instead
+  // of recording an approval with no trace. Idempotent by (candidate, rule).
+  if (decision.type === 'engine_learnings_draft' && params.actionId === 'landed') {
+    const { recordLearningsDraftLanded } = await import('../intelligence/learnings-router.js');
+    await recordLearningsDraftLanded(existing, decision);
+    assertDecisionStillUnresolved(params.runId, params.decisionId);
+  }
+
   // Mark decision as resolved
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = params.actionId;

@@ -1,0 +1,366 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import test from 'node:test';
+
+import type { PRMonitorIncident, Run } from '@farmslot/protocol';
+
+import { makeRun } from '../family-observability/test-fixtures.js';
+
+import {
+  buildFeedbackCandidates,
+  type FeedbackCandidateInput,
+  feedbackIdentityFromUrl,
+  feedbackSourceKey,
+  feedbackTargetForRun,
+  repositorySlugFromUrl,
+  summarizeFeedbackCandidates,
+  unconsumedHumanFeedback,
+} from './feedback-candidates.js';
+import type { FeedbackLedger } from './feedback-ledger.js';
+
+const TARGET = { host: 'github.com', repository: 'MetaMask/metamask-mobile', prNumber: 34865 };
+const URL = 'https://github.com/MetaMask/metamask-mobile/pull/34865#discussion_r3916065775';
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function incident(overrides: Partial<PRMonitorIncident> & { signal: PRMonitorIncident['signal'] }) {
+  return {
+    id: 'inc',
+    firstObservedAt: '2026-09-01T00:00:00.000Z',
+    lastObservedAt: '2026-09-02T00:00:00.000Z',
+    attemptCount: 0,
+    ...overrides,
+  } as PRMonitorIncident;
+}
+
+function monitor(
+  incidents: PRMonitorIncident[],
+  headSha = 'a93b2a48b007b9f4ca0c0d4b3fb8b8ea66cf4b08',
+): FeedbackCandidateInput['monitors'][number] {
+  return {
+    config: {
+      pr: { host: 'github.com', repo: 'MetaMask/metamask-mobile', number: 34865 },
+    } as FeedbackCandidateInput['monitors'][number]['config'],
+    incidents,
+    observation: { headSha } as FeedbackCandidateInput['monitors'][number]['observation'],
+    originatingRunIds: ['monitor-origin-run'],
+  };
+}
+
+const EMPTY_LEDGER: FeedbackLedger = { version: 1, entries: [] };
+
+function family(...runs: Run[]): Run[] {
+  return runs;
+}
+
+const ROOT = makeRun({
+  id: 'root',
+  familyId: 'root',
+  flowType: 'fix-bug',
+  ticketOrPr: 'MetaMask/metamask-mobile#34865',
+});
+const FOLLOW = makeRun({
+  id: 'follow',
+  familyId: 'root',
+  parentRunId: 'root',
+  flowType: 'pr-complete',
+  ticketOrPr: 'MetaMask/metamask-mobile#34865',
+});
+const REVIEW = makeRun({
+  id: 'review',
+  familyId: 'review',
+  flowType: 'review-pr',
+  ticketOrPr: 'MetaMask/metamask-mobile#34865',
+});
+
+const HUMAN_TRIAGE = {
+  comment_id: 3916065775,
+  author_login: 'reviewer-a',
+  author_type: 'User',
+  source_kind: 'human',
+  review_state: 'CHANGES_REQUESTED',
+  path: 'app/components/UI/Perps/hooks/usePerpsOrderForm.ts',
+  body: 'Late defaults overwrite what the user typed.',
+  triage: 'REAL',
+  fixed_in_commit: null,
+};
+
+test('identity is the provider comment id, so duplicate scans and repair pushes yield one candidate', () => {
+  const first = incident({
+    signal: {
+      kind: 'feedback',
+      key: 'PRRC_1',
+      revision: 'rev-1',
+      summary: 'reviewer-a: Late defaults overwrite what the user typed.',
+      url: URL,
+      reviewedCommit: 'a93b2a48b007b9f4ca0c0d4b3fb8b8ea66cf4b08',
+    },
+  });
+  const candidates = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT, FOLLOW),
+    // The same comment triaged by two follow-up runs AND observed by the monitor twice.
+    triage: [
+      { runId: 'follow', entries: [HUMAN_TRIAGE] },
+      { runId: 'follow-2', entries: [HUMAN_TRIAGE] },
+    ],
+    monitors: [monitor([first]), monitor([first], 'b7cc4ff3000000000000000000000000000000ff')],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidates.length, 1);
+  const [candidate] = candidates;
+  assert.equal(candidate!.sourceKey, feedbackSourceKey(TARGET, 'review-comment', '3916065775'));
+  assert.equal(candidate!.id, sha256(candidate!.sourceKey));
+  assert.deepEqual(candidate!.sources, ['comments-triage', 'pr-monitor']);
+  assert.deepEqual(candidate!.runIds, ['follow', 'follow-2', 'monitor-origin-run']);
+  assert.equal(candidate!.authorKind, 'human');
+  assert.equal(candidate!.reviewedCommit, 'a93b2a48b007b9f4ca0c0d4b3fb8b8ea66cf4b08');
+  // Provider revision wins over the body hash when the monitor observed the comment.
+  assert.equal(candidate!.revision, 'rev-1');
+  assert.equal(candidate!.bodyRevision, sha256('Late defaults overwrite what the user typed.'));
+  assert.equal(candidate!.attribution.kind, 'family-change');
+  assert.deepEqual(candidate!.familyChangeRunIds, ['root', 'follow']);
+});
+
+test('an edited comment changes the revision but keeps its consumed-rule link and is flagged revised', () => {
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: [
+      {
+        sourceKey: feedbackSourceKey(TARGET, 'review-comment', '3916065775'),
+        candidateId: 'x',
+        revision: 'rev-1',
+        bodyRevision: sha256('Late defaults overwrite what the user typed.'),
+        destination:
+          'git@github.com:MetaMask/experimental-metamask-recipe-perps.git:review/antipatterns.md',
+        rule: 'Late defaults overwrite a user choice',
+        recordedAt: '2026-09-15T00:00:00.000Z',
+        source: 'approved-audit',
+      },
+    ],
+  };
+  const unchanged = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [HUMAN_TRIAGE] }],
+    monitors: [],
+    ledger,
+  })[0]!;
+  assert.equal(unchanged.consumedBy?.length, 1);
+  assert.equal(unchanged.revisedSinceConsumed, undefined, 'same body via triage is not a revision');
+
+  const edited = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [],
+    monitors: [
+      monitor([
+        incident({
+          signal: {
+            kind: 'feedback',
+            key: 'PRRC_1',
+            revision: 'rev-2',
+            summary: 'reviewer-a: Late defaults overwrite what the user typed (edited).',
+            url: URL,
+          },
+        }),
+      ]),
+    ],
+    ledger,
+  })[0]!;
+  assert.equal(edited.revision, 'rev-2');
+  assert.equal(edited.consumedBy?.[0]?.rule, 'Late defaults overwrite a user choice');
+  assert.equal(edited.revisedSinceConsumed, true);
+  assert.equal(
+    unconsumedHumanFeedback([unchanged, edited]).length,
+    1,
+    'only the edited one re-enters curation',
+  );
+});
+
+test('a new reviewed SHA does not create a second candidate; head and reviewed commit stay separate', () => {
+  const candidates = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [],
+    monitors: [
+      monitor(
+        [
+          incident({
+            signal: {
+              kind: 'feedback',
+              key: 'PRRC_1',
+              revision: 'rev-1',
+              summary: 'reviewer-a: body',
+              url: URL,
+              reviewedCommit: '47dfbf15ed95d0f2ce4ce11d502476d3766b1e57',
+            },
+          }),
+        ],
+        'ffffffffffffffffffffffffffffffffffffffff',
+      ),
+    ],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]!.reviewedCommit, '47dfbf15ed95d0f2ce4ce11d502476d3766b1e57');
+  assert.equal(candidates[0]!.observedHead, 'ffffffffffffffffffffffffffffffffffffffff');
+});
+
+test('bot, human and unknown feedback stay distinguishable and are summarised separately', () => {
+  const candidates = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [
+      {
+        runId: 'root',
+        entries: [
+          HUMAN_TRIAGE,
+          {
+            comment_id: 1,
+            author_login: 'cursor[bot]',
+            author_type: 'Bot',
+            source_kind: 'bugbot',
+            triage: 'REAL',
+            fixed_in_commit: 'abc123',
+          },
+          { comment_id: 2, author_login: 'someone', triage: 'OUT_OF_SCOPE' },
+        ],
+      },
+    ],
+    monitors: [
+      monitor([
+        incident({
+          signal: {
+            kind: 'review',
+            key: 'PRR_1',
+            revision: 'r',
+            summary: 'dependabot[bot] requested changes',
+            url: 'https://github.com/MetaMask/metamask-mobile/pull/34865#pullrequestreview-99',
+          },
+        }),
+      ]),
+    ],
+    ledger: EMPTY_LEDGER,
+  });
+  const byKind = Object.fromEntries(
+    candidates.map((c) => [c.sourceKey.split(':').slice(1).join(':'), c.authorKind]),
+  );
+  assert.deepEqual(byKind, {
+    'review-comment:3916065775': 'human',
+    'review-comment:1': 'bot',
+    'review-comment:2': 'unknown',
+    'review:99': 'bot',
+  });
+  assert.deepEqual(summarizeFeedbackCandidates(candidates), {
+    total: 4,
+    human: 1,
+    bot: 2,
+    unknown: 1,
+    consumed: 0,
+    open: 3,
+  });
+  const fixed = candidates.find((c) => c.sourceKey.endsWith(':1'))!;
+  assert.deepEqual(fixed.resolution, { state: 'fixed', triage: 'REAL', fixedInCommit: 'abc123' });
+  // Human first, then open before fixed — the curation order.
+  assert.equal(candidates[0]!.authorKind, 'human');
+});
+
+test('attribution: review-only and follow-up-only families are never blamed for the implementation', () => {
+  const reviewOnly = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(REVIEW),
+    triage: [{ runId: 'review', entries: [HUMAN_TRIAGE] }],
+    monitors: [],
+    ledger: EMPTY_LEDGER,
+  })[0]!;
+  assert.equal(reviewOnly.attribution.kind, 'review-only');
+  assert.deepEqual(reviewOnly.familyChangeRunIds, []);
+
+  const followUpOnly = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(
+      makeRun({
+        id: 'pc',
+        familyId: 'pc',
+        flowType: 'pr-complete',
+        ticketOrPr: 'MetaMask/metamask-mobile#34865',
+      }),
+    ),
+    triage: [{ runId: 'pc', entries: [HUMAN_TRIAGE] }],
+    monitors: [],
+    ledger: EMPTY_LEDGER,
+  })[0]!;
+  assert.equal(followUpOnly.attribution.kind, 'follow-up-only');
+  assert.match(followUpOnly.attribution.note, /attribution incomplete/);
+
+  const unknown = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: [],
+    triage: [{ runId: 'ghost', entries: [HUMAN_TRIAGE] }],
+    monitors: [],
+    ledger: EMPTY_LEDGER,
+  })[0]!;
+  assert.equal(unknown.attribution.kind, 'unknown');
+});
+
+test('monitors for other PRs are ignored and unkeyable triage rows are skipped', () => {
+  const candidates = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [{ author_login: 'x', body: 'no id' }] }],
+    monitors: [
+      {
+        ...monitor([
+          incident({
+            signal: {
+              kind: 'feedback',
+              key: 'k',
+              revision: 'r',
+              summary: 'a: b',
+              url: 'https://github.com/o/r/pull/1#discussion_r5',
+            },
+          }),
+        ]),
+        config: {
+          pr: { host: 'github.com', repo: 'other/repo', number: 1 },
+        } as FeedbackCandidateInput['monitors'][number]['config'],
+      },
+    ],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidates.length, 0);
+});
+
+test('helpers parse provider identities and run PR targets', () => {
+  assert.deepEqual(feedbackIdentityFromUrl(URL), {
+    kind: 'review-comment',
+    providerId: '3916065775',
+  });
+  assert.deepEqual(feedbackIdentityFromUrl('https://github.com/o/r/pull/1#pullrequestreview-77'), {
+    kind: 'review',
+    providerId: '77',
+  });
+  assert.equal(feedbackIdentityFromUrl('https://github.com/o/r/pull/1'), null);
+  assert.equal(
+    repositorySlugFromUrl('git@github.com:MetaMask/metamask-mobile.git'),
+    'MetaMask/metamask-mobile',
+  );
+  assert.equal(
+    repositorySlugFromUrl('https://github.com/MetaMask/metamask-mobile'),
+    'MetaMask/metamask-mobile',
+  );
+  assert.equal(repositorySlugFromUrl('https://gitlab.com/o/r.git'), null);
+  assert.deepEqual(feedbackTargetForRun(ROOT, [], null), TARGET);
+  assert.deepEqual(
+    feedbackTargetForRun(
+      makeRun({ ticketOrPr: 'TAT-1', prNumber: 12 }),
+      [],
+      'MetaMask/metamask-extension',
+    ),
+    { host: 'github.com', repository: 'MetaMask/metamask-extension', prNumber: 12 },
+  );
+  assert.equal(feedbackTargetForRun(makeRun({ ticketOrPr: 'TAT-1' }), [], null), null);
+});

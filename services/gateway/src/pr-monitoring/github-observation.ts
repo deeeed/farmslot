@@ -30,6 +30,7 @@ interface Comment {
   updatedAt: string;
   url: string;
   author: { login: string; __typename: string } | null;
+  originalCommit?: { oid: string } | null;
 }
 interface Thread {
   id: string;
@@ -67,7 +68,7 @@ interface PullRequest {
 }
 
 const pageInfo = 'pageInfo { hasNextPage endCursor }';
-const commentFields = 'id body updatedAt url author { login __typename }';
+const commentFields = 'id body updatedAt url author { login __typename } originalCommit { oid }';
 
 async function prConnection<T>(
   prId: string,
@@ -211,6 +212,7 @@ export async function fetchPRMonitorObservation(
         revision: fingerprint(`${comment.updatedAt}:${comment.body}`),
         summary: `${comment.author.login}: ${comment.body.trim().slice(0, 180)}`,
         url: comment.url,
+        ...(comment.originalCommit?.oid ? { reviewedCommit: comment.originalCommit.oid } : {}),
       });
     }
   }
