@@ -136,7 +136,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /^# fix-bug: Saving a note drops the last character/m);
   assert.match(taskDocument, /> Fully autonomous — zero human input/);
   assert.match(taskDocument, /^TICKET: SPLIT-\d+$/m);
-  assert.match(taskDocument, /^STATUS: pending$/m);
+  assert.doesNotMatch(taskDocument, /^STATUS:/m);
   assert.match(
     taskDocument,
     /## Acceptance Criteria\n\n- Tapping Save persists the full text\n- No error toast appears\n- Undo restores the note\n {2}within one tap\n {2}and keeps focus\n/,

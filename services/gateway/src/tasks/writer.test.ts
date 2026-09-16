@@ -328,7 +328,10 @@ REPO: /tmp/repo
   git push origin replay-branch
   unset GH_TOKEN && gh pr edit <PR_NUMBER> --body-file /tmp/report.md
   \`\`\`
-  Set \`STATUS: done\`.
+  Write completion signal:
+  \`\`\`bash
+  /tmp/task/mark complete --mark-last
+  \`\`\`
 `;
 
 const SIMPLE_PUBLISHING_DEV_TEMPLATE_SHAPE = `# Worker: Feature — PROJ-1
@@ -345,7 +348,7 @@ TASK_DIR: /tmp/task
 - [ ] **4. Create branch** — \`git checkout -b replay-branch\`
 - [ ] **11. Commit** — atomic commit following the repo protocol.
 - [ ] **12. Push and create draft PR** — \`git push -u origin replay-branch\`, create PR referencing PROJ-1.
-- [ ] **13. Write report and signal** — create \`/tmp/task/artifacts/report.md\`, update \`STATUS: done\`, write \`SIGNAL.json\`.
+- [ ] **13. Write report and signal** — create \`/tmp/task/artifacts/report.md\`, then run \`/tmp/task/mark complete --mark-last\`.
 `;
 
 const FORBIDDEN_PUBLISH_SNIPPETS = [
@@ -784,7 +787,6 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
       'PR: {{PR_NUMBER}}',
       'BRANCH: {{PR_BRANCH}}',
       'TASK_DIR: {{TASK_DIR}}',
-      'STATUS: pending',
       '',
       'Do not write terminal `SIGNAL.json`.',
       '',
@@ -812,7 +814,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
   const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
   assert.match(checklist, /Worker: Interactive PR-Complete/);
   assert.match(rendered, /Interactive PR-complete handoff/);
-  assert.match(rendered, /STATUS: waiting-human/);
+  assert.doesNotMatch(rendered, /STATUS:/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete-interactive.md');
   assert.equal(provenance.templateSelectionSource, 'implicit-interactive-pr-complete');
@@ -844,7 +846,7 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
     templateSelectionReason?: string;
   };
   assert.match(rendered, /Interactive PR-complete handoff/);
-  assert.match(rendered, /STATUS: waiting-human/);
+  assert.doesNotMatch(rendered, /STATUS:/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete.md');
   assert.equal(provenance.templateSelectionSource, 'default');

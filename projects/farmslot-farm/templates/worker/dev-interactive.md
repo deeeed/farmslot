@@ -1,7 +1,7 @@
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. TASK.md `STATUS: working` is not SIGNAL `status` — `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
 
 ### Repo boundaries — where proof artifacts live
 
@@ -24,7 +24,6 @@ CDP_PORT: {{CDP_PORT}}
 WATCHER_PORT: {{WATCHER_PORT}}
 RUNTIME_DIR: {{RUNTIME_DIR}}
 SLOT: {{SLOT}}
-STATUS: pending
 ```
 
 ## Description
@@ -43,7 +42,7 @@ These steps are common to every interactive run, and are the same list as `{{TAS
 
 ## Interactive protocol
 
-- When the operator begins steering work, set `STATUS: working` and run `{{TASK_DIR}}/mark start` before the first `./mark N`.
+- When the operator begins steering work, run `{{TASK_DIR}}/mark start` before the first `./mark N`.
 - The human operator drives scope, order, review, and whether/when to publish.
 - Keep changes local unless the operator explicitly tells you otherwise.
 - Avoid publishing, pushing, or mutating GitHub PRs unless explicitly instructed.
@@ -89,7 +88,6 @@ When the operator says the interactive session is complete:
    node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings
    ```
 4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-5. Set the task status line to `STATUS: done`.
 6. If the operator explicitly approved publication, run repo hygiene before creating the PR:
    ```bash
    cd {{REPO}}

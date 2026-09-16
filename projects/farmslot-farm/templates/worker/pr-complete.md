@@ -5,7 +5,7 @@
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in TASK.md, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Confirm PR context** — verify `PR_NUMBER`, `PR_BRANCH`, and current task scope before editing.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Read inherited context** — review `{{TASK_DIR}}/inputs/inherited/` and any materialized family artifacts before making changes.
@@ -62,4 +62,4 @@
   Record `behindMain`, `mergeConflicts`, and the next command used in the report.
 - [ ] **10. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results, behindMain/mergeConflicts.
 - [ ] **11. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
-- [ ] **12. Update status and signal** — set `STATUS: done` in TASK.md, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)
+- [ ] **12. Signal completion** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)

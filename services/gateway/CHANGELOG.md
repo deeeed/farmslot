@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Task documents no longer carry a `STATUS:` line and interactive PR-complete handoffs no longer ask the worker to set one. Run state comes from the `mark` signal file (ADR-045); the field had no reader.
+
 - Bind owned native filesystem operations and responses to the authorized node connection.
 
 - `run.rereviewLatestHead` re-reviews a review-pr run whose review could not be posted because the head moved: when the run's reviewer session is still alive on its slot, a chained review-pr run hands the follow-up into that session (warm handoff) with the incremental repeat-review context attached; otherwise a manual review request (resume session, incremental scope, same slot/runner/model preferred) goes through the review queue. Reviewer continuity treats a review blocked at posting as the prior round.

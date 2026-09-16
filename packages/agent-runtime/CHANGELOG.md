@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Task documents no longer carry a `STATUS:` line; run state is the `mark` signal file (farmslot ADR-045) and the field had no reader.
+
 - Run static reviewers with read-only source permissions and cancel native initialization safely.
 
 - `writeTaskDir` drops the transition `writeChecklistManifest` option; a task dir never carries a default-valued `checklist-target.json`.
