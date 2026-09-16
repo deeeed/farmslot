@@ -48,13 +48,9 @@ def mtime(path: Path):
     return int(path.stat().st_mtime) if path.exists() else None
 
 checkbox_done = 0
-status = None
 if task_path.exists():
     text = task_path.read_text(encoding="utf-8")
     checkbox_done = len(re.findall(r"^- \[(?:x|X)\]", text, flags=re.M))
-    m = re.search(r"STATUS:\s*([^\n]+)", text)
-    if m:
-        status = m.group(1).strip()
 
 signal = None
 if signal_path.exists():
@@ -69,7 +65,6 @@ print(json.dumps({
     "task_exists": task_path.exists(),
     "task_mtime": mtime(task_path),
     "checkbox_done": checkbox_done,
-    "task_status": status,
     "recipe_exists": recipe_path.exists(),
     "recipe_mtime": mtime(recipe_path),
     "learning_exists": learning_path.exists(),
@@ -107,7 +102,7 @@ if signal_status in {"complete", "done", "failed", "blocked"}:
     sys.exit(0)
 
 def progress_changed(prev, current):
-    keys = ["task_mtime", "checkbox_done", "task_status", "recipe_mtime", "learning_mtime"]
+    keys = ["task_mtime", "checkbox_done", "recipe_mtime", "learning_mtime"]
     return any(prev.get(k) != current.get(k) for k in keys)
 
 if previous is None:

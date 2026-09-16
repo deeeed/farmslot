@@ -93,7 +93,7 @@ Completion requires:
 - unresolved-target audit written
 - validation evidence recorded
 - all required proof targets either `PROVEN` or explicitly non-applicable by contract
-- `STATUS: done` in the run-local copied `TASK.md`
+- `terminal_status: done` in the run envelope; `blocked` and `failed` carry a concrete `terminal_reason`
 
 ## Hard Rules
 
@@ -119,7 +119,7 @@ Completion requires:
 | Rewriting long repeated setup chains                               | reuse parameterized recipes through `call`                                                           |
 | Forcing a canonical recipe when the claim is unresolved            | stop or emit only resolved targets with explicit gaps                                                |
 | Treating interactive farmslot execution like chat-only drafting    | keep driving the workspace until artifacts + validation evidence exist                               |
-| Writing recipe artifacts but forgetting the copied `TASK.md`       | rewrite the task file and update `STATUS` / evidence sections before stopping                        |
+| Writing recipe artifacts but forgetting the copied `TASK.md`       | rewrite the task file and update the evidence sections before stopping                               |
 | Inventing non-canonical runner fields like `timeout` on `wait_for` | use documented runner field names such as `timeout_ms` so live validation honors the intended timing |
 
 ## Stop Conditions
