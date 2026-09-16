@@ -339,7 +339,10 @@ REPO: /tmp/repo
   git push origin replay-branch
   unset GH_TOKEN && gh pr edit <PR_NUMBER> --body-file /tmp/report.md
   \`\`\`
-  Set \`STATUS: done\`.
+  Write completion signal:
+  \`\`\`bash
+  /tmp/task/mark complete --mark-last
+  \`\`\`
 `;
 
 const SIMPLE_PUBLISHING_DEV_TEMPLATE_SHAPE = `# Worker: Feature — PROJ-1
@@ -356,7 +359,34 @@ TASK_DIR: /tmp/task
 - [ ] **4. Create branch** — \`git checkout -b replay-branch\`
 - [ ] **11. Commit** — atomic commit following the repo protocol.
 - [ ] **12. Push and create draft PR** — \`git push -u origin replay-branch\`, create PR referencing PROJ-1.
-- [ ] **13. Write report and signal** — create \`/tmp/task/artifacts/report.md\`, update \`STATUS: done\`, write \`SIGNAL.json\`.
+- [ ] **13. Write report and signal** — create \`/tmp/task/artifacts/report.md\`, then run \`/tmp/task/mark complete --mark-last\`.
+`;
+
+// Mobile dev-interactive shape: the approval step is followed directly by the
+// next step heading, with no "Write completion signal:" sentence in between.
+const NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE = `# Worker: Dev
+
+## Task
+
+\`\`\`text
+BRANCH: replay-branch
+TASK_DIR: /tmp/task
+\`\`\`
+
+## Checklist
+
+- [ ] **29. On approval — commit, push, update PR:**
+  \`\`\`bash
+  git add -- path/to/feature-file && git commit -m "feat(perps): summary"
+  git push origin replay-branch
+  unset GH_TOKEN && gh pr edit <PR_NUMBER> --body-file /tmp/task/artifacts/pr-body.md
+  \`\`\`
+- [ ] **30. Write \`/tmp/task/artifacts/learnings.md\`** — 3–5 bullets.
+
+- [ ] **31. Signal completion**:
+  \`\`\`bash
+  /tmp/task/mark complete --mark-last
+  \`\`\`
 `;
 
 const FORBIDDEN_PUBLISH_SNIPPETS = [
@@ -450,6 +480,27 @@ test('artifact-only task policy strips dev publishing instructions from replay t
   assert.match(safe, /scripts\/perps\/agentic/);
   assert.match(safe, /no remote pushes, no GitHub PR CLI mutations/);
   assert.match(safe, /Leave `PR_NUMBER:` empty/);
+  for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
+    assert.doesNotMatch(safe, forbidden);
+  }
+  assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
+});
+
+test('artifact-only task policy rewrites an approval step followed directly by the next step', () => {
+  assert.throws(
+    () => assertArtifactOnlyTaskGuard(NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE),
+    /forbidden/,
+  );
+
+  const safe = applyArtifactOnlyTaskPolicy(
+    NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE,
+    makeArtifactOnlyReplayRun(),
+  );
+
+  assert.match(safe, /\*\*29\. Artifact-only completion — leave local evidence only:\*\*/);
+  assert.match(safe, /\*\*30\. Write `\/tmp\/task\/artifacts\/learnings\.md`\*\*/);
+  assert.match(safe, /\*\*31\. Signal completion\*\*/);
+  assert.match(safe, /mark complete --mark-last/);
   for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
     assert.doesNotMatch(safe, forbidden);
   }
@@ -795,7 +846,6 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
       'PR: {{PR_NUMBER}}',
       'BRANCH: {{PR_BRANCH}}',
       'TASK_DIR: {{TASK_DIR}}',
-      'STATUS: pending',
       '',
       'Do not write terminal `SIGNAL.json`.',
       '',
@@ -823,7 +873,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
   const checklist = await readFile(path.join(path.dirname(taskPath), 'CHECKLIST.md'), 'utf-8');
   assert.match(checklist, /Worker: Interactive PR-Complete/);
   assert.match(rendered, /Interactive PR-complete handoff/);
-  assert.match(rendered, /STATUS: waiting-human/);
+  assert.doesNotMatch(rendered, /STATUS:/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete-interactive.md');
   assert.equal(provenance.templateSelectionSource, 'implicit-interactive-pr-complete');
@@ -855,7 +905,7 @@ test('writeTaskFile appends interactive PR-complete handoff to default template 
     templateSelectionReason?: string;
   };
   assert.match(rendered, /Interactive PR-complete handoff/);
-  assert.match(rendered, /STATUS: waiting-human/);
+  assert.doesNotMatch(rendered, /STATUS:/);
   assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
   assert.equal(provenance.templateName, 'pr-complete.md');
   assert.equal(provenance.templateSelectionSource, 'default');

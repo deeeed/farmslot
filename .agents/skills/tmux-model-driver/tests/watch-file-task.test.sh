@@ -17,7 +17,7 @@ cat > "$task_dir/TASK.md" <<'EOF'
 ## Task
 
 ```text
-STATUS: pending
+TARGET_REPO: example
 ```
 
 ## Checklist
@@ -37,7 +37,7 @@ cat > "$task_dir/TASK.md" <<'EOF'
 ## Task
 
 ```text
-STATUS: working
+TARGET_REPO: example
 ```
 
 ## Checklist

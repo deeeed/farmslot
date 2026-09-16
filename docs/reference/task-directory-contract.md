@@ -41,7 +41,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 
 | File                                   | Producer                                                | Consumer                                                               |
 | -------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `TASK.md`                              | task init; worker updates `STATUS` and may append notes | worker, family follow-ups, review brief                                |
+| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                |
 | `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress               |
 | `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                 |
 | `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                 |

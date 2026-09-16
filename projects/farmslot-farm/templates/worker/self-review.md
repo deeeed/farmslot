@@ -18,12 +18,11 @@ SESSION: {{SESSION}}
 RUNTIME_DIR: {{RUNTIME_DIR}}
 TICKET: {{TICKET}}
 VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
-STATUS: pending
 ```
 
 ## Checklist
 
-- [ ] **1. Start** - set `STATUS: working`, then run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`.
+- [ ] **1. Start** — run `{{TASK_DIR}}/mark start` and `{{TASK_DIR}}/mark 1`.
 - [ ] **2. Read quality rules**:
   ```bash
   cd {{REPO}}

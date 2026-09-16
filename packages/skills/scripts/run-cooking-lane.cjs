@@ -429,7 +429,9 @@ function buildPrompt({
     '',
     '## Required output JSON schema',
     '{',
-    '  "task_markdown": "full TASK.md content based on the provided template. Set STATUS to the correct terminal value: done, blocked, or failed. Inside ## Validation Evidence include the exact standalone token RECIPE_COOK_VALIDATION_PENDING.",',
+    '  "task_markdown": "full TASK.md content based on the provided template. Inside ## Validation Evidence include the exact standalone token RECIPE_COOK_VALIDATION_PENDING.",',
+    '  "terminal_status": "done|blocked|failed",',
+    '  "terminal_reason": "one sentence naming the concrete blocker or failure; null when done",',
     '  "recipe_json": { "valid": "json object" },',
     '  "recipe_cook_json": { "valid": "json object" } or null,',
     '  "evidence_verdict": "good|ok|bad",',
@@ -451,7 +453,8 @@ function buildPrompt({
     '',
     'The JSON object you return is the final serialized payload for those files.',
     'Emit the JSON last, after you have fully reasoned through:',
-    '- the rewritten TASK.md contents, including the correct terminal STATUS',
+    '- the rewritten TASK.md contents',
+    '- the terminal_status (done, blocked, or failed) and, for blocked or failed, its concrete terminal_reason',
     '- the recipe artifact contents',
     '- the learning artifact contents',
     '- what validation commands should run',
@@ -769,26 +772,47 @@ function renderValidationEvidence(validationResults, cdpPort, repoRoot) {
   return lines.join('\n');
 }
 
-function deriveTerminalState(taskMarkdown, validationResults) {
+// Terminal state comes from the runner's explicit envelope field, never from
+// status text in the task markdown. Two evidence-based overrides remain: an
+// UNRESOLVED proof target blocks, and a failed validation step fails.
+function deriveTerminalState(envelope, taskMarkdown, validationResults) {
   const text = String(taskMarkdown || '');
-  if (/\bSTATUS:\s*blocked\b/i.test(text)) {
-    return { status: 'blocked', outcome: 'partial' };
+  // A reason only travels with a non-done envelope; a note attached to a done
+  // envelope must not be presented as the blocker or failure cause. The two
+  // evidence overrides below are reachable only for done envelopes, so they
+  // synthesize their own reason.
+  const reason =
+    envelope.terminal_status !== 'done' &&
+    typeof envelope.terminal_reason === 'string' &&
+    envelope.terminal_reason.trim()
+      ? envelope.terminal_reason.trim()
+      : null;
+  if (envelope.terminal_status === 'blocked') {
+    return { status: 'blocked', outcome: 'partial', reason };
   }
-  if (/\bSTATUS:\s*failed\b/i.test(text)) {
-    return { status: 'failed', outcome: 'failure' };
+  if (envelope.terminal_status === 'failed') {
+    return { status: 'failed', outcome: 'failure', reason };
   }
   if (/^\s*[-*]\s+.*:\s*UNRESOLVED\b/m.test(text)) {
-    return { status: 'blocked', outcome: 'partial' };
+    return {
+      status: 'blocked',
+      outcome: 'partial',
+      reason: 'a required proof target remains UNRESOLVED',
+    };
   }
 
-  const failingStep = Object.values(validationResults || {}).find(
-    (result) => result.exit_code !== 0 && result.exit_code !== -1,
+  const failingStep = Object.entries(validationResults || {}).find(
+    ([, result]) => result.exit_code !== 0 && result.exit_code !== -1,
   );
   if (failingStep) {
-    return { status: 'failed', outcome: 'failure' };
+    return {
+      status: 'failed',
+      outcome: 'failure',
+      reason: `validation step ${failingStep[0]} exited ${failingStep[1].exit_code}`,
+    };
   }
 
-  return { status: 'done', outcome: 'success' };
+  return { status: 'done', outcome: 'success', reason: null };
 }
 
 function injectValidationEvidence(taskMarkdown, evidenceBlock) {
@@ -987,6 +1011,15 @@ async function main() {
     typeof envelope.next_delta === 'string' && envelope.next_delta.trim(),
     'Runner output missing next_delta',
   );
+  assert(
+    ['done', 'blocked', 'failed'].includes(envelope.terminal_status),
+    `Runner output missing terminal_status (done|blocked|failed). See ${path.join(runDir, 'runner-output.txt')}`,
+  );
+  assert(
+    envelope.terminal_status === 'done' ||
+      (typeof envelope.terminal_reason === 'string' && envelope.terminal_reason.trim()),
+    `Runner output missing terminal_reason for terminal_status ${envelope.terminal_status}. See ${path.join(runDir, 'runner-output.txt')}`,
+  );
   writeJson(path.join(runDir, 'runner-response.json'), envelope);
 
   const recipePath = path.join(artifactsDir, 'recipe.json');
@@ -1009,11 +1042,7 @@ async function main() {
   const evidenceBlock = renderValidationEvidence(validationResults, effectiveCdpPort, projectRoot);
   const normalizedTask = normalizeTaskArtifactDir(envelope.task_markdown, artifactsDir);
   let finalTask = injectValidationEvidence(normalizedTask, evidenceBlock);
-  const terminalState = deriveTerminalState(finalTask, validationResults);
-  finalTask = finalTask.replace(
-    /STATUS:\s*(pending|working|done|blocked|failed)/i,
-    `STATUS: ${terminalState.status}`,
-  );
+  const terminalState = deriveTerminalState(envelope, finalTask, validationResults);
   writeFile(path.join(runDir, 'TASK.md'), finalTask);
 
   const verdict = mapVerdict(envelope.evidence_verdict, validationResults);
@@ -1036,6 +1065,7 @@ async function main() {
         : terminalState.outcome === 'partial'
           ? 'blocked'
           : 'completed',
+    terminal_reason: terminalState.reason,
   });
   writeJson(path.join(artifactsDir, 'grade.json'), {
     recipe_semantic: verdict,

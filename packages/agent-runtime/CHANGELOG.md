@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Task documents no longer carry a `STATUS:` line; run state is the `mark` signal file (farmslot ADR-045) and the field had no reader.
+
 - Recognize shared QA execution templates independently of static PR review.
 
 - Run static reviewers with read-only source permissions and cancel native initialization safely.

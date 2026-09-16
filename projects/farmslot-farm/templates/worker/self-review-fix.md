@@ -15,7 +15,6 @@
 TASK_DIR: {{TASK_DIR}}
 REPO: {{REPO}}
 TICKET: {{TICKET}}
-STATUS: pending
 ```
 
 ## Issues Found by Self-Review
@@ -43,7 +42,7 @@ STATUS: pending
 
 ### Fix (steps 1-3)
 
-- [ ] **1. Update Status** — `STATUS: working` in Task block, then run the explicit checklist/signal marker with `start`, followed by `1`.
+- [ ] **1. Start** — run the explicit checklist/signal marker with `start`, followed by `1`.
 - [ ] **2. Read the review feedback** — `{{TASK_DIR}}/artifacts/review-feedback.md` has the full analysis. Understand each issue.
 - [ ] **3. Fix each issue:**
   For each issue above:

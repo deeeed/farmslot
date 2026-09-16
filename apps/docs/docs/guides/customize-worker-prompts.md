@@ -110,13 +110,12 @@ TICKET: {{TICKET_ID}}
 TITLE: {{TICKET_TITLE}}
 BRANCH: {{BRANCH}}
 TASK_DIR: {{TASK_DIR}}
-STATUS: pending
 ```
 
 ## Checklist
 
 - [ ] **1. Read project docs** — learn the repo-specific rules.
-- [ ] **2. Update status** — set `STATUS: working` in this file.
+- [ ] **2. Start** — run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Reproduce or understand the issue** — gather evidence.
 - [ ] **4. Implement the smallest safe change** — keep scope narrow.
 - [ ] **5. Validate** — run the project-owned checks.

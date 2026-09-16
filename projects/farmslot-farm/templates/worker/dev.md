@@ -22,7 +22,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
   Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
-- [ ] **3. Update status** — set `STATUS: working` in TASK.md, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
+- [ ] **3. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
   - **`command-center` only when listed:**
     ```bash
@@ -33,8 +33,8 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
       '{"slotId":"{{SLOT}}","capabilityId":"browser-cdp","ownerRunId":"{{RUN_ID}}","ownerFamilyId":"{{FAMILY_ID}}","queueOnPressure":true,"proofRequirement":{"capabilityId":"browser-cdp","reason":"Command Center proof requires a browser and CDP","mode":"visual"}}'
     node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
     ```
-    Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, set `STATUS: blocked` with the failing check, and stop. Do not launch the sandbox or Chrome directly.
-  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. Discover the catalog, then acquire the declared native-client provider through `runtime.capability.acquire` (for the configured iOS simulator, `companion-native-client-ios`; its dependencies acquire the simulator and Metro). Require `ok: true`, then verify with `simctl listapps` / `adb` that the Companion bundle is present. If the platform has no declared install provider or acquisition/install fails, set `STATUS: blocked` and stop; do not invoke `companion-prepare.sh` or install scripts directly.
+    Require both acquire responses to report `ok: true`; a queued/failed response is not a booted surface. For a queued `host-pressure` conflict, retry the same acquire request after `retryAfterMs` for at most two minutes, preserving the same owner id so admission remains idempotent. If that bounded retry, any non-pressure acquisition, or the doctor fails, release the owner's queued leases, run `{{TASK_DIR}}/mark blocked --reason "<failing check>"`, and stop. Do not launch the sandbox or Chrome directly.
+  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. Discover the catalog, then acquire the declared native-client provider through `runtime.capability.acquire` (for the configured iOS simulator, `companion-native-client-ios`; its dependencies acquire the simulator and Metro). Require `ok: true`, then verify with `simctl listapps` / `adb` that the Companion bundle is present. If the platform has no declared install provider or acquisition/install fails, run `{{TASK_DIR}}/mark blocked --reason "<why>"` and stop; do not invoke `companion-prepare.sh` or install scripts directly.
   - **`gateway-cli` only:** skip this step’s boots/installs entirely.
 - [ ] **5. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
   ```bash
@@ -142,7 +142,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **23. Signal completion** — set `STATUS: done` in TASK.md, then:
+- [ ] **23. Signal completion**:
   ```bash
   {{TASK_DIR}}/mark complete --mark-last
   ```
