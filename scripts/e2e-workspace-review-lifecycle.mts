@@ -33,14 +33,20 @@ import {
 // Uses the installed native reviewer and its existing account. Provider PR facts come
 // from a read-only fixture; run creation, ownership and worker execution are real.
 const root = fileURLToPath(new URL('../', import.meta.url));
-if (process.argv[2] === 'recipe') {
+if (process.argv[2] === 'recipe' || process.argv[2] === 'recipe-ui') {
   const artifactsDir = path.resolve(
     root,
     process.argv[3] ?? `temp/workspace-review-recipe/${Date.now()}`,
   );
   const recipeDocument = JSON.parse(
     await readFile(
-      path.join(root, 'docs/examples/recipes/farmslot/workspace-review-lifecycle.recipe.json'),
+      path.join(
+        root,
+        'docs/examples/recipes/farmslot',
+        process.argv[2] === 'recipe-ui'
+          ? 'workspace-review-ui.recipe.json'
+          : 'workspace-review-lifecycle.recipe.json',
+      ),
       'utf8',
     ),
   );

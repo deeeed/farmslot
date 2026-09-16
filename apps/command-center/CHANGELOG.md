@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add real browser clicks to the CDP helper for fullscreen and other user-gesture checks.
+
 - Update native dispatch probes for the worker-interface button controls.
 
 - Add live validation controls for native worker profiles, conversation history, account changes, and load-balancer-backed Copilot alongside terminal runners.
