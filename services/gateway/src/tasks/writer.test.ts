@@ -362,6 +362,33 @@ TASK_DIR: /tmp/task
 - [ ] **13. Write report and signal** — create \`/tmp/task/artifacts/report.md\`, then run \`/tmp/task/mark complete --mark-last\`.
 `;
 
+// Mobile dev-interactive shape: the approval step is followed directly by the
+// next step heading, with no "Write completion signal:" sentence in between.
+const NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE = `# Worker: Dev
+
+## Task
+
+\`\`\`text
+BRANCH: replay-branch
+TASK_DIR: /tmp/task
+\`\`\`
+
+## Checklist
+
+- [ ] **29. On approval — commit, push, update PR:**
+  \`\`\`bash
+  git add -- path/to/feature-file && git commit -m "feat(perps): summary"
+  git push origin replay-branch
+  unset GH_TOKEN && gh pr edit <PR_NUMBER> --body-file /tmp/task/artifacts/pr-body.md
+  \`\`\`
+- [ ] **30. Write \`/tmp/task/artifacts/learnings.md\`** — 3–5 bullets.
+
+- [ ] **31. Signal completion**:
+  \`\`\`bash
+  /tmp/task/mark complete --mark-last
+  \`\`\`
+`;
+
 const FORBIDDEN_PUBLISH_SNIPPETS = [
   /\bgh\s+pr\s+create\b/i,
   /\bgh\s+pr\s+edit\b/i,
@@ -453,6 +480,27 @@ test('artifact-only task policy strips dev publishing instructions from replay t
   assert.match(safe, /scripts\/perps\/agentic/);
   assert.match(safe, /no remote pushes, no GitHub PR CLI mutations/);
   assert.match(safe, /Leave `PR_NUMBER:` empty/);
+  for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
+    assert.doesNotMatch(safe, forbidden);
+  }
+  assert.doesNotThrow(() => assertArtifactOnlyTaskGuard(safe));
+});
+
+test('artifact-only task policy rewrites an approval step followed directly by the next step', () => {
+  assert.throws(
+    () => assertArtifactOnlyTaskGuard(NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE),
+    /forbidden/,
+  );
+
+  const safe = applyArtifactOnlyTaskPolicy(
+    NEXT_STEP_PUBLISHING_DEV_TEMPLATE_SHAPE,
+    makeArtifactOnlyReplayRun(),
+  );
+
+  assert.match(safe, /\*\*29\. Artifact-only completion — leave local evidence only:\*\*/);
+  assert.match(safe, /\*\*30\. Write `\/tmp\/task\/artifacts\/learnings\.md`\*\*/);
+  assert.match(safe, /\*\*31\. Signal completion\*\*/);
+  assert.match(safe, /mark complete --mark-last/);
   for (const forbidden of FORBIDDEN_PUBLISH_SNIPPETS) {
     assert.doesNotMatch(safe, forbidden);
   }
