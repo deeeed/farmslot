@@ -20,6 +20,8 @@ export interface ReviewPublicationReceipt {
   marker: string;
   event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
   attemptedAt: string;
+  /** Hash of the outgoing body, retained for reconciliation after a lost response. */
+  bodySha256?: string;
   reviewId?: number;
   url?: string;
   publishedAt?: string;

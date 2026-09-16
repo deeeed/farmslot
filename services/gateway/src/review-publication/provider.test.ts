@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 
 import type { Run } from '@farmslot/protocol';
+
+import {
+  GatewayClient,
+  GatewayConnectionError,
+} from '../../../../packages/cli/src/gateway-client.js';
 
 import { publishWorkspaceReview, type ReviewPublicationReceipt } from './provider.js';
 
@@ -26,6 +36,7 @@ const method = args[args.indexOf('--method') + 1];
 let body;
 if (endpoint === 'user') body = { login: 'reviewer' };
 else if (endpoint.endsWith('/reviews?per_page=100')) body = [state.reviews];
+else if (endpoint.endsWith('/files?per_page=100')) body = [state.files];
 else if (endpoint.endsWith('/reviews') && method === 'POST') {
   state.posts++;
   if (state.failure === 'rejected') {
@@ -58,7 +69,16 @@ async function fixture(overrides: Record<string, unknown> = {}) {
   const directory = path.join(root, randomUUID());
   await mkdir(directory);
   const stateFile = path.join(directory, 'provider.json');
-  const state = { reviews: [], posts: 0, head, author: 'author', ...overrides };
+  const state = {
+    reviews: [],
+    posts: 0,
+    head,
+    author: 'author',
+    files: [
+      { filename: 'src/example.ts', patch: '@@ -1,4 +1,4 @@\n one\n two\n-three\n+three\n four' },
+    ],
+    ...overrides,
+  };
   await writeFile(stateFile, JSON.stringify(state));
   process.env.PUBLICATION_FIXTURE_STATE = stateFile;
   const receiptFile = path.join(directory, 'receipt.json');
@@ -254,4 +274,202 @@ test('a definite provider rejection remains retryable without treating transport
   assert.equal((await publishWorkspaceReview(f.input)).state, 'published');
   assert.equal((await f.state()).reviews.length, 1);
   assert.equal((await f.state()).posts, 2);
+});
+
+test('off-diff findings move to the body while valid comments stay inline', async () => {
+  const f = await fixture();
+  f.input.run.reviewResult!.lineComments.push({
+    path: 'src/example.ts',
+    line: 99,
+    body: 'Missing coverage outside the diff.',
+    severity: 'major',
+  });
+  const receipt = await publishWorkspaceReview(f.input);
+  const state = await f.state();
+  assert.equal(state.payload.comments.length, 1);
+  assert.equal(state.payload.comments[0].line, 3);
+  assert.match(state.payload.body, /Findings outside the PR diff/);
+  assert.match(state.payload.body, /Missing coverage outside the diff/);
+  assert(state.payload.body.includes(`/blob/${head}/src/example.ts#L99`));
+  assert.equal(receipt.bodySha256, createHash('sha256').update(state.payload.body).digest('hex'));
+  assert.equal(f.input.run.reviewResult!.lineComments.length, 2);
+});
+
+test('a lost off-diff submission reconciles the frozen body after the provider diff changes', async () => {
+  const f = await fixture({ failure: 'after-write', files: [] });
+  await assert.rejects(publishWorkspaceReview(f.input));
+  assert.equal(f.receipt()?.state, 'posting');
+  const state = await f.state();
+  await f.setState({ ...state, files: null, head: 'b'.repeat(40) });
+  await f.reload();
+  assert.equal((await publishWorkspaceReview(f.input)).state, 'published');
+  assert.equal((await f.state()).posts, 1);
+});
+
+test('an explicitly rejected prepared attempt can rebuild inline locations without changing findings', async () => {
+  const f = await fixture({ failure: 'rejected' });
+  await assert.rejects(publishWorkspaceReview(f.input));
+  assert.equal(f.receipt()?.state, 'prepared');
+  const originalDigest = f.receipt()!.contentSha256;
+  await f.input.saveReceipt({ ...f.receipt()!, bodySha256: undefined });
+  await f.reload();
+  await f.setState({ ...(await f.state()), failure: null, files: [] });
+  const receipt = await publishWorkspaceReview(f.input);
+  assert.equal(receipt.state, 'published');
+  assert.equal(receipt.contentSha256, originalDigest);
+  assert.match((await f.state()).payload.body, /src\/example.ts:3/);
+  assert.equal((await f.state()).payload.comments.length, 0);
+});
+
+test('production gateway publishes off-diff findings once through the publication RPC', async () => {
+  const f = await fixture();
+  const gatewayRoot = await mkdtemp(path.join(root, 'gateway-'));
+  const repo = fileURLToPath(new URL('../../../../', import.meta.url));
+  execFileSync('git', ['clone', '--shared', '--no-checkout', repo, gatewayRoot], { stdio: 'pipe' });
+  for (const name of ['scripts', 'services', 'packages', 'node_modules'])
+    await symlink(path.join(repo, name), path.join(gatewayRoot, name));
+  await writeFile(path.join(gatewayRoot, 'CLAUDE.md'), '# Isolated publication fixture\n');
+  await mkdir(path.join(gatewayRoot, 'projects/review'), { recursive: true });
+  await mkdir(path.join(gatewayRoot, 'pool'));
+  await mkdir(path.join(gatewayRoot, 'runs'));
+  await writeFile(
+    path.join(gatewayRoot, 'projects/review/project.json'),
+    JSON.stringify({ name: 'review', ci: { repo: 'example/app' } }),
+  );
+  const now = new Date().toISOString();
+  const account = { host: 'github.com', login: 'reviewer' };
+  const teamId = randomUUID();
+  await writeFile(
+    path.join(gatewayRoot, '.pr-rules.json'),
+    JSON.stringify({
+      version: 1,
+      teams: [
+        {
+          id: teamId,
+          ownerId: 'legacy-env',
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          config: {
+            name: 'Fixture',
+            account,
+            sources: [{ kind: 'repository', repo: 'example/app' }],
+            predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
+            repositories: [
+              {
+                repo: 'example/app',
+                project: 'review',
+                reviewProfile: 'standard',
+                excludedLabels: [],
+              },
+            ],
+            execution: {
+              workspacePolicy: { kind: 'exact', machine: 'fixture' },
+              transport: 'tmux',
+              models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+            },
+            githubTeams: [],
+            notificationPrincipalIds: [],
+          },
+        },
+      ],
+      rules: [],
+      intents: [],
+    }),
+  );
+  const run = {
+    ...f.input.run,
+    project: 'review',
+    createdByPrincipalId: 'legacy-env',
+    nativeOwnerPrincipalId: 'legacy-env',
+    familyId: f.input.run.id,
+    parentRunId: null,
+    lane: 'production',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    mode: 'autonomous',
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+    steps: [],
+    metrics: { nudgeCount: 0 },
+    reviewQaContract: { version: 1 },
+    reviewPublication: {
+      direct: {
+        ownerId: 'legacy-env',
+        pr: f.input.pr,
+        requested: true,
+        policy: { enabled: true, source: 'request', teamId, account },
+      },
+      checkedAt: now,
+    },
+  };
+  run.reviewResult!.lineComments.push({
+    path: 'src/example.ts',
+    line: 99,
+    body: 'Preserve this off-diff finding.',
+    severity: 'minor',
+  });
+  await writeFile(path.join(gatewayRoot, 'runs', run.id + '.json'), JSON.stringify(run));
+  const probe = createServer().listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  const token = randomUUID();
+  let logs = '';
+  const server = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
+    cwd: repo,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      FARMSLOT_ROOT: gatewayRoot,
+      FARMSLOT_HOME: path.join(gatewayRoot, 'home'),
+      FARMSLOT_RUNS_DIR: path.join(gatewayRoot, 'runs'),
+      FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
+      FARMSLOT_DISABLE_ORCHESTRATION: '1',
+      FARMSLOT_GATEWAY_TOKEN: token,
+      GATEWAY_HOST: '127.0.0.1',
+      GATEWAY_PORT: String(port),
+    },
+  });
+  server.stdout.on('data', (chunk) => {
+    logs += chunk;
+  });
+  server.stderr.on('data', (chunk) => {
+    logs += chunk;
+  });
+  const client = new GatewayClient({
+    url: `ws://127.0.0.1:${port}`,
+    credential: { token },
+    timeout: 30_000,
+  });
+  let connection;
+  try {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (server.exitCode !== null) throw new Error(logs);
+      try {
+        connection = await client.connect();
+        break;
+      } catch (error) {
+        if (!(error instanceof GatewayConnectionError)) throw error;
+        await delay(200);
+      }
+    }
+    assert(connection, logs);
+    await connection.call('prReview.publish', { runId: run.id });
+    const published = await connection.call<{ run: Run }>('run.get', { runId: run.id });
+    assert.equal(published.run.reviewPublication?.receipt?.state, 'published');
+    assert.equal((await f.state()).payload.comments.length, 1);
+    assert.match((await f.state()).payload.body, /Preserve this off-diff finding/);
+    await connection.call('prReview.publish', { runId: run.id });
+    assert.equal((await f.state()).posts, 1);
+  } finally {
+    connection?.close();
+    if (server.exitCode === null && server.signalCode === null) {
+      process.kill(-server.pid!, 'SIGTERM');
+      await once(server, 'exit');
+    }
+  }
 });
