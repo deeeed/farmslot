@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Advertise read-only workspace review capabilities so clients offer compatible runners.
+
 - Separate runtime QA from static Review with farm profiles, frozen inputs, legacy-request migration and verified smoke evidence. Preserve opted-in QA follow-ups when source reviews are archived. Publish requested workspace reviews with account/head checks and durable retry receipts. Read terminal signals again after worker-exit checks so fast completion is not mistaken for missing evidence. Autonomous task context preserves approval requirements.
 
 - Resolve internal static and runtime review checklists from the shared catalog and retain their content provenance.

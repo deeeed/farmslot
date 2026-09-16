@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 
+import type { NativeRunnerOption } from '@farmslot/protocol';
 import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
@@ -73,6 +74,7 @@ interface DispatchWizardViewContext {
   model: string;
   effort: EffortLevel;
   workflowControls: unknown;
+  reviewRunnerCatalog?: NativeRunnerOption[];
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -235,6 +237,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               model: ctx.model,
               effort: ctx.effort,
               workflowControls: ctx.workflowControls,
+              reviewRunnerCatalog: ctx.reviewRunnerCatalog,
               skipPrepare: ctx.skipPrepare,
               prepareProfiles: ctx.prepareProfiles,
               prepareProfile: ctx.prepareProfile,

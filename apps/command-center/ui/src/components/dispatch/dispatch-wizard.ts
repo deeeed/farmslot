@@ -3,6 +3,7 @@ import { customElement } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type {
+  ConfigPoolsResult,
   ConfigTemplateOptionsResult,
   DispatchCandidatesResult,
   ExecutionTemplateCatalogOption,
@@ -17,6 +18,7 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import './execution-template-preview-modal.js';
+import '../shared/choice-picker.js';
 import './dispatch-native-profiles.js';
 
 import { gateway } from '../../gateway-client.js';
@@ -30,6 +32,7 @@ import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
 } from '../shared/execution-template-picker-model.js';
+import { renderQaProfileControl } from '../shared/qa-profile-control.js';
 
 import {
   dispatchNativeProfileKey,
@@ -336,7 +339,17 @@ export class DispatchWizard extends DispatchWizardState {
     if (this._loadingProjectConfigs) return;
     this._loadingProjectConfigs = true;
     try {
-      this._projectConfigs = await requestProjectConfigs();
+      const [projects, pools] = await Promise.allSettled([
+        requestProjectConfigs(),
+        gateway.request<ConfigPoolsResult>(Methods.CONFIG_POOLS, {}),
+      ]);
+      if (projects.status === 'rejected') throw projects.reason;
+      this._projectConfigs = projects.value;
+      this._reviewPools = pools.status === 'fulfilled' ? pools.value.pools : [];
+      this._reviewPoolsError =
+        pools.status === 'rejected'
+          ? 'Machine choices could not load. Reconnect to refresh them.'
+          : '';
       this._syncSelectedAppForProject(this._project);
       this._syncWorkflowSelection();
       this._syncFleet(getState());
@@ -1428,7 +1441,40 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _workspaceMachine(): string {
     const filters = getState().globalFilters.machines;
-    return this._reviewMachine.trim() || (filters.length === 1 ? filters[0] : '');
+    if (this._reviewMachine.trim()) return this._reviewMachine.trim();
+    if (filters.length === 1) return filters[0];
+    const configured = this._projectConfigs.find((project) => project.name === this._project)
+      ?.workflowDefaults?.['review-pr']?.execution;
+    const policy =
+      configured && 'workspacePolicy' in configured ? configured.workspacePolicy : undefined;
+    if (policy?.kind === 'exact' && (!filters.length || filters.includes(policy.machine)))
+      return policy.machine;
+    if (policy && !filters.length) return '';
+    const machines = this._reviewMachines();
+    return (
+      (policy?.kind === 'pool'
+        ? machines.find((machine) => policy.allowedMachines.includes(machine))
+        : undefined) ??
+      machines[0] ??
+      ''
+    );
+  }
+
+  private _reviewMachines(): string[] {
+    const filters = getState().globalFilters.machines;
+    return [
+      ...new Set(
+        (this.mockMode ? this.mockPools : this._reviewPools)
+          .filter(
+            (pool) =>
+              pool.reviewWorkspaces &&
+              (pool.project === this._project ||
+                pool.slots.some((slot) => slot.project === this._project)) &&
+              (!filters.length || filters.includes(pool.machine)),
+          )
+          .map((pool) => pool.machine),
+      ),
+    ];
   }
 
   private _workflowSelectionError(): string | null {
@@ -1442,6 +1488,13 @@ export class DispatchWizard extends DispatchWizardState {
     }
     if (this._flowType !== 'review-pr') return null;
     if (this._legacyReviewPlacementError) return this._legacyReviewPlacementError;
+    if (
+      this._nativeCatalogReady &&
+      !this._nativeCatalog?.runners.some(
+        (runner) => runner.runner === this._runner && runner.supportsWorkspaceReviews,
+      )
+    )
+      return 'Choose a supported review runner in Execution options.';
     const filters = getState().globalFilters.machines;
     const machine = this._workspaceMachine();
     if (filters.length > 1 && !machine)
@@ -1452,71 +1505,75 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _renderWorkflowControls() {
-    if (this._flowType === 'review-pr')
+    if (this._flowType === 'review-pr') {
+      const machines = this._reviewMachines();
       return html`<div class="config-group">
-        <label class="section-label" for="review-machine">Review machine</label>
-        <input
-          id="review-machine"
-          data-testid="dispatch-review-machine"
-          class="ticket-input"
-          placeholder="Farm default"
-          .value=${this._reviewMachine}
-          @input=${(event: InputEvent) => {
-            this._reviewMachine = (event.target as HTMLInputElement).value;
-            this._legacyReviewPlacementError = '';
-          }}
-        />
-        <p class="section-help">
-          Static source review in a managed workspace. No app slot or preparation is used. Leave the
-          machine empty to inherit farm defaults. Active machine filters still apply.
-        </p>
-        ${this._workflowSelectionError()
+        <label class="section-label"
+          >Review machine
+          <choice-picker
+            data-testid="dispatch-review-machine"
+            .value=${this._reviewMachine}
+            ?disabled=${!this._project}
+            @change=${(event: Event) => {
+              this._reviewMachine = (event.target as HTMLSelectElement).value;
+              this._legacyReviewPlacementError = '';
+            }}
+          >
+            <option value="">
+              ${this._project
+                ? `Automatic · ${this._workspaceMachine() || 'project default'}`
+                : 'Choose a project first'}
+            </option>
+            ${machines.map((machine) => html`<option value=${machine}>${machine}</option>`)}
+          </choice-picker>
+        </label>
+        <p class="section-help">Reviews run in a temporary workspace without using an app slot.</p>
+        ${this._reviewPoolsError
+          ? html`<p class="section-help" role="alert">${this._reviewPoolsError}</p>`
+          : nothing}
+        ${this._project && this._workflowSelectionError()
           ? html`<p class="section-help" role="alert">${this._workflowSelectionError()}</p>`
           : nothing}
       </div>`;
+    }
     if (this._flowType !== 'qa') return nothing;
     const config = this._projectConfigs.find((entry) => entry.name === this._project)?.qa;
     const selectedId = this._qaProfileId || config?.default_profile || '';
     const selected = config?.profiles.find((profile) => profile.id === selectedId);
     const error = this._workflowSelectionError();
     return html`<div class="config-group" data-testid="dispatch-qa-profile-controls">
-      <label class="section-label" for="qa-profile">QA profile</label>
-      <select
-        id="qa-profile"
-        class="ticket-input"
-        data-testid="dispatch-qa-profile"
-        .value=${selectedId}
-        @change=${(event: Event) => {
-          this._qaProfileId = (event.target as HTMLSelectElement).value;
+      ${renderQaProfileControl({
+        config,
+        value: this._qaProfileId,
+        projectSelected: !!this._project,
+        testId: 'dispatch-qa-profile',
+        change: (id) => {
+          this._qaProfileId = id;
           this._qaInputsText = '';
-        }}
-      >
-        ${!config
-          ? html`<option value="">No farm QA profiles configured</option>`
-          : config.profiles.map(
-              (profile) =>
-                html`<option value=${profile.id} ?selected=${profile.id === selectedId}>
-                  ${profile.title}${profile.id === config.default_profile ? ' (farm default)' : ''}
-                </option>`,
-            )}
-      </select>
-      ${selected?.description ? html`<p class="section-help">${selected.description}</p>` : nothing}
-      <label class="section-label" for="qa-inputs">Input overrides (JSON)</label>
-      <textarea
-        id="qa-inputs"
-        data-testid="dispatch-qa-inputs"
-        class="ticket-input"
-        rows="4"
-        .value=${this._qaInputsText}
-        placeholder=${JSON.stringify(selected?.inputs ?? {}, null, 2)}
-        @input=${(event: InputEvent) => {
-          this._qaInputsText = (event.target as HTMLTextAreaElement).value;
-        }}
-      ></textarea>
-      <p class="section-help">
-        Leave empty to use the profile inputs. The farm's skill selects its validation recipes.
-      </p>
-      ${error ? html`<p class="section-help" role="alert">${error}</p>` : nothing}
+        },
+      })}
+      ${config
+        ? html`<details data-testid="dispatch-qa-advanced">
+            <summary>Advanced inputs</summary>
+            <label class="section-label" for="qa-inputs">Input overrides (JSON)</label>
+            <textarea
+              id="qa-inputs"
+              data-testid="dispatch-qa-inputs"
+              class="ticket-input"
+              rows="4"
+              .value=${this._qaInputsText}
+              placeholder=${JSON.stringify(selected?.inputs ?? {}, null, 2)}
+              @input=${(event: InputEvent) => {
+                this._qaInputsText = (event.target as HTMLTextAreaElement).value;
+              }}
+            ></textarea>
+            <p class="section-help">
+              Leave empty to use the profile inputs. The farm's skill selects its validation
+              recipes.
+            </p>
+          </details>`
+        : nothing}
+      ${config && error ? html`<p class="section-help" role="alert">${error}</p>` : nothing}
     </div>`;
   }
 
@@ -1637,6 +1694,10 @@ export class DispatchWizard extends DispatchWizardState {
             );
     const view = renderDispatchWizardView({
       transport: this._transport,
+      reviewRunnerCatalog:
+        this._flowType === 'review-pr'
+          ? this._nativeCatalog?.runners.filter((runner) => runner.supportsWorkspaceReviews)
+          : undefined,
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
       nativeCatalogError: this._nativeCatalogError,
       nativeProfileControl: keyed(

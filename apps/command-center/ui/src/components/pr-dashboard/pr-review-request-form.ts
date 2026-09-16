@@ -197,7 +197,7 @@ export class PRReviewRequestForm extends LitElement {
           : nothing}
         ${prReviewWorkflow(review) === 'qa'
           ? html`<details>
-              <summary>QA inputs</summary>
+              <summary>Advanced inputs</summary>
               <label
                 >Profile input overrides
                 <textarea

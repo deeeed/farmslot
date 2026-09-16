@@ -527,6 +527,16 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(inherited.team, team.id);
     assert.match(inherited.text, /Execution:\s*farm/);
     assert.equal(inherited.machine, true);
+    await waitUI(
+      `return find('pr-execution-picker')?.element.shadowRoot.querySelector('runner-model-effort-picker')?.catalog !== undefined;`,
+    );
+    assert.deepEqual(
+      evaluate(
+        `return find('pr-execution-picker').element.shadowRoot.querySelector('runner-model-effort-picker').catalog.map(runner=>runner.runner);`,
+      ),
+      ['codex'],
+      'PR workspace controls must offer only supported review runners',
+    );
     assert.equal(
       evaluate(`return find('[data-testid="pr-review-publication"]').element.value;`),
       'inherit',
@@ -721,8 +731,15 @@ process.stdout.write(JSON.stringify(body));
       `return find('pr-review-request-form')?.element.shadowRoot.textContent.includes('Needs configuration');`,
     );
     assert.equal(evaluate(`return Boolean(find('[data-testid="pr-review-qa-profile"]'));`), true);
-    const profilePath = evaluate(`return find('[data-testid="pr-review-qa-profile"]')?.path;`);
-    cdp('select', 'prs', profilePath, 'daily');
+    evaluate(
+      `find('[data-testid="pr-review-qa-profile"]').element.shadowRoot.querySelector('.trigger').click();return true;`,
+    );
+    await waitUI(
+      `return Boolean(find('[data-testid="pr-review-qa-profile"]').element.shadowRoot.querySelector('[data-choice-value="daily"]'));`,
+    );
+    evaluate(
+      `find('[data-testid="pr-review-qa-profile"]').element.shadowRoot.querySelector('[data-choice-value="daily"]').click();return true;`,
+    );
     evaluate(
       `find('[data-testid="pr-qa-inputs"]').element.closest('details').querySelector('summary').click();return true;`,
     );

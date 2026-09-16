@@ -162,7 +162,7 @@ try {
             workspacePolicy:
               name === 'workspace-only'
                 ? { kind: 'exact', machine: 'zero-node' }
-                : { kind: 'pool', allowedMachines: ['review-node', 'review-other'] },
+                : { kind: 'exact', machine: 'review-other' },
             transport: 'native',
             models,
           },
@@ -188,9 +188,10 @@ try {
     resources: {},
   };
   const secondSlot = { ...slot, id: 'qa-runtime-other', session: 'qa-wizard-unused-other' };
+  const filterSlot = { ...slot, id: 'filter-only', session: 'qa-wizard-unused-filter' };
   for (const [machine, project, slots] of [
     ['review-node', 'wizard-farm', [slot, secondSlot]],
-    ['review-other', 'wizard-farm', []],
+    ['review-other', 'wizard-farm', [filterSlot]],
     ['zero-node', 'workspace-only', []],
   ] as const) {
     await json(path.join(fixture, 'pool', `${machine}.json`), {
@@ -206,9 +207,9 @@ try {
   }
   await json(path.join(fixture, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
-    slots: [slot, secondSlot].map((slot) => ({
+    slots: [slot, secondSlot, filterSlot].map((slot) => ({
       slot: slot.id,
-      machine: 'review-node',
+      machine: slot === filterSlot ? 'review-other' : 'review-node',
       project: 'wizard-farm',
       platform: 'cli',
       repo: fixture,
@@ -279,6 +280,7 @@ process.stdout.write(JSON.stringify(body));
   }
   assert(connection, 'Fixture gateway did not start');
   const cdpFile = path.join(root, 'apps/command-center/scripts/cdp.mjs');
+  let activeRoute = 'dispatch';
   const cdp = (...args: string[]) =>
     execFileSync(process.execPath, [cdpFile, ...args], {
       cwd: root,
@@ -289,8 +291,9 @@ process.stdout.write(JSON.stringify(body));
     }).trim();
   const walk = `function find(selector,root=document,prefix=''){const found=root.querySelector(selector);if(found)return {element:found,path:prefix+selector};for(const element of root.querySelectorAll('*'))if(element.shadowRoot){const result=find(selector,element.shadowRoot,prefix+element.tagName.toLowerCase()+' >>> ');if(result)return result;}return null;}`;
   const evaluate = (body: string) =>
-    JSON.parse(cdp('eval', '-', walk + `const value=await(async()=>{${body}})();return {value};`))
-      .value;
+    JSON.parse(
+      cdp('eval', activeRoute, walk + `const value=await(async()=>{${body}})();return {value};`),
+    ).value;
   const selector = (id: string) => `[data-testid="${id}"]`;
   const click = (id: string) =>
     evaluate(
@@ -299,7 +302,7 @@ process.stdout.write(JSON.stringify(body));
   const fill = (id: string, value: string, select = false) => {
     const target = evaluate(`return find(${JSON.stringify(selector(id))})?.path;`);
     assert(target, `Missing control ${id}`);
-    cdp(select ? 'select' : 'fill', '-', target, value);
+    cdp(select ? 'select' : 'fill', activeRoute, target, value);
   };
   const waitUI = async (body: string) => {
     const until = Date.now() + 30000;
@@ -308,6 +311,18 @@ process.stdout.write(JSON.stringify(body));
       await delay(250);
     }
     throw new Error(`UI checkpoint missing: ${body}`);
+  };
+  const choose = async (id: string, value: string) => {
+    evaluate(
+      `find(${JSON.stringify(selector(id))}).element.shadowRoot.querySelector('.trigger').click();return true;`,
+    );
+    const option = `[data-choice-value=${JSON.stringify(value)}]`;
+    await waitUI(
+      `return Boolean(find(${JSON.stringify(selector(id))}).element.shadowRoot.querySelector(${JSON.stringify(option)}));`,
+    );
+    evaluate(
+      `find(${JSON.stringify(selector(id))}).element.shadowRoot.querySelector(${JSON.stringify(option)}).click();return true;`,
+    );
   };
   const exists = (id: string) => `Boolean(find(${JSON.stringify(selector(id))}))`;
   const observe = (items: QueueItem[]) => {
@@ -350,13 +365,17 @@ process.stdout.write(JSON.stringify(body));
     throw new Error(`Expected ${count} queued tasks`);
   };
   screenshot = (name: string) => {
-    cdp('screenshot', '-', path.join(evidence, `${name}.png`));
+    cdp('screenshot', activeRoute, path.join(evidence, `${name}.png`));
   };
   const navigate = async (hash: string) => {
     cdp('goto', '#fleet');
+    activeRoute = 'fleet';
     await waitUI(`return !find('dispatch-wizard');`);
     cdp('goto', hash);
-    await waitUI(`return ${exists('dispatch-flow-qa')};`);
+    activeRoute = hash.replace(/^#/, '').split('?')[0];
+    await waitUI(
+      `return Boolean(find('[data-testid="dispatch-flow-qa"]')?.element.getClientRects().length);`,
+    );
   };
   const uiDeadline = Date.now() + 30000;
   let uiReady = false;
@@ -378,20 +397,79 @@ process.stdout.write(JSON.stringify(body));
     encoding: 'utf8',
     timeout: 30000,
   });
-  cdp('viewport', '-', '1440', '1200');
+  cdp('viewport', activeRoute, '1440', '1200');
   await waitUI(`return Boolean(document.querySelector('.auth-input'));`);
-  cdp('fill', '-', '.auth-input', token);
+  cdp('fill', activeRoute, '.auth-input', token);
   evaluate(`document.querySelector('.auth-card').requestSubmit();return true;`);
-  await waitUI(`return ${exists('dispatch-flow-qa')};`);
+  await waitUI(
+    `return Boolean(find('[data-testid="dispatch-flow-qa"]')?.element.getClientRects().length);`,
+  );
   evaluate(
     `find('whats-new-modal')?.element.shadowRoot?.querySelector('button.primary')?.click();return true;`,
   );
   await noExecution();
 
+  // Same handoff as Review from the PR list: no runner/transport overrides.
+  await navigate('#dispatch?flow=review-pr&project=wizard-farm&ticket=example%2Fwizard-farm%23199');
+  await waitUI(
+    `return find('runner-model-effort-picker')?.element.catalog?.some(runner=>runner.supportsWorkspaceReviews);`,
+  );
+  assert.deepEqual(
+    evaluate(
+      `return find('runner-model-effort-picker').element.catalog.map(runner=>runner.runner);`,
+    ),
+    ['codex'],
+  );
+  for (const machine of ['review-node', 'review-other']) {
+    evaluate(
+      `const bar=find('global-filter-bar').element.shadowRoot;const button=[...bar.querySelectorAll('[data-testid="global-filter-machines"] button')].find(button=>button.textContent.trim()===${JSON.stringify(machine)});if(!button)throw new Error('Missing machine filter');button.click();return true;`,
+    );
+  }
+  await waitUI(
+    `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Automatic · review-other');`,
+  );
+  await waitUI(`return !find('[data-testid="dispatch-submit"]').element.disabled;`);
+  click('dispatch-submit');
+  let createdReview;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const listed = await connection.call<{
+      runs: Array<{
+        id: string;
+        ticketOrPr: string;
+        transport: string;
+        slotId: string | null;
+        reviewWorkspaceTarget?: { machine: string };
+        effort: string;
+        metrics: { runner: string; model: string };
+      }>;
+    }>('run.list');
+    createdReview = listed.runs.find((run) => run.ticketOrPr === 'example/wizard-farm#199');
+    if (createdReview) break;
+    await delay(100);
+  }
+  assert(createdReview, 'PR-list Review must dispatch using a supported farm default');
+  assert.equal(createdReview.transport, 'native');
+  assert.equal(createdReview.metrics.runner, 'codex');
+  assert.equal(createdReview.metrics.model, 'gpt-5.6-luna');
+  assert.equal(createdReview.effort, 'low');
+  assert.equal(createdReview.slotId, null);
+  assert.equal(
+    createdReview.reviewWorkspaceTarget?.machine,
+    'review-other',
+    'Automatic must preserve the matching farm machine under multiple filters',
+  );
+  await noExecution();
+  await json(path.join(evidence, 'review-handoff.json'), createdReview);
+  checkpoints.push('pr-list-review-default-dispatches-without-worker');
+  await navigate('#dispatch');
+  evaluate(
+    `find('global-filter-bar').element.shadowRoot.querySelector('.clear-btn').click();return true;`,
+  );
+
   click('dispatch-flow-qa');
   await waitUI(`return ${exists('dispatch-project-wizard-farm')};`);
   click('dispatch-project-wizard-farm');
-  await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='daily';`);
+  await waitUI(`return find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`);
   assert.match(
     evaluate(`return find('dispatch-wizard').element.shadowRoot.textContent;`),
     /Validate changes from the previous day/,
@@ -403,6 +481,14 @@ process.stdout.write(JSON.stringify(body));
   screenshot('qa-farm-default');
   checkpoints.push('farm-default-and-runtime-controls');
 
+  assert.equal(
+    evaluate(`return find('[data-testid=dispatch-qa-advanced]').element.open;`),
+    false,
+    'QA input overrides must start collapsed',
+  );
+  evaluate(
+    `find('[data-testid=dispatch-qa-advanced]').element.querySelector('summary').click();return true;`,
+  );
   for (const invalid of ['{', '[1,2]']) {
     fill('dispatch-qa-inputs', invalid);
     await waitUI(
@@ -427,7 +513,7 @@ process.stdout.write(JSON.stringify(body));
   assert.equal(items[0].reviewWorkspaceTarget, undefined);
   await json(path.join(evidence, 'qa-default-item.json'), items[0]);
 
-  fill('dispatch-qa-profile', 'pr', true);
+  await choose('dispatch-qa-profile', 'pr');
   const inputs = { scope: { from: 'base', to: 'head' }, recipes: ['smoke'], optional: null };
   fill('dispatch-qa-inputs', JSON.stringify(inputs));
   fill('dispatch-ticket', 'example/wizard-farm#102');
@@ -450,7 +536,7 @@ process.stdout.write(JSON.stringify(body));
       `return find('dispatch-wizard').element.shadowRoot.textContent.includes('Review Tier');`,
     ),
   );
-  fill('dispatch-review-machine', 'review-other');
+  await choose('dispatch-review-machine', 'review-other');
   fill('dispatch-ticket', 'example/wizard-farm#103');
   await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
   screenshot('static-after-qa');
@@ -482,7 +568,7 @@ process.stdout.write(JSON.stringify(body));
     '#dispatch?flow=review-pr&validationDepth=full-live&project=wizard-farm&slot=qa-runtime-other&ticket=example%2Fwizard-farm%23105',
   );
   await waitUI(
-    `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='daily';`,
+    `return find('[data-testid="dispatch-flow-qa"]').element.classList.contains('selected') && find('[data-testid="dispatch-qa-profile"]')?.element.value==='';`,
   );
   assert(!evaluate(`return ${exists('dispatch-review-machine')};`));
   await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);

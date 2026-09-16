@@ -3198,6 +3198,32 @@ All checks passed.`;
     const projectConfigs: ProjectConfig[] = [
       {
         name: 'example-mobile',
+        workflowDefaults: {
+          'review-pr': {
+            execution: {
+              workspacePolicy: { kind: 'exact', machine: 'review-one' },
+              transport: 'native',
+              models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
+            },
+          },
+        },
+        qa: {
+          default_profile: 'pr',
+          profiles: [
+            {
+              id: 'pr',
+              title: 'PR smoke test',
+              template_id: 'qa/autonomous',
+              description: 'Check the changed behavior and run the app smoke test.',
+            },
+            {
+              id: 'daily',
+              title: 'Recent changes',
+              template_id: 'qa/autonomous',
+              inputs: { hours: 24 },
+            },
+          ],
+        },
         repoUrl: 'https://github.com/example-org/example-mobile',
         defaultBranch: 'main',
         apps: ['mobile'],
@@ -3362,6 +3388,16 @@ All checks passed.`;
           }}
           .mockCandidates=${candidates}
           .mockProjectConfigs=${projectConfigs}
+          .mockPools=${['review-one', 'review-two'].map((machine) => ({
+            machine,
+            project: 'example-mobile',
+            platform: 'mobile',
+            os: 'darwin',
+            host: 'localhost',
+            sshUser: 'fixture',
+            slots: [],
+            reviewWorkspaces: { maxConcurrent: 2 },
+          }))}
           .mockPriorRuns=${priorRuns}
         ></dispatch-wizard>
       </div>

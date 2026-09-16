@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose managed-workspace review support in the native runner catalog.
+
 - Define farm-owned QA presets with JSON skill inputs and explicit legacy review migration contracts. Resolve static-review publication opt-in and overrides independently, retaining their policy source.
 
 - Add machine-owned static-review workspace placement and retained source/support bindings, while keeping runtime reviews and repairs on slots.

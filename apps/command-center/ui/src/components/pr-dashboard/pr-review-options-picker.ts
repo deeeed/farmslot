@@ -8,6 +8,8 @@ import {
   prReviewWorkflow,
 } from '@farmslot/protocol';
 
+import { renderQaProfileControl } from '../shared/qa-profile-control.js';
+
 import { prAutomationStyles } from './pr-automation-styles.js';
 
 @customElement('pr-review-options-picker')
@@ -107,25 +109,14 @@ export class PRReviewOptionsPicker extends LitElement {
           </div>
           ${prReviewWorkflow(this.value) === 'qa'
             ? html`
-                <label
-                  >Farm QA profile
-                  <select
-                    data-testid="pr-review-qa-profile"
-                    .value=${this.value.qaProfileId ?? ''}
-                    @change=${(event: Event) =>
-                      this.change({
-                        qaProfileId: (event.target as HTMLSelectElement).value || undefined,
-                        qaInputs: undefined,
-                      })}
-                  >
-                    <option value="">
-                      Farm default${this.qa ? ` · ${this.qa.default_profile}` : ''}
-                    </option>
-                    ${(this.qa?.profiles ?? []).map(
-                      (profile) => html`<option value=${profile.id}>${profile.title}</option>`,
-                    )}
-                  </select>
-                </label>
+                ${renderQaProfileControl({
+                  config: this.qa,
+                  value: this.value.qaProfileId,
+                  disabled: this.disabled,
+                  testId: 'pr-review-qa-profile',
+                  change: (id) =>
+                    this.change({ qaProfileId: id || undefined, qaInputs: undefined }),
+                })}
                 <p class="muted">QA runs the farm's validation skill and requires runtime proof.</p>
               `
             : html`<p class="muted">

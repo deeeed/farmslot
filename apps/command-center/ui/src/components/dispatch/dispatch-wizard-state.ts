@@ -8,6 +8,7 @@ import type {
   ExecutionTemplateOptions,
   FlowType,
   NativeSessionCatalogResult,
+  PoolConfig,
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
@@ -37,6 +38,9 @@ export abstract class DispatchWizardState extends LitElement {
   @property({ attribute: false }) mockCandidates: DispatchCandidatesResult['candidates'] | null =
     null;
   @property({ attribute: false }) mockProjectConfigs: ProjectConfig[] | null = null;
+  @property({ attribute: false }) mockPools: PoolConfig[] = [];
+  @state() _reviewPools: PoolConfig[] = [];
+  @state() _reviewPoolsError = '';
   @property({ attribute: false }) mockPriorRuns: Run[] | null = null;
   @property({ attribute: false }) mockInitial: DispatchWizardMockInitialState | null = null;
 
