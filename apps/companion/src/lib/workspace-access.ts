@@ -42,7 +42,7 @@ export function workspaceAllowsMethod(
 }
 
 export function workspaceHome(access: WorkspaceAccess) {
-  return access === 'farm' ? '/(tabs)/runs' : access === 'native' ? '/native' : '/connection';
+  return access === 'farm' ? '/(tabs)/runs' : access === 'native' ? '/native' : '/(tabs)/settings';
 }
 
 export function canOpenNativeConversation(access: WorkspaceAccess, runId?: string) {

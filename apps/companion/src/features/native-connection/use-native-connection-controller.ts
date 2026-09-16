@@ -2,11 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 
 import { inferGatewayProfileKindFromUrl } from '../../lib/gateway-profile-kind';
 import {
+  type GatewayProfile,
   type GatewayProfileAuthMode,
   mobileGatewayProfileUrlError,
 } from '../../lib/gateway-profiles';
 import { workspaceHome } from '../../lib/workspace-access';
 import { useConnectionStore } from '../../store/connection';
+import { useGatewayPairingController } from '../settings/use-gateway-pairing-controller';
+import type { ProfileConnectionTestState } from '../settings/use-gateway-profile-controller';
 
 export function useNativeConnectionController() {
   const connection = useConnectionStore();
@@ -16,14 +19,36 @@ export function useNativeConnectionController() {
   const [secret, setSecret] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [paired, setPaired] = useState(false);
+  const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
+  const [, setProfileConnectionTests] = useState<Record<string, ProfileConnectionTestState>>({});
+  const [, setRecentImportedProfiles] = useState<GatewayProfile[]>([]);
   const alive = useRef(true);
   const mutation = useRef(false);
+  const autoOpenedScanner = useRef(false);
+  const openScannerRef = useRef<() => Promise<void>>(async () => undefined);
+  const pairing = useGatewayPairingController({
+    setAuthMode,
+    setPairingImportMessage,
+    setProfileConnectionTests,
+    setRecentImportedProfiles,
+    setUrlInput: setUrl,
+    setAdvancedGatewaySetupOpen: setManualOpen,
+    onPaired: () => setPaired(true),
+  });
+  openScannerRef.current = pairing.openPairingScanner;
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (autoOpenedScanner.current || connection.profiles.length > 0) return;
+    autoOpenedScanner.current = true;
+    void openScannerRef.current();
+  }, [connection.profiles.length]);
   const act = async (work: () => Promise<unknown>) => {
     if (mutation.current) return;
     mutation.current = true;
@@ -38,6 +63,7 @@ export function useNativeConnectionController() {
       if (alive.current) setBusy(false);
     }
   };
+  const canOpen = connection.status === 'connected' && connection.workspaceAccess !== 'none';
   return {
     viewModel: {
       name,
@@ -46,6 +72,10 @@ export function useNativeConnectionController() {
       secret,
       error,
       busy,
+      manualOpen,
+      pairingImportMessage,
+      pairingScannerOpen: pairing.pairingScannerOpen,
+      pairingInProgress: pairing.pairingInProgress,
       profiles: connection.profiles,
       activeProfileId: connection.activeProfileId,
       status: connection.status,
@@ -53,13 +83,18 @@ export function useNativeConnectionController() {
       access: connection.workspaceAccess,
       connectionError: connection.lastProbeError,
       home: workspaceHome(connection.workspaceAccess),
-      canOpen: connection.status === 'connected' && connection.workspaceAccess !== 'none',
+      canOpen,
+      leaveToHome: paired && canOpen,
     },
     actions: {
       setName,
       setUrl,
       setSecret,
       setAuthMode,
+      toggleManual: () => setManualOpen((open) => !open),
+      openPairingScanner: pairing.openPairingScanner,
+      closePairingScanner: pairing.closePairingScanner,
+      handlePairingBarcodeScanned: pairing.handlePairingBarcodeScanned,
       selectProfile: (id: string) => act(() => connection.setActiveProfile(id)),
       retry: () => act(() => connection.retryConnection()),
       save: () =>

@@ -1,13 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
-import { CameraView } from 'expo-camera';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   AppState,
   Linking,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,12 +13,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
+import { GatewayPairingScanner } from '../../features/settings/components/GatewayPairingScanner';
 import { useGatewayPairingController } from '../../features/settings/use-gateway-pairing-controller';
 import {
   connectionHealthNeedsAttention,
@@ -1243,39 +1242,12 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      <Modal
+      <GatewayPairingScanner
         visible={pairingScannerOpen}
-        animationType="slide"
-        onRequestClose={closePairingScanner}
-      >
-        <SafeAreaView style={styles.scannerContainer}>
-          <CameraView
-            style={styles.scanner}
-            facing="back"
-            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-            onBarcodeScanned={pairingInProgress ? undefined : handlePairingBarcodeScanned}
-          />
-          <View style={[styles.scannerOverlay, { paddingBottom: spacing.xl + insets.bottom }]}>
-            <Text style={styles.scannerTitle}>Scan Farmslot pairing QR</Text>
-            <Text style={styles.scannerHelp}>
-              Command Center → connection status → Generate QR. Keep this screen open until pairing
-              completes.
-            </Text>
-            {pairingInProgress ? (
-              <View style={styles.scannerProgress}>
-                <ActivityIndicator color="#fff" />
-                <Text style={styles.scannerHelp}>Exchanging credential…</Text>
-              </View>
-            ) : null}
-            <Pressable
-              style={[styles.button, styles.scannerCancelButton]}
-              onPress={closePairingScanner}
-            >
-              <Text style={styles.buttonText}>Cancel</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
-      </Modal>
+        inProgress={pairingInProgress}
+        onBarcodeScanned={(result) => void handlePairingBarcodeScanned(result)}
+        onClose={closePairingScanner}
+      />
       <View
         testID="companion-screen-settings-end"
         accessible
@@ -1790,40 +1762,5 @@ const styles = StyleSheet.create({
   diagnosticsCards: {
     gap: spacing.lg,
     marginTop: spacing.lg,
-  },
-  scannerContainer: {
-    backgroundColor: '#000',
-    flex: 1,
-  },
-  scanner: {
-    flex: 1,
-  },
-  scannerOverlay: {
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    bottom: 0,
-    left: 0,
-    padding: spacing.xl,
-    position: 'absolute',
-    right: 0,
-  },
-  scannerTitle: {
-    color: '#fff',
-    fontSize: fonts.sizeLg,
-    fontWeight: '700',
-    marginBottom: spacing.sm,
-  },
-  scannerHelp: {
-    color: colors.textSecondary,
-    fontSize: fonts.sizeSm,
-    lineHeight: 18,
-  },
-  scannerProgress: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.lg,
-  },
-  scannerCancelButton: {
-    marginTop: spacing.xl,
   },
 });

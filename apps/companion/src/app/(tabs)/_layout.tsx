@@ -14,7 +14,10 @@ import { useConnectionStore } from '../../store/connection';
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const access = useConnectionStore((state) => state.workspaceAccess);
-  if (!isStoreScreenshotMode && access !== 'farm') return <Redirect href={workspaceHome(access)} />;
+  if (!isStoreScreenshotMode && access === 'native') {
+    return <Redirect href={workspaceHome(access)} />;
+  }
+  const farmTabs = isStoreScreenshotMode || access === 'farm';
   const connectedHeader = (
     <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
       <ConnectionBanner />
@@ -48,6 +51,7 @@ export default function TabLayout() {
           name="runs"
           options={{
             title: 'Review',
+            href: farmTabs ? undefined : null,
             tabBarButtonTestID: 'companion-tab-review',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="play-circle-outline" size={size} color={color} />
@@ -70,6 +74,7 @@ export default function TabLayout() {
           name="workers"
           options={{
             title: 'Terminals',
+            href: farmTabs ? undefined : null,
             tabBarButtonTestID: 'companion-tab-terminals',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="terminal-outline" size={size} color={color} />
@@ -130,6 +135,7 @@ export default function TabLayout() {
           name="advanced"
           options={{
             title: 'Advanced',
+            href: farmTabs ? undefined : null,
             tabBarButtonTestID: 'companion-tab-advanced',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="ellipsis-horizontal-circle-outline" size={size} color={color} />

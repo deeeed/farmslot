@@ -68,12 +68,12 @@ test('native accounts allow standalone native methods and reject farm, worker an
   assert.equal(workspaceAllowsMethod('none', Methods.GATEWAY_PING), true);
 });
 
-test('native owners cannot open a worker route and unassigned users only get connection settings', () => {
+test('native owners cannot open a worker route and unassigned users land on Settings pairing', () => {
   assert.equal(canOpenNativeConversation('native'), true);
   assert.equal(canOpenNativeConversation('native', 'worker-run'), false);
   assert.equal(canOpenNativeConversation('farm', 'worker-run'), true);
   assert.equal(canOpenNativeConversation('none'), false);
   assert.equal(workspaceHome('native'), '/native');
   assert.equal(workspaceHome('farm'), '/(tabs)/runs');
-  assert.equal(workspaceHome('none'), '/connection');
+  assert.equal(workspaceHome('none'), '/(tabs)/settings');
 });
