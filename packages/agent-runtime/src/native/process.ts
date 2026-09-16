@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 import { NativeProcessTree } from './process-tree.js';
+import type { NativeProcessSandbox } from './review-sandbox.js';
 
 // Wait for the host's durable process registration before executing the native binary.
 // Reading one byte leaves all subsequent native JSON on stdin untouched.
@@ -49,6 +50,7 @@ export class JsonLineProcess {
       env?: NodeJS.ProcessEnv;
       onSpawn?: (pid: number, identity: string) => void;
       signal?: AbortSignal;
+      processSandbox?: NativeProcessSandbox;
     },
     onMessage: (message: Record<string, unknown>) => void,
     private readonly onExit: (error: Error | undefined, processStopped: boolean) => void,
@@ -56,7 +58,17 @@ export class JsonLineProcess {
     const identity = `farmslot-native-${randomUUID()}`;
     this.child = spawn(
       process.execPath,
-      ['-e', registeredLaunch, '--', identity, executable, ...args],
+      [
+        '-e',
+        registeredLaunch,
+        '--',
+        identity,
+        ...(options.processSandbox
+          ? [options.processSandbox.executable, ...options.processSandbox.args]
+          : []),
+        executable,
+        ...args,
+      ],
       {
         cwd: options.cwd,
         env: options.env,

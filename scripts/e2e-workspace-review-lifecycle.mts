@@ -163,7 +163,7 @@ await mkdir(path.join(project, 'shared/review-pr'), { recursive: true });
 await mkdir(path.join(project, 'shared/review-skill'), { recursive: true });
 await writeFile(
   path.join(project, 'shared/review-skill/SKILL.md'),
-  '# Fixture static review\n\nInspect the frozen diff and existing files. Do not install dependencies, build, run tests or use an app. Record findings in the task artifacts.\n',
+  '---\nname: fixture-static-review\ndescription: Inspect the fixture diff without app execution.\n---\n\n# Fixture static review\n\nInspect the frozen diff and existing files. Do not install dependencies, build, run tests or use an app. Record findings in the task artifacts.\n',
 );
 await writeFile(
   path.join(project, 'shared/review-pr/shared.md'),
@@ -349,6 +349,7 @@ let gateway = startGateway();
 let connection: GatewayConnection | undefined;
 let current: Run | undefined;
 const runs: Run[] = [];
+const discoveredSkills = new Set<string>();
 let failure: unknown;
 let cleanupFailed = false;
 let lifecycleInterrupted = false;
@@ -377,9 +378,9 @@ try {
     flowType: 'review-pr',
     mode: 'autonomous',
     reviewWorkspaceTarget: { machine: 'review-node' },
-    runner: 'codex',
-    model: 'gpt-6-astra',
-    effort: 'low',
+    runner: process.env.FARMSLOT_REVIEW_TEST_RUNNER ?? 'codex',
+    model: process.env.FARMSLOT_REVIEW_TEST_MODEL ?? 'gpt-5.6-luna',
+    effort: (process.env.FARMSLOT_REVIEW_TEST_EFFORT ?? 'low') || undefined,
     transport: 'native',
   };
   for (let index = 0; index < count; index++) {
@@ -400,6 +401,28 @@ try {
   while (Date.now() < deadline) {
     for (let index = 0; index < runs.length; index++) {
       runs[index] = (await connection.call<{ run: Run }>('run.get', { runId: runs[index].id })).run;
+      if (
+        !discoveredSkills.has(runs[index].id) &&
+        runs[index].reviewWorkspace?.support &&
+        runs[index].agentContexts?.some((context) => context.nativeSession?.launchRequestedAt) &&
+        !runs[index].reviewWorkspace?.cleanedAt
+      ) {
+        for (const surface of ['.agents', '.cursor', '.claude']) {
+          const skill = path.join(
+            runs[index].reviewWorkspace!.checkoutPath,
+            surface,
+            'skills/fixture-static-review/SKILL.md',
+          );
+          assert.match(await readFile(skill, 'utf8'), /Fixture static review/);
+        }
+        discoveredSkills.add(runs[index].id);
+        await json(path.join(evidence, 'skill-discovery.json'), {
+          verified: true,
+          surfaces: ['.agents', '.cursor', '.claude'],
+          workspace: runs[index].reviewWorkspace!.workspaceId,
+        });
+      }
+
       await json(
         path.join(evidence, multipleReviews ? `run-${index + 1}.json` : 'run.json'),
         runs[index],
@@ -571,7 +594,7 @@ try {
     assert(run.reviewWorkspace?.support?.sha256, 'Review must retain its admitted skill digest');
     assert.equal(
       await readFile(run.reviewWorkspace.support.skills[0].path, 'utf8'),
-      '# Fixture static review\n\nInspect the frozen diff and existing files. Do not install dependencies, build, run tests or use an app. Record findings in the task artifacts.\n',
+      '---\nname: fixture-static-review\ndescription: Inspect the fixture diff without app execution.\n---\n\n# Fixture static review\n\nInspect the frozen diff and existing files. Do not install dependencies, build, run tests or use an app. Record findings in the task artifacts.\n',
     );
     assert.equal(run.reviewResult?.reviewSnapshot?.headSha, headSha);
     assert(run.reviewResult?.reviewMd.trim());
@@ -620,13 +643,25 @@ try {
               (action: { command?: string }) => action.command === writeProbe,
             ),
         );
+        assert.equal(history.session.cwd, run.reviewWorkspace!.checkoutPath);
+        const structuredTool = history.events.find(
+          (event) =>
+            event.type === 'tool.completed' &&
+            (event.tool?.input as { command?: string } | undefined)?.command === writeProbe,
+        );
         const proof = attempt
           ? { exitCode: attempt.data?.exitCode, source: 'native event' }
-          : getRunnerAdapter(run.metrics.runner!).readCommandProbe({
-              repo: run.reviewWorkspace!.checkoutPath,
-              sessionId: run.metrics.runnerSessionId,
-              command: writeProbe,
-            });
+          : structuredTool
+            ? {
+                exitCode: (structuredTool.tool?.output as { exitCode?: number } | undefined)
+                  ?.exitCode,
+                source: 'structured tool event',
+              }
+            : getRunnerAdapter(run.metrics.runner!).readCommandProbe({
+                repo: run.reviewWorkspace!.checkoutPath,
+                sessionId: run.metrics.runnerSessionId,
+                command: writeProbe,
+              });
         assert(
           typeof proof.exitCode === 'number' && proof.exitCode !== 0,
           'Source write probe must be rejected',

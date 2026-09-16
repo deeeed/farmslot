@@ -31,6 +31,7 @@ import {
   requireNativeProfile,
 } from './account-profiles.js';
 import { nativeRunnerDefinitions as adapters } from './registry.js';
+import { hostReviewSandboxAvailable, reviewProcessSandbox } from './review-sandbox.js';
 import { durableWrite, privateDirectory, readJournal, readJson } from './storage.js';
 import type { NativeAdapterSession, NativeEventInput } from './types.js';
 import { NativeWorkerHistory } from './worker-history.js';
@@ -69,18 +70,29 @@ export async function resolveNativeExecutable(
         continue;
       throw error;
     }
-    executable = candidate;
+    if (candidate.includes('/.asdf/shims/')) {
+      try {
+        const resolved = await exec('asdf', ['which', basename(binary)], {
+          cwd,
+          timeout: 10_000,
+          env: environment,
+        });
+        executable = resolved.stdout.trim();
+      } catch (error) {
+        // Fresh worktrees may not select the shim's runtime. For a PATH lookup,
+        // continue to another installed executable; explicit paths remain exact.
+        if (
+          (error as { code?: unknown }).code === 1 &&
+          !isAbsolute(requested) &&
+          !requested.includes('/')
+        )
+          continue;
+        throw error;
+      }
+    } else executable = candidate;
     break;
   }
   if (!executable) throw new Error(`Install and log into the native ${binary} runner first`);
-  if (executable.includes('/.asdf/shims/')) {
-    const resolved = await exec('asdf', ['which', basename(binary)], {
-      cwd,
-      timeout: 10_000,
-      env: environment,
-    });
-    executable = resolved.stdout.trim();
-  }
   executable = await realpath(executable);
   const result = await exec(executable, ['--version'], {
     cwd,
@@ -406,7 +418,10 @@ export class NativeSessionManager {
     let filesystemPolicy = workerLaunch?.filesystemPolicy;
     if (filesystemPolicy) {
       const unsupported = transport.adapter.filesystemPolicyUnavailableReason?.(resolved.version);
-      if (!transport.adapter.filesystemPolicyUnavailableReason || unsupported)
+      if (
+        unsupported ||
+        (!transport.adapter.filesystemPolicyUnavailableReason && !hostReviewSandboxAvailable())
+      )
         throw new Error(unsupported ?? 'Native runner cannot enforce filesystem policy');
       filesystemPolicy = validateNativeWorkerFilesystemPolicy({
         readOnlyRoots: await Promise.all(
@@ -418,9 +433,27 @@ export class NativeSessionManager {
       });
       if (!filesystemPolicy.readOnlyRoots.includes(await realpath(params.cwd)))
         throw new Error('Native worker cwd must be an explicit read-only source root');
+      if (
+        !transport.adapter.filesystemPolicyUnavailableReason &&
+        existsSync(join(params.cwd, '.git'))
+      ) {
+        const gitDirectory = await exec(
+          'git',
+          ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+          { cwd: params.cwd, timeout: 10000 },
+        );
+        filesystemPolicy.readOnlyRoots.push(await realpath(gitDirectory.stdout.trim()));
+      }
       if (workerLaunch?.safetyTier !== 'sandboxed')
         throw new Error('Read-only native workers require sandboxed execution');
     }
+    const hostProtection =
+      filesystemPolicy && !transport.adapter.filesystemPolicyUnavailableReason
+        ? await reviewProcessSandbox(
+            filesystemPolicy,
+            transport.reviewRuntimeRoots?.(environment) ?? [],
+          )
+        : undefined;
     if (relocation) {
       const unavailable = transport.adapter.workspaceResumeUnavailableReason?.(resolved.version);
       if (unavailable) throw new Error(unavailable);
@@ -516,7 +549,11 @@ export class NativeSessionManager {
             this.persist(record);
           },
           executable: resolved.executable,
-          env: nativeEnvironment(resolved.executable, environment),
+          env: nativeEnvironment(resolved.executable, {
+            ...environment,
+            ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
+          }),
+          ...(hostProtection ? { processSandbox: hostProtection.sandbox } : {}),
           ...(workerLaunch
             ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }
             : {}),

@@ -164,7 +164,7 @@ try {
                 ? { kind: 'exact', machine: 'zero-node' }
                 : { kind: 'exact', machine: 'review-other' },
             transport: 'native',
-            models,
+            models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
           },
         },
         ...(name === 'wizard-farm'
@@ -412,14 +412,20 @@ process.stdout.write(JSON.stringify(body));
   // Same handoff as Review from the PR list: no runner/transport overrides.
   await navigate('#dispatch?flow=review-pr&project=wizard-farm&ticket=example%2Fwizard-farm%23199');
   await waitUI(
-    `return find('runner-model-effort-picker')?.element.catalog?.some(runner=>runner.supportsWorkspaceReviews);`,
+    `return find('runner-model-effort-picker')?.element.runner === 'cursor' && find('runner-model-effort-picker')?.element.model === 'cursor-grok-4.6-xhigh';`,
   );
   assert.deepEqual(
     evaluate(
-      `return find('runner-model-effort-picker').element.catalog.map(runner=>runner.runner);`,
+      `return [...find('runner-model-effort-picker').element.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
     ),
-    ['codex'],
+    ['claude', 'codex', 'cursor', 'grok'],
   );
+  evaluate(
+    `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();find('runner-model-effort-picker').element.shadowRoot.querySelector('details summary').click();return true;`,
+  );
+  fill('runner-custom-model', 'composer-2.5-fast');
+  evaluate(`find('[data-testid="dispatch-ticket"]').element.focus();return true;`);
+  await waitUI(`return find('runner-model-effort-picker').element.model === 'composer-2.5-fast';`);
   for (const machine of ['review-node', 'review-other']) {
     evaluate(
       `const bar=find('global-filter-bar').element.shadowRoot;const button=[...bar.querySelectorAll('[data-testid="global-filter-machines"] button')].find(button=>button.textContent.trim()===${JSON.stringify(machine)});if(!button)throw new Error('Missing machine filter');button.click();return true;`,
@@ -449,9 +455,9 @@ process.stdout.write(JSON.stringify(body));
   }
   assert(createdReview, 'PR-list Review must dispatch using a supported farm default');
   assert.equal(createdReview.transport, 'native');
-  assert.equal(createdReview.metrics.runner, 'codex');
-  assert.equal(createdReview.metrics.model, 'gpt-5.6-luna');
-  assert.equal(createdReview.effort, 'low');
+  assert.equal(createdReview.metrics.runner, 'cursor');
+  assert.equal(createdReview.metrics.model, 'composer-2.5-fast');
+  assert.equal(createdReview.effort, undefined);
   assert.equal(createdReview.slotId, null);
   assert.equal(
     createdReview.reviewWorkspaceTarget?.machine,

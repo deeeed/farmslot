@@ -1,6 +1,5 @@
 import { html, nothing } from 'lit';
 
-import type { NativeRunnerOption } from '@farmslot/protocol';
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
@@ -52,7 +51,6 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   model: string;
   effort: EffortLevel;
   workflowControls: unknown;
-  reviewRunnerCatalog?: NativeRunnerOption[];
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -249,7 +247,6 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <runner-model-effort-picker
-      .catalog=${ctx.reviewRunnerCatalog}
       .runner=${ctx.runner}
       .model=${ctx.model}
       .effort=${ctx.effort}

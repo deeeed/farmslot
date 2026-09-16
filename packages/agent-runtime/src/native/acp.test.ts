@@ -13,6 +13,7 @@ const fixture = `#!/usr/bin/env node
 if(process.argv.includes('--version')) { console.log('fixture 1'); process.exit(0); }
 const fs=require('node:fs');
 let session='fixture-session',prompt,authenticated=false;
+const configOptions=[{id:'model',currentValue:'specific-model',options:[{value:'specific-model'}]}];
 const send=m=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\\n');
 const update=u=>send({method:'session/update',params:{sessionId:session,update:u}});
 const result=(id,value)=>send({id,result:value});
@@ -24,8 +25,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(m.method==='session/new'||m.method==='session/load'){
   if(!authenticated)process.exit(10);
   if(m.method==='session/load') {session=m.params.sessionId;update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'REPLAY'}})}
-  return result(m.id,{...(m.method==='session/new'?{sessionId:session}:{}),modes:{availableModes:[{id:'agent'},{id:'plan'}]}});
+  return result(m.id,{...(m.method==='session/new'?{sessionId:session}:{}),modes:{availableModes:[{id:'agent'},{id:'plan'}]},configOptions});
  }
+ if(m.method==='session/set_config_option'){configOptions[0].currentValue=m.params.value;return result(m.id,{configOptions});}
  if(m.method==='session/set_model'||m.method==='session/set_mode')return result(m.id,{});
  if(m.method==='session/prompt'){
   prompt=m.id;const text=m.params.prompt[0].text;
@@ -97,7 +99,11 @@ for (const [runner, adapter] of [
         .map((line) => JSON.parse(line));
       assert.ok(calls.every((call) => call.jsonrpc === '2.0'));
       assert.equal(
-        calls.find((call) => call.method === 'session/set_model').params.modelId,
+        calls.find(
+          (call) =>
+            call.method ===
+            (runner === 'cursor' ? 'session/set_config_option' : 'session/set_model'),
+        ).params[runner === 'cursor' ? 'value' : 'modelId'],
         'specific-model',
       );
       await session.close();
@@ -208,25 +214,27 @@ test('ACP permission updates can omit previously streamed tool fields', () => {
 });
 
 for (const runner of ['cursor', 'grok']) {
-  test(`${runner} native registration refuses worker launches and unproven modes`, async () => {
+  test(`${runner} native registration binds worker leases and refuses unproven modes`, async () => {
     const { NativeSessionManager } = await import('./manager.js');
     const { randomUUID } = await import('node:crypto');
     const f = setup();
+    const manager = new NativeSessionManager(join(f.cwd, 'state'));
+    let workerId: string | undefined;
     try {
-      const manager = new NativeSessionManager(join(f.cwd, 'state'));
-      await assert.rejects(
-        manager.ensure(
-          'owner',
-          { runner, cwd: f.cwd, sessionId: randomUUID() },
-          {
-            leaseId: randomUUID(),
-            executable: f.executable,
-            environment: { set: {}, unset: [] },
-            safetyTier: 'sandboxed',
-          },
-        ),
-        /worker execution is not supported/,
+      const leaseId = randomUUID();
+      const worker = await manager.ensure(
+        'owner',
+        { runner, cwd: f.cwd, sessionId: randomUUID() },
+        {
+          leaseId,
+          executable: f.executable,
+          environment: { set: {}, unset: [] },
+          safetyTier: 'sandboxed',
+        },
       );
+      workerId = worker.id;
+      assert.equal(worker.workerLeaseId, leaseId);
+      assert.equal(worker.ownerPrincipalId, 'owner');
       await assert.rejects(
         manager.create('owner', { runner, cwd: f.cwd, mode: 'plan' }),
         /does not support/,
@@ -234,6 +242,7 @@ for (const runner of ['cursor', 'grok']) {
       const adapter = runner === 'cursor' ? cursorNativeAdapter : grokNativeAdapter;
       assert.equal(adapter.capabilities.questions, false);
     } finally {
+      if (workerId) await manager.close('owner', workerId);
       f.cleanup();
     }
   });

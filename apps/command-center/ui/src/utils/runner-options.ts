@@ -27,7 +27,16 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
   ],
   // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
   // shared protocol default used by every client.
-  cursor: [DEFAULT_CURSOR_MODEL, 'composer-2.5-fast', 'cursor-grok-4.6-high', 'gpt-5.6-sol-max'],
+  cursor: [
+    DEFAULT_CURSOR_MODEL,
+    'composer-2.5',
+    'composer-2.5-fast',
+    'cursor-grok-4.6-high',
+    'cursor-grok-4.6-xhigh',
+    'gpt-5.6-sol-medium',
+    'gpt-5.6-sol-high',
+    'gpt-5.6-sol-max',
+  ],
   grok: [DEFAULT_GROK_MODEL],
 };
 

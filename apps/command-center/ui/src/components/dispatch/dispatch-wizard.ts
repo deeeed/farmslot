@@ -1488,13 +1488,6 @@ export class DispatchWizard extends DispatchWizardState {
     }
     if (this._flowType !== 'review-pr') return null;
     if (this._legacyReviewPlacementError) return this._legacyReviewPlacementError;
-    if (
-      this._nativeCatalogReady &&
-      !this._nativeCatalog?.runners.some(
-        (runner) => runner.runner === this._runner && runner.supportsWorkspaceReviews,
-      )
-    )
-      return 'Choose a supported review runner in Execution options.';
     const filters = getState().globalFilters.machines;
     const machine = this._workspaceMachine();
     if (filters.length > 1 && !machine)
@@ -1694,10 +1687,6 @@ export class DispatchWizard extends DispatchWizardState {
             );
     const view = renderDispatchWizardView({
       transport: this._transport,
-      reviewRunnerCatalog:
-        this._flowType === 'review-pr'
-          ? this._nativeCatalog?.runners.filter((runner) => runner.supportsWorkspaceReviews)
-          : undefined,
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
       nativeCatalogError: this._nativeCatalogError,
       nativeProfileControl: keyed(

@@ -5,6 +5,7 @@ import type {
   SafetyTier,
 } from '@farmslot/protocol';
 
+import type { NativeProcessSandbox } from './review-sandbox.js';
 import type { NativeWorkerFilesystemPolicy } from './worker-launch.js';
 
 export type NativeEventInput = Omit<
@@ -23,6 +24,7 @@ export interface NativeAdapterOptions {
   effort?: string;
   safetyTier?: SafetyTier;
   filesystemPolicy?: NativeWorkerFilesystemPolicy;
+  processSandbox?: NativeProcessSandbox;
 }
 export interface NativeAdapterSession {
   nativeSessionId: string;

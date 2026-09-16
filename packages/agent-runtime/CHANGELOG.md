@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support managed review workers across native runners on macOS with source protection and exact model selection.
+
 - Task documents no longer carry a `STATUS:` line; run state is the `mark` signal file (farmslot ADR-045) and the field had no reader.
 
 - Recognize shared QA execution templates independently of static PR review.
