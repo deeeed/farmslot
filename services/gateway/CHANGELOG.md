@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate.
 - Correlate review worktrees in terminal inventory and support confirmed termination of unmanaged tmux sessions with identity checks.
 - Publish findings outside PR diff hunks in the review body instead of failing the entire review; keep valid findings inline and preserve retry safety.
 

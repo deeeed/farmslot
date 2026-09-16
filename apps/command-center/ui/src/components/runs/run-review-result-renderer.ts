@@ -72,7 +72,12 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
 }
 
 /** Saved evidence remains readable after its worker and checkout are released. */
-export function renderRunReviewResult(run: Run, openGate: () => void, disabled: boolean) {
+export function renderRunReviewResult(
+  run: Run,
+  openGate: () => void,
+  disabled: boolean,
+  rereview: () => void,
+) {
   const result = reviewResultForRun(run);
   if (!result) return nothing;
   const pending = run.decisions.some(
@@ -92,6 +97,16 @@ export function renderRunReviewResult(run: Run, openGate: () => void, disabled: 
           : nothing}
         ${run.reviewWorkspace && run.status === 'done' && !published
           ? html`<button ?disabled=${disabled} @click=${openGate}>Review and publish…</button>`
+          : nothing}
+        ${run.reviewWorkspace && ['done', 'failed', 'blocked'].includes(run.status)
+          ? html`<button
+              data-testid="run-rereview-latest-head"
+              ?disabled=${disabled}
+              @click=${rereview}
+              title="Review the latest PR head using this reviewer's saved context when available"
+            >
+              Re-review latest changes
+            </button>`
           : nothing}
       </div>
       <review-workspace

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Render farm-defined QA input fields across Dispatch, PR requests and automation; select QA domains in Dispatch.
+- Offer re-review of the latest PR changes from saved worktree review results.
 
 - Share workspace pins across run, terminal and slot views. Show worktrees alongside active terminals, provide searchable session cards with explicit session-ending controls, and expose review progress and checklists in an optional process panel.
 

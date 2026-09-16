@@ -7,6 +7,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { configureWorkspaceContinuity } from '../review-workspaces/continuity.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -56,9 +57,25 @@ export function preferRetainedReviewer(
     ),
     options,
   );
-  const retained = choices.filter(
-    (choice) =>
-      !isPRWorkspaceExecutionChoice(choice) &&
+  const retained = choices.filter((choice) => {
+    if (isPRWorkspaceExecutionChoice(choice)) {
+      const selected = structuredClone(context);
+      configureWorkspaceContinuity(
+        {
+          ...identity,
+          reviewScope: options.scope,
+          transport: choice.transport ?? 'tmux',
+          nativeOwnerPrincipalId: source.ownerId,
+          createdByPrincipalId: source.ownerId,
+          reviewWorkspaceTarget: { machine: choice.machine },
+          metrics: { runner: choice.runner, model: choice.model },
+        },
+        prior,
+        selected,
+      );
+      return selected.session?.continuity === 'resumed';
+    }
+    return (
       resolveRepeatReviewResumePlan(
         {
           ...identity,
@@ -68,8 +85,9 @@ export function preferRetainedReviewer(
         prior,
         choice.runner,
         choice.model,
-      ).kind === 'resume',
-  );
+      ).kind === 'resume'
+    );
+  });
   if (!retained.length) return choices;
   if (options.busySession !== 'fresh') return retained;
   return [...retained, ...choices.filter((choice) => !retained.includes(choice))];

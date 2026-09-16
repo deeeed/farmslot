@@ -28,6 +28,8 @@ export type RereviewRun = Pick<
   | 'ticketOrPr'
   | 'prNumber'
   | 'slotId'
+  | 'reviewWorkspaceTarget'
+  | 'transport'
   | 'effort'
   | 'reviewValidationDepth'
 > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> };
@@ -127,20 +129,29 @@ export function buildRereviewRequest(
     // Same slot, runner and model as the blocked round so the retained
     // reviewer session is the preferred choice; the team/rule config decides
     // when the run did not record them.
-    ...(run.slotId && runner && model
+    ...(run.reviewWorkspaceTarget && runner && model
       ? {
           execution: {
-            slotPolicy: { kind: 'exact' as const, slotId: run.slotId },
+            workspacePolicy: { kind: 'exact' as const, machine: run.reviewWorkspaceTarget.machine },
+            transport: run.transport ?? 'tmux',
             models: [{ runner, model, ...(run.effort ? { effort: run.effort } : {}) }],
           },
         }
-      : {}),
+      : run.slotId && runner && model
+        ? {
+            execution: {
+              slotPolicy: { kind: 'exact' as const, slotId: run.slotId },
+              models: [{ runner, model, ...(run.effort ? { effort: run.effort } : {}) }],
+            },
+          }
+        : {}),
     review: {
       sessionIntent: 'resume',
       scope: 'incremental',
       // Same depth as the review being redone; a dead session is no reason to go shallower.
       validationDepth: run.reviewValidationDepth ?? 'static-code',
       busySession: 'wait',
+      autoFinish: false,
     },
     source: { client: 'command-center', reference: `run:${run.id}`, requester: ownerId },
   };
