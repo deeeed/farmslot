@@ -23,10 +23,15 @@ import {
   launchReviewWorkspaceWorker,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
-import { launchReviewTmux, reviewTmuxOperation } from '../runners/review-tmux.js';
+import {
+  launchReviewTmux,
+  recoverReviewTmuxSession,
+  reviewTmuxOperation,
+} from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
+import { compatibleWorkspaceReviewer, configureWorkspaceContinuity } from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
 import { ensureReviewWorkspaceSupport } from './support.js';
 import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
@@ -151,29 +156,26 @@ async function freezeSubject(
         getAllRuns(),
       )
     : undefined;
-  if (context) {
-    // The native permission grant is pinned to its old workspace. Until the runner
-    // can relocate that grant, preserve findings and explicitly perform a fresh full pass.
-    context.reviewScope = 'full';
-    context.sessionIntent = 'reset';
-    context.session = {
-      intent: run.reviewScope === 'incremental' ? 'resume' : 'reset',
-      continuity: run.reviewScope === 'incremental' ? 'fallback-fresh' : 'fresh',
-      priorRunId: prior!.id,
-      ...(run.reviewScope === 'incremental'
-        ? { fallbackReason: 'session-unavailable' as const }
-        : {}),
-    };
-    if (run.reviewScope === 'incremental')
-      context.incrementalUnavailableReason =
-        'Saved reviewer permissions are bound to its previous workspace; a fresh full review rechecks prior findings.';
+  if (context && prior) {
+    const resumeRequested =
+      (run.prWork?.review?.options.sessionIntent ??
+        (run.reviewScope === 'incremental' ? 'resume' : 'reset')) === 'resume';
+    if (resumeRequested && compatibleWorkspaceReviewer(run, prior)) {
+      // Fill only the missing session identity on the saved prior run; its result stays immutable.
+      await recoverReviewTmuxSession(prior, () => {
+        currentWorkspaceRun(runId, generation);
+      });
+    }
+    const savedPrior = getRun(prior.id);
+    if (!savedPrior) throw new Error('The prior review was removed during session recovery');
+    configureWorkspaceContinuity(run, savedPrior, context);
   }
   await persistRunNow(
     updateRun(runId, {
       reviewWorkspaceSubject: subject,
       branch: pr.branch,
       summary: pr.title,
-      ...(context ? { repeatReviewContext: context, reviewScope: 'full' } : {}),
+      ...(context ? { repeatReviewContext: context, reviewScope: context.reviewScope } : {}),
     }),
     'freeze workspace review subject',
   );

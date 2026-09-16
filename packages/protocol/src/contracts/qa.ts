@@ -1,6 +1,16 @@
 /** Project-defined inputs passed unchanged to a shared validation skill. */
 export type QaInput = string | number | boolean | null | QaInput[] | { [key: string]: QaInput };
 
+/** Optional form hints for skill inputs. The farm owns their meaning. */
+export interface QaInputField {
+  path: string;
+  title: string;
+  type: 'text' | 'number' | 'boolean' | 'select';
+  description?: string;
+  required?: boolean;
+  options?: Array<{ value: string; title: string }>;
+}
+
 /** A preset selects a shared workflow; it does not define workflow steps. */
 export interface QaProfile {
   id: string;
@@ -8,6 +18,7 @@ export interface QaProfile {
   description?: string;
   template_id: string;
   inputs?: Record<string, QaInput>;
+  input_fields?: QaInputField[];
 }
 
 export interface ProjectQaConfig {
@@ -177,7 +188,11 @@ export function validateQaConfig(value: unknown): asserts value is ProjectQaConf
   for (const [index, profile] of value.profiles.entries()) {
     const field = `qa.profiles[${index}]`;
     if (!isRecord(profile)) throw new Error(`${field} must be an object`);
-    requireFields(profile, ['id', 'title', 'description', 'template_id', 'inputs'], field);
+    requireFields(
+      profile,
+      ['id', 'title', 'description', 'template_id', 'inputs', 'input_fields'],
+      field,
+    );
     requireText(profile.id, `${field}.id`);
     requireText(profile.title, `${field}.title`);
     requireText(profile.template_id, `${field}.template_id`);
@@ -189,6 +204,48 @@ export function validateQaConfig(value: unknown): asserts value is ProjectQaConf
       (!isRecord(profile.inputs) || !Object.values(profile.inputs).every(isInput))
     ) {
       throw new Error(`${field}.inputs must be an object containing JSON values`);
+    }
+    if (profile.input_fields !== undefined) {
+      if (!Array.isArray(profile.input_fields))
+        throw new Error(`${field}.input_fields must be an array`);
+      const paths = new Set<string>();
+      for (const input of profile.input_fields) {
+        if (!isRecord(input)) throw new Error(`${field}.input_fields entries must be objects`);
+        requireFields(
+          input,
+          ['path', 'title', 'type', 'description', 'required', 'options'],
+          `${field}.input_fields`,
+        );
+        requireText(input.path, 'QA field path');
+        requireText(input.title, 'QA field title');
+        if (
+          !/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*$/.test(input.path) ||
+          input.path
+            .split('.')
+            .some((part) => ['__proto__', 'constructor', 'prototype'].includes(part))
+        )
+          throw new Error('QA field path is invalid');
+        if (paths.has(input.path)) throw new Error(`Duplicate QA field: ${input.path}`);
+        paths.add(input.path);
+        if (!['text', 'number', 'boolean', 'select'].includes(String(input.type)))
+          throw new Error('QA field type is invalid');
+        if (input.required !== undefined && typeof input.required !== 'boolean')
+          throw new Error('QA field required must be boolean');
+        if (input.description !== undefined) requireText(input.description, 'QA field description');
+        if (input.type === 'select') {
+          if (!Array.isArray(input.options) || !input.options.length)
+            throw new Error('QA select field needs options');
+          const values = new Set<string>();
+          for (const option of input.options) {
+            if (!isRecord(option)) throw new Error('QA field option must be an object');
+            requireFields(option, ['value', 'title'], 'QA field option');
+            requireText(option.value, 'QA option value');
+            requireText(option.title, 'QA option title');
+            if (values.has(option.value)) throw new Error('QA option values must be unique');
+            values.add(option.value);
+          }
+        } else if (input.options !== undefined) throw new Error('Only select fields have options');
+      }
     }
   }
   if (!ids.has(value.default_profile)) {
@@ -256,7 +313,36 @@ export function selectQaProfile(
   const profile = config.profiles.find((entry) => entry.id === id);
   if (!profile)
     throw new ReviewQaConfigurationError(`QA preset does not exist in this farm: ${id}`);
-  return JSON.parse(JSON.stringify({ profile, inputs: { ...profile.inputs, ...inputs } }));
+  const selection: QaProfileSelection = JSON.parse(
+    JSON.stringify({ profile, inputs: { ...profile.inputs, ...inputs } }),
+  );
+  for (const field of profile.input_fields ?? []) {
+    const value = qaInputFieldValue(selection.inputs, field.path);
+    const missing =
+      value === undefined || value === null || (typeof value === 'string' && !value.trim());
+    if (missing) {
+      if (field.required) throw new ReviewQaConfigurationError(`${field.title} is required`);
+      continue;
+    }
+    if (
+      (field.type === 'text' && typeof value !== 'string') ||
+      (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) ||
+      (field.type === 'boolean' && typeof value !== 'boolean') ||
+      (field.type === 'select' && !field.options?.some((option) => option.value === value))
+    )
+      throw new ReviewQaConfigurationError(`${field.title} has an invalid value`);
+  }
+  return selection;
+}
+
+export function qaInputFieldValue(
+  inputs: Record<string, QaInput>,
+  path: string,
+): QaInput | undefined {
+  let value: QaInput | undefined = inputs;
+  for (const part of path.split('.'))
+    value = isRecord(value) ? (value[part] as QaInput | undefined) : undefined;
+  return value;
 }
 
 /** Skill-resolved runtime evidence index, written as artifacts/qa-result.json. */

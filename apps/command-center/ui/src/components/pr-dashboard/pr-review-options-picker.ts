@@ -8,6 +8,7 @@ import {
   prReviewWorkflow,
 } from '@farmslot/protocol';
 
+import { qaInputFieldStyles } from '../shared/qa-input-fields.js';
 import { renderQaProfileControl } from '../shared/qa-profile-control.js';
 
 import { prAutomationStyles } from './pr-automation-styles.js';
@@ -21,6 +22,7 @@ export class PRReviewOptionsPicker extends LitElement {
   @property() presentation: 'all' | 'workflow' | 'reviewer' = 'all';
   static styles = [
     prAutomationStyles,
+    qaInputFieldStyles,
     css`
       [hidden] {
         display: none;
@@ -119,6 +121,8 @@ export class PRReviewOptionsPicker extends LitElement {
                   testId: 'pr-review-qa-profile',
                   change: (id) =>
                     this.change({ qaProfileId: id || undefined, qaInputs: undefined }),
+                  inputs: this.value.qaInputs,
+                  changeInputs: (qaInputs) => this.change({ qaInputs }),
                 })}
                 <p class="muted">QA runs the farm's validation skill and requires runtime proof.</p>
               `

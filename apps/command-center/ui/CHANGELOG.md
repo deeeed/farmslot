@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Show PR feedback candidates (author kind, reviewed commit, revision, attribution, consumption state) on the retrospective rail and inbox card, and show the canonical library destination plus the "Recorded in canonical library" gate on learnings-draft cards.
+- Render farm-defined QA input fields across Dispatch, PR requests and automation; select QA domains in Dispatch.
+- Offer re-review of the latest PR changes from saved worktree review results.
 
 - Share workspace pins across run, terminal and slot views. Show worktrees alongside active terminals, provide searchable session cards with explicit session-ending controls, and expose review progress and checklists in an optional process panel.
 

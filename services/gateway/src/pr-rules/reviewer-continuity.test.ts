@@ -157,3 +157,25 @@ test('QA does not inherit static reviewer session placement', () => {
   };
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
 });
+
+test('workspace automation prefers the machine holding the compatible retained reviewer', () => {
+  const { intent, prior } = fixture();
+  prior.slotId = null;
+  prior.transport = 'tmux';
+  prior.createdByPrincipalId = prior.nativeOwnerPrincipalId = 'owner';
+  prior.reviewWorkspace = { machine: 'machine-a' } as Run['reviewWorkspace'];
+  prior.agentContexts![0] = {
+    ...prior.agentContexts![0],
+    id: 'review',
+    runner: 'cursor',
+    model: 'composer-2.5',
+  };
+  const workspaces: PRExecutionChoice[] = [
+    { machine: 'machine-b', runner: 'cursor', model: 'composer-2.5', transport: 'tmux' },
+    { machine: 'machine-a', runner: 'cursor', model: 'composer-2.5', transport: 'tmux' },
+  ];
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', workspaces, [prior]), [workspaces[1]]);
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', [workspaces[0]], [prior]), [
+    workspaces[0],
+  ]);
+});

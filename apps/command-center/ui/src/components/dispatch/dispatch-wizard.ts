@@ -10,6 +10,7 @@ import type {
   FlowType,
   NativeSessionCatalogResult,
   PRStatus,
+  QaInput,
   ReviewRunnerId,
   ReviewValidationDepth,
   Run,
@@ -32,6 +33,7 @@ import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
 } from '../shared/execution-template-picker-model.js';
+import { qaInputFieldStyles } from '../shared/qa-input-fields.js';
 import { renderQaProfileControl } from '../shared/qa-profile-control.js';
 
 import {
@@ -64,6 +66,7 @@ import {
   defaultExtraReviewRunner,
   interactiveTemplateOption,
   modeForFlow,
+  parseQaInputOverrides,
   projectApps,
   projectPrepareProfiles,
   publicationReviewsEnabled,
@@ -462,12 +465,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _fetchTemplateOptions(): Promise<void> {
-    if (
-      !this._project ||
-      this.mockMode ||
-      this._flowType === 'review-pr' ||
-      this._flowType === 'qa'
-    ) {
+    if (!this._project || this.mockMode || this._flowType === 'review-pr') {
       this._applyVisibleCatalog();
       return;
     }
@@ -1416,6 +1414,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._qaProfileId = '';
       this._qaInputsText = '';
       this._reviewMachine = '';
+      this._domain = '';
     }
     this._nativeProfileSelection = null;
     this._nativeProfileRefreshVersion++;
@@ -1553,12 +1552,42 @@ export class DispatchWizard extends DispatchWizardState {
     const selectedId = this._qaProfileId || config?.default_profile || '';
     const selected = config?.profiles.find((profile) => profile.id === selectedId);
     const error = this._workflowSelectionError();
+    const domains =
+      this._templateOptionsCache.get(this._project)?.executionTemplates?.availableDomains ?? [];
+    let fieldInputs: Record<string, QaInput> | undefined;
+    try {
+      fieldInputs = parseQaInputOverrides(this._qaInputsText);
+    } catch {
+      // Invalid advanced JSON is already shown by the workflow error below. Preserve it for correction.
+      fieldInputs = undefined;
+    }
     return html`<div class="config-group" data-testid="dispatch-qa-profile-controls">
+      ${domains.length
+        ? html`<label class="section-label"
+            >Domain
+            <choice-picker
+              data-testid="dispatch-qa-domain"
+              .value=${this._domain}
+              @change=${(event: Event) => {
+                this._domain = (event.target as HTMLSelectElement).value;
+              }}
+            >
+              <option value="">Project default</option>
+              ${domains.map((domain) => html`<option value=${domain}>${domain}</option>`)}
+            </choice-picker>
+          </label>`
+        : nothing}
       ${renderQaProfileControl({
         config,
         value: this._qaProfileId,
         projectSelected: !!this._project,
         testId: 'dispatch-qa-profile',
+        inputs: fieldInputs,
+        changeInputs: fieldInputs
+          ? (inputs) => {
+              this._qaInputsText = JSON.stringify(inputs, null, 2);
+            }
+          : undefined,
         change: (id) => {
           this._qaProfileId = id;
           this._qaInputsText = '';
@@ -1581,7 +1610,7 @@ export class DispatchWizard extends DispatchWizardState {
             ></textarea>
             <p class="section-help">
               Leave empty to use the profile inputs. The farm's skill selects its validation
-              recipes.
+              recipes. Fix invalid JSON here before editing the profile fields.
             </p>
           </details>`
         : nothing}
@@ -1690,7 +1719,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._syncPublicationReviewsToHash();
   }
 
-  static styles = dispatchWizardStyles;
+  static styles = [dispatchWizardStyles, qaInputFieldStyles];
 
   render() {
     const blockers = this._blockingState();

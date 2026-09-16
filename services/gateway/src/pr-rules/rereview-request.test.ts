@@ -64,6 +64,7 @@ test('the request resumes the same slot, runner and model with incremental scope
     scope: 'incremental',
     validationDepth: 'full-live',
     busySession: 'wait',
+    autoFinish: false,
   });
   assert.equal(request.source.reference, 'run:run-1');
 });
@@ -77,6 +78,29 @@ test('without recorded runner/model the team configuration decides execution', (
   );
   assert.equal(request.execution, undefined);
   assert.equal(request.review?.validationDepth, 'static-code');
+});
+
+test('worktree re-review preserves machine, transport and reviewer without allocating a slot', () => {
+  const request = buildRereviewRequest(
+    {
+      ...run,
+      slotId: null,
+      reviewWorkspaceTarget: { machine: 'macwork' },
+      transport: 'tmux',
+      reviewValidationDepth: 'static-code',
+      metrics: { runner: 'cursor', model: 'cursor-grok-4.6-xhigh' },
+      effort: undefined,
+    },
+    [perps],
+    'owner-1',
+    { headSha: head },
+  );
+  assert.deepEqual(request.execution, {
+    workspacePolicy: { kind: 'exact', machine: 'macwork' },
+    transport: 'tmux',
+    models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+  });
+  assert.equal(request.review?.scope, 'incremental');
 });
 
 test('team selection covers the repo case-insensitively and prefers the run project', () => {
