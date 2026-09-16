@@ -95,7 +95,12 @@ export function renderQaInputFields(options: {
               ?disabled=${options.disabled}
               @input=${(event: Event) => {
                 const input = (event.target as HTMLInputElement).value;
-                changed(input === '' ? undefined : field.type === 'number' ? Number(input) : input);
+                const value = field.type === 'number' ? Number(input) : input;
+                changed(
+                  input === '' || (typeof value === 'number' && !Number.isFinite(value))
+                    ? null
+                    : value,
+                );
               }}
             />`}
       ${field.description ? html`<span class="section-help">${field.description}</span>` : nothing}

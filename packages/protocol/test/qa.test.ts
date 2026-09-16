@@ -32,7 +32,7 @@ test('farm-defined input fields validate defaults, choices and required values a
         id: 'custom',
         title: 'Custom validation',
         template_id: 'team/check',
-        inputs: { range: { hours: 24 }, enabled: false },
+        inputs: { range: { hours: 24 }, enabled: false, target: 'main' },
         input_fields: [
           { path: 'range.hours', title: 'Hours', type: 'number', required: true },
           {
@@ -43,6 +43,7 @@ test('farm-defined input fields validate defaults, choices and required values a
             options: [{ value: 'source', title: 'Development' }],
           },
           { path: 'enabled', title: 'Enabled', type: 'boolean' },
+          { path: 'target', title: 'Target', type: 'text', required: true },
         ],
       },
     ],
@@ -52,6 +53,10 @@ test('farm-defined input fields validate defaults, choices and required values a
   const selected = selectQaProfile(farm, undefined, { lane: 'source' });
   assert.equal(qaInputFieldValue(selected.inputs, 'range.hours'), 24);
   assert.equal(selected.inputs.enabled, false);
+  assert.throws(
+    () => selectQaProfile(farm, undefined, { lane: 'source', target: '  ' }),
+    /Target is required/,
+  );
   assert.throws(
     () => selectQaProfile(farm, undefined, { lane: 'unknown' }),
     /Proof lane has an invalid value/,

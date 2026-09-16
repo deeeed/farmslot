@@ -1610,7 +1610,7 @@ export class DispatchWizard extends DispatchWizardState {
             ></textarea>
             <p class="section-help">
               Leave empty to use the profile inputs. The farm's skill selects its validation
-              recipes.
+              recipes. Fix invalid JSON here before editing the profile fields.
             </p>
           </details>`
         : nothing}

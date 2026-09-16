@@ -682,6 +682,12 @@ process.stdout.write(JSON.stringify(body));
   fill('dispatch-ticket', 'release/1.2.3');
   await waitUI(`return find('[data-testid="dispatch-queue"]').element.disabled;`);
   const scopeControl = evaluate(`return find('[data-qa-input="scope"]').path;`);
+  cdp('fill', activeRoute, scopeControl, '   ');
+  await chooseField('lane', 'source');
+  assert(
+    evaluate(`return find('[data-testid="dispatch-queue"]').element.disabled;`),
+    'Whitespace is not a release scope',
+  );
   cdp('fill', activeRoute, scopeControl, 'payments');
   await chooseField('lane', 'source');
   await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);

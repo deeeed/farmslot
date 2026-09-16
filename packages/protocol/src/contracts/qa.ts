@@ -318,7 +318,8 @@ export function selectQaProfile(
   );
   for (const field of profile.input_fields ?? []) {
     const value = qaInputFieldValue(selection.inputs, field.path);
-    const missing = value === undefined || value === null || value === '';
+    const missing =
+      value === undefined || value === null || (typeof value === 'string' && !value.trim());
     if (missing) {
       if (field.required) throw new ReviewQaConfigurationError(`${field.title} is required`);
       continue;

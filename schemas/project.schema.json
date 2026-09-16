@@ -711,7 +711,7 @@
                   "properties": {
                     "path": {
                       "type": "string",
-                      "pattern": "^[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*$"
+                      "pattern": "^(?!(?:.*\\.)?(?:__proto__|constructor|prototype)(?:\\.|$))[a-zA-Z0-9_-]+(?:\\.[a-zA-Z0-9_-]+)*$"
                     },
                     "title": {
                       "type": "string",
