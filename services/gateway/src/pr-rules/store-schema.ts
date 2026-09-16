@@ -9,9 +9,20 @@ import {
   assertPRSourceAccount,
   assertPRTeamConfig,
   assertPRTriggerRuleConfig,
+  prReviewWorkflow,
 } from '@farmslot/protocol';
 
 import type { PRRuleStoreData } from './store.js';
+
+const sourceReview = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['runId', 'headSha'],
+  properties: {
+    runId: { type: 'string', minLength: 1 },
+    headSha: { type: 'string', pattern: '^[a-f0-9]{40}$' },
+  },
+};
 
 const text = { type: 'string', minLength: 1 };
 const strings = { type: 'array', items: text };
@@ -172,6 +183,7 @@ const validate = ajv.compile<PRRuleStoreData>({
           ownerId: text,
           revision,
           request: { type: 'object' },
+          sourceReview,
           intentId: text,
           priorExecutionIds: { type: 'array', items: text, uniqueItems: true },
           checkedAt: timestamp,
@@ -341,7 +353,26 @@ const validate = ajv.compile<PRRuleStoreData>({
                 project: text,
                 execution: { type: 'object' },
                 review: { type: 'object' },
+                policySources: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['execution', 'review'],
+                  properties: {
+                    execution: { enum: ['request', 'rule', 'repository', 'team', 'farm', null] },
+                    review: { enum: ['request', 'rule', 'repository', 'team', 'farm', 'built-in'] },
+                    publication: {
+                      enum: ['request', 'rule', 'repository', 'team', 'farm', 'built-in'],
+                    },
+                  },
+                },
+                reviewPurpose: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['configured', 'resolved'],
+                  properties: { configured: text, resolved: text },
+                },
                 reviewObservation,
+                sourceReview,
                 autoStart: { type: 'boolean' },
                 eligible: { type: 'boolean' },
                 configurationErrors: strings,
@@ -393,6 +424,8 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
   const requestKeys = new Set<string>();
   for (const submission of value.submissions ?? []) {
     assertPRReviewRequest(submission.request);
+    if (submission.request.sourceReviewRunId !== submission.sourceReview?.runId)
+      throw new Error('QA request has inconsistent source review provenance');
     const key = JSON.stringify([submission.ownerId, submission.request.idempotencyKey]);
     if (requestKeys.has(key)) throw new Error('Duplicate review request idempotency key');
     requestKeys.add(key);
@@ -423,6 +456,11 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
     for (const source of intent.contributions) {
       if (source.execution) assertPRExecutionProfile(source.execution);
       if (source.review) assertPRReviewOptions(source.review);
+      if (
+        source.sourceReview &&
+        (prReviewWorkflow(source.review) !== 'qa' || source.sourceReview.headSha !== intent.headSha)
+      )
+        throw new Error('QA source review does not match its workflow and head');
       if (source.submissionId !== undefined) {
         if (
           !value.submissions?.some(
@@ -433,8 +471,16 @@ export function decodePRRuleStore(value: unknown): PRRuleStoreData {
           )
         )
           throw new Error('Review contribution references an unavailable request');
+        const request = value.submissions!.find((item) => item.id === source.submissionId)!;
+        if (
+          source.sourceReview?.runId !== request.sourceReview?.runId ||
+          source.sourceReview?.headSha !== request.sourceReview?.headSha
+        )
+          throw new Error('QA contribution has inconsistent source review provenance');
         continue;
       }
+      if (source.sourceReview)
+        throw new Error('Only explicit QA requests can reference a source review');
       if (
         !value.rules.some(
           (rule) =>

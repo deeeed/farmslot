@@ -2045,6 +2045,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Gateway-owned automatic QA opt-in and durable follow-up status. */
+  qaAfterReview?: import('./qa.js').QaAfterReview;
   /** Effective direct-dispatch policy retained from admission or its queued request. */
   workflowExecution?: import('./pr-monitoring.js').PRExecutionProfile;
   id: string;
@@ -2070,6 +2072,11 @@ export interface Run {
   executionTemplateId?: string;
   /** Portable snapshot selected and revalidated by the gateway. */
   executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
+  /** Frozen workflow migration provenance and farm-selected QA skill inputs. */
+  reviewQaContract?: import('./qa.js').ReviewQaContract;
+  qa?: import('./qa.js').QaProfileSelection;
+  /** Provider commits frozen before task generation for PR-bound QA. */
+  qaSource?: { baseSha: string; headSha: string };
   /** Worker pipeline/template carrier. Eval candidates may use dev as a carrier while taskProfile stores rubric semantics. */
   flowType: FlowType;
   /** Operator/autonomy behavior preset. mode='validation' implies lane='validation' and is not used for comparison siblings. */
@@ -2112,8 +2119,14 @@ export interface Run {
   reviewWorkspaceSubject?: import('./review-workspace.js').ReviewWorkspaceSubject;
   /** Retained cleanup failure; capacity stays reserved until owned process closure is confirmed. */
   reviewWorkspaceCleanupError?: string;
+  reviewPublication?: {
+    direct?: import('./review-publication.js').DirectReviewPublication;
+    receipt?: import('./review-publication.js').ReviewPublicationReceipt;
+    error?: string;
+    checkedAt: string;
+  };
   branch: string | null;
-  /** Completion side-effect policy; artifact-only suppresses publication/PR mutation paths. */
+  /** Completion pipeline side effects. Separate requested review publication uses prWork.publication. */
   completionPolicy?: RunCompletionPolicy;
   /** Principal-stamped one-dispatch pressure override requested for this run.
    * Bound to one machine + pressure generation; dispatch execution recomputes
@@ -2547,7 +2560,7 @@ export interface FamilyChangeLedger {
   entries: FamilyChangeLedgerEntry[];
 }
 
-export type FlowType = 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'update-branch';
+export type FlowType = 'fix-bug' | 'review-pr' | 'qa' | 'dev' | 'pr-complete' | 'update-branch';
 export type RunLane = 'production' | 'validation' | 'comparison';
 
 /**
@@ -2643,6 +2656,7 @@ export type PipelineStep = (typeof PipelineSteps)[keyof typeof PipelineSteps];
 const S = PipelineSteps;
 
 export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
+  qa: [S.FIND_SLOT, S.WRITE_TASK, S.PREPARE, S.DISPATCH, S.MONITOR, S.HUMAN_GATE, S.COMPLETE],
   'fix-bug': [
     S.FIND_SLOT,
     S.GRADE,
@@ -2710,6 +2724,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
  * Falls back to `report.md` for any flow not listed.
  */
 export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
+  qa: ['qa-report.md', 'report.md'],
   'fix-bug': ['pr-description.md', 'report.md'],
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],

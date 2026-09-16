@@ -50,6 +50,10 @@ const raw = {
     sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
   },
   workflow_defaults: { 'review-pr': { execution } },
+  qa: {
+    default_profile: 'pr',
+    profiles: [{ id: 'pr', title: 'PR QA', template_id: 'validation/default' }],
+  },
 };
 const projectPath = path.join(root, 'projects/farm/project.json');
 writeFileSync(projectPath, JSON.stringify(raw));
@@ -217,7 +221,7 @@ test('preview and run creation use farm choices and reject public snapshot forge
   );
 });
 
-test('legacy full-live preview retains its slot path and template', async () => {
+test('legacy full-live preview selects QA template while retaining its explicit slot', async () => {
   const result = await asOwner(() =>
     dispatchPreview({
       ...request,
@@ -228,13 +232,13 @@ test('legacy full-live preview retains its slot path and template', async () => 
       effort: 'high',
     }),
   );
-  assert.equal(result.preview.flowType, 'review-pr');
+  assert.equal(result.preview.flowType, 'qa');
   assert.equal(result.preview.slotId, 'runtime');
-  assert.equal(result.preview.executionTemplate?.id, 'review-pr/default');
+  assert.equal(result.preview.executionTemplate?.id, 'validation/default');
   assert.equal(result.preview.reviewWorkspace, undefined);
 });
 
-test('full-live create and queue retain slot, depth and caller selections under static farm defaults', async (t) => {
+test('full-live create and queue migrate to QA while retaining slot and caller selections', async (t) => {
   const runtime = {
     ...request,
     slotId: 'runtime',
@@ -246,26 +250,30 @@ test('full-live create and queue retain slot, depth and caller selections under 
   const selected = await resolveDirectWorkflowDefaults(runtime, await loadProjectConfig('farm'), {
     purpose: 'run',
   });
-  assert.deepEqual(selected.params, runtime);
+  assert.equal(selected.params.flowType, 'qa');
+  assert.equal(selected.params.slotId, runtime.slotId);
+  assert.equal(selected.params.reviewValidationDepth, undefined);
   assert.equal(selected.execution, undefined);
   const { run } = await asOwner(() => runCreate(runtime, () => {}, { awaitPersist: true }));
   t.after(async () => {
     run.status = 'cancelled';
     await deleteRun(run.id);
   });
-  assert.equal(run.flowType, 'review-pr');
-  assert.equal(run.reviewValidationDepth, 'full-live');
+  assert.equal(run.flowType, 'qa');
+  assert.equal(run.reviewValidationDepth, undefined);
+  assert.equal(run.reviewQaContract?.legacy?.validationDepth, 'full-live');
   assert.equal(run.slotId, 'runtime');
   assert.equal(run.reviewWorkspaceTarget, undefined);
-  assert.equal(run.executionTemplate?.id, 'review-pr/default');
+  assert.equal(run.executionTemplate?.id, 'validation/default');
   assert.equal(run.metrics.model, 'gpt-6-astra');
   assert.equal(run.effort, 'high');
   const queued = await asOwner(() =>
     dispatchQueueAdd({ ...runtime, ticketOrPr: 'example/app#43' }),
   );
   t.after(() => queue.removeQueueItemInternalNow(queued.item.id, 'test-cleanup'));
-  assert.equal(queued.item.flowType, 'review-pr');
-  assert.equal(queued.item.reviewValidationDepth, 'full-live');
+  assert.equal(queued.item.flowType, 'qa');
+  assert.equal(queued.item.reviewValidationDepth, undefined);
+  assert.equal(queued.item.reviewQaContract?.legacy?.validationDepth, 'full-live');
   assert.equal(queued.item.slotId, 'runtime');
   assert.equal(queued.item.reviewWorkspaceTarget, undefined);
   await assert.rejects(
@@ -433,4 +441,34 @@ test('delayed queue dispatch uses frozen alternatives when farm defaults change'
   );
   await queue.tryDispatchNext();
   assert.equal(selected, 'two');
+});
+
+test('queued QA pool selection stays unpinned while explicit slot requests survive', async () => {
+  const project = await loadProjectConfig('farm');
+  const input = { ...request, flowType: 'qa' as const };
+  const execution = {
+    slotPolicy: { kind: 'pool' as const, allowedSlots: ['runtime'] },
+    models: [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }],
+  };
+  const queued = await resolveDirectWorkflowDefaults(input, project, {
+    purpose: 'queue',
+    execution,
+  });
+  assert.equal(queued.params.slotId, undefined);
+  assert.deepEqual(queued.params.allowedSlots, ['runtime']);
+  const pinned = await resolveDirectWorkflowDefaults({ ...input, slotId: 'runtime' }, project, {
+    purpose: 'queue',
+    execution,
+  });
+  assert.equal(pinned.params.slotId, 'runtime');
+  const immediate = await resolveDirectWorkflowDefaults(input, project, {
+    purpose: 'run',
+    execution,
+  });
+  assert.equal(immediate.params.slotId, 'runtime');
+  const preview = await resolveDirectWorkflowDefaults(input, project, {
+    purpose: 'preview',
+    execution,
+  });
+  assert.equal(preview.params.slotId, 'runtime');
 });

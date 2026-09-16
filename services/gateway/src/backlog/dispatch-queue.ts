@@ -20,6 +20,7 @@ import {
   type PRSlotExecutionChoice,
   type QueueClaim,
   type QueueItem,
+  ReviewQaConfigurationError,
   type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
@@ -31,7 +32,7 @@ import {
   isNodeTransportUnavailableError,
   type NodeTransportUnavailableError,
 } from '../fleet/node-rpc.js';
-import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
+import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   capturePressureAdmissionDecisionsLightweight,
   isFreeSlot,
@@ -54,6 +55,7 @@ import {
 import { runWithSystemOriginator, type WorkOriginator } from '../security/work-originator.js';
 
 import { preparePRQueueAdmission } from './pr-admission.js';
+import { migrateQueuedReviewQa } from './review-qa-migration.js';
 
 export type QueueRecord = QueueItem & { originator?: WorkOriginator };
 
@@ -514,6 +516,11 @@ export function addItem(
     variant: params.variant ?? null,
     taskTemplate: params.taskTemplate ? { ...params.taskTemplate } : undefined,
     executionTemplateId: params.executionTemplateId,
+    qaProfileId: params.qaProfileId,
+    qaInputs: params.qaInputs ? structuredClone(params.qaInputs) : undefined,
+    reviewQaContract: params.reviewQaContract
+      ? structuredClone(params.reviewQaContract)
+      : undefined,
     executionTemplate: params.executionTemplate ? { ...params.executionTemplate } : undefined,
     domain: params.domain,
     app: params.app,
@@ -1337,6 +1344,30 @@ async function tryDispatchNextOnce(): Promise<void> {
   for (const pendingItem of pending) {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
+    if (item.flowType === 'review-pr' || item.flowType === 'qa') {
+      const project = await loadProjectConfig(item.project);
+      if (liveQueuedItem(item.id) !== item) continue;
+      try {
+        const migrated = migrateQueuedReviewQa(item, project?.qa, project?.workflowDefaults);
+        const repaired = item.waitingReason?.startsWith('Review/QA migration: ') === true;
+        if (repaired) delete item.waitingReason;
+        if (migrated || repaired) {
+          await persistQueueNow();
+          broadcastQueue();
+        }
+      } catch (error) {
+        if (!(error instanceof ReviewQaConfigurationError)) throw error;
+        // Keep refused migrations and all their constraints visible for operator repair.
+        const reason = `Review/QA migration: ${error.message}`;
+        if (item.waitingReason !== reason) {
+          item.waitingReason = reason;
+          await persistQueueNow();
+          broadcastQueue();
+        }
+        continue;
+      }
+      if (liveQueuedItem(item.id) !== item) continue;
+    }
     let prChoices: PRExecutionChoice[] | undefined = item.workflowExecution
       ? prExecutionChoices(item.workflowExecution)
       : undefined;

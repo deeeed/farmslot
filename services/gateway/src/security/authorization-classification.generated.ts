@@ -196,6 +196,7 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'prPush.unregister': { classification: 'admin' },
   'prReview.cancel': { classification: 'admin' },
   'prReview.get': { classification: 'admin' },
+  'prReview.publish': { classification: 'admin' },
   'prReview.submit': { classification: 'admin' },
   'prRules.accept': { classification: 'admin' },
   'prRules.acknowledgeAction': { classification: 'admin' },

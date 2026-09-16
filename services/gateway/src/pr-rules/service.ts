@@ -1,10 +1,14 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   assertPRMonitorConfig,
   type MonitoredPRIdentity,
   monitoredPRKey,
+  parseGitHubRef,
   type PRMonitorConfig,
   type PRReviewRequest,
   type PRReviewSubmission,
+  prReviewWorkflow,
   type PRRuleActionRecord,
   type PRRulePreview,
   type PRRulesListResult,
@@ -12,6 +16,11 @@ import {
   type PRTeamProfile,
   type PRTriggerRule,
   type PRTriggerRuleConfig,
+  type QaAfterReview,
+  resolvePRWorkflowDefaults,
+  reviewPublicationPolicyForRun,
+  reviewResultForRun,
+  type Run,
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
@@ -19,15 +28,36 @@ import { resolvePRExecution } from '../backlog/pr-execution.js';
 import { loadProjectConfig } from '../fleet/state.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import type { PRMonitoringService } from '../pr-monitoring/service.js';
-import { getAllRuns } from '../runs/store.js';
+import { captureDirectReviewPublication } from '../review-publication/direct.js';
+import {
+  publishWorkspaceReview,
+  ReviewPublicationInProgressError,
+} from '../review-publication/provider.js';
+import {
+  getAllRuns,
+  getAllRunsWithArchived,
+  getRun,
+  getRunWithArchived,
+  updateQaFollowUp,
+  updateReviewPublication,
+} from '../runs/store.js';
 
+import {
+  assertAutomaticQaPolicy,
+  assertAutomaticQaRequest,
+  automaticQaKey,
+  automaticQaSource,
+} from './automatic-qa.js';
 import {
   collectPRRuleSources,
   collectPRRuleTarget,
   collectPRSubmissionSources,
 } from './github-sources.js';
 import { buildPRReviewPreviewItem, buildPRRulePreview, type PRSourceScan } from './preview.js';
+import { hasPublicationAuthorityConflict } from './publication-policy.js';
+import { resolvePreviewQaPreset } from './qa-preset.js';
 import type { PRSourceCheckpoints } from './source-checkpoints.js';
+import { validateQaSourceReview } from './source-review.js';
 import type { PRRuleStore } from './store.js';
 
 export class PRRuleService {
@@ -36,6 +66,7 @@ export class PRRuleService {
   private readonly scanning = new Map<string, Promise<PRRulePreview>>();
   private readonly submissionReads = new Map<string, Promise<PRReviewSubmission>>();
   private actionDelivery?: Promise<void>;
+  private qaFollowUps?: Promise<void>;
   private previousAudience = new Set<string>();
   schedulerError?: string;
 
@@ -58,6 +89,7 @@ export class PRRuleService {
       pr: MonitoredPRIdentity,
     ) => Promise<PRSourceScan> = collectPRRuleTarget,
     private readonly checkpoints?: Pick<PRSourceCheckpoints, 'consume' | 'current' | 'prune'>,
+    private readonly runChanged: (run: Run) => void = () => {},
   ) {
     this.previousAudience = new Set(
       store
@@ -90,6 +122,8 @@ export class PRRuleService {
   tick(now = Date.now()): Promise<void> {
     if (this.sweep) return this.sweep;
     this.sweep = (async () => {
+      await this.reconcileQaAfterReviews();
+      await this.reconcileReviewPublications();
       const snapshot = this.store.snapshot();
       await this.checkpoints?.prune(
         snapshot.rules.flatMap((rule) => {
@@ -114,6 +148,7 @@ export class PRRuleService {
         await this.scan(rule.ownerId, rule.id);
       }
       for (const submission of this.store.snapshot().submissions ?? []) {
+        if (await automaticQaSource(submission)) continue;
         if (submission.cancelledAt || !this.authorized(submission.ownerId)) continue;
         const intent = submission.intentId ? this.store.intent(submission.intentId) : undefined;
         if (intent?.runId || ['running', 'completed', 'failed'].includes(intent?.status ?? ''))
@@ -125,6 +160,307 @@ export class PRRuleService {
       this.sweep = undefined;
     });
     return this.sweep;
+  }
+
+  private notifyRunChange(runId: string): void {
+    const run = getRun(runId);
+    if (run) this.runChanged(run);
+    this.notifyChanges();
+  }
+
+  async publishReview(ownerId: string, runId: string) {
+    this.assertAuthorized(ownerId);
+    const existing = await getRunWithArchived(runId);
+    if (!existing) throw new Error('Review run is unavailable');
+    const run = structuredClone(existing);
+    const direct = run.reviewPublication?.direct;
+    const policy = reviewPublicationPolicyForRun(run);
+    if (!policy?.enabled || (!direct && run.prWork?.kind !== 'review'))
+      throw new Error('PR publication was not requested when this review was admitted');
+    if ((direct?.ownerId ?? run.prWork?.review?.ownerId) !== ownerId)
+      throw new Error('Review publication belongs to another principal');
+    if (direct && run.prWork) throw new Error('Ambiguous publication authority');
+    if (run.status !== 'done') throw new Error('Review must complete before publication');
+    const pr = direct?.pr ?? run.prWork!.pr;
+    const authorize = async () => {
+      this.assertAuthorized(ownerId);
+      const current = await getRunWithArchived(runId);
+      if (
+        !current ||
+        current.status !== 'done' ||
+        !isDeepStrictEqual(current.prWork, run.prWork) ||
+        !isDeepStrictEqual(current.reviewResult, run.reviewResult) ||
+        !isDeepStrictEqual(current.reviewPublication?.direct, direct)
+      )
+        throw new Error('Review source changed during publication');
+      if (direct) {
+        const selected = captureDirectReviewPublication(
+          {
+            flowType: 'review-pr',
+            project: run.project,
+            ticketOrPr: run.ticketOrPr,
+            publishReview: direct.requested,
+            reviewTeamId: policy.teamId,
+          },
+          await loadProjectConfig(run.project),
+          ownerId,
+        );
+        if (!selected?.policy.enabled || !isDeepStrictEqual(selected.policy, policy))
+          throw new Error('Direct publication policy or account changed after admission');
+        return;
+      }
+      const intent = this.store.intent(run.prWork!.sourceId);
+      if (!intent || intent.runId !== runId || intent.headSha !== run.prWork!.headSha)
+        throw new Error('Publication is not linked to the admitted review intent');
+      const source = intent.contributions.find(
+        (entry) => entry.eligible && entry.ownerId === ownerId && entry.teamId === policy.teamId,
+      );
+      if (!source) throw new Error('Review publication source is no longer eligible');
+      if (hasPublicationAuthorityConflict(intent, this.store.snapshot().teams))
+        throw new Error('Publishing a shared review requires one owner and GitHub account');
+      const team = this.store.team(policy.teamId, ownerId);
+      if (!isDeepStrictEqual(team.config.account, policy.account))
+        throw new Error('Review publication account changed after admission');
+      const repository = team.config.repositories.find(
+        (entry) => entry.repo.toLowerCase() === run.prWork!.pr.repo.toLowerCase(),
+      );
+      if (repository?.project !== run.project)
+        throw new Error('Review publication project mapping changed');
+      const project = await loadProjectConfig(run.project);
+      let request;
+      let rulePolicy;
+      if (source.submissionId !== undefined) {
+        const submission = this.store.submission(source.submissionId, ownerId);
+        if (submission.cancelledAt) throw new Error('Review request was cancelled');
+        request = submission.request;
+      } else {
+        const rule = this.store.rule(source.ruleId, ownerId);
+        if (!rule.enabled) throw new Error('Review automation rule is disabled');
+        rulePolicy = rule.config.actions.find((action) => action.kind === 'review');
+        if (!rulePolicy) throw new Error('Rule no longer requests review');
+      }
+      const resolved = resolvePRWorkflowDefaults({
+        workflow: 'review-pr',
+        request,
+        rule: rulePolicy,
+        repository,
+        team: team.config,
+        farm: project?.workflowDefaults,
+      });
+      if (resolved.review.publishReview !== true)
+        throw new Error('Current policy does not permit review publication');
+      this.assertAuthorized(ownerId);
+    };
+    try {
+      const receipt = await publishWorkspaceReview({
+        run,
+        ownerId,
+        account: policy.account,
+        pr,
+        authorize,
+        readReceipt: async () => (await getRunWithArchived(runId))?.reviewPublication?.receipt,
+        saveReceipt: async (receipt) => {
+          await updateReviewPublication(runId, { receipt, error: undefined });
+          this.notifyRunChange(runId);
+        },
+      });
+      return receipt;
+    } catch (error) {
+      // A concurrent caller did not attempt publication; preserve the active flight's receipt.
+      if (error instanceof ReviewPublicationInProgressError) throw error;
+      await updateReviewPublication(runId, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.notifyRunChange(runId);
+      throw error;
+    }
+  }
+
+  private async reconcileReviewPublications(): Promise<void> {
+    for (const run of await getAllRunsWithArchived()) {
+      if (
+        run.status !== 'done' ||
+        !reviewPublicationPolicyForRun(run)?.enabled ||
+        run.reviewPublication?.receipt?.state === 'published' ||
+        run.reviewPublication?.error
+      )
+        continue;
+      const ownerId = run.reviewPublication?.direct?.ownerId ?? run.prWork?.review?.ownerId;
+      if (!ownerId) continue;
+      try {
+        await this.publishReview(ownerId, run.id);
+      } catch (error) {
+        if (error instanceof ReviewPublicationInProgressError) continue;
+        // Publication failure is durable and visible; the completed static review stays available.
+        // A new explicit retry reconciles uncertain provider outcomes instead of polling forever.
+        const recorded = (await getRunWithArchived(run.id))?.reviewPublication?.error;
+        if (!recorded) {
+          await updateReviewPublication(run.id, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          this.notifyRunChange(run.id);
+        }
+      }
+    }
+  }
+
+  reconcileQaAfterReviews(): Promise<void> {
+    if (this.qaFollowUps) return this.qaFollowUps;
+    this.qaFollowUps = this.reconcileQaAfterReviewsOnce().finally(() => {
+      this.qaFollowUps = undefined;
+    });
+    return this.qaFollowUps;
+  }
+
+  private async updateQaFollowUp(
+    runId: string,
+    patch: Partial<Pick<QaAfterReview, 'state' | 'teamId' | 'submissionId' | 'intentId' | 'error'>>,
+  ): Promise<void> {
+    if (await updateQaFollowUp(runId, patch)) this.notifyRunChange(runId);
+  }
+
+  private async reconcileQaAfterReviewsOnce(): Promise<void> {
+    for (const candidate of await getAllRunsWithArchived()) {
+      const run = await getRunWithArchived(candidate.id);
+      if (!run?.qaAfterReview || run.flowType !== 'review-pr') continue;
+      const followUp = run.qaAfterReview;
+      const ownerId =
+        run.createdByPrincipalId ?? run.nativeOwnerPrincipalId ?? run.prWork?.review?.ownerId;
+      const key = automaticQaKey(run.id, followUp.selection.profile.id);
+      let receipt = this.store
+        .snapshot()
+        .submissions?.find(
+          (item) => item.ownerId === ownerId && item.request.idempotencyKey === key,
+        );
+      if (!receipt && followUp.submissionId)
+        receipt = this.store
+          .snapshot()
+          .submissions?.find(
+            (item) => item.ownerId === ownerId && item.id === followUp.submissionId,
+          );
+      if (!receipt && run.status === 'done') {
+        const headSha = reviewResultForRun(run)?.reviewSnapshot?.headSha;
+        receipt = [...(this.store.snapshot().submissions ?? [])].reverse().find((item) => {
+          if (
+            item.ownerId !== ownerId ||
+            item.sourceReview?.runId !== run.id ||
+            item.sourceReview.headSha !== headSha ||
+            !item.intentId
+          )
+            return false;
+          const intent = this.store.intent(item.intentId);
+          const child = intent?.runId ? getRun(intent.runId) : undefined;
+          return child?.flowType === 'qa' && isDeepStrictEqual(child.qa, followUp.selection);
+        });
+      }
+      try {
+        if (receipt) {
+          if (receipt.request.idempotencyKey === key) assertAutomaticQaRequest(run, receipt);
+          else if (receipt.sourceReview?.runId !== run.id)
+            throw new Error('Recorded QA receipt belongs to another source review');
+          const intent = receipt.intentId ? this.store.intent(receipt.intentId) : undefined;
+          if (intent?.runId || ['running', 'completed', 'failed'].includes(intent?.status ?? '')) {
+            await this.updateQaFollowUp(run.id, {
+              state: 'submitted',
+              submissionId: receipt.id,
+              intentId: receipt.intentId,
+              error: undefined,
+            });
+            continue;
+          }
+          if (receipt.cancelledAt)
+            throw new Error(
+              'Automatic QA was cancelled; use explicit Run QA to request another execution',
+            );
+        } else {
+          if (followUp.submissionId)
+            throw new Error(
+              'Automatic QA receipt is unavailable; inspect the recorded request before retrying',
+            );
+          if (run.status !== 'done') {
+            if (run.status === 'failed' || run.status === 'cancelled')
+              await this.updateQaFollowUp(run.id, {
+                state: 'blocked',
+                error: 'Static review did not complete; automatic QA was not requested',
+              });
+            continue;
+          }
+          if (!ownerId) throw new Error('Automatic QA has no source review owner');
+          this.assertAuthorized(ownerId);
+          assertAutomaticQaPolicy(run, await loadProjectConfig(run.project));
+          const ref = parseGitHubRef(run.ticketOrPr);
+          const pr =
+            run.prWork?.pr ??
+            (ref ? { host: 'github.com', repo: ref.repo, number: ref.number } : undefined);
+          if (!pr) throw new Error('Automatic QA source has no canonical PR identity');
+          await validateQaSourceReview({ runId: run.id, ownerId, project: run.project, pr });
+          const sourceIntent =
+            run.prWork?.kind === 'review' ? this.store.intent(run.prWork.sourceId) : undefined;
+          if (run.prWork?.kind === 'review' && !sourceIntent)
+            throw new Error('Automatic QA source team context is unavailable');
+          const sourceTeams = new Set(
+            sourceIntent?.contributions
+              .filter((source) => source.ownerId === ownerId)
+              .map((source) => source.teamId),
+          );
+          const teams = this.store
+            .snapshot()
+            .teams.filter(
+              (team) =>
+                team.ownerId === ownerId &&
+                team.config.account.host.toLowerCase() === pr.host.toLowerCase() &&
+                team.config.repositories.some(
+                  (policy) =>
+                    policy.project === run.project &&
+                    policy.repo.toLowerCase() === pr.repo.toLowerCase(),
+                ),
+            );
+          const selected = followUp.teamId
+            ? teams.filter((team) => team.id === followUp.teamId)
+            : sourceTeams.size
+              ? teams.filter((team) => sourceTeams.has(team.id))
+              : teams;
+          if (selected.length !== 1)
+            throw new Error(
+              'Automatic QA needs one unambiguous current team mapping for this owner, project and PR',
+            );
+          await this.updateQaFollowUp(run.id, {
+            state: 'pending',
+            teamId: selected[0].id,
+            error: undefined,
+          });
+          receipt = await this.submit(ownerId, {
+            teamId: selected[0].id,
+            pr,
+            sourceReviewRunId: run.id,
+            idempotencyKey: key,
+            autoStart: true,
+            ...(followUp.execution ? { execution: followUp.execution } : {}),
+            review: followUp.review,
+            source: { client: 'farm-after-review' },
+          });
+        }
+        receipt = await this.refreshSubmission(receipt.ownerId, receipt.id);
+        const intent = receipt.intentId ? this.store.intent(receipt.intentId) : undefined;
+        const source = intent?.contributions.find((entry) => entry.submissionId === receipt!.id);
+        const error =
+          receipt.error ||
+          source?.configurationErrors.join('; ') ||
+          (intent?.status === 'needs-configuration' ? intent.waitingReason : undefined);
+        await this.updateQaFollowUp(run.id, {
+          state: error ? 'blocked' : 'submitted',
+          submissionId: receipt.id,
+          intentId: receipt.intentId,
+          error,
+        });
+      } catch (error) {
+        await this.updateQaFollowUp(run.id, {
+          state: 'blocked',
+          ...(receipt ? { submissionId: receipt.id, intentId: receipt.intentId } : {}),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   async saveTeam(
@@ -190,6 +526,13 @@ export class PRRuleService {
           : []),
       ];
       if (!item.project) continue;
+      if (prReviewWorkflow(item.review) === 'qa') {
+        resolvePreviewQaPreset(
+          item,
+          projects.get(item.project)?.qa,
+          projects.get(item.project)?.workflowDefaults,
+        );
+      }
       for (const profile of profiles) {
         const key = JSON.stringify([item.project, item.subject.pr.repo, profile.execution]);
         let errors = validations.get(key);
@@ -540,7 +883,23 @@ export class PRRuleService {
 
   async submit(ownerId: string, request: PRReviewRequest): Promise<PRReviewSubmission> {
     this.assertAuthorized(ownerId);
-    const submission = await this.store.submit(ownerId, request);
+    const existing = this.store
+      .list(ownerId)
+      .submissions?.find((entry) => entry.request.idempotencyKey === request.idempotencyKey);
+    let sourceReview: import('@farmslot/protocol').PRQaSourceReview | undefined;
+    if (request.sourceReviewRunId && !existing) {
+      const team = this.store.team(request.teamId, ownerId);
+      const project = team.config.repositories.find(
+        (policy) => policy.repo.toLowerCase() === request.pr.repo.toLowerCase(),
+      )?.project;
+      sourceReview = await validateQaSourceReview({
+        runId: request.sourceReviewRunId,
+        ownerId,
+        project,
+        pr: request.pr,
+      });
+    }
+    const submission = await this.store.submit(ownerId, request, sourceReview);
     this.notifyChanges();
     void this.refreshSubmission(ownerId, submission.id).catch((error: unknown) => {
       // The receipt is durable. Expose persistence/policy races while the scheduled sweep retries.
@@ -584,13 +943,33 @@ export class PRRuleService {
     let result: Parameters<PRRuleStore['applySubmission']>[4];
     try {
       this.assertAuthorized(ownerId);
-      const scan = await this.collectSubmission(team, submission.request.pr);
-      if (!scan.complete || scan.subjects.length !== 1)
-        throw new Error(scan.errors.join('; ') || 'Requested PR observation is incomplete');
       const projectName = team.config.repositories.find(
         (policy) => policy.repo.toLowerCase() === submission.request.pr.repo.toLowerCase(),
       )?.project;
       const project = projectName ? await loadProjectConfig(projectName) : null;
+      const automaticSource = await automaticQaSource(submission);
+      if (automaticSource) {
+        assertAutomaticQaRequest(automaticSource, submission);
+        if (
+          projectName !== automaticSource.project ||
+          team.config.account.host.toLowerCase() !== submission.request.pr.host.toLowerCase()
+        )
+          throw new Error('Automatic QA team mapping changed after submission');
+        assertAutomaticQaPolicy(automaticSource, project);
+      }
+      const scan = await this.collectSubmission(team, submission.request.pr);
+      if (!scan.complete || scan.subjects.length !== 1)
+        throw new Error(scan.errors.join('; ') || 'Requested PR observation is incomplete');
+      const sourceReview = submission.request.sourceReviewRunId
+        ? await validateQaSourceReview({
+            runId: submission.request.sourceReviewRunId,
+            ownerId,
+            project: projectName,
+            pr: submission.request.pr,
+            expected: submission.sourceReview,
+            observedHeadSha: scan.subjects[0].headSha,
+          })
+        : undefined;
       const item = buildPRReviewPreviewItem(
         team,
         scan.subjects[0],
@@ -610,6 +989,10 @@ export class PRRuleService {
         project?.workflowDefaults,
         'request',
       );
+      if (sourceReview) item.sourceReview = sourceReview;
+      if (item.project && prReviewWorkflow(item.review) === 'qa') {
+        resolvePreviewQaPreset(item, project?.qa, project?.workflowDefaults);
+      }
       if (item.project && item.execution)
         item.configurationErrors.push(
           ...(
@@ -618,7 +1001,21 @@ export class PRRuleService {
             })
           ).errors,
         );
+      if (automaticSource)
+        assertAutomaticQaPolicy(
+          automaticSource,
+          item.project ? await loadProjectConfig(item.project) : null,
+        );
       this.assertAuthorized(ownerId);
+      if (sourceReview)
+        await validateQaSourceReview({
+          runId: sourceReview.runId,
+          ownerId,
+          project: item.project,
+          pr: item.subject.pr,
+          expected: sourceReview,
+          observedHeadSha: item.subject.headSha,
+        });
       result = { item };
     } catch (error) {
       // Keep the durable request actionable and withdraw stale admission while source access recovers.

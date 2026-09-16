@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PreparePhase } from '@farmslot/protocol';
+import type { PreparePhase, ProjectQaConfig } from '@farmslot/protocol';
 
 import {
   appLabel,
@@ -13,6 +13,7 @@ import {
   projectApps,
   projectPrepareProfiles,
   publicationReviewsEnabled,
+  qaDispatchFields,
   selectedDispatchApp,
   selectedTaskTemplate,
   selectedTemplateMode,
@@ -100,7 +101,8 @@ test('publication review depth counts configured loops once', () => {
 
 test('default draft choices derive from flow and current runner', () => {
   assert.equal(modeForFlow('fix-bug'), 'autonomous');
-  assert.equal(modeForFlow('review-pr'), 'interactive');
+  assert.equal(modeForFlow('review-pr'), 'autonomous');
+  assert.equal(modeForFlow('qa'), 'autonomous');
   assert.equal(modeForFlow('pr-complete'), 'autonomous');
   assert.equal(defaultExtraReviewRunner('claude', runners), 'codex');
   assert.equal(defaultExtraReviewRunner('missing', runners), 'codex');
@@ -194,4 +196,45 @@ test('projectPrepareProfiles maps profiles with labels and default star', () => 
   ];
   assert.equal(projectPrepareProfiles(noDefault, 'demo')[0]?.isDefault, true);
   assert.deepEqual(projectPrepareProfiles(configs, 'other'), []);
+});
+
+test('QA profile fields use the farm default and preserve opaque JSON input overrides', () => {
+  const config: ProjectQaConfig = {
+    default_profile: 'daily',
+    profiles: [
+      {
+        id: 'pr',
+        title: 'PR validation',
+        template_id: 'review-pr/shared',
+        inputs: { scope: 'pr' },
+      },
+      {
+        id: 'daily',
+        title: 'Recent changes',
+        template_id: 'qa/shared',
+        inputs: { scope: 'last-24h', smoke: true },
+      },
+    ],
+  };
+  assert.deepEqual(qaDispatchFields(config, '', ''), {
+    qaProfileId: 'daily',
+    qaInputs: { scope: 'last-24h', smoke: true },
+  });
+  assert.deepEqual(
+    qaDispatchFields(
+      config,
+      'pr',
+      '{"scope":{"from":"base","to":"head"},"recipes":["smoke"],"optional":null}',
+    ),
+    {
+      qaProfileId: 'pr',
+      qaInputs: { scope: { from: 'base', to: 'head' }, recipes: ['smoke'], optional: null },
+    },
+  );
+  assert.throws(() => qaDispatchFields(undefined, '', ''), /no QA presets/);
+  assert.throws(() => qaDispatchFields(config, 'missing', ''), /does not exist/);
+  for (const raw of ['null', '[]', '"text"', '{"number":1e999}'])
+    assert.throws(() => qaDispatchFields(config, '', raw), /QA inputs.*object/);
+  assert.throws(() => qaDispatchFields(config, '', '{'), /JSON object/);
+  assert.equal(config.profiles[1].inputs?.smoke, true);
 });

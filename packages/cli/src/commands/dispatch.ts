@@ -15,6 +15,7 @@ import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
 import {
+  buildQaDispatchParams,
   buildReviewDispatchParams,
   executeRunCreate,
   type RunCreateCliOptions,
@@ -153,11 +154,19 @@ export function registerDispatchCommand(program: Command): void {
     .command('preview')
     .description('Preview dispatch plan')
     .requiredOption('--project <name>', 'Project name')
-    .requiredOption('--flow-type <type>', 'Flow type (fix-bug, review-pr, dev, pr-complete)')
+    .requiredOption('--flow-type <type>', 'Flow type (fix-bug, review-pr, qa, dev, pr-complete)')
     .requiredOption('--ticket <id>', 'Ticket or PR identifier')
     .option('--slot <id>', 'Specific slot ID')
     .option('--review-machine <machine>', 'Machine for a static review workspace')
-    .option('--review-validation-depth <depth>', 'Review validation: static-code or full-live')
+    .option(
+      '--review-validation-depth <depth>',
+      'Legacy compatibility: static-code or full-live; use --flow-type qa for runtime QA',
+    )
+    .option(
+      '--qa-profile <id>',
+      'Farm-owned QA profile for --flow-type qa (otherwise farm default)',
+    )
+    .option('--qa-inputs <json>', 'JSON object of skill inputs for --flow-type qa')
     .option('--runner <name>', 'Runner override')
     .option('--model <name>', 'Model override')
     .option('--effort <effort>', 'Runner effort override')
@@ -178,6 +187,7 @@ export function registerDispatchCommand(program: Command): void {
               ticketOrPr: opts.ticket,
               slotId: opts.slot,
               ...buildReviewDispatchParams(opts),
+              ...buildQaDispatchParams(opts),
               ...(opts.runner ? { runner: opts.runner } : {}),
               ...(opts.model ? { model: opts.model } : {}),
               ...(opts.effort ? { effort: opts.effort } : {}),

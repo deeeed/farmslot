@@ -17,6 +17,7 @@ import {
   observedReviewSessionContinuity,
   resolveRunSlotId,
   reviewChainForRun,
+  reviewPublicationPolicyForRun,
 } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
@@ -72,6 +73,8 @@ export interface RunDetailViewContext {
   _pendingConfirm: string | null;
   _showTerminal: boolean;
   _actionsBlocked: () => boolean;
+  _publicationActions: Record<string, { busy: boolean; error?: string }>;
+  _retryReviewPublication: (run: Run) => Promise<void>;
   _rescueLinkage: (runId: string) => void | Promise<void>;
   _confirmForceComplete: (run: Run) => void;
   _confirmLifecycleAction: (run: Run, action: 'cancel' | 'delete') => void | Promise<void>;
@@ -327,6 +330,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const comparisonLaneCount =
     ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
+  const publication = reviewPublicationPolicyForRun(r);
   const prLink = prLinkForRun(r);
   const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
   const familyRootUrl =
@@ -532,6 +536,69 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
     </div>
     ${r.summary ? html`<div class="header-summary">${r.summary}</div>` : nothing}
+    ${r.flowType === 'review-pr' && publication
+      ? html`<div class="review-publication" data-testid="run-review-publication">
+          <strong
+            >PR publication:
+            ${r.reviewPublication?.receipt?.state === 'published'
+              ? 'Published'
+              : r.reviewPublication?.error
+                ? 'Needs attention'
+                : publication.enabled
+                  ? 'Requested'
+                  : 'Farmslot results only'}</strong
+          >
+          <span>
+            ·
+            ${publication.account
+              ? `${publication.account.login} · `
+              : ''}${publication.source}</span
+          >
+          ${r.reviewPublication?.receipt?.url
+            ? html`<a
+                class="ext-link"
+                href=${r.reviewPublication.receipt.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                >View published review</a
+              >`
+            : nothing}
+          ${r.reviewPublication?.error && !ctx._publicationActions[r.id]?.error
+            ? html`<p role="alert">${r.reviewPublication.error}</p>`
+            : nothing}
+          ${ctx._publicationActions[r.id]?.error &&
+          (r.reviewPublication?.receipt?.state !== 'published' || r.reviewPublication?.error)
+            ? html`<p role="alert">${ctx._publicationActions[r.id].error}</p>`
+            : nothing}
+          ${publication.enabled &&
+          r.status === 'done' &&
+          r.reviewPublication?.receipt?.state !== 'published'
+            ? html`
+                <button
+                  data-testid="run-review-publication-retry"
+                  ?disabled=${actionsBlocked || ctx._publicationActions[r.id]?.busy}
+                  @click=${() => ctx._retryReviewPublication(r)}
+                >
+                  ${ctx._publicationActions[r.id]?.busy
+                    ? 'Checking publication…'
+                    : r.reviewPublication?.error || r.reviewPublication?.receipt
+                      ? 'Retry publication'
+                      : 'Publish now'}
+                </button>
+              `
+            : nothing}
+        </div>`
+      : nothing}
+    ${r.qa
+      ? html`<p data-testid="run-qa-profile">QA profile: <strong>${r.qa.profile.title}</strong></p>`
+      : nothing}
+    ${r.qaAfterReview
+      ? html`<div class="redirect-banner" data-testid="run-automatic-qa">
+          <strong>Automatic QA: ${r.qaAfterReview.selection.profile.title}</strong>
+          <span> · ${r.qaAfterReview.state}</span>
+          ${r.qaAfterReview.error ? html`<p>${r.qaAfterReview.error}</p>` : nothing}
+        </div>`
+      : nothing}
     ${ctx._renderInteractiveDevGate(r)}
     <div class="meta">
       <div class="meta-item">

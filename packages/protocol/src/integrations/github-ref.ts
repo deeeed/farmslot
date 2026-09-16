@@ -52,6 +52,6 @@ export function prNumberFromRunInput(
   >,
 ): number | null {
   if (input.prNumber != null) return input.prNumber;
-  if (!PR_BOUND_FLOW_TYPES.has(input.flowType)) return null;
+  if (!PR_BOUND_FLOW_TYPES.has(input.flowType) && input.flowType !== 'qa') return null;
   return parseGitHubRef(input.ticketOrPr)?.number ?? null;
 }

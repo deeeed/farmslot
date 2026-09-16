@@ -64,6 +64,26 @@ export const runDetailStyles = css`
   .ext-link:hover {
     background: ${unsafeCSS(colors.accent)}22;
   }
+  .review-publication {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: ${unsafeCSS(spacing.sm)};
+    padding: ${unsafeCSS(spacing.sm)};
+    margin-bottom: ${unsafeCSS(spacing.md)};
+    background: ${unsafeCSS(colors.bgCard)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .review-publication > span {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .review-publication p {
+    flex-basis: 100%;
+    margin: 0;
+  }
   .meta {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

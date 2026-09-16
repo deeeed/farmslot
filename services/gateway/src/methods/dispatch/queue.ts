@@ -56,6 +56,7 @@ export async function dispatchQueueAdd(
     launchSlotPolicy?: unknown;
     ticketData?: unknown;
     workflowExecution?: unknown;
+    reviewQaContract?: unknown;
   };
   if (
     rawParams.prWork !== undefined ||
@@ -67,7 +68,8 @@ export async function dispatchQueueAdd(
     rawParams.launchGroupId !== undefined ||
     rawParams.launchSlotPolicy !== undefined ||
     rawParams.ticketData !== undefined ||
-    rawParams.workflowExecution !== undefined
+    rawParams.workflowExecution !== undefined ||
+    rawParams.reviewQaContract !== undefined
   ) {
     throw new Error(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
@@ -84,6 +86,7 @@ export async function dispatchQueueAdd(
     params,
     {
       workflowDefaults: projectVars.projectJson.workflow_defaults,
+      qa: projectVars.projectJson.qa,
       staticReview: normalizeRawStaticReview(
         projectVars.projectJson.static_review,
         projectVars.projectConfig,
@@ -143,12 +146,15 @@ export async function dispatchQueueAdd(
   }
   let executionTemplate: import('@farmslot/protocol').ExecutionTemplateReference | undefined;
   if (configuredCatalog) {
-    if ((!params.slotId && !workspaceAdmission) || !params.mode) {
+    // A pool candidate supplies template context without becoming an explicit slot pin.
+    const templateSlotId =
+      params.slotId ?? (params.flowType === 'qa' ? params.allowedSlots?.[0] : undefined);
+    if ((!templateSlotId && !workspaceAdmission) || !params.mode) {
       throw new Error(
         'Queued execution-template selection requires both slotId and mode so the gateway can validate and snapshot it.',
       );
     }
-    const slotVars = params.slotId ? await loadSlotVars(params.slotId) : undefined;
+    const slotVars = templateSlotId ? await loadSlotVars(templateSlotId) : undefined;
     executionTemplate = resolveConfiguredExecutionTemplateForSlot(projectVars, {
       flow: params.flowType,
       platform: slotVars?.platform ?? workspaceAdmission!.pool.platform,
@@ -162,6 +168,9 @@ export async function dispatchQueueAdd(
     {
       ...params,
       ...(workflowDefaults.execution ? { workflowExecution: workflowDefaults.execution } : {}),
+      ...(workflowDefaults.reviewQa
+        ? { reviewQaContract: workflowDefaults.reviewQa.contract }
+        : {}),
       ...(normalizedTaskTemplate ? { taskTemplate: normalizedTaskTemplate } : {}),
       ...(executionTemplate ? { executionTemplate: { ...executionTemplate } } : {}),
     },

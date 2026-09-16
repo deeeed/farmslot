@@ -210,10 +210,15 @@ export class PRRuleStore {
     if (!found) throw new Error('Review request not found');
     return structuredClone(found);
   }
-  submit(ownerId: string, request: PRReviewRequest): Promise<PRReviewSubmission> {
+  submit(
+    ownerId: string,
+    request: PRReviewRequest,
+    sourceReview?: import('@farmslot/protocol').PRQaSourceReview,
+  ): Promise<PRReviewSubmission> {
     assertPRReviewRequest(request);
     const copy = structuredClone(request);
-    return this.change((data) => createReviewSubmission(data, ownerId, copy));
+    const frozenSource = sourceReview ? structuredClone(sourceReview) : undefined;
+    return this.change((data) => createReviewSubmission(data, ownerId, copy, frozenSource));
   }
   cancelSubmission(
     ownerId: string,
@@ -238,7 +243,7 @@ export class PRRuleStore {
       for (const intent of data.intents) {
         for (const source of intent.contributions)
           if (source.submissionId === id) source.eligible = false;
-        reconcileReviewIntent(intent);
+        reconcileReviewIntent(intent, data.teams);
       }
       return submission;
     });
@@ -301,7 +306,7 @@ export class PRRuleStore {
         }
       }
       intent.updatedAt = new Date().toISOString();
-      reconcileReviewIntent(intent);
+      reconcileReviewIntent(intent, data.teams);
       return intent;
     });
   }
@@ -374,7 +379,7 @@ export class PRRuleStore {
         if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.teamId === team.id) contribution.eligible = false;
-        reconcileReviewIntent(intent);
+        reconcileReviewIntent(intent, data.teams);
       }
       return team;
     });
@@ -423,7 +428,7 @@ export class PRRuleStore {
         if (intent.status === 'completed' || intent.status === 'failed') continue;
         for (const contribution of intent.contributions)
           if (contribution.ruleId === rule.id) contribution.eligible = false;
-        reconcileReviewIntent(intent);
+        reconcileReviewIntent(intent, data.teams);
       }
       return rule;
     });
@@ -492,7 +497,7 @@ export class PRRuleStore {
           if (intent.status === 'completed' || intent.status === 'failed') continue;
           for (const contribution of intent.contributions)
             if (contribution.ruleId === id) contribution.eligible = false;
-          reconcileReviewIntent(intent);
+          reconcileReviewIntent(intent, data.teams);
         }
       }
       return rule;
@@ -722,6 +727,8 @@ export class PRRuleStore {
           project: item.project,
           execution: item.execution,
           review: item.review,
+          policySources: item.policySources,
+          reviewPurpose: item.reviewPurpose,
           autoStart: reviewAction.autoStart,
           eligible: true,
           configurationErrors: item.configurationErrors,
@@ -748,7 +755,7 @@ export class PRRuleStore {
         if (!eligible.has(intent.id))
           for (const source of intent.contributions)
             if (source.ruleId === rule.id) source.eligible = false;
-        reconcileReviewIntent(intent);
+        reconcileReviewIntent(intent, data.teams);
       }
       if (targetPRKey) return true;
       rule.scan.subjects = subjects;

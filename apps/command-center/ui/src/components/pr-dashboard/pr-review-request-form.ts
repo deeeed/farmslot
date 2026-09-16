@@ -11,6 +11,7 @@ import {
   type ProjectConfig,
   type PRReviewOptions,
   type PRReviewRequest,
+  prReviewWorkflow,
   type PRTeamProfile,
   resolvePRWorkflowDefaults,
   type SlotStatus,
@@ -28,6 +29,8 @@ import { newPRExecution, newPRWorkspaceExecution } from './pr-execution-picker.j
 @customElement('pr-review-request-form')
 export class PRReviewRequestForm extends LitElement {
   @property() prUrl = '';
+  @property() initialWorkflow: 'review' | 'qa' = 'review';
+  @property() sourceReviewRunId?: string;
   @property({ attribute: false }) teams: PRTeamProfile[] = [];
   @property({ attribute: false }) slots: SlotStatus[] = [];
   @property({ attribute: false }) pools: PoolConfig[] = [];
@@ -41,10 +44,15 @@ export class PRReviewRequestForm extends LitElement {
   @state() private execution: PRExecutionProfile = newPRWorkspaceExecution();
   @state() private review: PRReviewOptions = { ...DEFAULT_PR_REVIEW_OPTIONS };
   @state() private error = '';
+  @state() private qaInputsText?: string;
   private requestKey?: string;
   static styles = prAutomationStyles;
   protected willUpdate(changed: Map<string, unknown>) {
     if (changed.has('prUrl')) this.url = this.prUrl;
+    if (changed.has('initialWorkflow') && this.initialWorkflow === 'qa') {
+      this.review = { sessionIntent: 'reset', scope: 'full', workflow: 'qa' };
+      this.overrideReview = true;
+    }
   }
   private edited() {
     this.requestKey = undefined;
@@ -63,13 +71,24 @@ export class PRReviewRequestForm extends LitElement {
     try {
       const pr = parseGitHubPullUrl(this.url);
       if (!pr) throw new Error('Enter a GitHub pull request URL');
+      let requestedReview = this.overrideReview ? this.review : undefined;
+      const { resolved } = this.selection();
+      if (prReviewWorkflow(resolved.review) === 'qa' && this.qaInputsText !== undefined) {
+        const inputs = JSON.parse(this.qaInputsText);
+        if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs))
+          throw new Error('QA inputs must be a JSON object');
+        requestedReview = { ...resolved.review, qaInputs: inputs };
+      }
       const request: PRReviewRequest = {
         teamId: this.selectedTeamId(),
         pr: { host: 'github.com', repo: pr.repo, number: pr.number },
         idempotencyKey: (this.requestKey ??= crypto.randomUUID()),
         autoStart: this.autoStart,
         ...(this.overrideExecution ? { execution: this.execution } : {}),
-        ...(this.overrideReview ? { review: this.review } : {}),
+        ...(requestedReview ? { review: requestedReview } : {}),
+        ...(this.sourceReviewRunId && prReviewWorkflow(this.review) === 'qa'
+          ? { sourceReviewRunId: this.sourceReviewRunId }
+          : {}),
         source: { client: 'command-center' },
       };
       assertPRReviewRequest(request);
@@ -80,7 +99,7 @@ export class PRReviewRequestForm extends LitElement {
       this.error = error instanceof Error ? error.message : String(error);
     }
   }
-  render() {
+  private selection() {
     const teamId = this.selectedTeamId();
     const team = this.teams.find((item) => item.id === teamId);
     const repo = parseGitHubPullUrl(this.url)?.repo;
@@ -94,6 +113,10 @@ export class PRReviewRequestForm extends LitElement {
       team: team?.config,
       farm: farm?.workflowDefaults,
     });
+    return { teamId, team, policy, farm, resolved };
+  }
+  render() {
+    const { teamId, team, policy, farm, resolved } = this.selection();
     const { review } = resolved;
     const execution = this.overrideExecution ? this.execution : resolved.execution;
     const target = execution
@@ -117,6 +140,7 @@ export class PRReviewRequestForm extends LitElement {
               placeholder="https://github.com/owner/repo/pull/42"
               @input=${(event: Event) => {
                 this.url = (event.target as HTMLInputElement).value;
+                this.sourceReviewRunId = undefined;
               }}
           /></label>
           <label
@@ -151,14 +175,57 @@ export class PRReviewRequestForm extends LitElement {
           : nothing}
         <pr-review-options-picker
           .presentation=${'workflow'}
-          .value=${review}
+          .qa=${farm?.qa}
+          .value=${{
+            ...review,
+            publishReview: this.overrideReview ? this.review.publishReview : undefined,
+          }}
           .disabled=${this.disabled}
           @review-options-change=${(event: CustomEvent<PRReviewOptions>) => {
             this.overrideReview = true;
             this.review = event.detail;
+            this.qaInputsText = undefined;
             this.edited();
           }}
         ></pr-review-options-picker>
+        ${prReviewWorkflow(review) === 'review'
+          ? html`<p class="muted" data-testid="pr-review-publication-resolved">
+              Publication:
+              ${review.publishReview === true ? 'Publish review to PR' : 'Farmslot results only'} ·
+              ${resolved.sources.publication ?? 'built-in'}
+            </p>`
+          : nothing}
+        ${prReviewWorkflow(review) === 'qa'
+          ? html`<details>
+              <summary>QA inputs</summary>
+              <label
+                >Profile input overrides
+                <textarea
+                  data-testid="pr-qa-inputs"
+                  rows="6"
+                  .value=${this.qaInputsText ??
+                  JSON.stringify(
+                    {
+                      ...farm?.qa?.profiles.find(
+                        (profile) =>
+                          profile.id === (review.qaProfileId ?? farm?.qa?.default_profile),
+                      )?.inputs,
+                      ...review.qaInputs,
+                    },
+                    null,
+                    2,
+                  )}
+                  @input=${(event: Event) => {
+                    this.qaInputsText = (event.target as HTMLTextAreaElement).value;
+                  }}
+                ></textarea>
+              </label>
+              <p class="muted">
+                Set the scope, refs or dates accepted by this farm's skill. Invalid JSON prevents
+                submission.
+              </p>
+            </details>`
+          : nothing}
         <p>
           ${target}${execution?.models[0]
             ? ` · ${execution.models[0].runner} / ${execution.models[0].model}`
@@ -180,20 +247,24 @@ export class PRReviewRequestForm extends LitElement {
         </p>
         <details>
           <summary data-testid="pr-review-advanced">Advanced options</summary>
-          <label class="check"
+          <label class="check" ?hidden=${prReviewWorkflow(review) === 'qa'}
             ><input
               data-testid="pr-review-request-override"
               type="checkbox"
               .checked=${this.overrideReview}
               @change=${(event: Event) => {
                 this.overrideReview = (event.target as HTMLInputElement).checked;
-                this.review = { ...review };
+                this.review = { ...review, publishReview: this.review.publishReview };
               }}
             />Override inherited review options</label
           >
           <pr-review-options-picker
             .presentation=${'reviewer'}
-            .value=${review}
+            .qa=${farm?.qa}
+            .value=${{
+              ...review,
+              publishReview: this.overrideReview ? this.review.publishReview : undefined,
+            }}
             .disabled=${this.disabled || !this.overrideReview}
             @review-options-change=${(event: CustomEvent<PRReviewOptions>) => {
               this.review = event.detail;
@@ -208,7 +279,7 @@ export class PRReviewRequestForm extends LitElement {
                 this.overrideExecution = (event.target as HTMLInputElement).checked;
                 this.execution = execution
                   ? structuredClone(execution)
-                  : review.validationDepth === 'full-live'
+                  : prReviewWorkflow(review) === 'qa'
                     ? newPRExecution()
                     : newPRWorkspaceExecution();
               }}
@@ -217,7 +288,7 @@ export class PRReviewRequestForm extends LitElement {
           ${execution
             ? html`<pr-execution-picker
                 .pools=${this.pools}
-                .resource=${review.validationDepth === 'full-live' ? 'slot' : 'workspace'}
+                .resource=${prReviewWorkflow(review) === 'qa' ? 'slot' : 'workspace'}
                 .value=${execution}
                 .project=${policy?.project ?? ''}
                 .slots=${this.slots}
@@ -236,8 +307,8 @@ export class PRReviewRequestForm extends LitElement {
         <button data-testid="pr-review-request-submit" class="primary" type="submit">
           ${this.disabled
             ? 'Submitting…'
-            : review.validationDepth === 'full-live'
-              ? 'Request on-device review'
+            : prReviewWorkflow(review) === 'qa'
+              ? 'Request QA'
               : 'Request review'}
         </button>
       </fieldset>

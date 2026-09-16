@@ -5,10 +5,12 @@ import type {
   NativeProfileReference,
   PressureAdmissionReference,
   PressureDispatchOverride,
+  QaInput,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewScope,
   ReviewValidationDepth,
+  ReviewWorkspaceTarget,
   RunCreateParams,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
@@ -31,6 +33,9 @@ export interface DispatchPayloadDraft {
   model?: string;
   runner?: string;
   effort?: string;
+  reviewWorkspaceTarget?: ReviewWorkspaceTarget;
+  qaProfileId?: string;
+  qaInputs?: Record<string, QaInput>;
   slotId?: string;
   allowedSlots?: string[];
   branch?: string;
@@ -74,6 +79,9 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketOrPr,
+    reviewWorkspaceTarget: input.reviewWorkspaceTarget,
+    qaProfileId: input.qaProfileId,
+    qaInputs: input.qaInputs,
     slotId: input.slotId,
     allowedSlots: input.allowedSlots,
     branch: input.branch,
@@ -119,6 +127,9 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     model: input.model,
     runner: input.runner,
     effort: input.effort,
+    reviewWorkspaceTarget: input.reviewWorkspaceTarget,
+    qaProfileId: input.qaProfileId,
+    qaInputs: input.qaInputs,
     slotId: input.slotId,
     allowedSlots: input.allowedSlots,
     branch: input.branch,

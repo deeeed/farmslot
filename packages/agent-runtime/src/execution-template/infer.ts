@@ -28,6 +28,7 @@ export const FARMSLOT_FLOW_PREFIXES = [
   'validate-dep',
   'ci-fix',
   'dev',
+  'qa',
 ] as const;
 
 const PLATFORM_SUFFIXES = ['mobile', 'extension', 'core'] as const;

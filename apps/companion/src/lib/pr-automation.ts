@@ -6,16 +6,24 @@ import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_PR_REVIEW_OPTIONS,
   isPRWorkspaceExecutionProfile,
+  monitoredPRKey,
   monitoredPRUrl,
   parseGitHubPullUrl,
+  parseGitHubRef,
   type PRExecutionProfile,
   type PRMonitor,
   type PRMonitorConfig,
+  type ProjectConfig,
   type PRProjectMonitorPolicy,
+  type PRReviewIntent,
   type PRReviewOptions,
   type PRReviewRequest,
+  prReviewWorkflow,
   type PRSlotExecutionProfile,
   type PRTeamProfile,
+  resolvePRWorkflowDefaults,
+  reviewResultForRun,
+  type Run,
 } from '@farmslot/protocol';
 
 export function newPRExecution(): PRSlotExecutionProfile {
@@ -46,6 +54,8 @@ export interface PRRequestDraft {
   overrideExecution: boolean;
   review: PRReviewOptions;
   execution: PRExecutionProfile;
+  qaInputsText?: string;
+  sourceReview?: { runId: string; url: string };
 }
 export function newPRRequestDraft(): PRRequestDraft {
   return {
@@ -58,33 +68,75 @@ export function newPRRequestDraft(): PRRequestDraft {
     execution: newPRExecution(),
   };
 }
-export function effectivePRRequest(draft: PRRequestDraft, teams: PRTeamProfile[]) {
+export function effectivePRRequest(
+  draft: PRRequestDraft,
+  teams: PRTeamProfile[],
+  farms: Pick<ProjectConfig, 'name' | 'qa' | 'workflowDefaults'>[] = [],
+) {
   const team = teams.find((item) => item.id === draft.teamId);
   const repo = parseGitHubPullUrl(draft.url)?.repo;
   const policy = team?.config.repositories.find(
     (item) => item.repo.toLowerCase() === repo?.toLowerCase(),
   );
+  const farm = farms.find((item) => item.name === policy?.project);
+  const resolved = resolvePRWorkflowDefaults({
+    request: { review: draft.overrideReview ? draft.review : undefined },
+    repository: policy,
+    team: team?.config,
+    farm: farm?.workflowDefaults,
+  });
+  const profile = farm?.qa?.profiles.find(
+    (item) => item.id === (resolved.review.qaProfileId ?? farm.qa?.default_profile),
+  );
   return {
     project: policy?.project ?? '',
     reviewProfile: policy?.reviewProfile ?? 'standard',
-    review: draft.overrideReview
-      ? draft.review
-      : (policy?.review ?? team?.config.review ?? DEFAULT_PR_REVIEW_OPTIONS),
-    execution: draft.overrideExecution
-      ? draft.execution
-      : (policy?.execution ?? team?.config.execution),
+    review: resolved.review,
+    execution: draft.overrideExecution ? draft.execution : resolved.execution,
+    sources: resolved.sources,
+    qa: farm?.qa,
+    qaInputs: { ...profile?.inputs, ...resolved.review.qaInputs },
   };
 }
+
+export function updatePRReviewOptions(
+  value: PRReviewOptions,
+  patch: Partial<PRReviewOptions>,
+): PRReviewOptions {
+  const { validationDepth: _legacy, ...current } = value;
+  const next = { ...current, workflow: prReviewWorkflow(value), ...patch };
+  if (next.workflow === 'qa') {
+    delete next.publishReview;
+    next.sessionIntent = 'reset';
+    next.scope = 'full';
+    delete next.busySession;
+  } else {
+    delete next.qaProfileId;
+    delete next.qaInputs;
+  }
+  return next;
+}
+
 export function buildPRRequest(draft: PRRequestDraft, idempotencyKey: string): PRReviewRequest {
   const pr = parseGitHubPullUrl(draft.url);
   if (!pr) throw new Error('Enter a GitHub pull request URL');
+  let review = draft.overrideReview ? draft.review : undefined;
+  if (review && prReviewWorkflow(review) === 'qa' && draft.qaInputsText !== undefined) {
+    const inputs: unknown = JSON.parse(draft.qaInputsText);
+    if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs))
+      throw new Error('QA inputs must be a JSON object');
+    review = { ...review, qaInputs: inputs as PRReviewOptions['qaInputs'] };
+  }
   const request: PRReviewRequest = {
     teamId: draft.teamId,
     pr: { host: 'github.com', repo: pr.repo, number: pr.number },
     idempotencyKey,
     autoStart: draft.autoStart,
-    ...(draft.overrideReview ? { review: draft.review } : {}),
+    ...(review ? { review } : {}),
     ...(draft.overrideExecution ? { execution: normalizePRExecution(draft.execution) } : {}),
+    ...(review && prReviewWorkflow(review) === 'qa' && draft.sourceReview?.url === draft.url
+      ? { sourceReviewRunId: draft.sourceReview.runId }
+      : {}),
     source: { client: 'companion' },
   };
   assertPRReviewRequest(request);
@@ -197,11 +249,60 @@ export function prExecutionText(profile?: PRExecutionProfile): string {
   return `${profile.slotPolicy.kind === 'exact' ? profile.slotPolicy.slotId : profile.slotPolicy.allowedSlots.join(', ')} · ${profile.models.map((model) => `${model.runner}/${model.model}${model.effort ? `/${model.effort}` : ''}${model.allowedSlots?.length ? ` on ${model.allowedSlots.join(', ')}` : ''}`).join(' or ')}`;
 }
 export function prReviewText(options: PRReviewOptions = DEFAULT_PR_REVIEW_OPTIONS): string {
-  return `${options.sessionIntent === 'resume' ? 'Continue' : 'Fresh'} · ${options.scope === 'full' ? 'Full review' : 'Changes since last review'} · ${options.validationDepth === 'full-live' ? 'Live QA' : 'Static code'} · ${options.busySession === 'fresh' ? 'Allow fresh slot when busy' : 'Wait for saved reviewer'}`;
+  if (prReviewWorkflow(options) === 'qa') return `QA · ${options.qaProfileId ?? 'farm default'}`;
+  return `${options.sessionIntent === 'resume' ? 'Continue' : 'Fresh'} · ${options.scope === 'full' ? 'Full review' : 'Changes since last review'} · Static review · ${options.publishReview === undefined ? 'Publication inherited' : options.publishReview ? 'Publish to PR' : 'Farmslot results only'}`;
 }
 export function prMonitorFreshness(monitor: PRMonitor, now = Date.now()): string {
   if (!monitor.observation) return 'Awaiting observation';
   const stale =
     now - Date.parse(monitor.observation.checkedAt) > monitor.config.pollIntervalMs + 60_000;
   return `${stale ? 'Stale observation' : 'Observed'} ${new Date(monitor.observation.checkedAt).toLocaleString()}`;
+}
+
+export function qaRequestFromReview(
+  intent: PRReviewIntent,
+  run: Run | undefined,
+  principalId: string | null,
+): PRRequestDraft {
+  const draft = newPRRequestDraft();
+  draft.url = monitoredPRUrl(intent.pr);
+  const contribution = intent.contributions.find((source) => source.ownerId === principalId);
+  draft.teamId = contribution?.teamId ?? '';
+  draft.overrideReview = true;
+  draft.review = updatePRReviewOptions(draft.review, { workflow: 'qa' });
+  const owners = run
+    ? [run.createdByPrincipalId, run.nativeOwnerPrincipalId, run.prWork?.review?.ownerId].filter(
+        Boolean,
+      )
+    : [];
+  const result = run && reviewResultForRun(run);
+  const ref = run && parseGitHubRef(run.ticketOrPr);
+  const pr =
+    run?.prWork?.pr ??
+    (ref ? { host: 'github.com', repo: ref.repo, number: ref.number } : undefined);
+  if (
+    run &&
+    principalId &&
+    owners.length &&
+    owners.every((owner) => owner === principalId) &&
+    intent.runId === run.id &&
+    intent.status === 'completed' &&
+    run.flowType === 'review-pr' &&
+    run.status === 'done' &&
+    !!contribution?.project &&
+    run.project === contribution.project &&
+    !!pr &&
+    monitoredPRKey(pr) === monitoredPRKey(intent.pr) &&
+    /^[a-f0-9]{40}$/.test(intent.headSha) &&
+    ['github-pr', 'local-git'].includes(result?.reviewSnapshot?.source ?? '') &&
+    run.reviewValidationDepth !== 'full-live' &&
+    run.reviewQaContract?.legacy?.validationDepth !== 'full-live' &&
+    intent.contributions.every((source) => prReviewWorkflow(source.review) === 'review') &&
+    result?.reviewSnapshot?.headSha === intent.headSha &&
+    result.reviewMd?.trim() &&
+    !('stale' in result && result.stale)
+  ) {
+    draft.sourceReview = { runId: run.id, url: draft.url };
+  }
+  return draft;
 }

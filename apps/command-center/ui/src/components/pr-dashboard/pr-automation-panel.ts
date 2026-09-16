@@ -15,6 +15,7 @@ import {
   type PRProjectImportResult,
   type PRProjectMonitorPolicy,
   type PRReviewRequest,
+  prReviewWorkflow,
   type PRRulePreview,
   type PRRulePreviewResult,
   type PRTeamConfig,
@@ -85,6 +86,8 @@ export class PRAutomationPanel extends LitElement {
   @state() private selectedMonitor?: PRMonitor;
   @state() private selectedPolicy?: PRProjectMonitorPolicy;
   @state() private initialConfig?: PRMonitorConfig;
+  @state() private requestWorkflow: 'review' | 'qa' = 'review';
+  @state() private sourceReviewRunId?: string;
   @state() private repairProject = '';
   @state() private repairExecution = newPRExecution();
   @state() private preview?: PRRulePreview;
@@ -232,6 +235,8 @@ export class PRAutomationPanel extends LitElement {
     this.editorScope = undefined;
     this.pendingRoute = undefined;
     this.editor = undefined;
+    this.requestWorkflow = 'review';
+    this.sourceReviewRunId = undefined;
     this.draftId = undefined;
     this.restoredDraft = undefined;
     this.lastDraft = '';
@@ -480,7 +485,7 @@ export class PRAutomationPanel extends LitElement {
             : this.editor === 'rule'
               ? 'Trigger rule'
               : this.editor === 'request'
-                ? 'Request PR review'
+                ? 'Request PR review / QA'
                 : this.editor === 'policy'
                   ? 'Project publication monitoring'
                   : this.editor === 'repair'
@@ -611,6 +616,8 @@ export class PRAutomationPanel extends LitElement {
                   .pools=${controller.pools}
                   .farms=${controller.projectConfigs}
                   .prUrl=${this.selectedUrl}
+                  .initialWorkflow=${this.requestWorkflow}
+                  .sourceReviewRunId=${this.sourceReviewRunId}
                   .teams=${controller.reviews.teams}
                   .slots=${controller.slots}
                   .disabled=${disabled}
@@ -695,8 +702,45 @@ export class PRAutomationPanel extends LitElement {
           this.openEditor('request');
         }}
       >
-        Request review
+        Request review / QA
       </button>
+      ${selectedOnly && this.selectedPr
+        ? html`<button
+            data-testid="pr-run-qa"
+            ?disabled=${disabled}
+            @click=${() => {
+              this.requestWorkflow = 'qa';
+              this.sourceReviewRunId = [...reviews.intents]
+                .filter((intent) => {
+                  const principalId = gateway.authenticatedPrincipalId;
+                  const run = getState().runs.find((candidate) => candidate.id === intent.runId);
+                  const owners = run
+                    ? [
+                        run.createdByPrincipalId,
+                        run.nativeOwnerPrincipalId,
+                        run.prWork?.review?.ownerId,
+                      ].filter(Boolean)
+                    : [];
+                  return (
+                    principalId &&
+                    owners.length > 0 &&
+                    owners.every((owner) => owner === principalId) &&
+                    intent.contributions.some((source) => source.ownerId === principalId) &&
+                    this.matchesSelected(intent.pr) &&
+                    intent.status === 'completed' &&
+                    intent.runId &&
+                    intent.contributions.every(
+                      (source) => prReviewWorkflow(source.review) === 'review',
+                    )
+                  );
+                })
+                .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.runId;
+              this.openEditor('request');
+            }}
+          >
+            Run QA
+          </button>`
+        : nothing}
       ${selectedOnly && this.reviewBlockedReason
         ? html`<p class="muted" data-testid="pr-review-start-blocked">
             ${this.reviewBlockedReason}

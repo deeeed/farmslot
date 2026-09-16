@@ -149,6 +149,10 @@ export async function runForceCompleteTransitionLocked(
 ): Promise<RunForceCompleteResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  if (existing.flowType === 'qa')
+    throw new Error(
+      'QA cannot be force-completed; resume the run to validate its runtime evidence',
+    );
   assertNotMachineParkManaged(existing);
   const originalStatus = existing.status;
 

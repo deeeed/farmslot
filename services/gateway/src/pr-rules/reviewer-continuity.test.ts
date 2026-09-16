@@ -146,3 +146,14 @@ test('fresh-slot fallback and explicit Fresh honor the pool without transferring
   prior.prWork!.review!.ownerId = 'another-owner';
   assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
 });
+
+test('QA does not inherit static reviewer session placement', () => {
+  const { intent, prior } = fixture();
+  intent.contributions[0].review = {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    workflow: 'qa',
+    qaProfileId: 'changes',
+  };
+  assert.deepEqual(preferRetainedReviewer(intent, 'project', choices, [prior]), choices);
+});

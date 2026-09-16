@@ -148,6 +148,8 @@ export interface DispatchCandidatesResult {
 // ─── Dispatch Queue param/result types ───
 
 export interface DispatchQueueAddParams {
+  qaProfileId?: string;
+  qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;
   /** Static-review machine selection, mutually exclusive with slot placement. */
   reviewWorkspaceTarget?: import('../contracts/review-workspace.js').ReviewWorkspaceTarget;
   transport?: import('../contracts/agents.js').WorkerTransport;
@@ -198,6 +200,8 @@ export interface DispatchQueueAddParams {
   /** Same semantics as RunCreateParams.reviewDepth — persisted onto the created run. */
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
   reviewScope?: import('../contracts/index.js').ReviewScope;
+  reviewTier?: string;
+  recipeStrategy?: string;
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
   /** Same semantics as RunCreateParams.pendingReviewPlan — additional independent reviews for auto-dispatch. */
   pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
@@ -256,6 +260,10 @@ export interface DispatchQueueReorderResult {
 }
 
 export interface DispatchPreviewParams {
+  qaProfileId?: string;
+  qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;
+  reviewTier?: string;
+  recipeStrategy?: string;
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;
   runner?: string;
   model?: string;

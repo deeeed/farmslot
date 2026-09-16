@@ -546,7 +546,8 @@ async function main(): Promise<void> {
       }
       return;
     }
-    const { runCreate } = await import('./methods/run.js');
+    const { runCreate, queuedQaExpectation } = await import('./methods/run.js');
+    const expectedQa = queuedQaExpectation(item);
     const runParams = {
       transport: item.transport,
       nativeProfile: item.nativeProfile,
@@ -594,12 +595,17 @@ async function main(): Promise<void> {
       reviewDepth: item.reviewDepth,
       reviewScope: item.reviewScope,
       reviewValidationDepth: item.reviewValidationDepth,
+      qaProfileId: item.qaProfileId,
+      qaInputs: item.qaInputs,
       pendingReviewPlan: item.pendingReviewPlan,
       safetyTier: effectiveSafetyTier,
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const createQueuedRun = () =>
       runCreate(runParams, broadcastEvent, {
+        prWork: item.prWork,
         workflowExecution: item.workflowExecution,
+        reviewQaContract: item.reviewQaContract,
+        expectedQa,
         expectedExecutionTemplate: item.executionTemplate,
         beforeCreateAsync: () => refreshPRQueueAdmission(prDispatchSelection),
         beforeCreate,

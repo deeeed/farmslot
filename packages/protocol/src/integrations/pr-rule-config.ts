@@ -1,8 +1,9 @@
-import type {
-  PRReviewOptions,
-  PRReviewRequest,
-  PRTeamConfig,
-  PRTriggerRuleConfig,
+import {
+  type PRReviewOptions,
+  type PRReviewRequest,
+  prReviewWorkflow,
+  type PRTeamConfig,
+  type PRTriggerRuleConfig,
 } from '../contracts/pr-rules.js';
 
 import {
@@ -41,13 +42,49 @@ function integer(value: unknown, name: string, min: number, max: number): void {
 
 export function assertPRReviewOptions(value: unknown): asserts value is PRReviewOptions {
   record(value, 'review options');
-  keys(value, ['sessionIntent', 'scope', 'validationDepth', 'busySession']);
+  keys(value, [
+    'sessionIntent',
+    'scope',
+    'workflow',
+    'qaProfileId',
+    'qaInputs',
+    'validationDepth',
+    'busySession',
+    'publishReview',
+  ]);
   if (value.sessionIntent !== 'resume' && value.sessionIntent !== 'reset')
     throw new Error('Review session must be Continue or Fresh');
   if (value.scope !== 'incremental' && value.scope !== 'full')
     throw new Error('Review scope must be incremental or full');
-  if (value.validationDepth !== 'static-code' && value.validationDepth !== 'full-live')
+  if (
+    value.validationDepth !== undefined &&
+    value.validationDepth !== 'static-code' &&
+    value.validationDepth !== 'full-live'
+  )
     throw new Error('Review validation must be static-code or full-live');
+  if (value.workflow !== undefined && value.workflow !== 'review' && value.workflow !== 'qa')
+    throw new Error('Review workflow must be review or qa');
+  if (
+    value.workflow &&
+    value.validationDepth &&
+    (value.workflow === 'qa') !== (value.validationDepth === 'full-live')
+  )
+    throw new Error('Review workflow conflicts with legacy validation depth');
+  if (value.publishReview !== undefined && typeof value.publishReview !== 'boolean')
+    throw new Error('publishReview must be boolean');
+  if (
+    value.publishReview === true &&
+    (value.workflow === 'qa' || value.validationDepth === 'full-live')
+  )
+    throw new Error('QA cannot publish a static PR review');
+  if (value.qaProfileId !== undefined) text(value.qaProfileId, 'QA preset id');
+  if (value.qaInputs !== undefined) record(value.qaInputs, 'QA inputs');
+  if (
+    (value.qaProfileId !== undefined || value.qaInputs !== undefined) &&
+    value.workflow !== 'qa' &&
+    value.validationDepth !== 'full-live'
+  )
+    throw new Error('QA preset inputs require the QA workflow');
   if (
     value.busySession !== undefined &&
     value.busySession !== 'wait' &&
@@ -58,13 +95,27 @@ export function assertPRReviewOptions(value: unknown): asserts value is PRReview
 
 export function assertPRReviewRequest(value: unknown): asserts value is PRReviewRequest {
   record(value, 'review request');
-  keys(value, ['teamId', 'pr', 'idempotencyKey', 'autoStart', 'execution', 'review', 'source']);
+  keys(value, [
+    'teamId',
+    'pr',
+    'idempotencyKey',
+    'autoStart',
+    'execution',
+    'review',
+    'source',
+    'sourceReviewRunId',
+  ]);
   text(value.teamId, 'teamId');
   text(value.idempotencyKey, 'idempotencyKey');
   assertMonitoredPRIdentity(value.pr);
   if (typeof value.autoStart !== 'boolean') throw new Error('Review autoStart must be explicit');
   if (value.execution !== undefined) assertPRExecutionProfile(value.execution);
   if (value.review !== undefined) assertPRReviewOptions(value.review);
+  if (value.sourceReviewRunId !== undefined) {
+    text(value.sourceReviewRunId, 'sourceReviewRunId');
+    if (prReviewWorkflow(value.review) !== 'qa')
+      throw new Error('sourceReviewRunId is only allowed for QA requests');
+  }
   record(value.source, 'review source');
   keys(value.source, ['client', 'reference', 'requester']);
   text(value.source.client, 'source.client');

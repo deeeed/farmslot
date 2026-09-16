@@ -1,7 +1,7 @@
 import { Events, type Run } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
+import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
@@ -354,6 +354,12 @@ export async function executePrepareStep(
       });
     }
     const afterPrepare = getRun(runId)!;
+    if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
+      const vars = await loadSlotVars(current.slotId);
+      const head = await execArgvOnSlot(vars, ['git', 'rev-parse', 'HEAD']);
+      if (head.exitCode !== 0 || head.stdout.trim() !== afterPrepare.qaSource.headSha)
+        throw new Error('Prepared QA checkout differs from the frozen PR head');
+    }
     if (afterPrepare.engineState?.evalExperiment) {
       emitWithBroadcast('substep', {
         name: 'recipe-harness-verify',

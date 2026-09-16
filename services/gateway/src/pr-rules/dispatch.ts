@@ -10,7 +10,9 @@ import {
   type PRExecutionChoice,
   type PRExecutionProfile,
   type PRReviewIntent,
+  prReviewWorkflow,
   type QueueItem,
+  resolvedRecipeArtifactPath,
   reviewResultForRun,
   type Run,
 } from '@farmslot/protocol';
@@ -29,15 +31,48 @@ import {
   runOwnsPR,
 } from '../backlog/pr-admission.js';
 import { type PRExecutionContext, resolvePRExecution } from '../backlog/pr-execution.js';
-import { getAllRuns, runRecordPath } from '../runs/store.js';
+import { GatewayMethodError } from '../core/method-error.js';
+import {
+  getAllRuns,
+  getCachedRunWithArchived,
+  getRunWithArchived,
+  runRecordPath,
+} from '../runs/store.js';
 
 import { reviewIntentAuthorized } from './intents.js';
+import { publicationForIntent } from './publication-policy.js';
 import { preferRetainedReviewer } from './reviewer-continuity.js';
 import type { PRRuleService } from './service.js';
+import { validateQaSourceReview, validateQaSourceReviewRecord } from './source-review.js';
 import type { PRRuleStore } from './store.js';
 
 function workId(intent: PRReviewIntent): string {
   return `review:${intent.id}`;
+}
+
+/** MONITOR writes this receipt only after the shared QA runtime-proof validator succeeds. */
+function completedQaHead(run: Run, intent: PRReviewIntent): string | undefined {
+  const evidence = run.steps.find((step) => step.name === 'monitor' && step.status === 'done')
+    ?.outputs?.qaEvidence;
+  if (!evidence || typeof evidence !== 'object') return undefined;
+  const receipt = evidence as Record<string, unknown>;
+  if (
+    receipt.headSha !== intent.headSha ||
+    !Array.isArray(receipt.packages) ||
+    !receipt.packages.length
+  )
+    return undefined;
+  if (
+    !receipt.packages.every((entry: unknown) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const item = entry as Record<string, unknown>;
+      return (
+        typeof item.path === 'string' && item.path.trim() && resolvedRecipeArtifactPath(item.digest)
+      );
+    })
+  )
+    return undefined;
+  return intent.headSha;
 }
 function fingerprint(intent: PRReviewIntent): string {
   return createHash('sha256')
@@ -179,18 +214,44 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       }
       const source = intent.contributions.find((item) => item.eligible)!;
       if (!source.project || !this.authorized(source.ownerId)) continue;
+      let parent: Run | undefined;
+      if (source.sourceReview) {
+        try {
+          await validateQaSourceReview({
+            runId: source.sourceReview.runId,
+            ownerId: source.ownerId,
+            project: source.project,
+            pr: intent.pr,
+            expected: source.sourceReview,
+            observedHeadSha: intent.headSha,
+          });
+          parent = (await getRunWithArchived(source.sourceReview.runId))!;
+        } catch (error) {
+          if (!(error instanceof GatewayMethodError)) throw error;
+          if (queued) await removeQueueItemInternalNow(queued.id, 'qa-source-review-unavailable');
+          await this.store.updateDispatch(intent.id, {
+            status: 'needs-configuration',
+            queueItemId: undefined,
+            waitingReason: error.message,
+          });
+          this.changed();
+          continue;
+        }
+      }
       const review = {
         profile: intent.reviewProfile,
         ownerId: source.ownerId,
         options: source.review ?? DEFAULT_PR_REVIEW_OPTIONS,
       };
+      const publication = publicationForIntent(intent, this.store);
+      const flowType = prReviewWorkflow(review.options) === 'qa' ? 'qa' : 'review-pr';
       const profiles = intent.contributions
         .filter((item) => item.eligible)
         .flatMap((item) => (item.execution ? [item.execution] : []));
       const resolved = await this.resolveExecution(source.project, intent.pr.repo, profiles, {
         ownerId: source.ownerId,
       });
-      const workspaceRequired = review.options.validationDepth !== 'full-live';
+      const workspaceRequired = prReviewWorkflow(review.options) === 'review';
       if (
         resolved.choices.some(
           (choice) => isPRWorkspaceExecutionChoice(choice) !== workspaceRequired,
@@ -200,7 +261,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         resolved.errors = [
           workspaceRequired
             ? 'Select workspace machines for static Review; existing slot constraints need explicit migration'
-            : 'Full-live review requires runtime slots',
+            : 'QA requires runtime slots, not review workspaces',
         ];
       }
       resolved.choices = preferRetainedReviewer(
@@ -222,7 +283,13 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       if (
         queued &&
         (queued.project !== source.project ||
+          (queued.parentRunId ?? undefined) !== source.sourceReview?.runId ||
+          (parent && queued.familyId !== parent.familyId) ||
+          queued.flowType !== flowType ||
+          !isDeepStrictEqual(queued.qaProfileId, review.options.qaProfileId) ||
+          !isDeepStrictEqual(queued.qaInputs, review.options.qaInputs) ||
           !isDeepStrictEqual(queued.prWork?.review, review) ||
+          !isDeepStrictEqual(queued.prWork?.publication, publication) ||
           originator?.kind !== 'principal' ||
           originator.principalId !== source.ownerId)
       ) {
@@ -242,8 +309,16 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
               pr: intent.pr,
               headSha: intent.headSha,
               review,
+              ...(publication ? { publication } : {}),
             },
-            flowType: 'review-pr',
+            flowType,
+            ...(parent
+              ? {
+                  parentRunId: parent.id,
+                  familyId: parent.familyId,
+                  familyRootTicketOrPr: parent.familyRootTicketOrPr ?? parent.ticketOrPr,
+                }
+              : {}),
             project: source.project,
             ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
             ...(isPRWorkspaceExecutionChoice(resolved.choices[0])
@@ -258,16 +333,20 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
                   ],
                 }),
             runner: resolved.choices[0].runner,
-            transport: resolved.choices[0].transport,
+            transport: resolved.choices[0].transport ?? (parent ? 'tmux' : undefined),
             nativeProfile: resolved.choices[0].nativeProfile,
             model: resolved.choices[0].model,
             effort: resolved.choices[0].effort,
             completionPolicy: 'artifact-only',
             reviewScope: review.options.scope,
-            reviewValidationDepth: review.options.validationDepth,
+            qaProfileId: review.options.qaProfileId,
+            qaInputs: review.options.qaInputs,
             mode: 'autonomous',
             autoDispatch: false,
-            initialContext: `Review the PR at ${intent.headSha}. Record the exact reviewed SHA. Review profile: ${intent.reviewProfile}. Publication requires the project's normal review policy.`,
+            initialContext:
+              prReviewWorkflow(review.options) === 'qa'
+                ? `Validate the PR at ${intent.headSha} using the selected farm QA preset. Record the exact validated SHA, executed recipes and runtime evidence.`
+                : `Review the PR at ${intent.headSha}. Record the exact reviewed SHA. Review profile: ${intent.reviewProfile}. Publication requires the project's normal review policy.`,
           },
           { kind: 'principal', principalId: source.ownerId },
         );
@@ -314,7 +393,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       { ownerId: active[0].ownerId },
     );
     resolved.choices = preferRetainedReviewer(intent, project, resolved.choices, getAllRuns());
-    const workspaceRequired = active[0].review?.validationDepth !== 'full-live';
+    const workspaceRequired = prReviewWorkflow(active[0].review) === 'review';
     if (
       resolved.choices.some((choice) => isPRWorkspaceExecutionChoice(choice) !== workspaceRequired)
     ) {
@@ -322,7 +401,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         ready: false,
         reason: workspaceRequired
           ? 'Select workspace machines for static Review'
-          : 'Full-live review requires runtime slots',
+          : 'QA requires runtime slots',
       };
     }
     return resolved.choices.length
@@ -360,7 +439,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       item.runner,
       item.model,
       item.effort,
-      item.transport ?? null,
+      item.transport ?? 'tmux',
       item.nativeProfile ?? null,
     ]);
     if (
@@ -372,7 +451,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
             choice.runner,
             choice.model,
             choice.effort,
-            choice.transport ?? null,
+            choice.transport ?? 'tmux',
             choice.nativeProfile ?? null,
           ]) === selection,
       )
@@ -401,7 +480,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
           item.runner,
           item.model,
           item.effort,
-          item.transport ?? null,
+          item.transport ?? 'tmux',
           item.nativeProfile ?? null,
         ])
     )
@@ -429,8 +508,24 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       return 'Review is held or no longer authorized';
     if (intent.pr.host.toLowerCase() !== 'github.com')
       return 'Project execution does not yet bind an enterprise GitHub host';
+    if (!isDeepStrictEqual(item.prWork?.publication, publicationForIntent(intent, this.store)))
+      return 'Review publication policy or account changed; queue replacement is pending';
     const active = intent.contributions.filter((source) => source.eligible);
     const options = active[0]?.review ?? DEFAULT_PR_REVIEW_OPTIONS;
+    const sourceReview = active[0]?.sourceReview;
+    if ((item.parentRunId ?? undefined) !== sourceReview?.runId)
+      return 'QA source review linkage changed';
+    if (sourceReview) {
+      const originator = queueRecordOriginator(item.id);
+      if (originator?.kind !== 'principal' || originator.principalId !== active[0]?.ownerId)
+        return 'Linked QA must retain the source review owner';
+    }
+    if (
+      item.flowType !== (prReviewWorkflow(options) === 'qa' ? 'qa' : 'review-pr') ||
+      !isDeepStrictEqual(item.qaProfileId, options.qaProfileId) ||
+      !isDeepStrictEqual(item.qaInputs, options.qaInputs)
+    )
+      return 'Review/QA workflow or preset changed; queue replacement is pending';
     if (
       !isDeepStrictEqual(item.prWork?.review, {
         profile: intent.reviewProfile,
@@ -441,6 +536,26 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       return 'Reviewer configuration changed; queue replacement is pending';
     const snapshot = this.store.snapshot();
     for (const source of active) {
+      if (source.sourceReview) {
+        try {
+          validateQaSourceReviewRecord(
+            {
+              runId: source.sourceReview.runId,
+              ownerId: source.ownerId,
+              project: source.project,
+              pr: intent.pr,
+              expected: source.sourceReview,
+              observedHeadSha: intent.headSha,
+            },
+            getCachedRunWithArchived(source.sourceReview.runId),
+          );
+          if (item.familyId !== getCachedRunWithArchived(source.sourceReview.runId)?.familyId)
+            return 'QA source review family changed';
+        } catch (error) {
+          if (!(error instanceof GatewayMethodError)) throw error;
+          return error.message;
+        }
+      }
       const rule = snapshot.rules.find((entry) => entry.id === source.ruleId);
       const submission = snapshot.submissions?.find((entry) => entry.id === source.submissionId);
       const team = snapshot.teams.find((entry) => entry.id === source.teamId);
@@ -472,14 +587,21 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
     let reviewedSha: string | undefined;
     let waitingReason: string | undefined;
     if (isTerminalRunStatus(run.status)) {
-      const result = reviewResultForRun(run);
-      reviewedSha =
-        result?.reviewSnapshot?.source !== 'unavailable'
-          ? (result?.reviewSnapshot?.headSha ?? undefined)
-          : undefined;
+      if (run.flowType === 'qa') {
+        reviewedSha = completedQaHead(run, intent);
+      } else {
+        const result = reviewResultForRun(run);
+        reviewedSha =
+          result?.reviewSnapshot?.source !== 'unavailable'
+            ? (result?.reviewSnapshot?.headSha ?? undefined)
+            : undefined;
+      }
       status = run.status === 'done' && reviewedSha ? 'completed' : 'failed';
       if (status === 'failed')
-        waitingReason = 'Review ended without confirmed review evidence; inspect the linked run';
+        waitingReason =
+          run.flowType === 'qa'
+            ? 'QA ended without verified runtime evidence; inspect the linked run'
+            : 'Review ended without confirmed review evidence; inspect the linked run';
     }
     if (intent.status !== status || intent.runId !== run.id || intent.reviewedSha !== reviewedSha) {
       await this.store.updateDispatch(intent.id, {

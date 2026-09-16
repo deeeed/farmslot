@@ -29,6 +29,11 @@ export interface EvalQueueCell {
 }
 
 export interface QueueItem {
+  qaProfileId?: string;
+  qaInputs?: Record<string, import('./qa.js').QaInput>;
+  reviewQaContract?: import('./qa.js').ReviewQaContract;
+  reviewTier?: string;
+  recipeStrategy?: string;
   /** Gateway-frozen direct-dispatch choices; public requests cannot supply this snapshot. */
   workflowExecution?: import('./pr-monitoring.js').PRExecutionProfile;
   transport?: import('./agents.js').WorkerTransport;

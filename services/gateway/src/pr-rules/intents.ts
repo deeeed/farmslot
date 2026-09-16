@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   DEFAULT_PR_REVIEW_OPTIONS,
@@ -8,8 +9,13 @@ import {
   type PRReviewContribution,
   type PRReviewIntent,
   prReviewPurpose,
+  prReviewWorkflow,
   type PRRulePreviewItem,
+  type PRTeamProfile,
+  samePRReviewOptions,
 } from '@farmslot/protocol';
+
+import { hasPublicationAuthorityConflict } from './publication-policy.js';
 
 export function reviewIntentId(item: PRRulePreviewItem, round = 1): string {
   const purpose = prReviewPurpose(item.review);
@@ -20,6 +26,9 @@ export function reviewIntentId(item: PRRulePreviewItem, round = 1): string {
         item.subject.headSha,
         item.reviewProfile,
         ...(purpose !== 'review' ? [purpose] : []),
+        ...(item.sourceReview
+          ? [['source-review', item.sourceReview.runId, item.sourceReview.headSha]]
+          : []),
         ...(round > 1 ? [round] : []),
       ]),
     )
@@ -32,7 +41,19 @@ export function sameReviewPurpose(intent: PRReviewIntent, item: PRRulePreviewIte
   const sources = contributions.length ? contributions : intent.contributions;
   return (
     sources.length > 0 &&
-    sources.every((source) => prReviewPurpose(source.review) === prReviewPurpose(item.review))
+    sources.every((source) => {
+      if (!isDeepStrictEqual(source.sourceReview, item.sourceReview)) return false;
+      const purpose = prReviewPurpose(source.review);
+      const resolved = prReviewPurpose(item.review);
+      if (purpose === resolved) return true;
+      // Only gateway-derived defaults can bridge an old configured purpose to a
+      // resolved preset. Explicitly different presets keep distinct purposes.
+      if (source.project !== item.project || item.reviewPurpose?.resolved !== resolved)
+        return false;
+      const configured =
+        source.reviewPurpose?.resolved === purpose ? source.reviewPurpose.configured : purpose;
+      return configured === item.reviewPurpose.configured;
+    })
   );
 }
 
@@ -52,14 +73,21 @@ export function updateReviewDisplay(intent: PRReviewIntent, item: PRRulePreviewI
       : undefined;
 }
 
-/** Retain the existing review eligibility policy for both validation depths. */
+/** GitHub approval suppresses another static review, never runtime validation. */
 export function contributionBlockedReason(
-  source: Pick<PRReviewContribution, 'reviewObservation'>,
+  source: Pick<PRReviewContribution, 'review' | 'reviewObservation'>,
 ): string | undefined {
-  return prReviewBlockedReason(source.reviewObservation);
+  const observation = source.reviewObservation;
+  if (prReviewWorkflow(source.review) !== 'qa') return prReviewBlockedReason(observation);
+  if (observation && observation.state !== 'open') return `This PR is ${observation.state}.`;
+  if (observation?.draft) return 'This PR is still a draft.';
+  return undefined;
 }
 
-export function reconcileReviewIntent(intent: PRReviewIntent): void {
+export function reconcileReviewIntent(
+  intent: PRReviewIntent,
+  teams: readonly PRTeamProfile[],
+): void {
   if (intent.status === 'running' || intent.status === 'completed' || intent.status === 'failed')
     return;
   const contributors = intent.contributions.filter((item) => item.eligible);
@@ -76,6 +104,15 @@ export function reconcileReviewIntent(intent: PRReviewIntent): void {
     return;
   }
   const projects = new Set(contributors.map((item) => item.project));
+  if (
+    contributors.some(
+      (source) => !isDeepStrictEqual(source.sourceReview, contributors[0].sourceReview),
+    )
+  ) {
+    intent.status = 'needs-configuration';
+    intent.waitingReason = 'QA requests reference different source reviews';
+    return;
+  }
   if (contributors.some((item) => item.configurationErrors.length)) {
     intent.status = 'needs-configuration';
     intent.waitingReason = 'A matching rule requires configuration before this review can start';
@@ -98,18 +135,14 @@ export function reconcileReviewIntent(intent: PRReviewIntent): void {
     return;
   }
   const reviewOptions = contributors.map((item) => item.review ?? DEFAULT_PR_REVIEW_OPTIONS);
-  if (
-    reviewOptions.some(
-      (item) =>
-        item.sessionIntent !== reviewOptions[0].sessionIntent ||
-        item.scope !== reviewOptions[0].scope ||
-        prReviewPurpose(item) !== prReviewPurpose(reviewOptions[0]) ||
-        (item.busySession ?? 'wait') !== (reviewOptions[0].busySession ?? 'wait'),
-    )
-  ) {
+  if (reviewOptions.some((item) => !samePRReviewOptions(item, reviewOptions[0]))) {
     intent.status = 'needs-configuration';
-    intent.waitingReason =
-      'Matching rules have incompatible reviewer continuity or validation depth';
+    intent.waitingReason = 'Matching rules have incompatible review or publication choices';
+    return;
+  }
+  if (hasPublicationAuthorityConflict(intent, teams)) {
+    intent.status = 'needs-configuration';
+    intent.waitingReason = 'Publishing a shared review requires one owner and GitHub account';
     return;
   }
   if (intent.status !== 'queued') {
@@ -127,6 +160,7 @@ export function reviewIntentAuthorized(intent: PRReviewIntent): boolean {
   const active = intent.contributions.filter((item) => item.eligible);
   return (
     active.length > 0 &&
+    active.every((source) => isDeepStrictEqual(source.sourceReview, active[0].sourceReview)) &&
     active.every(
       (item) =>
         !contributionBlockedReason(item) &&

@@ -16,11 +16,13 @@ import { FormSheetHeader } from './FormSheetHeader';
 
 const FLOW_OPTIONS: { label: string; value: FlowFilter; color: string }[] = [
   { label: 'All', value: '', color: colors.textMuted },
-  ...(['fix-bug', 'review-pr', 'dev', 'pr-complete', 'update-branch'] as const).map((flow) => ({
-    label: FLOW_LABELS[flow] ?? flow,
-    value: flow as FlowFilter,
-    color: FLOW_COLORS[flow] ?? colors.textMuted,
-  })),
+  ...(['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-branch'] as const).map(
+    (flow) => ({
+      label: FLOW_LABELS[flow] ?? flow,
+      value: flow as FlowFilter,
+      color: FLOW_COLORS[flow] ?? colors.textMuted,
+    }),
+  ),
 ];
 
 const LANE_OPTIONS: { label: string; value: LaneFilter; color: string }[] = [

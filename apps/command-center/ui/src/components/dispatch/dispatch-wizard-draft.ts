@@ -10,9 +10,10 @@ import type {
 } from '@farmslot/protocol';
 import {
   interactiveWorkerTemplateOption,
-  modeForFlow,
+  modeForFlow as sharedModeForFlow,
   reviewValidationDepthForLoop,
-  selectedTemplateMode,
+  selectedTemplateMode as sharedSelectedTemplateMode,
+  selectQaProfile,
 } from '@farmslot/protocol';
 
 import type { EffortLevel } from '../../utils/runner-options.js';
@@ -52,7 +53,15 @@ export function interactiveTemplateOption(
   return interactiveWorkerTemplateOption(options);
 }
 
-export { modeForFlow, selectedTemplateMode };
+export function modeForFlow(flowType: FlowType) {
+  return flowType === 'review-pr' || flowType === 'qa' ? 'autonomous' : sharedModeForFlow(flowType);
+}
+
+export function selectedTemplateMode(...args: Parameters<typeof sharedSelectedTemplateMode>) {
+  return args[0] === 'review-pr' || args[0] === 'qa'
+    ? 'autonomous'
+    : sharedSelectedTemplateMode(...args);
+}
 
 export function projectApps(
   configs: ReadonlyArray<{ name: string; apps?: string[] }>,
@@ -190,4 +199,26 @@ export function buildPublicationReviewGateParams(
   );
   const reviewDepth = buildPublicationReviewDepth(flowType, currentRunner, pendingReviewPlan, mode);
   return reviewDepth ? { reviewDepth, pendingReviewPlan } : {};
+}
+
+/** Inputs stay skill-owned; only the selected farm profile and JSON shape are interpreted here. */
+export function qaDispatchFields(
+  config: import('@farmslot/protocol').ProjectQaConfig | undefined,
+  profileId: string,
+  rawInputs: string,
+) {
+  let inputs: unknown = {};
+  if (rawInputs.trim()) {
+    try {
+      inputs = JSON.parse(rawInputs);
+    } catch (error) {
+      throw new Error(`QA inputs must be a JSON object: ${(error as Error).message}`);
+    }
+  }
+  const selected = selectQaProfile(
+    config,
+    profileId || undefined,
+    inputs as Record<string, import('@farmslot/protocol').QaInput>,
+  );
+  return { qaProfileId: selected.profile.id, qaInputs: selected.inputs };
 }

@@ -6,6 +6,7 @@ import {
   type PRMonitor,
   prReviewBlockedReason,
   type PRReviewIntent,
+  prReviewWorkflow,
   type PRRuleActionRecord,
   type PRRuleNotification,
   type PRTeamProfile,
@@ -363,12 +364,17 @@ export function reviewCard(
               : ' · no longer eligible'}
           </p>
           <p class="muted">
-            ${review.sessionIntent === 'resume' ? 'Continue saved reviewer' : 'Fresh reviewer'} ·
-            ${review.scope} ·
-            ${review.validationDepth === 'full-live' ? 'On-device review' : 'Review'} ·
-            ${review.busySession === 'fresh'
-              ? 'Fresh reviewer fallback allowed'
-              : 'Wait for saved reviewer'}
+            ${prReviewWorkflow(review) === 'qa'
+              ? review.workflow === undefined && review.validationDepth === 'full-live'
+                ? 'On-device review · legacy contract'
+                : `QA · ${review.qaProfileId ?? 'farm default'}`
+              : html`${review.sessionIntent === 'resume'
+                  ? 'Continue saved reviewer'
+                  : 'Fresh reviewer'}
+                · ${review.scope} · Review ·
+                ${review.busySession === 'fresh'
+                  ? 'Fresh reviewer fallback allowed'
+                  : 'Wait for saved reviewer'}`}
           </p>
           ${execution
             ? html`<p class="muted">
