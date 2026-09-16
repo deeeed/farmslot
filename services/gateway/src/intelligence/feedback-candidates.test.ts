@@ -470,3 +470,94 @@ test('annotateFeedbackConsumption re-reads consumption for stored candidates', (
   // Annotation never freezes consumption in: against an empty ledger it is unconsumed again.
   assert.equal(annotateFeedbackConsumption([refreshed!], EMPTY_LEDGER)[0]!.consumedBy, undefined);
 });
+
+test('a triage body copied before an edit cannot mask the newer provider revision', () => {
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: [
+      {
+        sourceKey: feedbackSourceKey(TARGET, 'review-comment', '3916065775'),
+        candidateId: 'x',
+        revision: 'rev-1',
+        bodyRevision: sha256('Late defaults overwrite what the user typed.'),
+        destination: 'lib:review/antipatterns.md',
+        rule: 'r',
+        recordedAt: 'now',
+        source: 'approved-audit',
+      },
+    ],
+  };
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    // Old body in the family artifact, edited comment on the provider.
+    triage: [{ runId: 'root', entries: [HUMAN_TRIAGE] }],
+    monitors: [
+      monitor([
+        incident({
+          signal: {
+            kind: 'feedback',
+            key: 'PRRC_1',
+            revision: 'rev-2',
+            summary: 'reviewer-a: edited body',
+            url: URL,
+          },
+        }),
+      ]),
+    ],
+    ledger,
+  });
+  assert.equal(candidate!.revision, 'rev-2');
+  assert.equal(
+    candidate!.excerpt,
+    'edited body',
+    'display follows the provider, not the stale artifact',
+  );
+  assert.equal(candidate!.revisedSinceConsumed, true);
+  assert.equal(unconsumedHumanFeedback([candidate!]).length, 1);
+});
+
+test('the newest observation wins across several monitors of the same PR, whatever their order', () => {
+  const newer = monitor([
+    incident({
+      id: 'newer',
+      lastObservedAt: '2026-09-05T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-2',
+        summary: 'reviewer-a: edited',
+        url: URL,
+      },
+    }),
+  ]);
+  const stale = monitor([
+    incident({
+      id: 'stale',
+      lastObservedAt: '2026-09-01T00:00:00.000Z',
+      resolvedAt: '2026-09-02T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-1',
+        summary: 'reviewer-a: original',
+        url: URL,
+      },
+    }),
+  ]);
+  for (const monitors of [
+    [newer, stale],
+    [stale, newer],
+  ]) {
+    const [candidate] = buildFeedbackCandidates({
+      target: TARGET,
+      familyRuns: family(ROOT),
+      triage: [],
+      monitors,
+      ledger: EMPTY_LEDGER,
+    });
+    assert.equal(candidate!.revision, 'rev-2');
+    assert.equal(candidate!.resolution.state, 'open');
+    assert.equal(candidate!.excerpt, 'edited');
+  }
+});

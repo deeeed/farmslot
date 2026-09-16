@@ -203,33 +203,35 @@ function triageIdentity(entry: CommentsTriageEntry): {
   return null;
 }
 
-/**
- * The monitor keeps every observed revision of a comment as its own incident
- * (identity includes the revision). Only the latest observation describes the
- * comment as it is now; earlier ones are provenance.
- */
-function latestIncidentsByIdentity(incidents: PRMonitorIncident[]): Array<{
+interface ObservedIncident {
   identity: { kind: FeedbackCandidate['kind']; providerId: string };
   incident: PRMonitorIncident;
-}> {
-  const latest = new Map<
-    string,
-    {
-      identity: { kind: FeedbackCandidate['kind']; providerId: string };
-      incident: PRMonitorIncident;
-    }
-  >();
-  for (const incident of incidents) {
-    const signal = incident.signal;
-    if (signal.kind !== 'feedback' && signal.kind !== 'review') continue;
-    const identity = feedbackIdentityFromUrl(signal.url) ?? {
-      kind: signal.kind === 'review' ? ('review' as const) : ('review-comment' as const),
-      providerId: `node-${signal.key}`,
-    };
-    const key = `${identity.kind}:${identity.providerId}`;
-    const current = latest.get(key);
-    if (!current || current.incident.lastObservedAt <= incident.lastObservedAt) {
-      latest.set(key, { identity, incident });
+  monitor: FeedbackCandidateInput['monitors'][number];
+}
+
+/**
+ * The monitor keeps every observed revision of a comment as its own incident
+ * (identity includes the revision), and several subscriptions may watch one
+ * PR. Only the most recently observed incident across all of them describes
+ * the comment as it is now; earlier ones are provenance.
+ */
+function latestIncidentsByIdentity(
+  monitors: FeedbackCandidateInput['monitors'],
+): ObservedIncident[] {
+  const latest = new Map<string, ObservedIncident>();
+  for (const monitor of monitors) {
+    for (const incident of monitor.incidents as PRMonitorIncident[]) {
+      const signal = incident.signal;
+      if (signal.kind !== 'feedback' && signal.kind !== 'review') continue;
+      const identity = feedbackIdentityFromUrl(signal.url) ?? {
+        kind: signal.kind === 'review' ? ('review' as const) : ('review-comment' as const),
+        providerId: `node-${signal.key}`,
+      };
+      const key = `${identity.kind}:${identity.providerId}`;
+      const current = latest.get(key);
+      if (!current || current.incident.lastObservedAt <= incident.lastObservedAt) {
+        latest.set(key, { identity, incident, monitor });
+      }
     }
   }
   return [...latest.values()];
@@ -254,12 +256,18 @@ export function annotateFeedbackConsumption(
       ...(entry.commit ? { commit: entry.commit } : {}),
       ...(entry.bodyRevision ? { bodyRevision: entry.bodyRevision } : {}),
     }));
-    // A consumption matches when it recorded this provider revision, or the
-    // same full body (a triage-only re-read of unchanged text is not an edit).
+    // A consumption matches when it recorded this provider revision. The body
+    // hash only stands in for a candidate nobody observed on the provider (a
+    // triage-only re-read of unchanged text is not an edit); once the provider
+    // reports a newer revision, a triage body copied before the edit must not
+    // mask it.
+    const providerObserved = candidate.sources.includes('pr-monitor');
     const revisedSinceConsumed = consumedBy.every(
       (entry) =>
         entry.revision !== candidate.revision &&
-        (candidate.bodyRevision === undefined || entry.bodyRevision !== candidate.bodyRevision),
+        (providerObserved ||
+          candidate.bodyRevision === undefined ||
+          entry.bodyRevision !== candidate.bodyRevision),
     );
     return { ...base, consumedBy, ...(revisedSinceConsumed ? { revisedSinceConsumed: true } : {}) };
   });
@@ -357,12 +365,12 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     repo: target.repository,
     number: target.prNumber,
   });
-  for (const monitor of input.monitors) {
-    if (monitoredPRKey(monitor.config.pr) !== targetKey) continue;
-    const observedHead = monitor.observation?.headSha;
-    for (const { identity, incident } of latestIncidentsByIdentity(
-      monitor.incidents as PRMonitorIncident[],
-    )) {
+  const matchingMonitors = input.monitors.filter(
+    (monitor) => monitoredPRKey(monitor.config.pr) === targetKey,
+  );
+  {
+    for (const { identity, incident, monitor } of latestIncidentsByIdentity(matchingMonitors)) {
+      const observedHead = monitor.observation?.headSha;
       const signal = incident.signal;
       const login = signal.summary.split(':')[0]?.split(' ')[0]?.trim();
       const summary =
@@ -393,7 +401,8 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     // Only a full body is a fingerprint; the provider summary is truncated.
     const bodyRevision = draft.body !== undefined ? sha256(collapse(draft.body)) : undefined;
     const revision = draft.providerRevision ?? bodyRevision ?? sha256(draft.sourceKey);
-    const excerpt = draft.body ?? draft.summaryExcerpt;
+    // The provider summary is current (truncated); a triage body may predate an edit.
+    const excerpt = draft.providerRevision ? (draft.summaryExcerpt ?? draft.body) : draft.body;
     candidates.push({
       id: sha256(draft.sourceKey),
       sourceKey: draft.sourceKey,

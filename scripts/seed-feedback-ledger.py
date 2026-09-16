@@ -11,7 +11,9 @@ Input coverage format (one object per approved rule):
 
 Provider revisions are recomputed from saved GitHub evidence (`--github-dir`, files named
 `<owner>--<repo>--<number>.json` holding the GraphQL pull request) with the same fingerprint the
-gateway's PR monitor uses (`sha256("<updatedAt>:<body>")`) so a later monitor read matches.
+gateway's PR monitor uses (`sha256("<updatedAt>:<body>")`) so a later monitor read matches. A rule
+without that evidence is refused (exit 1, nothing written) unless `--allow-unknown-revision` is
+given, because an unknown revision can never match and would flag the candidate as revised.
 
 Run this while no approval is being recorded through the gateway (it is an offline operator
 step): the gateway serializes its own appends but cannot see this process.
@@ -103,6 +105,11 @@ def main() -> int:
     ap.add_argument("--github-dir", type=Path, help="Saved GitHub GraphQL evidence directory")
     ap.add_argument("--ledger", type=Path, default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--allow-unknown-revision",
+        action="store_true",
+        help="Seed rules whose provider revision cannot be recomputed (their candidates will show as revised until re-observed)",
+    )
     args = ap.parse_args()
 
     coverage = json.loads(args.coverage.read_text())
@@ -116,6 +123,13 @@ def main() -> int:
         source_key = f"github.com/{repo.lower()}#{number}:{kind}:{provider_id}"
         destination = f"{args.repo}:{rule['destination']}"
         revision, body_revision = provider_revision(args.github_dir, repo, number, kind, provider_id)
+        if not revision and not args.allow_unknown_revision:
+            print(
+                f"ERROR: no provider revision evidence for {source_key} ({rule['lesson']}); "
+                "pass --github-dir with the saved comment or --allow-unknown-revision",
+                file=sys.stderr,
+            )
+            return 1
         key = (source_key, destination, rule["lesson"], revision or "unknown-at-seed")
         if key in existing:
             continue
