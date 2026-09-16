@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Retain a digest of the submitted review body so retries can reconcile an uncertain publication.
+
 - Allow terminal requests to target an allocated review run without a slot.
 
 - Expose managed-workspace review support in the native runner catalog.

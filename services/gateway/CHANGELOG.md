@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Publish findings outside PR diff hunks in the review body instead of failing the entire review; keep valid findings inline and preserve retry safety.
+
 - Hold static reviews at the shared publish gate by default, with an explicit automatic-finish override. Support owned tmux worktrees, terminal/progress access and saved diff reads after cleanup.
 
 - Launch static reviews with the selected runner and install frozen review skills into fresh worktrees before startup.
