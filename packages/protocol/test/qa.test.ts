@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { prReviewPurpose, samePRReviewOptions } from '../src/contracts/pr-rules.js';
 import {
   type ProjectQaConfig,
+  qaInputFieldValue,
   resolveReviewQaDispatch,
   selectQaProfile,
   validateQaConfig,
@@ -22,6 +23,62 @@ const config: ProjectQaConfig = {
     { id: 'candidate', title: 'Validate candidate', template_id: 'candidate/validation' },
   ],
 };
+
+test('farm-defined input fields validate defaults, choices and required values at admission', () => {
+  const farm: ProjectQaConfig = {
+    default_profile: 'custom',
+    profiles: [
+      {
+        id: 'custom',
+        title: 'Custom validation',
+        template_id: 'team/check',
+        inputs: { range: { hours: 24 }, enabled: false, target: 'main' },
+        input_fields: [
+          { path: 'range.hours', title: 'Hours', type: 'number', required: true },
+          {
+            path: 'lane',
+            title: 'Proof lane',
+            type: 'select',
+            required: true,
+            options: [{ value: 'source', title: 'Development' }],
+          },
+          { path: 'enabled', title: 'Enabled', type: 'boolean' },
+          { path: 'target', title: 'Target', type: 'text', required: true },
+        ],
+      },
+    ],
+  };
+  assert.doesNotThrow(() => validateQaConfig(farm));
+  assert.throws(() => selectQaProfile(farm), /Proof lane is required/);
+  const selected = selectQaProfile(farm, undefined, { lane: 'source' });
+  assert.equal(qaInputFieldValue(selected.inputs, 'range.hours'), 24);
+  assert.equal(selected.inputs.enabled, false);
+  assert.throws(
+    () => selectQaProfile(farm, undefined, { lane: 'source', target: '  ' }),
+    /Target is required/,
+  );
+  assert.throws(
+    () => selectQaProfile(farm, undefined, { lane: 'unknown' }),
+    /Proof lane has an invalid value/,
+  );
+  assert.throws(
+    () => selectQaProfile(farm, undefined, { lane: 'source', range: { hours: '24' } }),
+    /Hours has an invalid value/,
+  );
+  assert.throws(
+    () =>
+      validateQaConfig({
+        ...farm,
+        profiles: [
+          {
+            ...farm.profiles[0],
+            input_fields: [{ path: '__proto__.value', title: 'Bad', type: 'text' }],
+          },
+        ],
+      }),
+    /path is invalid/,
+  );
+});
 
 test('each farm controls its default and explicit selections stay in that farm', () => {
   assert.equal(selectQaProfile(config).profile.id, 'changes');

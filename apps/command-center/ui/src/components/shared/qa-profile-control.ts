@@ -1,8 +1,10 @@
 import { html, nothing } from 'lit';
 
-import type { ProjectQaConfig } from '@farmslot/protocol';
+import type { ProjectQaConfig, QaInput } from '@farmslot/protocol';
 
 import './choice-picker.js';
+
+import { renderQaInputFields } from './qa-input-fields.js';
 
 /** Shared profile selection for Dispatch, PR requests and automation policies. */
 export function renderQaProfileControl(options: {
@@ -12,6 +14,8 @@ export function renderQaProfileControl(options: {
   disabled?: boolean;
   testId: string;
   change: (id: string) => void;
+  inputs?: Record<string, QaInput>;
+  changeInputs?: (inputs: Record<string, QaInput>) => void;
 }) {
   const { config, testId } = options;
   if (options.projectSelected === false)
@@ -47,5 +51,13 @@ export function renderQaProfileControl(options: {
     </label>
     ${selected?.description
       ? html`<p class="section-help muted">${selected.description}</p>`
+      : nothing}
+    ${options.changeInputs
+      ? renderQaInputFields({
+          profile: selected,
+          inputs: options.inputs,
+          disabled: options.disabled,
+          change: options.changeInputs,
+        })
       : nothing}`;
 }

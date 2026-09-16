@@ -171,6 +171,17 @@ async function main() {
           title: 'Daily changes',
           template_id: 'validation/shared',
           inputs: { window: '24h' },
+          input_fields: [
+            {
+              path: 'window',
+              title: 'Change window',
+              type: 'select',
+              options: [
+                { value: '24h', title: 'Last24 hours' },
+                { value: '48h', title: 'Last48 hours' },
+              ],
+            },
+          ],
         },
       ],
     },
@@ -746,7 +757,19 @@ process.stdout.write(JSON.stringify(body));
       `return find('pr-review-request-form').element.shadowRoot.textContent.includes('QA inputs must be a JSON object');`,
     );
     assert.equal((await connection.call<PRRulesListResult>('prRules.list')).submissions?.length, 2);
-    fill('pr-qa-inputs', '{"window":"48h"}');
+    evaluate(
+      `find('[data-qa-input="window"]').element.shadowRoot.querySelector('.trigger').click();return true;`,
+    );
+    await waitUI(
+      `return Boolean(find('[data-qa-input="window"]').element.shadowRoot.querySelector('[data-choice-value="48h"]'));`,
+    );
+    evaluate(
+      `find('[data-qa-input="window"]').element.shadowRoot.querySelector('[data-choice-value="48h"]').click();return true;`,
+    );
+    assert.deepEqual(
+      JSON.parse(evaluate(`return find('[data-testid="pr-qa-inputs"]').element.value;`)),
+      { window: '48h' },
+    );
 
     await screenshot('farm-qa-profile');
     click(selector('pr-review-request-submit'));

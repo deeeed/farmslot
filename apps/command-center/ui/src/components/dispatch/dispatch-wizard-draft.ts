@@ -207,6 +207,14 @@ export function qaDispatchFields(
   profileId: string,
   rawInputs: string,
 ) {
+  const inputs = parseQaInputOverrides(rawInputs);
+  const selected = selectQaProfile(config, profileId || undefined, inputs);
+  return { qaProfileId: selected.profile.id, qaInputs: selected.inputs };
+}
+
+export function parseQaInputOverrides(
+  rawInputs: string,
+): Record<string, import('@farmslot/protocol').QaInput> {
   let inputs: unknown = {};
   if (rawInputs.trim()) {
     try {
@@ -215,10 +223,7 @@ export function qaDispatchFields(
       throw new Error(`QA inputs must be a JSON object: ${(error as Error).message}`);
     }
   }
-  const selected = selectQaProfile(
-    config,
-    profileId || undefined,
-    inputs as Record<string, import('@farmslot/protocol').QaInput>,
-  );
-  return { qaProfileId: selected.profile.id, qaInputs: selected.inputs };
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs))
+    throw new Error('QA inputs must be a JSON object');
+  return inputs as Record<string, import('@farmslot/protocol').QaInput>;
 }
