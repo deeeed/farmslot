@@ -4,6 +4,7 @@ import { loadSlotVars, poolDir } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { runnerSupportsReadonlyReviewWorkspace } from '../runners/native/review-workspace.js';
 import {
   DEFAULT_COPILOT_RUNNER,
   KNOWN_RUNNERS,
@@ -64,6 +65,10 @@ export async function nativeCatalog(
                 defaultModel: definition.defaultModel ?? '',
                 supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
                 supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
+                supportsWorkspaceReviews:
+                  allowWorkers &&
+                  runnerSupportsNativeTaskReuse(definition.id) &&
+                  runnerSupportsReadonlyReviewWorkspace(definition.id),
                 ...definition.nativeChoices,
               },
             ]

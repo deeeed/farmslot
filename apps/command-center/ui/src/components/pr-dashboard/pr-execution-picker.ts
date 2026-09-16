@@ -5,6 +5,9 @@ import {
   DEFAULT_CODEX_EFFORT,
   DEFAULT_CODEX_MODEL,
   isPRWorkspaceExecutionProfile,
+  Methods,
+  type NativeRunnerOption,
+  type NativeSessionCatalogResult,
   type PoolConfig,
   type PRExecutionProfile,
   type PRSlotExecutionProfile,
@@ -15,6 +18,7 @@ import {
 import '../shared/runner-model-effort-picker.js';
 import '../shared/slot-selector-modal.js';
 
+import { gateway } from '../../gateway-client.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
 import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
@@ -46,6 +50,41 @@ export class PRExecutionPicker extends LitElement {
   @property({ type: Boolean }) allProjects = false;
   @property({ type: Boolean }) disabled = false;
   @state() private picker: 'allowed' | number | undefined;
+  @state() private workspaceRunners?: NativeRunnerOption[];
+  @state() private workspaceRunnerError = '';
+  private disconnectCatalog?: () => void;
+  private catalogGeneration = 0;
+  connectedCallback() {
+    super.connectedCallback();
+    if (gateway.connectionState === 'connected') void this.loadWorkspaceRunners();
+    this.disconnectCatalog = gateway.onConnectionChange((state) => {
+      this.workspaceRunners = undefined;
+      this.workspaceRunnerError = '';
+      this.catalogGeneration++;
+      if (state === 'connected') void this.loadWorkspaceRunners();
+    });
+  }
+  disconnectedCallback() {
+    this.disconnectCatalog?.();
+    this.catalogGeneration++;
+    super.disconnectedCallback();
+  }
+  private async loadWorkspaceRunners() {
+    const generation = ++this.catalogGeneration;
+    try {
+      const catalog = await gateway.request<NativeSessionCatalogResult>(
+        Methods.NATIVE_SESSION_CATALOG,
+        {},
+      );
+      if (!this.isConnected || generation !== this.catalogGeneration) return;
+      this.workspaceRunners = catalog.runners.filter((runner) => runner.supportsWorkspaceReviews);
+      this.workspaceRunnerError = '';
+    } catch (error) {
+      if (this.isConnected && generation === this.catalogGeneration)
+        this.workspaceRunnerError = `Review runner choices unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
   static styles = prAutomationStyles;
 
   private change(value: PRExecutionProfile) {
@@ -189,13 +228,21 @@ export class PRExecutionPicker extends LitElement {
         <p class="muted">
           Static review runs in an isolated workspace. Device slots remain available.
         </p>
+        ${this.workspaceRunnerError
+          ? html`<p class="attention">${this.workspaceRunnerError}</p>`
+          : this.workspaceRunners === undefined
+            ? html`<p class="muted" role="status">Loading supported review runners…</p>`
+            : !this.workspaceRunners.length
+              ? html`<p class="attention">No managed review runners are available.</p>`
+              : nothing}
         ${this.value.models.map(
           (model, index) =>
             html`<runner-model-effort-picker
+              .catalog=${this.workspaceRunners}
               .runner=${model.runner}
               .model=${model.model}
               .effort=${(model.effort ?? '') as EffortLevel}
-              .disabled=${this.disabled}
+              .disabled=${this.disabled || this.workspaceRunners === undefined}
               @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) =>
                 this.change({
                   ...this.value,

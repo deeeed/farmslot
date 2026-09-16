@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit';
 
+import type { NativeRunnerOption } from '@farmslot/protocol';
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
@@ -51,6 +52,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   model: string;
   effort: EffortLevel;
   workflowControls: unknown;
+  reviewRunnerCatalog?: NativeRunnerOption[];
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -76,57 +78,61 @@ export function renderDispatchWizardPrimaryControls(
   return html`
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
-    ${ctx.workflowControls} ${renderRunnerModelConfig(ctx)}
-    ${ctx.flowType === 'review-pr'
-      ? nothing
-      : html`<div>
-            <div
-              class="section-label"
-              id="worker-interface-label"
-              title=${DISPATCH_HELP.interface.text}
-            >
-              Worker interface
-            </div>
-            <div
-              class="pill-row"
-              role="group"
-              aria-labelledby="worker-interface-label"
-              data-testid="dispatch-transport"
-            >
-              <button
-                type="button"
-                class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
-                data-transport="tmux"
-                aria-pressed=${ctx.transport === 'tmux'}
-                @click=${() => ctx.setTransport('tmux')}
+    ${ctx.workflowControls}
+    <details class="config-group" data-testid="dispatch-execution-options">
+      <summary>Execution options · ${ctx.runner} / ${ctx.model}</summary>
+      ${renderRunnerModelConfig(ctx)}
+      ${ctx.flowType === 'review-pr'
+        ? nothing
+        : html`<div>
+              <div
+                class="section-label"
+                id="worker-interface-label"
+                title=${DISPATCH_HELP.interface.text}
               >
-                Terminal
-              </button>
-              <button
-                type="button"
-                class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
-                data-transport="native"
-                aria-pressed=${ctx.transport === 'native'}
-                ?disabled=${!ctx.nativeWorkerAvailable}
-                title=${ctx.nativeWorkerAvailable
-                  ? 'Messages, tools and approvals in Farmslot'
-                  : 'Native workers are unavailable for this runner'}
-                @click=${() => ctx.setTransport('native')}
+                Worker interface
+              </div>
+              <div
+                class="pill-row"
+                role="group"
+                aria-labelledby="worker-interface-label"
+                data-testid="dispatch-transport"
               >
-                Conversation
-              </button>
+                <button
+                  type="button"
+                  class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
+                  data-transport="tmux"
+                  aria-pressed=${ctx.transport === 'tmux'}
+                  @click=${() => ctx.setTransport('tmux')}
+                >
+                  Terminal
+                </button>
+                <button
+                  type="button"
+                  class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
+                  data-transport="native"
+                  aria-pressed=${ctx.transport === 'native'}
+                  ?disabled=${!ctx.nativeWorkerAvailable}
+                  title=${ctx.nativeWorkerAvailable
+                    ? 'Messages, tools and approvals in Farmslot'
+                    : 'Native workers are unavailable for this runner'}
+                  @click=${() => ctx.setTransport('native')}
+                >
+                  Conversation
+                </button>
+              </div>
             </div>
-          </div>
-          ${ctx.nativeCatalogError
-            ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
-            : nothing}
-          ${ctx.transport === 'native'
-            ? html`<p class="section-help" data-testid="dispatch-interface-help">
-                Messages, tools and approvals appear in Farmslot. The selected runner keeps its own
-                login and model.
-              </p>`
-            : nothing}
-          ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
+            ${ctx.nativeCatalogError
+              ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
+              : nothing}
+            ${ctx.transport === 'native'
+              ? html`<p class="section-help" data-testid="dispatch-interface-help">
+                  Messages, tools and approvals appear in Farmslot. The selected runner keeps its
+                  own login and model.
+                </p>`
+              : nothing}
+            ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
+    </details>
     ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
   `;
 }
@@ -243,6 +249,7 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <runner-model-effort-picker
+      .catalog=${ctx.reviewRunnerCatalog}
       .runner=${ctx.runner}
       .model=${ctx.model}
       .effort=${ctx.effort}

@@ -205,6 +205,8 @@ export interface NativeRunnerOption {
   supportsWorkers?: boolean;
   /** Queued creation preserves the authenticated profile owner and transport. */
   supportsQueuedWorkers?: boolean;
+  /** Managed static reviews enforce a read-only checkout without leasing an app slot. */
+  supportsWorkspaceReviews?: boolean;
 }
 export interface NativeSessionCatalogResult {
   runners: NativeRunnerOption[];
