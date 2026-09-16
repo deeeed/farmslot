@@ -1654,6 +1654,9 @@ async function resolveRunDecision(
     releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
     if (params.actionId === 'landed') {
       try {
+        // A dismiss that won the lock during the import above already resolved
+        // the card; recheck before anything reaches the ledger.
+        assertDecisionStillUnresolved(params.runId, params.decisionId);
         await recordLearningsDraftLanded(existing, decision);
         assertDecisionStillUnresolved(params.runId, params.decisionId);
       } catch (err) {

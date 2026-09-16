@@ -386,6 +386,23 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   assert.equal(again.holds.length, 1);
   // The hold names the most recent consumption of that lesson (the multi-draft card).
   assert.match(again.holds[0]!.reason, /already recorded in .* as "second-draft"/);
+  // The same lesson text for a project whose library is a different repo is not held.
+  writeFileSync(
+    path.join(TEST_PROJECT_DIR, 'project.json'),
+    `${JSON.stringify({
+      name: TEST_PROJECT,
+      vars: {
+        knowledge_destination: {
+          repo: 'git@github.com:example/other-library.git',
+          path: 'review/antipatterns.md',
+        },
+      },
+    })}\n`,
+  );
+  invalidateProjectVarsCache(TEST_PROJECT);
+  const elsewhere = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
+  assert.equal(elsewhere.drafts.length, 1);
+  assert.equal(elsewhere.holds.length, 0);
 });
 
 test('a card with no destination never offers the landed action and refuses to record', async (t) => {

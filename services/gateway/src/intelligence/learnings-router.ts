@@ -549,11 +549,17 @@ export async function routeLearnings(project: string, learnings: string): Promis
         });
       }
     } else {
-      // Lessons already landed in the canonical library are held, not re-drafted.
+      // Lessons already landed in THIS project's canonical library are held,
+      // not re-drafted; the ledger is machine-wide, so a lesson landed in
+      // another project's library does not count.
       const landed = consumptionsBySourceKey(await readFeedbackLedger());
+      const destinationKey = knowledgeDestinationKey(destination);
       const pending: LearningsEntry[] = [];
       for (const entry of buckets.domain) {
-        const prior = landed.get(learningEntryKey(entry.text))?.at(-1);
+        const prior = landed
+          .get(learningEntryKey(entry.text))
+          ?.filter((item) => item.destination === destinationKey)
+          .at(-1);
         if (prior) {
           holds.push({
             entry: entry.text,

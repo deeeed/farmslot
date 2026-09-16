@@ -183,8 +183,6 @@ interface Draft {
   reviewedCommit?: string;
   observedHead?: string;
   providerRevision?: string;
-  /** Completion time of the run whose triage supplied `body`. */
-  bodyObservedAt?: string;
   /** Time of the provider observation that supplied `providerRevision`. */
   providerObservedAt?: string;
   resolution: FeedbackCandidate['resolution'];
@@ -194,13 +192,15 @@ interface Draft {
 
 /**
  * A triage body is a usable fingerprint only when it demonstrably matches the
- * comment as the provider last saw it: the triage was captured after that
- * observation, or the whole body fits inside the provider summary and equals it.
+ * comment as the provider last saw it: nobody has observed the comment on the
+ * provider yet, or the whole body fits inside the provider summary and equals
+ * it. Run timestamps are not evidence — a comment can be edited between triage
+ * capture and run completion — so a long body observed on the provider can
+ * only be proven current by the provider itself (it re-enters curation once).
  */
 function bodyIsCurrent(draft: Draft): boolean {
   if (draft.body === undefined) return false;
   if (!draft.providerObservedAt) return true;
-  if (draft.bodyObservedAt && draft.bodyObservedAt >= draft.providerObservedAt) return true;
   const trimmed = draft.body.trim();
   return trimmed.length <= 180 && draft.summaryExcerpt === trimmed;
 }
@@ -328,7 +328,6 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       existing.providerObservedAt = init.providerObservedAt ?? existing.providerObservedAt;
     } else if (init.body !== undefined) {
       existing.body = init.body;
-      existing.bodyObservedAt = init.bodyObservedAt;
     }
     existing.url ??= init.url;
     existing.observedHead ??= init.observedHead;
@@ -371,9 +370,6 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       )
       .map((run, index) => [run.id, index] as const),
   );
-  const runCompletedAt = new Map(
-    input.familyRuns.map((run) => [run.id, run.completedAt ?? run.updatedAt] as const),
-  );
   const orderedTriage = [...input.triage].sort(
     (a, b) =>
       (runOrder.get(a.runId) ?? Number.MAX_SAFE_INTEGER) -
@@ -396,7 +392,6 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
           ...(entry.triage ? { triage: entry.triage } : {}),
           ...(fixed ? { fixedInCommit: entry.fixed_in_commit!.trim() } : {}),
         },
-        bodyObservedAt: runCompletedAt.get(runId),
         runIds: [runId],
         source: 'comments-triage',
       });

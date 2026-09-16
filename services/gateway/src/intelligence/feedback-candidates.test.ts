@@ -702,12 +702,14 @@ test('a provider fingerprint appearing after a triage-only consumption does not 
   assert.equal(unchanged!.bodyRevision, sha256(body));
   assert.equal(unchanged!.revisedSinceConsumed, undefined);
 
-  // A long body captured before the provider observation cannot be proven current: it
+  // A long body can only be proven current by the provider, whatever the run timestamps
+  // say (a comment may be edited between triage capture and run completion): it
   // re-enters curation rather than risking a silent drop.
   const longBody = `${body} ${'x'.repeat(200)}`;
+  const completedLater = makeRun({ ...triagedRun, completedAt: '2026-09-09T00:00:00.000Z' });
   const [unproven] = buildFeedbackCandidates({
     target: TARGET,
-    familyRuns: family(triagedRun),
+    familyRuns: family(completedLater),
     triage: [{ runId: 'root', entries: [{ ...HUMAN_TRIAGE, body: longBody }] }],
     monitors: [
       monitor([
