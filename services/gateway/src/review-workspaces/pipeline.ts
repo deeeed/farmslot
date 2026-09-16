@@ -31,7 +31,7 @@ import {
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
-import { configureWorkspaceContinuity } from './continuity.js';
+import { compatibleWorkspaceReviewer, configureWorkspaceContinuity } from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
 import { ensureReviewWorkspaceSupport } from './support.js';
 import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
@@ -160,14 +160,8 @@ async function freezeSubject(
     const resumeRequested =
       (run.prWork?.review?.options.sessionIntent ??
         (run.reviewScope === 'incremental' ? 'resume' : 'reset')) === 'resume';
-    if (
-      resumeRequested &&
-      prior?.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
-      prior.nativeOwnerPrincipalId === run.nativeOwnerPrincipalId &&
-      prior.createdByPrincipalId === run.createdByPrincipalId &&
-      prior.metrics.runner === run.metrics.runner &&
-      prior.metrics.model === run.metrics.model
-    ) {
+    if (resumeRequested && compatibleWorkspaceReviewer(run, prior)) {
+      // Fill only the missing session identity on the saved prior run; its result stays immutable.
       await recoverReviewTmuxSession(prior, () => {
         currentWorkspaceRun(runId, generation);
       });
