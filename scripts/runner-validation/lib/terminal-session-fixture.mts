@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import type { GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
+import { GatewayClient, type GatewayConnection } from '../../../packages/cli/src/gateway-client.js';
 import type {
   TmuxWorkerListResult,
   TmuxWorkerSummary,
@@ -117,6 +117,31 @@ export async function terminalSessionFixture(input: {
     await writeFile(path.join(evidence, 'session-inventory.json'), JSON.stringify(workers));
     assert(worker?.canEndSession && worker.pid, 'Isolated unmanaged session was not discovered');
     assert(protectedWorker && !protectedWorker.canEndSession);
+    const operator = await connection.call<{ principal: { id: string } }>('principal.create', {
+      subject: { type: 'service', displayName: 'Terminal operator fixture' },
+      roles: [{ role: 'operator', scope: { kind: 'global' } }],
+    });
+    const operatorCredential = await connection.call<{ secret: string }>('credential.issue', {
+      principalId: operator.principal.id,
+      displayName: 'Fixture operator',
+    });
+    const operatorConnection = await new GatewayClient({
+      url: `ws://127.0.0.1:${port}`,
+      credential: { token: operatorCredential.secret },
+      timeout: 30_000,
+    }).connect();
+    try {
+      await assert.rejects(
+        operatorConnection.call('tmux.worker.endSession', {
+          worker: worker.ref,
+          expectedPid: worker.pid,
+        }),
+        /admin|forbidden|permission/i,
+      );
+      tmux('has-session', '-t', '=' + session);
+    } finally {
+      operatorConnection.close();
+    }
     await assert.rejects(
       connection.call('tmux.worker.endSession', {
         worker: protectedWorker.ref,

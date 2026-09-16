@@ -638,7 +638,23 @@ async function openReviewUi(route: string) {
         timeout: 30000,
       },
     ).trim();
-  await delay(2000);
+  const uiReadyBy = Date.now() + 30_000;
+  for (;;) {
+    if (terminalUi.exitCode !== null) throw new Error('Fixture UI exited before readiness');
+    try {
+      const response = await fetch(`http://127.0.0.1:${uiPort}/`);
+      if (!response.ok) throw new Error(`Fixture UI returned HTTP ${response.status}`);
+      break;
+    } catch (error) {
+      // Connection refusal is expected while Vite starts on its isolated port.
+      if (
+        (error as { cause?: { code?: string } }).cause?.code !== 'ECONNREFUSED' ||
+        Date.now() >= uiReadyBy
+      )
+        throw error;
+      await delay(100);
+    }
+  }
   cdp('goto', `http://127.0.0.1:${uiPort}/#${route}`, '--new');
   cdp('login', route);
   const walk = `function find(selector,root=document){const e=root.querySelector(selector);if(e)return e;for(const child of root.querySelectorAll('*'))if(child.shadowRoot){const e=find(selector,child.shadowRoot);if(e)return e;}}`;

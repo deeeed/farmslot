@@ -182,6 +182,7 @@ export class GatewayClient {
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
   private principalId: string | null = null;
+  private adminRole = false;
   private access: 'farm' | 'native' | 'none' = 'none';
   private reqId = 0;
   private pending = new Map<string, PendingRequest>();
@@ -228,6 +229,10 @@ export class GatewayClient {
 
   get authenticatedPrincipalId(): string | null {
     return this.state === 'connected' ? this.principalId : null;
+  }
+
+  get isGlobalAdmin(): boolean {
+    return this.state === 'connected' && this.adminRole;
   }
 
   get workspaceAccess(): 'farm' | 'native' | 'none' {
@@ -390,6 +395,10 @@ export class GatewayClient {
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
     this.principalId = result.principal?.id ?? null;
+    this.adminRole =
+      result.principal?.roles.some(
+        ({ role, scope }) => role === 'admin' && scope.kind === 'global',
+      ) ?? false;
     this.access = workspaceAccessFromAuth(result);
     this.epoch += 1;
     this.backoff = 1000;

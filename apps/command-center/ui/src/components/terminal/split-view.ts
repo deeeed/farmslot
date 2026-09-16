@@ -941,7 +941,8 @@ export class TerminalSplitView extends LitElement {
   }
 
   private async _endSession(worker: TmuxWorkerSummary) {
-    if (!worker.canEndSession || !worker.pid || this._endingSession) return;
+    if (!gateway.isGlobalAdmin || !worker.canEndSession || !worker.pid || this._endingSession)
+      return;
     if (
       !window.confirm(
         `End tmux session "${worker.ref.session}" on ${worker.ref.nodeId}?\n\nEvery pane and any programs running in this session will stop.`,
@@ -1008,15 +1009,23 @@ export class TerminalSplitView extends LitElement {
           ? html`<workspace-pin .slotId=${worker.linkedSlotId}></workspace-pin
               ><a class="worker-chip-btn" href=${`#slot/${worker.linkedSlotId}`}>Workspace</a>`
           : worker?.linkedRunId
-            ? html`<workspace-pin .runId=${worker.linkedRunId}></workspace-pin
+            ? html`<workspace-pin
+                  .runId=${worker.linkedRunId}
+                  .label=${this._runs.find((run) => run.id === worker.linkedRunId)?.ticketOrPr ??
+                  ''}
+                ></workspace-pin
                 ><a class="worker-chip-btn" href=${`#run/${worker.linkedRunId}`}>Workspace</a>`
             : html`<button
                 class="worker-chip-btn danger"
                 data-end-session=${ref.session}
-                ?disabled=${!worker?.canEndSession || Boolean(this._endingSession)}
-                title=${worker?.canEndSession
-                  ? 'Stop every pane in this session'
-                  : 'Session termination requires current inventory from an updated gateway'}
+                ?disabled=${!gateway.isGlobalAdmin ||
+                !worker?.canEndSession ||
+                Boolean(this._endingSession)}
+                title=${!gateway.isGlobalAdmin
+                  ? 'Only a farm administrator can end sessions'
+                  : worker?.canEndSession
+                    ? 'Stop every pane in this session'
+                    : 'Session termination requires current inventory from an updated gateway'}
                 @click=${() => worker && this._endSession(worker)}
               >
                 ${ending ? 'Ending…' : 'End session'}
