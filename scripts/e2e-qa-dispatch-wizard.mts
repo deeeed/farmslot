@@ -81,7 +81,11 @@ const sourceSnapshot = async () => {
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
     .sort()
     .map((name) => `${directory}/${name}`);
-  files.push('scripts/e2e-qa-dispatch-wizard.mts');
+  files.push(
+    'scripts/e2e-qa-dispatch-wizard.mts',
+    'apps/command-center/ui/src/components/shared/qa-input-fields.ts',
+    'apps/command-center/ui/src/components/shared/qa-profile-control.ts',
+  );
   return Promise.all(
     files.map(async (file) => ({
       path: file,
@@ -135,6 +139,9 @@ try {
       ci: { repo: `example/${name}` },
       execution_templates: {
         sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
+        defaults: [
+          { when: { flow: 'validation', domain: 'payments' }, templateId: 'validation/shared' },
+        ],
       },
       static_review: { template_id: 'review-pr/shared' },
       qa: {
@@ -153,6 +160,36 @@ try {
             description: 'Validate changes from the previous day.',
             template_id: 'validation/shared',
             inputs: { window: '24h', smoke: true },
+            input_fields: [
+              {
+                path: 'window',
+                title: 'Change window',
+                type: 'select',
+                options: [
+                  { value: '24h', title: 'Last24 hours' },
+                  { value: '48h', title: 'Last48 hours' },
+                ],
+              },
+            ],
+          },
+          {
+            id: 'release',
+            title: 'Release validation',
+            description: 'Validate a chosen release scope and proof lane.',
+            template_id: 'validation/shared',
+            input_fields: [
+              { path: 'scope', title: 'Scope', type: 'text', required: true },
+              {
+                path: 'lane',
+                title: 'Proof lane',
+                type: 'select',
+                required: true,
+                options: [
+                  { value: 'source', title: 'Development build' },
+                  { value: 'official', title: 'Official artifact' },
+                ],
+              },
+            ],
           },
         ],
       },
@@ -617,6 +654,49 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('existing-dev-controls');
   checkpoints.push('qa-return-and-existing-dev-controls');
+  await navigate('#dispatch?flow=qa&project=wizard-farm&ticket=changes-since-yesterday');
+  await waitUI(`return Boolean(find('[data-testid="dispatch-qa-domain"]'));`);
+  await choose('dispatch-qa-domain', 'payments');
+  const chooseField = async (field: string, value: string) => {
+    const selector = `[data-qa-input="${field}"]`;
+    evaluate(
+      `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('.trigger').click();return true;`,
+    );
+    await waitUI(
+      `return Boolean(find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]'));`,
+    );
+    evaluate(
+      `find(${JSON.stringify(selector)}).element.shadowRoot.querySelector('[data-choice-value="${value}"]').click();return true;`,
+    );
+  };
+  await chooseField('window', '48h');
+  let count = (await queue()).length;
+  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+  click('dispatch-queue');
+  let actionItems = await waitQueue(count + 1);
+  const daily = actionItems.at(-1)!;
+  assert.equal(daily.domain, 'payments');
+  assert.equal(daily.qaInputs?.window, '48h');
+  assert.equal(daily.ticketOrPr, 'changes-since-yesterday');
+  await choose('dispatch-qa-profile', 'release');
+  fill('dispatch-ticket', 'release/1.2.3');
+  await waitUI(`return find('[data-testid="dispatch-queue"]').element.disabled;`);
+  const scopeControl = evaluate(`return find('[data-qa-input="scope"]').path;`);
+  cdp('fill', activeRoute, scopeControl, 'payments');
+  await chooseField('lane', 'source');
+  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+  screenshot('qa-release-inputs');
+  count = (await queue()).length;
+  click('dispatch-queue');
+  actionItems = await waitQueue(count + 1);
+  const release = actionItems.at(-1)!;
+  assert.equal(release.qaProfileId, 'release');
+  assert.equal(release.ticketOrPr, 'release/1.2.3');
+  assert.equal(release.domain, 'payments');
+  assert.deepEqual(release.qaInputs, { scope: 'payments', lane: 'source' });
+  await json(path.join(evidence, 'qa-dynamic-actions.json'), { daily, release });
+  checkpoints.push('farm-fields-domain-and-non-pr-qa-actions');
+
   await noExecution();
   await json(path.join(evidence, 'queue.json'), {
     observedItems: await queue(),

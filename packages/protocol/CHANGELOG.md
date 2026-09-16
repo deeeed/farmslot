@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow lightweight farm-owned QA input field declarations with admission validation.
+
 - Expose explicit tmux session termination with an inventory capability and expected process identity.
 - Retain a digest of the submitted review body so retries can reconcile an uncertain publication.
 
