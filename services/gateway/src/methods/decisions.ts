@@ -52,7 +52,8 @@ export async function decisionList(): Promise<DecisionListResult> {
           : d.payload;
       // Stored retrospectives froze their feedback consumption state; a rule
       // landed since must show as consumed.
-      if (payload?.kind === 'retrospective') payload = await refreshRetrospectiveFeedback(payload);
+      if (payload?.kind === 'retrospective')
+        payload = await refreshRetrospectiveFeedback(payload, enrichedRun);
       runDecisions.push(pendingDecisionForRun(run, d, payload));
     }
   }

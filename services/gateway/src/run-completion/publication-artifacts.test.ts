@@ -18,17 +18,20 @@ test('scanArtifacts excludes internal launch artifacts from reviewable manifests
     await writeFile(path.join(taskDir, 'artifacts/report.md'), 'ok');
     await writeFile(path.join(taskDir, 'artifacts/recipe-run/after.png'), 'png');
     await writeFile(path.join(taskDir, 'artifacts/harness-launch/summary.json'), '{}');
-    await writeFile(path.join(taskDir, 'artifacts/runtime-launch/chrome-profile/Local State'), '{}');
+    await writeFile(
+      path.join(taskDir, 'artifacts/runtime-launch/chrome-profile/Local State'),
+      '{}',
+    );
     await writeFile(path.join(taskDir, 'artifacts/runtime-launch/runtime-dist/app.js'), 'bundle');
     await writeFile(path.join(taskDir, 'artifacts/runtime-relaunch/runtime-dist/app.js'), 'bundle');
     await writeFile(path.join(taskDir, 'artifacts/runner-blockers/self-review-launch.txt'), 'pane');
 
     const artifacts = await scanArtifacts(taskDir);
 
-    assert.deepEqual(
-      artifacts.map((artifact) => artifact.path).sort(),
-      ['artifacts/recipe-run/after.png', 'artifacts/report.md'],
-    );
+    assert.deepEqual(artifacts.map((artifact) => artifact.path).sort(), [
+      'artifacts/recipe-run/after.png',
+      'artifacts/report.md',
+    ]);
   } finally {
     await rm(taskDir, { recursive: true, force: true });
   }

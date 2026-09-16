@@ -120,7 +120,7 @@ export async function unconsumedRetrospectiveFeedback(run: Run): Promise<Feedbac
   const stored = retrospective.payload;
   const payload =
     stored?.kind === 'retrospective' ? stored : await buildRetrospectivePayload(run, null);
-  const refreshed = await refreshRetrospectiveFeedback(payload);
+  const refreshed = await refreshRetrospectiveFeedback(payload, run);
   return unconsumedHumanFeedback(refreshed.feedbackCandidates ?? []);
 }
 

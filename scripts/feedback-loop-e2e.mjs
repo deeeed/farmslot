@@ -287,6 +287,22 @@ function seedRuns() {
       familyId: 'e2e-draft-run',
       decisions: [draftDecision('e2e-draft-decision', true)],
     }),
+    baseRun('e2e-legacy-run', {
+      familyId: 'e2e-legacy-run',
+      taskFile: path.join(retroTask, 'TASK.md'),
+      decisions: [
+        {
+          ...retroDecision('e2e-legacy-decision'),
+          // Persisted before feedback capture existed: a payload with no candidates at all.
+          payload: {
+            kind: 'retrospective',
+            outcome: 'success',
+            whatThisIs: 'legacy',
+            actionEffects: [],
+          },
+        },
+      ],
+    }),
     baseRun('e2e-race-run', {
       familyId: 'e2e-race-run',
       // A distinct rule so its consumption is not deduplicated against the first card's.
@@ -453,6 +469,19 @@ async function main() {
       payload?.feedbackSummary?.human === 1 && payload?.feedbackSummary?.bot === 1,
       'summary counts by author kind',
       payload?.feedbackSummary,
+    );
+
+    const legacy = await rpc(gatewayUrl, 'family.observability.get', {
+      familyId: 'e2e-legacy-run',
+      project: PROJECT,
+    });
+    const legacyPayload = legacy?.snapshot?.runs?.[0]?.decisions?.find(
+      (d) => d.id === 'e2e-legacy-decision',
+    )?.payload;
+    check(
+      legacyPayload?.feedbackCandidates?.length === 2,
+      'a stored payload without candidates is backfilled from the run',
+      legacyPayload?.feedbackSummary,
     );
 
     console.log(

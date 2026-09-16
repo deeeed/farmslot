@@ -19,7 +19,8 @@ import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
 import {
   collectFeedbackCandidates,
-  githubRepositorySlugFromUrl,
+  familyRunsFor,
+  projectRepositoryFor,
 } from '../intelligence/feedback-candidates.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
@@ -535,28 +536,6 @@ export function inferRetrospectiveOutcome(
   if (!hasIncompleteStep) return 'success';
 
   return 'unknown';
-}
-
-function familyRunsFor(run: Run): Run[] {
-  const family = getFamilyRuns(run, getAllRuns());
-  return uniqueRuns([
-    run,
-    family.rootRun,
-    ...(family.parentRun ? [family.parentRun] : []),
-    ...family.otherFamilyRuns,
-  ]);
-}
-
-async function projectRepositoryFor(project: string): Promise<string | null> {
-  const vars = await loadProjectVars(project).catch((err: Error) => {
-    // A run whose project config is gone (deleted farm, renamed project) still
-    // gets a retrospective; the PR is then keyed from `ticketOrPr` only.
-    console.warn(`[run-completion] loadProjectVars(${project}) failed: ${err.message}`);
-    return null;
-  });
-  return githubRepositorySlugFromUrl(
-    (vars?.projectJson as { repo_url?: string } | undefined)?.repo_url,
-  );
 }
 
 export async function buildRetrospectivePayload(

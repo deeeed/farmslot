@@ -638,7 +638,9 @@ export async function emitLearningsDraftDecision(
   const receipt: LearningsDraftReceipt | undefined =
     routed.drafts.length > 0 ? await appendProcessedReceipt(run, decisionId) : undefined;
 
-  const feedbackCandidates = (options.feedbackCandidates ?? []).slice(0, 40);
+  // Every unconsumed candidate rides along (bounded upstream by the retrospective
+  // cap) so landing the card can record all of them.
+  const feedbackCandidates = options.feedbackCandidates ?? [];
   const payload: LearningsDraftPayload = {
     kind: 'learnings-draft',
     project: run.project,

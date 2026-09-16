@@ -768,3 +768,52 @@ test('a later triage that reopens an edited comment resets the resolution', () =
   assert.deepEqual(candidate!.resolution, { state: 'open', triage: 'REAL' });
   assert.match(candidate!.excerpt ?? '', /still broken/);
 });
+
+test('a triage fix on a comment the reviewer has since rewritten becomes unknown, keeping the commit', () => {
+  const fixedTriage = { ...HUMAN_TRIAGE, fixed_in_commit: 'abc123' };
+  const rewritten = monitor([
+    incident({
+      lastObservedAt: '2026-09-05T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-2',
+        summary: 'reviewer-a: Still broken after abc123, MAX is ignored.',
+        url: URL,
+      },
+    }),
+  ]);
+  const [edited] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [fixedTriage] }],
+    monitors: [rewritten],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.deepEqual(edited!.resolution, {
+    state: 'unknown',
+    triage: 'REAL',
+    fixedInCommit: 'abc123',
+  });
+
+  const unchanged = monitor([
+    incident({
+      lastObservedAt: '2026-09-05T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-1',
+        summary: `reviewer-a: ${HUMAN_TRIAGE.body}`,
+        url: URL,
+      },
+    }),
+  ]);
+  const [same] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [fixedTriage] }],
+    monitors: [unchanged],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(same!.resolution.state, 'fixed');
+});

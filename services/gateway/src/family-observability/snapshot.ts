@@ -666,10 +666,10 @@ async function buildRunSummary(
       } else if (payload?.kind === 'retrospective') {
         // Same rebuild for feedback consumption: the ledger, not the frozen
         // payload, says which candidates a landed rule already absorbed.
-        payload = await refreshRetrospectiveFeedback({
-          ...payload,
-          gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review),
-        });
+        payload = await refreshRetrospectiveFeedback(
+          { ...payload, gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review) },
+          run,
+        );
       }
       return payload === decision.payload ? decision : { ...decision, payload };
     }),

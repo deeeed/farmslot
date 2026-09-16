@@ -25,11 +25,14 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { loadProjectVars } from '../core/config.js';
+import { getFamilyRuns } from '../family-observability/context.js';
 import {
   type CommentsTriageEntry,
   normalizeCommentSource,
   readCommentsTriageEntries,
 } from '../run-completion/retrospective.js';
+import { getAllRuns } from '../runs/store.js';
 
 import {
   consumptionsBySourceKey,
@@ -185,6 +188,8 @@ interface Draft {
   providerRevision?: string;
   /** Time of the provider observation that supplied `providerRevision`. */
   providerObservedAt?: string;
+  /** Thread state as the provider last reported it. */
+  providerState?: FeedbackCandidate['resolution']['state'];
   resolution: FeedbackCandidate['resolution'];
   runIds: Set<string>;
   sources: Set<FeedbackCandidate['sources'][number]>;
@@ -326,6 +331,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     if (fromProvider) {
       existing.body ??= init.body;
       existing.providerObservedAt = init.providerObservedAt ?? existing.providerObservedAt;
+      existing.providerState = init.providerState ?? existing.providerState;
     } else if (init.body !== undefined) {
       existing.body = init.body;
     }
@@ -429,6 +435,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
           state: incident.handledAt ? 'fixed' : incident.resolvedAt ? 'resolved' : 'open',
         },
         providerObservedAt: incident.lastObservedAt,
+        providerState: incident.handledAt ? 'fixed' : incident.resolvedAt ? 'resolved' : 'open',
         runIds: [...(monitor.originatingRunIds ?? []), ...(incident.runId ? [incident.runId] : [])],
         source: 'pr-monitor',
       });
@@ -439,6 +446,21 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
   for (const draft of drafts.values()) {
     // Only a full body is a fingerprint; the provider summary is truncated.
     const bodyRevision = bodyIsCurrent(draft) ? sha256(collapse(draft.body!)) : undefined;
+    // A triage fix applies to the comment the worker read. When the provider
+    // still reports the thread open and its current text no longer starts the
+    // way that comment did, the reviewer edited it (typically to say the fix
+    // fell short): the fix is no longer known to apply, so the state becomes
+    // `unknown` while the recorded commit stays visible.
+    let resolution = draft.resolution;
+    if (
+      resolution.state === 'fixed' &&
+      draft.providerState === 'open' &&
+      draft.summaryExcerpt !== undefined &&
+      draft.body !== undefined &&
+      draft.body.trim().slice(0, 180).trim() !== draft.summaryExcerpt
+    ) {
+      resolution = { ...resolution, state: 'unknown' };
+    }
     const revision = draft.providerRevision ?? bodyRevision ?? sha256(draft.sourceKey);
     // The provider summary is current (truncated); a triage body may predate an edit.
     const excerpt = draft.providerRevision ? (draft.summaryExcerpt ?? draft.body) : draft.body;
@@ -460,7 +482,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       ...(draft.url ? { url: draft.url } : {}),
       ...(draft.reviewedCommit ? { reviewedCommit: draft.reviewedCommit } : {}),
       ...(draft.observedHead ? { observedHead: draft.observedHead } : {}),
-      resolution: draft.resolution,
+      resolution,
       runIds: [...draft.runIds].sort(),
       ...(familyId ? { familyId } : {}),
       familyChangeRunIds: attribution.familyChangeRunIds,
@@ -509,14 +531,52 @@ export function unconsumedHumanFeedback(candidates: FeedbackCandidate[]): Feedba
   );
 }
 
+/** Every run in the family, the run itself first. */
+export function familyRunsFor(run: Run): Run[] {
+  const family = getFamilyRuns(run, getAllRuns());
+  const seen = new Set<string>();
+  return [
+    run,
+    family.rootRun,
+    ...(family.parentRun ? [family.parentRun] : []),
+    ...family.otherFamilyRuns,
+  ].filter((member) => (seen.has(member.id) ? false : (seen.add(member.id), true)));
+}
+
+/** The project's GitHub repository slug, when its config is readable and on GitHub. */
+export async function projectRepositoryFor(project: string): Promise<string | null> {
+  const vars = await loadProjectVars(project).catch((err: Error) => {
+    // A run whose project config is gone (deleted farm, renamed project) still
+    // gets a retrospective; the PR is then keyed from `ticketOrPr` only.
+    console.warn(`[feedback-candidates] loadProjectVars(${project}) failed: ${err.message}`);
+    return null;
+  });
+  return githubRepositorySlugFromUrl(
+    (vars?.projectJson as { repo_url?: string } | undefined)?.repo_url,
+  );
+}
+
 /**
  * A persisted retrospective payload froze its consumption state at creation.
  * Re-annotate against the current ledger whenever a stored payload is read or
  * routed, so a rule landed afterwards shows as consumed and is not re-proposed.
+ * A payload stored before feedback capture existed has no candidates at all;
+ * given its run, derive them the same way a new retrospective would.
  */
 export async function refreshRetrospectiveFeedback(
   payload: RetrospectivePayload,
+  run?: Run,
 ): Promise<RetrospectivePayload> {
+  if (payload.feedbackCandidates === undefined && run) {
+    const derived = await collectFeedbackCandidates(
+      run,
+      familyRunsFor(run),
+      await projectRepositoryFor(run.project),
+    );
+    return derived && derived.candidates.length
+      ? { ...payload, feedbackCandidates: derived.candidates, feedbackSummary: derived.summary }
+      : payload;
+  }
   if (!payload.feedbackCandidates?.length) return payload;
   const candidates = annotateFeedbackConsumption(
     payload.feedbackCandidates,

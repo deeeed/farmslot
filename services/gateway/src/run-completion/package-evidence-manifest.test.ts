@@ -44,9 +44,7 @@ test('buildPackageEvidenceManifest keeps only publishable or manifest-referenced
     version: 1,
     preferred_mode: 'screenshots',
     before_after_pairs: [],
-    standalone: [
-      { label: 'AC1', file: 'recipe-run/ac1.png' },
-    ],
+    standalone: [{ label: 'AC1', file: 'recipe-run/ac1.png' }],
     omit: [],
   });
 

@@ -232,7 +232,8 @@ test('refreshArtifactMirror rejects evidence-manifest references to internal art
   );
 
   await assert.rejects(
-    () => refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile })),
+    () =>
+      refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile })),
     /evidence-manifest references internal artifact: artifacts\/runtime-relaunch\/chrome-profile\/cache\.png/,
   );
   assert.equal(

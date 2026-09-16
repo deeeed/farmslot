@@ -7,7 +7,10 @@ import test from 'node:test';
 import type { PRMonitorIncident } from '@farmslot/protocol';
 
 import { makeRun, writeArtifact } from '../family-observability/test-fixtures.js';
-import { setFeedbackMonitorSource } from '../intelligence/feedback-candidates.js';
+import {
+  refreshRetrospectiveFeedback,
+  setFeedbackMonitorSource,
+} from '../intelligence/feedback-candidates.js';
 
 import { buildRetrospectivePayload, readCommentsTriageEntries } from './retrospective.js';
 
@@ -100,6 +103,14 @@ test('retrospective payload carries deduplicated feedback candidates from triage
   assert.equal(human.observedHead, 'ffffffffffffffffffffffffffffffffffffffff');
   assert.equal(human.attribution.kind, 'follow-up-only');
   assert.deepEqual(human.runIds, ['retro-feedback-run']);
+
+  // A payload persisted before feedback capture existed is backfilled from the run.
+  const legacy = await refreshRetrospectiveFeedback(
+    { kind: 'retrospective', outcome: 'success', whatThisIs: 'legacy', actionEffects: [] },
+    run,
+  );
+  assert.equal(legacy.feedbackCandidates?.length, 2);
+  assert.equal(legacy.feedbackSummary?.human, 1);
 
   // Building the payload again (a repeated scan) yields the same identities.
   const again = await buildRetrospectivePayload(run, null, 'success', { familyRuns: [run] });
