@@ -275,7 +275,17 @@ if (scenario === 'tmux-fixture') {
     path.join(fixture, 'bin/cursor-agent'),
     `#!${process.execPath}
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto');
+const sessions=${JSON.stringify(path.join(fixture, 'fixture-chats'))};
+if(process.argv.includes('create-chat')){
+ fs.mkdirSync(sessions,{recursive:true});const id=crypto.randomUUID();
+ fs.writeFileSync(path.join(sessions,id+'.json'),JSON.stringify({task:path.join(process.cwd(),'..','task')}));
+ process.stdout.write(id);process.exit(0);
+}
+const sessionId=process.argv[process.argv.indexOf('--resume')+1];
+if(!sessionId||!fs.existsSync(path.join(sessions,sessionId+'.json')))throw Error('Missing exact reserved chat');
+const original=JSON.parse(fs.readFileSync(path.join(sessions,sessionId+'.json'),'utf8'));
 const prompt=process.argv.at(-1),task=path.dirname(/Read '([^']+)'/.exec(prompt)[1]);
+fs.writeFileSync(path.join(task,'artifacts/session-proof.json'),JSON.stringify({sessionId,priorTask:original.task,history:fs.existsSync(path.join(original.task,'artifacts/history.json'))?JSON.parse(fs.readFileSync(path.join(original.task,'artifacts/history.json'),'utf8')):null}));
 const mark=(...args)=>cp.execFileSync(path.join(task,'mark'),args,{cwd:task,stdio:'pipe'});
 mark('start');
 console.log('FIXTURE_READY');
@@ -285,6 +295,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  const md=fs.readFileSync(path.join(task,'TASK.md'),'utf8'),subject=JSON.parse(fs.readFileSync(path.join(task,'inputs/review-subject.json'),'utf8')),signal=JSON.parse(fs.readFileSync(path.join(task,'SIGNAL.json'),'utf8'));
  const report='VERDICT: REQUEST_CHANGES\\nCOMMIT: '+subject.headSha+'\\nFixture inspected frozen inputs.\\n';
  for(const [name,content]of Object.entries({'review.md':report,'learnings.md':'Fixture proof','review-checklist.md':'- [x] Fixture reviewed','line-comments.json':JSON.stringify({comments:[{path:'message.txt',line:1,body:'Fixture inline finding',severity:'minor'}]}),'review-result.json':JSON.stringify({schemaVersion:1,verdict:'issues',issues:[{file:'message.txt',line:1,description:'Fixture inline finding',severity:'minor'}],runId:/Add runId "([^"]+)"/.exec(md)[1],workspaceId:path.basename(path.dirname(task)),headSha:subject.headSha,baseSha:subject.baseSha,attemptId:signal.attemptId,reportSha256:crypto.createHash('sha256').update(report).digest('hex')})}))fs.writeFileSync(path.join(task,'artifacts',name),content);
+ fs.writeFileSync(path.join(task,'artifacts/history.json'),JSON.stringify({finding:'Fixture inline finding',head:subject.headSha}));
  mark('complete','--mark-last');console.log('FIXTURE_COMPLETE');
 });
 `,
@@ -345,7 +356,7 @@ const args=process.argv.slice(2);
 const endpoint=args.find(value=>value.startsWith('repos/example/app/pulls/'));
 if(args[0]==='api' && endpoint) {
  if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n');
-const data=${JSON.stringify({ number: 42, title: 'Greeting wording', body: prBody, html_url: 'https://github.com/example/app/pull/42', state: 'open', head: { sha: headSha, ref: 'greeting', repo: { full_name: 'example/app' } }, base: { sha: baseSha, ref: 'main' } })}; data.number=Number(endpoint.split('/').pop()); process.stdout.write(JSON.stringify(data)); process.exit(0);
+const data=${JSON.stringify({ number: 42, title: 'Greeting wording', body: prBody, html_url: 'https://github.com/example/app/pull/42', state: 'open', head: { sha: headSha, ref: 'greeting', repo: { full_name: 'example/app' } }, base: { sha: baseSha, ref: 'main' } })}; data.number=Number(endpoint.split('/').pop()); const headFile=${JSON.stringify(path.join(fixture, 'fixture-pr-head'))}; if(require('node:fs').existsSync(headFile))data.head.sha=require('node:fs').readFileSync(headFile,'utf8').trim(); process.stdout.write(JSON.stringify(data)); process.exit(0);
 }
 if(args[0]==='pr' && args[1]==='view'){process.stdout.write(JSON.stringify({mergeable:'MERGEABLE',mergeStateStatus:'CLEAN'}));process.exit(0);}
 process.stderr.write('Unsupported fixture provider request');process.exit(2);
@@ -1118,6 +1129,10 @@ try {
         : 'pre-seeded busy device-slot records',
       capacityRejection: true,
     });
+  }
+  if (scenario === 'tmux-fixture') {
+    const { proveWarmReview } = await import('./runner-validation/lib/warm-review-proof.mjs');
+    await proveWarmReview({ connection, prior: runs[0], parameters, fixture, app, evidence });
   }
   console.log(
     JSON.stringify({

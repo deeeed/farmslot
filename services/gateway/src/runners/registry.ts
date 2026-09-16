@@ -134,6 +134,8 @@ export interface RunnerGracefulExitCapability {
 }
 
 export interface RunnerDefinition {
+  /** Empty-session reservation and explicit resume are available for managed worktree terminals. */
+  workspaceTerminalSession?: 'create-chat';
   /** Opt-in native protocol. Missing means structured sessions are unavailable. */
   nativeTransport?: 'codex-app-server' | 'claude-stream-json' | 'cursor-acp' | 'grok-acp';
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
@@ -367,6 +369,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   cursor: {
     id: 'cursor',
+    workspaceTerminalSession: 'create-chat',
     nativeTransport: 'cursor-acp',
     supportsNativeTaskReuse: true,
     nativeChoices: {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retain exact terminal reviewer chat identities across managed worktrees.
+
 - Share review filesystem protection between native and terminal launches while preserving task artifacts.
 
 - Support managed review workers across native runners on macOS with source protection and exact model selection.

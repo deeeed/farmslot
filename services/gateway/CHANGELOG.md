@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate.
+
 - Hold static reviews at the shared publish gate by default, with an explicit automatic-finish override. Support owned tmux worktrees, terminal/progress access and saved diff reads after cleanup.
 
 - Launch static reviews with the selected runner and install frozen review skills into fresh worktrees before startup.
