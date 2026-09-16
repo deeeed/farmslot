@@ -251,7 +251,11 @@ function latestIncidentsByIdentity(
       };
       const key = `${identity.kind}:${identity.providerId}`;
       const current = latest.get(key);
-      if (!current || current.incident.lastObservedAt <= incident.lastObservedAt) {
+      // An incident's state can change after it was last seen present (resolvedAt
+      // is stamped when the signal disappears), so compare the newest of both.
+      const stamp = (item: PRMonitorIncident) =>
+        [item.lastObservedAt, item.resolvedAt ?? '', item.handledAt ?? ''].sort().at(-1)!;
+      if (!current || stamp(current.incident) <= stamp(incident)) {
         latest.set(key, { identity, incident, monitor });
       }
     }
@@ -431,11 +435,13 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
         reviewedCommit: signal.reviewedCommit,
         observedHead,
         providerRevision: signal.revision,
+        // `handledAt` only says a repair run finished; the comment itself is
+        // confirmed fixed by triage (fixed_in_commit) or resolved by the reviewer.
         resolution: {
-          state: incident.handledAt ? 'fixed' : incident.resolvedAt ? 'resolved' : 'open',
+          state: incident.resolvedAt ? 'resolved' : incident.handledAt ? 'unknown' : 'open',
         },
         providerObservedAt: incident.lastObservedAt,
-        providerState: incident.handledAt ? 'fixed' : incident.resolvedAt ? 'resolved' : 'open',
+        providerState: incident.resolvedAt ? 'resolved' : incident.handledAt ? 'unknown' : 'open',
         runIds: [...(monitor.originatingRunIds ?? []), ...(incident.runId ? [incident.runId] : [])],
         source: 'pr-monitor',
       });
@@ -557,25 +563,32 @@ export async function projectRepositoryFor(project: string): Promise<string | nu
 }
 
 /**
- * A persisted retrospective payload froze its consumption state at creation.
- * Re-annotate against the current ledger whenever a stored payload is read or
- * routed, so a rule landed afterwards shows as consumed and is not re-proposed.
- * A payload stored before feedback capture existed has no candidates at all;
- * given its run, derive them the same way a new retrospective would.
+ * A persisted retrospective payload froze its feedback at creation. Whenever a
+ * stored payload is read or routed, rebuild it from current evidence and the
+ * current ledger, so an edited comment re-enters curation and a rule landed
+ * afterwards shows as consumed. Without the run, only the ledger annotation is
+ * refreshed.
  */
 export async function refreshRetrospectiveFeedback(
   payload: RetrospectivePayload,
   run?: Run,
 ): Promise<RetrospectivePayload> {
-  if (payload.feedbackCandidates === undefined && run) {
+  // With the run at hand, re-derive from current evidence (a later provider
+  // observation or follow-up triage supersedes the stored snapshot); the stored
+  // candidates only stand in when nothing can be derived.
+  if (run) {
     const derived = await collectFeedbackCandidates(
       run,
       familyRunsFor(run),
       await projectRepositoryFor(run.project),
     );
-    return derived && derived.candidates.length
-      ? { ...payload, feedbackCandidates: derived.candidates, feedbackSummary: derived.summary }
-      : payload;
+    if (derived && derived.candidates.length) {
+      return {
+        ...payload,
+        feedbackCandidates: derived.candidates,
+        feedbackSummary: derived.summary,
+      };
+    }
   }
   if (!payload.feedbackCandidates?.length) return payload;
   const candidates = annotateFeedbackConsumption(

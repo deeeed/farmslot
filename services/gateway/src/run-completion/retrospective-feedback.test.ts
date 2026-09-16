@@ -104,6 +104,34 @@ test('retrospective payload carries deduplicated feedback candidates from triage
   assert.equal(human.attribution.kind, 'follow-up-only');
   assert.deepEqual(human.runIds, ['retro-feedback-run']);
 
+  // A stored payload is rebuilt from current evidence: an edit observed after it
+  // was persisted supersedes the frozen snapshot.
+  setFeedbackMonitorSource(() => [
+    {
+      config: {
+        pr: { host: 'github.com', repo: 'MetaMask/metamask-mobile', number: 34865 },
+      } as never,
+      incidents: [
+        {
+          ...monitorIncident,
+          lastObservedAt: '2026-09-06T00:00:00.000Z',
+          signal: {
+            ...monitorIncident.signal,
+            revision: 'provider-rev-2',
+            summary: 'reviewer-a: edited',
+          },
+        },
+      ],
+      observation: { headSha: 'ffffffffffffffffffffffffffffffffffffffff' } as never,
+      originatingRunIds: [],
+    },
+  ]);
+  const rebuilt = await refreshRetrospectiveFeedback(payload, run);
+  assert.equal(
+    rebuilt.feedbackCandidates!.find((c) => c.authorKind === 'human')!.revision,
+    'provider-rev-2',
+  );
+
   // A payload persisted before feedback capture existed is backfilled from the run.
   const legacy = await refreshRetrospectiveFeedback(
     { kind: 'retrospective', outcome: 'success', whatThisIs: 'legacy', actionEffects: [] },

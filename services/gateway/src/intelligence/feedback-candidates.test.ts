@@ -817,3 +817,66 @@ test('a triage fix on a comment the reviewer has since rewritten becomes unknown
   });
   assert.equal(same!.resolution.state, 'fixed');
 });
+
+test('repair completion is not a per-comment fix, and a later resolution outranks a stale open sighting', () => {
+  const [handled] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [],
+    monitors: [
+      monitor([
+        incident({
+          handledAt: '2026-09-04T00:00:00.000Z',
+          signal: {
+            kind: 'feedback',
+            key: 'PRRC_1',
+            revision: 'rev-1',
+            summary: 'reviewer-a: body',
+            url: URL,
+          },
+        }),
+      ]),
+    ],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(handled!.resolution.state, 'unknown');
+
+  const resolvedLater = monitor([
+    incident({
+      lastObservedAt: '2026-09-01T00:00:00.000Z',
+      resolvedAt: '2026-09-03T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-1',
+        summary: 'reviewer-a: body',
+        url: URL,
+      },
+    }),
+  ]);
+  const staleOpen = monitor([
+    incident({
+      lastObservedAt: '2026-09-02T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'rev-1',
+        summary: 'reviewer-a: body',
+        url: URL,
+      },
+    }),
+  ]);
+  for (const monitors of [
+    [resolvedLater, staleOpen],
+    [staleOpen, resolvedLater],
+  ]) {
+    const [candidate] = buildFeedbackCandidates({
+      target: TARGET,
+      familyRuns: family(ROOT),
+      triage: [],
+      monitors,
+      ledger: EMPTY_LEDGER,
+    });
+    assert.equal(candidate!.resolution.state, 'resolved');
+  }
+});
