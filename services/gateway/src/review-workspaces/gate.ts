@@ -97,6 +97,8 @@ export async function holdWorkspaceReview(runId: string) {
             'refresh review gate',
           );
           run = getRun(runId)!;
+          retryError =
+            'The reviewer changed the report. Inspect the updated review before publishing or dismissing it.';
           continue;
         }
       }

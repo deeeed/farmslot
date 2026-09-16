@@ -98,6 +98,9 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     )
       throw new Error('Review has an invalid inline finding');
     const labels: Record<string, string> = {
+      blocker: 'Blocker',
+      major: 'Major',
+      minor: 'Minor',
       must_fix: 'Must fix',
       suggestion: 'Suggestion',
       nit: 'Nit',

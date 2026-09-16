@@ -206,6 +206,20 @@ await json(path.join(project, 'project.json'), {
   execution_templates: {
     sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
   },
+  ...(scenario === 'tmux-fixture'
+    ? {
+        workflow_defaults: {
+          'review-pr': {
+            review: { sessionIntent: 'reset', scope: 'full' },
+            execution: {
+              workspacePolicy: { kind: 'exact', machine: 'review-node' },
+              transport: 'tmux',
+              models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+            },
+          },
+        },
+      }
+    : {}),
   monitoring: { total_timeout_min: 5 },
 });
 const runtimeSlots =
@@ -435,6 +449,53 @@ async function verifyReviewUi(stage: string, readOnly: boolean) {
   reviewUi.cdp('screenshot', reviewUi.route, path.join(evidence, stage + '.png'));
 }
 let terminalUi: ReturnType<typeof spawn> | undefined;
+async function openReviewUi(route: string) {
+  const uiProbe = createServer().listen(0, '127.0.0.1');
+  await once(uiProbe, 'listening');
+  const uiPort = (uiProbe.address() as { port: number }).port;
+  await new Promise<void>((resolve, reject) =>
+    uiProbe.close((error) => (error ? reject(error) : resolve())),
+  );
+  const uiLog = openSync(path.join(evidence, 'ui.log'), 'w', 0o600);
+  terminalUi = spawn(
+    'yarn',
+    [
+      'workspace',
+      '@farmslot/command-center-ui',
+      'dev',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(uiPort),
+      '--strictPort',
+    ],
+    {
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', uiLog, uiLog],
+      env: { ...process.env, VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${port}` },
+    },
+  );
+  closeSync(uiLog);
+  const cdp = (...args: string[]) =>
+    execFileSync(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
+        timeout: 30000,
+      },
+    ).trim();
+  await delay(2000);
+  cdp('goto', `http://127.0.0.1:${uiPort}/#${route}`, '--new');
+  cdp('login', route);
+  const walk = `function find(selector,root=document){const e=root.querySelector(selector);if(e)return e;for(const child of root.querySelectorAll('*'))if(child.shadowRoot){const e=find(selector,child.shadowRoot);if(e)return e;}}`;
+  const evaluate = (body: string) => JSON.parse(cdp('eval', reviewUi?.route ?? route, walk + body));
+  reviewUi = { cdp, evaluate, route };
+  return { cdp, evaluate, route, url: `http://127.0.0.1:${uiPort}` };
+}
 let failure: unknown;
 let cleanupFailed = false;
 let lifecycleInterrupted = false;
@@ -477,11 +538,62 @@ try {
     transport: scenario === 'tmux-fixture' ? 'tmux' : 'native',
   };
   for (let index = 0; index < count; index++) {
-    const created = await connection.call<{ run: Run }>('run.create', {
-      ...parameters,
-      ticketOrPr: `example/app#${42 + index}`,
-    });
-    runs.push(created.run);
+    if (scenario === 'tmux-fixture') {
+      const ui = await openReviewUi(
+        'dispatch?flow=review-pr&project=review&ticket=example%2Fapp%2342',
+      );
+      ui.evaluate(
+        `find('whats-new-modal')?.shadowRoot.querySelector('button.primary')?.click();return true;`,
+      );
+      let draft;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        draft = ui.evaluate(
+          `const w=find('dispatch-wizard'),button=find('[data-testid="dispatch-submit"]');return {ready:button&&!button.disabled,reason:button?.title,transport:w?._dispatchPayloadDraft().transport};`,
+        );
+        if (draft.ready) break;
+        await delay(200);
+      }
+      assert(draft.ready, draft.reason);
+      assert.equal(draft.transport, 'tmux');
+      ui.cdp('click', ui.route, '[data-testid="dispatch-execution-options"] summary');
+      ui.cdp('click', ui.route, '[data-transport="native"]');
+      assert.equal(
+        ui.evaluate(`return {transport:find('dispatch-wizard')._dispatchPayloadDraft().transport};`)
+          .transport,
+        'native',
+      );
+      ui.cdp('click', ui.route, '[data-transport="tmux"]');
+      assert.equal(
+        ui.evaluate(`return {transport:find('dispatch-wizard')._dispatchPayloadDraft().transport};`)
+          .transport,
+        'tmux',
+      );
+      ui.cdp('click', ui.route, '[data-testid="dispatch-submit"]');
+      let created: Run | undefined;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const list = await connection.call<{ runs: Run[] }>('run.list', {});
+        created = list.runs.find((run) => run.ticketOrPr === 'example/app#42');
+        if (created) break;
+        await delay(200);
+      }
+      assert(created, 'Wizard did not create a review');
+      assert.equal(created.transport, 'tmux');
+      assert.equal(created.reviewAutoFinish, false);
+      await json(path.join(evidence, 'wizard-dispatch.json'), {
+        runId: created.id,
+        transport: created.transport,
+        autoFinish: created.reviewAutoFinish,
+      });
+      runs.push(created);
+      reviewUi!.route = `runs?run=${created.id}`;
+      ui.cdp('goto', `${ui.url}/#${reviewUi!.route}`);
+    } else {
+      const created = await connection.call<{ run: Run }>('run.create', {
+        ...parameters,
+        ticketOrPr: `example/app#${42 + index}`,
+      });
+      runs.push(created.run);
+    }
   }
   if (count === 3) {
     await assert.rejects(
@@ -564,54 +676,9 @@ try {
       }
       if (scenario === 'tmux-fixture' && runs[index].status === 'monitoring' && !terminalProven) {
         const params = { slotId: '', runId: runs[index].id };
-        const uiProbe = createServer().listen(0, '127.0.0.1');
-        await once(uiProbe, 'listening');
-        const uiPort = (uiProbe.address() as { port: number }).port;
-        await new Promise<void>((resolve, reject) =>
-          uiProbe.close((error) => (error ? reject(error) : resolve())),
-        );
-        const uiLog = openSync(path.join(evidence, 'ui.log'), 'w', 0o600);
-        terminalUi = spawn(
-          'yarn',
-          [
-            'workspace',
-            '@farmslot/command-center-ui',
-            'dev',
-            '--host',
-            '127.0.0.1',
-            '--port',
-            String(uiPort),
-            '--strictPort',
-          ],
-          {
-            cwd: root,
-            detached: true,
-            stdio: ['ignore', uiLog, uiLog],
-            env: { ...process.env, VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${port}` },
-          },
-        );
-        closeSync(uiLog);
+        const { cdp, evaluate } = reviewUi!;
         const route = `runs?run=${runs[index].id}`;
-        const cdp = (...args: string[]) =>
-          execFileSync(
-            process.execPath,
-            [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
-            {
-              cwd: root,
-              encoding: 'utf8',
-              env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
-              timeout: 30000,
-            },
-          ).trim();
-        await delay(2000);
-        cdp('goto', `http://127.0.0.1:${uiPort}/#${route}`, '--new');
-        cdp('login', route);
-        const walk = `function find(selector,root=document){const e=root.querySelector(selector);if(e)return e;for(const child of root.querySelectorAll('*'))if(child.shadowRoot){const e=find(selector,child.shadowRoot);if(e)return e;}}`;
-        const evaluate = (body: string) => JSON.parse(cdp('eval', route, walk + body));
-        reviewUi = { cdp, evaluate, route };
-        evaluate(
-          `find('whats-new-modal')?.shadowRoot.querySelector('button.primary')?.click();return true;`,
-        );
+        reviewUi!.route = route;
         const until = Date.now() + 20000;
         while (Date.now() < until) {
           if (evaluate(`return Boolean(find('[data-testid="run-terminal-toggle"]'));`)) break;

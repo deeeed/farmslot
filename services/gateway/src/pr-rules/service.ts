@@ -291,7 +291,10 @@ export class PRRuleService {
         run.reviewPublication?.error
       )
         continue;
-      const ownerId = run.reviewPublication?.direct?.ownerId ?? run.prWork?.review?.ownerId;
+      const ownerId =
+        run.reviewPublication?.gate?.publication.ownerId ??
+        run.reviewPublication?.direct?.ownerId ??
+        run.prWork?.review?.ownerId;
       if (!ownerId) continue;
       try {
         await this.publishReview(ownerId, run.id);

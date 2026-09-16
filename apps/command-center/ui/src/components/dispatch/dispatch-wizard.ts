@@ -912,7 +912,13 @@ export class DispatchWizard extends DispatchWizardState {
   };
 
   private _exitComparisonMode(): void {
-    this._transport = this._flowType === 'review-pr' ? 'native' : 'tmux';
+    const defaults = this._projectConfigs.find(
+      (entry) => entry.name === this._project,
+    )?.workflowDefaults;
+    this._transport =
+      (this._flowType === 'review-pr' || this._flowType === 'qa'
+        ? defaults?.[this._flowType]?.execution?.transport
+        : undefined) ?? 'tmux';
     this._transportChosen = false;
     const next = exitedComparisonModeState();
     this._comparisonLane = next.comparisonLane;
@@ -1298,11 +1304,9 @@ export class DispatchWizard extends DispatchWizardState {
           }
         : undefined;
     return buildDispatchWizardPayloadDraft({
-      transport: this._flowType === 'review-pr' ? 'native' : this._transport,
+      transport: this._transport,
       nativeProfile:
-        this._transport === 'native' && this._flowType !== 'review-pr'
-          ? this._nativeProfileSelection?.profile
-          : undefined,
+        this._transport === 'native' ? this._nativeProfileSelection?.profile : undefined,
       pressureOverride,
       pressureAdmissionRef,
       flowType: this._flowType,
