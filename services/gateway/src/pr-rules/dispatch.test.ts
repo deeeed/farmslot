@@ -149,6 +149,43 @@ test('review admission reuses one durable queue entry across concurrent ticks an
   assert.equal(next.store.intent(intent.id)?.queueItemId, queued[0].id);
 });
 
+test('incremental intake retains the owned predecessor domain for skill and template selection', async (t) => {
+  const { intent, dispatcher } = await fixture(t);
+  for (const [owner, domain] of [
+    ['owner', 'perps'],
+    ['other-owner', 'unrelated'],
+  ]) {
+    const prior = createRun(
+      {
+        flowType: 'review-pr',
+        project: 'project',
+        ticketOrPr: `owner/repo#${intent.pr.number}`,
+        domain,
+      },
+      { deferBackgroundPersist: true },
+    );
+    prior.status = 'done';
+    prior.createdByPrincipalId = owner;
+    prior.reviewResult = {
+      reviewMd: 'Prior review',
+      recommendation: 'COMMENT',
+      lineComments: [],
+      reviewSnapshot: {
+        headSha: 'a'.repeat(40),
+        source: 'github-pr',
+        capturedAt: new Date().toISOString(),
+      },
+    };
+    await persistRunNow(prior, 'domain-continuity-test');
+    t.after(() => deleteRun(prior.id));
+  }
+  await dispatcher.reconcile();
+  assert.equal(
+    getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)?.domain,
+    'perps',
+  );
+});
+
 test('changing static review to QA creates distinct work that survives restart', async (t) => {
   const { store, intent, dispatcher, preview, restart } = await fixture(t);
   await dispatcher.reconcile();

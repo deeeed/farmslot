@@ -32,6 +32,7 @@ import {
 } from '../backlog/pr-admission.js';
 import { type PRExecutionContext, resolvePRExecution } from '../backlog/pr-execution.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { findLatestPriorReviewRun } from '../run-engine/engine-decisions.js';
 import {
   getAllRuns,
   getCachedRunWithArchived,
@@ -245,6 +246,29 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
       };
       const publication = publicationForIntent(intent, this.store);
       const flowType = prReviewWorkflow(review.options) === 'qa' ? 'qa' : 'review-pr';
+      const prWork = {
+        kind: 'review' as const,
+        id: workId(intent),
+        sourceId: intent.id,
+        pr: intent.pr,
+        headSha: intent.headSha,
+        review,
+        ...(publication ? { publication } : {}),
+      };
+      const domain =
+        parent?.domain ??
+        (flowType === 'review-pr' && review.options.scope === 'incremental'
+          ? findLatestPriorReviewRun(
+              {
+                id: workId(intent),
+                project: source.project,
+                flowType,
+                ticketOrPr: `${intent.pr.repo}#${intent.pr.number}`,
+                prWork,
+              },
+              getAllRuns().filter((run) => run.createdByPrincipalId === source.ownerId),
+            )?.domain
+          : undefined);
       const profiles = intent.contributions
         .filter((item) => item.eligible)
         .flatMap((item) => (item.execution ? [item.execution] : []));
@@ -286,6 +310,7 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
           (queued.parentRunId ?? undefined) !== source.sourceReview?.runId ||
           (parent && queued.familyId !== parent.familyId) ||
           queued.flowType !== flowType ||
+          queued.domain !== domain ||
           !isDeepStrictEqual(queued.qaProfileId, review.options.qaProfileId) ||
           !isDeepStrictEqual(queued.qaInputs, review.options.qaInputs) ||
           !isDeepStrictEqual(queued.prWork?.review, review) ||
@@ -302,16 +327,9 @@ export class PRReviewDispatcher implements PRQueueAdmissionHooks {
         queued ??
         addItem(
           {
-            prWork: {
-              kind: 'review',
-              id: workId(intent),
-              sourceId: intent.id,
-              pr: intent.pr,
-              headSha: intent.headSha,
-              review,
-              ...(publication ? { publication } : {}),
-            },
+            prWork,
             flowType,
+            ...(domain ? { domain } : {}),
             ...(parent
               ? {
                   parentRunId: parent.id,

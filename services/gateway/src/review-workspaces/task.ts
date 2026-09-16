@@ -287,6 +287,14 @@ export async function materializeReviewWorkspaceTask(
       ...(run.repeatReviewContext
         ? [
             'Read inputs/prior-review.json and recheck every unresolved finding. It records the prior head and the requested review scope.',
+            ...(run.repeatReviewContext.reviewScope === 'incremental' &&
+            run.repeatReviewContext.priorReviewedHeadSha
+              ? [
+                  `This is an incremental review. Inspect git -C ${shellQuote(run.reviewWorkspace.checkoutPath)} diff ${shellQuote(`${run.repeatReviewContext.priorReviewedHeadSha}..${subject.headSha}`)}, plus code needed to reassess prior findings. Avoid repeating the unchanged full review.`,
+                  'If the previous commit is unavailable, report the missing input with ./mark blocked --reason. Do not silently claim an incremental review.',
+                  'Save a consolidated review of the current head. Recheck each previous finding, exclude resolved findings, and include new findings.',
+                ]
+              : []),
           ]
         : []),
       '',

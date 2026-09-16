@@ -18,6 +18,7 @@ import { shellQuote } from '../core/tmux.js';
 
 import {
   assertSafeRunnerArgumentValue,
+  getRunnerDefinition,
   normalizeRunner,
   runnerDefaultSafetyTier,
   runnerFlagsForTier,
@@ -169,6 +170,12 @@ export function resolveGrokBinary(preferred?: string | null): string {
  * Runner-name CLI syntax lives here — not in domain refinement modules.
  * Prompt content is read from `promptPath` at shell runtime via `cat`.
  */
+/** Reserve an empty native CLI chat without running a model. */
+export function workspaceTerminalSessionCreateArgv(runner: string, repo: string): string[] | null {
+  if (getRunnerDefinition(runner).workspaceTerminalSession !== 'create-chat') return null;
+  return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
+}
+
 export function buildInteractiveRefinementRunnerCommand(options: {
   runner: string;
   model?: string | null;
@@ -178,6 +185,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   binary?: string;
   effort?: string;
   trustWorkspace?: boolean;
+  resumeSessionId?: string;
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
@@ -199,7 +207,10 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   }
   if (runnerId === 'cursor') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(resolveCursorAgentBinary(options.binary))}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag} ${promptArg}`;
+    const resume = options.resumeSessionId
+      ? ` --resume ${shellQuote(options.resumeSessionId)}`
+      : '';
+    return `${shellQuote(resolveCursorAgentBinary(options.binary))}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag}${resume} ${promptArg}`;
   }
   if (runnerId === 'grok') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
