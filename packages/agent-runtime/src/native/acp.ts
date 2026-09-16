@@ -7,6 +7,13 @@ import type { NativeAdapter, NativeAdapterOptions, NativeEventInput } from './ty
 export interface AcpAdapterConfig {
   args(options: NativeAdapterOptions): string[];
   authMethod: string;
+  clientCapabilities?: AcpObject;
+  configureModel?: (
+    sessionId: string,
+    session: AcpObject,
+    requested: string,
+    request: (method: string, params: AcpObject) => Promise<unknown>,
+  ) => Promise<void>;
   defaultModeId?: string;
   modes: Array<'default' | 'plan'>;
   extensionRequest?: (method: string, params: AcpObject) => AcpPendingRequest | undefined;
@@ -146,7 +153,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         const result = acpObject(
           await rpc.request('initialize', {
             protocolVersion: 1,
-            clientCapabilities: {},
+            clientCapabilities: config.clientCapabilities ?? {},
             clientInfo: { name: 'farmslot', version: '1' },
           }),
         );
@@ -192,11 +199,17 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
           await rpc.request('session/set_mode', { sessionId: nativeSessionId, modeId });
         }
         // Set the exact requested model through the native session API, never silently fall back.
-        if (options.model)
-          await rpc.request('session/set_model', {
-            sessionId: nativeSessionId,
-            modelId: options.model,
-          });
+        if (options.model) {
+          if (config.configureModel)
+            await config.configureModel(nativeSessionId, session, options.model, (method, params) =>
+              rpc.request(method, params),
+            );
+          else
+            await rpc.request('session/set_model', {
+              sessionId: nativeSessionId,
+              modelId: options.model,
+            });
+        }
         initialized = true;
         publish({
           type: 'session.started',

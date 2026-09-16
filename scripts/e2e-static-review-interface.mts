@@ -527,15 +527,12 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(inherited.team, team.id);
     assert.match(inherited.text, /Execution:\s*farm/);
     assert.equal(inherited.machine, true);
-    await waitUI(
-      `return find('pr-execution-picker')?.element.shadowRoot.querySelector('runner-model-effort-picker')?.catalog !== undefined;`,
-    );
     assert.deepEqual(
       evaluate(
-        `return find('pr-execution-picker').element.shadowRoot.querySelector('runner-model-effort-picker').catalog.map(runner=>runner.runner);`,
+        `const picker=find('pr-execution-picker').element.shadowRoot.querySelector('runner-model-effort-picker');return [...picker.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
       ),
-      ['codex'],
-      'PR workspace controls must offer only supported review runners',
+      ['claude', 'codex', 'cursor', 'grok'],
+      'Manual workspace review controls must retain the shared runner choices',
     );
     assert.equal(
       evaluate(`return find('[data-testid="pr-review-publication"]').element.value;`),

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Keep manual Review runner and model choices consistent with other flows, including custom models; farm defaults remain overridable.
+
 - Use selectable review machines and a shared default QA profile picker; keep execution overrides and QA input JSON under expandable options.
 
 - Separate static Review from farm-configured QA profiles in PR requests and policies. Choose publication inheritance or overrides, and inspect or retry publication from run detail.

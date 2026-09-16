@@ -11,6 +11,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import type { ReviewWorkspaceAdmission } from './admission.js';
+import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
 import { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
 
 export { REVIEW_WORKSPACE_SCRIPT } from './workspace-node.js';
@@ -230,6 +231,8 @@ export async function cleanupReviewWorkspace(
       throw new Error('Confirm native worker process closure before deleting a review checkout');
     const subject = run.reviewWorkspaceSubject;
     if (!subject) throw new Error('Review workspace has no frozen source subject');
+    await removeReviewWorkspaceSkills(run);
+    await options.assertCurrent();
     await executeWorkspace(run, 'cleanup', { ...subject, assertCurrent: options.assertCurrent });
   });
 }
@@ -245,4 +248,26 @@ export async function cancelReviewWorkspaceAllocation(
     ...run.reviewWorkspaceSubject,
     assertCurrent: options.assertCurrent,
   });
+}
+
+/** Remove only verified framework skill links after the reviewer has stopped. */
+async function removeReviewWorkspaceSkills(run: Run): Promise<void> {
+  const workspace = run.reviewWorkspace;
+  if (!workspace?.support) return;
+  assertNativeRunOwner(run);
+  const argv = [
+    'node',
+    '-e',
+    REVIEW_SKILL_INSTALL_SCRIPT,
+    JSON.stringify({
+      action: 'cleanup',
+      checkout: workspace.checkoutPath,
+      skills: workspace.support.skills,
+    }),
+  ];
+  const result =
+    workspace.executionNodeId === 'local'
+      ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 300000 })
+      : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, workspace.machine, argv, 300000);
+  if (result.exitCode !== 0) throw new Error(`Review skill cleanup failed: ${result.stderr}`);
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { hostReviewSandboxAvailable } from '@farmslot/agent-runtime/native/review-sandbox';
 import type { NativeSessionInfo, NativeWorkerSessionBinding, Run } from '@farmslot/protocol';
 
 import {
@@ -133,6 +134,8 @@ test('cancellation requires exact owner/node/lease/generation and actual process
 
 test('only explicitly supported native runners admit read-only workspace review', () => {
   assert.equal(runnerSupportsReadonlyReviewWorkspace('codex'), true);
-  for (const runner of ['claude', 'cursor', 'grok', 'scripted', 'unknown'])
+  for (const runner of ['claude', 'cursor', 'grok'])
+    assert.equal(runnerSupportsReadonlyReviewWorkspace(runner), hostReviewSandboxAvailable());
+  for (const runner of ['scripted', 'unknown'])
     assert.equal(runnerSupportsReadonlyReviewWorkspace(runner), false);
 });

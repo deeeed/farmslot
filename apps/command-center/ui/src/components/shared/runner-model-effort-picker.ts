@@ -87,6 +87,18 @@ export class RunnerModelEffortPicker extends LitElement {
       opacity: 0.45;
     }
 
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      margin-top: 6px;
+      padding: 6px 8px;
+      border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+      border-radius: ${unsafeCSS(radii.lg)};
+      background: ${unsafeCSS(colors.bgCard)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font: inherit;
+    }
+
     .hint {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
@@ -208,16 +220,21 @@ export class RunnerModelEffortPicker extends LitElement {
                 )}
               </div>`
             : html`<div class="hint">Choose a runner to set a model.</div>`}
-          ${!this.catalog && this.runner === 'cursor'
-            ? html`<div class="hint">
-                Curated Cursor models (Composer + Grok-on-Cursor). Custom or gateway/admin dispatch
-                may pass any account-available model.
-              </div>`
-            : !this.catalog && this.runner === 'claude' && this.model === 'fable'
-              ? html`<div class="hint warning">
-                  Fable is a heavyweight Claude model; select it only for very complex tasks.
-                </div>`
-              : nothing}
+          ${!this.catalog && this.runner
+            ? html`<details>
+                <summary class="hint">Other model</summary>
+                <input
+                  aria-label="Custom model"
+                  data-testid="runner-custom-model"
+                  .value=${this.model}
+                  ?disabled=${this.disabled}
+                  @change=${(event: Event) => {
+                    const model = (event.target as HTMLInputElement).value.trim();
+                    if (model) this.selectModel(model);
+                  }}
+                />
+              </details>`
+            : nothing}
         </div>
 
         ${this.showEffort && this.runner && efforts.length

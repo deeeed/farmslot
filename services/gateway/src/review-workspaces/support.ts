@@ -27,6 +27,7 @@ import { requestNativeNode } from '../runners/native/node.js';
 import { getRun, persistRunNow, runsDirectory, updateRun } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
+import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
 import {
   collectReviewWorkspaceSupport,
   type FrozenReviewWorkspaceSupport,
@@ -494,6 +495,33 @@ export async function ensureReviewWorkspaceSupport(
       });
       await deps.persistRunNow(updated, 'review support ready');
     }
+    const installation = await deps.execute(io, [
+      'node',
+      '-e',
+      REVIEW_SKILL_INSTALL_SCRIPT,
+      JSON.stringify({
+        checkout: current.reviewWorkspace!.checkoutPath,
+        skills: binding.skills,
+        verifyOnly:
+          current.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt) ??
+          false,
+      }),
+    ]);
+    if (installation.exitCode !== 0)
+      throw new Error(`Review skill installation failed: ${installation.stderr}`);
+    const installed = JSON.parse(installation.stdout) as {
+      verified?: boolean;
+      installed?: string[];
+    };
+    if (
+      !installed.verified ||
+      !isDeepStrictEqual(
+        installed.installed,
+        binding.skills.map((skill) => skill.name),
+      )
+    )
+      throw new Error('Review skills were not verified on the execution node');
+    await check();
     return binding;
   });
   await assertCurrent();

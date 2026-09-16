@@ -23,7 +23,12 @@ import {
 } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { isFreeSlot } from '../methods/dispatch/slot-scoring.js';
-import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
+import {
+  getRunnerDefinition,
+  isKnownRunner,
+  runnerSupportsEffort,
+  runnerSupportsModel,
+} from '../runners/registry.js';
 
 import {
   assertReviewWorkspaceAdmitted,
@@ -219,6 +224,34 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       'Select an authorized review machine; legacy slot placement requires explicit migration',
     );
   let profile = options.execution ?? defaults.execution;
+  // Farm defaults preselect a model; only an explicitly supplied execution policy
+  // constrains automation/replay. Manual choices still pass normal runner admission.
+  if (
+    profile &&
+    !options.execution &&
+    (params.runner !== undefined || params.model !== undefined || params.effort !== undefined)
+  ) {
+    profile = structuredClone(profile);
+    const runner = params.runner ?? params.nativeProfile?.runner ?? profile.models[0].runner;
+    if (!isKnownRunner(runner)) unavailable('Selected runner is unsupported');
+    const configured = profile.models.find((entry) => entry.runner === runner);
+    const model = params.model ?? configured?.model ?? getRunnerDefinition(runner).defaultModel;
+    if (!model) unavailable('Select a model for this runner');
+    profile.models = [
+      {
+        runner,
+        model,
+        effort:
+          params.effort ??
+          (params.model === undefined || params.model === configured?.model
+            ? configured?.effort
+            : undefined),
+      },
+    ];
+    if (isPRWorkspaceExecutionProfile(profile) && profile.nativeProfile?.runner !== runner)
+      delete profile.nativeProfile;
+  }
+
   if (
     !profile &&
     flow === 'review-pr' &&

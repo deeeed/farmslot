@@ -1,3 +1,6 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { claudeProfileEnvironment, observeClaudeAccount } from './account-claude.js';
 import { observeCodexAccount } from './account-codex.js';
 import { cursorProfileEnvironment, observeCursorAccount } from './account-cursor.js';
@@ -7,6 +10,7 @@ import { claudeNativeAdapter } from './claude.js';
 import { codexNativeAdapter } from './codex.js';
 import { cursorNativeAdapter } from './cursor.js';
 import { grokNativeAdapter } from './grok.js';
+import { hostReviewSandboxAvailable } from './review-sandbox.js';
 import type { NativeAdapter } from './types.js';
 
 export interface NativeRunnerDefinition {
@@ -14,6 +18,7 @@ export interface NativeRunnerDefinition {
   binary: string;
   supportsWorkers?: boolean;
   supportsReadOnlyWorkspace?: boolean;
+  reviewRuntimeRoots?: (environment: NodeJS.ProcessEnv) => string[];
   /** Default for new standalone conversations; worker launch settings stay authoritative. */
   defaultEffort?: string;
   account: {
@@ -40,6 +45,8 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   claude: {
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: (env) => [env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude')],
     adapter: claudeNativeAdapter,
     binary: 'claude',
     supportsWorkers: true,
@@ -57,8 +64,14 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   cursor: {
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: (env) => [
+      join(env.HOME ?? homedir(), '.cursor'),
+      join(env.HOME ?? homedir(), 'Library/Caches/cursor-compile-cache'),
+    ],
     adapter: cursorNativeAdapter,
     binary: 'cursor-agent',
+    supportsWorkers: true,
     account: {
       environment: cursorProfileEnvironment,
       unset: [
@@ -74,8 +87,11 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     },
   },
   grok: {
+    supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
+    reviewRuntimeRoots: (env) => [env.GROK_HOME ?? join(env.HOME ?? homedir(), '.grok')],
     adapter: grokNativeAdapter,
     binary: 'grok',
+    supportsWorkers: true,
     account: {
       environment: (directory) => ({ GROK_HOME: directory }),
       unset: ['GROK_API_KEY', 'XAI_API_KEY'],

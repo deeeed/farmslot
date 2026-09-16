@@ -368,9 +368,17 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   cursor: {
     id: 'cursor',
     nativeTransport: 'cursor-acp',
+    supportsNativeTaskReuse: true,
     nativeChoices: {
-      models: ['gpt-5.6-luna[context=272k,reasoning=medium,fast=false]'],
-      defaultModel: 'gpt-5.6-luna[context=272k,reasoning=medium,fast=false]',
+      models: [
+        DEFAULT_CURSOR_MODEL,
+        'composer-2.5',
+        'cursor-grok-4.6-xhigh',
+        'gpt-5.6-sol-medium',
+        'gpt-5.6-sol-high',
+        'gpt-5.6-sol-max',
+      ],
+      defaultModel: DEFAULT_CURSOR_MODEL,
       modes: ['default'],
     },
     defaultLaunchMode: 'interactive',
@@ -414,6 +422,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   grok: {
     id: 'grok',
     nativeTransport: 'grok-acp',
+    supportsNativeTaskReuse: true,
     nativeChoices: { models: ['grok-4.6'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)grok($| )'],

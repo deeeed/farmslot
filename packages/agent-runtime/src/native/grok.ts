@@ -5,7 +5,9 @@ export const grokNativeAdapter = createAcpAdapter({
   args: (options) => [
     '--no-auto-update',
     '--permission-mode',
-    options.safetyTier && options.safetyTier !== 'sandboxed' ? 'bypassPermissions' : 'default',
+    options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
+      ? 'bypassPermissions'
+      : 'default',
     'agent',
     '--no-leader',
     ...(options.effort ? ['--reasoning-effort', options.effort] : []),
