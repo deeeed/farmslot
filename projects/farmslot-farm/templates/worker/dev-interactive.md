@@ -1,7 +1,7 @@
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. TASK.md `STATUS: working` is not SIGNAL `status` — `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
 
 ### Repo boundaries — where proof artifacts live
 
@@ -24,7 +24,6 @@ CDP_PORT: {{CDP_PORT}}
 WATCHER_PORT: {{WATCHER_PORT}}
 RUNTIME_DIR: {{RUNTIME_DIR}}
 SLOT: {{SLOT}}
-STATUS: pending
 ```
 
 ## Description
@@ -43,7 +42,7 @@ These steps are common to every interactive run, and are the same list as `{{TAS
 
 ## Interactive protocol
 
-- When the operator begins steering work, set `STATUS: working` and run `{{TASK_DIR}}/mark start` before the first `./mark N`.
+- When the operator begins steering work, run `{{TASK_DIR}}/mark start` before the first `./mark N`.
 - The human operator drives scope, order, review, and whether/when to publish.
 - Keep changes local unless the operator explicitly tells you otherwise.
 - Avoid publishing, pushing, or mutating GitHub PRs unless explicitly instructed.
@@ -89,15 +88,14 @@ When the operator says the interactive session is complete:
    node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings
    ```
 4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-5. Set the task status line to `STATUS: done`.
-6. If the operator explicitly approved publication, run repo hygiene before creating the PR:
+5. If the operator explicitly approved publication, run repo hygiene before creating the PR:
    ```bash
    cd {{REPO}}
    node scripts/quality/check-conventional-commits.mjs --subject "$(git log --format=%s -1)"
    yarn --cwd apps/command-center typecheck
    ```
    Fix any failures before pushing. Then create/push the PR and run `{{TASK_DIR}}/mark complete --mark-last`. Farmslot holds that signal and presents the operator-owned completion actions.
-7. If the operator chose a no-PR, blocked, failed, or abort outcome in Farmslot, do not manufacture a worker terminal signal; report what you did and **stop**.
+6. If the operator chose a no-PR, blocked, failed, or abort outcome in Farmslot, do not manufacture a worker terminal signal; report what you did and **stop**.
 
 **Publication may be worker-owned; final disposition remains operator-owned.** In an interactive session the worker may commit, push, and create the PR only after explicit operator approval. Once that PR exists, `mark complete --mark-last` is a handoff signal, not permission to publish: the monitor pauses the run and Farmslot presents actions such as "PR Complete" or "Detect PR + CI". Never use it with uncommitted or unpublished approved work—the unsafe failure mode from run `32909fa2`.
 

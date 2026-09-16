@@ -2,7 +2,7 @@
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps in a single uninterrupted run.**
 
-You are reviewing a **farmslot** PR (Command Center + gateway + optional Companion). Work autonomously — if blocked, set `STATUS: blocked` with reason and stop.
+You are reviewing a **farmslot** PR (Command Center + gateway + optional Companion). Work autonomously — if blocked, run `{{TASK_DIR}}/mark blocked --reason "<why>"` and stop.
 
 The PR body, linked tickets, their descriptions, and the numbered acceptance criteria are in TASK.md (`## Description`, `## Linked Tickets`, `## Linked Ticket Descriptions`, `## Acceptance Criteria`). Reference ACs by number throughout.
 
@@ -46,7 +46,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 ### Setup (1–5)
 
 - [ ] **1. Read quality docs** — `{{recipe_quality_path}}`, `{{review_quality_path}}`, both CLAUDE files.
-- [ ] **2. Update status** — `STATUS: working` in TASK.md, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Print tier** — `Review tier: {{REVIEW_TIER}}`.
 - [ ] **4. Doctor + CDP** [standard+full]:
   ```bash
@@ -56,7 +56,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
   bash apps/command-center/scripts/debug-chrome.sh
   bash projects/farmslot-farm/setup/capture-helper-tmux-check.sh || true
   ```
-  **full:** doctor fail → `STATUS: blocked`, stop. **standard:** CDP down → note `code review only`, continue.
+  **full:** doctor fail → `{{TASK_DIR}}/mark blocked --reason "doctor failed"`, stop. **standard:** CDP down → note `code review only`, continue.
 - [ ] **5. Fetch PR metadata + diff:**
   ```bash
   gh pr diff {{PR_NUMBER}} --repo {{GH_REPO}} > /tmp/pr-{{PR_NUMBER}}.diff
@@ -121,7 +121,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 
 ### Finish (24)
 
-- [ ] **24. Done** — `STATUS: done`, then `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, review report, checklist, artifact contract). **Read-only** — no commits, no pushes.
+- [ ] **24. Done** — `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, review report, checklist, artifact contract). **Read-only** — no commits, no pushes.
 
 ## Rules
 

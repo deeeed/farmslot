@@ -437,7 +437,7 @@ export function applyArtifactOnlyTaskPolicy(
   result = result.replace(/git log HEAD\.\.main/g, `git log HEAD..${replayBase}`);
   result = result.replace(/commit\/push approval/g, 'artifact-only completion approval');
   result = result.replace(
-    /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Set `STATUS: done`\.)/g,
+    /- \[ \] \*\*(\d+)\. On approval — commit, push, update PR:\*\*[\s\S]*?(?=\s*Write completion signal:|\n- \[ \] \*\*\d+\.)/g,
     [
       '- [ ] **$1. Artifact-only completion — leave local evidence only:**',
       '  - Do not push to any remote, use GitHub PR CLI mutation commands, edit/comment on PRs, mark ready, merge, or publish this replay.',
@@ -713,7 +713,6 @@ function buildInteractivePrCompleteHandoffSection(taskDir: string): string {
     `- Write or update \`${taskDir}/artifacts/report.md\` with summary, files changed, validation, comments handled, and remaining manual work.`,
     `- Write or update \`${taskDir}/artifacts/comments-report.md\` when PR comments were triaged.`,
     `- If family context was inherited, write \`${taskDir}/artifacts/family-scope.json\` before handoff.`,
-    '- Set this task status to `STATUS: waiting-human` instead of `STATUS: done`.',
     '- Do **not** write a terminal `SIGNAL.json` with `complete`, `done`, `blocked`, or `failed`.',
     '',
     'The human operator will inspect the workspace, do any manual edits/review/replies, and write the terminal signal only when the PR-complete session is actually ready to close.',
