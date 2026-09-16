@@ -7,12 +7,13 @@ import type { PRMonitorIncident, Run } from '@farmslot/protocol';
 import { makeRun } from '../family-observability/test-fixtures.js';
 
 import {
+  annotateFeedbackConsumption,
   buildFeedbackCandidates,
   type FeedbackCandidateInput,
   feedbackIdentityFromUrl,
   feedbackSourceKey,
   feedbackTargetForRun,
-  repositorySlugFromUrl,
+  githubRepositorySlugFromUrl,
   summarizeFeedbackCandidates,
   unconsumedHumanFeedback,
 } from './feedback-candidates.js';
@@ -345,15 +346,27 @@ test('helpers parse provider identities and run PR targets', () => {
   });
   assert.equal(feedbackIdentityFromUrl('https://github.com/o/r/pull/1'), null);
   assert.equal(
-    repositorySlugFromUrl('git@github.com:MetaMask/metamask-mobile.git'),
+    githubRepositorySlugFromUrl('git@github.com:MetaMask/metamask-mobile.git'),
     'MetaMask/metamask-mobile',
   );
   assert.equal(
-    repositorySlugFromUrl('https://github.com/MetaMask/metamask-mobile'),
+    githubRepositorySlugFromUrl('https://github.com/MetaMask/metamask-mobile'),
     'MetaMask/metamask-mobile',
   );
-  assert.equal(repositorySlugFromUrl('https://gitlab.com/o/r.git'), null);
-  assert.deepEqual(feedbackTargetForRun(ROOT, [], null), TARGET);
+  assert.equal(githubRepositorySlugFromUrl('https://gitlab.com/o/r.git'), null);
+  // PR-bound flows may carry the PR in ticketOrPr; a fix-bug ticket ref is an issue, not a PR.
+  assert.deepEqual(feedbackTargetForRun(FOLLOW, [], null), TARGET);
+  assert.equal(feedbackTargetForRun(ROOT, [], null), null);
+  assert.deepEqual(feedbackTargetForRun(ROOT, [FOLLOW], null), TARGET);
+  // A discovered PR number with the project repo wins over any ticket reference.
+  assert.deepEqual(
+    feedbackTargetForRun(
+      makeRun({ ticketOrPr: 'o/r#1', flowType: 'pr-complete', prNumber: 34865 }),
+      [],
+      'MetaMask/metamask-mobile',
+    ),
+    TARGET,
+  );
   assert.deepEqual(
     feedbackTargetForRun(
       makeRun({ ticketOrPr: 'TAT-1', prNumber: 12 }),
@@ -363,4 +376,97 @@ test('helpers parse provider identities and run PR targets', () => {
     { host: 'github.com', repository: 'MetaMask/metamask-extension', prNumber: 12 },
   );
   assert.equal(feedbackTargetForRun(makeRun({ ticketOrPr: 'TAT-1' }), [], null), null);
+});
+
+test('the latest monitor observation of a comment wins over its retained earlier incidents', () => {
+  const stale = incident({
+    id: 'old',
+    lastObservedAt: '2026-09-01T00:00:00.000Z',
+    resolvedAt: '2026-09-02T00:00:00.000Z',
+    signal: {
+      kind: 'feedback',
+      key: 'PRRC_1',
+      revision: 'rev-1',
+      summary: 'reviewer-a: original text',
+      url: URL,
+    },
+  });
+  const edited = incident({
+    id: 'new',
+    lastObservedAt: '2026-09-03T00:00:00.000Z',
+    signal: {
+      kind: 'feedback',
+      key: 'PRRC_1',
+      revision: 'rev-2',
+      summary: 'reviewer-a: edited text',
+      url: URL,
+      reviewedCommit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    },
+  });
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [],
+    monitors: [monitor([stale, edited])],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidate!.revision, 'rev-2');
+  assert.equal(candidate!.excerpt, 'edited text');
+  assert.equal(candidate!.reviewedCommit, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  assert.equal(candidate!.resolution.state, 'open', 'an edited open comment is not stale-resolved');
+  // The provider summary is truncated, so it is never a body fingerprint.
+  assert.equal(candidate!.bodyRevision, undefined);
+});
+
+test('equal-rank merge keeps the richer triage fields over a sparse provider record', () => {
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [HUMAN_TRIAGE] }],
+    monitors: [
+      monitor([
+        incident({
+          signal: {
+            kind: 'feedback',
+            key: 'PRRC_1',
+            revision: 'rev-1',
+            summary: 'reviewer-a: x',
+            url: URL,
+          },
+        }),
+      ]),
+    ],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.deepEqual(candidate!.resolution, { state: 'open', triage: 'REAL' });
+});
+
+test('annotateFeedbackConsumption re-reads consumption for stored candidates', () => {
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries: [HUMAN_TRIAGE] }],
+    monitors: [],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidate!.consumedBy, undefined);
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: [
+      {
+        sourceKey: candidate!.sourceKey,
+        candidateId: candidate!.id,
+        revision: candidate!.revision,
+        destination: 'lib:review/antipatterns.md',
+        rule: 'r',
+        recordedAt: 'now',
+        source: 'learnings-draft',
+      },
+    ],
+  };
+  const [refreshed] = annotateFeedbackConsumption([candidate!], ledger);
+  assert.equal(refreshed!.consumedBy?.[0]?.rule, 'r');
+  assert.equal(refreshed!.revisedSinceConsumed, undefined);
+  // Annotation never freezes consumption in: against an empty ledger it is unconsumed again.
+  assert.equal(annotateFeedbackConsumption([refreshed!], EMPTY_LEDGER)[0]!.consumedBy, undefined);
 });

@@ -18,6 +18,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
 import { readPortableTextIfExists } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
@@ -663,7 +664,12 @@ async function buildRunSummary(
           }),
         };
       } else if (payload?.kind === 'retrospective') {
-        payload = { ...payload, gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review) };
+        // Same rebuild for feedback consumption: the ledger, not the frozen
+        // payload, says which candidates a landed rule already absorbed.
+        payload = await refreshRetrospectiveFeedback({
+          ...payload,
+          gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review),
+        });
       }
       return payload === decision.payload ? decision : { ...decision, payload };
     }),

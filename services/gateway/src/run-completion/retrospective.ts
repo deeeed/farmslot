@@ -19,7 +19,7 @@ import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
 import {
   collectFeedbackCandidates,
-  repositorySlugFromUrl,
+  githubRepositorySlugFromUrl,
 } from '../intelligence/feedback-candidates.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
@@ -554,7 +554,9 @@ async function projectRepositoryFor(project: string): Promise<string | null> {
     console.warn(`[run-completion] loadProjectVars(${project}) failed: ${err.message}`);
     return null;
   });
-  return repositorySlugFromUrl((vars?.projectJson as { repo_url?: string } | undefined)?.repo_url);
+  return githubRepositorySlugFromUrl(
+    (vars?.projectJson as { repo_url?: string } | undefined)?.repo_url,
+  );
 }
 
 export async function buildRetrospectivePayload(

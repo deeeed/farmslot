@@ -351,13 +351,27 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   const added = await recordLearningsDraftLanded(run, decision);
   assert.equal(added.length, 1);
   assert.equal(added[0]!.rule, 'unknown-balance-as-zero');
+  // A card with several drafts still records one consumption per candidate,
+  // naming the card's drafts rather than binding every draft to every comment.
+  const basePayload = decision.payload as LearningsDraftPayload;
+  const multi = {
+    ...decision,
+    id: 'multi',
+    payload: {
+      ...basePayload,
+      drafts: [...basePayload.drafts, { ...basePayload.drafts[0]!, id: 'second-draft' }],
+    } as LearningsDraftPayload,
+  };
+  const multiAdded = await recordLearningsDraftLanded(run, multi);
+  assert.equal(multiAdded.length, 1);
+  assert.equal(multiAdded[0]!.rule, 'unknown-balance-as-zero, second-draft');
   assert.equal(added[0]!.destination, `${TEST_LIBRARY_REPO}:review/antipatterns.md`);
   assert.equal(added[0]!.sourceKey, candidate.sourceKey);
   assert.deepEqual(added[0]!.runIds, [run.id, 'other-run']);
   // A retried approval records nothing new.
   assert.equal((await recordLearningsDraftLanded(run, decision)).length, 0);
   const ledger = await readFeedbackLedger(feedbackLedgerPath());
-  assert.equal(ledger.entries.length, 1);
+  assert.equal(ledger.entries.length, 2);
 });
 
 test('a card with no destination never offers the landed action and refuses to record', async (t) => {

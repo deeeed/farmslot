@@ -655,10 +655,12 @@ export async function emitLearningsDraftDecision(
 }
 
 /**
- * Human gate consumed: append one ledger entry per (draft, feedback candidate)
- * so the candidate's identity is bound to the rule that absorbed it. Runs
- * BEFORE the decision is marked resolved; a ledger failure leaves the card
- * pending rather than recording an approval with no trace.
+ * Human gate consumed: append one ledger entry per feedback candidate, naming
+ * the card's drafts as the consuming rule. The binding is "consumed by this
+ * landed card", not a claim that one specific draft addressed one specific
+ * comment — the card is the unit the human approved. Runs BEFORE the decision
+ * is marked resolved; a ledger failure leaves the card pending rather than
+ * recording an approval with no trace.
  */
 export async function recordLearningsDraftLanded(
   run: Run,
@@ -675,23 +677,19 @@ export async function recordLearningsDraftLanded(
     throw new Error(`Decision ${decision.id} has no drafts to record as landed`);
   }
   const destination = knowledgeDestinationKey(payload.destination);
+  const rule = payload.drafts.map((draft) => draft.id).join(', ');
   const recordedAt = new Date().toISOString();
-  const entries: FeedbackLedgerEntry[] = [];
-  for (const draft of payload.drafts) {
-    for (const candidate of payload.feedbackCandidates ?? []) {
-      entries.push({
-        sourceKey: candidate.sourceKey,
-        candidateId: candidate.id,
-        revision: candidate.revision,
-        ...(candidate.bodyRevision ? { bodyRevision: candidate.bodyRevision } : {}),
-        destination,
-        rule: draft.id,
-        recordedAt,
-        decisionId: decision.id,
-        source: 'learnings-draft',
-        runIds: [run.id, ...candidate.runIds.filter((id) => id !== run.id)],
-      });
-    }
-  }
+  const entries: FeedbackLedgerEntry[] = (payload.feedbackCandidates ?? []).map((candidate) => ({
+    sourceKey: candidate.sourceKey,
+    candidateId: candidate.id,
+    revision: candidate.revision,
+    ...(candidate.bodyRevision ? { bodyRevision: candidate.bodyRevision } : {}),
+    destination,
+    rule,
+    recordedAt,
+    decisionId: decision.id,
+    source: 'learnings-draft',
+    runIds: [run.id, ...candidate.runIds.filter((id) => id !== run.id)],
+  }));
   return appendFeedbackConsumptions(entries);
 }

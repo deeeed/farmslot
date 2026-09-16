@@ -1,6 +1,7 @@
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { feedbackCandidateStyles } from '../shared/feedback-candidate-styles.js';
 
 export const decisionInboxStyles = css`
   :host {
@@ -276,35 +277,7 @@ export const decisionInboxStyles = css`
     font-size: 10px;
   }
 
-  .feedback-list {
-    display: grid;
-    gap: 6px;
-    margin-top: 6px;
-  }
-  .feedback-candidate {
-    border-left: 2px solid ${unsafeCSS(colors.textMuted)};
-    padding-left: 8px;
-    font-size: 11px;
-    color: ${unsafeCSS(colors.textSecondary)};
-  }
-  .feedback-candidate[data-author-kind='human'] {
-    border-left-color: ${unsafeCSS(colors.accent)};
-  }
-  .feedback-head,
-  .feedback-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: baseline;
-  }
-  .feedback-kind,
-  .feedback-meta {
-    font-family: ${unsafeCSS(fonts.mono)};
-    font-size: 10px;
-  }
-  .feedback-candidate .muted {
-    color: ${unsafeCSS(colors.textMuted)};
-  }
+  ${feedbackCandidateStyles}
 
   .retro-open {
     color: ${unsafeCSS(colors.accent)};

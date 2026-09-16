@@ -17,9 +17,11 @@ import {
   type FeedbackConsumption,
   monitoredPRKey,
   parseGitHubRef,
+  PR_BOUND_FLOW_TYPES,
   type PRMonitor,
   type PRMonitorIncident,
   type PRMonitorSignal,
+  type RetrospectivePayload,
   type Run,
 } from '@farmslot/protocol';
 
@@ -83,23 +85,34 @@ export function feedbackSourceKey(
   return `${target.host.toLowerCase()}/${target.repository.toLowerCase()}#${target.prNumber}:${kind}:${providerId}`;
 }
 
-/** PR the run is bound to. `ticketOrPr` carries `owner/repo#n`; a bare PR number needs the project repo. */
+/**
+ * PR the family is bound to. A discovered `prNumber` (with the project repo)
+ * wins; `ticketOrPr` is only a PR reference for PR-bound flows — for dev and
+ * fix-bug runs it names the originating issue, not the resulting PR.
+ */
 export function feedbackTargetForRun(
   run: Run,
   familyRuns: Run[],
   projectRepository: string | null,
 ): FeedbackPRTarget | null {
-  for (const candidate of [run, ...familyRuns]) {
-    const ref = parseGitHubRef(candidate.ticketOrPr);
+  const members = [run, ...familyRuns.filter((member) => member.id !== run.id)];
+  if (projectRepository) {
+    for (const member of members) {
+      if (member.prNumber) {
+        return { host: GITHUB_HOST, repository: projectRepository, prNumber: member.prNumber };
+      }
+    }
+  }
+  for (const member of members) {
+    if (!PR_BOUND_FLOW_TYPES.has(member.flowType)) continue;
+    const ref = parseGitHubRef(member.ticketOrPr);
     if (ref) return { host: GITHUB_HOST, repository: ref.repo, prNumber: ref.number };
-    if (candidate.prNumber && projectRepository)
-      return { host: GITHUB_HOST, repository: projectRepository, prNumber: candidate.prNumber };
   }
   return null;
 }
 
-/** `git@github.com:Owner/Repo.git` or `https://github.com/Owner/Repo(.git)` → `Owner/Repo`. */
-export function repositorySlugFromUrl(url: string | undefined | null): string | null {
+/** `git@github.com:Owner/Repo.git` or `https://github.com/Owner/Repo(.git)` → `Owner/Repo`; other hosts → null. */
+export function githubRepositorySlugFromUrl(url: string | undefined | null): string | null {
   if (!url) return null;
   const match = url.trim().match(/github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i);
   return match ? match[1]! : null;
@@ -152,16 +165,20 @@ function reviewAuthorKind(signal: PRMonitorSignal): FeedbackAuthorKind {
   return login.endsWith('[bot]') ? 'bot' : 'human';
 }
 
+const RESOLUTION_RANK = { fixed: 3, resolved: 2, open: 1, unknown: 0 } as const;
+
 interface Draft {
   sourceKey: string;
   kind: FeedbackCandidate['kind'];
-  providerId: string;
   authorLogin?: string;
   authorKind: FeedbackAuthorKind;
   sourceKind?: string;
   reviewState?: string;
   path?: string;
+  /** Full comment body — only the worker triage carries it. */
   body?: string;
+  /** Provider summary (first ~180 chars) — display only, never a fingerprint. */
+  summaryExcerpt?: string;
   url?: string;
   reviewedCommit?: string;
   observedHead?: string;
@@ -186,8 +203,66 @@ function triageIdentity(entry: CommentsTriageEntry): {
   return null;
 }
 
-function mergeStrings(current: string | undefined, next: string | undefined): string | undefined {
-  return current ?? next;
+/**
+ * The monitor keeps every observed revision of a comment as its own incident
+ * (identity includes the revision). Only the latest observation describes the
+ * comment as it is now; earlier ones are provenance.
+ */
+function latestIncidentsByIdentity(incidents: PRMonitorIncident[]): Array<{
+  identity: { kind: FeedbackCandidate['kind']; providerId: string };
+  incident: PRMonitorIncident;
+}> {
+  const latest = new Map<
+    string,
+    {
+      identity: { kind: FeedbackCandidate['kind']; providerId: string };
+      incident: PRMonitorIncident;
+    }
+  >();
+  for (const incident of incidents) {
+    const signal = incident.signal;
+    if (signal.kind !== 'feedback' && signal.kind !== 'review') continue;
+    const identity = feedbackIdentityFromUrl(signal.url) ?? {
+      kind: signal.kind === 'review' ? ('review' as const) : ('review-comment' as const),
+      providerId: `node-${signal.key}`,
+    };
+    const key = `${identity.kind}:${identity.providerId}`;
+    const current = latest.get(key);
+    if (!current || current.incident.lastObservedAt <= incident.lastObservedAt) {
+      latest.set(key, { identity, incident });
+    }
+  }
+  return [...latest.values()];
+}
+
+/** Ledger annotation, pure: consumption links plus the revised-since-consumed flag. */
+export function annotateFeedbackConsumption(
+  candidates: FeedbackCandidate[],
+  ledger: FeedbackLedger,
+): FeedbackCandidate[] {
+  const consumptions = consumptionsBySourceKey(ledger);
+  return candidates.map((candidate) => {
+    const consumed = consumptions.get(candidate.sourceKey) ?? [];
+    const { consumedBy: _consumedBy, revisedSinceConsumed: _revised, ...base } = candidate;
+    if (consumed.length === 0) return base;
+    const consumedBy: FeedbackConsumption[] = consumed.map((entry) => ({
+      destination: entry.destination,
+      rule: entry.rule,
+      revision: entry.revision,
+      recordedAt: entry.recordedAt,
+      ...(entry.decisionId ? { decisionId: entry.decisionId } : {}),
+      ...(entry.commit ? { commit: entry.commit } : {}),
+      ...(entry.bodyRevision ? { bodyRevision: entry.bodyRevision } : {}),
+    }));
+    // A consumption matches when it recorded this provider revision, or the
+    // same full body (a triage-only re-read of unchanged text is not an edit).
+    const revisedSinceConsumed = consumedBy.every(
+      (entry) =>
+        entry.revision !== candidate.revision &&
+        (candidate.bodyRevision === undefined || entry.bodyRevision !== candidate.bodyRevision),
+    );
+    return { ...base, consumedBy, ...(revisedSinceConsumed ? { revisedSinceConsumed: true } : {}) };
+  });
 }
 
 /** Pure: builds the deduplicated candidate list from already-loaded evidence. */
@@ -199,55 +274,59 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
 
   const upsert = (
     identity: { kind: FeedbackCandidate['kind']; providerId: string },
-    init: Omit<Draft, 'sourceKey' | 'kind' | 'providerId' | 'runIds' | 'sources'> & {
+    init: Omit<Draft, 'sourceKey' | 'kind' | 'runIds' | 'sources'> & {
       runIds: Iterable<string>;
       source: FeedbackCandidate['sources'][number];
     },
-  ): Draft => {
+  ): void => {
     const sourceKey = feedbackSourceKey(target, identity.kind, identity.providerId);
     const existing = drafts.get(sourceKey);
     if (!existing) {
-      const draft: Draft = {
+      const { runIds, source, ...fields } = init;
+      drafts.set(sourceKey, {
+        ...fields,
         sourceKey,
         kind: identity.kind,
-        providerId: identity.providerId,
-        authorLogin: init.authorLogin,
-        authorKind: init.authorKind,
-        sourceKind: init.sourceKind,
-        reviewState: init.reviewState,
-        path: init.path,
-        body: init.body,
-        url: init.url,
-        reviewedCommit: init.reviewedCommit,
-        observedHead: init.observedHead,
-        providerRevision: init.providerRevision,
-        resolution: init.resolution,
-        runIds: new Set(init.runIds),
-        sources: new Set([init.source]),
-      };
-      drafts.set(sourceKey, draft);
-      return draft;
+        runIds: new Set(runIds),
+        sources: new Set([source]),
+      });
+      return;
     }
-    existing.authorLogin = mergeStrings(existing.authorLogin, init.authorLogin);
+    const fromProvider = init.source === 'pr-monitor';
+    existing.authorLogin ??= init.authorLogin;
     if (existing.authorKind === 'unknown') existing.authorKind = init.authorKind;
-    existing.sourceKind = mergeStrings(existing.sourceKind, init.sourceKind);
-    existing.reviewState = mergeStrings(existing.reviewState, init.reviewState);
-    existing.path = mergeStrings(existing.path, init.path);
-    existing.body = mergeStrings(existing.body, init.body);
-    existing.url = mergeStrings(existing.url, init.url);
-    existing.reviewedCommit = mergeStrings(existing.reviewedCommit, init.reviewedCommit);
-    existing.observedHead = mergeStrings(existing.observedHead, init.observedHead);
-    existing.providerRevision = mergeStrings(existing.providerRevision, init.providerRevision);
-    // A confirmed fix outranks an open/unknown state; a provider resolution outranks unknown.
-    const rank = { fixed: 3, resolved: 2, open: 1, unknown: 0 } as const;
-    if (rank[init.resolution.state] > rank[existing.resolution.state]) {
+    existing.sourceKind ??= init.sourceKind;
+    existing.reviewState ??= init.reviewState;
+    existing.path ??= init.path;
+    existing.body ??= init.body;
+    existing.url ??= init.url;
+    existing.observedHead ??= init.observedHead;
+    // Revision-dependent facts come from the provider's latest observation.
+    if (fromProvider) {
+      existing.summaryExcerpt = init.summaryExcerpt ?? existing.summaryExcerpt;
+      existing.providerRevision = init.providerRevision ?? existing.providerRevision;
+      existing.reviewedCommit = init.reviewedCommit ?? existing.reviewedCommit;
+    } else {
+      existing.summaryExcerpt ??= init.summaryExcerpt;
+      existing.providerRevision ??= init.providerRevision;
+      existing.reviewedCommit ??= init.reviewedCommit;
+    }
+    // A confirmed fix outranks a resolved thread, which outranks open/unknown.
+    // On equal rank the worker triage's richer fields (triage, fixedInCommit)
+    // win over the provider's sparser record.
+    const existingRank = RESOLUTION_RANK[existing.resolution.state];
+    const initRank = RESOLUTION_RANK[init.resolution.state];
+    if (initRank > existingRank) {
       existing.resolution = { ...existing.resolution, ...init.resolution };
+    } else if (initRank === existingRank) {
+      existing.resolution = fromProvider
+        ? { ...init.resolution, ...existing.resolution }
+        : { ...existing.resolution, ...init.resolution };
     } else {
       existing.resolution = { ...init.resolution, ...existing.resolution };
     }
     for (const runId of init.runIds) existing.runIds.add(runId);
     existing.sources.add(init.source);
-    return existing;
   };
 
   for (const { runId, entries } of input.triage) {
@@ -281,24 +360,21 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
   for (const monitor of input.monitors) {
     if (monitoredPRKey(monitor.config.pr) !== targetKey) continue;
     const observedHead = monitor.observation?.headSha;
-    for (const incident of monitor.incidents as PRMonitorIncident[]) {
+    for (const { identity, incident } of latestIncidentsByIdentity(
+      monitor.incidents as PRMonitorIncident[],
+    )) {
       const signal = incident.signal;
-      if (signal.kind !== 'feedback' && signal.kind !== 'review') continue;
-      const identity = feedbackIdentityFromUrl(signal.url) ?? {
-        kind: signal.kind === 'review' ? ('review' as const) : ('review-comment' as const),
-        providerId: `node-${signal.key}`,
-      };
       const login = signal.summary.split(':')[0]?.split(' ')[0]?.trim();
-      const body =
+      const summary =
         signal.kind === 'feedback'
-          ? signal.summary.slice(signal.summary.indexOf(':') + 1)
+          ? signal.summary.slice(signal.summary.indexOf(':') + 1).trim()
           : undefined;
       upsert(identity, {
         authorLogin: login || undefined,
         // The observer already drops Bot-typed comment authors and the PR author's own comments.
         authorKind: signal.kind === 'feedback' ? 'human' : reviewAuthorKind(signal),
         reviewState: signal.kind === 'review' ? 'CHANGES_REQUESTED' : undefined,
-        body: body?.trim() || undefined,
+        summaryExcerpt: summary || undefined,
         url: signal.url,
         reviewedCommit: signal.reviewedCommit,
         observedHead,
@@ -312,28 +388,12 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     }
   }
 
-  const consumptions = consumptionsBySourceKey(input.ledger);
   const candidates: FeedbackCandidate[] = [];
   for (const draft of drafts.values()) {
+    // Only a full body is a fingerprint; the provider summary is truncated.
     const bodyRevision = draft.body !== undefined ? sha256(collapse(draft.body)) : undefined;
     const revision = draft.providerRevision ?? bodyRevision ?? sha256(draft.sourceKey);
-    const consumed = consumptions.get(draft.sourceKey) ?? [];
-    const consumedBy: FeedbackConsumption[] = consumed.map((entry) => ({
-      destination: entry.destination,
-      rule: entry.rule,
-      revision: entry.revision,
-      recordedAt: entry.recordedAt,
-      ...(entry.decisionId ? { decisionId: entry.decisionId } : {}),
-      ...(entry.commit ? { commit: entry.commit } : {}),
-      ...(entry.bodyRevision ? { bodyRevision: entry.bodyRevision } : {}),
-    }));
-    const revisedSinceConsumed =
-      consumedBy.length > 0 &&
-      consumedBy.every(
-        (entry) =>
-          entry.revision !== revision &&
-          (bodyRevision === undefined || entry.bodyRevision !== bodyRevision),
-      );
+    const excerpt = draft.body ?? draft.summaryExcerpt;
     candidates.push({
       id: sha256(draft.sourceKey),
       sourceKey: draft.sourceKey,
@@ -348,7 +408,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       ...(draft.sourceKind ? { sourceKind: draft.sourceKind } : {}),
       ...(draft.reviewState ? { reviewState: draft.reviewState } : {}),
       ...(draft.path ? { path: draft.path } : {}),
-      ...(draft.body ? { excerpt: collapse(draft.body).slice(0, EXCERPT_MAX) } : {}),
+      ...(excerpt ? { excerpt: collapse(excerpt).slice(0, EXCERPT_MAX) } : {}),
       ...(draft.url ? { url: draft.url } : {}),
       ...(draft.reviewedCommit ? { reviewedCommit: draft.reviewedCommit } : {}),
       ...(draft.observedHead ? { observedHead: draft.observedHead } : {}),
@@ -358,8 +418,6 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       familyChangeRunIds: attribution.familyChangeRunIds,
       attribution: { kind: attribution.kind, note: attribution.note },
       sources: [...draft.sources].sort() as FeedbackCandidate['sources'],
-      ...(consumedBy.length ? { consumedBy } : {}),
-      ...(revisedSinceConsumed ? { revisedSinceConsumed: true } : {}),
     });
   }
 
@@ -372,7 +430,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       (a.path ?? '').localeCompare(b.path ?? '') ||
       a.sourceKey.localeCompare(b.sourceKey),
   );
-  return candidates.slice(0, CANDIDATE_CAP);
+  return annotateFeedbackConsumption(candidates.slice(0, CANDIDATE_CAP), input.ledger);
 }
 
 export function summarizeFeedbackCandidates(
@@ -395,6 +453,26 @@ export function unconsumedHumanFeedback(candidates: FeedbackCandidate[]): Feedba
       candidate.authorKind === 'human' &&
       (!candidate.consumedBy?.length || candidate.revisedSinceConsumed),
   );
+}
+
+/**
+ * A persisted retrospective payload froze its consumption state at creation.
+ * Re-annotate against the current ledger whenever a stored payload is read or
+ * routed, so a rule landed afterwards shows as consumed and is not re-proposed.
+ */
+export async function refreshRetrospectiveFeedback(
+  payload: RetrospectivePayload,
+): Promise<RetrospectivePayload> {
+  if (!payload.feedbackCandidates?.length) return payload;
+  const candidates = annotateFeedbackConsumption(
+    payload.feedbackCandidates,
+    await readFeedbackLedger(),
+  );
+  return {
+    ...payload,
+    feedbackCandidates: candidates,
+    feedbackSummary: summarizeFeedbackCandidates(candidates),
+  };
 }
 
 type MonitorSource = () => FeedbackCandidateInput['monitors'];

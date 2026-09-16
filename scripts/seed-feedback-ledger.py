@@ -13,6 +13,9 @@ Provider revisions are recomputed from saved GitHub evidence (`--github-dir`, fi
 `<owner>--<repo>--<number>.json` holding the GraphQL pull request) with the same fingerprint the
 gateway's PR monitor uses (`sha256("<updatedAt>:<body>")`) so a later monitor read matches.
 
+Run this while no approval is being recorded through the gateway (it is an offline operator
+step): the gateway serializes its own appends but cannot see this process.
+
 Usage:
   python3 scripts/seed-feedback-ledger.py --coverage <coverage.json> --repo <library repo url> \
       --commit <merged library sha> [--github-dir <dir>] [--ledger <path>] [--dry-run]
@@ -105,17 +108,17 @@ def main() -> int:
     coverage = json.loads(args.coverage.read_text())
     target = args.ledger or ledger_path()
     ledger = load_ledger(target)
-    existing = {(e["sourceKey"], e["destination"], e["rule"]) for e in ledger["entries"]}
+    existing = {(e["sourceKey"], e["destination"], e["rule"], e.get("revision")) for e in ledger["entries"]}
     recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     added = []
     for rule in coverage.get("rules", []):
         repo, number, kind, provider_id = parse_source(rule["source"])
         source_key = f"github.com/{repo.lower()}#{number}:{kind}:{provider_id}"
         destination = f"{args.repo}:{rule['destination']}"
-        key = (source_key, destination, rule["lesson"])
+        revision, body_revision = provider_revision(args.github_dir, repo, number, kind, provider_id)
+        key = (source_key, destination, rule["lesson"], revision or "unknown-at-seed")
         if key in existing:
             continue
-        revision, body_revision = provider_revision(args.github_dir, repo, number, kind, provider_id)
         run_ids = sorted({run_id for candidate in rule.get("candidates", []) for run_id in candidate.get("runIds", [])})
         entry = {
             "sourceKey": source_key,

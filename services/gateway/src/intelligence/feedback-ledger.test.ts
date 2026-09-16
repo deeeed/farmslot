@@ -55,3 +55,28 @@ test('a malformed ledger is an error, never silently treated as empty', async (t
   writeFileSync(file, JSON.stringify({ version: 1, entries: [{ sourceKey: 'x' }] }));
   await assert.rejects(() => readFeedbackLedger(file), /malformed entry/);
 });
+
+test('landing an edited revision under the same rule records a new consumption', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'feedback-ledger-rev-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'ledger.json');
+  assert.equal((await appendFeedbackConsumptions([ENTRY], file)).length, 1);
+  assert.equal(
+    (await appendFeedbackConsumptions([{ ...ENTRY, revision: 'rev-2' }], file)).length,
+    1,
+  );
+  assert.equal((await readFeedbackLedger(file)).entries.length, 2);
+});
+
+test('concurrent appends are serialized and none are lost', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'feedback-ledger-race-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'ledger.json');
+  const results = await Promise.all(
+    Array.from({ length: 10 }, (_, index) =>
+      appendFeedbackConsumptions([{ ...ENTRY, rule: `rule-${index}` }], file),
+    ),
+  );
+  assert.equal(results.flat().length, 10);
+  assert.equal((await readFeedbackLedger(file)).entries.length, 10);
+});

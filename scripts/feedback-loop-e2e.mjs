@@ -257,6 +257,24 @@ function seedRuns() {
       taskFile: path.join(retroTask, 'TASK.md'),
       decisions: [retroDecision('e2e-retro-decision')],
     }),
+    baseRun('e2e-persisted-run', {
+      familyId: 'e2e-persisted-run',
+      decisions: [
+        {
+          ...retroDecision('e2e-persisted-decision'),
+          // A retrospective the gateway persisted BEFORE the rule landed: its
+          // frozen candidate must still show as consumed when read back.
+          payload: {
+            kind: 'retrospective',
+            outcome: 'success',
+            whatThisIs: 'fixture',
+            actionEffects: [],
+            feedbackCandidates: [humanCandidate],
+            feedbackSummary: { total: 1, human: 1, bot: 0, unknown: 0, consumed: 0, open: 1 },
+          },
+        },
+      ],
+    }),
     baseRun('e2e-drift-run', {
       familyId: 'e2e-drift-run',
       decisions: [retroDecision('e2e-drift-decision')],
@@ -516,6 +534,30 @@ async function main() {
         ?.consumed === 1,
       'summary counts the consumption',
       familyAfter?.snapshot?.runs?.[0]?.decisions?.[0]?.payload?.feedbackSummary,
+    );
+    const persisted = await rpc(gatewayUrl, 'family.observability.get', {
+      familyId: 'e2e-persisted-run',
+      project: PROJECT,
+    });
+    const persistedPayload = persisted?.snapshot?.runs?.[0]?.decisions?.find(
+      (d) => d.id === 'e2e-persisted-decision',
+    )?.payload;
+    check(
+      persistedPayload?.feedbackCandidates?.[0]?.consumedBy?.[0]?.rule ===
+        'late-defaults-overwrite-user-choice' && persistedPayload?.feedbackSummary?.consumed === 1,
+      'a retrospective persisted before the rule landed is refreshed from the ledger',
+      persistedPayload?.feedbackSummary,
+    );
+    const listed = await rpc(gatewayUrl, 'decision.list', {});
+    const listedPersisted = listed?.decisions?.find((d) => d.id === 'e2e-persisted-decision');
+    check(
+      listedPersisted?.payload?.feedbackCandidates?.[0]?.consumedBy?.length === 1,
+      'decision.list serves the refreshed consumption state too',
+      listedPersisted?.payload?.feedbackSummary,
+    );
+    check(
+      readRun('e2e-persisted-run').decisions[0].payload.feedbackSummary.consumed === 0,
+      'the stored payload itself is left untouched (refresh is read-side)',
     );
 
     console.log(

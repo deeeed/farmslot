@@ -62,27 +62,47 @@ export async function readFeedbackLedger(file = feedbackLedgerPath()): Promise<F
   return assertLedgerShape(JSON.parse(await readFile(file, 'utf-8')), file);
 }
 
+/** Consumption identity: the same revision of a candidate landing under the same rule/destination. */
+export function feedbackConsumptionKey(
+  entry: Pick<FeedbackLedgerEntry, 'sourceKey' | 'destination' | 'rule' | 'revision'>,
+): string {
+  return `${entry.sourceKey}\u0000${entry.destination}\u0000${entry.rule}\u0000${entry.revision}`;
+}
+
+// Read-modify-write on one file: serialize appends within the gateway process so
+// two approvals resolving together cannot drop each other's entries (an atomic
+// rename protects the bytes, not the merge).
+let ledgerQueue: Promise<unknown> = Promise.resolve();
+
 /**
- * Append consumptions. Identity is (sourceKey, destination, rule): recording
- * the same consumption twice is a no-op, so a retried approval cannot double
- * count. Returns the entries that were actually added.
+ * Append consumptions. Identity is (sourceKey, destination, rule, revision):
+ * recording the same consumption twice is a no-op so a retried approval cannot
+ * double count, while landing an edited revision under an existing rule adds a
+ * new record. Returns the entries that were actually added.
  */
-export async function appendFeedbackConsumptions(
+export function appendFeedbackConsumptions(
   entries: FeedbackLedgerEntry[],
   file = feedbackLedgerPath(),
 ): Promise<FeedbackLedgerEntry[]> {
-  const ledger = await readFeedbackLedger(file);
-  const seen = new Set(ledger.entries.map((e) => `${e.sourceKey} ${e.destination} ${e.rule}`));
-  const added: FeedbackLedgerEntry[] = [];
-  for (const entry of entries) {
-    const key = `${entry.sourceKey} ${entry.destination} ${entry.rule}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    ledger.entries.push(entry);
-    added.push(entry);
-  }
-  if (added.length > 0) await writeAtomicJSON(file, ledger);
-  return added;
+  const run = async () => {
+    const ledger = await readFeedbackLedger(file);
+    const seen = new Set(ledger.entries.map(feedbackConsumptionKey));
+    const added: FeedbackLedgerEntry[] = [];
+    for (const entry of entries) {
+      const key = feedbackConsumptionKey(entry);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ledger.entries.push(entry);
+      added.push(entry);
+    }
+    if (added.length > 0) await writeAtomicJSON(file, ledger);
+    return added;
+  };
+  const next = ledgerQueue.then(run, run);
+  // The caller receives `next` (and its rejection); the chain itself only needs
+  // to outlive a failed append so the following append still runs.
+  ledgerQueue = next.catch(() => undefined);
+  return next;
 }
 
 export function consumptionsBySourceKey(

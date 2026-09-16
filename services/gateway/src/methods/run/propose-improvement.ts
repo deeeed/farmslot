@@ -104,7 +104,7 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
 }
 
 /** Human feedback from the run's latest retrospective that no canonical rule has consumed yet. */
-function unconsumedRetrospectiveFeedback(run: Run): FeedbackCandidate[] {
+async function unconsumedRetrospectiveFeedback(run: Run): Promise<FeedbackCandidate[]> {
   const retrospective = [...(run.decisions ?? [])]
     .reverse()
     .find(
@@ -112,11 +112,10 @@ function unconsumedRetrospectiveFeedback(run: Run): FeedbackCandidate[] {
     );
   const payload = retrospective?.payload;
   if (!payload || payload.kind !== 'retrospective') return [];
-  return (payload.feedbackCandidates ?? []).filter(
-    (candidate) =>
-      candidate.authorKind === 'human' &&
-      (!candidate.consumedBy?.length || candidate.revisedSinceConsumed),
-  );
+  const { refreshRetrospectiveFeedback, unconsumedHumanFeedback } =
+    await import('../../intelligence/feedback-candidates.js');
+  const refreshed = await refreshRetrospectiveFeedback(payload);
+  return unconsumedHumanFeedback(refreshed.feedbackCandidates ?? []);
 }
 
 /**
@@ -140,7 +139,7 @@ async function routeThenAnalyze(
   let emissionError: string | null = null;
   try {
     await router.emitLearningsDraftDecision(runId, routed, {
-      feedbackCandidates: unconsumedRetrospectiveFeedback(getRun(runId) ?? run),
+      feedbackCandidates: await unconsumedRetrospectiveFeedback(getRun(runId) ?? run),
     });
   } catch (err) {
     // The draft card failing (e.g. inbox IO) must not take the system arm down
