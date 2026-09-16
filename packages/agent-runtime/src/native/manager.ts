@@ -553,7 +553,7 @@ export class NativeSessionManager {
             ...environment,
             ...(hostProtection ? { TMPDIR: hostProtection.temporaryDirectory } : {}),
           }),
-          ...(hostProtection ? { processSandbox: hostProtection.sandbox } : {}),
+          processSandbox: hostProtection?.sandbox,
           ...(workerLaunch
             ? { effort: workerLaunch.effort, safetyTier: workerLaunch.safetyTier, filesystemPolicy }
             : {}),

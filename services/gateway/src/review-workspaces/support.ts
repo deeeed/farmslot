@@ -544,37 +544,3 @@ export function reviewWorkspaceSupportBindingEnvironment(
     inheritedPath,
   );
 }
-
-/** Remove only verified framework skill links after the reviewer has stopped. */
-export async function removeReviewWorkspaceSkills(run: Run): Promise<void> {
-  const workspace = run.reviewWorkspace;
-  if (!workspace?.support) return;
-  assertNativeRunOwner(run);
-  const pools = (await loadPoolConfigs()).filter((pool) => pool.machine === workspace.machine);
-  if (pools.length !== 1) throw new Error('Review skill cleanup machine is unavailable');
-  const pool = pools[0];
-  const io: SlotLocality = {
-    host: pool.host,
-    machine: pool.machine,
-    sshTarget: `${pool.sshUser}@${pool.host}`,
-    nodeRequest: (method, params, options) =>
-      requestNativeNode(
-        run.nativeOwnerPrincipalId!,
-        pool.machine,
-        method,
-        params,
-        options?.timeout ?? 30000,
-      ),
-  };
-  const result = await defaults.execute(io, [
-    'node',
-    '-e',
-    REVIEW_SKILL_INSTALL_SCRIPT,
-    JSON.stringify({
-      action: 'cleanup',
-      checkout: workspace.checkoutPath,
-      skills: workspace.support.skills,
-    }),
-  ]);
-  if (result.exitCode !== 0) throw new Error(`Review skill cleanup failed: ${result.stderr}`);
-}

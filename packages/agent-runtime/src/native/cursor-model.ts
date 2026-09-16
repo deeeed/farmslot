@@ -25,14 +25,23 @@ export async function configureCursorModel(
     }
   } else if (!ids.includes(model)) {
     // These are Cursor's CLI aliases, also used by the shared manual-dispatch picker.
-    model = model.replace(/^cursor-(?=grok-)/, '');
-    const fast = model.endsWith('-fast');
-    if (fast) model = model.slice(0, -5);
-    parameters.set('fast', String(fast));
-    const level = /-(none|low|medium|high|xhigh|max|extra-high)$/.exec(model);
-    if (level) {
-      model = model.slice(0, -level[0].length);
-      parameters.set('$effort', level[1] === 'extra-high' ? 'xhigh' : level[1]);
+    model = model
+      .replace(/^cursor-(?=grok-)/, '')
+      .replace(/^claude-(\d+)\.(\d+)-(opus|sonnet|haiku)/, 'claude-$3-$1-$2');
+    if (model === 'auto' && ids.includes('auto-smart')) model = 'auto-smart';
+    parameters.set('fast', 'false');
+    while (!ids.includes(model)) {
+      const suffix = /-(extra-high|thinking|fast|minimal|none|low|medium|high|xhigh|max)$/.exec(
+        model,
+      );
+      if (!suffix) break;
+      model = model.slice(0, -suffix[0].length);
+      const value = suffix[1];
+      if (value === 'thinking' || value === 'fast') parameters.set(value, 'true');
+      else {
+        if (parameters.has('$effort')) throw new Error('Ambiguous Cursor model effort');
+        parameters.set('$effort', value === 'extra-high' ? 'xhigh' : value);
+      }
     }
   }
   if (!ids.includes(model)) throw new Error(`Cursor model is unavailable: ${requested}`);
@@ -48,7 +57,12 @@ export async function configureCursorModel(
   for (const [key, value] of parameters) {
     const option =
       key === '$effort'
-        ? choices.find((entry) => entry.category === 'thought_level')
+        ? choices.find(
+            (entry) =>
+              entry.category === 'thought_level' &&
+              Array.isArray(entry.options) &&
+              entry.options.some((choice) => acpObject(choice).value === value),
+          )
         : choices.find((entry) => entry.id === key);
     if (!option) {
       if (key === 'fast' && value === 'false') continue;

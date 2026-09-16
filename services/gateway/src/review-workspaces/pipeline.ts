@@ -26,7 +26,7 @@ import {
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
-import { ensureReviewWorkspaceSupport, removeReviewWorkspaceSkills } from './support.js';
+import { ensureReviewWorkspaceSupport } from './support.js';
 import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
 import {
   allocateReviewWorkspace,
@@ -189,9 +189,6 @@ export async function teardownReviewWorkspace(runId: string): Promise<void> {
   };
   if (run.status === 'cancelled')
     await cancelReviewWorkspaceAllocation(runId, { assertCurrent: check });
-  check();
-  await removeReviewWorkspaceSkills(currentWorkspaceRun(runId, generation, true));
-  check();
   await waitForWorkspaceOperation(
     () => cleanupReviewWorkspace(runId, { assertCurrent: check }),
     check,

@@ -5,7 +5,7 @@ import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
 
 import { getRunnerDefinition, runnerSupportsNativeTaskReuse } from './registry.js';
 
-test('additional native sessions preserve terminal defaults and withhold unproven worker capabilities', () => {
+test('additional native sessions preserve terminal defaults and support native worker execution', () => {
   for (const [runner, terminalModel, transport] of [
     ['cursor', DEFAULT_CURSOR_MODEL, 'cursor-acp'],
     ['grok', DEFAULT_GROK_MODEL, 'grok-acp'],
@@ -15,7 +15,7 @@ test('additional native sessions preserve terminal defaults and withhold unprove
     assert.equal(definition.defaultModel, terminalModel);
     assert.equal(definition.supportsInteractivePrompt, true);
     assert.equal(definition.supportsTmuxNudges, true);
-    assert.equal(runnerSupportsNativeTaskReuse(runner), false);
+    assert.equal(runnerSupportsNativeTaskReuse(runner), true);
     assert.deepEqual(definition.nativeChoices?.modes, ['default']);
     const nativeDefault = definition.nativeChoices?.defaultModel ?? definition.defaultModel;
     assert.ok(nativeDefault && definition.nativeChoices?.models.includes(nativeDefault));
