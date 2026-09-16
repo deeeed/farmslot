@@ -1,6 +1,7 @@
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { feedbackCandidateStyles } from '../shared/feedback-candidate-styles.js';
 
 export const familyObservabilityLayoutStyles = css`
   :host {
@@ -128,6 +129,7 @@ export const familyObservabilityLayoutStyles = css`
     gap: ${unsafeCSS(spacing.sm)};
     margin-top: ${unsafeCSS(spacing.sm)};
   }
+  ${feedbackCandidateStyles}
   .retro-effect {
     display: grid;
     gap: 3px;

@@ -20,6 +20,10 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe as subscribeState } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import {
+  feedbackSummaryLabel,
+  renderFeedbackCandidates,
+} from '../runs/family-observability-retrospective-renderers.js';
 import { flowColor, flowLabel } from '../runs/run-utils.js';
 
 import { decisionInboxStyles } from './decision-inbox-styles.js';
@@ -362,10 +366,18 @@ export class DecisionInbox extends LitElement {
     const payload = d.payload as LearningsDraftPayload | undefined;
     if (!payload || payload.kind !== 'learnings-draft') return nothing;
     return html`
+      ${payload.destination
+        ? html`<div class="improvement-rationale" data-testid="learnings-destination">
+            Canonical destination: <code>${payload.destination.repo}</code> ·
+            <code>${payload.destination.path}</code>
+            <span style="opacity:0.7">(from ${payload.destination.source})</span>
+          </div>`
+        : nothing}
       ${payload.drafts.map(
         (draft) => html`
           <div class="improvement-rationale">
-            <strong>${draft.id}</strong> → <code>${draft.targetPath}</code>
+            <strong>${draft.id}</strong> →
+            <code>${draft.targetRepo ? `${draft.targetRepo}:` : ''}${draft.targetPath}</code>
             <div><em>Symptom:</em> ${draft.symptom}</div>
             <div><em>Cause:</em> ${draft.cause}</div>
             <div><em>Action:</em> ${draft.action}</div>
@@ -383,6 +395,7 @@ export class DecisionInbox extends LitElement {
           </div>
         `,
       )}
+      ${renderFeedbackCandidates(payload.feedbackCandidates, undefined)}
       ${payload.receipt
         ? html`<div class="improvement-rationale" style="opacity:0.8">
             Inbox receipt:
@@ -550,6 +563,16 @@ export class DecisionInbox extends LitElement {
                     ? html` · paths: ${payload.commentsTriageSummary.actionablePaths.join(', ')}`
                     : nothing}
                 </span>
+              </div>
+            `
+          : nothing}
+        ${payload.feedbackSummary
+          ? html`
+              <div class="retro-row">
+                <span class="retro-label">PR feedback</span>
+                <span class="retro-value" data-testid="feedback-summary"
+                  >${feedbackSummaryLabel(payload.feedbackSummary)}</span
+                >
               </div>
             `
           : nothing}
@@ -779,6 +802,8 @@ export class DecisionInbox extends LitElement {
                         <div class="decision-action">
                           <button
                             class="decision-btn"
+                            data-action-id=${action.id}
+                            data-decision-id=${d.id}
                             style=${actionStyle(action.style)}
                             title=${action.description ?? ''}
                             ?disabled=${isResolving}

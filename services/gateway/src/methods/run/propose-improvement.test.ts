@@ -361,3 +361,58 @@ test('composeImprovementAnalysisContent omits rationale section when absent', ()
   const outBlank = composeImprovementAnalysisContent('   ', 'bare learnings');
   assert.equal(outBlank, '## Worker learnings\nbare learnings');
 });
+
+test('a retrospective stored without a payload still offers the derived human feedback for consumption', async (t) => {
+  const { writeArtifact } = await import('../../family-observability/test-fixtures.js');
+  const { unconsumedRetrospectiveFeedback } = await import('./propose-improvement.js');
+  const base = mkdtempSync(path.join(tmpdir(), 'propose-payloadless-'));
+  const taskDir = path.join(base, 'task');
+  await writeArtifact(taskDir, 'TASK.md', '# task');
+  await writeArtifact(
+    taskDir,
+    'artifacts/comments-triage.json',
+    JSON.stringify([
+      {
+        comment_id: 77,
+        author_login: 'reviewer-a',
+        author_type: 'User',
+        source_kind: 'human',
+        body: 'late default',
+        triage: 'REAL',
+      },
+    ]),
+  );
+  const ledgerDir = mkdtempSync(path.join(tmpdir(), 'propose-ledger-'));
+  process.env.FARMSLOT_FEEDBACK_LEDGER = path.join(ledgerDir, 'ledger.json');
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  updateRun(run.id, {
+    taskFile: path.join(taskDir, 'TASK.md'),
+    decisions: [
+      {
+        id: 'retro-legacy',
+        type: 'retrospective',
+        title: 'legacy',
+        description: 'legacy',
+        actions: [{ id: 'accept', label: 'Accept', style: 'primary' }],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  t.after(async () => {
+    delete process.env.FARMSLOT_FEEDBACK_LEDGER;
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+    rmSync(base, { recursive: true, force: true });
+    rmSync(ledgerDir, { recursive: true, force: true });
+  });
+  const candidates = await unconsumedRetrospectiveFeedback(getRun(run.id)!);
+  assert.equal(candidates.length, 1);
+  assert.equal(
+    candidates[0]!.sourceKey,
+    'github.com/metamask/metamask-mobile#34865:review-comment:77',
+  );
+});

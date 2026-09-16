@@ -73,6 +73,7 @@ import {
 import { loadBindingsCache } from './integrations/github-bindings-cache.js';
 import { initGitHubClient } from './integrations/github-client.js';
 import { initPrLinkage } from './integrations/pr-linkage.js';
+import { setFeedbackMonitorSource } from './intelligence/feedback-candidates.js';
 import { initImprovementEngine } from './intelligence/improvement-engine.js';
 import { reconcileMachineParking } from './machine-parking/recovery.js';
 import { refreshBranches } from './methods/dispatch.js';
@@ -85,7 +86,7 @@ import { fetchPRList } from './methods/pr.js';
 import { loadPRListCache, startPRListRefresher } from './methods/pr/list-cache.js';
 import { initPRPush } from './methods/pr-push.js';
 import { initPRRuleDispatch, initPRRules } from './methods/pr-rules.js';
-import { initPRMonitorDispatch, initPRMonitoring } from './methods/pr-watch.js';
+import { initPRMonitorDispatch, initPRMonitoring, monitorsSnapshot } from './methods/pr-watch.js';
 import { resolveCreateSafetyTier } from './methods/run.js';
 import {
   getRuntimeCapabilityRegistry,
@@ -369,6 +370,8 @@ async function main(): Promise<void> {
     broadcastPrincipalEvent,
     ENABLE_ORCHESTRATION,
   );
+  // Retrospectives read persisted PR monitor incidents as feedback evidence.
+  setFeedbackMonitorSource(monitorsSnapshot);
   const prRules = await initPRRules(
     gatewayAuthRuntime,
     broadcastPrincipalEvent,

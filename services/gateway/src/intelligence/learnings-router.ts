@@ -4,17 +4,21 @@
 // SYSTEM findings (template/checklist/flow/harness-usage problems) continue to
 // the existing improvement path — the engine's projects/<project>/ applier.
 // DOMAIN knowledge (product behavior, measurement methodology, environment
-// gotchas) becomes a human-gated skill-antipattern DRAFT: exact text plus the
-// target path in the external recipe-pr-qa-review skill; farmslot never writes
-// to that repo. Ambiguous or unroutable entries become visible teaching holds —
-// never both arms for one entry, never a silent drop. Every route terminates at
-// a human gate.
-import { randomUUID } from 'node:crypto';
+// gotchas) becomes a human-gated antipattern DRAFT: exact text plus the target
+// path in the project's canonical knowledge library (the same library the
+// static reviewer consumes); farmslot never writes to that repo. Ambiguous or
+// unroutable entries become visible teaching holds — never both arms for one
+// entry, never a silent drop. Every route terminates at a human gate, and
+// "Recorded in canonical library" writes the consumption ledger so the same
+// feedback is never re-proposed.
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   Events,
+  type FeedbackCandidate,
+  type KnowledgeDestination,
   type LearningsAntipatternDraft,
   type LearningsDraftPayload,
   type LearningsDraftReceipt,
@@ -29,10 +33,35 @@ import { callLLM } from '../llm/index.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import {
+  appendFeedbackConsumptions,
+  consumptionsBySourceKey,
+  type FeedbackLedgerEntry,
+  readFeedbackLedger,
+} from './feedback-ledger.js';
 import { improvementBroadcast } from './improvement-engine.js';
 
 export const LEARNINGS_DRAFT_DECISION_TYPE = 'engine_learnings_draft';
-const ANTIPATTERN_SKILL_BASE = 'domains/agentic/skills/recipe-pr-qa-review/references/antipatterns';
+/** Human gate: the drafts landed in the canonical library; record the consumed feedback. */
+export const LEARNINGS_DRAFT_LANDED_ACTION = 'landed';
+
+/** Ledger identity of a learnings entry itself, so a landed lesson is not re-drafted. */
+export function learningEntryKey(entryText: string): string {
+  return `learning:${createHash('sha256').update(entryText.replace(/\s+/g, ' ').trim()).digest('hex')}`;
+}
+
+// One learnings-draft card resolves at a time: `landed` writes the ledger
+// before the card is marked resolved, and a concurrent `dismiss` must not slip
+// into that window and leave a dismissed card's feedback recorded as consumed.
+const resolvingDrafts = new Set<string>();
+export function beginLearningsDraftResolution(decisionId: string): () => void {
+  if (resolvingDrafts.has(decisionId)) {
+    throw new Error(`Decision ${decisionId} is already being resolved`);
+  }
+  resolvingDrafts.add(decisionId);
+  return () => resolvingDrafts.delete(decisionId);
+}
+const DEFAULT_LIBRARY_ANTIPATTERNS_PATH = 'review/antipatterns.md';
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,60}$/;
 
 export type LearningsEntryKind = 'system' | 'domain' | 'unclassified';
@@ -269,18 +298,54 @@ export function __setAntipatternDrafterForTest(fn: AntipatternDrafter | null): v
   drafterOverride = fn;
 }
 
-/** The skills-repo path a repo-key routes to. Exported for tests. */
-export function antipatternTargetPath(repoKey: string, slug: string): string {
-  return `${ANTIPATTERN_SKILL_BASE}/${repoKey}/${slug}.md`;
+/** `repo:path` string form used as the ledger destination key. */
+export function knowledgeDestinationKey(destination: KnowledgeDestination): string {
+  return `${destination.repo}:${destination.path}`;
 }
 
-/** Repo-key comes from pack configuration, never guessed (AC2): projects
- * declare vars.antipattern_repo_key in project.json. */
-export async function resolveAntipatternRepoKey(project: string): Promise<string | null> {
+interface ProjectKnowledgeConfig {
+  vars?: { knowledge_destination?: unknown };
+  static_review?: { support?: { libraries?: Array<{ name?: unknown }> } };
+  reference_repos?: Record<string, { repo_url?: unknown }>;
+}
+
+/**
+ * The destination comes from project configuration, never guessed. Explicit
+ * `vars.knowledge_destination {repo, path}` wins; otherwise the library the
+ * static reviewer already consumes (`static_review.support.libraries[0]` +
+ * `reference_repos.<name>_library.repo_url`) with the library's shared
+ * anti-pattern file. Null when neither is configured — the caller holds the
+ * entry visibly instead of inventing a path.
+ */
+export function knowledgeDestinationFromConfig(
+  projectJson: ProjectKnowledgeConfig,
+): KnowledgeDestination | null {
+  const explicit = projectJson.vars?.knowledge_destination;
+  if (explicit && typeof explicit === 'object') {
+    const { repo, path } = explicit as { repo?: unknown; path?: unknown };
+    if (typeof repo === 'string' && repo.trim() && typeof path === 'string' && path.trim()) {
+      return { repo: repo.trim(), path: path.trim(), source: 'vars.knowledge_destination' };
+    }
+    return null;
+  }
+  const library = projectJson.static_review?.support?.libraries?.[0]?.name;
+  if (typeof library !== 'string' || !library.trim()) return null;
+  const repo = projectJson.reference_repos?.[`${library.trim()}_library`]?.repo_url;
+  if (typeof repo !== 'string' || !repo.trim()) return null;
+  return {
+    repo: repo.trim(),
+    path: DEFAULT_LIBRARY_ANTIPATTERNS_PATH,
+    library: library.trim(),
+    source: 'static_review',
+  };
+}
+
+export async function resolveKnowledgeDestination(
+  project: string,
+): Promise<KnowledgeDestination | null> {
   try {
     const vars = await loadProjectVars(project);
-    const raw = (vars.projectJson as { vars?: Record<string, unknown> }).vars?.antipattern_repo_key;
-    return typeof raw === 'string' && /^[\w.-]+$/.test(raw.trim()) ? raw.trim() : null;
+    return knowledgeDestinationFromConfig(vars.projectJson as ProjectKnowledgeConfig);
   } catch (err) {
     console.warn(
       `[learnings-router] loadProjectVars(${project}) failed: ${(err as Error).message}`,
@@ -446,6 +511,8 @@ export interface RoutedLearnings {
   /** System-only learnings reconstructed for the improvement engine; null when
    * no entry classified system. */
   systemContent: string | null;
+  /** Canonical library the drafts target; null when the project configures none. */
+  destination: KnowledgeDestination | null;
 }
 
 function reconstructSections(entries: LearningsEntry[]): string {
@@ -472,24 +539,46 @@ export async function routeLearnings(project: string, learnings: string): Promis
   }));
 
   const drafts: LearningsAntipatternDraft[] = [];
+  const destination = buckets.domain.length > 0 ? await resolveKnowledgeDestination(project) : null;
   if (buckets.domain.length > 0) {
-    const repoKey = await resolveAntipatternRepoKey(project);
-    if (!repoKey) {
+    if (!destination) {
       for (const entry of buckets.domain) {
         holds.push({
           entry: entry.text,
-          reason: `no antipattern repo-key configured for project "${project}" — set vars.antipattern_repo_key in its project.json`,
+          reason: `no canonical knowledge destination configured for project "${project}" — set vars.knowledge_destination {repo, path} or static_review.support.libraries + reference_repos.<name>_library in its project.json`,
         });
       }
     } else {
-      let generated: Awaited<ReturnType<AntipatternDrafter>>;
-      try {
-        generated = await (drafterOverride ?? draftViaLLM)(buckets.domain);
-      } catch (err) {
-        console.warn(`[learnings-router] draft generation failed: ${(err as Error).message}`);
-        generated = buckets.domain.map(() => null);
+      // Lessons already landed in THIS project's canonical library are held,
+      // not re-drafted; the ledger is machine-wide, so a lesson landed in
+      // another project's library does not count.
+      const landed = consumptionsBySourceKey(await readFeedbackLedger());
+      const destinationKey = knowledgeDestinationKey(destination);
+      const pending: LearningsEntry[] = [];
+      for (const entry of buckets.domain) {
+        const prior = landed
+          .get(learningEntryKey(entry.text))
+          ?.filter((item) => item.destination === destinationKey)
+          .at(-1);
+        if (prior) {
+          holds.push({
+            entry: entry.text,
+            reason: `already recorded in ${prior.destination} as "${prior.rule}" on ${prior.recordedAt} — reword the entry if the lesson changed`,
+          });
+        } else {
+          pending.push(entry);
+        }
       }
-      buckets.domain.forEach((entry, index) => {
+      let generated: Awaited<ReturnType<AntipatternDrafter>> = [];
+      if (pending.length > 0) {
+        try {
+          generated = await (drafterOverride ?? draftViaLLM)(pending);
+        } catch (err) {
+          console.warn(`[learnings-router] draft generation failed: ${(err as Error).message}`);
+          generated = pending.map(() => null);
+        }
+      }
+      pending.forEach((entry, index) => {
         const draft = validAntipatternDraft(generated[index]);
         if (!draft) {
           holds.push({
@@ -500,7 +589,8 @@ export async function routeLearnings(project: string, learnings: string): Promis
         }
         drafts.push({
           ...draft,
-          targetPath: antipatternTargetPath(repoKey, draft.id),
+          targetPath: destination.path,
+          targetRepo: destination.repo,
           sourceEntry: entry.text,
         });
       });
@@ -512,6 +602,7 @@ export async function routeLearnings(project: string, learnings: string): Promis
     drafts,
     holds,
     systemContent: buckets.system.length > 0 ? reconstructSections(buckets.system) : null,
+    destination,
   };
 }
 
@@ -524,6 +615,7 @@ export async function routeLearnings(project: string, learnings: string): Promis
 export async function emitLearningsDraftDecision(
   runId: string,
   routed: RoutedLearnings,
+  options: { feedbackCandidates?: FeedbackCandidate[] } = {},
 ): Promise<string | null> {
   if (routed.drafts.length === 0 && routed.holds.length === 0) return null;
   const run = getRun(runId);
@@ -546,6 +638,9 @@ export async function emitLearningsDraftDecision(
   const receipt: LearningsDraftReceipt | undefined =
     routed.drafts.length > 0 ? await appendProcessedReceipt(run, decisionId) : undefined;
 
+  // Every unconsumed candidate rides along (bounded upstream by the retrospective
+  // cap) so landing the card can record all of them.
+  const feedbackCandidates = options.feedbackCandidates ?? [];
   const payload: LearningsDraftPayload = {
     kind: 'learnings-draft',
     project: run.project,
@@ -553,11 +648,13 @@ export async function emitLearningsDraftDecision(
     drafts: routed.drafts,
     holds: routed.holds,
     ...(receipt ? { receipt } : {}),
+    ...(routed.destination ? { destination: routed.destination } : {}),
+    ...(feedbackCandidates.length ? { feedbackCandidates } : {}),
   };
   const parts: string[] = [];
-  if (routed.drafts.length > 0) {
+  if (routed.drafts.length > 0 && routed.destination) {
     parts.push(
-      `${routed.drafts.length} domain antipattern ${routed.drafts.length === 1 ? 'draft' : 'drafts'} for the recipe-pr-qa-review skill — open a PR on the skills repo to land them`,
+      `${routed.drafts.length} domain antipattern ${routed.drafts.length === 1 ? 'draft' : 'drafts'} for ${routed.destination.path} in ${routed.destination.repo} — open a PR on the library to land them`,
     );
   }
   if (routed.holds.length > 0) {
@@ -565,12 +662,31 @@ export async function emitLearningsDraftDecision(
       `${routed.holds.length} ${routed.holds.length === 1 ? 'entry' : 'entries'} held for teaching — nothing was dropped`,
     );
   }
+  if (feedbackCandidates.length > 0) {
+    parts.push(
+      `${feedbackCandidates.length} unconsumed human feedback ${feedbackCandidates.length === 1 ? 'candidate' : 'candidates'} from this family`,
+    );
+  }
+  const canLand = routed.drafts.length > 0 && Boolean(routed.destination);
   const decision: RunDecision = {
     id: decisionId,
     type: LEARNINGS_DRAFT_DECISION_TYPE,
     title: 'Learnings routed: domain drafts & holds',
-    description: `${parts.join('; ')}. Farmslot never writes to the skills repo — this card is the human gate.`,
-    actions: [{ id: 'dismiss', label: 'Dismiss', style: 'secondary' }],
+    description: `${parts.join('; ')}. Farmslot never writes to the library — this card is the human gate.`,
+    actions: [
+      ...(canLand
+        ? [
+            {
+              id: LEARNINGS_DRAFT_LANDED_ACTION,
+              label: 'Recorded in canonical library',
+              style: 'primary' as const,
+              description:
+                'After the library PR merged: records these drafts and the listed human feedback as consumed, so later scans and repair pushes do not re-propose them.',
+            },
+          ]
+        : []),
+      { id: 'dismiss', label: 'Dismiss', style: 'secondary' },
+    ],
     createdAt: new Date().toISOString(),
     payload,
   };
@@ -582,4 +698,60 @@ export async function emitLearningsDraftDecision(
     slotId: run.slotId,
   });
   return decisionId;
+}
+
+/**
+ * Human gate consumed: append one ledger entry per feedback candidate, naming
+ * the card's drafts as the consuming rule. The binding is "consumed by this
+ * landed card", not a claim that one specific draft addressed one specific
+ * comment — the card is the unit the human approved. Runs BEFORE the decision
+ * is marked resolved; a ledger failure leaves the card pending rather than
+ * recording an approval with no trace.
+ */
+export async function recordLearningsDraftLanded(
+  run: Run,
+  decision: Pick<RunDecision, 'id' | 'payload'>,
+): Promise<FeedbackLedgerEntry[]> {
+  const payload = decision.payload;
+  if (!payload || payload.kind !== 'learnings-draft') {
+    throw new Error(`Decision ${decision.id} is not a learnings-draft card`);
+  }
+  if (!payload.destination) {
+    throw new Error(`Decision ${decision.id} has no canonical destination to record`);
+  }
+  if (payload.drafts.length === 0) {
+    throw new Error(`Decision ${decision.id} has no drafts to record as landed`);
+  }
+  const destination = knowledgeDestinationKey(payload.destination);
+  const rule = payload.drafts.map((draft) => draft.id).join(', ');
+  const recordedAt = new Date().toISOString();
+  const entries: FeedbackLedgerEntry[] = (payload.feedbackCandidates ?? []).map((candidate) => ({
+    sourceKey: candidate.sourceKey,
+    candidateId: candidate.id,
+    revision: candidate.revision,
+    ...(candidate.bodyRevision ? { bodyRevision: candidate.bodyRevision } : {}),
+    destination,
+    rule,
+    recordedAt,
+    decisionId: decision.id,
+    source: 'learnings-draft',
+    runIds: [run.id, ...candidate.runIds.filter((id) => id !== run.id)],
+  }));
+  // The lessons themselves are consumed too, so re-analysing unchanged
+  // learnings later holds them instead of proposing the same rule again.
+  for (const draft of payload.drafts) {
+    const key = learningEntryKey(draft.sourceEntry);
+    entries.push({
+      sourceKey: key,
+      candidateId: key.slice('learning:'.length),
+      revision: key.slice('learning:'.length),
+      destination,
+      rule: draft.id,
+      recordedAt,
+      decisionId: decision.id,
+      source: 'learnings-draft',
+      runIds: [run.id],
+    });
+  }
+  return appendFeedbackConsumptions(entries);
 }

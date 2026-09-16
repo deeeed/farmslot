@@ -11,13 +11,15 @@ import { invalidateProjectVarsCache } from '@farmslot/slot-config';
 import { farmslotRoot } from '../fleet/state.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
+import { feedbackLedgerPath, readFeedbackLedger } from './feedback-ledger.js';
 import {
   __setAntipatternDrafterForTest,
   __setLearningsClassifierForTest,
-  antipatternTargetPath,
   appendProcessedReceipt,
   classifyLearningsEntries,
   emitLearningsDraftDecision,
+  knowledgeDestinationFromConfig,
+  recordLearningsDraftLanded,
   routeLearnings,
   splitLearningsEntries,
 } from './learnings-router.js';
@@ -25,13 +27,23 @@ import {
 const TEST_PROJECT = `.learnings-router-test-${process.pid}`;
 const TEST_PROJECT_DIR = path.join(farmslotRoot, 'projects', TEST_PROJECT);
 
+const TEST_LIBRARY_REPO = 'git@github.com:example/recipe-library.git';
+
 function setupProject(options: { repoKey?: string } = {}): void {
   mkdirSync(TEST_PROJECT_DIR, { recursive: true });
-  const vars = options.repoKey ? { antipattern_repo_key: options.repoKey } : {};
-  writeFileSync(
-    path.join(TEST_PROJECT_DIR, 'project.json'),
-    `${JSON.stringify({ name: TEST_PROJECT, vars })}\n`,
-  );
+  // The destination is the library the static reviewer already consumes.
+  const config = options.repoKey
+    ? {
+        name: TEST_PROJECT,
+        static_review: {
+          support: {
+            libraries: [{ name: options.repoKey, root: { env: 'LRN_TEST_LIBRARY_ROOT' } }],
+          },
+        },
+        reference_repos: { [`${options.repoKey}_library`]: { repo_url: TEST_LIBRARY_REPO } },
+      }
+    : { name: TEST_PROJECT };
+  writeFileSync(path.join(TEST_PROJECT_DIR, 'project.json'), `${JSON.stringify(config)}\n`);
   invalidateProjectVarsCache(TEST_PROJECT);
 }
 
@@ -121,18 +133,19 @@ test('AC1: a mixed fixture yields exactly one system arm and one domain draft â€
   assert.ok(routed.systemContent);
   assert.match(routed.systemContent!, /recipe schema was stale/);
   assert.doesNotMatch(routed.systemContent!, /Performance\.getMetrics/);
-  assert.equal(
-    routed.drafts[0]!.targetPath,
-    antipatternTargetPath('testrepo', 'forced-gc-before-node-counts'),
-  );
-  assert.match(
-    routed.drafts[0]!.targetPath,
-    /^domains\/agentic\/skills\/recipe-pr-qa-review\/references\/antipatterns\/testrepo\//,
-  );
+  // Canonical routing: the draft targets the library the static reviewer consumes.
+  assert.equal(routed.drafts[0]!.targetPath, 'review/antipatterns.md');
+  assert.equal(routed.drafts[0]!.targetRepo, TEST_LIBRARY_REPO);
+  assert.deepEqual(routed.destination, {
+    repo: TEST_LIBRARY_REPO,
+    path: 'review/antipatterns.md',
+    library: 'testrepo',
+    source: 'static_review',
+  });
   assert.match(routed.drafts[0]!.sourceEntry, /Performance\.getMetrics/);
 });
 
-test('AC2: a domain entry with no configured repo-key becomes a teaching hold, not a guessed path', async (t) => {
+test('AC2: a domain entry with no configured destination becomes a teaching hold, not a guessed path', async (t) => {
   setupProject({});
   __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
   __setAntipatternDrafterForTest(async () => {
@@ -147,8 +160,54 @@ test('AC2: a domain entry with no configured repo-key becomes a teaching hold, n
   const routed = await routeLearnings(TEST_PROJECT, '- product screens flake on slow seeds\n');
   assert.equal(routed.drafts.length, 0);
   assert.equal(routed.holds.length, 1);
-  assert.match(routed.holds[0]!.reason, /vars\.antipattern_repo_key/);
+  assert.match(routed.holds[0]!.reason, /vars\.knowledge_destination/);
   assert.equal(routed.systemContent, null);
+  assert.equal(routed.destination, null);
+});
+
+test('knowledge destination comes from config only: explicit vars win, static_review derives, nothing else guesses', () => {
+  assert.deepEqual(
+    knowledgeDestinationFromConfig({
+      vars: {
+        knowledge_destination: { repo: 'git@x:o/r.git', path: 'review/antipatterns.extension.md' },
+      },
+      static_review: { support: { libraries: [{ name: 'perps' }] } },
+      reference_repos: { perps_library: { repo_url: 'git@x:o/lib.git' } },
+    }),
+    {
+      repo: 'git@x:o/r.git',
+      path: 'review/antipatterns.extension.md',
+      source: 'vars.knowledge_destination',
+    },
+  );
+  assert.deepEqual(
+    knowledgeDestinationFromConfig({
+      static_review: { support: { libraries: [{ name: 'perps' }] } },
+      reference_repos: { perps_library: { repo_url: 'git@x:o/lib.git' } },
+    }),
+    {
+      repo: 'git@x:o/lib.git',
+      path: 'review/antipatterns.md',
+      library: 'perps',
+      source: 'static_review',
+    },
+  );
+  // A library without a matching reference repo cannot be a destination.
+  assert.equal(
+    knowledgeDestinationFromConfig({
+      static_review: { support: { libraries: [{ name: 'perps' }] } },
+    }),
+    null,
+  );
+  // A malformed explicit destination is rejected rather than falling back silently.
+  assert.equal(
+    knowledgeDestinationFromConfig({
+      vars: { knowledge_destination: { repo: 'x' } },
+      static_review: { support: { libraries: [{ name: 'perps' }] } },
+      reference_repos: { perps_library: { repo_url: 'git@x:o/lib.git' } },
+    }),
+    null,
+  );
 });
 
 test('AC3: a draft the drafter cannot shape faithfully is held, and slugs are validated', async (t) => {
@@ -237,11 +296,132 @@ test('AC5: emitting a draft appends exactly one processed.jsonl receipt per capt
   const thirdPayload = decisions[1]!.payload as LearningsDraftPayload;
   assert.equal(firstPayload.receipt?.status, 'appended');
   assert.equal(thirdPayload.receipt?.status, 'already-processed');
-  // Every route terminates at a human gate: dismiss only, no auto-merge arm.
+  // Every route terminates at a human gate: record-as-landed or dismiss, no auto-merge arm.
   assert.deepEqual(
     decisions.map((decision) => decision.actions.map((action) => action.id)),
-    [['dismiss'], ['dismiss']],
+    [
+      ['landed', 'dismiss'],
+      ['landed', 'dismiss'],
+    ],
   );
+});
+
+test('approval gating: "landed" binds the family feedback to the draft in the ledger, idempotently', async (t) => {
+  setupProject({ repoKey: 'testrepo' });
+  const ledgerDir = mkdtempSync(path.join(tmpdir(), 'lrn-ledger-'));
+  process.env.FARMSLOT_FEEDBACK_LEDGER = path.join(ledgerDir, 'feedback-ledger.json');
+  __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
+  __setAntipatternDrafterForTest(async (entries) =>
+    entries.map(() => ({ id: 'unknown-balance-as-zero', symptom: 's', cause: 'c', action: 'a' })),
+  );
+  const run = createRun({ flowType: 'pr-complete', project: TEST_PROJECT, ticketOrPr: 'o/r#7' });
+  t.after(async () => {
+    delete process.env.FARMSLOT_FEEDBACK_LEDGER;
+    __setLearningsClassifierForTest(null);
+    __setAntipatternDrafterForTest(null);
+    teardownProject();
+    await cleanupRun(run.id);
+    rmSync(ledgerDir, { recursive: true, force: true });
+  });
+
+  const candidate = {
+    id: 'cand-1',
+    sourceKey: 'github.com/o/r#7:review-comment:11',
+    provider: 'github' as const,
+    repository: 'o/r',
+    prNumber: 7,
+    kind: 'review-comment' as const,
+    revision: 'rev-a',
+    bodyRevision: 'body-a',
+    authorKind: 'human' as const,
+    resolution: { state: 'open' as const },
+    runIds: ['other-run'],
+    familyChangeRunIds: [],
+    attribution: { kind: 'unknown' as const, note: 'n' },
+    sources: ['comments-triage' as const],
+  };
+  const routed = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
+  const decisionId = await emitLearningsDraftDecision(run.id, routed, {
+    feedbackCandidates: [candidate],
+  });
+  assert.ok(decisionId);
+  const decision = getRun(run.id)!.decisions.find((entry) => entry.id === decisionId)!;
+  assert.equal(decision.actions[0]?.id, 'landed');
+
+  const added = await recordLearningsDraftLanded(run, decision);
+  // One candidate consumption plus the landed lesson itself.
+  assert.equal(added.length, 2);
+  assert.equal(added[0]!.rule, 'unknown-balance-as-zero');
+  assert.equal(added[1]!.sourceKey.startsWith('learning:'), true);
+  // A card with several drafts still records one consumption per candidate,
+  // naming the card's drafts rather than binding every draft to every comment.
+  const basePayload = decision.payload as LearningsDraftPayload;
+  const multi = {
+    ...decision,
+    id: 'multi',
+    payload: {
+      ...basePayload,
+      drafts: [...basePayload.drafts, { ...basePayload.drafts[0]!, id: 'second-draft' }],
+    } as LearningsDraftPayload,
+  };
+  const multiAdded = await recordLearningsDraftLanded(run, multi);
+  // The candidate consumption under the combined rule, plus the new second lesson.
+  assert.equal(multiAdded.length, 2);
+  assert.equal(multiAdded[0]!.rule, 'unknown-balance-as-zero, second-draft');
+  assert.equal(added[0]!.destination, `${TEST_LIBRARY_REPO}:review/antipatterns.md`);
+  assert.equal(added[0]!.sourceKey, candidate.sourceKey);
+  assert.deepEqual(added[0]!.runIds, [run.id, 'other-run']);
+  // A retried approval records nothing new.
+  assert.equal((await recordLearningsDraftLanded(run, decision)).length, 0);
+  const ledger = await readFeedbackLedger(feedbackLedgerPath());
+  // Two candidate consumptions (one per card) plus the landed lesson entries themselves.
+  assert.equal(
+    ledger.entries.filter((entry) => !entry.sourceKey.startsWith('learning:')).length,
+    2,
+  );
+  assert.equal(ledger.entries.filter((entry) => entry.sourceKey.startsWith('learning:')).length, 2);
+  // Re-analysing the same learnings holds the landed lesson instead of drafting it again.
+  const again = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
+  assert.equal(again.drafts.length, 0);
+  assert.equal(again.holds.length, 1);
+  // The hold names the most recent consumption of that lesson (the multi-draft card).
+  assert.match(again.holds[0]!.reason, /already recorded in .* as "second-draft"/);
+  // The same lesson text for a project whose library is a different repo is not held.
+  writeFileSync(
+    path.join(TEST_PROJECT_DIR, 'project.json'),
+    `${JSON.stringify({
+      name: TEST_PROJECT,
+      vars: {
+        knowledge_destination: {
+          repo: 'git@github.com:example/other-library.git',
+          path: 'review/antipatterns.md',
+        },
+      },
+    })}\n`,
+  );
+  invalidateProjectVarsCache(TEST_PROJECT);
+  const elsewhere = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
+  assert.equal(elsewhere.drafts.length, 1);
+  assert.equal(elsewhere.holds.length, 0);
+});
+
+test('a card with no destination never offers the landed action and refuses to record', async (t) => {
+  setupProject({});
+  __setLearningsClassifierForTest(async (entries) => entries.map(() => 'domain' as const));
+  const run = createRun({ flowType: 'dev', project: TEST_PROJECT, ticketOrPr: 'LRN-9' });
+  t.after(async () => {
+    __setLearningsClassifierForTest(null);
+    teardownProject();
+    await cleanupRun(run.id);
+  });
+  const routed = await routeLearnings(TEST_PROJECT, '- some domain lesson\n');
+  const decisionId = await emitLearningsDraftDecision(run.id, routed);
+  const decision = getRun(run.id)!.decisions.find((entry) => entry.id === decisionId)!;
+  assert.deepEqual(
+    decision.actions.map((action) => action.id),
+    ['dismiss'],
+  );
+  await assert.rejects(() => recordLearningsDraftLanded(run, decision), /no canonical destination/);
 });
 
 test('concurrent receipt appends stay exactly-once under the inbox lock', async (t) => {

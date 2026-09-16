@@ -1,6 +1,11 @@
 import { html, nothing } from 'lit';
 
-import type { FamilyObservabilityRunSummary, RunDecision } from '@farmslot/protocol';
+import type {
+  FamilyObservabilityRunSummary,
+  FeedbackCandidate,
+  FeedbackCandidateSummary,
+  RunDecision,
+} from '@farmslot/protocol';
 
 import '../reviews/gate-summary-panel.js';
 
@@ -14,6 +19,84 @@ interface PendingRetrospectiveRenderOptions {
   run: FamilyObservabilityRunSummary;
   decision: RunDecision | null;
   onResolve: (run: FamilyObservabilityRunSummary, decision: RunDecision, actionId: string) => void;
+}
+
+export function feedbackSummaryLabel(summary: FeedbackCandidateSummary): string {
+  return `${summary.total} total · ${summary.human} human · ${summary.bot} bot · ${summary.unknown} unknown · ${summary.consumed} consumed · ${summary.open} open`;
+}
+
+function feedbackStateLabel(candidate: FeedbackCandidate): string {
+  if (candidate.consumedBy?.length) {
+    return candidate.revisedSinceConsumed
+      ? `revised since consumed by "${candidate.consumedBy[0]!.rule}"`
+      : `consumed by "${candidate.consumedBy[0]!.rule}"`;
+  }
+  return candidate.resolution.state;
+}
+
+export function renderFeedbackCandidates(
+  candidates: FeedbackCandidate[] | undefined,
+  summary: FeedbackCandidateSummary | undefined,
+) {
+  if (!candidates?.length) return nothing;
+  return html`
+    <details class="retro-details feedback-candidates" data-testid="feedback-candidates">
+      <summary>
+        PR feedback candidates${summary ? ` (${feedbackSummaryLabel(summary)})` : ''}
+      </summary>
+      <div class="feedback-list">
+        ${candidates.map(
+          (candidate) => html`
+            <div
+              class="feedback-candidate"
+              data-testid="feedback-candidate"
+              data-author-kind=${candidate.authorKind}
+              data-state=${feedbackStateLabel(candidate)}
+            >
+              <div class="feedback-head">
+                <span class="feedback-kind">${candidate.authorKind}</span>
+                <strong>${candidate.authorLogin ?? 'unknown author'}</strong>
+                <span class="muted">${candidate.kind}</span>
+                <span class="muted">${feedbackStateLabel(candidate)}</span>
+                ${candidate.url
+                  ? html`<a
+                      class="retro-open"
+                      href=${candidate.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      >open</a
+                    >`
+                  : nothing}
+              </div>
+              ${candidate.excerpt
+                ? html`<div class="retro-copy">${candidate.excerpt}</div>`
+                : nothing}
+              <div class="feedback-meta muted">
+                ${candidate.path ? html`<span>${candidate.path}</span>` : nothing}
+                <span
+                  >reviewed
+                  ${candidate.reviewedCommit
+                    ? candidate.reviewedCommit.slice(0, 8)
+                    : 'unknown'}</span
+                >
+                ${candidate.observedHead
+                  ? html`<span>head ${candidate.observedHead.slice(0, 8)}</span>`
+                  : nothing}
+                <span>rev ${candidate.revision.slice(0, 8)}</span>
+                <span
+                  >runs ${candidate.runIds.map((id) => id.slice(0, 8)).join(', ') || 'none'}</span
+                >
+                <span
+                  >attribution: ${candidate.attribution.kind} — ${candidate.attribution.note}</span
+                >
+                <span>sources: ${candidate.sources.join(', ')}</span>
+              </div>
+            </div>
+          `,
+        )}
+      </div>
+    </details>
+  `;
 }
 
 export function renderPendingRetrospectiveDecision(options: PendingRetrospectiveRenderOptions) {
@@ -95,6 +178,7 @@ export function renderPendingRetrospectiveDecision(options: PendingRetrospective
             </details>
           `
         : nothing}
+      ${renderFeedbackCandidates(payload?.feedbackCandidates, payload?.feedbackSummary)}
       ${payload?.actionEffects?.length
         ? html`
             <div class="retro-effects">

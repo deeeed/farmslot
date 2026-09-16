@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add `FeedbackCandidate`, `FeedbackConsumption` and `KnowledgeDestination` contracts; retrospectives carry `feedbackCandidates`/`feedbackSummary`, learnings drafts carry their canonical `targetRepo`, destination and unconsumed feedback, and PR monitor feedback signals record the reviewed commit.
 - Allow lightweight farm-owned QA input field declarations with admission validation.
 
 - Expose explicit tmux session termination with an inventory capability and expected process identity.

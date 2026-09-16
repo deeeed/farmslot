@@ -10,6 +10,7 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
+import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
 import { loadPendingDecisions } from '../observability/fleet-monitor.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
@@ -45,10 +46,14 @@ export async function decisionList(): Promise<DecisionListResult> {
     const enrichedRun = enrichDecisionsWithGateSummary(run);
     for (const d of enrichedRun.decisions) {
       if (d.resolvedAt) continue;
-      const payload =
+      let payload =
         d.type === 'retrospective' && !d.payload
           ? await buildRetrospectivePayload(enrichedRun, null)
           : d.payload;
+      // Stored retrospectives froze their feedback consumption state; a rule
+      // landed since must show as consumed.
+      if (payload?.kind === 'retrospective')
+        payload = await refreshRetrospectiveFeedback(payload, enrichedRun);
       runDecisions.push(pendingDecisionForRun(run, d, payload));
     }
   }

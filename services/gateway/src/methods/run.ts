@@ -1643,6 +1643,29 @@ async function resolveRunDecision(
     };
   }
 
+  // Human gate for routed domain drafts: bind the consumed feedback to the
+  // rule BEFORE resolving, so a ledger failure leaves the card pending instead
+  // of recording an approval with no trace. Idempotent by (candidate, rule).
+  let releaseLearningsDraft: (() => void) | null = null;
+  if (decision.type === 'engine_learnings_draft') {
+    const { beginLearningsDraftResolution, recordLearningsDraftLanded } =
+      await import('../intelligence/learnings-router.js');
+    // Serializes landed/dismiss on one card; released once the resolution is persisted.
+    releaseLearningsDraft = beginLearningsDraftResolution(params.decisionId);
+    if (params.actionId === 'landed') {
+      try {
+        // A dismiss that won the lock during the import above already resolved
+        // the card; recheck before anything reaches the ledger.
+        assertDecisionStillUnresolved(params.runId, params.decisionId);
+        await recordLearningsDraftLanded(existing, decision);
+        assertDecisionStillUnresolved(params.runId, params.decisionId);
+      } catch (err) {
+        releaseLearningsDraft();
+        throw err;
+      }
+    }
+  }
+
   // Mark decision as resolved
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = params.actionId;
@@ -1651,6 +1674,7 @@ async function resolveRunDecision(
     (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));
   if (extendMonitorWindow) persistMonitorWindowStart(params.runId);
   updateRun(params.runId, { decisions: getRun(params.runId)!.decisions });
+  releaseLearningsDraft?.();
 
   // Unblock whichever resolver owns this decision
   resolveMonitorDecision(params.decisionId, params.actionId);

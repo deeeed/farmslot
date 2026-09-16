@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import {
   Events,
+  type FeedbackCandidate,
   type ImprovementDiffPayload,
   type Run,
   type RunProposeImprovementParams,
@@ -9,7 +10,10 @@ import {
 } from '@farmslot/protocol';
 
 import { getFamilyRuns } from '../../family-observability/context.js';
-import { readCommentsTriageSummary } from '../../run-completion/orchestrator.js';
+import {
+  buildRetrospectivePayload,
+  readCommentsTriageSummary,
+} from '../../run-completion/orchestrator.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -102,6 +106,24 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
   return sections.join('\n\n');
 }
 
+/** Human feedback from the run's latest retrospective that no canonical rule has consumed yet. */
+export async function unconsumedRetrospectiveFeedback(run: Run): Promise<FeedbackCandidate[]> {
+  const retrospective = [...(run.decisions ?? [])]
+    .reverse()
+    .find((decision) => decision.type === 'retrospective');
+  if (!retrospective) return [];
+  const { refreshRetrospectiveFeedback, unconsumedHumanFeedback } =
+    await import('../../intelligence/feedback-candidates.js');
+  // A legacy retrospective without a stored payload is derived on read by the
+  // inbox and family views; the operator accepted what those showed, so derive
+  // the same payload here instead of silently offering nothing to consume.
+  const stored = retrospective.payload;
+  const payload =
+    stored?.kind === 'retrospective' ? stored : await buildRetrospectivePayload(run, null);
+  const refreshed = await refreshRetrospectiveFeedback(payload, run);
+  return unconsumedHumanFeedback(refreshed.feedbackCandidates ?? []);
+}
+
 /**
  * MANUAL-000075: every improvement analysis first routes the learnings through
  * the system/domain classifier. SYSTEM entries continue into the improvement
@@ -122,7 +144,9 @@ async function routeThenAnalyze(
   const routed = await router.routeLearnings(run.project, learnings);
   let emissionError: string | null = null;
   try {
-    await router.emitLearningsDraftDecision(runId, routed);
+    await router.emitLearningsDraftDecision(runId, routed, {
+      feedbackCandidates: await unconsumedRetrospectiveFeedback(getRun(runId) ?? run),
+    });
   } catch (err) {
     // The draft card failing (e.g. inbox IO) must not take the system arm down
     // with it; the payload is logged for recovery and the terminal message

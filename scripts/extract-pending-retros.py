@@ -4,6 +4,7 @@
 Read-only over .runs/. Writes digests under .omc/retro-digest/.
 """
 import json
+import hashlib
 import os
 import sys
 from collections import defaultdict
@@ -11,9 +12,9 @@ from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-RUNS_DIR = REPO / ".runs"
-OUT_DIR = REPO / ".omc" / "retro-digest"
+REPO = Path(os.environ.get("FARMSLOT_ROOT", Path(__file__).resolve().parent.parent)).expanduser().resolve()
+RUNS_DIR = Path(os.environ.get("FARMSLOT_RUNS_DIR", REPO / ".runs")).expanduser().resolve()
+OUT_DIR = Path(os.environ.get("FARMSLOT_RETRO_DIGEST_DIR", REPO / ".omc" / "retro-digest")).expanduser().resolve()
 
 
 def load_pending():
@@ -21,7 +22,7 @@ def load_pending():
     pending = []
     for f in sorted(glob(str(RUNS_DIR / "*.json"))):
         try:
-            run = json.load(open(f))
+            run = json.loads(Path(f).read_text())
         except Exception:
             continue
         for dec in run.get("decisions") or []:
@@ -107,6 +108,20 @@ def step_failures(steps):
     return out
 
 
+def read_worker_learnings(run):
+    task = run.get("taskFile")
+    if not isinstance(task, str) or not task:
+        return None
+    target = Path(task).parent / "artifacts" / "learnings.md"
+    if not target.is_absolute():
+        target = REPO / target
+    try:
+        data = target.read_bytes()
+    except FileNotFoundError:
+        return None
+    return {"path": str(target), "sha256": hashlib.sha256(data).hexdigest(), "text": data.decode("utf-8")}
+
+
 def write_digest(project, items, today):
     outfile = OUT_DIR / f"{today}-{project.replace('-farm','')}.md"
     lines = []
@@ -173,7 +188,15 @@ def write_digest(project, items, today):
                         "the report excerpt has no parseable table row"
                     )
             else:
-                lines.append("- review items: none REAL (all out-of-scope/clean)")
+                lines.append("- review triage: no REAL items recorded; inspect findings and learnings separately")
+            original = read_worker_learnings(run)
+            if original and original["text"].strip():
+                lines.extend(["", "#### Full worker learnings", "", f"Source: `{original['path']}` · SHA-256 `{original['sha256']}`", ""])
+                lines.extend("> " + line for line in original["text"].strip().splitlines())
+            learnings = payload.get("workerLearnings") or payload.get("deltaLearnings") or payload.get("rootLearnings")
+            if isinstance(learnings, str) and learnings.strip() and (not original or learnings.strip() != original["text"].strip()):
+                lines.extend(["", "#### Retrospective learning snapshot (may be truncated)", ""])
+                lines.extend("> " + line for line in learnings.strip().splitlines())
             lines.append("")
 
         lines.append("")
@@ -195,6 +218,15 @@ def write_digest(project, items, today):
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     outfile.write_text("\n".join(lines))
+    outfile.with_suffix(".json").write_text(json.dumps({
+        "version": 1,
+        "capturedAt": datetime.now(timezone.utc).isoformat(),
+        "project": project,
+        "decisions": [
+            {"runId": run["id"], "decisionId": decision["id"], "decisionHash": hashlib.sha256(json.dumps(decision, sort_keys=True).encode()).hexdigest()}
+            for run, decision in items
+        ],
+    }, indent=2) + "\n")
     return outfile
 
 
@@ -211,7 +243,7 @@ def main():
     for proj, items in sorted(by_project.items()):
         out = write_digest(proj, items, today)
         written.append(out)
-        print(f"  {proj}: {len(items)} → {out.relative_to(REPO)}")
+        print(f"  {proj}: {len(items)} → {os.path.relpath(out, REPO)}")
 
     if not written:
         print("nothing to write")

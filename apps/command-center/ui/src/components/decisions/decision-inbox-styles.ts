@@ -1,6 +1,7 @@
 import { css, unsafeCSS } from 'lit';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { feedbackCandidateStyles } from '../shared/feedback-candidate-styles.js';
 
 export const decisionInboxStyles = css`
   :host {
@@ -275,6 +276,8 @@ export const decisionInboxStyles = css`
     font-family: ${unsafeCSS(fonts.mono)};
     font-size: 10px;
   }
+
+  ${feedbackCandidateStyles}
 
   .retro-open {
     color: ${unsafeCSS(colors.accent)};

@@ -35,7 +35,7 @@ python3 scripts/extract-pending-retros.py
 
 Idempotent and read-only. Walks `.runs/`, filters for unresolved retros, groups by project + flow, writes per-project digest markdown. Counts and a flat list of run IDs are emitted in a fenced block at the top — Pass 3 reads them straight back.
 
-The digest tags REAL review items vs out-of-scope-bot rows from each `payload.reportExcerpt`. Use this to spot signal density before deciding whether a retro deserves a curated entry or just a quiet dismiss.
+The digest tags REAL review items from each `payload.reportExcerpt` and structured triage, quotes the full `artifacts/learnings.md` when it is readable (labelling the retrospective's own snapshot as possibly truncated otherwise), and writes a sibling `.json` snapshot of every decision id + hash for Pass 3. Zero REAL rows means "no triage recorded", never "clean": inspect findings and learnings separately.
 
 ## Pass 2 — Curate
 
@@ -52,22 +52,34 @@ If a learning maps to a concrete template change (worker/self-review/pr-complete
 ## Pass 3 — Resolve
 
 ```bash
-# Resolve every pending retro (matches Pass 1 output exactly):
-python3 scripts/bulk-resolve-retros.py --all-pending
+# Safe closeout: only audited decisions whose lesson has a recorded destination.
+# The plan is `{"version":1,"decisions":[{runId,decisionId,decisionHash,destination}]}`;
+# a decision whose hash changed since the audit, whose run is still active, that is
+# already resolved, or that has no destination is skipped with an explicit reason.
+python3 scripts/bulk-resolve-retros.py --from-plan <plan.json> --dry-run --receipt <receipt.jsonl>
+python3 scripts/bulk-resolve-retros.py --from-plan <plan.json> --receipt <receipt.jsonl> --reason "..."
 
-# Or scope to one digest:
+# Or scope to one digest (its `.json` snapshot carries the decision hashes captured in Pass 1):
 python3 scripts/bulk-resolve-retros.py --from-digest .omc/retro-digest/2026-05-07-example-browser.md
 
 # Or a hand-picked subset:
 python3 scripts/bulk-resolve-retros.py --run-ids <id1> <id2> ...
 
-# Preview without calling the gateway:
+# Every pending retro on disk — never against the live farm without a curated destination per decision:
 python3 scripts/bulk-resolve-retros.py --dry-run --all-pending
 ```
 
-Each call sends `run.resolveDecision` over WS via `apps/command-center/scripts/cdp.mjs gateway` with `actionId:'dismiss'` (the closest existing action — see _Known limitation_ below). The gateway atomically sets `resolvedAt`/`resolvedAction` on the decision and emits `RUN_DECISION_RESOLVED` so the UI quiets immediately. Refuses to run if `http://localhost:7777/health` is unreachable.
+Each call sends `run.resolveDecision` over WS via `apps/command-center/scripts/cdp.mjs gateway` with `actionId:'dismiss'` (the closest existing action — see _Known limitation_ below). The gateway atomically sets `resolvedAt`/`resolvedAction` on the decision and emits `RUN_DECISION_RESOLVED` so the UI quiets immediately. Refuses to run if the gateway `/health` (from `FARMSLOT_GATEWAY`, default `ws://localhost:7777`) is unreachable. `FARMSLOT_ROOT`, `FARMSLOT_RUNS_DIR` and `FARMSLOT_RETRO_DIGEST_DIR` isolate the inputs and outputs.
 
-The audit log records every resolved run id + decision id + flow + project, plus the `--reason` string — stamped UTC so future archaeology can trace bulk passes back to the LEARNINGS entries that consumed them.
+The audit log records every resolved run id + decision id + flow + project, plus the `--reason` string — stamped UTC so future archaeology can trace bulk passes back to the LEARNINGS entries that consumed them. `--receipt` appends one JSON line per audited decision (status, reason, decision hash, destination, dry-run flag) so the closeout is reconstructible.
+
+## Feedback ledger — which rule consumed which comment
+
+Retrospectives carry `feedbackCandidates`: one entry per provider comment/review id, merged from the family's `comments-triage.json` and the PR monitor's incidents, with author kind (human/bot/unknown), revision, reviewed commit, attribution (`family-change`, `follow-up-only`, `review-only`, `unknown`) and consumption state. The gateway reads `$FARMSLOT_HOME/state/feedback-ledger.json` (`FARMSLOT_FEEDBACK_LEDGER` overrides) to mark candidates a canonical rule already absorbed; an edited comment keeps the link and shows as revised.
+
+- The learnings-draft card's **Recorded in canonical library** action writes the ledger for the drafts on that card after the library PR merged: one consumption per listed feedback candidate naming the card's drafts, plus one `learning:<hash>` entry per landed lesson so re-analysing unchanged learnings holds the lesson instead of drafting it again.
+- Rules curated by hand (this skill's Pass 2) are recorded with `python3 scripts/seed-feedback-ledger.py --coverage <rule-coverage.json> --repo <library repo url> --commit <merged sha> [--github-dir <saved evidence>]`, so the next scan of the same PR does not re-propose them.
+- `node scripts/feedback-loop-e2e.mjs` proves the whole loop against an isolated production gateway (candidate derivation, the landed gate, consumption display, plan-mode closeout refusals).
 
 ## Known limitation — `dismiss` is the wrong label
 
@@ -90,8 +102,12 @@ Until that lands, treat the dismiss + audit log as the source of truth for "batc
 
 ## See also
 
-- `scripts/extract-pending-retros.py` — Pass 1 implementation.
+- `scripts/extract-pending-retros.py` — Pass 1 implementation (digest markdown + `.json` decision-hash snapshot, full worker learnings when the artifact exists).
 - `scripts/bulk-resolve-retros.py` — Pass 3 implementation.
+- `scripts/seed-feedback-ledger.py` — record hand-curated rule consumption in the feedback ledger.
+- `scripts/feedback-loop-e2e.mjs` — isolated-gateway proof of the feedback loop.
+- `services/gateway/src/intelligence/feedback-candidates.ts` — candidate identity, dedupe and attribution.
+- `services/gateway/src/intelligence/learnings-router.ts` — canonical destination resolution and the landed gate.
 - `services/gateway/src/run-completion/orchestrator.ts::createRetrospective()` — where retros are produced.
 - `services/gateway/src/methods/run.ts::runResolveDecision()` — the WS handler this skill drives.
 - `services/gateway/src/improvement-engine.ts::analyzeAndPropose()` — what `accept` triggers; bulk path skips this.
