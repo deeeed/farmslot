@@ -367,7 +367,7 @@ export const claudeNativeAdapter: NativeAdapter = {
         '--replay-user-messages',
         '--permission-prompt-tool',
         'stdio',
-        ...(options.safetyTier && options.safetyTier !== 'sandboxed'
+        ...(options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
           ? ['--dangerously-skip-permissions']
           : []),
         ...(options.effort ? ['--effort', options.effort] : []),

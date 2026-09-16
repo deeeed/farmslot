@@ -18,7 +18,9 @@ export const cursorNativeAdapter = createAcpAdapter({
             ...options.filesystemPolicy.writableRoots.flatMap((root) => ['--add-dir', root]),
           ]
         : []),
-      ...(options.safetyTier && options.safetyTier !== 'sandboxed' ? ['--force'] : []),
+      ...(options.processSandbox || (options.safetyTier && options.safetyTier !== 'sandboxed')
+        ? ['--force']
+        : []),
       'acp',
     ];
   },
