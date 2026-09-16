@@ -777,8 +777,12 @@ function renderValidationEvidence(validationResults, cdpPort, repoRoot) {
 // UNRESOLVED proof target blocks, and a failed validation step fails.
 function deriveTerminalState(envelope, taskMarkdown, validationResults) {
   const text = String(taskMarkdown || '');
+  // A reason only travels with a non-done envelope; a note attached to a done
+  // envelope must not be presented as the blocker or failure cause.
   const reason =
-    typeof envelope.terminal_reason === 'string' && envelope.terminal_reason.trim()
+    envelope.terminal_status !== 'done' &&
+    typeof envelope.terminal_reason === 'string' &&
+    envelope.terminal_reason.trim()
       ? envelope.terminal_reason.trim()
       : null;
   if (envelope.terminal_status === 'blocked') {
@@ -1007,7 +1011,12 @@ async function main() {
   );
   assert(
     ['done', 'blocked', 'failed'].includes(envelope.terminal_status),
-    'Runner output missing terminal_status (done|blocked|failed)',
+    `Runner output missing terminal_status (done|blocked|failed). See ${path.join(runDir, 'runner-output.txt')}`,
+  );
+  assert(
+    envelope.terminal_status === 'done' ||
+      (typeof envelope.terminal_reason === 'string' && envelope.terminal_reason.trim()),
+    `Runner output missing terminal_reason for terminal_status ${envelope.terminal_status}. See ${path.join(runDir, 'runner-output.txt')}`,
   );
   writeJson(path.join(runDir, 'runner-response.json'), envelope);
 

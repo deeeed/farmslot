@@ -307,9 +307,6 @@ function testCookingLanePreservesFailedStatus() {
 
   const repoRoot = path.join(root, 'example-browser');
   mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
-  const validatorDir = path.join(repoRoot, 'fixtures', 'agentic', 'recipes');
-  mkdirSync(validatorDir, { recursive: true });
-  writeFileSync(path.join(validatorDir, 'validate-recipe.js'), 'process.exit(1)\n', 'utf8');
 
   const runnerPath = path.join(root, 'runner.js');
   writeFileSync(
@@ -363,6 +360,175 @@ function testCookingLanePreservesFailedStatus() {
   assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'failed');
+  assert.equal(meta.terminal_reason, 'validation contradicted the PR claim');
+}
+
+function testCookingLaneFailsOnFailingValidationDespiteDone() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'recipe-cook-lane-validation-failed-'));
+  const taskArtifacts = path.join(
+    root,
+    'projects',
+    'example-browser-farm',
+    'tasks',
+    'review',
+    '111',
+    'artifacts',
+  );
+  mkdirSync(taskArtifacts, { recursive: true });
+  writeFileSync(path.join(taskArtifacts, 'review.md'), 'Failure context.\n', 'utf8');
+
+  const scenarioConfig = path.join(root, 'scenarios.json');
+  writeJson(scenarioConfig, {
+    version: 1,
+    scenarios: [
+      {
+        id: 'review-failed',
+        lane: 'review',
+        repo: 'example-browser',
+        task_artifact_dir: taskArtifacts,
+      },
+    ],
+  });
+
+  const repoRoot = path.join(root, 'example-browser');
+  mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
+  const validatorDir = path.join(repoRoot, 'fixtures', 'agentic', 'recipes');
+  mkdirSync(validatorDir, { recursive: true });
+  writeFileSync(path.join(validatorDir, 'validate-recipe.js'), 'process.exit(1)\n', 'utf8');
+
+  const runnerPath = path.join(root, 'runner.js');
+  writeFileSync(
+    runnerPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const input = fs.readFileSync(0, 'utf8');",
+      'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
+      "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
+      'process.stdout.write(JSON.stringify({',
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: failed', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      '  recipe_json: { version: 1, steps: [] },',
+      '  recipe_cook_json: null,',
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
+      "  evidence_verdict: 'bad',",
+      "  next_delta: 'fix failure',",
+      "  summary: 'failed run' }));",
+    ].join('\n'),
+    'utf8',
+  );
+
+  const script = path.resolve(__dirname, '../scripts/run-cooking-lane.cjs');
+  const outputDir = path.join(root, 'run-output');
+  const result = spawnSync(
+    process.execPath,
+    [
+      script,
+      '--scenario',
+      'review-failed',
+      '--scenario-config',
+      scenarioConfig,
+      '--repo-root',
+      repoRoot,
+      '--output-dir',
+      outputDir,
+      '--runner-cmd',
+      `node ${runnerPath}`,
+      '--runner-mode',
+      'batch',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
+  assert.doesNotMatch(task, /STATUS:/);
+  const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
+  assert.equal(meta.outcome, 'failed');
+  assert.match(meta.terminal_reason, /^validation step \w+ exited 1$/);
+}
+
+function testCookingLaneFailsClosedWithoutTerminalStatus() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'recipe-cook-lane-no-terminal-status-'));
+  const taskArtifacts = path.join(
+    root,
+    'projects',
+    'example-browser-farm',
+    'tasks',
+    'fix',
+    '456',
+    'artifacts',
+  );
+  mkdirSync(taskArtifacts, { recursive: true });
+  writeFileSync(path.join(taskArtifacts, 'comments-report.md'), 'Fix context.\n', 'utf8');
+
+  const scenarioConfig = path.join(root, 'recipe-cook', 'assets', 'scenarios.json');
+  writeJson(scenarioConfig, {
+    version: 1,
+    scenarios: [
+      {
+        id: 'fix-zero-balance-cta',
+        lane: 'fix',
+        repo: 'example-browser',
+        task_artifact_dir: 'projects/example-browser-farm/tasks/fix/456/artifacts',
+      },
+    ],
+  });
+
+  const runnerPath = path.join(root, 'runner.js');
+  writeFileSync(
+    runnerPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const input = fs.readFileSync(0, 'utf8');",
+      'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
+      "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
+      'process.stdout.write(JSON.stringify({',
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: fix', 'SOURCE_REF: fix-zero-balance-cta', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  recipe_json: { version: 1, steps: [{ id: 'step-1', action: 'assert' }] },",
+      '  recipe_cook_json: null,',
+      "  evidence_verdict: 'ok',",
+      "  next_delta: 'Add stronger fix-specific source prompts.',",
+      "  summary: 'No validator available.'",
+      '}));',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const script = path.resolve(__dirname, '../scripts/run-cooking-lane.cjs');
+  const outputDir = path.join(root, 'run-output');
+  const result = spawnSync(
+    process.execPath,
+    [
+      script,
+      '--scenario',
+      'fix-zero-balance-cta',
+      '--scenario-config',
+      scenarioConfig,
+      '--repo-root',
+      path.join(root, 'missing-repo'),
+      '--output-dir',
+      outputDir,
+      '--runner-cmd',
+      `node ${runnerPath}`,
+      '--runner-mode',
+      'batch',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.notEqual(result.status, 0, 'lane must fail closed without terminal_status');
+  const output = `${result.stderr}\n${result.stdout}`;
+  assert.match(output, /missing terminal_status \(done\|blocked\|failed\)/);
+  assert.match(output, /runner-output\.txt/);
+  assert.ok(fs.existsSync(path.join(outputDir, 'runner-output.txt')), 'model output stays on disk');
 }
 
 function testCookingLanePreservesBlockedStatus() {
@@ -447,6 +613,7 @@ function testCookingLanePreservesBlockedStatus() {
   assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'blocked');
+  assert.equal(meta.terminal_reason, 'live runtime unavailable');
 }
 
 function testCookingLaneBlocksOnUnresolvedTarget() {
@@ -531,6 +698,7 @@ function testCookingLaneBlocksOnUnresolvedTarget() {
   assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'blocked');
+  assert.equal(meta.terminal_reason, 'a required proof target remains UNRESOLVED');
 }
 
 function testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone() {
@@ -636,6 +804,7 @@ function testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone() {
   assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'completed');
+  assert.equal(meta.terminal_reason, null);
 }
 
 function testRepoLocalAutoResolution() {
@@ -841,6 +1010,8 @@ function main() {
   testCookingLaneBlocksOnUnresolvedTarget();
   testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone();
   testCookingLanePreservesFailedStatus();
+  testCookingLaneFailsOnFailingValidationDespiteDone();
+  testCookingLaneFailsClosedWithoutTerminalStatus();
   testRepoLocalAutoResolution();
   testStreamingRunnerMirrorsProgress();
   process.stdout.write('run-cooking-lane tests: ok\n');
