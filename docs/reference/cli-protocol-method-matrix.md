@@ -542,21 +542,22 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## tmux.\*
 
-| Method                  | Surface  | CLI command | TUI | Note                                                                                           |
-| ----------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `tmux.split`            | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.selectPane`       | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.killPane`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.zoomPane`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.newWindow`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.selectWindow`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.list`             | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.worker.list`      | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.worker.restore`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.renameWindow`     | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.sendKeys`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.pasteText`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `tmux.synchronizePanes` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                   | Surface  | CLI command                           | TUI | Note                                                                                                |
+| ------------------------ | -------- | ------------------------------------- | --- | --------------------------------------------------------------------------------------------------- |
+| `tmux.split`             | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.selectPane`        | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.killPane`          | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.zoomPane`          | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.newWindow`         | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.selectWindow`      | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.list`              | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.worker.list`       | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.worker.restore`    | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.worker.endSession` | rpc-only | `farmslot rpc tmux.worker.endSession` |     | Command Center ends an explicitly confirmed unmanaged session after checking current pane identity. |
+| `tmux.renameWindow`      | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.sendKeys`          | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.pasteText`         | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
+| `tmux.synchronizePanes`  | rpc-only |                                       |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.      |
 
 ## worker.\*
 

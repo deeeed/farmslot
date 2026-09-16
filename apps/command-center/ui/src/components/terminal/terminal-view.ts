@@ -12,6 +12,7 @@ import { Events, Methods } from '@farmslot/protocol';
 import '../progress-tracker/progress-tracker.js';
 
 import { gateway } from '../../gateway-client.js';
+import { getState } from '../../state.js';
 
 import {
   dropCarriesFiles,
@@ -1157,6 +1158,10 @@ export class TerminalView extends TerminalViewState {
 
   render() {
     const worker = this._workerRef();
+    const workspaceRun =
+      !worker && !this.slotId && this.runId
+        ? getState().runs.find((run) => run.id === this.runId)
+        : undefined;
 
     return renderTerminalChrome({
       showInputBar: !this.compact && this._mode !== 'pty',
@@ -1164,12 +1169,13 @@ export class TerminalView extends TerminalViewState {
       lifecycle: this._lifecycle,
       mode: this._mode,
       attachPhase: this._attachPhase,
-      agent: this._agent,
-      runner: this._runner,
-      model: this._model,
-      summary: this._summary,
+      agent: workspaceRun?.status ?? this._agent,
+      runner: workspaceRun?.metrics.runner ?? this._runner,
+      model: workspaceRun?.metrics.model ?? this._model,
+      summary: workspaceRun?.summary ?? this._summary,
       slotId: this.slotId,
-      targetLabel: this._targetLabel(),
+      runId: this.runId,
+      targetLabel: workspaceRun?.ticketOrPr || this._targetLabel(),
       hasTarget: this._hasTarget(),
       taskMarkdown: this._taskMarkdown,
       toolbar: this._renderTmuxToolbar(),

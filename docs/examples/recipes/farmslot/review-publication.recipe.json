@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Publish static review findings",
+  "description": "Publish through an isolated production gateway RPC with a fake GitHub executable. No model calls or real GitHub writes.",
+  "workflow": {
+    "entry": "publish",
+    "nodes": {
+      "publish": {
+        "action": "command",
+        "cmd": "yarn --cwd apps/command-center tsx --tsconfig ../../services/gateway/tsconfig.json --test ../../services/gateway/src/review-publication/diff-comments.test.ts ../../services/gateway/src/review-publication/provider.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Prove prReview.publish persists a published receipt, sends valid inline comments, preserves off-diff findings in the body, rejects stale heads, and reconciles retries without duplicate publication.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

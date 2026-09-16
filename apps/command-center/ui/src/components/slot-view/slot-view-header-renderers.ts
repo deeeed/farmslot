@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
+import '../shared/workspace-pin.js';
+
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
 import { runDisplayTitle } from '../runs/run-utils.js';
@@ -52,18 +54,10 @@ export function renderSlotViewHeader(
         : nothing}
       ${view.slotId
         ? html`
-            <button
-              class="sv-run-ctrl"
-              style="background:${pinned ? colors.accent : colors.bgCard}22; color:${pinned
-                ? colors.accent
-                : colors.textMuted}; border:1px solid ${pinned
-                ? colors.accent
-                : colors.bgCardHover}; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
-              @click=${() => view._togglePinnedSlot()}
-              title="Toggle this slot in the Command Center pinned slots list"
-            >
-              ${pinned ? 'Pinned' : 'Pin slot'}
-            </button>
+            <workspace-pin
+              .slotId=${view.slotId}
+              @pin-changed=${() => view.requestUpdate()}
+            ></workspace-pin>
             ${pinned
               ? html`
                   <button

@@ -37,12 +37,27 @@ export const STORAGE_KEY = 'farmslot:split-view:slots';
 export const LAYOUT_KEY = 'farmslot:split-view:layout';
 export const WORKER_WATCHLIST_KEY = 'farmslot:terminal-watchlist:v1';
 export const WORKER_PANES_KEY = 'farmslot:split-view:worker-panes';
+export const RUN_PANES_KEY = 'farmslot:split-view:run-panes';
 export const WORKER_FILTER_KEY = 'farmslot:terminal-worker-filter';
 
 export type TerminalPane =
   | { type: 'worker'; ref: TmuxWorkerRef }
+  | { type: 'run'; runId: string }
   | { type: 'slot'; slotId: string; index: number };
 export type WorkerPaneFilter = 'adhoc' | 'all' | 'farmslot';
+
+export function selectWorkspaceRuns(runs: readonly Run[], filters: GlobalFilters): Run[] {
+  return runs
+    .filter(
+      (run) =>
+        run.reviewWorkspace &&
+        !run.reviewWorkspace.cleanedAt &&
+        isRunListActiveRun(run) &&
+        (!filters.projects.length || filters.projects.includes(run.project)) &&
+        (!filters.machines.length || filters.machines.includes(run.reviewWorkspace.machine)),
+    )
+    .sort(compareTerminalRuns);
+}
 
 export function parseWorkerRefs(raw: string | null): TmuxWorkerRef[] {
   if (!raw) return [];

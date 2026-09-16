@@ -43,7 +43,6 @@ import '../interactive/interactive-operator-packets.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { copyTextToClipboard } from '../../utils/clipboard.js';
-import { togglePinnedSlot } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -977,6 +976,7 @@ export class RunDetail extends RunDetailState {
 
   private _renderRunEvidence(run: Run) {
     return renderRunEvidence(run, {
+      taskProgress: this.taskProgress,
       evidenceLightboxItems: this._evidenceLightboxItems,
       evidenceLightboxOpen: this._evidenceLightboxOpen,
       evidenceLightboxIndex: this._evidenceLightboxIndex,
@@ -1048,10 +1048,6 @@ export class RunDetail extends RunDetailState {
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _publicationActions: this._publicationActions,
       _retryReviewPublication: (run) => this._retryReviewPublication(run),
-      _togglePinnedSlot: (slotId) => {
-        togglePinnedSlot(slotId);
-        this.requestUpdate();
-      },
       _renderInteractiveDevGate: (run) =>
         renderInteractiveDevGate(run, {
           busyAction: this._interactiveDevActionInProgress,
