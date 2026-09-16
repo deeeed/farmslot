@@ -221,3 +221,21 @@ test('QA requests do not inherit static publication from lower-priority team pol
   assert.equal(resolved.review.publishReview, undefined);
   assert.equal(resolved.sources.publication, 'built-in');
 });
+
+test('publication gate defaults inherit independently and explicit hold wins', () => {
+  const configured = {
+    'review-pr': {
+      review: { sessionIntent: 'reset' as const, scope: 'full' as const, autoFinish: true },
+    },
+  };
+  const request = { review: { sessionIntent: 'reset' as const, scope: 'incremental' as const } };
+  assert.equal(resolvePRWorkflowDefaults({ farm: configured, request }).review.autoFinish, true);
+  assert.equal(
+    resolvePRWorkflowDefaults({
+      farm: configured,
+      request: { review: { ...request.review, autoFinish: false } },
+    }).review.autoFinish,
+    false,
+  );
+  assert.equal(resolvePRWorkflowDefaults({}).review.autoFinish, undefined);
+});

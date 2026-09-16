@@ -22,6 +22,10 @@ import type { ReviewWorkspaceAdmission } from './admission.js';
 
 const runs = new Map<string, Run>();
 const persisted: Run[] = [];
+// The gateway lifecycle recipe covers real tmux cleanup; these tests isolate Git ownership.
+mock.module('../runtime/workspace-terminal.js', {
+  namedExports: { workspaceTerminalOperation: async () => [] },
+});
 let nativeStateRoot = '';
 mock.module('../runs/store.js', {
   namedExports: {

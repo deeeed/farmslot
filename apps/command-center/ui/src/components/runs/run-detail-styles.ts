@@ -84,6 +84,23 @@ export const runDetailStyles = css`
     flex-basis: 100%;
     margin: 0;
   }
+  .review-result {
+    flex-shrink: 0;
+    min-width: 0;
+    margin-bottom: ${unsafeCSS(spacing.md)};
+    padding: ${unsafeCSS(spacing.md)};
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  .review-result review-workspace {
+    height: 700px;
+    max-height: 80vh;
+    min-height: 320px;
+    overflow: hidden;
+  }
   .meta {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

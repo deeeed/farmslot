@@ -34,6 +34,8 @@ export interface DispatchPayloadDraft {
   runner?: string;
   effort?: string;
   reviewWorkspaceTarget?: ReviewWorkspaceTarget;
+  reviewAutoFinish?: boolean;
+  publishReview?: boolean;
   qaProfileId?: string;
   qaInputs?: Record<string, QaInput>;
   slotId?: string;
@@ -100,6 +102,8 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     ...devInteractiveFields(input),
     reviewTier: input.reviewTier,
     reviewScope: input.reviewScope,
+    reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
+    publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
     reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
@@ -136,6 +140,8 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     mode: input.mode,
     ...devInteractiveFields(input),
     reviewScope: input.reviewScope,
+    reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
+    publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
     reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,

@@ -52,6 +52,7 @@ export type DirectWorkflowRequest = ReviewQaDispatchInput &
     | 'slotId'
     | 'allowedSlots'
     | 'reviewScope'
+    | 'reviewAutoFinish'
     | 'mode'
     | 'executionTemplateId'
     | 'taskTemplate'
@@ -190,6 +191,9 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     ...original,
     mode: original.mode ?? ('autonomous' as const),
     reviewScope: original.reviewScope ?? defaults.review.scope,
+    ...(flow === 'review-pr'
+      ? { reviewAutoFinish: original.reviewAutoFinish ?? defaults.review.autoFinish ?? false }
+      : {}),
     ...(flow === 'review-pr' && original.domain === undefined && project?.staticReview?.domain
       ? { domain: project.staticReview.domain }
       : {}),
@@ -229,7 +233,10 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
   if (
     profile &&
     !options.execution &&
-    (params.runner !== undefined || params.model !== undefined || params.effort !== undefined)
+    (params.runner !== undefined ||
+      params.model !== undefined ||
+      params.effort !== undefined ||
+      params.transport !== undefined)
   ) {
     profile = structuredClone(profile);
     const runner = params.runner ?? params.nativeProfile?.runner ?? profile.models[0].runner;
@@ -248,6 +255,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
             : undefined),
       },
     ];
+    if (isPRWorkspaceExecutionProfile(profile) && params.transport)
+      profile.transport = params.transport;
     if (isPRWorkspaceExecutionProfile(profile) && profile.nativeProfile?.runner !== runner)
       delete profile.nativeProfile;
   }

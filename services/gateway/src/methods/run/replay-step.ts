@@ -1230,6 +1230,22 @@ export async function runReplayStep(
         ? { executionTemplate: undefined, templateProvenance: undefined }
         : {}),
       decisions: clearedDecisions,
+      ...(existing.reviewWorkspace && replayStepName === PS.HUMAN_GATE
+        ? {
+            reviewAutoFinish: false,
+            ...(existing.prWork?.review
+              ? {
+                  prWork: {
+                    ...existing.prWork,
+                    review: {
+                      ...existing.prWork.review,
+                      options: { ...existing.prWork.review.options, autoFinish: false },
+                    },
+                  },
+                }
+              : {}),
+          }
+        : {}),
       ...(resetTerminalOutcome ? { reviewResult: undefined } : {}),
       engineState: engineStateForReplay,
       metrics: resetMetrics,

@@ -221,7 +221,11 @@ export async function materializeReviewWorkspaceTask(
   const bundleDir = path.join(deps.snapshotRoot(), run.id, 'bundle');
   let snapshot = await loadSnapshot(run, deps);
   if (!snapshot) {
-    if (run.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt))
+    if (
+      run.agentContexts?.some(
+        (context) => context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+      )
+    )
       throw new Error('Cannot reconstruct a missing static task after worker launch');
     const project = await deps.loadProjectVars(run.project);
     const selected = readConfiguredExecutionTemplateSnapshot(project, run.executionTemplate!);
@@ -392,7 +396,11 @@ export async function materializeReviewWorkspaceTask(
     throw new Error('Static review identity changed during task writing');
   if (isTerminalRunStatus(current.status))
     throw new Error('Static review run stopped before task transfer');
-  if (!current.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt)) {
+  if (
+    !current.agentContexts?.some(
+      (context) => context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+    )
+  ) {
     const files = await collectTaskBundle(bundleDir);
     if (
       !isDeepStrictEqual(
@@ -456,14 +464,20 @@ export async function readReviewWorkspaceCompletion(
   if (signal.status === 'running') return null;
   const context = run.agentContexts?.find((candidate) => candidate.id === 'review');
   if (
-    !context?.nativeSession?.acceptedAt ||
+    !(run.transport === 'tmux'
+      ? context?.promptDeliveryStartedAt
+      : context?.nativeSession?.acceptedAt) ||
     !signal.attemptId ||
-    (context.signalAttemptId && context.signalAttemptId !== signal.attemptId) ||
+    (context?.signalAttemptId && context.signalAttemptId !== signal.attemptId) ||
     (signal.role && signal.role !== 'review') ||
     (signal.contextId && signal.contextId !== 'review') ||
     parseStrictIsoMs(signal.timestamp) === null ||
     Date.parse(signal.timestamp) <
-      Date.parse(context.nativeSession.launchRequestedAt ?? context.nativeSession.acceptedAt)
+      Date.parse(
+        run.transport === 'tmux'
+          ? context!.attemptStartedAt!
+          : (context!.nativeSession!.launchRequestedAt ?? context!.nativeSession!.acceptedAt!),
+      )
   )
     throw new Error('Static review signal does not belong to its accepted worker attempt');
   if (signal.status === 'blocked') {
@@ -607,4 +621,13 @@ function assertCompletionIdentity(runId: string, snapshot: Snapshot, deps: Depen
     !isDeepStrictEqual(current.executionTemplate, snapshot.executionTemplate)
   )
     throw new Error('Static review identity changed during completion');
+}
+
+/** Read progress from the same confined, owned task as completion validation. */
+export async function readReviewWorkspaceChecklist(runId: string): Promise<string> {
+  const run = ownedRun(runId, defaults);
+  const io = await locality(run, defaults);
+  if (run.reviewWorkspace!.cleanedAt)
+    return readFile(path.join(defaults.snapshotRoot(), run.id, 'view/CHECKLIST.md'), 'utf8');
+  return confinedRead(io, run.reviewWorkspace!.taskPath, 'CHECKLIST.md');
 }

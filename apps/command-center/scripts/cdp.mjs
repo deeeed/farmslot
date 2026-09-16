@@ -11,6 +11,7 @@
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
 //   node scripts/cdp.mjs viewport <hash> <width> <height> Resize the browser content area.
 //   node scripts/cdp.mjs fill <hash> <selector> <text> Type into a control with real CDP input.
+//   node scripts/cdp.mjs click <hash> <selector>       Click a control, searching shadow roots.
 //   node scripts/cdp.mjs select <hash> <selector> <value> Choose a native select option by keyboard.
 //   Selectors may cross shadow roots with >>>, e.g. native-session-view >>> textarea.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
@@ -306,6 +307,46 @@ async function screenshotTab(hash, outputPath) {
   return { path: outputPath };
 }
 
+async function clickInTab(hash, selector) {
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  try {
+    await call('Page.bringToFront');
+    const result = await call('Runtime.evaluate', {
+      expression: `(() => {
+        function find(root) {
+          const element = root.querySelector(${JSON.stringify(selector)});
+          if (element) return element;
+          for (const child of root.querySelectorAll('*')) {
+            if (child.shadowRoot) { const found=find(child.shadowRoot); if(found)return found; }
+          }
+        }
+        const element=find(document);
+        if(!element || element.disabled || !element.getClientRects().length) throw Error('Click target unavailable');
+        element.scrollIntoView({block:'center'});
+        const rect=element.getBoundingClientRect();
+        return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+      })()`,
+      returnByValue: true,
+    });
+    if (result.exceptionDetails)
+      throw new Error(
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+      );
+    for (const type of ['mousePressed', 'mouseReleased'])
+      await call('Input.dispatchMouseEvent', {
+        type,
+        ...result.result.value,
+        button: 'left',
+        clickCount: 1,
+      });
+    return { clicked: selector };
+  } finally {
+    close();
+  }
+}
+
 async function inputInTab(hash, selector, value, select) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
@@ -590,6 +631,10 @@ try {
     if (!hash) die('usage: cdp.mjs login <hash>');
     const result = await loginInTab(hash);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'click') {
+    const [hash, selector] = rest;
+    if (!hash || !selector) die('usage: cdp.mjs click <hash> <selector>');
+    console.log(JSON.stringify(await clickInTab(hash, selector), null, 2));
   } else if (cmd === 'fill' || cmd === 'select') {
     const [hash, selector, value] = rest;
     if (!hash || !selector || value === undefined)
@@ -612,7 +657,7 @@ try {
     console.log(JSON.stringify(result, null, 2));
   } else {
     die(
-      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | fill | select | viewport | screenshot | gateway> ...',
+      'usage: cdp.mjs <tabs | goto | eval | close | focus | login | click | fill | select | viewport | screenshot | gateway> ...',
     );
   }
 } catch (err) {

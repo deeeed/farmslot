@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Reuse terminal, conversation and checklist views for slot-free reviews, with Terminal or native execution. Hold reviews at the publish gate by default; keep the shared diff, comments and artifact viewer available in run history.
+
 - Keep manual Review runner and model choices consistent with other flows, including custom models; farm defaults remain overridable.
 
 - Use selectable review machines and a shared default QA profile picker; keep execution overrides and QA input JSON under expandable options.

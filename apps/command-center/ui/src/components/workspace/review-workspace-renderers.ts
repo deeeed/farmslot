@@ -130,6 +130,7 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
     }
 
     review-workspace .rw-split {
+      position: relative;
       display: flex;
       flex-direction: column;
       flex: 1;

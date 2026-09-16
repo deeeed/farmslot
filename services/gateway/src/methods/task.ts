@@ -21,11 +21,24 @@ import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, resolveTaskPaths } from '../core/config.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import { generateTaskSchema } from '../tasks/writer.js';
 
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
+  if (!params.slotId && params.runId) {
+    if (params.taskFile) throw new Error('Workspace progress uses the run’s recorded task');
+    const markdown = await readReviewWorkspaceChecklist(params.runId);
+    const schema = generateTaskSchema(markdown, 'review-pr');
+    return {
+      slotId: '',
+      contextId: 'review',
+      role: 'review',
+      markdown,
+      structured: joinSchemaWithMarkdown(schema, markdown),
+    };
+  }
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === params.slotId);
   if (!slot && !params.taskFile) throw new Error(`No task file for slot ${params.slotId}`);

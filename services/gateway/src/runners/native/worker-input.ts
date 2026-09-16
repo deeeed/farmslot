@@ -13,6 +13,7 @@ import { getRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 
 import { routeNativeExecution } from './node.js';
+import { cancelReviewWorkspaceWorker } from './review-workspace.js';
 import { cancelNativeWorkerContext } from './worker.js';
 
 export const NATIVE_WORKER_INPUT_METHODS: readonly string[] = [
@@ -88,14 +89,17 @@ async function routePinnedWorkerInput(
         'NATIVE_SESSION_ERROR',
         'Initial worker task acceptance must be reconciled before sending another instruction',
       );
-    if (!run.slotId)
+    if (!run.slotId && (!run.reviewWorkspace || run.reviewWorkspace.cleanedAt))
       throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Worker no longer owns a slot');
     return { run, context, binding, slotId: run.slotId };
   };
   const before = current();
-  const slot = await readSlotRow(before.slotId);
+  const slot = before.slotId ? await readSlotRow(before.slotId) : undefined;
   const { run, context, binding, slotId } = current();
-  if (slotId !== before.slotId || slot?.current_run_id !== run.id || slot.phase === 'releasing')
+  if (
+    slotId !== before.slotId ||
+    (slotId && (slot?.current_run_id !== run.id || slot.phase === 'releasing'))
+  )
     throw new GatewayMethodError('NATIVE_SESSION_ERROR', 'Worker slot ownership changed');
   const nativeTarget = {
     sessionId: binding.sessionId,
@@ -118,7 +122,8 @@ async function routePinnedWorkerInput(
   if (method === Methods.NATIVE_SESSION_INTERRUPT)
     return routeNativeExecution(principal, NATIVE_WORKER_INTERRUPT, nativeTarget);
   if (method === Methods.NATIVE_SESSION_CLOSE) {
-    await cancelNativeWorkerContext(run.id, context, { machineTransitionHeld: true });
+    if (run.reviewWorkspace) await cancelReviewWorkspaceWorker(run.id);
+    else await cancelNativeWorkerContext(run.id, context, { machineTransitionHeld: true });
     const snapshot = (await routeNativeExecution(
       principal,
       Methods.NATIVE_SESSION_READ,

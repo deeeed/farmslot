@@ -20,6 +20,8 @@ export abstract class ReviewWorkspaceState extends LitElement {
   }
 
   @property() runId = '';
+  @property({ type: Boolean }) readOnly = false;
+  @property({ type: Boolean }) workspaceView = false;
   @property({ attribute: false }) decision!: RunDecision;
   @property() slotId = '';
   @property() branch = ''; // expected branch from the run
@@ -51,6 +53,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
   // Branch diff state
   @state() _diffFiles: GitBranchDiffFile[] = [];
   @state() _diffLoading = false;
+  @state() _diffError = '';
   // Guards _beginRecovery against double-fire from willUpdate + updated.
   _recoveryInFlight = false;
   @state() _selectedFile = '';

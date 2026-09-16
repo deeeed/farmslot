@@ -43,5 +43,9 @@ export interface DirectReviewPublication {
 export function reviewPublicationPolicyForRun(
   run: Pick<import('./runs.js').Run, 'prWork' | 'reviewPublication'>,
 ) {
-  return run.prWork?.publication ?? run.reviewPublication?.direct?.policy;
+  return (
+    run.reviewPublication?.gate?.publication.policy ??
+    run.prWork?.publication ??
+    run.reviewPublication?.direct?.policy
+  );
 }

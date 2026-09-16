@@ -16,6 +16,8 @@ interface NativeSessionHeaderContext {
   workspace: boolean;
   workspaceAllowed: boolean;
   taskHistory: boolean;
+  fullscreen: boolean;
+  toggleFullscreen(): void;
   requestCount: number;
   sessionChoice(session: Pick<NativeSessionInfo, 'id' | 'executionNodeId'>): string;
   select(id: string, node?: string): void;
@@ -87,6 +89,9 @@ export function renderNativeSessionHeader(ctx: NativeSessionHeaderContext) {
               : ''}
           </button>`
         : nothing}
+      <button data-testid="native-fullscreen" @click=${ctx.toggleFullscreen}>
+        ${ctx.fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      </button>
       <span
         class="status"
         role="status"

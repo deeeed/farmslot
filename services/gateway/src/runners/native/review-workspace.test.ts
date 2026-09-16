@@ -49,10 +49,10 @@ function run(): Run {
 
 test('workspace launch rejects slot substitution, placement/profile changes and overlapping writable roots', () => {
   assert.doesNotThrow(() => assertReviewWorkspaceRun(run()));
+  assert.doesNotThrow(() => assertReviewWorkspaceRun({ ...run(), transport: 'tmux' }));
   for (const patch of [
     { slotId: 'real-slot' },
     { nativeOwnerPrincipalId: undefined },
-    { transport: 'tmux' },
     { flowType: 'qa' },
     { reviewWorkspaceTarget: { machine: 'elsewhere' } },
   ])

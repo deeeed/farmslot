@@ -84,12 +84,12 @@ const admissionInput = {
 };
 
 test('workspace admission requires machine opt-in and valid explicit runner/model/effort', async (t) => {
+  await inspectReviewWorkspaceTarget({ ...admissionInput, transport: 'tmux' }, 'review-owner');
   for (const change of [
     { runner: 'claude', model: 'sonnet' },
     { model: 'unknown' },
     { model: '' },
     { effort: 'unsupported-effort' },
-    { transport: 'tmux' as const },
     { transport: undefined },
   ]) {
     await assert.rejects(

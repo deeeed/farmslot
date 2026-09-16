@@ -33,14 +33,20 @@ import {
 // Uses the installed native reviewer and its existing account. Provider PR facts come
 // from a read-only fixture; run creation, ownership and worker execution are real.
 const root = fileURLToPath(new URL('../', import.meta.url));
-if (process.argv[2] === 'recipe') {
+if (process.argv[2] === 'recipe' || process.argv[2] === 'recipe-ui') {
   const artifactsDir = path.resolve(
     root,
     process.argv[3] ?? `temp/workspace-review-recipe/${Date.now()}`,
   );
   const recipeDocument = JSON.parse(
     await readFile(
-      path.join(root, 'docs/examples/recipes/farmslot/workspace-review-lifecycle.recipe.json'),
+      path.join(
+        root,
+        'docs/examples/recipes/farmslot',
+        process.argv[2] === 'recipe-ui'
+          ? 'workspace-review-ui.recipe.json'
+          : 'workspace-review-lifecycle.recipe.json',
+      ),
       'utf8',
     ),
   );
@@ -90,6 +96,7 @@ const scenario = process.argv[3] ?? 'single';
 assert(
   [
     'single',
+    'tmux-fixture',
     'blocked',
     'concurrency',
     'runtime-concurrency',
@@ -199,6 +206,20 @@ await json(path.join(project, 'project.json'), {
   execution_templates: {
     sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
   },
+  ...(scenario === 'tmux-fixture'
+    ? {
+        workflow_defaults: {
+          'review-pr': {
+            review: { sessionIntent: 'reset', scope: 'full' },
+            execution: {
+              workspacePolicy: { kind: 'exact', machine: 'review-node' },
+              transport: 'tmux',
+              models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+            },
+          },
+        },
+      }
+    : {}),
   monitoring: { total_timeout_min: 5 },
 });
 const runtimeSlots =
@@ -249,6 +270,28 @@ if (scenario === 'concurrency') {
   await writeFile(path.join(fixture, '.farm-status.json'), occupiedSlots);
 }
 await mkdir(path.join(fixture, 'bin'));
+if (scenario === 'tmux-fixture') {
+  await writeFile(
+    path.join(fixture, 'bin/cursor-agent'),
+    `#!${process.execPath}
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),crypto=require('node:crypto');
+const prompt=process.argv.at(-1),task=path.dirname(/Read '([^']+)'/.exec(prompt)[1]);
+const mark=(...args)=>cp.execFileSync(path.join(task,'mark'),args,{cwd:task,stdio:'pipe'});
+mark('start');
+console.log('FIXTURE_READY');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ if(line==='workspace-proof')console.log('FIXTURE_CWD='+process.cwd());
+ if(line!=='complete-fixture')return;
+ const md=fs.readFileSync(path.join(task,'TASK.md'),'utf8'),subject=JSON.parse(fs.readFileSync(path.join(task,'inputs/review-subject.json'),'utf8')),signal=JSON.parse(fs.readFileSync(path.join(task,'SIGNAL.json'),'utf8'));
+ const report='VERDICT: REQUEST_CHANGES\\nCOMMIT: '+subject.headSha+'\\nFixture inspected frozen inputs.\\n';
+ for(const [name,content]of Object.entries({'review.md':report,'learnings.md':'Fixture proof','review-checklist.md':'- [x] Fixture reviewed','line-comments.json':JSON.stringify({comments:[{path:'message.txt',line:1,body:'Fixture inline finding',severity:'minor'}]}),'review-result.json':JSON.stringify({schemaVersion:1,verdict:'issues',issues:[{file:'message.txt',line:1,description:'Fixture inline finding',severity:'minor'}],runId:/Add runId "([^"]+)"/.exec(md)[1],workspaceId:path.basename(path.dirname(task)),headSha:subject.headSha,baseSha:subject.baseSha,attemptId:signal.attemptId,reportSha256:crypto.createHash('sha256').update(report).digest('hex')})}))fs.writeFileSync(path.join(task,'artifacts',name),content);
+ mark('complete','--mark-last');console.log('FIXTURE_COMPLETE');
+});
+`,
+    { mode: 0o700 },
+  );
+}
+
 const launchBarrier = ['restart-launch', 'cancel-launch'].includes(scenario)
   ? getRunnerAdapter('codex').prepareLaunchBarrier(path.join(fixture, 'bin'))
   : undefined;
@@ -350,6 +393,109 @@ let connection: GatewayConnection | undefined;
 let current: Run | undefined;
 const runs: Run[] = [];
 const discoveredSkills = new Set<string>();
+let terminalProven = false;
+let rejectedPublishProven = false;
+let reviewUi:
+  | { evaluate: (body: string) => any; cdp: (...args: string[]) => string; route: string }
+  | undefined;
+async function verifyReviewUi(stage: string, readOnly: boolean) {
+  assert(reviewUi);
+  let proof;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    proof = reviewUi.evaluate(
+      `const w=find('review-workspace');return {readOnly:w?.readOnly,phase:w?._recoveryPhase,error:w?._recoveryMessage,files:w?._diffFiles?.map(f=>f.path),diff:w?._fileDiff,report:w?.querySelector('.rw-md-section')?.textContent};`,
+    );
+    if (
+      proof.readOnly === readOnly &&
+      proof.phase === 'live' &&
+      proof.diff?.includes('+hello world')
+    )
+      break;
+    await delay(250);
+  }
+  await json(path.join(evidence, stage + '.json'), proof);
+  assert.equal(proof.readOnly, readOnly);
+  assert.equal(proof.phase, 'live', proof.error);
+  assert(proof.files.includes('message.txt'));
+  assert(proof.diff.includes('+hello world'));
+  assert(proof.report.includes('Fixture inspected frozen inputs'));
+  reviewUi.evaluate(`find('review-workspace').querySelector('.rw-ci').click();return true;`);
+  let comment;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    comment = reviewUi.evaluate(
+      `const w=find('review-workspace');return {content:w?._commentFileContent,comments:w?._comments};`,
+    );
+    if (comment.content === 'hello world\n') break;
+    await delay(100);
+  }
+  assert.equal(comment.content, 'hello world\n');
+  assert.equal(comment.comments[0].body, 'Fixture inline finding');
+  reviewUi.evaluate(
+    `find('review-workspace').querySelector('step-artifacts').shadowRoot.querySelector('summary').click();return true;`,
+  );
+  reviewUi.evaluate(
+    `find('review-workspace').querySelector('step-artifacts').shadowRoot.querySelector('.artifact-link').click();return true;`,
+  );
+  const artifact = reviewUi.evaluate(
+    `const w=find('review-workspace');return {open:w.querySelector('media-lightbox').open,items:w.querySelector('media-lightbox').items};`,
+  );
+  assert(artifact.open);
+  assert(artifact.items.length > 0);
+  reviewUi.evaluate(
+    `const box=find('review-workspace').querySelector('media-lightbox');Array.from(box.shadowRoot.querySelectorAll('button')).find(button=>button.textContent.trim()==='Close').click();return true;`,
+  );
+
+  reviewUi.evaluate(`find('review-workspace').scrollIntoView({block:'center'});return true;`);
+  reviewUi.cdp('screenshot', reviewUi.route, path.join(evidence, stage + '.png'));
+}
+let terminalUi: ReturnType<typeof spawn> | undefined;
+async function openReviewUi(route: string) {
+  const uiProbe = createServer().listen(0, '127.0.0.1');
+  await once(uiProbe, 'listening');
+  const uiPort = (uiProbe.address() as { port: number }).port;
+  await new Promise<void>((resolve, reject) =>
+    uiProbe.close((error) => (error ? reject(error) : resolve())),
+  );
+  const uiLog = openSync(path.join(evidence, 'ui.log'), 'w', 0o600);
+  terminalUi = spawn(
+    'yarn',
+    [
+      'workspace',
+      '@farmslot/command-center-ui',
+      'dev',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(uiPort),
+      '--strictPort',
+    ],
+    {
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', uiLog, uiLog],
+      env: { ...process.env, VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${port}` },
+    },
+  );
+  closeSync(uiLog);
+  const cdp = (...args: string[]) =>
+    execFileSync(
+      process.execPath,
+      [path.join(root, 'apps/command-center/scripts/cdp.mjs'), ...args],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, FARMSLOT_GATEWAY_TOKEN: token },
+        timeout: 30000,
+      },
+    ).trim();
+  await delay(2000);
+  cdp('goto', `http://127.0.0.1:${uiPort}/#${route}`, '--new');
+  cdp('login', route);
+  const walk = `function find(selector,root=document){const e=root.querySelector(selector);if(e)return e;for(const child of root.querySelectorAll('*'))if(child.shadowRoot){const e=find(selector,child.shadowRoot);if(e)return e;}}`;
+  const evaluate = (body: string) => JSON.parse(cdp('eval', reviewUi?.route ?? route, walk + body));
+  reviewUi = { cdp, evaluate, route };
+  return { cdp, evaluate, route, url: `http://127.0.0.1:${uiPort}` };
+}
 let failure: unknown;
 let cleanupFailed = false;
 let lifecycleInterrupted = false;
@@ -376,19 +522,78 @@ try {
   const parameters = {
     project: 'review',
     flowType: 'review-pr',
+    reviewAutoFinish: scenario !== 'tmux-fixture',
     mode: 'autonomous',
     reviewWorkspaceTarget: { machine: 'review-node' },
-    runner: process.env.FARMSLOT_REVIEW_TEST_RUNNER ?? 'codex',
-    model: process.env.FARMSLOT_REVIEW_TEST_MODEL ?? 'gpt-5.6-luna',
-    effort: (process.env.FARMSLOT_REVIEW_TEST_EFFORT ?? 'low') || undefined,
-    transport: 'native',
+    runner:
+      scenario === 'tmux-fixture' ? 'cursor' : (process.env.FARMSLOT_REVIEW_TEST_RUNNER ?? 'codex'),
+    model:
+      scenario === 'tmux-fixture'
+        ? 'cursor-grok-4.6-xhigh'
+        : (process.env.FARMSLOT_REVIEW_TEST_MODEL ?? 'gpt-5.6-luna'),
+    effort:
+      scenario === 'tmux-fixture'
+        ? undefined
+        : (process.env.FARMSLOT_REVIEW_TEST_EFFORT ?? 'low') || undefined,
+    transport: scenario === 'tmux-fixture' ? 'tmux' : 'native',
   };
   for (let index = 0; index < count; index++) {
-    const created = await connection.call<{ run: Run }>('run.create', {
-      ...parameters,
-      ticketOrPr: `example/app#${42 + index}`,
-    });
-    runs.push(created.run);
+    if (scenario === 'tmux-fixture') {
+      const ui = await openReviewUi(
+        'dispatch?flow=review-pr&project=review&ticket=example%2Fapp%2342',
+      );
+      ui.evaluate(
+        `find('whats-new-modal')?.shadowRoot.querySelector('button.primary')?.click();return true;`,
+      );
+      let draft;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        draft = ui.evaluate(
+          `const w=find('dispatch-wizard'),button=find('[data-testid="dispatch-submit"]');return {ready:button&&!button.disabled,reason:button?.title,transport:w?._dispatchPayloadDraft().transport};`,
+        );
+        if (draft.ready) break;
+        await delay(200);
+      }
+      assert(draft.ready, draft.reason);
+      assert.equal(draft.transport, 'tmux');
+      ui.cdp('click', ui.route, '[data-testid="dispatch-execution-options"] summary');
+      ui.cdp('click', ui.route, '[data-transport="native"]');
+      assert.equal(
+        ui.evaluate(`return {transport:find('dispatch-wizard')._dispatchPayloadDraft().transport};`)
+          .transport,
+        'native',
+      );
+      ui.cdp('click', ui.route, '[data-transport="tmux"]');
+      assert.equal(
+        ui.evaluate(`return {transport:find('dispatch-wizard')._dispatchPayloadDraft().transport};`)
+          .transport,
+        'tmux',
+      );
+      ui.cdp('click', ui.route, '[data-testid="dispatch-submit"]');
+      let created: Run | undefined;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const list = await connection.call<{ runs: Run[] }>('run.list', {});
+        created = list.runs.find((run) => run.ticketOrPr === 'example/app#42');
+        if (created) break;
+        await delay(200);
+      }
+      assert(created, 'Wizard did not create a review');
+      assert.equal(created.transport, 'tmux');
+      assert.equal(created.reviewAutoFinish, false);
+      await json(path.join(evidence, 'wizard-dispatch.json'), {
+        runId: created.id,
+        transport: created.transport,
+        autoFinish: created.reviewAutoFinish,
+      });
+      runs.push(created);
+      reviewUi!.route = `runs?run=${created.id}`;
+      ui.cdp('goto', `${ui.url}/#${reviewUi!.route}`);
+    } else {
+      const created = await connection.call<{ run: Run }>('run.create', {
+        ...parameters,
+        ticketOrPr: `example/app#${42 + index}`,
+      });
+      runs.push(created.run);
+    }
   }
   if (count === 3) {
     await assert.rejects(
@@ -404,7 +609,9 @@ try {
       if (
         !discoveredSkills.has(runs[index].id) &&
         runs[index].reviewWorkspace?.support &&
-        runs[index].agentContexts?.some((context) => context.nativeSession?.launchRequestedAt) &&
+        runs[index].agentContexts?.some(
+          (context) => context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+        ) &&
         !runs[index].reviewWorkspace?.cleanedAt
       ) {
         for (const surface of ['.agents', '.cursor', '.claude']) {
@@ -423,6 +630,112 @@ try {
         });
       }
 
+      if (scenario === 'tmux-fixture' && runs[index].status === 'blocked' && terminalProven) {
+        const decision = runs[index].decisions.find(
+          (d) => d.type === 'engine_review_posting' && !d.resolvedAt,
+        );
+        if (decision) {
+          await verifyReviewUi('review-gate-ui', false);
+          const params = { slotId: '', runId: runs[index].id };
+          await connection.call('terminal.subscribe', {
+            ...params,
+            interactive: true,
+            cols: 100,
+            rows: 30,
+          });
+          await connection.call('terminal.input', { ...params, data: 'workspace-proof\r' });
+          await delay(300);
+          const followup = await connection.call<{ lines: string[] }>('terminal.snapshot', params);
+          assert(followup.lines.join('\n').includes('FIXTURE_CWD='));
+          await json(path.join(evidence, 'gate-followup.json'), {
+            status: runs[index].status,
+            decision: decision.type,
+            followup,
+            worktree: runs[index].reviewWorkspace!.workspaceId,
+          });
+          if (!rejectedPublishProven) {
+            // This isolated farm has no publishing account. A failed request must keep the gate and worker.
+            await connection.call('run.resolveDecision', {
+              runId: runs[index].id,
+              decisionId: decision.id,
+              actionId: 'post',
+              selectionData: { recommendation: 'COMMENT', includedIndices: [] },
+            });
+            rejectedPublishProven = true;
+            await connection.call('terminal.unsubscribe', params);
+            continue;
+          }
+          assert.match(runs[index].error ?? '', /owned PR team/);
+          await connection.call('run.resolveDecision', {
+            runId: runs[index].id,
+            decisionId: decision.id,
+            actionId: 'dismiss',
+          });
+          await connection.call('terminal.unsubscribe', params);
+        }
+      }
+      if (scenario === 'tmux-fixture' && runs[index].status === 'monitoring' && !terminalProven) {
+        const params = { slotId: '', runId: runs[index].id };
+        const { cdp, evaluate } = reviewUi!;
+        const route = `runs?run=${runs[index].id}`;
+        reviewUi!.route = route;
+        const until = Date.now() + 20000;
+        while (Date.now() < until) {
+          if (evaluate(`return Boolean(find('[data-testid="run-terminal-toggle"]'));`)) break;
+          await delay(200);
+        }
+        evaluate(`find('[data-testid="run-terminal-toggle"]').click();return true;`);
+        const readyBy = Date.now() + 20000;
+        let uiProof;
+        while (Date.now() < readyBy) {
+          uiProof = evaluate(
+            `const t=find('terminal-view'),p=find('run-pipeline');return {phase:t?._attachPhase,progress:p?.taskProgress,transport:find('run-detail')?.run?.transport};`,
+          );
+          if (uiProof.phase === 'live' && uiProof.progress?.totalSteps) break;
+          await delay(250);
+        }
+        assert.equal(uiProof.phase, 'live');
+        assert(uiProof.progress.totalSteps > 0);
+        await json(path.join(evidence, 'terminal-ui.json'), uiProof);
+        evaluate(`find('terminal-view').scrollIntoView({block:'center'});return true;`);
+        cdp('screenshot', route, path.join(evidence, 'terminal-ui.png'));
+
+        await connection.call('terminal.subscribe', {
+          ...params,
+          interactive: true,
+          cols: 100,
+          rows: 30,
+        });
+        await delay(500);
+        await connection.call('terminal.input', { ...params, data: 'workspace-proof\r' });
+        await delay(500);
+        const snapshot = await connection.call<{ lines: string[] }>('terminal.snapshot', params);
+        await json(path.join(evidence, 'terminal-snapshot.json'), snapshot);
+        assert(
+          snapshot.lines
+            .join('\n')
+            .includes(
+              'FIXTURE_CWD=' +
+                runs[index].reviewWorkspace!.checkoutPath.replace(/^\/var\//, '/private/var/'),
+            ) ||
+            snapshot.lines
+              .join('\n')
+              .includes('FIXTURE_CWD=' + runs[index].reviewWorkspace!.checkoutPath),
+        );
+        const progress = await connection.call<{ structured: { totalSteps: number } }>(
+          'task.progress',
+          params,
+        );
+        assert(progress.structured.totalSteps > 0);
+        await json(path.join(evidence, 'terminal-progress.json'), {
+          snapshot,
+          progress,
+          modelWorkers: 0,
+        });
+        await connection.call('terminal.input', { ...params, data: 'complete-fixture\r' });
+        await connection.call('terminal.unsubscribe', params);
+        terminalProven = true;
+      }
       await json(
         path.join(evidence, multipleReviews ? `run-${index + 1}.json` : 'run.json'),
         runs[index],
@@ -544,7 +857,17 @@ try {
       await delay(1000);
       continue;
     }
-    if (runs.every((run) => ['done', 'failed', 'blocked', 'cancelled'].includes(run.status))) break;
+    if (
+      runs.every((run) =>
+        [
+          'done',
+          'failed',
+          'cancelled',
+          ...(scenario === 'tmux-fixture' ? [] : ['blocked']),
+        ].includes(run.status),
+      )
+    )
+      break;
     await delay(1000);
   }
   for (const [index, run] of runs.entries()) {
@@ -590,6 +913,43 @@ try {
     }
     if (scenario.startsWith('restart')) assert(lifecycleInterrupted);
     assert.equal(run.status, 'done', run.error ?? 'Review did not complete');
+    if (scenario === 'tmux-fixture') {
+      await verifyReviewUi('saved-review-ui', true);
+      const code = await connection.call<{ content: string }>('git.show', {
+        slotId: '',
+        runId: run.id,
+        ref: headSha,
+        path: 'message.txt',
+      });
+      assert.equal(code.content, 'hello world\n');
+      await assert.rejects(
+        connection.call('git.show', {
+          slotId: '',
+          runId: run.id,
+          ref: baseSha,
+          path: 'message.txt',
+        }),
+        /frozen review commits/,
+      );
+      reviewUi!.evaluate(`find('[data-testid="run-review-result"] button').click();return true;`);
+      await verifyReviewUi('reopened-review-gate-ui', false);
+      const reopened = (await connection.call<{ run: Run }>('run.get', { runId: run.id })).run;
+      assert.equal(
+        reopened.steps.find((step) => step.name === 'dispatch')?.completedAt,
+        run.steps.find((step) => step.name === 'dispatch')?.completedAt,
+      );
+      const gate = reopened.decisions.find(
+        (d) => d.type === 'engine_review_posting' && !d.resolvedAt,
+      )!;
+      assert(gate);
+      await connection.call('run.resolveDecision', {
+        runId: run.id,
+        decisionId: gate.id,
+        actionId: 'dismiss',
+      });
+      await verifyReviewUi('saved-review-after-reopen-ui', true);
+      reviewUi!.cdp('close', reviewUi!.route);
+    }
     assert.equal(run.slotId, null);
     assert(run.reviewWorkspace?.support?.sha256, 'Review must retain its admitted skill digest');
     assert.equal(
@@ -821,6 +1181,11 @@ try {
       );
       await json(path.join(evidence, 'cleanup-failure.json'), { error: String(error), fixture });
     }
+  }
+  if (terminalUi?.pid && terminalUi.exitCode === null) {
+    const exited = once(terminalUi, 'exit');
+    process.kill(-terminalUi.pid, 'SIGTERM');
+    await exited;
   }
   connection?.close();
   const nativeRoot = path.join(fixture, 'home/native-sessions');

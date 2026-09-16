@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Static review workspace and publication gate",
+  "description": "Use a scripted reviewer through the production gateway and Command Center. No model calls.",
+  "workflow": {
+    "entry": "review-workspace",
+    "nodes": {
+      "review-workspace": {
+        "action": "command",
+        "cmd": "yarn --cwd apps/command-center tsx ../../scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/tmux-fixture tmux-fixture",
+        "timeout_ms": 180000,
+        "intent": "Dispatch through the real wizard with native/terminal selection, then prove skill discovery, terminal input, progress, held publish gate, inline comments and artifact viewing, rejected publication recovery, cleanup and reopening the saved gate without another worker.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

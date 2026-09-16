@@ -988,6 +988,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _startTmuxPoll() {
+    if (!this.slotId && this.runId && !this._workerRef()) return;
     if (this._workerRef()) return;
     this._stopTmuxPoll();
     this._refreshTmuxList({ force: true });
@@ -1131,6 +1132,7 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _renderTmuxToolbar() {
+    if (!this.slotId && this.runId && !this._workerRef()) return null;
     return renderTmuxToolbar({
       isWorkerTarget: Boolean(this._workerRef()),
       mode: this._mode,

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share review filesystem protection between native and terminal launches while preserving task artifacts.
+
 - Support managed review workers across native runners on macOS with source protection and exact model selection.
 
 - Task documents no longer carry a `STATUS:` line; run state is the `mark` signal file (farmslot ADR-045) and the field had no reader.

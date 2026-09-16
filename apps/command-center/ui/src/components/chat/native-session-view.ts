@@ -93,6 +93,18 @@ export class NativeSessionView extends LitElement {
   @state() private error = '';
   @state() private pollError = '';
   @state() private workspace = false;
+  @state() private fullscreen = false;
+  private readonly fullscreenChanged = () => {
+    this.fullscreen = this.matches(':fullscreen');
+  };
+  private async toggleFullscreen() {
+    try {
+      if (this.matches(':fullscreen')) await document.exitFullscreen();
+      else await this.requestFullscreen();
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+    }
+  }
   @state() private responseAttempts = new Set<string>();
   @state() private invalidDelivery = false;
   private revision = 0;
@@ -154,6 +166,7 @@ export class NativeSessionView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    document.addEventListener('fullscreenchange', this.fullscreenChanged);
     this.connected = this.fixture || gateway.connectionState === 'connected';
     if (this.fixture) void this.connect();
     else {
@@ -179,6 +192,7 @@ export class NativeSessionView extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('fullscreenchange', this.fullscreenChanged);
     this.revision++;
     clearTimeout(this.timer);
     clearTimeout(this.inventoryTimer);
@@ -669,6 +683,8 @@ export class NativeSessionView extends LitElement {
         workspace: this.workspace,
         workspaceAllowed: this.workspaceAllowed,
         taskHistory: this.taskHistory,
+        fullscreen: this.fullscreen,
+        toggleFullscreen: () => void this.toggleFullscreen(),
         requestCount: this.requests.length,
         sessionChoice: (item) => this.sessionChoice(item),
         select: (id, node) => this.select(id, node),

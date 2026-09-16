@@ -2121,6 +2121,11 @@ export interface Run {
   reviewWorkspaceCleanupError?: string;
   reviewPublication?: {
     direct?: import('./review-publication.js').DirectReviewPublication;
+    /** Explicit gate choice, separate from the immutable dispatch policy. */
+    gate?: {
+      decisionId: string;
+      publication: import('./review-publication.js').DirectReviewPublication;
+    };
     receipt?: import('./review-publication.js').ReviewPublicationReceipt;
     error?: string;
     checkedAt: string;
@@ -2173,6 +2178,8 @@ export interface Run {
   summary?: string; // LLM-generated 1-line description
   reviewTier?: string; // forced tier for review-pr: '' (auto — LLM picks strategy) | 'light' (→ smoke) | 'standard' (→ smoke|targeted) | 'full' (→ targeted|full-qa)
   /** Code breadth for review-pr. Independent from runtime validation depth. */
+  /** Explicitly finish static review without waiting for operator questions/publication. */
+  reviewAutoFinish?: boolean;
   reviewScope?: ReviewScope;
   /** Static by default; full-live is an explicit operator escalation. */
   reviewValidationDepth?: ReviewValidationDepth;

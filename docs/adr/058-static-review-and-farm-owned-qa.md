@@ -88,6 +88,8 @@ An execution node creates disposable SHA-pinned checkouts under its managed work
 
 Workspace admission counts active reviewer executions against host/runner limits and host pressure independently of device slots. Explicit node/model/effort constraints remain binding. Existing slot constraints are not implicitly converted into unrestricted node selection.
 
+Static reviews wait at the shared review/publish gate by default. The reviewer remains available for questions until the operator posts or dismisses the review. Requests and automation policies may explicitly choose `autoFinish`. Posting uses the selected recommendation and inline comments, with the existing exact-head and account checks. Saved reports reuse the same review workspace in read-only mode, including diff, code, comments and artifact previews. Reopening its publication gate never dispatches another worker.
+
 ### Preset shape and inputs
 
 Use a small `qa` project configuration containing `default_profile` and `profiles`. Each preset has `id`, `title`, optional `description`, `template_id`, and optional JSON `inputs`. Canonical skill-backed catalog entries are the executable source; profile configuration cannot embed a checklist, shell program or recipe-selection algorithm.

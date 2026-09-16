@@ -8,9 +8,19 @@ export const nativeSessionStyles = css`
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    min-width: 0;
+    overflow: hidden;
     color: ${unsafeCSS(colors.textPrimary)};
     font-family: ${unsafeCSS(fonts.mono)};
     font-size: ${unsafeCSS(fonts.sizeSm)};
+  }
+  :host(:fullscreen) {
+    width: 100vw;
+    height: 100vh;
+    background: ${unsafeCSS(colors.bgCard)};
+  }
+  .bar {
+    flex-shrink: 0;
   }
   * {
     box-sizing: border-box;

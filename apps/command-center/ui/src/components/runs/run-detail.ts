@@ -180,10 +180,10 @@ export class RunDetail extends RunDetailState {
   }
 
   private _maybeRefreshTaskProgress(): void {
-    if (!this.run?.slotId) return;
+    if (!this.run?.slotId && !this.run?.reviewWorkspace) return;
     if (!isTaskProgressRunActive(this.run, { includeCompleting: true })) return;
     if (Date.now() - this._lastTaskProgressFetchAt < 10_000) return;
-    void this.fetchTaskProgress(this.run.slotId);
+    void this.fetchTaskProgress(this.run.slotId ?? '');
   }
 
   disconnectedCallback() {
@@ -349,8 +349,12 @@ export class RunDetail extends RunDetailState {
       !this.taskProgress ||
       activeTaskChanged ||
       (inlineCIFixActive && Date.now() - this._lastTaskProgressFetchAt > 5_000);
-    if (isWorkerActive && this.run?.slotId && shouldRefreshTaskProgress) {
-      this.fetchTaskProgress(this.run!.slotId);
+    if (
+      (isWorkerActive || (this.run?.reviewWorkspace && !this.taskProgress)) &&
+      (this.run?.slotId || this.run?.reviewWorkspace) &&
+      shouldRefreshTaskProgress
+    ) {
+      this.fetchTaskProgress(this.run!.slotId ?? '');
     }
     if (this.run && prev?.id !== this.run.id) {
       void this.fetchSiblings(this.run);
@@ -900,7 +904,7 @@ export class RunDetail extends RunDetailState {
     const requestStillCurrent = () =>
       requestSeq === this._taskProgressRequestSeq &&
       this.runId === runId &&
-      this.run?.slotId === slotId;
+      (this.run?.slotId ?? '') === slotId;
     this._lastTaskProgressFetchAt = Date.now();
     try {
       const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {

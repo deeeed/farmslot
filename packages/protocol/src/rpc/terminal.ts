@@ -3,6 +3,7 @@ import type { AgentRole } from '../contracts/index.js';
 import type { TmuxWorkerRef } from './tmux.js';
 
 export interface SlotAgentTargetParams {
+  /** Empty with runId selects that run’s allocated review-worktree shell. */
   slotId: string;
   runId?: string;
   role?: AgentRole;

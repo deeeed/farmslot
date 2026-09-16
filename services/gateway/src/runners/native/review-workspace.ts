@@ -84,7 +84,7 @@ export function assertReviewWorkspaceRun(run: Run | null | undefined): asserts r
     !run ||
     run.flowType !== 'review-pr' ||
     run.slotId !== null ||
-    run.transport !== 'native' ||
+    !['native', 'tmux'].includes(run.transport ?? '') ||
     !run.reviewWorkspace ||
     !run.nativeOwnerPrincipalId
   )
@@ -196,6 +196,7 @@ export async function launchReviewWorkspaceWorker(input: {
   assertCurrent: () => void | Promise<void>;
 }): Promise<NativeSessionReadResult> {
   const original = ownedRun(input.runId);
+  if (original.transport !== 'native') throw new Error('Native reviewer requires native transport');
   const workspace = structuredClone(original.reviewWorkspace);
   const assertCurrent = executionFence(original);
   const check = async () => {
@@ -391,13 +392,13 @@ export async function launchReviewWorkspaceWorker(input: {
 
 export async function readReviewWorkspaceWorker(
   runId: string,
-  options: { after?: number; limit?: number; deadline?: number } = {},
+  options: { after?: number; limit?: number; deadline?: number; allowGate?: boolean } = {},
 ): Promise<NativeSessionReadResult> {
   const original = ownedRun(runId);
-  const assertCurrent = executionFence(original);
+  const assertCurrent = executionFence(original, options.allowGate === true);
   const binding = structuredClone(currentBinding(original));
   if (!binding.generation) throw new Error('Static review worker creation is not yet confirmed');
-  const { deadline = Date.now(), ...readOptions } = options;
+  const { deadline = Date.now(), allowGate: _allowGate, ...readOptions } = options;
   const snapshot = (await observeTransport(
     () =>
       routeNativeExecution(binding.ownerPrincipalId, NATIVE_WORKER_READ, {

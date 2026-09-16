@@ -22,6 +22,7 @@ import { buildRunResolveDecisionParams, Events, Methods } from '@farmslot/protoc
 import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
 import '../shared/media-lightbox.js';
+import '../shared/step-artifacts.js';
 import '../shared/diff-viewer-modal.js';
 import './recipe-output-panel.js';
 
@@ -141,6 +142,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     return reviewCommentCountByFile(this._commentsByFile);
   }
 
+  private _artifactLightboxItems: LightboxItem[] | null = null;
+
   private _unsubSlot?: () => void;
   private _unsubConn?: () => void;
   private _unsubDecision?: () => void;
@@ -258,7 +261,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _beginRecovery() {
-    if (!this.slotId) {
+    if (!this.slotId && !this.workspaceView) {
       // No slot context (e.g. dev harness) — skip recovery, show content directly
       this._recoveryPhase = 'live';
       this._recoveryMessage = '';
@@ -294,8 +297,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     epoch = this._recoveryEpoch || currentRecoveryEpoch(),
     opts: { forceRefreshSlotBranch?: boolean } = {},
   ) {
-    if (!this.slotId) return;
+    if (!this.slotId && !this.workspaceView) return;
     this._diffLoading = true;
+    this._diffError = '';
     this._branchMismatch = false;
     const t0 = performance.now();
     try {
@@ -306,7 +310,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       // forceRefreshSlotBranch — slot-view's _liveGitData is event-driven and
       // can lag a checkout by hundreds of ms, which would otherwise leave the
       // diff view stuck on a stale mismatch banner.
-      if (this.branch && !this._payload.reviewSnapshot?.headSha) {
+      if (this.slotId && this.branch && !this._payload.reviewSnapshot?.headSha) {
         let currentBranch = opts.forceRefreshSlotBranch ? '' : this.slotBranch;
         if (!currentBranch) {
           const status = await gateway.request<{ branch: string }>(Methods.GIT_STATUS, {
@@ -327,10 +331,14 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         }
       }
 
-      const result = await gateway.request<GitBranchDiffResult>(
-        Methods.GIT_BRANCH_DIFF,
-        committedReviewBranchDiffRequest(this.slotId, this._baseRef, this._payload.reviewSnapshot),
-      );
+      const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
+        ...committedReviewBranchDiffRequest(
+          this.slotId,
+          this._baseRef,
+          this._payload.reviewSnapshot,
+        ),
+        ...(this.workspaceView ? { runId: this.runId } : {}),
+      });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
       // Auto-select first file with comments, or first file
@@ -340,8 +348,16 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     } catch (err) {
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       console.error('[review-workspace] branch diff failed:', err);
-      this._recoveryPhase = 'error';
-      this._recoveryMessage = 'Review workspace failed to recover — retry when ready.';
+      if (this.workspaceView) {
+        // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
+        this._diffError = err instanceof Error ? err.message : String(err);
+        this._diffFiles = [];
+        this._fileDiff = '';
+        this._recoveryPhase = 'live';
+      } else {
+        this._recoveryPhase = 'error';
+        this._recoveryMessage = 'Review workspace failed to recover — retry when ready.';
+      }
     } finally {
       if (epoch === this._recoveryEpoch) this._diffLoading = false;
       if (
@@ -387,15 +403,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._fileDiffLoading = true;
     this._fileDiff = '';
     try {
-      const result = await gateway.request<GitDiffResult>(
-        Methods.GIT_DIFF,
-        committedReviewFileDiffRequest(
+      const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
+        ...committedReviewFileDiffRequest(
           this.slotId,
           path,
           this._baseRef,
           this._payload.reviewSnapshot,
         ),
-      );
+        ...(this.workspaceView ? { runId: this.runId } : {}),
+      });
       this._fileDiff = result.diff;
     } catch (err) {
       console.error('[review-workspace] file diff failed:', err);
@@ -408,7 +424,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   // --- Actions ---
 
   private _toggleComment(idx: number) {
-    if (this._isRecovering) return;
+    if (this.readOnly || this._isRecovering) return;
     const next = new Set(this._includedComments);
     if (next.has(idx)) next.delete(idx);
     else next.add(idx);
@@ -420,7 +436,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handlePost() {
-    if (this._isRecovering) return;
+    if (this.readOnly || this._isRecovering) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -453,7 +469,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _handleDismiss() {
-    if (this._isRecovering) return;
+    if (this.readOnly || this._isRecovering) return;
     // A posture choice the Gateway already refused must not ride along with a
     // resolution: the decision would be consumed and the refusal repeated.
     if (this.postureBlockedReason) return;
@@ -634,13 +650,22 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
                       ${this._renderCodePanel()}
                     `
                   : html`<div class="rw-diff-empty">
-                      ${this._selectedFile ? 'No diff' : 'No changed files'}
+                      ${this._diffError
+                        ? html`<div role="alert">
+                            Diff unavailable: ${this._diffError}
+                            <button class="rw-recovery-btn" @click=${() => this._beginRecovery()}>
+                              Retry diff
+                            </button>
+                          </div>`
+                        : this._selectedFile
+                          ? 'No diff'
+                          : 'No changed files'}
                     </div>`}
           </div>
         </div>
       </div>
       <media-lightbox
-        .items=${this._lightboxItems(mediaArtifacts)}
+        .items=${this._artifactLightboxItems ?? this._lightboxItems(mediaArtifacts)}
         .open=${this._lightboxOpen}
         .selectedIndex=${this._lightboxIndex}
         @lightbox-close=${() => {
@@ -751,6 +776,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
                   artifact,
                   url: runArtifactUrl(this.runId, artifact),
                   open: () => {
+                    this._artifactLightboxItems = null;
                     this._lightboxIndex = index;
                     this._lightboxOpen = true;
                   },
@@ -804,11 +830,35 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       default:
         return html`<div class="rw-md-section">
           ${unsafeHTML(renderMarkdown(payload.reviewMd))}
+          <step-artifacts
+            stepName="Review artifacts"
+            status="done"
+            .artifacts=${(payload.artifactManifest ?? []).map((artifact) => ({
+              ...artifact,
+              runId: this.runId,
+              familyId: this.runId,
+              source: 'artifact-manifest',
+            }))}
+            .artifactUrl=${(artifact: ArtifactRef) => runArtifactUrl(this.runId, artifact)}
+            @step-artifact-click=${(
+              event: CustomEvent<{ artifacts: ArtifactRef[]; index: number }>,
+            ) => {
+              const artifacts = event.detail.artifacts;
+              this._artifactLightboxItems = this._lightboxItems(artifacts);
+              this._lightboxIndex = event.detail.index;
+              this._lightboxOpen = true;
+            }}
+          ></step-artifacts>
         </div>`;
     }
   }
 
   private _renderTopBar() {
+    if (this.readOnly)
+      return html`<div class="rw-top-bar">
+        <strong>${this._payload.recommendation}</strong
+        ><span>Saved review · ${this._comments.length} line comments</span>
+      </div>`;
     return renderReviewTopBar({
       comments: this._comments,
       includedComments: this._includedComments.size,
@@ -847,6 +897,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   private _renderCommentItem(c: ReviewLineComment, idx: number) {
     return renderReviewCommentItem({
+      readOnly: this.readOnly,
       comment: c,
       selected: this._selectedCommentIdx === idx,
       included: this._includedComments.has(idx),
@@ -866,15 +917,15 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._fileDiff = '';
       const tDiff = performance.now();
       gateway
-        .request<GitDiffResult>(
-          Methods.GIT_DIFF,
-          committedReviewFileDiffRequest(
+        .request<GitDiffResult>(Methods.GIT_DIFF, {
+          ...committedReviewFileDiffRequest(
             this.slotId,
             c.path,
             this._baseRef,
             this._payload.reviewSnapshot,
           ),
-        )
+          ...(this.workspaceView ? { runId: this.runId } : {}),
+        })
         .then((r) => {
           this._fileDiff = r.diff;
         })
@@ -897,6 +948,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       const result = reviewedHead
         ? await gateway.request<GitShowResult>(Methods.GIT_SHOW, {
             slotId: this.slotId,
+            ...(this.workspaceView ? { runId: this.runId } : {}),
             ref: reviewedHead,
             path: c.path,
           })

@@ -192,3 +192,24 @@ test('the request guard is keyed per context so one row cannot strand another', 
     assert.doesNotMatch(source, /\+\+this\._sessionRequestSeq;/);
   }
 });
+
+test('slot-free native review rows do not fall back to tmux controls', () => {
+  const rows = runAgentSessionRows(
+    run([
+      context({
+        id: 'review',
+        role: 'review',
+        slotId: null,
+        nativeSession: {
+          sessionId: 'native-review',
+          leaseId: 'lease',
+          commandId: 'command',
+          executionNodeId: 'local',
+          ownerPrincipalId: 'owner',
+        },
+      }),
+    ]),
+  );
+  assert.equal(rows[0].workspaceView, true);
+  assert.equal(rows[0].nativeHref, undefined);
+});

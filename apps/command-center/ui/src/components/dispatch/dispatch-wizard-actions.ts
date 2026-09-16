@@ -30,6 +30,8 @@ export interface DispatchPayloadDraftInput {
   project: string;
   ticketId: string;
   reviewMachine?: string;
+  reviewAutoFinish?: boolean;
+  publishReview?: boolean;
   qaProfileId?: string;
   qaInputs?: Record<string, QaInput>;
   slotOverride: string;
@@ -98,6 +100,8 @@ export function buildDispatchWizardPayloadDraft(
     mode: input.mode,
     devInteractiveProfile: input.devInteractiveProfile,
     reviewTier: input.reviewTier || undefined,
+    reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
+    publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
     reviewScope: input.flowType === 'review-pr' ? 'full' : undefined,
     reviewValidationDepth: input.flowType === 'review-pr' ? input.reviewValidationDepth : undefined,
     reviewDepth: input.reviewDepth,

@@ -8,6 +8,10 @@ import { workspaceArtifactBasename } from './workspace-artifacts.js';
 import type { ReviewWorkspaceTab } from './workspace-url-state.js';
 
 const SEV_COLORS: Record<string, string> = {
+  blocker: '#ef4444',
+  major: '#ef4444',
+  minor: '#f59e0b',
+  nit: '#3b82f6',
   must_fix: '#ef4444',
   suggestion: '#f59e0b',
   nitpick: '#3b82f6',
@@ -288,6 +292,7 @@ export function renderReviewFileTab(input: {
 }
 
 export function renderReviewCommentItem(input: {
+  readOnly?: boolean;
   comment: ReviewLineComment;
   selected: boolean;
   included: boolean;
@@ -303,6 +308,7 @@ export function renderReviewCommentItem(input: {
       <input
         type="checkbox"
         .checked=${input.included}
+        ?disabled=${input.readOnly}
         @click=${(event: Event) => event.stopPropagation()}
         @change=${input.toggle}
       />
