@@ -306,7 +306,10 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     existing.sourceKind ??= init.sourceKind;
     existing.reviewState ??= init.reviewState;
     existing.path ??= init.path;
-    existing.body ??= init.body;
+    // Triage rows arrive oldest run first, so a later follow-up's copy of the
+    // comment (possibly edited) replaces the root's; the provider still wins.
+    if (fromProvider) existing.body ??= init.body;
+    else existing.body = init.body ?? existing.body;
     existing.url ??= init.url;
     existing.observedHead ??= init.observedHead;
     // Revision-dependent facts come from the provider's latest observation.
@@ -337,7 +340,19 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     existing.sources.add(init.source);
   };
 
-  for (const { runId, entries } of input.triage) {
+  const runOrder = new Map(
+    [...input.familyRuns]
+      .sort((a, b) =>
+        (a.completedAt ?? a.updatedAt ?? '').localeCompare(b.completedAt ?? b.updatedAt ?? ''),
+      )
+      .map((run, index) => [run.id, index] as const),
+  );
+  const orderedTriage = [...input.triage].sort(
+    (a, b) =>
+      (runOrder.get(a.runId) ?? Number.MAX_SAFE_INTEGER) -
+      (runOrder.get(b.runId) ?? Number.MAX_SAFE_INTEGER),
+  );
+  for (const { runId, entries } of orderedTriage) {
     for (const entry of entries) {
       const identity = triageIdentity(entry);
       if (!identity) continue;
@@ -430,16 +445,22 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     });
   }
 
+  // Annotate before bounding so the cap never hides feedback still awaiting
+  // curation behind already-consumed entries.
+  const annotated = annotateFeedbackConsumption(candidates, input.ledger);
   const authorRank = { human: 0, unknown: 1, bot: 2 } as const;
   const stateRank = { open: 0, unknown: 1, resolved: 2, fixed: 3 } as const;
-  candidates.sort(
+  const curationRank = (candidate: FeedbackCandidate): number =>
+    !candidate.consumedBy?.length || candidate.revisedSinceConsumed ? 0 : 1;
+  annotated.sort(
     (a, b) =>
       authorRank[a.authorKind] - authorRank[b.authorKind] ||
+      curationRank(a) - curationRank(b) ||
       stateRank[a.resolution.state] - stateRank[b.resolution.state] ||
       (a.path ?? '').localeCompare(b.path ?? '') ||
       a.sourceKey.localeCompare(b.sourceKey),
   );
-  return annotateFeedbackConsumption(candidates.slice(0, CANDIDATE_CAP), input.ledger);
+  return annotated.slice(0, CANDIDATE_CAP);
 }
 
 export function summarizeFeedbackCandidates(

@@ -10,7 +10,10 @@ import {
 } from '@farmslot/protocol';
 
 import { getFamilyRuns } from '../../family-observability/context.js';
-import { readCommentsTriageSummary } from '../../run-completion/orchestrator.js';
+import {
+  buildRetrospectivePayload,
+  readCommentsTriageSummary,
+} from '../../run-completion/orchestrator.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -104,16 +107,19 @@ async function composeFamilyLearnings(run: Run): Promise<string> {
 }
 
 /** Human feedback from the run's latest retrospective that no canonical rule has consumed yet. */
-async function unconsumedRetrospectiveFeedback(run: Run): Promise<FeedbackCandidate[]> {
+export async function unconsumedRetrospectiveFeedback(run: Run): Promise<FeedbackCandidate[]> {
   const retrospective = [...(run.decisions ?? [])]
     .reverse()
-    .find(
-      (decision) => decision.type === 'retrospective' && decision.payload?.kind === 'retrospective',
-    );
-  const payload = retrospective?.payload;
-  if (!payload || payload.kind !== 'retrospective') return [];
+    .find((decision) => decision.type === 'retrospective');
+  if (!retrospective) return [];
   const { refreshRetrospectiveFeedback, unconsumedHumanFeedback } =
     await import('../../intelligence/feedback-candidates.js');
+  // A legacy retrospective without a stored payload is derived on read by the
+  // inbox and family views; the operator accepted what those showed, so derive
+  // the same payload here instead of silently offering nothing to consume.
+  const stored = retrospective.payload;
+  const payload =
+    stored?.kind === 'retrospective' ? stored : await buildRetrospectivePayload(run, null);
   const refreshed = await refreshRetrospectiveFeedback(payload);
   return unconsumedHumanFeedback(refreshed.feedbackCandidates ?? []);
 }

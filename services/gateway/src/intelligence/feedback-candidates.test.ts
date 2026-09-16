@@ -561,3 +561,95 @@ test('the newest observation wins across several monitors of the same PR, whatev
     assert.equal(candidate!.excerpt, 'edited');
   }
 });
+
+test('the newest family triage copy of a comment wins, whatever order the runs were read', () => {
+  const rootRun = makeRun({
+    id: 'root',
+    familyId: 'root',
+    flowType: 'fix-bug',
+    completedAt: '2026-09-01T00:00:00.000Z',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  const laterRun = makeRun({
+    id: 'later',
+    familyId: 'root',
+    parentRunId: 'root',
+    flowType: 'pr-complete',
+    completedAt: '2026-09-05T00:00:00.000Z',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: [
+      {
+        sourceKey: feedbackSourceKey(TARGET, 'review-comment', '3916065775'),
+        candidateId: 'x',
+        revision: sha256('Late defaults overwrite what the user typed.'),
+        bodyRevision: sha256('Late defaults overwrite what the user typed.'),
+        destination: 'lib:review/antipatterns.md',
+        rule: 'r',
+        recordedAt: 'now',
+        source: 'approved-audit',
+      },
+    ],
+  };
+  const edited = {
+    ...HUMAN_TRIAGE,
+    body: 'Late defaults overwrite what the user typed — and MAX too.',
+  };
+  for (const triage of [
+    [
+      { runId: 'root', entries: [HUMAN_TRIAGE] },
+      { runId: 'later', entries: [edited] },
+    ],
+    [
+      { runId: 'later', entries: [edited] },
+      { runId: 'root', entries: [HUMAN_TRIAGE] },
+    ],
+  ]) {
+    const [candidate] = buildFeedbackCandidates({
+      target: TARGET,
+      familyRuns: family(rootRun, laterRun),
+      triage,
+      monitors: [],
+      ledger,
+    });
+    assert.match(candidate!.excerpt ?? '', /and MAX too/);
+    assert.equal(candidate!.revisedSinceConsumed, true);
+  }
+});
+
+test('the candidate cap keeps feedback still awaiting curation ahead of consumed entries', () => {
+  const entries = Array.from({ length: 81 }, (_, index) => ({
+    comment_id: 1000 + index,
+    author_login: 'reviewer-a',
+    author_type: 'User',
+    source_kind: 'human',
+    body: `comment ${index}`,
+    triage: 'REAL',
+  }));
+  // Every comment except the last one was already consumed.
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: entries.slice(0, 80).map((entry) => ({
+      sourceKey: feedbackSourceKey(TARGET, 'review-comment', String(entry.comment_id)),
+      candidateId: 'x',
+      revision: sha256(entry.body),
+      bodyRevision: sha256(entry.body),
+      destination: 'lib:review/antipatterns.md',
+      rule: 'r',
+      recordedAt: 'now',
+      source: 'approved-audit' as const,
+    })),
+  };
+  const candidates = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [{ runId: 'root', entries }],
+    monitors: [],
+    ledger,
+  });
+  assert.equal(candidates.length, 80);
+  assert.equal(candidates[0]!.sourceKey.endsWith(':1080'), true, 'the unconsumed comment leads');
+  assert.equal(unconsumedHumanFeedback(candidates).length, 1);
+});
