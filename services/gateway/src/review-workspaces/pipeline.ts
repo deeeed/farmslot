@@ -156,9 +156,12 @@ async function freezeSubject(
         getAllRuns(),
       )
     : undefined;
-  if (context) {
+  if (context && prior) {
+    const resumeRequested =
+      (run.prWork?.review?.options.sessionIntent ??
+        (run.reviewScope === 'incremental' ? 'resume' : 'reset')) === 'resume';
     if (
-      run.reviewScope === 'incremental' &&
+      resumeRequested &&
       prior?.reviewWorkspace?.machine === run.reviewWorkspaceTarget?.machine &&
       prior.nativeOwnerPrincipalId === run.nativeOwnerPrincipalId &&
       prior.createdByPrincipalId === run.createdByPrincipalId &&
@@ -169,7 +172,9 @@ async function freezeSubject(
         currentWorkspaceRun(runId, generation);
       });
     }
-    configureWorkspaceContinuity(run, getRun(prior!.id)!, context);
+    const savedPrior = getRun(prior.id);
+    if (!savedPrior) throw new Error('The prior review was removed during session recovery');
+    configureWorkspaceContinuity(run, savedPrior, context);
   }
   await persistRunNow(
     updateRun(runId, {

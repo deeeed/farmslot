@@ -173,7 +173,7 @@ export function resolveGrokBinary(preferred?: string | null): string {
 /** Reserve an empty native CLI chat without running a model. */
 export function workspaceTerminalSessionCreateArgv(runner: string, repo: string): string[] | null {
   if (getRunnerDefinition(runner).workspaceTerminalSession !== 'create-chat') return null;
-  return [resolveCursorAgentBinary(), '--workspace', repo, 'create-chat'];
+  return [resolveCursorAgentBinary(), '--trust', '--workspace', repo, 'create-chat'];
 }
 
 export function buildInteractiveRefinementRunnerCommand(options: {

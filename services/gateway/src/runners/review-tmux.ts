@@ -13,6 +13,10 @@ import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import { execNativeNodeArgv } from './native/node.js';
+import {
+  buildInteractiveRefinementRunnerCommand,
+  workspaceTerminalSessionCreateArgv,
+} from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
 
 /** Recover only a unique structured metadata match, never the newest unrelated conversation. */
@@ -67,10 +71,6 @@ export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => vo
   });
   await persistRunNow(getRun(run.id)!, 'recover exact reviewer session');
 }
-import {
-  buildInteractiveRefinementRunnerCommand,
-  workspaceTerminalSessionCreateArgv,
-} from './launch-command.js';
 
 async function reviewEnvironment(run: Run) {
   const w = run.reviewWorkspace!;

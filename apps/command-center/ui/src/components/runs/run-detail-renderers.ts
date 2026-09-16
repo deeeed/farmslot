@@ -599,7 +599,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         </div>`
       : nothing}
     ${r.reviewWorkspaceTarget ? ctx._renderRunEvidence(r) : nothing}
-    ${renderRunReviewResult(r, () => void ctx._onReplayStep('human-gate'), actionsBlocked)}
+    ${renderRunReviewResult(
+      r,
+      () => void ctx._onReplayStep('human-gate'),
+      actionsBlocked || ctx._rereviewInFlight,
+      () => void ctx._rereviewLatestHead(r),
+    )}
     ${r.reviewWorkspace ? ctx.renderGateSection(r) : nothing}
     ${r.qa
       ? html`<p data-testid="run-qa-profile">QA profile: <strong>${r.qa.profile.title}</strong></p>`
@@ -1017,6 +1022,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           <div class="error-box">
             <div>${r.error}</div>
             ${r.flowType === 'review-pr' &&
+            !r.reviewWorkspace &&
             (r.status === 'blocked' || r.status === 'done' || r.status === 'failed') &&
             r.steps.some((step) => step.detail === 'stale-review')
               ? html`

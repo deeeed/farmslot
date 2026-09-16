@@ -151,6 +151,7 @@ export function buildRereviewRequest(
       // Same depth as the review being redone; a dead session is no reason to go shallower.
       validationDepth: run.reviewValidationDepth ?? 'static-code',
       busySession: 'wait',
+      autoFinish: false,
     },
     source: { client: 'command-center', reference: `run:${run.id}`, requester: ownerId },
   };

@@ -64,6 +64,7 @@ test('the request resumes the same slot, runner and model with incremental scope
     scope: 'incremental',
     validationDepth: 'full-live',
     busySession: 'wait',
+    autoFinish: false,
   });
   assert.equal(request.source.reference, 'run:run-1');
 });

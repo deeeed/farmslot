@@ -354,9 +354,18 @@ await writeFile(
   path.join(fixture, 'bin/gh'),
   `#!/usr/bin/env node
 const args=process.argv.slice(2);
+if(args[0]==='auth' && args[1]==='token'){process.stdout.write('fixture-only-token');process.exit(0);}
+if(args[0]==='api' && args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n');
+if(args[0]==='api' && args.includes('user')){process.stdout.write(JSON.stringify({login:'fixture-reviewer'}));process.exit(0);}
+if(args[0]==='api' && args.includes('graphql')){
+ const fs=require('node:fs'),headFile=${JSON.stringify(path.join(fixture, 'fixture-pr-head'))};
+ const head=fs.existsSync(headFile)?fs.readFileSync(headFile,'utf8').trim():${JSON.stringify(headSha)};
+ const pr={id:'fixture-pr',number:42,title:'Greeting wording',updatedAt:new Date().toISOString(),state:'OPEN',isDraft:false,headRefOid:head,baseRefOid:${JSON.stringify(baseSha)},baseRefName:'main',headRefName:'greeting',author:{login:'author'},repository:{nameWithOwner:'example/app'},labels:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}},viewerLatestReview:null,viewerLatestReviewRequest:null};
+ process.stdout.write(JSON.stringify({data:{repository:{pullRequest:pr},node:{headRefOid:head,baseRefOid:${JSON.stringify(baseSha)}}}}));process.exit(0);
+}
+
 const endpoint=args.find(value=>value.startsWith('repos/example/app/pulls/'));
 if(args[0]==='api' && endpoint) {
- if(args.includes('--include')) process.stdout.write('HTTP/2.0 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n');
 const data=${JSON.stringify({ number: 42, title: 'Greeting wording', body: prBody, html_url: 'https://github.com/example/app/pull/42', state: 'open', head: { sha: headSha, ref: 'greeting', repo: { full_name: 'example/app' } }, base: { sha: baseSha, ref: 'main' } })}; data.number=Number(endpoint.split('/').pop()); const headFile=${JSON.stringify(path.join(fixture, 'fixture-pr-head'))}; if(require('node:fs').existsSync(headFile))data.head.sha=require('node:fs').readFileSync(headFile,'utf8').trim(); process.stdout.write(JSON.stringify(data)); process.exit(0);
 }
 if(args[0]==='pr' && args[1]==='view'){process.stdout.write(JSON.stringify({mergeable:'MERGEABLE',mergeStateStatus:'CLEAN'}));process.exit(0);}
@@ -393,7 +402,7 @@ function startGateway(recovery = false) {
       FARMSLOT_GATEWAY_TOKEN: token,
       FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
       FARMSLOT_NATIVE_STATE_DIR: path.join(fixture, 'home/native-sessions'),
-      FARMSLOT_DISABLE_ORCHESTRATION: recovery ? '0' : '1',
+      FARMSLOT_DISABLE_ORCHESTRATION: recovery || scenario === 'tmux-fixture' ? '0' : '1',
       FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     },
   });
@@ -568,6 +577,22 @@ async function verifyWorkspacePins(runId: string) {
       sessionFixture.session,
     );
     const selector = `[data-end-session="${sessionFixture.session}"]`;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (
+        ui.evaluate(
+          `return find('terminal-split-view').shadowRoot.querySelector(${JSON.stringify(selector)})?.disabled === false;`,
+        )
+      )
+        break;
+      await delay(100);
+    }
+    assert(
+      ui.evaluate(
+        `return find('terminal-split-view').shadowRoot.querySelector(${JSON.stringify(selector)})?.disabled === false;`,
+      ),
+      'Current session must be enabled for this administrator',
+    );
+
     ui.cdp('click', ui.route, selector, '--dismiss-dialog', sessionFixture.confirmMessage);
     sessionFixture.exists();
     ui.cdp('click', ui.route, selector, '--accept-dialog', sessionFixture.confirmMessage);
@@ -1128,7 +1153,7 @@ try {
         actionId: 'dismiss',
       });
       await verifyReviewUi('saved-review-after-reopen-ui', true);
-      reviewUi!.cdp('close', reviewUi!.route);
+      // The saved result is also the entry point for the incremental review proof.
     }
     assert.equal(run.slotId, null);
     assert(run.reviewWorkspace?.support?.sha256, 'Review must retain its admitted skill digest');
@@ -1232,10 +1257,10 @@ try {
       'Repeat review must disclose a fresh-session fallback',
     );
     assert.equal(context?.session?.fallbackReason, 'session-unavailable');
-    assert.equal(context?.reviewScope, 'full');
-    assert.equal(context?.sessionIntent, 'reset');
-    assert.equal(repeated.reviewScope, 'full');
-    assert(context?.incrementalUnavailableReason);
+    assert.equal(context?.reviewScope, 'incremental');
+    assert.equal(context?.sessionIntent, 'resume');
+    assert.equal(repeated.reviewScope, 'incremental');
+    assert.equal(context?.incrementalUnavailableReason, undefined);
     assert.deepEqual(
       JSON.parse(
         await readFile(
@@ -1301,7 +1326,19 @@ try {
   }
   if (scenario === 'tmux-fixture') {
     const { proveWarmReview } = await import('./runner-validation/lib/warm-review-proof.mjs');
-    await proveWarmReview({ connection, prior: runs[0], parameters, fixture, app, evidence });
+    await proveWarmReview({
+      connection,
+      prior: runs[0],
+      parameters,
+      fixture,
+      app,
+      evidence,
+      requestReview: async () => {
+        reviewUi!.evaluate(`find('[data-testid="run-rereview-latest-head"]').click();return true;`);
+      },
+    });
+    reviewUi!.route = 'prs';
+    reviewUi!.cdp('close', reviewUi!.route);
   }
   console.log(
     JSON.stringify({

@@ -15,8 +15,9 @@ export async function proveWarmReview(input: {
   fixture: string;
   app: string;
   evidence: string;
+  requestReview: () => Promise<void>;
 }) {
-  const { connection, prior, parameters, fixture, app, evidence } = input;
+  const { connection, prior, fixture, app, evidence } = input;
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: app, encoding: 'utf8', stdio: 'pipe' }).trim();
   const oldHead = prior.reviewWorkspaceSubject!.headSha;
@@ -33,14 +34,35 @@ export async function proveWarmReview(input: {
   );
   const newHead = git('rev-parse', 'HEAD');
   await writeFile(path.join(fixture, 'fixture-pr-head'), newHead);
-  let run = (
-    await connection.call<{ run: Run }>('run.create', {
-      ...parameters,
-      ticketOrPr: 'example/app#42',
-      reviewScope: 'incremental',
-      reviewAutoFinish: false,
-    })
-  ).run;
+  await connection.call('prRules.teamSave', {
+    config: {
+      name: 'Review fixture',
+      account: { host: 'github.com', login: 'fixture-reviewer' },
+      sources: [{ kind: 'repository', repo: 'example/app' }],
+      predicate: { kind: 'compare', field: 'state', operator: 'equals', value: 'open' },
+      repositories: [
+        { repo: 'example/app', project: 'review', reviewProfile: 'standard', excludedLabels: [] },
+      ],
+      execution: {
+        workspacePolicy: { kind: 'exact', machine: 'review-node' },
+        transport: 'tmux',
+        models: [{ runner: 'cursor', model: 'cursor-grok-4.6-xhigh' }],
+      },
+      githubTeams: [],
+      notificationPrincipalIds: [],
+    },
+  });
+  await input.requestReview();
+  let run: Run | undefined;
+  for (let attempt = 0; attempt < 160; attempt++) {
+    const listed = await connection.call<{ runs: Run[] }>('run.list', {});
+    run = listed.runs.find(
+      (candidate) => candidate.id !== prior.id && candidate.ticketOrPr === prior.ticketOrPr,
+    );
+    if (run) break;
+    await delay(250);
+  }
+  assert(run, 'Re-review action must dispatch through normal PR intake');
   const read = async () => (await connection.call<{ run: Run }>('run.get', { runId: run.id })).run;
   let completeSent = false;
   try {

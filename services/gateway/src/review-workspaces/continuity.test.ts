@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { RepeatReviewContext, Run } from '@farmslot/protocol';
+import { DEFAULT_PR_REVIEW_OPTIONS, type RepeatReviewContext, type Run } from '@farmslot/protocol';
 
 import { configureWorkspaceContinuity } from './continuity.js';
 
@@ -53,6 +53,27 @@ test('a requested full review does not resume the previous chat', () => {
   const result = context();
   configureWorkspaceContinuity({ ...current, reviewScope: 'full' }, prior, result);
   assert.equal(result.reviewScope, 'full');
+  assert.equal(result.sessionIntent, 'reset');
+  assert.equal(result.session?.continuity, 'fresh');
+});
+
+test('an explicit fresh-session choice still preserves incremental findings context', () => {
+  const run = structuredClone(current);
+  run.prWork = {
+    kind: 'review',
+    id: 'work',
+    sourceId: 'request',
+    pr: { host: 'github.com', repo: 'example/app', number: 42 },
+    headSha: 'b'.repeat(40),
+    review: {
+      profile: 'standard',
+      ownerId: 'owner',
+      options: { ...DEFAULT_PR_REVIEW_OPTIONS, sessionIntent: 'reset', scope: 'incremental' },
+    },
+  };
+  const result = context();
+  configureWorkspaceContinuity(run, prior, result);
+  assert.equal(result.reviewScope, 'incremental');
   assert.equal(result.sessionIntent, 'reset');
   assert.equal(result.session?.continuity, 'fresh');
 });

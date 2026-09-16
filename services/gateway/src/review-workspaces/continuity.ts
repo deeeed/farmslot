@@ -4,14 +4,23 @@ import { getRunnerDefinition } from '../runners/registry.js';
 
 /** Session reuse is restricted to the recorded owner, machine, runner and model. */
 export function configureWorkspaceContinuity(
-  run: Run,
+  run: Pick<
+    Run,
+    | 'reviewScope'
+    | 'prWork'
+    | 'transport'
+    | 'nativeOwnerPrincipalId'
+    | 'createdByPrincipalId'
+    | 'reviewWorkspaceTarget'
+  > & { metrics: Pick<Run['metrics'], 'runner' | 'model'> },
   prior: Run,
   context: RepeatReviewContext,
 ): void {
   const incremental = run.reviewScope === 'incremental' && Boolean(context.priorReviewedHeadSha);
   context.reviewScope = incremental ? 'incremental' : 'full';
-  context.sessionIntent = incremental ? 'resume' : 'reset';
-  if (!incremental) {
+  context.sessionIntent =
+    run.prWork?.review?.options.sessionIntent ?? (incremental ? 'resume' : 'reset');
+  if (context.sessionIntent !== 'resume') {
     context.session = { intent: 'reset', continuity: 'fresh', priorRunId: prior.id };
     return;
   }
