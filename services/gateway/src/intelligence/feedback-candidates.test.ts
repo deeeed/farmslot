@@ -880,3 +880,39 @@ test('repair completion is not a per-comment fix, and a later resolution outrank
     assert.equal(candidate!.resolution.state, 'resolved');
   }
 });
+
+test('a repair completing after an edit does not resurrect the older revision', () => {
+  const original = incident({
+    id: 'orig',
+    lastObservedAt: '2026-09-01T00:00:00.000Z',
+    handledAt: '2026-09-04T00:00:00.000Z',
+    signal: {
+      kind: 'feedback',
+      key: 'PRRC_1',
+      revision: 'rev-1',
+      summary: 'reviewer-a: original',
+      url: URL,
+    },
+  });
+  const edited = incident({
+    id: 'edit',
+    lastObservedAt: '2026-09-03T00:00:00.000Z',
+    signal: {
+      kind: 'feedback',
+      key: 'PRRC_1',
+      revision: 'rev-2',
+      summary: 'reviewer-a: edited',
+      url: URL,
+    },
+  });
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(ROOT),
+    triage: [],
+    monitors: [monitor([original, edited])],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.equal(candidate!.revision, 'rev-2');
+  assert.equal(candidate!.excerpt, 'edited');
+  assert.equal(candidate!.resolution.state, 'open', "the older revision's handling does not apply");
+});

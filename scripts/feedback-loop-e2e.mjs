@@ -383,6 +383,8 @@ async function main() {
     FARMSLOT_ROOT: REPO,
     FARMSLOT_HOME: home,
     FARMSLOT_RUNS_DIR: runsDir,
+    // Pin the ledger explicitly so an operator shell's FARMSLOT_FEEDBACK_LEDGER cannot leak in.
+    FARMSLOT_FEEDBACK_LEDGER: ledgerPath,
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_BRANCH_WATCHERS: '0',
     FARMSLOT_LOCAL_HEALTH_POLL: '0',

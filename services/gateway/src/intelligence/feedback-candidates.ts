@@ -251,16 +251,40 @@ function latestIncidentsByIdentity(
       };
       const key = `${identity.kind}:${identity.providerId}`;
       const current = latest.get(key);
-      // An incident's state can change after it was last seen present (resolvedAt
-      // is stamped when the signal disappears), so compare the newest of both.
-      const stamp = (item: PRMonitorIncident) =>
-        [item.lastObservedAt, item.resolvedAt ?? '', item.handledAt ?? ''].sort().at(-1)!;
-      if (!current || stamp(current.incident) <= stamp(incident)) {
+      if (!current || current.incident.lastObservedAt <= incident.lastObservedAt) {
         latest.set(key, { identity, incident, monitor });
       }
     }
   }
-  return [...latest.values()];
+  // The newest provider observation names the current revision. Its state can
+  // still change afterwards (resolvedAt is stamped when the signal disappears,
+  // handledAt when a repair finishes), so take the newest state stamp among the
+  // incidents carrying that same revision — never from an older revision.
+  const stamp = (item: PRMonitorIncident) =>
+    [item.lastObservedAt, item.resolvedAt ?? '', item.handledAt ?? ''].sort().at(-1)!;
+  return [...latest.values()].map((selected) => {
+    let state = selected.incident;
+    for (const monitor of monitors) {
+      for (const incident of monitor.incidents as PRMonitorIncident[]) {
+        if (
+          incident.signal.kind !== selected.incident.signal.kind ||
+          incident.signal.url !== selected.incident.signal.url ||
+          incident.signal.revision !== selected.incident.signal.revision
+        )
+          continue;
+        if (stamp(incident) > stamp(state)) state = incident;
+      }
+    }
+    if (state === selected.incident) return selected;
+    return {
+      ...selected,
+      incident: {
+        ...selected.incident,
+        ...(state.resolvedAt ? { resolvedAt: state.resolvedAt } : {}),
+        ...(state.handledAt ? { handledAt: state.handledAt } : {}),
+      },
+    };
+  });
 }
 
 /** Ledger annotation, pure: consumption links plus the revised-since-consumed flag. */
