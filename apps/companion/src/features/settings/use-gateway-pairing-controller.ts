@@ -24,6 +24,7 @@ interface GatewayPairingControllerOptions {
   setRecentImportedProfiles: Dispatch<SetStateAction<GatewayProfile[]>>;
   setUrlInput: (url: string) => void;
   setAdvancedGatewaySetupOpen: (open: boolean) => void;
+  onPaired?: () => void;
 }
 
 export function useGatewayPairingController(options: GatewayPairingControllerOptions) {
@@ -102,7 +103,10 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         );
       });
       options.setAdvancedGatewaySetupOpen(false);
-      if (preferredProfile) connect();
+      if (preferredProfile) {
+        connect();
+        options.onPaired?.();
+      }
       setPairingScannerOpen(false);
       Alert.alert('Companion paired', importMessage);
     } catch (error) {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Restore Settings when the gateway is unpaired, and put QR pairing first on the connection landing page. Typing a URL or token stays as a manual fallback.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.6.0 - 2026-09-16

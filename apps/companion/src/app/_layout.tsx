@@ -78,11 +78,13 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="connection" options={{ title: 'Gateway connection' }} />
+          <Stack.Protected guard={farm || access === 'none'}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          </Stack.Protected>
           <Stack.Protected guard={farm || access === 'native'}>
             <Stack.Screen name="native" options={{ title: 'Conversations' }} />
           </Stack.Protected>
           <Stack.Protected guard={farm}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen
               name="pr-automation"
               options={{
