@@ -197,7 +197,7 @@ const humanCandidate = {
   sources: ['comments-triage'],
 };
 
-function draftDecision(id, withDestination) {
+function draftDecision(id, withDestination, ruleId = 'late-defaults-overwrite-user-choice') {
   return {
     id,
     type: 'engine_learnings_draft',
@@ -216,7 +216,7 @@ function draftDecision(id, withDestination) {
       sourceRunId: 'e2e-draft-run',
       drafts: [
         {
-          id: 'late-defaults-overwrite-user-choice',
+          id: ruleId,
           targetPath: 'review/antipatterns.md',
           targetRepo: LIBRARY_REPO,
           symptom: 's',
@@ -286,6 +286,11 @@ function seedRuns() {
     baseRun('e2e-draft-run', {
       familyId: 'e2e-draft-run',
       decisions: [draftDecision('e2e-draft-decision', true)],
+    }),
+    baseRun('e2e-race-run', {
+      familyId: 'e2e-race-run',
+      // A distinct rule so its consumption is not deduplicated against the first card's.
+      decisions: [draftDecision('e2e-race-decision', true, 'race-rule')],
     }),
     baseRun('e2e-draft-nodest-run', {
       familyId: 'e2e-draft-nodest-run',
@@ -489,10 +494,16 @@ async function main() {
     } catch (err) {
       check(false, 'ledger written under FARMSLOT_HOME/state', String(err));
     }
-    const entry = ledger?.entries?.[0];
+    const candidateEntries = (ledger?.entries ?? []).filter(
+      (item) => !item.sourceKey.startsWith('learning:'),
+    );
+    const lessonEntries = (ledger?.entries ?? []).filter((item) =>
+      item.sourceKey.startsWith('learning:'),
+    );
+    const entry = candidateEntries[0];
     check(
-      ledger?.entries?.length === 1,
-      'exactly one ledger entry for one draft × one candidate',
+      candidateEntries.length === 1 && lessonEntries.length === 1,
+      'one candidate consumption plus the landed lesson itself',
       ledger,
     );
     check(
@@ -506,6 +517,39 @@ async function main() {
       entry?.decisionId === 'e2e-draft-decision' && entry?.source === 'learnings-draft',
       'ledger entry records the gating decision',
       entry,
+    );
+
+    console.log(
+      '\n2b. concurrent landed + dismiss on one card resolve exactly once, ledger consistent with the winner',
+    );
+    const [raceLanded, raceDismiss] = await Promise.all([
+      rpc(
+        gatewayUrl,
+        'run.resolveDecision',
+        { runId: 'e2e-race-run', decisionId: 'e2e-race-decision', actionId: 'landed' },
+        { allowFailure: true },
+      ),
+      rpc(
+        gatewayUrl,
+        'run.resolveDecision',
+        { runId: 'e2e-race-run', decisionId: 'e2e-race-decision', actionId: 'dismiss' },
+        { allowFailure: true },
+      ),
+    ]);
+    const winners = [raceLanded, raceDismiss].filter((result) => !result.error);
+    check(winners.length === 1, 'exactly one of the concurrent resolutions succeeded', {
+      raceLanded,
+      raceDismiss,
+    });
+    const raceResolved = readRun('e2e-race-run').decisions[0].resolvedAction;
+    const raceLedger = JSON.parse(readFileSync(ledgerPath, 'utf-8')).entries.filter(
+      (entry) => entry.decisionId === 'e2e-race-decision',
+    );
+    check(
+      (raceResolved === 'landed' && raceLedger.length > 0) ||
+        (raceResolved === 'dismiss' && raceLedger.length === 0),
+      `ledger matches the winner (${raceResolved})`,
+      raceLedger,
     );
 
     console.log('\n3. the retrospective now shows the candidate as consumed (no re-proposal)');
@@ -551,7 +595,7 @@ async function main() {
     const listed = await rpc(gatewayUrl, 'decision.list', {});
     const listedPersisted = listed?.decisions?.find((d) => d.id === 'e2e-persisted-decision');
     check(
-      listedPersisted?.payload?.feedbackCandidates?.[0]?.consumedBy?.length === 1,
+      (listedPersisted?.payload?.feedbackCandidates?.[0]?.consumedBy?.length ?? 0) >= 1,
       'decision.list serves the refreshed consumption state too',
       listedPersisted?.payload?.feedbackSummary,
     );

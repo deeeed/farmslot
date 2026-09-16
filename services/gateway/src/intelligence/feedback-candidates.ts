@@ -183,9 +183,26 @@ interface Draft {
   reviewedCommit?: string;
   observedHead?: string;
   providerRevision?: string;
+  /** Completion time of the run whose triage supplied `body`. */
+  bodyObservedAt?: string;
+  /** Time of the provider observation that supplied `providerRevision`. */
+  providerObservedAt?: string;
   resolution: FeedbackCandidate['resolution'];
   runIds: Set<string>;
   sources: Set<FeedbackCandidate['sources'][number]>;
+}
+
+/**
+ * A triage body is a usable fingerprint only when it demonstrably matches the
+ * comment as the provider last saw it: the triage was captured after that
+ * observation, or the whole body fits inside the provider summary and equals it.
+ */
+function bodyIsCurrent(draft: Draft): boolean {
+  if (draft.body === undefined) return false;
+  if (!draft.providerObservedAt) return true;
+  if (draft.bodyObservedAt && draft.bodyObservedAt >= draft.providerObservedAt) return true;
+  const trimmed = draft.body.trim();
+  return trimmed.length <= 180 && draft.summaryExcerpt === trimmed;
 }
 
 function triageIdentity(entry: CommentsTriageEntry): {
@@ -256,18 +273,16 @@ export function annotateFeedbackConsumption(
       ...(entry.commit ? { commit: entry.commit } : {}),
       ...(entry.bodyRevision ? { bodyRevision: entry.bodyRevision } : {}),
     }));
-    // A consumption matches when it recorded this provider revision. The body
-    // hash only stands in for a candidate nobody observed on the provider (a
-    // triage-only re-read of unchanged text is not an edit); once the provider
-    // reports a newer revision, a triage body copied before the edit must not
-    // mask it.
-    const providerObserved = candidate.sources.includes('pr-monitor');
+    // A consumption matches when it recorded this provider revision, or the
+    // same current full body (`bodyRevision` is only set when the body is
+    // known to match the comment as the provider last saw it — see
+    // bodyIsCurrent). A stale triage copy therefore cannot mask an edit, and a
+    // provider fingerprint appearing after a triage-only consumption does not
+    // re-open unchanged feedback.
     const revisedSinceConsumed = consumedBy.every(
       (entry) =>
         entry.revision !== candidate.revision &&
-        (providerObserved ||
-          candidate.bodyRevision === undefined ||
-          entry.bodyRevision !== candidate.bodyRevision),
+        (candidate.bodyRevision === undefined || entry.bodyRevision !== candidate.bodyRevision),
     );
     return { ...base, consumedBy, ...(revisedSinceConsumed ? { revisedSinceConsumed: true } : {}) };
   });
@@ -308,8 +323,13 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
     existing.path ??= init.path;
     // Triage rows arrive oldest run first, so a later follow-up's copy of the
     // comment (possibly edited) replaces the root's; the provider still wins.
-    if (fromProvider) existing.body ??= init.body;
-    else existing.body = init.body ?? existing.body;
+    if (fromProvider) {
+      existing.body ??= init.body;
+      existing.providerObservedAt = init.providerObservedAt ?? existing.providerObservedAt;
+    } else if (init.body !== undefined) {
+      existing.body = init.body;
+      existing.bodyObservedAt = init.bodyObservedAt;
+    }
     existing.url ??= init.url;
     existing.observedHead ??= init.observedHead;
     // Revision-dependent facts come from the provider's latest observation.
@@ -322,12 +342,16 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
       existing.providerRevision ??= init.providerRevision;
       existing.reviewedCommit ??= init.reviewedCommit;
     }
-    // A confirmed fix outranks a resolved thread, which outranks open/unknown.
-    // On equal rank the worker triage's richer fields (triage, fixedInCommit)
-    // win over the provider's sparser record.
+    // Between triage rows the newest run's verdict stands: a later follow-up
+    // that reopened an edited comment (fixed_in_commit null) is not still
+    // "fixed" because an earlier round once was. Against the provider, a
+    // confirmed fix outranks a resolved thread, which outranks open/unknown; on
+    // equal rank the triage's richer fields (triage, fixedInCommit) win.
     const existingRank = RESOLUTION_RANK[existing.resolution.state];
     const initRank = RESOLUTION_RANK[init.resolution.state];
-    if (initRank > existingRank) {
+    if (!fromProvider && !existing.sources.has('pr-monitor')) {
+      existing.resolution = init.resolution;
+    } else if (initRank > existingRank) {
       existing.resolution = { ...existing.resolution, ...init.resolution };
     } else if (initRank === existingRank) {
       existing.resolution = fromProvider
@@ -346,6 +370,9 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
         (a.completedAt ?? a.updatedAt ?? '').localeCompare(b.completedAt ?? b.updatedAt ?? ''),
       )
       .map((run, index) => [run.id, index] as const),
+  );
+  const runCompletedAt = new Map(
+    input.familyRuns.map((run) => [run.id, run.completedAt ?? run.updatedAt] as const),
   );
   const orderedTriage = [...input.triage].sort(
     (a, b) =>
@@ -369,6 +396,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
           ...(entry.triage ? { triage: entry.triage } : {}),
           ...(fixed ? { fixedInCommit: entry.fixed_in_commit!.trim() } : {}),
         },
+        bodyObservedAt: runCompletedAt.get(runId),
         runIds: [runId],
         source: 'comments-triage',
       });
@@ -405,6 +433,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
         resolution: {
           state: incident.handledAt ? 'fixed' : incident.resolvedAt ? 'resolved' : 'open',
         },
+        providerObservedAt: incident.lastObservedAt,
         runIds: [...(monitor.originatingRunIds ?? []), ...(incident.runId ? [incident.runId] : [])],
         source: 'pr-monitor',
       });
@@ -414,7 +443,7 @@ export function buildFeedbackCandidates(input: FeedbackCandidateInput): Feedback
   const candidates: FeedbackCandidate[] = [];
   for (const draft of drafts.values()) {
     // Only a full body is a fingerprint; the provider summary is truncated.
-    const bodyRevision = draft.body !== undefined ? sha256(collapse(draft.body)) : undefined;
+    const bodyRevision = bodyIsCurrent(draft) ? sha256(collapse(draft.body!)) : undefined;
     const revision = draft.providerRevision ?? bodyRevision ?? sha256(draft.sourceKey);
     // The provider summary is current (truncated); a triage body may predate an edit.
     const excerpt = draft.providerRevision ? (draft.summaryExcerpt ?? draft.body) : draft.body;

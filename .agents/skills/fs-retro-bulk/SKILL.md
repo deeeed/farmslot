@@ -77,7 +77,7 @@ The audit log records every resolved run id + decision id + flow + project, plus
 
 Retrospectives carry `feedbackCandidates`: one entry per provider comment/review id, merged from the family's `comments-triage.json` and the PR monitor's incidents, with author kind (human/bot/unknown), revision, reviewed commit, attribution (`family-change`, `follow-up-only`, `review-only`, `unknown`) and consumption state. The gateway reads `$FARMSLOT_HOME/state/feedback-ledger.json` (`FARMSLOT_FEEDBACK_LEDGER` overrides) to mark candidates a canonical rule already absorbed; an edited comment keeps the link and shows as revised.
 
-- The learnings-draft card's **Recorded in canonical library** action writes the ledger for the drafts on that card after the library PR merged.
+- The learnings-draft card's **Recorded in canonical library** action writes the ledger for the drafts on that card after the library PR merged: one consumption per listed feedback candidate naming the card's drafts, plus one `learning:<hash>` entry per landed lesson so re-analysing unchanged learnings holds the lesson instead of drafting it again.
 - Rules curated by hand (this skill's Pass 2) are recorded with `python3 scripts/seed-feedback-ledger.py --coverage <rule-coverage.json> --repo <library repo url> --commit <merged sha> [--github-dir <saved evidence>]`, so the next scan of the same PR does not re-propose them.
 - `node scripts/feedback-loop-e2e.mjs` proves the whole loop against an isolated production gateway (candidate derivation, the landed gate, consumption display, plan-mode closeout refusals).
 

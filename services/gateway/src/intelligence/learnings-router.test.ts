@@ -349,8 +349,10 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   assert.equal(decision.actions[0]?.id, 'landed');
 
   const added = await recordLearningsDraftLanded(run, decision);
-  assert.equal(added.length, 1);
+  // One candidate consumption plus the landed lesson itself.
+  assert.equal(added.length, 2);
   assert.equal(added[0]!.rule, 'unknown-balance-as-zero');
+  assert.equal(added[1]!.sourceKey.startsWith('learning:'), true);
   // A card with several drafts still records one consumption per candidate,
   // naming the card's drafts rather than binding every draft to every comment.
   const basePayload = decision.payload as LearningsDraftPayload;
@@ -363,7 +365,8 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
     } as LearningsDraftPayload,
   };
   const multiAdded = await recordLearningsDraftLanded(run, multi);
-  assert.equal(multiAdded.length, 1);
+  // The candidate consumption under the combined rule, plus the new second lesson.
+  assert.equal(multiAdded.length, 2);
   assert.equal(multiAdded[0]!.rule, 'unknown-balance-as-zero, second-draft');
   assert.equal(added[0]!.destination, `${TEST_LIBRARY_REPO}:review/antipatterns.md`);
   assert.equal(added[0]!.sourceKey, candidate.sourceKey);
@@ -371,7 +374,18 @@ test('approval gating: "landed" binds the family feedback to the draft in the le
   // A retried approval records nothing new.
   assert.equal((await recordLearningsDraftLanded(run, decision)).length, 0);
   const ledger = await readFeedbackLedger(feedbackLedgerPath());
-  assert.equal(ledger.entries.length, 2);
+  // Two candidate consumptions (one per card) plus the landed lesson entries themselves.
+  assert.equal(
+    ledger.entries.filter((entry) => !entry.sourceKey.startsWith('learning:')).length,
+    2,
+  );
+  assert.equal(ledger.entries.filter((entry) => entry.sourceKey.startsWith('learning:')).length, 2);
+  // Re-analysing the same learnings holds the landed lesson instead of drafting it again.
+  const again = await routeLearnings(TEST_PROJECT, '- unknown balance rendered as zero\n');
+  assert.equal(again.drafts.length, 0);
+  assert.equal(again.holds.length, 1);
+  // The hold names the most recent consumption of that lesson (the multi-draft card).
+  assert.match(again.holds[0]!.reason, /already recorded in .* as "second-draft"/);
 });
 
 test('a card with no destination never offers the landed action and refuses to record', async (t) => {

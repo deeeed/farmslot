@@ -653,3 +653,116 @@ test('the candidate cap keeps feedback still awaiting curation ahead of consumed
   assert.equal(candidates[0]!.sourceKey.endsWith(':1080'), true, 'the unconsumed comment leads');
   assert.equal(unconsumedHumanFeedback(candidates).length, 1);
 });
+
+test('a provider fingerprint appearing after a triage-only consumption does not re-open unchanged feedback', () => {
+  const body = 'Late defaults overwrite what the user typed.';
+  const ledger: FeedbackLedger = {
+    version: 1,
+    entries: [
+      {
+        sourceKey: feedbackSourceKey(TARGET, 'review-comment', '3916065775'),
+        candidateId: 'x',
+        revision: sha256(body),
+        bodyRevision: sha256(body),
+        destination: 'lib:review/antipatterns.md',
+        rule: 'r',
+        recordedAt: 'now',
+        source: 'learnings-draft',
+      },
+    ],
+  };
+  const triagedRun = makeRun({
+    id: 'root',
+    familyId: 'root',
+    flowType: 'pr-complete',
+    completedAt: '2026-09-01T00:00:00.000Z',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  const observedLater = monitor([
+    incident({
+      lastObservedAt: '2026-09-05T00:00:00.000Z',
+      signal: {
+        kind: 'feedback',
+        key: 'PRRC_1',
+        revision: 'provider-rev',
+        summary: `reviewer-a: ${body}`,
+        url: URL,
+      },
+    }),
+  ]);
+  const [unchanged] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(triagedRun),
+    triage: [{ runId: 'root', entries: [HUMAN_TRIAGE] }],
+    monitors: [observedLater],
+    ledger,
+  });
+  // The short body equals the provider summary, so it is provably current.
+  assert.equal(unchanged!.revision, 'provider-rev');
+  assert.equal(unchanged!.bodyRevision, sha256(body));
+  assert.equal(unchanged!.revisedSinceConsumed, undefined);
+
+  // A long body captured before the provider observation cannot be proven current: it
+  // re-enters curation rather than risking a silent drop.
+  const longBody = `${body} ${'x'.repeat(200)}`;
+  const [unproven] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(triagedRun),
+    triage: [{ runId: 'root', entries: [{ ...HUMAN_TRIAGE, body: longBody }] }],
+    monitors: [
+      monitor([
+        incident({
+          lastObservedAt: '2026-09-05T00:00:00.000Z',
+          signal: {
+            kind: 'feedback',
+            key: 'PRRC_1',
+            revision: 'provider-rev',
+            summary: `reviewer-a: ${longBody.slice(0, 180)}`,
+            url: URL,
+          },
+        }),
+      ]),
+    ],
+    ledger: {
+      version: 1,
+      entries: [
+        { ...ledger.entries[0]!, revision: sha256(longBody), bodyRevision: sha256(longBody) },
+      ],
+    },
+  });
+  assert.equal(unproven!.bodyRevision, undefined);
+  assert.equal(unproven!.revisedSinceConsumed, true);
+});
+
+test('a later triage that reopens an edited comment resets the resolution', () => {
+  const rootRun = makeRun({
+    id: 'root',
+    familyId: 'root',
+    flowType: 'fix-bug',
+    completedAt: '2026-09-01T00:00:00.000Z',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  const laterRun = makeRun({
+    id: 'later',
+    familyId: 'root',
+    parentRunId: 'root',
+    flowType: 'pr-complete',
+    completedAt: '2026-09-05T00:00:00.000Z',
+    ticketOrPr: 'MetaMask/metamask-mobile#34865',
+  });
+  const [candidate] = buildFeedbackCandidates({
+    target: TARGET,
+    familyRuns: family(rootRun, laterRun),
+    triage: [
+      {
+        runId: 'later',
+        entries: [{ ...HUMAN_TRIAGE, body: 'still broken after the fix', fixed_in_commit: null }],
+      },
+      { runId: 'root', entries: [{ ...HUMAN_TRIAGE, fixed_in_commit: 'abc123' }] },
+    ],
+    monitors: [],
+    ledger: EMPTY_LEDGER,
+  });
+  assert.deepEqual(candidate!.resolution, { state: 'open', triage: 'REAL' });
+  assert.match(candidate!.excerpt ?? '', /still broken/);
+});

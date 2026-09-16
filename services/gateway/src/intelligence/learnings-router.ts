@@ -11,7 +11,7 @@
 // entry, never a silent drop. Every route terminates at a human gate, and
 // "Recorded in canonical library" writes the consumption ledger so the same
 // feedback is never re-proposed.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -33,12 +33,34 @@ import { callLLM } from '../llm/index.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, updateRun } from '../runs/store.js';
 
-import { appendFeedbackConsumptions, type FeedbackLedgerEntry } from './feedback-ledger.js';
+import {
+  appendFeedbackConsumptions,
+  consumptionsBySourceKey,
+  type FeedbackLedgerEntry,
+  readFeedbackLedger,
+} from './feedback-ledger.js';
 import { improvementBroadcast } from './improvement-engine.js';
 
 export const LEARNINGS_DRAFT_DECISION_TYPE = 'engine_learnings_draft';
 /** Human gate: the drafts landed in the canonical library; record the consumed feedback. */
 export const LEARNINGS_DRAFT_LANDED_ACTION = 'landed';
+
+/** Ledger identity of a learnings entry itself, so a landed lesson is not re-drafted. */
+export function learningEntryKey(entryText: string): string {
+  return `learning:${createHash('sha256').update(entryText.replace(/\s+/g, ' ').trim()).digest('hex')}`;
+}
+
+// One learnings-draft card resolves at a time: `landed` writes the ledger
+// before the card is marked resolved, and a concurrent `dismiss` must not slip
+// into that window and leave a dismissed card's feedback recorded as consumed.
+const resolvingDrafts = new Set<string>();
+export function beginLearningsDraftResolution(decisionId: string): () => void {
+  if (resolvingDrafts.has(decisionId)) {
+    throw new Error(`Decision ${decisionId} is already being resolved`);
+  }
+  resolvingDrafts.add(decisionId);
+  return () => resolvingDrafts.delete(decisionId);
+}
 const DEFAULT_LIBRARY_ANTIPATTERNS_PATH = 'review/antipatterns.md';
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,60}$/;
 
@@ -527,14 +549,30 @@ export async function routeLearnings(project: string, learnings: string): Promis
         });
       }
     } else {
-      let generated: Awaited<ReturnType<AntipatternDrafter>>;
-      try {
-        generated = await (drafterOverride ?? draftViaLLM)(buckets.domain);
-      } catch (err) {
-        console.warn(`[learnings-router] draft generation failed: ${(err as Error).message}`);
-        generated = buckets.domain.map(() => null);
+      // Lessons already landed in the canonical library are held, not re-drafted.
+      const landed = consumptionsBySourceKey(await readFeedbackLedger());
+      const pending: LearningsEntry[] = [];
+      for (const entry of buckets.domain) {
+        const prior = landed.get(learningEntryKey(entry.text))?.at(-1);
+        if (prior) {
+          holds.push({
+            entry: entry.text,
+            reason: `already recorded in ${prior.destination} as "${prior.rule}" on ${prior.recordedAt} — reword the entry if the lesson changed`,
+          });
+        } else {
+          pending.push(entry);
+        }
       }
-      buckets.domain.forEach((entry, index) => {
+      let generated: Awaited<ReturnType<AntipatternDrafter>> = [];
+      if (pending.length > 0) {
+        try {
+          generated = await (drafterOverride ?? draftViaLLM)(pending);
+        } catch (err) {
+          console.warn(`[learnings-router] draft generation failed: ${(err as Error).message}`);
+          generated = pending.map(() => null);
+        }
+      }
+      pending.forEach((entry, index) => {
         const draft = validAntipatternDraft(generated[index]);
         if (!draft) {
           holds.push({
@@ -691,5 +729,21 @@ export async function recordLearningsDraftLanded(
     source: 'learnings-draft',
     runIds: [run.id, ...candidate.runIds.filter((id) => id !== run.id)],
   }));
+  // The lessons themselves are consumed too, so re-analysing unchanged
+  // learnings later holds them instead of proposing the same rule again.
+  for (const draft of payload.drafts) {
+    const key = learningEntryKey(draft.sourceEntry);
+    entries.push({
+      sourceKey: key,
+      candidateId: key.slice('learning:'.length),
+      revision: key.slice('learning:'.length),
+      destination,
+      rule: draft.id,
+      recordedAt,
+      decisionId: decision.id,
+      source: 'learnings-draft',
+      runIds: [run.id],
+    });
+  }
   return appendFeedbackConsumptions(entries);
 }
