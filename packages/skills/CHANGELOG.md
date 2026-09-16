@@ -4,6 +4,8 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- Recipe Cook lane: the runner envelope reports `terminal_status` (`done|blocked|failed`) and `terminal_reason`; the lane no longer reads or rewrites a `STATUS:` line in the run-local TASK.md, and `meta.json` records `terminal_reason`. Templates and skill text drop the field.
+
 ## 0.3.0 - 2026-08-03
 
 - Teach recipe authors to start from existing parameterized recipes and compose them node by node before adding new capabilities.

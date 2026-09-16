@@ -94,9 +94,11 @@ function testCookingLaneWithValidation() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: review-explore-markets-live', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', 'STATUS: working', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: review-explore-markets-live', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
       "  recipe_json: { version: 1, steps: [{ id: 'step-1', action: 'assert' }] },",
       "  recipe_cook_json: { version: 1, resolved_targets: ['ac-1-keep-data-live'], unresolved_targets: [], proof_mode_by_target: { 'ac-1-keep-data-live': 'mixed' } },",
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
       "  evidence_verdict: 'good',",
       "  next_delta: 'Tighten acceptance-criteria extraction.',",
       "  summary: 'Synthetic runner output.'",
@@ -134,7 +136,7 @@ function testCookingLaneWithValidation() {
   assert.equal(lastNonEmptyLine(result.stdout), outputDir);
 
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
-  assert.match(task, /STATUS: done/);
+  assert.doesNotMatch(task, /STATUS:/);
   assert.match(
     task,
     new RegExp(`ARTIFACT_DIR: ${outputDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/artifacts`),
@@ -175,7 +177,7 @@ function testCookingLaneWithValidation() {
     promptText,
     /The JSON object you return is the final serialized payload for those files\./,
   );
-  assert.match(promptText, /Set STATUS to the correct terminal value: done, blocked, or failed/);
+  assert.match(promptText, /"terminal_status": "done\|blocked\|failed"/);
   assert.match(promptText, /transport envelope, not the definition of completion/);
   assert.match(
     promptText,
@@ -220,9 +222,11 @@ function testCookingLaneWithoutValidator() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: fix', 'SOURCE_REF: fix-zero-balance-cta', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', 'STATUS: working', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: fix', 'SOURCE_REF: fix-zero-balance-cta', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
       "  recipe_json: { version: 1, steps: [{ id: 'step-1', action: 'assert' }] },",
       '  recipe_cook_json: null,',
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
       "  evidence_verdict: 'ok',",
       "  next_delta: 'Add stronger fix-specific source prompts.',",
       "  summary: 'No validator available.'",
@@ -261,7 +265,7 @@ function testCookingLaneWithoutValidator() {
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
   assert.match(task, /validation unavailable/);
   assert.doesNotMatch(task, /RECIPE_COOK_VALIDATION_PENDING/);
-  assert.match(task, /STATUS: done/);
+  assert.doesNotMatch(task, /STATUS:/);
   assert.ok(fs.existsSync(path.join(outputDir, 'SOURCE-BUNDLE.md')));
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.validate_exit, -1);
@@ -317,9 +321,11 @@ function testCookingLanePreservesFailedStatus() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: failed', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', 'STATUS: failed', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: failed', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
       '  recipe_json: { version: 1, steps: [] },',
       '  recipe_cook_json: null,',
+      "  terminal_status: 'failed',",
+      "  terminal_reason: 'validation contradicted the PR claim',",
       "  evidence_verdict: 'bad',",
       "  next_delta: 'fix failure',",
       "  summary: 'failed run' }));",
@@ -354,7 +360,7 @@ function testCookingLanePreservesFailedStatus() {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
-  assert.match(task, /STATUS: failed/);
+  assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'failed');
 }
@@ -399,9 +405,11 @@ function testCookingLanePreservesBlockedStatus() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: blocked', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: live', 'STATUS: blocked', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', '', 'Reason: live slot unavailable'].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: blocked', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: live', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', '', 'Reason: live slot unavailable'].join('\\n'),",
       '  recipe_json: { version: 1, steps: [] },',
       '  recipe_cook_json: null,',
+      "  terminal_status: 'blocked',",
+      "  terminal_reason: 'live runtime unavailable',",
       "  evidence_verdict: 'ok',",
       "  next_delta: 'none',",
       "  summary: 'blocked run' }));",
@@ -436,7 +444,7 @@ function testCookingLanePreservesBlockedStatus() {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
-  assert.match(task, /STATUS: blocked/);
+  assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'blocked');
 }
@@ -481,9 +489,11 @@ function testCookingLaneBlocksOnUnresolvedTarget() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: unresolved', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: live', 'STATUS: working', '```', '', '## Resolved vs Unresolved', '', '- PT-1: UNRESOLVED — live blocker', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING'].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: unresolved', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: live', '```', '', '## Resolved vs Unresolved', '', '- PT-1: UNRESOLVED — live blocker', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING'].join('\\n'),",
       '  recipe_json: { version: 1, steps: [] },',
       '  recipe_cook_json: null,',
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
       "  evidence_verdict: 'ok',",
       "  next_delta: 'none',",
       "  summary: 'unresolved run' }));",
@@ -518,7 +528,7 @@ function testCookingLaneBlocksOnUnresolvedTarget() {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
-  assert.match(task, /STATUS: blocked/);
+  assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'blocked');
 }
@@ -574,7 +584,6 @@ function testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone() {
       "    'SOURCE_REF: heading-only',",
       '    `ARTIFACT_DIR: ${artifactsDir}`,',
       "    'VALIDATION_MODE: live',",
-      "    'STATUS: done',",
       "    '```',",
       "    '',",
       "    '## Resolved vs Unresolved',",
@@ -588,6 +597,8 @@ function testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone() {
       "  ].join('\\n'),",
       '  recipe_json: { version: 1, steps: [] },',
       '  recipe_cook_json: null,',
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
       "  evidence_verdict: 'ok',",
       "  next_delta: 'none',",
       "  summary: 'heading-only run' }));",
@@ -622,7 +633,7 @@ function testCookingLaneDoesNotBlockOnResolvedVsUnresolvedHeadingAlone() {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const task = readFileSync(path.join(outputDir, 'TASK.md'), 'utf8');
-  assert.match(task, /STATUS: done/);
+  assert.doesNotMatch(task, /STATUS:/);
   const meta = JSON.parse(readFileSync(path.join(outputDir, 'artifacts', 'meta.json'), 'utf8'));
   assert.equal(meta.outcome, 'completed');
 }
@@ -679,9 +690,11 @@ function testRepoLocalAutoResolution() {
       'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
       "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
       'process.stdout.write(JSON.stringify({',
-      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: repo-local', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', 'STATUS: working', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: review', 'SOURCE_REF: repo-local', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: mixed', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
       '  recipe_json: { version: 1, steps: [] },',
       '  recipe_cook_json: null,',
+      "  terminal_status: 'done',",
+      '  terminal_reason: null,',
       "  evidence_verdict: 'ok',",
       "  next_delta: 'none',",
       "  summary: 'repo-local' }));",
@@ -771,9 +784,11 @@ function testStreamingRunnerMirrorsProgress() {
       "process.stderr.write('progress: synthesize\\n');",
       'setTimeout(() => {',
       '  process.stdout.write(JSON.stringify({',
-      "    task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: mobile-review', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', 'STATUS: working', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "    task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-mobile', 'SOURCE_KIND: review', 'SOURCE_REF: mobile-review', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
       "    recipe_json: { version: 1, steps: [{ id: 'step-1', action: 'assert' }] },",
       '    recipe_cook_json: null,',
+      "    terminal_status: 'done',",
+      '    terminal_reason: null,',
       "    evidence_verdict: 'ok',",
       "    next_delta: 'Keep stream mode default.',",
       "    summary: 'streaming runner output'",

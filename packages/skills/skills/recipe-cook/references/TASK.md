@@ -11,8 +11,7 @@ Do not edit the template in-place during a cooking run.
 Every time you complete a checklist step:
 
 1. run `./mark N` if present (1-based); otherwise immediately change `- [ ]` to `- [x]`
-2. update `STATUS` if needed
-3. only then move to the next step
+2. only then move to the next step
 
 Do not batch checkbox updates.
 Do not leave completed steps unchecked.
@@ -31,7 +30,6 @@ TASK_DIR: {{TASK_DIR}}
 ARTIFACT_DIR: {{ARTIFACT_DIR}}
 SOURCE_BUNDLE_FILE: {{SOURCE_BUNDLE_FILE}}
 VALIDATION_MODE: {{VALIDATION_MODE}}
-STATUS: pending
 ```
 
 ## Source Material
@@ -110,7 +108,7 @@ It must include:
 
 ## Checklist
 
-- [ ] **1. Fill the task block** — set `TARGET_REPO`, `SOURCE_KIND`, `SOURCE_REF`, `ARTIFACT_DIR`, `VALIDATION_MODE`, `STATUS: working`.
+- [ ] **1. Fill the task block** — set `TARGET_REPO`, `SOURCE_KIND`, `SOURCE_REF`, `ARTIFACT_DIR`, `VALIDATION_MODE`.
 - [ ] **2. Gather the real source of truth** — PR/ticket/investigation text plus existing user journeys, recipes, and evals in the target repo.
 - [ ] **3. Enumerate acceptance criteria** — write a numbered canonical list under `## Acceptance Criteria`.
 - [ ] **4. Extract proof targets** — split the work into the smallest executable claims.
@@ -124,7 +122,7 @@ It must include:
 - [ ] **12. Handle unavailable validation honestly** — if the repo has no validator or runner, write `validation unavailable` with the reason. Do not fake success.
 - [ ] **13. Write the learning artifact** — write `artifacts/recipe-cook-learning.json` with evidence verdict and proposed next delta.
 - [ ] **14. Audit unresolved targets** — update `## Resolved vs Unresolved` and `## Recipe Coverage Audit` after validation evidence exists.
-- [ ] **15. Final completion gate** — set `STATUS: done` only after recipe writing, rewritten TASK.md, validation evidence, learning artifact, and unresolved-target audit are all present.
+- [ ] **15. Final completion gate** — report `terminal_status: done` only after recipe writing, rewritten TASK.md, validation evidence, learning artifact, and unresolved-target audit are all present.
 - [ ] **16. Write terminal signal** — write exactly one terminal `SIGNAL.json` based on the outcome matrix below.
 
 ## Outcome Matrix
@@ -134,7 +132,6 @@ Write `SIGNAL.json` only after step 15 is evaluated.
 - **Success**:
   - every required validation passed or was explicitly non-applicable by contract
   - no required proof target remains `UNRESOLVED`
-  - `STATUS: done`
   - signal:
     ```json
     { "status": "complete", "outcome": "success" }
@@ -143,7 +140,6 @@ Write `SIGNAL.json` only after step 15 is evaluated.
 - **Blocked**:
   - a concrete environment/runtime/tooling blocker prevented required validation
   - or a proof target remains `UNRESOLVED` because a required live/runtime dependency was unavailable
-  - `STATUS: blocked`
   - signal:
     ```json
     { "status": "blocked", "outcome": "partial", "reason": "<concrete blocker>" }
@@ -152,7 +148,6 @@ Write `SIGNAL.json` only after step 15 is evaluated.
 - **Failed**:
   - a required validation actually ran and failed
   - or the recipe/proof contradicts the PR claim
-  - `STATUS: failed`
   - signal:
     ```json
     { "status": "failed", "outcome": "failure", "reason": "<concrete failure>" }

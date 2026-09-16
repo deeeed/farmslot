@@ -12,7 +12,6 @@ SOURCE_KIND:
 SOURCE_REF:
 ARTIFACT_DIR:
 VALIDATION_MODE:
-STATUS: pending
 ```
 
 ## Source Material
@@ -87,7 +86,7 @@ It must include:
 
 ## Checklist
 
-- [ ] **1. Fill the task block** — set `TARGET_REPO`, `SOURCE_KIND`, `SOURCE_REF`, `ARTIFACT_DIR`, `VALIDATION_MODE`, `STATUS: working`.
+- [ ] **1. Fill the task block** — set `TARGET_REPO`, `SOURCE_KIND`, `SOURCE_REF`, `ARTIFACT_DIR`, `VALIDATION_MODE`.
 - [ ] **2. Gather the real source of truth** — PR/ticket/investigation text plus existing user journeys, recipes, and evals in the target repo.
 - [ ] **3. Enumerate acceptance criteria** — write a numbered canonical list under `## Acceptance Criteria`.
 - [ ] **4. Extract proof targets** — split the work into the smallest executable claims.
@@ -99,7 +98,7 @@ It must include:
 - [ ] **10. Handle unavailable validation honestly** — if the repo has no validator or runner, write `validation unavailable` with the reason. Do not fake success.
 - [ ] **11. Write the learning artifact** — write `artifacts/recipe-cook-learning.json` with evidence verdict and proposed next delta.
 - [ ] **12. Audit unresolved targets** — update `## Resolved vs Unresolved` and `## Recipe Coverage Audit` after validation evidence exists.
-- [ ] **13. Final completion gate** — set `STATUS: done` only after recipe writing, validation evidence, learning artifact, and unresolved-target audit are all present.
+- [ ] **13. Final completion gate** — report `terminal_status: done` only after recipe writing, validation evidence, learning artifact, and unresolved-target audit are all present.
 
 ## Failure Conditions
 
