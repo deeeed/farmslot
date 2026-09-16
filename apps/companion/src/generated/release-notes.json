@@ -1,11 +1,11 @@
 {
-  "version": "0.5.0",
-  "date": "2026-09-08",
+  "version": "0.6.0",
+  "date": "2026-09-16",
   "items": [
-    "Run Detail shows the run's resource posture at every wait, with gate choices to keep, minimize, or free the slot.",
-    "A parked run restored into a different slot names both slots so you attach to the right one.",
-    "Runs waiting on a fleet-scoped device claim show their place in line and the run holding it, and when the claim is granted.",
-    "Posture rows show the device each capability actually resolved to after a re-target.",
-    "Machine pause and restore show what each park retains or stops."
+    "Review and farm QA are separate. Request each from the configured workspace, filter runs by QA, and retry publication from the run.",
+    "The PR list follows the gateway refresh. A GitHub read failure is the list error, and Refresh asks the gateway to re-read GitHub.",
+    "Continue Co-Pilot and worker conversations natively with streamed history, tools, approvals, and turn controls. Focused drafts survive reconnect.",
+    "Choose a native runner configuration, resume a saved conversation, and expand why a node is unavailable.",
+    "PR monitors, review and QA requests, rule attention, device push enrollment, and publication policy stay on the gateway across reconnects."
   ]
 }
