@@ -120,7 +120,7 @@ async function findReusableTab(url) {
   );
 }
 
-function connect(wsUrl) {
+function connect(wsUrl, onEvent) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     const pending = new Map();
@@ -131,6 +131,8 @@ function connect(wsUrl) {
         const { resolve: r, reject: rj } = pending.get(msg.id);
         pending.delete(msg.id);
         msg.error ? rj(new Error(msg.error.message ?? 'cdp error')) : r(msg.result);
+      } else if (msg.method && onEvent) {
+        onEvent(msg);
       }
     });
     ws.on('error', reject);
@@ -307,11 +309,23 @@ async function screenshotTab(hash, outputPath) {
   return { path: outputPath };
 }
 
-async function clickInTab(hash, selector) {
+async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
   const tab = await findTab(hash);
   if (!tab) die(`no CDP tab matching hash=${hash}`, 2);
-  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  let dialog, dialogResult, dialogError;
+  const { call, close } = await connect(tab.webSocketDebuggerUrl, (event) => {
+    if (event.method !== 'Page.javascriptDialogOpening' || !dialogChoice) return;
+    dialog = event.params.message;
+    const matches = event.params.type === 'confirm' && dialog === expectedDialog;
+    dialogResult = call('Page.handleJavaScriptDialog', {
+      accept: matches && dialogChoice === 'accept',
+    }).catch((error) => {
+      dialogError = error;
+    });
+    if (!matches) dialogError = new Error('Confirmation dialog did not match the expected message');
+  });
   try {
+    if (dialogChoice) await call('Page.enable');
     await call('Page.bringToFront');
     const result = await call('Runtime.evaluate', {
       expression: `(() => {
@@ -341,6 +355,11 @@ async function clickInTab(hash, selector) {
         button: 'left',
         clickCount: 1,
       });
+    if (dialogChoice) {
+      await dialogResult;
+      if (dialogError) throw dialogError;
+      if (dialog === undefined) throw new Error('Expected confirmation dialog did not open');
+    }
     return { clicked: selector };
   } finally {
     close();
@@ -632,9 +651,19 @@ try {
     const result = await loginInTab(hash);
     console.log(JSON.stringify(result, null, 2));
   } else if (cmd === 'click') {
-    const [hash, selector] = rest;
+    const [hash, selector, dialogFlag, expectedDialog] = rest;
     if (!hash || !selector) die('usage: cdp.mjs click <hash> <selector>');
-    console.log(JSON.stringify(await clickInTab(hash, selector), null, 2));
+    const dialogChoice =
+      dialogFlag === '--accept-dialog'
+        ? 'accept'
+        : dialogFlag === '--dismiss-dialog'
+          ? 'dismiss'
+          : undefined;
+    if (dialogFlag && (!dialogChoice || expectedDialog === undefined))
+      die('click dialog option requires an exact expected message');
+    console.log(
+      JSON.stringify(await clickInTab(hash, selector, dialogChoice, expectedDialog), null, 2),
+    );
   } else if (cmd === 'fill' || cmd === 'select') {
     const [hash, selector, value] = rest;
     if (!hash || !selector || value === undefined)

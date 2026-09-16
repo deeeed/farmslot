@@ -195,6 +195,7 @@ import {
   type TmuxSendKeysParams,
   type TmuxSplitParams,
   type TmuxSynchronizePanesParams,
+  type TmuxWorkerEndSessionParams,
   type TmuxWorkerListParams,
   type TmuxWorkerRestoreParams,
   type TmuxZoomPaneParams,
@@ -478,7 +479,7 @@ import {
   tmuxSynchronizePanes,
   tmuxZoomPane,
 } from '../methods/tmux-control.js';
-import { tmuxWorkerList } from '../methods/tmux-workers.js';
+import { tmuxWorkerEndSession, tmuxWorkerList } from '../methods/tmux-workers.js';
 import {
   workGraphActivate,
   workGraphAddEdge,
@@ -1307,6 +1308,8 @@ async function routeAuthorizedMethod(
       return tmuxList(p as TmuxListParams);
     case Methods.TMUX_WORKER_LIST:
       return tmuxWorkerList((p ?? {}) as TmuxWorkerListParams);
+    case Methods.TMUX_WORKER_END_SESSION:
+      return tmuxWorkerEndSession(p as TmuxWorkerEndSessionParams);
     case Methods.TMUX_WORKER_RESTORE:
       return restoreTmuxWorker(p as TmuxWorkerRestoreParams);
     case Methods.TMUX_SEND_KEYS:

@@ -423,6 +423,7 @@ test('tmuxWorkerFromNodePane preserves node tmux identity and optional correlati
       cwd: '/repo',
       command: 'codex',
       pid: 123,
+      canEndSession: false,
       branch: 'feature/mobile',
       lastChangedAt: 1779411210000,
       width: 100,
@@ -1027,4 +1028,47 @@ test('a numeric pane INDEX in the stored context falls back to window matching',
     },
   });
   assert.equal(worker.status.attentionReason, 'observability-degraded');
+});
+
+test('worktree reviewer and shell sessions are managed without fabricating a slot', () => {
+  const run = {
+    id: 'review-run',
+    familyId: 'family',
+    status: 'blocked',
+    slotId: null,
+    reviewWorkspace: { workspaceId: 'workspace', machine: 'runner-local' },
+    agentContexts: [
+      {
+        id: 'review',
+        runner: 'cursor',
+        target: { session: 'review-workspace', target: 'review-workspace' },
+      },
+    ],
+  } as Run;
+  const correlation = buildSessionCorrelation([], { slots: [] } as unknown as FleetStatus, [
+    run,
+  ]).get('runner-local')!;
+  assert.equal(correlation.get('review-workspace')?.runId, run.id);
+  assert.equal(correlation.get('review-shell-workspace')?.runId, run.id);
+  const pane: NodeTmuxPane = {
+    session: 'review-workspace',
+    window: '0',
+    pane: '0',
+    paneId: '%42',
+    target: 'review-workspace:0.0',
+    pid: 123,
+  };
+  const worker = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane,
+    observedAt: Date.now(),
+    correlation: correlation.get(pane.session),
+  });
+  assert.equal(worker.linkedSlotId, undefined);
+  assert.equal(worker.linkedRunId, run.id);
+  assert.equal(worker.canEndSession, false);
+  assert.equal(
+    tmuxWorkerFromNodePane({ nodeId: 'runner-local', pane, observedAt: Date.now() }).canEndSession,
+    true,
+  );
 });

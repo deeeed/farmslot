@@ -5,6 +5,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import type {
   FleetStatus,
   FleetStatusResult,
+  Run,
   RunListResult,
   SlotStatus,
   TmuxWorkerInventoryUpdatedPayload,
@@ -26,12 +27,13 @@ import {
 } from '@farmslot/protocol';
 
 import './terminal-view.js';
+import '../shared/workspace-pin.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { isSlotPinned, listPinnedSlots, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import { listPinnedSlots, listPinnedWorkspaces } from '../../utils/pinned-slots.js';
 import { hashParams } from '../../utils/url-state.js';
 import { isRunListActiveRun } from '../runs/run-list-model.js';
 
@@ -45,8 +47,10 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   parseWorkerRouteParam,
+  RUN_PANES_KEY,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
+  selectWorkspaceRuns,
   STORAGE_KEY,
   type TerminalPane,
   watchEntryDescription,
@@ -62,16 +66,22 @@ import {
 @customElement('terminal-split-view')
 export class TerminalSplitView extends LitElement {
   @property({ type: String }) initialSlot = '';
+  @property() initialRun = '';
+  @state() private _selectedRuns: string[] = [];
+  @state() private _runs: Run[] = [];
 
   @state() private _availableSlots: string[] = [];
   @state() private _selectedSlots: string[] = [];
   @state() private _selectedWorkers: TmuxWorkerRef[] = [];
   @state() private _layout: LayoutMode = 'auto';
-  @state() private _expandedSlot: string | null = null;
+  @state() private _expandedPane: string | null = null;
   @state() private _hydrating = false;
   @state() private _tmuxWorkers: TmuxWorkerSummary[] = [];
   @state() private _workerWatchItems: TmuxWorkerWatchItem[] = [];
   @state() private _workerListError = '';
+  @state() private _workerSearch = '';
+  @state() private _endingSession: string | null = null;
+  @state() private _endSessionError = '';
   @state() private _workerPaneFilter: WorkerPaneFilter = 'adhoc';
 
   private _unsubFleet?: () => void;
@@ -85,11 +95,14 @@ export class TerminalSplitView extends LitElement {
       display: flex;
       flex-direction: column;
       height: 100%;
+      min-width: 0;
+      overflow: hidden;
       background: ${unsafeCSS(colors.bgBase)};
     }
 
     .toolbar {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: ${unsafeCSS(spacing.md)};
       padding: ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.lg)};
@@ -262,19 +275,52 @@ export class TerminalSplitView extends LitElement {
     }
 
     .worker-list {
-      display: flex;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
       gap: ${unsafeCSS(spacing.sm)};
-      overflow-x: auto;
-      padding-bottom: 2px;
+      min-width: 0;
+      max-height: 28vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    details.worker-panel > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    .worker-search {
+      flex: 1;
+      min-width: 150px;
+      padding: 6px 8px;
+      background: ${unsafeCSS(colors.bgInput)};
+      color: ${unsafeCSS(colors.textPrimary)};
+      border: 1px solid #2a2a44;
+      border-radius: 4px;
+    }
+    .worker-chip-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .worker-chip-btn.danger {
+      color: ${unsafeCSS(colors.statusFail)};
+    }
+    .worker-chip-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .worker-empty {
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: 12px;
+      padding: 8px;
     }
 
     .worker-chip {
       display: grid;
-      grid-template-columns: auto minmax(160px, 1fr) auto auto;
+      grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
       gap: ${unsafeCSS(spacing.sm)};
-      min-width: 340px;
-      max-width: 520px;
+      min-width: 0;
       padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
       background: ${unsafeCSS(colors.bgSurface)};
       border: 1px solid #2a2a44;
@@ -299,9 +345,9 @@ export class TerminalSplitView extends LitElement {
 
     .worker-chip-title {
       color: ${unsafeCSS(colors.textPrimary)};
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      line-height: 1.4;
     }
 
     .worker-chip-meta {
@@ -309,7 +355,7 @@ export class TerminalSplitView extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      grid-column: 2 / 5;
+      grid-column: 1 / -1;
     }
 
     .worker-chip-btn {
@@ -344,6 +390,14 @@ export class TerminalSplitView extends LitElement {
   `;
 
   updated(changed: Map<string, unknown>) {
+    if (changed.has('initialRun') && this.initialRun) {
+      this._selectedRuns = [this.initialRun];
+      this._selectedSlots = [];
+      this._selectedWorkers = [];
+      this._expandedPane = null;
+      this._layout = '1x1';
+      this._save();
+    }
     if (
       changed.has('initialSlot') &&
       this.initialSlot &&
@@ -362,9 +416,11 @@ export class TerminalSplitView extends LitElement {
     this._loadSaved();
     this._applyRouteWorker();
     this._fetchSlots();
+    void this._fetchRuns();
     this._fetchTmuxWorkers();
     const initial = getState();
     this._globalFilters = initial.globalFilters;
+    this._runs = initial.runs;
     this._hydrating = isHydrating(initial, 'fleet');
     this._unsubFleet = gateway.subscribe(Events.FLEET_UPDATED, (payload: unknown) => {
       const fleet = payload as FleetStatus;
@@ -382,6 +438,7 @@ export class TerminalSplitView extends LitElement {
     );
     this._unsubState = subscribe((s: AppState) => {
       this._globalFilters = s.globalFilters;
+      this._runs = s.runs;
       this._hydrating = isHydrating(s, 'fleet');
       if (s.fleet) {
         this._availableSlots = this._applyFilters(s.fleet.slots).map((slot) => slot.slot);
@@ -403,6 +460,10 @@ export class TerminalSplitView extends LitElement {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) this._selectedSlots = parsed;
       }
+      const savedRuns: unknown = JSON.parse(localStorage.getItem(RUN_PANES_KEY) ?? '[]');
+      this._selectedRuns = Array.isArray(savedRuns)
+        ? savedRuns.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : [];
       this._selectedWorkers = parseWorkerRefs(localStorage.getItem(WORKER_PANES_KEY));
       this._workerWatchItems = parseWatchItems(localStorage.getItem(WORKER_WATCHLIST_KEY));
       const workerFilter = localStorage.getItem(WORKER_FILTER_KEY);
@@ -417,6 +478,8 @@ export class TerminalSplitView extends LitElement {
       // terminal preferences so a corrupt browser cache cannot break the page.
       console.warn('[terminal-split-view] resetting corrupt local terminal preferences', err);
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(RUN_PANES_KEY);
+      this._selectedRuns = [];
       localStorage.removeItem(WORKER_PANES_KEY);
       localStorage.removeItem(WORKER_WATCHLIST_KEY);
       localStorage.removeItem(WORKER_FILTER_KEY);
@@ -429,6 +492,7 @@ export class TerminalSplitView extends LitElement {
   private _applyRouteWorker() {
     const routeWorker = parseWorkerRouteParam(hashParams().get('worker'));
     if (!routeWorker) return;
+    this._selectedRuns = [];
     this._selectedSlots = [];
     this._selectedWorkers = [routeWorker];
     this._workerPaneFilter = 'all';
@@ -437,6 +501,7 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _save() {
+    localStorage.setItem(RUN_PANES_KEY, JSON.stringify(this._selectedRuns));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this._selectedSlots));
     localStorage.setItem(WORKER_PANES_KEY, JSON.stringify(this._selectedWorkers));
     localStorage.setItem(LAYOUT_KEY, this._layout);
@@ -446,6 +511,32 @@ export class TerminalSplitView extends LitElement {
   private _saveWatchItems(items: TmuxWorkerWatchItem[]) {
     this._workerWatchItems = items;
     localStorage.setItem(WORKER_WATCHLIST_KEY, JSON.stringify(items));
+  }
+
+  private async _fetchRuns() {
+    try {
+      const result = await gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 });
+      this._runs = result.runs;
+    } catch (error) {
+      this._workerListError = `Could not load worktree reviews: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  private _openRun(runId: string) {
+    this._selectedRuns = [runId, ...this._selectedRuns.filter((id) => id !== runId)].slice(
+      0,
+      this._maxSlots(),
+    );
+    this._selectedWorkers = this._selectedWorkers.slice(
+      0,
+      this._maxSlots() - this._selectedRuns.length,
+    );
+    this._selectedSlots = this._selectedSlots.slice(
+      0,
+      Math.max(0, this._maxSlots() - this._selectedRuns.length - this._selectedWorkers.length),
+    );
+    this._expandedPane = null;
+    this._save();
   }
 
   private async _fetchSlots() {
@@ -541,10 +632,14 @@ export class TerminalSplitView extends LitElement {
         (runResult.runs ?? []).filter(isRunListActiveRun),
         this._globalFilters,
       );
-      this._selectedSlots = activeRuns;
+      this._runs = runResult.runs;
+      this._selectedRuns = selectWorkspaceRuns(runResult.runs, this._globalFilters)
+        .slice(0, 8)
+        .map((run) => run.id);
+      this._selectedSlots = activeRuns.slice(0, 8 - this._selectedRuns.length);
       this._selectedWorkers = [];
       this._layout = 'auto';
-      this._expandedSlot = null;
+      this._expandedPane = null;
       this._save();
     } catch (err) {
       console.warn('[terminal-split-view] failed to open active run slots', err);
@@ -553,16 +648,26 @@ export class TerminalSplitView extends LitElement {
 
   private async _showPinnedSlots() {
     try {
-      const fleetResult = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+      const [fleetResult, runResult] = await Promise.all([
+        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
+        gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
+      ]);
+      this._runs = runResult.runs;
+      const availableRuns = new Set(
+        selectWorkspaceRuns(this._runs, this._globalFilters).map((run) => run.id),
+      );
+      this._selectedRuns = listPinnedWorkspaces()
+        .flatMap((pin) => ('runId' in pin && availableRuns.has(pin.runId) ? [pin.runId] : []))
+        .slice(0, 8);
       const pinned = selectPinnedSlotIds(
         fleetResult.fleet.slots,
         listPinnedSlots().map((pin) => pin.slotId),
         this._globalFilters,
       );
-      this._selectedSlots = pinned;
+      this._selectedSlots = pinned.slice(0, 8 - this._selectedRuns.length);
       this._selectedWorkers = [];
       this._layout = 'auto';
-      this._expandedSlot = null;
+      this._expandedPane = null;
       this._save();
     } catch (err) {
       console.warn('[terminal-split-view] failed to open pinned slots', err);
@@ -579,9 +684,10 @@ export class TerminalSplitView extends LitElement {
       watchRefs.every((ref) =>
         this._selectedWorkers.some((selected) => tmuxWorkerRefsMatch(selected, ref)),
       );
+    this._selectedRuns = [];
     this._selectedWorkers = sameWatchlist ? [] : watchRefs;
     this._selectedSlots = [];
-    this._expandedSlot = null;
+    this._expandedPane = null;
     this._layout = 'auto';
     this._save();
   }
@@ -595,29 +701,39 @@ export class TerminalSplitView extends LitElement {
       updated.splice(index, 1);
     }
     this._selectedSlots = updated;
+    this._expandedPane = null;
     this._save();
   }
 
   private _handleLayoutChange(layout: LayoutMode) {
     this._layout = layout;
-    this._expandedSlot = null;
+    this._expandedPane = null;
     this._save();
   }
 
   private _handleExpand(e: CustomEvent) {
-    const { slotId } = e.detail;
-    this._expandedSlot = this._expandedSlot === slotId ? null : slotId;
+    const { slotId, runId } = e.detail;
+    const key = slotId ? `slot:${slotId}` : runId ? `run:${runId}` : null;
+    this._expandedPane = this._expandedPane === key ? null : key;
   }
 
-  private _handleTerminalClose(e: CustomEvent<{ slotId?: string; worker?: TmuxWorkerRef }>) {
-    const { slotId, worker } = e.detail;
+  private _handleTerminalClose(
+    e: CustomEvent<{ slotId?: string; runId?: string; worker?: TmuxWorkerRef }>,
+  ) {
+    const { slotId, runId, worker } = e.detail;
     if (worker) {
       this._closeWorker(worker);
       return;
     }
+    if (!slotId && runId) {
+      this._selectedRuns = this._selectedRuns.filter((id) => id !== runId);
+      if (this._expandedPane === `run:${runId}`) this._expandedPane = null;
+      this._save();
+      return;
+    }
     if (!slotId) return;
     this._selectedSlots = this._selectedSlots.filter((selected) => selected !== slotId);
-    if (this._expandedSlot === slotId) this._expandedSlot = null;
+    if (this._expandedPane === `slot:${slotId}`) this._expandedPane = null;
     this._save();
   }
 
@@ -629,7 +745,10 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _addSlotSelector() {
-    if (this._selectedSlots.length < this._maxSlots()) {
+    if (
+      this._selectedSlots.length + this._selectedRuns.length + this._selectedWorkers.length <
+      this._maxSlots()
+    ) {
       this._selectedSlots = [...this._selectedSlots, ''];
     }
   }
@@ -641,8 +760,21 @@ export class TerminalSplitView extends LitElement {
       : this._tmuxWorkers.filter((worker) => machines.includes(worker.ref.nodeId));
   }
 
+  private _matchesSearch(text: string): boolean {
+    return this._workerSearch
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .every((term) => text.toLowerCase().includes(term));
+  }
+
   private _filteredWorkers(): TmuxWorkerSummary[] {
+    const workspaceIds = new Set(
+      selectWorkspaceRuns(this._runs, this._globalFilters).map((run) => run.id),
+    );
     return this._machineFilteredWorkers().filter((worker) => {
+      if (worker.linkedRunId && workspaceIds.has(worker.linkedRunId)) return false;
+      if (!this._matchesSearch(workerTitle(worker) + ' ' + workerDescription(worker))) return false;
       if (this._workerPaneFilter === 'all') return true;
       const farmslot = isFarmslotWorker(worker);
       return this._workerPaneFilter === 'farmslot' ? farmslot : !farmslot;
@@ -654,6 +786,8 @@ export class TerminalSplitView extends LitElement {
       this._workerWatchItems,
       this._machineFilteredWorkers(),
     ).filter((entry) => {
+      if (!this._matchesSearch(watchEntryTitle(entry) + ' ' + watchEntryDescription(entry)))
+        return false;
       if (this._workerPaneFilter === 'all') return true;
       const farmslot = isFarmslotWatchEntry(entry);
       return this._workerPaneFilter === 'farmslot' ? farmslot : !farmslot;
@@ -680,9 +814,19 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _openWorker(ref: TmuxWorkerRef) {
-    if (this._selectedWorkers.some((candidate) => tmuxWorkerRefsMatch(candidate, ref))) return;
-    this._selectedWorkers = [ref, ...this._selectedWorkers].slice(0, 4);
-    this._expandedSlot = null;
+    this._selectedWorkers = [
+      ref,
+      ...this._selectedWorkers.filter((candidate) => !tmuxWorkerRefsMatch(candidate, ref)),
+    ].slice(0, Math.min(4, this._maxSlots()));
+    this._selectedRuns = this._selectedRuns.slice(
+      0,
+      this._maxSlots() - this._selectedWorkers.length,
+    );
+    this._selectedSlots = this._selectedSlots.slice(
+      0,
+      Math.max(0, this._maxSlots() - this._selectedRuns.length - this._selectedWorkers.length),
+    );
+    this._expandedPane = null;
     this._save();
   }
 
@@ -713,17 +857,35 @@ export class TerminalSplitView extends LitElement {
     );
 
     return html`
-      <div class="worker-panel">
-        <div class="worker-panel-header">
+      <details class="worker-panel" open>
+        <summary class="worker-panel-header">
           <div>
-            <div class="worker-panel-title">Tmux watchlist</div>
+            <div class="worker-panel-title">Sessions · ${liveWorkers.length} matching</div>
             <div class="worker-panel-hint">
-              Local browser cache. Pin tmux panes that were not launched by Farmslot.
+              Watch sessions for quick access. Collapse this list to give terminals more room.
             </div>
           </div>
-          <button class="layout-btn" @click=${() => this._fetchTmuxWorkers()}>Refresh tmux</button>
-        </div>
+          <button
+            class="layout-btn"
+            @click=${(event: Event) => {
+              event.preventDefault();
+              void this._fetchTmuxWorkers();
+            }}
+          >
+            Refresh sessions
+          </button>
+        </summary>
         <div class="worker-filter-row">
+          <input
+            class="worker-search"
+            type="search"
+            aria-label="Search sessions"
+            placeholder="Search sessions, machines, folders…"
+            .value=${this._workerSearch}
+            @input=${(event: Event) => {
+              this._workerSearch = (event.target as HTMLInputElement).value;
+            }}
+          />
           ${(['adhoc', 'farmslot', 'all'] as WorkerPaneFilter[]).map(
             (filter) => html`
               <button
@@ -731,7 +893,7 @@ export class TerminalSplitView extends LitElement {
                 @click=${() => this._setWorkerPaneFilter(filter)}
               >
                 ${filter === 'adhoc'
-                  ? `Non-Farmslot ${counts.adhoc}`
+                  ? `Unmanaged ${counts.adhoc}`
                   : filter === 'farmslot'
                     ? `Farmslot ${counts.farmslot}`
                     : `All ${counts.all}`}
@@ -742,83 +904,144 @@ export class TerminalSplitView extends LitElement {
         ${this._workerListError
           ? html`<div class="worker-error">${this._workerListError}</div>`
           : ''}
+        ${this._endSessionError
+          ? html`<div class="worker-error" role="alert">${this._endSessionError}</div>`
+          : ''}
         <div class="worker-list">
+          ${!watchEntries.length && !liveUnwatched.length
+            ? html`<div class="worker-empty">No sessions match these filters.</div>`
+            : ''}
           ${watchEntries.map((entry) => this._renderWatchEntry(entry))}
-          ${liveUnwatched.slice(0, 12).map((worker) => this._renderLiveWorker(worker))}
+          ${liveUnwatched.map((worker) => this._renderLiveWorker(worker))}
         </div>
-      </div>
+      </details>
     `;
   }
 
   private _renderWatchEntry(entry: TmuxWorkerWatchEntry) {
-    const needsAttention = entry.worker?.status.requiresAttention === true;
-    return html`
-      <div
-        class="worker-chip ${entry.live ? 'live' : 'stale'} ${needsAttention
-          ? 'needs-attention'
-          : ''}"
-      >
-        <button class="worker-chip-btn pinned" @click=${() => this._removeWatchEntry(entry)}>
-          ★
-        </button>
-        <div class="worker-chip-title">${watchEntryTitle(entry)}</div>
-        <button class="worker-chip-btn active" @click=${() => this._openWorker(entry.ref)}>
-          Open
-        </button>
-        ${entry.worker?.linkedSlotId
-          ? html`<button
-              class="worker-chip-btn ${isSlotPinned(entry.worker.linkedSlotId) ? 'pinned' : ''}"
-              title=${isSlotPinned(entry.worker.linkedSlotId)
-                ? `Remove ${entry.worker.linkedSlotId} from pinned slots`
-                : `Pin ${entry.worker.linkedSlotId}`}
-              @click=${() => togglePinnedSlot(entry.worker!.linkedSlotId!)}
-            >
-              ${isSlotPinned(entry.worker.linkedSlotId) ? 'Pinned slot' : 'Pin slot'}
-            </button>`
-          : ''}
-        <button class="worker-chip-btn" @click=${() => this._closeWorker(entry.ref)}>Close</button>
-        <div class="worker-chip-meta">${watchEntryDescription(entry)}</div>
-      </div>
-    `;
+    return this._renderSessionCard(
+      entry.ref,
+      watchEntryTitle(entry),
+      watchEntryDescription(entry),
+      entry.worker,
+      true,
+      () => this._removeWatchEntry(entry),
+    );
   }
 
   private _renderLiveWorker(worker: TmuxWorkerSummary) {
-    const needsAttention = worker.status.requiresAttention === true;
-    return html`
-      <div class="worker-chip live ${needsAttention ? 'needs-attention' : ''}">
-        <button class="worker-chip-btn" @click=${() => this._toggleWorkerWatch(worker)}>☆</button>
-        <div class="worker-chip-title">${workerTitle(worker)}</div>
-        <button class="worker-chip-btn active" @click=${() => this._openWorker(worker.ref)}>
-          Open
-        </button>
-        ${worker.linkedSlotId
-          ? html`<button
-              class="worker-chip-btn ${isSlotPinned(worker.linkedSlotId) ? 'pinned' : ''}"
-              title=${isSlotPinned(worker.linkedSlotId)
-                ? `Remove ${worker.linkedSlotId} from pinned slots`
-                : `Pin ${worker.linkedSlotId}`}
-              @click=${() => togglePinnedSlot(worker.linkedSlotId!)}
-            >
-              ${isSlotPinned(worker.linkedSlotId) ? 'Pinned slot' : 'Pin slot'}
-            </button>`
-          : ''}
-        <button class="worker-chip-btn" @click=${() => this._closeWorker(worker.ref)}>Close</button>
-        <div class="worker-chip-meta">${workerDescription(worker)}</div>
+    return this._renderSessionCard(
+      worker.ref,
+      workerTitle(worker),
+      workerDescription(worker),
+      worker,
+      false,
+      () => this._toggleWorkerWatch(worker),
+    );
+  }
+
+  private async _endSession(worker: TmuxWorkerSummary) {
+    if (!worker.canEndSession || !worker.pid || this._endingSession) return;
+    if (
+      !window.confirm(
+        `End tmux session "${worker.ref.session}" on ${worker.ref.nodeId}?\n\nEvery pane and any programs running in this session will stop.`,
+      )
+    )
+      return;
+    this._endingSession = `${worker.ref.nodeId}:${worker.ref.session}`;
+    this._endSessionError = '';
+    try {
+      await gateway.request(Methods.TMUX_WORKER_END_SESSION, {
+        worker: worker.ref,
+        expectedPid: worker.pid,
+      });
+      const belongs = (ref: TmuxWorkerRef) =>
+        ref.nodeId === worker.ref.nodeId && ref.session === worker.ref.session;
+      this._selectedWorkers = this._selectedWorkers.filter((ref) => !belongs(ref));
+      this._saveWatchItems(this._workerWatchItems.filter((item) => !belongs(item.ref)));
+      this._save();
+      await this._fetchTmuxWorkers();
+      // Node inventory can remain cached briefly after confirmed termination.
+      this._tmuxWorkers = this._tmuxWorkers.filter((current) => !belongs(current.ref));
+    } catch (error) {
+      this._endSessionError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._endingSession = null;
+    }
+  }
+
+  private _renderSessionCard(
+    ref: TmuxWorkerRef,
+    title: string,
+    description: string,
+    worker: TmuxWorkerSummary | undefined,
+    watched: boolean,
+    toggleWatch: () => void,
+  ) {
+    const open = this._selectedWorkers.some((selected) => tmuxWorkerRefsMatch(selected, ref));
+    const ending = this._endingSession === `${ref.nodeId}:${ref.session}`;
+    return html`<div
+      data-session=${ref.session}
+      class="worker-chip ${worker ? 'live' : 'stale'} ${worker?.status.requiresAttention
+        ? 'needs-attention'
+        : ''}"
+    >
+      <button
+        class="worker-chip-btn ${watched ? 'pinned' : ''}"
+        title=${watched ? 'Remove from watchlist' : 'Add to watchlist'}
+        @click=${toggleWatch}
+      >
+        ${watched ? '★' : '☆'}
+      </button>
+      <div class="worker-chip-title" title=${title}>${title}</div>
+      <div class="worker-chip-meta" title=${description}>
+        ${ref.nodeId} · ${worker?.status.label ?? 'Unavailable'} · ${worker?.cwd ?? ''}
       </div>
-    `;
+      <div class="worker-chip-actions">
+        <button
+          class="worker-chip-btn ${open ? 'active' : ''}"
+          @click=${() => (open ? this._closeWorker(ref) : this._openWorker(ref))}
+        >
+          ${open ? 'Hide terminal' : 'Open terminal'}
+        </button>
+        ${worker?.linkedSlotId
+          ? html`<workspace-pin .slotId=${worker.linkedSlotId}></workspace-pin
+              ><a class="worker-chip-btn" href=${`#slot/${worker.linkedSlotId}`}>Workspace</a>`
+          : worker?.linkedRunId
+            ? html`<workspace-pin .runId=${worker.linkedRunId}></workspace-pin
+                ><a class="worker-chip-btn" href=${`#run/${worker.linkedRunId}`}>Workspace</a>`
+            : html`<button
+                class="worker-chip-btn danger"
+                data-end-session=${ref.session}
+                ?disabled=${!worker?.canEndSession || Boolean(this._endingSession)}
+                title=${worker?.canEndSession
+                  ? 'Stop every pane in this session'
+                  : 'Session termination requires current inventory from an updated gateway'}
+                @click=${() => worker && this._endSession(worker)}
+              >
+                ${ending ? 'Ending…' : 'End session'}
+              </button>`}
+      </div>
+    </div>`;
   }
 
   render() {
     const max = this._maxSlots();
-    const slotsToShow = this._expandedSlot
-      ? [this._expandedSlot]
-      : this._selectedSlots.slice(0, max);
-    const panes: TerminalPane[] = this._expandedSlot
-      ? slotsToShow.map((slotId, index) => ({ type: 'slot' as const, slotId, index }))
-      : [
-          ...this._selectedWorkers.map((ref) => ({ type: 'worker' as const, ref })),
-          ...slotsToShow.map((slotId, index) => ({ type: 'slot' as const, slotId, index })),
-        ];
+    const slotsToShow = this._selectedSlots.slice(0, max);
+    const allPanes: TerminalPane[] = [
+      ...this._selectedRuns.map((runId) => ({ type: 'run' as const, runId })),
+      ...this._selectedWorkers.map((ref) => ({ type: 'worker' as const, ref })),
+      ...slotsToShow.map((slotId, index) => ({ type: 'slot' as const, slotId, index })),
+    ];
+    const paneKey = (pane: TerminalPane) =>
+      pane.type === 'run'
+        ? `run:${pane.runId}`
+        : pane.type === 'worker'
+          ? `worker:${pane.ref.nodeId}:${pane.ref.target}`
+          : `slot:${pane.slotId || pane.index}`;
+    const panes = this._expandedPane
+      ? allPanes.filter((pane) => paneKey(pane) === this._expandedPane)
+      : allPanes.slice(0, max);
     const paneCount = panes.length || 1;
 
     return html`
@@ -852,7 +1075,7 @@ export class TerminalSplitView extends LitElement {
             </div>
           `,
         )}
-        ${!this._expandedSlot && slotsToShow.length < max
+        ${!this._expandedPane && allPanes.length < max
           ? html` <button class="layout-btn" @click=${this._addSlotSelector}>+</button> `
           : ''}
         <button class="layout-btn" @click=${this._showActiveRuns}>Active Runs</button>
@@ -871,24 +1094,76 @@ export class TerminalSplitView extends LitElement {
           )}
         </div>
       </div>
+      ${selectWorkspaceRuns(this._runs, this._globalFilters).length
+        ? html`<div class="worker-panel" data-testid="workspace-terminals">
+            <div class="worker-panel-title">Worktree reviews</div>
+            <div class="worker-list">
+              ${selectWorkspaceRuns(this._runs, this._globalFilters).map(
+                (run) =>
+                  html`<div class="worker-chip live">
+                    <workspace-pin .runId=${run.id} .label=${run.ticketOrPr}></workspace-pin>
+                    <div class="worker-chip-title">${run.ticketOrPr}</div>
+                    <div class="worker-chip-actions">
+                      <button
+                        class="worker-chip-btn"
+                        data-run-id=${run.id}
+                        @click=${() => this._openRun(run.id)}
+                      >
+                        Open terminal
+                      </button>
+                      <a class="worker-chip-btn" href=${`#run/${encodeURIComponent(run.id)}`}
+                        >Workspace</a
+                      >
+                    </div>
+                    <div class="worker-chip-meta">
+                      ${run.reviewWorkspace!.machine} · ${run.status}
+                    </div>
+                  </div>`,
+              )}
+            </div>
+          </div>`
+        : ''}
       ${this._renderWorkerPanel()}
       ${this._availableSlots.length === 0 &&
       this._selectedSlots.filter(Boolean).length === 0 &&
       this._selectedWorkers.length === 0 &&
+      this._selectedRuns.length === 0 &&
       this._hydrating
         ? html`<farm-hydrating message="Loading fleet data…"></farm-hydrating>`
         : html` <div
-            class="grid ${this._expandedSlot ? 'expanded' : ''}"
-            style="${this._expandedSlot ? '' : this._gridStyle(paneCount)}"
+            class="grid ${this._expandedPane ? 'expanded' : ''}"
+            style="${this._expandedPane ? '' : this._gridStyle(paneCount)}"
           >
-            ${repeat(
-              panes,
-              (pane) =>
-                pane.type === 'worker'
-                  ? `worker:${pane.ref.nodeId}:${pane.ref.target}`
-                  : `slot:${pane.slotId || pane.index}`,
-              (pane) =>
-                pane.type === 'worker'
+            ${repeat(panes, paneKey, (pane) =>
+              pane.type === 'run'
+                ? this._runs.some(
+                    (run) =>
+                      run.id === pane.runId &&
+                      run.reviewWorkspace &&
+                      !run.reviewWorkspace.cleanedAt,
+                  )
+                  ? html`<terminal-view
+                      .runId=${pane.runId}
+                      @terminal-expand=${this._handleExpand}
+                      @terminal-close=${this._handleTerminalClose}
+                    ></terminal-view>`
+                  : html`<div class="empty-slot">
+                      ${this._runs.find((run) => run.id === pane.runId)?.reviewWorkspace?.cleanedAt
+                        ? 'This worktree has been cleaned up.'
+                        : 'Worktree unavailable.'}
+                      <a href=${`#run/${encodeURIComponent(pane.runId)}`}
+                        >Open run and saved review</a
+                      ><button
+                        @click=${() => {
+                          this._selectedRuns = this._selectedRuns.filter((id) => id !== pane.runId);
+                          this._expandedPane = null;
+                          this._save();
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>`
+                : pane.type === 'worker'
                   ? html`<terminal-view
                       .workerRefJson=${JSON.stringify(pane.ref)}
                       @terminal-close=${this._handleTerminalClose}

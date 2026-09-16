@@ -24,6 +24,7 @@ import type {
 } from '../packages/protocol/src/index.js';
 import { alive, matchesProcess } from '../packages/agent-runtime/src/native/storage.js';
 import { getRunnerAdapter } from './runner-validation/runners/index.mjs';
+import { terminalSessionFixture } from './runner-validation/lib/terminal-session-fixture.mjs';
 import { prepareBrowserSlots } from './runner-validation/lib/browser-slots.mjs';
 import {
   createRecipeRunner,
@@ -419,6 +420,38 @@ async function verifyReviewUi(stage: string, readOnly: boolean) {
   assert(proof.files.includes('message.txt'));
   assert(proof.diff.includes('+hello world'));
   assert(proof.report.includes('Fixture inspected frozen inputs'));
+  if (stage === 'saved-review-ui') {
+    reviewUi.evaluate(
+      `find('[data-testid="review-process"]').querySelector('summary').click();return true;`,
+    );
+    const process = reviewUi.evaluate(
+      `const d=find('[data-testid="review-process"]');return {text:d.textContent,steps:d.querySelector('progress-tracker')?.structured?.totalSteps};`,
+    );
+    assert(process.text.includes('checked items can still have findings'));
+    assert(process.steps > 0);
+    reviewUi.evaluate(
+      `const d=find('[data-testid="review-process"]');d.querySelector('step-artifacts').shadowRoot.querySelector('.artifact-link').click();return true;`,
+    );
+    let rendered;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      rendered = reviewUi.evaluate(
+        `const box=Array.from(find('run-detail').shadowRoot.querySelectorAll('media-lightbox')).find(box=>box.scopeLabel==='Replay evidence');return {open:box?.open,text:box?.shadowRoot?.textContent,path:box?.items?.[box.selectedIndex]?.path};`,
+      );
+      if (rendered.text?.includes('Fixture reviewed')) break;
+      await delay(100);
+    }
+    await json(path.join(evidence, 'review-process-lightbox.json'), rendered);
+    assert(
+      rendered.open &&
+        rendered.path.endsWith('review-checklist.md') &&
+        rendered.text.includes('Fixture reviewed'),
+    );
+    reviewUi.evaluate(
+      `const box=Array.from(find('run-detail').shadowRoot.querySelectorAll('media-lightbox')).find(box=>box.scopeLabel==='Replay evidence');Array.from(box.shadowRoot.querySelectorAll('button')).find(button=>button.textContent.trim()==='Close').click();return true;`,
+    );
+    await json(path.join(evidence, 'review-process.json'), { process, checklistRendered: true });
+  }
+
   reviewUi.evaluate(`find('review-workspace').querySelector('.rw-ci').click();return true;`);
   let comment;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -448,6 +481,119 @@ async function verifyReviewUi(stage: string, readOnly: boolean) {
   reviewUi.evaluate(`find('review-workspace').scrollIntoView({block:'center'});return true;`);
   reviewUi.cdp('screenshot', reviewUi.route, path.join(evidence, stage + '.png'));
 }
+async function verifyWorkspacePins(runId: string) {
+  assert(reviewUi);
+  const ui = reviewUi;
+  ui.evaluate(`document.querySelector('[title="Expand sidebar"]')?.click();return true;`);
+  ui.evaluate(
+    `const t=find('terminal-view');t.shadowRoot.querySelector('workspace-pin').shadowRoot.querySelector('button').click();return true;`,
+  );
+  await delay(100);
+  const pin = ui.evaluate(
+    `return {sidebar:document.querySelector('[aria-label="Pinned workspaces"]')?.textContent,pressed:find('terminal-view').shadowRoot.querySelector('workspace-pin').shadowRoot.querySelector('button').getAttribute('aria-pressed')};`,
+  );
+  assert.equal(pin.pressed, 'true');
+  assert(pin.sidebar.includes('example/app#42'));
+  ui.evaluate(
+    `find('terminal-view').shadowRoot.querySelector('[title="Open in Terminals"]').click();return true;`,
+  );
+  ui.route = `terminal?run=${runId}`;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const state = ui.evaluate(
+      `const t=find('terminal-view');return {phase:t?._attachPhase,runId:t?.runId};`,
+    );
+    if (state.phase === 'live' && state.runId === runId) break;
+    await delay(100);
+  }
+  for (const label of ['Active Runs', 'Pinned']) {
+    ui.evaluate(
+      `Array.from(find('terminal-split-view').shadowRoot.querySelectorAll('.toolbar button')).find(button=>button.textContent.trim()===${JSON.stringify(label)}).click();return true;`,
+    );
+    await delay(500);
+    assert(ui.evaluate(`return find('terminal-split-view')._selectedRuns;`).includes(runId));
+  }
+  ui.evaluate(
+    `find('terminal-view').shadowRoot.querySelector('button.close').click();return true;`,
+  );
+  assert.deepEqual(ui.evaluate(`return find('terminal-split-view')._selectedRuns;`), []);
+  assert.equal(
+    (await connection!.call<{ run: Run }>('run.get', { runId })).run.status,
+    'monitoring',
+  );
+  ui.evaluate(
+    `find('terminal-split-view').shadowRoot.querySelector('[data-run-id="${runId}"]').click();return true;`,
+  );
+  for (let attempt = 0; attempt < 80; attempt++) {
+    if (ui.evaluate(`return find('terminal-view')?._ptyInputBound === true;`)) break;
+    await delay(100);
+  }
+  assert(ui.evaluate(`return find('terminal-view')?._ptyInputBound === true;`));
+  ui.cdp('screenshot', ui.route, path.join(evidence, 'pinned-terminals.png'));
+  const originalSize = ui.evaluate(`return {width:innerWidth,height:innerHeight};`);
+  try {
+    ui.cdp('viewport', ui.route, '900', '760');
+    await delay(250);
+    const layout = ui.evaluate(
+      `const root=find('terminal-split-view').shadowRoot;const list=root.querySelector('details.worker-panel .worker-list');const terminal=find('terminal-view').getBoundingClientRect();return {width:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth,listWidth:list.clientWidth,listScrollWidth:list.scrollWidth,terminalHeight:terminal.height,terminalTop:terminal.top};`,
+    );
+    assert(layout.scrollWidth <= layout.width + 1);
+    assert(layout.listScrollWidth <= layout.listWidth + 1);
+    assert(layout.terminalHeight > 100 && layout.terminalTop < 760);
+    await json(path.join(evidence, 'narrow-terminal-layout.json'), layout);
+    ui.cdp('screenshot', ui.route, path.join(evidence, 'narrow-terminal-layout.png'));
+  } finally {
+    ui.cdp('viewport', ui.route, String(originalSize.width), String(originalSize.height));
+  }
+
+  if (sessionFixture) {
+    ui.evaluate(
+      `find('terminal-split-view').shadowRoot.querySelector('.worker-panel-header button').click();return true;`,
+    );
+    await delay(500);
+    ui.cdp(
+      'fill',
+      ui.route,
+      'terminal-split-view >>> [aria-label="Search sessions"]',
+      sessionFixture.session,
+    );
+    const selector = `[data-end-session="${sessionFixture.session}"]`;
+    ui.cdp('click', ui.route, selector, '--dismiss-dialog', sessionFixture.confirmMessage);
+    sessionFixture.exists();
+    ui.cdp('click', ui.route, selector, '--accept-dialog', sessionFixture.confirmMessage);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const workers = await connection!.call<{ workers: { ref: { session: string } }[] }>(
+        'tmux.worker.list',
+        { machine: sessionFixture.machine },
+      );
+      if (!workers.workers.some((worker) => worker.ref.session === sessionFixture!.session)) break;
+      await delay(100);
+    }
+    sessionFixture.assertClosed();
+    await json(path.join(evidence, 'end-session.json'), {
+      ended: sessionFixture.session,
+      protectedSessionAlive: true,
+      dismissedConfirmationDidNotEndSession: true,
+      changedPidRejected: true,
+    });
+  }
+  ui.evaluate(
+    `find('terminal-view').shadowRoot.querySelector('[title="Open workspace"]').click();return true;`,
+  );
+  ui.route = `run/${runId}`;
+  await delay(300);
+  const workspace = ui.evaluate(
+    `const r=find('run-detail');return {location:r?.shadowRoot.querySelector('[data-testid="run-workspace-location"]')?.textContent,pin:r?.shadowRoot.querySelector('workspace-pin')?.shadowRoot.querySelector('button').getAttribute('aria-pressed')};`,
+  );
+  assert(workspace.location.includes('worktree'));
+  assert.equal(workspace.pin, 'true');
+  await json(path.join(evidence, 'workspace-pins.json'), {
+    pin,
+    workspace,
+    runId,
+    noWorkerRestart: true,
+  });
+}
+let sessionFixture: Awaited<ReturnType<typeof terminalSessionFixture>> | undefined;
 let terminalUi: ReturnType<typeof spawn> | undefined;
 async function openReviewUi(route: string) {
   const uiProbe = createServer().listen(0, '127.0.0.1');
@@ -473,7 +619,11 @@ async function openReviewUi(route: string) {
       cwd: root,
       detached: true,
       stdio: ['ignore', uiLog, uiLog],
-      env: { ...process.env, VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${port}` },
+      env: {
+        ...process.env,
+        GATEWAY_PORT: String(port),
+        VITE_FARMSLOT_GATEWAY_URL: `ws://127.0.0.1:${port}`,
+      },
     },
   );
   closeSync(uiLog);
@@ -518,6 +668,8 @@ async function connectGateway() {
 }
 try {
   connection = await connectGateway();
+  if (scenario === 'tmux-fixture')
+    sessionFixture = await terminalSessionFixture({ connection, root, fixture, evidence, port });
   if (runtimeSlots) await runtimeSlots.start(connection);
   const parameters = {
     project: 'review',
@@ -699,6 +851,7 @@ try {
         await json(path.join(evidence, 'terminal-ui.json'), uiProof);
         evaluate(`find('terminal-view').scrollIntoView({block:'center'});return true;`);
         cdp('screenshot', route, path.join(evidence, 'terminal-ui.png'));
+        await verifyWorkspacePins(runs[index].id);
 
         await connection.call('terminal.subscribe', {
           ...params,
@@ -1138,6 +1291,7 @@ try {
     fixture,
   });
 } finally {
+  if (sessionFixture) await sessionFixture.cleanup();
   // A failed assertion must not leave the fixture's artificial Git barrier held.
   if (interruptionBarrier && failure) await writeFile(interruptionBarrier.release, 'cleanup\n');
   try {

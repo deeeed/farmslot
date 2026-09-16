@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Expose explicit tmux session termination with an inventory capability and expected process identity.
+
 - Allow terminal requests to target an allocated review run without a slot.
 
 - Expose managed-workspace review support in the native runner catalog.

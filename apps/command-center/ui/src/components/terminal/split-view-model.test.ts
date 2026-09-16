@@ -22,6 +22,7 @@ import {
   parseWorkerRouteParam,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
+  selectWorkspaceRuns,
   slotHasActiveRunTerminal,
   tmuxRefTitle,
   watchEntryDescription,
@@ -387,4 +388,46 @@ test('selectPinnedSlotIds preserves pin order and respects global filters', () =
     }),
     ['macwork-mm-2', 'macwork-mm-1'],
   );
+});
+
+test('active terminal selection includes held worktrees and excludes cleaned worktrees', () => {
+  const workspace = {
+    workspaceId: 'ws',
+    machine: 'macwork',
+    executionNodeId: 'local',
+    checkoutPath: '/review/source',
+    taskPath: '/review/task',
+    artifactPath: '/review/task/artifacts',
+  };
+  const reviewing = makeRun('reviewing', {
+    slotId: null,
+    flowType: 'review-pr',
+    reviewWorkspace: workspace,
+  });
+  const held = makeRun('held', {
+    slotId: null,
+    flowType: 'review-pr',
+    status: 'blocked',
+    reviewWorkspace: workspace,
+  });
+  const cleaned = makeRun('cleaned', {
+    slotId: null,
+    flowType: 'review-pr',
+    reviewWorkspace: { ...workspace, cleanedAt: '2026-09-16T00:00:00Z' },
+  });
+  const complete = makeRun('complete', {
+    slotId: null,
+    flowType: 'review-pr',
+    status: 'done',
+    reviewWorkspace: workspace,
+  });
+  assert.deepEqual(
+    selectWorkspaceRuns([reviewing, held, cleaned, complete, makeRun('slot')], {
+      projects: [],
+      machines: [],
+    }).map((run) => run.id),
+    ['held', 'reviewing'],
+  );
+  assert.deepEqual(selectWorkspaceRuns([reviewing], { projects: ['other'], machines: [] }), []);
+  assert.deepEqual(selectWorkspaceRuns([reviewing], { projects: [], machines: ['other'] }), []);
 });

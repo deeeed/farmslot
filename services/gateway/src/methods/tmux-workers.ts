@@ -1,15 +1,19 @@
 // methods/tmux-workers.ts — registered-node tmux worker inventory
 
 import {
+  type ExecResult,
   type FleetStatus,
+  isTerminalRunStatus,
   type NodeTmuxPane,
   type NodeTmuxPanesResult,
+  type OkResult,
   type PoolConfig,
   primaryRoleForFlow,
   type Run,
   type RunStatus,
   type TmuxWorkerActivityState,
   type TmuxWorkerAttentionReason,
+  type TmuxWorkerEndSessionParams,
   type TmuxWorkerFilterConfig,
   type TmuxWorkerFilterRule,
   type TmuxWorkerListParams,
@@ -23,7 +27,16 @@ import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
 import { isRunnerPaneRetired, normalizeRunner } from '../runners/registry.js';
-import { listRuns } from '../runs/store.js';
+import { getAllRuns } from '../runs/store.js';
+import { endTmuxSessionArgv } from '../runtime/tmux-session-control.js';
+import { reviewWorkspaceShellSession } from '../runtime/workspace-terminal.js';
+
+function correlationRuns() {
+  return getAllRuns().filter(
+    (run) =>
+      !isTerminalRunStatus(run.status) || (run.reviewWorkspace && !run.reviewWorkspace.cleanedAt),
+  );
+}
 
 const TMUX_PANES_TIMEOUT_MS = 5_000;
 const SIGNAL_FRESH_MS = 120_000;
@@ -219,7 +232,7 @@ function slotSession(slot: PoolConfig['slots'][number]): string | undefined {
 }
 
 interface SlotCorrelation {
-  slotId: string;
+  slotId?: string;
   runId?: string;
   familyId?: string;
   activityHint?: TmuxWorkerActivityState;
@@ -329,6 +342,23 @@ export function buildSessionCorrelation(
       });
     }
   }
+  for (const run of activeRuns) {
+    if (!run.reviewWorkspace || run.reviewWorkspace.cleanedAt) continue;
+    const machine = run.reviewWorkspace.machine;
+    if (!byMachine.has(machine)) byMachine.set(machine, new Map());
+    byMachine
+      .get(machine)!
+      .set(reviewWorkspaceShellSession(run), { runId: run.id, familyId: run.familyId });
+    for (const context of run.agentContexts ?? []) {
+      if (!context.target?.session) continue;
+      byMachine.get(machine)!.set(context.target.session, {
+        runId: run.id,
+        familyId: run.familyId,
+        activityHint: runActivityHint(run),
+        runner: context.runner ?? undefined,
+      });
+    }
+  }
   return byMachine;
 }
 
@@ -353,6 +383,11 @@ export function tmuxWorkerFromNodePane(params: {
     ...(pane.cwd ? { cwd: pane.cwd } : {}),
     ...(pane.command ? { command: pane.command } : {}),
     ...(pane.pid != null ? { pid: pane.pid } : {}),
+    canEndSession:
+      !correlation &&
+      /^%\d+$/.test(pane.paneId ?? '') &&
+      Number.isSafeInteger(pane.pid) &&
+      (pane.pid ?? 0) > 0,
     ...(pane.width != null ? { width: pane.width } : {}),
     ...(pane.height != null ? { height: pane.height } : {}),
     ...(pane.active != null ? { active: pane.active } : {}),
@@ -531,6 +566,15 @@ async function listNodeWorkers(params: {
         correlation: sessionCorrelation?.get(pane.session),
       }),
     );
+    const excludedSessions = new Set(
+      allWorkers
+        .filter(
+          (worker) => tmuxWorkerConfig && !tmuxWorkerAllowedByConfig(tmuxWorkerConfig, worker),
+        )
+        .map((worker) => worker.ref.session),
+    );
+    for (const worker of allWorkers)
+      if (excludedSessions.has(worker.ref.session)) worker.canEndSession = false;
     const filtered = filterWorkersByConfig(allWorkers, tmuxWorkerConfig);
     return {
       nodeId,
@@ -604,7 +648,7 @@ export async function assertTmuxWorkerControlAllowed(worker: {
 }): Promise<void> {
   const observedAt = Date.now();
   const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
-  const activeRuns = listRuns({ active: true }).runs;
+  const activeRuns = correlationRuns();
   const pool = pools.find((candidate) => candidate.machine === worker.nodeId);
   if (!pool?.tmuxWorkers) return;
 
@@ -644,7 +688,7 @@ export async function tmuxWorkerList(
     requestedMachines.size > 0
       ? allPools.filter((pool) => requestedMachines.has(pool.machine))
       : allPools;
-  const activeRuns = listRuns({ active: true }).runs;
+  const activeRuns = correlationRuns();
   const poolMachines = pools.map((pool) => pool.machine).filter(Boolean);
   const connectedMachines = getAllNodes()
     .map((node) => node.machine)
@@ -699,4 +743,56 @@ export async function buildTmuxWorkerUpdateFromNodeSnapshot(payload: {
     panes,
   });
   return tmuxWorkerList({ includeDisconnected: true });
+}
+
+/** Admin-only, explicit session termination. Managed work uses its run/slot lifecycle instead. */
+export async function tmuxWorkerEndSession(params: TmuxWorkerEndSessionParams): Promise<OkResult> {
+  const argv = endTmuxSessionArgv(params);
+  const { worker, expectedPid } = params;
+  const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
+  const correlations = buildSessionCorrelation(pools, fleet, correlationRuns()).get(worker.nodeId);
+  if (correlations?.has(worker.session))
+    throw new Error(
+      'This session belongs to a Farmslot workspace. Open that workspace to stop its run.',
+    );
+  const node = getNode(worker.nodeId);
+  if (!node) throw new Error(`Node ${worker.nodeId} is not connected`);
+  const panes = normalizeNodeTmuxPanesResult(
+    await sendNodeRequest(node, 'tmux.panes', {}, { timeout: TMUX_PANES_TIMEOUT_MS }),
+  );
+  if (
+    !panes.some(
+      (pane) =>
+        pane.paneId === worker.paneId &&
+        pane.session === worker.session &&
+        pane.target === worker.target &&
+        pane.pid === expectedPid,
+    )
+  )
+    throw new Error('Session changed; refresh before ending it');
+  const config = pools.find((pool) => pool.machine === worker.nodeId)?.tmuxWorkers;
+  if (
+    config &&
+    panes
+      .filter((pane) => pane.session === worker.session)
+      .some(
+        (pane) =>
+          !tmuxWorkerAllowedByConfig(
+            config,
+            tmuxWorkerFromNodePane({ nodeId: worker.nodeId, pane, observedAt: Date.now() }),
+          ),
+      )
+  )
+    throw new Error('Session contains panes excluded by the machine configuration');
+  const result = (await sendNodeRequest(
+    node,
+    'exec',
+    { argv, timeout: 10_000 },
+    { timeout: 15_000 },
+  )) as ExecResult;
+  if (result.exitCode !== 0) throw new Error(result.stderr || 'Could not end the session');
+  const confirmation = JSON.parse(result.stdout);
+  if (confirmation.ok !== true) throw new Error('Session termination was not confirmed');
+  nodeTmuxPaneSnapshots.delete(worker.nodeId);
+  return { ok: true };
 }
