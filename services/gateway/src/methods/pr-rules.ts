@@ -24,6 +24,7 @@ import { buildRereviewRequest } from '../pr-rules/rereview-request.js';
 import { PRRuleService } from '../pr-rules/service.js';
 import { PRSourceCheckpoints } from '../pr-rules/source-checkpoints.js';
 import { PRRuleStore } from '../pr-rules/store.js';
+import { setDirectPublicationAuthority } from '../review-publication/direct.js';
 import type { GatewayAuthRuntime } from '../security/auth.js';
 import { isAdminPrincipal } from '../security/authorization.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
@@ -80,7 +81,20 @@ export async function initPRRules(
     monitors,
     undefined,
     checkpoints,
+    (run) => {
+      const ownerId =
+        run.createdByPrincipalId ?? run.nativeOwnerPrincipalId ?? run.prWork?.review?.ownerId;
+      if (ownerId) publish(ownerId, Events.RUN_UPDATED, { run });
+    },
   );
+  setDirectPublicationAuthority({
+    teams: (ownerId) => store.list(ownerId).teams,
+    authorize: (ownerId) => {
+      const principal = auth.resolver.resolvePrincipalId(ownerId);
+      if (!principal.ok || !isAdminPrincipal(principal.principal))
+        throw new Error('Publication owner no longer has automation authority');
+    },
+  });
   if (poll) service.start();
   return service;
 }
@@ -137,6 +151,10 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
     assertPRSourceAccount(p.account);
     if (typeof p.url !== 'string') throw new Error('A Project/view URL is required');
     return importPRProject(ownerId, { account: p.account, url: p.url });
+  }
+  if (method === Methods.PR_REVIEW_PUBLISH) {
+    if (typeof p.runId !== 'string' || !p.runId.trim()) throw new Error('runId is required');
+    return { receipt: await service.publishReview(ownerId, p.runId) };
   }
   if (method === Methods.PR_REVIEW_REQUEST) {
     assertPRReviewRequest(p.request);

@@ -338,11 +338,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## prReview.\*
 
-| Method            | Surface  | CLI command                    | TUI | Note                                                               |
-| ----------------- | -------- | ------------------------------ | --- | ------------------------------------------------------------------ |
-| `prReview.submit` | rpc-only | `farmslot rpc prReview.submit` |     | Submit an idempotent PR review/QA request under a team policy.     |
-| `prReview.get`    | rpc-only | `farmslot rpc prReview.get`    |     | Read the authenticated owner's review request and linked work.     |
-| `prReview.cancel` | rpc-only | `farmslot rpc prReview.cancel` |     | Cancel unstarted review intake and retain its idempotency receipt. |
+| Method             | Surface  | CLI command                     | TUI | Note                                                                                     |
+| ------------------ | -------- | ------------------------------- | --- | ---------------------------------------------------------------------------------------- |
+| `prReview.submit`  | rpc-only | `farmslot rpc prReview.submit`  |     | Submit an idempotent PR review/QA request under a team policy.                           |
+| `prReview.publish` | rpc-only | `farmslot rpc prReview.publish` |     | Publish or reconcile a completed static review using its recorded account and authority. |
+| `prReview.get`     | rpc-only | `farmslot rpc prReview.get`     |     | Read the authenticated owner's review request and linked work.                           |
+| `prReview.cancel`  | rpc-only | `farmslot rpc prReview.cancel`  |     | Cancel unstarted review intake and retain its idempotency receipt.                       |
 
 ## prRules.\*
 

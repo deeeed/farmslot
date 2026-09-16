@@ -179,6 +179,17 @@ test('writeStaticReviewInstructionInputs freezes configured project guidance wit
   assert.equal(await readFile(path.join(dir, written[0]!), 'utf-8'), '# Domain rules\n');
 });
 
+test('QA collision prefixes match sanitized task names without changing eval identity', () => {
+  const title = "Daily 'quoted' $(printf qa); changes";
+  const prefix = buildTaskFolderPrefix(title, null, 'qa');
+  assert.match(prefix, /^[a-z0-9-]+$/);
+  const folder = `${prefix}0916-010101`;
+  assert.deepEqual(findTaskDirCollisions([folder, 'unrelated-0916-010101'], title, null, 'qa'), [
+    folder,
+  ]);
+  assert.equal(buildTaskFolderPrefix('dataset.v1_case-2', null, 'eval'), 'dataset.v1_case-2-');
+});
+
 test('buildTaskFolderPrefix keeps production collisions ticket-scoped', () => {
   assert.equal(buildTaskFolderPrefix('PROJ-1234'), 'proj-1234-');
 });

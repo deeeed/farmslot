@@ -531,7 +531,15 @@ export async function executeWriteTaskStep(
 
   // For PR flows: fetch PR metadata + set branch
   let fetchedPr: Awaited<ReturnType<typeof fetchPRData>> = null;
-  if (PR_BOUND_FLOW_TYPES.has(current.flowType) && !current.ticketData) {
+  if (current.flowType === 'qa' && parseGitHubRef(current.ticketOrPr) && !current.qaSource) {
+    fetchedPr = await fetchPRData(runId);
+  }
+  if (
+    !fetchedPr &&
+    (PR_BOUND_FLOW_TYPES.has(current.flowType) ||
+      (current.flowType === 'qa' && parseGitHubRef(current.ticketOrPr))) &&
+    !current.ticketData
+  ) {
     emitWithBroadcast('substep', {
       name: 'fetch-pr-data',
       detail: `Fetching PR ${current.ticketOrPr}`,

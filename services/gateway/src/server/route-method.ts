@@ -972,6 +972,7 @@ async function routeAuthorizedMethod(
     case Methods.PR_RULE_ACTION_ACKNOWLEDGE:
     case Methods.PR_REVIEW_ACCEPT:
     case Methods.PR_REVIEW_DEFER:
+    case Methods.PR_REVIEW_PUBLISH:
     case Methods.PR_REVIEW_REQUEST:
     case Methods.PR_REVIEW_REQUEST_GET:
     case Methods.PR_REVIEW_REQUEST_CANCEL:

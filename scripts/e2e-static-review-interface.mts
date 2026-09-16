@@ -148,7 +148,7 @@ async function main() {
     path.join(project, 'shared/validation/shared.md'),
     '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Validate changes\n\n- [ ] Execute selected recipes and report coverage.\n',
   );
-  const models = [{ runner: 'codex', model: 'gpt-6-astra', effort: 'low' }];
+  const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
   const workspaceExecution = {
     workspacePolicy: { kind: 'exact', machine: 'review-one' },
     transport: 'native',
@@ -162,10 +162,27 @@ async function main() {
       sources: [{ id: 'workspace:shared', kind: 'workspace', root: { projectPath: 'shared' } }],
     },
     static_review: { template_id: 'review-pr/shared' },
+    qa: {
+      default_profile: 'pr',
+      profiles: [
+        { id: 'pr', title: 'PR validation', template_id: 'validation/shared' },
+        {
+          id: 'daily',
+          title: 'Daily changes',
+          template_id: 'validation/shared',
+          inputs: { window: '24h' },
+        },
+      ],
+    },
     workflow_defaults: {
       'review-pr': {
         execution: workspaceExecution,
-        review: { validationDepth: 'static-code', sessionIntent: 'reset', scope: 'full' },
+        review: {
+          validationDepth: 'static-code',
+          sessionIntent: 'reset',
+          scope: 'full',
+          publishReview: true,
+        },
       },
     },
   });
@@ -269,7 +286,103 @@ process.stdout.write(JSON.stringify(body));
       ],
     },
   });
-  const servers = startReviewInterfaceServers({ root, evidence, environment });
+  const qaSelection = {
+    profile: { id: 'daily', title: 'Daily changes', template_id: 'validation/shared' },
+    inputs: { window: '24h' },
+  };
+  const runBase = {
+    familyId: 'ui-family',
+    parentRunId: null,
+    familyRootTicketOrPr: 'example/app#42',
+    lane: 'production',
+    variant: null,
+    mode: 'autonomous',
+    project: 'review',
+    ticketOrPr: 'example/app#42',
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    createdByPrincipalId: 'legacy-env',
+    steps: [],
+    decisions: [],
+    metrics: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await json(path.join(fixture, 'runs/ui-qa-profile.json'), {
+    ...runBase,
+    id: 'ui-qa-profile',
+    flowType: 'qa',
+    status: 'blocked',
+    qa: qaSelection,
+  });
+  await json(path.join(fixture, 'runs/ui-automatic-qa.json'), {
+    ...runBase,
+    id: 'ui-automatic-qa',
+    flowType: 'review-pr',
+    status: 'done',
+    qaAfterReview: {
+      version: 1,
+      capturedAt: runBase.createdAt,
+      selection: qaSelection,
+      review: { workflow: 'qa', sessionIntent: 'reset', scope: 'full' },
+      state: 'blocked',
+      error: 'Automatic QA is disabled for this farm',
+    },
+    prWork: {
+      kind: 'review',
+      id: 'ui-publication',
+      sourceId: 'missing-intent',
+      pr: { host: 'github.com', repo: 'example/app', number: 42 },
+      headSha: 'a'.repeat(40),
+      review: {
+        profile: 'fixture',
+        ownerId: 'legacy-env',
+        options: { sessionIntent: 'reset', scope: 'full', publishReview: true },
+      },
+      publication: {
+        enabled: true,
+        source: 'farm',
+        teamId: 'fixture-team',
+        account: { host: 'github.com', login: 'fixture-reviewer' },
+      },
+    },
+    reviewPublication: { error: 'Fixture publication needs retry', checkedAt: runBase.updatedAt },
+  });
+  const publicationSeed = JSON.parse(
+    await readFile(path.join(fixture, 'runs/ui-automatic-qa.json'), 'utf8'),
+  );
+  await json(path.join(fixture, 'runs/ui-publication-published.json'), {
+    ...publicationSeed,
+    id: 'ui-publication-published',
+    prWork: undefined,
+    qaAfterReview: undefined,
+    reviewPublication: {
+      direct: {
+        ownerId: 'legacy-env',
+        pr: { host: 'github.com', repo: 'example/app', number: 42 },
+        policy: publicationSeed.prWork.publication,
+      },
+      checkedAt: runBase.updatedAt,
+      receipt: {
+        version: 1,
+        state: 'published',
+        runId: 'ui-publication-published',
+        ownerId: 'legacy-env',
+        account: { host: 'github.com', login: 'fixture-reviewer' },
+        pr: { host: 'github.com', repo: 'example/app', number: 42 },
+        headSha: 'a'.repeat(40),
+        contentSha256: 'b'.repeat(64),
+        marker: 'fixture-publication-marker',
+        event: 'COMMENT',
+        attemptedAt: runBase.createdAt,
+        reviewId: 77,
+        url: 'https://github.com/example/app/pull/42#pullrequestreview-77',
+        publishedAt: runBase.updatedAt,
+      },
+    },
+  });
+  let servers = startReviewInterfaceServers({ root, evidence, environment });
   let connection: GatewayConnection | undefined;
   let failure: unknown;
   const cdpFile = path.join(root, 'apps/command-center/scripts/cdp.mjs');
@@ -414,6 +527,17 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(inherited.team, team.id);
     assert.match(inherited.text, /Execution:\s*farm/);
     assert.equal(inherited.machine, true);
+    assert.equal(
+      evaluate(`return find('[data-testid="pr-review-publication"]').element.value;`),
+      'inherit',
+    );
+    assert.match(
+      evaluate(
+        `return find('[data-testid="pr-review-publication-resolved"]').element.textContent;`,
+      ),
+      /Publish review to PR.*farm/s,
+    );
+
     await json(path.join(evidence, 'inherited.json'), inherited);
     await screenshot('inherited-review');
     click(selector('pr-review-request-submit'));
@@ -423,6 +547,30 @@ process.stdout.write(JSON.stringify(body));
     assert.equal(first.request.execution, undefined);
     assert.equal(first.request.review, undefined);
     await json(path.join(evidence, 'inherited-request.json'), first);
+    const updatedTeam = await connection.call<{ team: PRTeamProfile }>('prRules.teamSave', {
+      id: team.id,
+      revision: team.revision,
+      config: {
+        ...team.config,
+        review: {
+          sessionIntent: 'reset',
+          scope: 'full',
+          validationDepth: 'static-code',
+          publishReview: true,
+        },
+      },
+    });
+    // Policy edits intentionally withdraw old pending authority. Explicitly refresh this request.
+    await connection.call('prReview.submit', { request: first.request });
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const current = await connection.call<PRRulesListResult>('prRules.list');
+      const source = current.intents
+        .flatMap((intent) => intent.contributions)
+        .find((entry) => entry.submissionId === first.id);
+      if (source?.eligible && source.teamRevision === updatedTeam.team.revision) break;
+      await delay(100);
+    }
+
     // Reopen through the real request button and choose another machine.
     await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-workspace-back'))}));`);
     click(selector('pr-workspace-back'));
@@ -432,6 +580,33 @@ process.stdout.write(JSON.stringify(body));
     click(selector('pr-workspace-request-review'));
     await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-review-request-url'))}));`);
     fill('pr-review-request-url', 'https://github.com/example/app/pull/43');
+    await waitUI(`return Boolean(find('[data-testid="pr-review-publication"]'));`);
+    cdp(
+      'select',
+      'prs',
+      evaluate(`return find('[data-testid="pr-review-publication"]').path;`),
+      'publish',
+    );
+    click(selector('pr-review-workflow-qa'));
+    assert.equal(
+      evaluate(
+        `return find('[data-testid="pr-review-publication"]').element.closest('label').hidden;`,
+      ),
+      true,
+    );
+    click(selector('pr-review-workflow-review'));
+    await waitUI(`return find('[data-testid="pr-review-publication"]').element.value==='inherit';`);
+    cdp(
+      'select',
+      'prs',
+      evaluate(`return find('[data-testid="pr-review-publication"]').path;`),
+      'results-only',
+    );
+    await waitUI(
+      `return find('[data-testid="pr-review-publication-resolved"]').element.textContent.includes('Farmslot results only');`,
+    );
+    await screenshot('publication-override');
+
     evaluate(
       `const form=find('pr-review-request-form').element.shadowRoot;form.querySelector('[data-testid="pr-review-advanced"]').click();const label=[...form.querySelectorAll('label')].find(label=>label.textContent.includes('Override inherited execution'));if(!label)throw new Error('Missing execution override');label.querySelector('input').click();return true;`,
     );
@@ -445,29 +620,154 @@ process.stdout.write(JSON.stringify(body));
       machine: 'review-two',
     });
     assert.equal(second.request.autoStart, false);
+    assert.equal(second.request.review?.publishReview, false);
     await json(path.join(evidence, 'machine-request.json'), second);
-    // Full-live remains explicit and cannot inherit static workspace placement.
-    await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-workspace-back'))}));`);
-    click(selector('pr-workspace-back'));
+    // Seed historical shared-review ownership while the fixture gateway is stopped.
+    connection.close();
+    await servers.stop();
+    const storeFile = path.join(fixture, '.pr-rules.json');
+    const historical = JSON.parse(await readFile(storeFile, 'utf8'));
+    const sourceRule = historical.rules.find((rule: any) => rule.ownerId === 'legacy-env');
+    assert(sourceRule);
+    for (const number of [42, 43]) {
+      for (const owner of ['owned', 'foreign']) {
+        const id = `ui-ownership-${owner}-${number}`;
+        const updatedAt =
+          owner === 'foreign' ? '2026-09-16T00:00:02.000Z' : '2026-09-16T00:00:01.000Z';
+        historical.intents.push({
+          id,
+          pr: { host: 'github.com', repo: 'example/app', number },
+          headSha: 'a'.repeat(40),
+          reviewProfile: id,
+          status: 'completed',
+          runId: id,
+          createdAt: updatedAt,
+          updatedAt,
+          contributions: [
+            {
+              ruleId: sourceRule.id,
+              ruleRevision: sourceRule.revision,
+              teamId: sourceRule.config.teamId,
+              teamRevision: 1,
+              ownerId: 'legacy-env',
+              reasons: ['Historical shared review fixture'],
+              autoStart: false,
+              eligible: false,
+              configurationErrors: [],
+              project: 'review',
+              review: { workflow: 'review', sessionIntent: 'reset', scope: 'full' },
+            },
+          ],
+        });
+        await json(path.join(fixture, `runs/${id}.json`), {
+          ...runBase,
+          id,
+          ticketOrPr: `example/app#${number}`,
+          flowType: 'review-pr',
+          status: 'done',
+          createdByPrincipalId: owner === 'owned' ? 'legacy-env' : 'another-principal',
+          updatedAt,
+          reviewResult: {
+            recommendation: 'COMMENT',
+            reviewMd: 'Historical fixture review',
+            lineComments: [],
+            reviewSnapshot: { source: 'github-pr', headSha: 'a'.repeat(40), capturedAt: updatedAt },
+          },
+        });
+      }
+    }
+    await json(storeFile, historical);
+    servers = startReviewInterfaceServers({ root, evidence, environment });
+    connection = undefined;
+    const restartDeadline = Date.now() + 30000;
+    while (!connection && Date.now() < restartDeadline) {
+      try {
+        connection = await client.connect();
+      } catch (error) {
+        if (!(error instanceof GatewayConnectionError)) throw error;
+        await delay(200);
+      }
+    }
+    assert(connection);
     await waitUI(
-      `return Boolean(find(${JSON.stringify(selector('pr-workspace-request-review'))})?.element.getClientRects().length);`,
+      `return find('pr-automation-panel')?.element.controller?.reviews?.intents?.some(intent=>intent.id==='ui-ownership-foreign-43');`,
     );
-    click(selector('pr-workspace-request-review'));
+    // Explicit Run QA opens the selected PR with QA preselected.
+    await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-run-qa'))}));`);
+    click(selector('pr-run-qa'));
     await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-review-request-url'))}));`);
+    const selectedOwnedSource = evaluate(
+      `return find('pr-review-request-form').element.sourceReviewRunId;`,
+    );
+    assert.match(
+      selectedOwnedSource,
+      /^ui-ownership-owned-(42|43)$/,
+      'Run QA must select the owned review instead of the newer foreign review',
+    );
+    await json(path.join(evidence, 'qa-source-ownership.json'), { selectedOwnedSource });
     fill('pr-review-request-url', 'https://github.com/example/app/pull/42');
-    click(selector('pr-review-depth-full-live'));
+    assert.equal(
+      evaluate(`return find('pr-review-request-form').element.sourceReviewRunId ?? null;`),
+      null,
+      'Editing the PR clears source review linkage',
+    );
+    assert.equal(
+      evaluate(
+        `return find('[data-testid="pr-review-workflow-qa"]').element.getAttribute('aria-pressed');`,
+      ),
+      'true',
+    );
     await waitUI(
       `return find('pr-review-request-form')?.element.shadowRoot.textContent.includes('Needs configuration');`,
     );
-    assert.equal(evaluate(`return Boolean(find('[data-testid="pr-review-qa-profile"]'));`), false);
-    await screenshot('on-device-review');
+    assert.equal(evaluate(`return Boolean(find('[data-testid="pr-review-qa-profile"]'));`), true);
+    const profilePath = evaluate(`return find('[data-testid="pr-review-qa-profile"]')?.path;`);
+    cdp('select', 'prs', profilePath, 'daily');
+    evaluate(
+      `find('[data-testid="pr-qa-inputs"]').element.closest('details').querySelector('summary').click();return true;`,
+    );
+    fill('pr-qa-inputs', '[1]');
+    click(selector('pr-review-request-submit'));
+    await waitUI(
+      `return find('pr-review-request-form').element.shadowRoot.textContent.includes('QA inputs must be a JSON object');`,
+    );
+    assert.equal((await connection.call<PRRulesListResult>('prRules.list')).submissions?.length, 2);
+    fill('pr-qa-inputs', '{"window":"48h"}');
+
+    await screenshot('farm-qa-profile');
     click(selector('pr-review-request-submit'));
     const third = (await waitSubmission(3)).find(
       (item) => item.id !== first.id && item.id !== second.id,
     )!;
-    assert.equal(third.request.review?.validationDepth, 'full-live');
+    assert.equal(third.request.review?.workflow, 'qa');
+    assert.equal(third.request.review?.qaProfileId, 'daily');
+    assert.deepEqual(third.request.review?.qaInputs, { window: '48h' });
+    assert.equal(third.request.review?.validationDepth, undefined);
     assert.equal(third.request.autoStart, false);
     await json(path.join(evidence, 'runtime-request.json'), third);
+    await waitUI(
+      `return Boolean(find('[data-testid="pr-workspace-back"]')?.element.getClientRects().length);`,
+    );
+    click(selector('pr-workspace-back'));
+    click(selector('pr-workspace-request-review'));
+    await waitUI(`return Boolean(find('[data-testid="pr-review-request-url"]'));`);
+    fill('pr-review-request-url', 'https://github.com/example/app/pull/45');
+    cdp(
+      'select',
+      'prs',
+      evaluate(`return find('[data-testid="pr-review-publication"]').path;`),
+      'publish',
+    );
+    await waitUI(
+      `return /Publish review to PR.*request/s.test(find('[data-testid="pr-review-publication-resolved"]').element.textContent);`,
+    );
+    click(selector('pr-review-request-submit'));
+    const fourth = (await waitSubmission(4)).find(
+      (item) => ![first.id, second.id, third.id].includes(item.id),
+    )!;
+    assert.equal(fourth.request.review?.publishReview, true);
+    assert.equal(fourth.request.autoStart, false);
+    await json(path.join(evidence, 'publication-positive-request.json'), fourth);
     const state = await connection.call<PRRulesListResult>('prRules.list');
     await json(path.join(evidence, 'pr-state.json'), state);
     const contributions = state.intents.flatMap((intent) => intent.contributions);
@@ -480,19 +780,29 @@ process.stdout.write(JSON.stringify(body));
       kind: 'exact',
       machine: 'review-two',
     });
-    assert.equal(runtimeContribution.review?.validationDepth, 'full-live');
+    assert.equal(runtimeContribution.review?.workflow, 'qa');
+    assert.equal(runtimeContribution.review?.qaProfileId, 'daily');
+    assert.deepEqual(runtimeContribution.review?.qaInputs, { window: '48h' });
     assert.equal(runtimeContribution.execution, undefined);
+    await waitUI(`return find('pr-board').element.shadowRoot.textContent.includes('QA pending');`);
+    await screenshot('qa-pending-group');
     assert.notEqual(first.intentId, third.intentId);
     assert(
       state.intents
-        .filter((intent) => intent.id !== third.intentId)
+        .filter((intent) => intent.id !== third.intentId && !intent.id.startsWith('ui-ownership-'))
         .every((intent) => intent.status === 'held'),
     );
     assert.equal(
       state.intents.find((intent) => intent.id === third.intentId)?.status,
       'needs-configuration',
     );
-    assert.equal((await connection.call<{ runs: unknown[] }>('run.list')).runs.length, 0);
+    assert.deepEqual(
+      (await connection.call<{ runs: Array<{ id: string }> }>('run.list')).runs
+        .map((run) => run.id)
+        .filter((id) => !id.startsWith('ui-ownership-'))
+        .sort(),
+      ['ui-automatic-qa', 'ui-publication-published', 'ui-qa-profile'],
+    );
     // Clearing the last slot is an incomplete draft, not a rejected edit.
     async function clearRepairDraft(kind: string) {
       click(selector('pr-execution-choose-slots'));
@@ -511,6 +821,36 @@ process.stdout.write(JSON.stringify(body));
     click(selector('pr-workspace-back'));
     click(selector('pr-workspace-automation'));
     await waitUI(`return Boolean(find(${JSON.stringify(selector('pr-rule-edit'))}));`);
+    click(selector('pr-rule-edit'));
+    await waitUI(`return Boolean(find('pr-rule-form'));`);
+    click(selector('pr-rule-action-review'));
+    await waitUI(`return Boolean(find('[data-testid="pr-policy-review-override"]'));`);
+    click(selector('pr-policy-review-override'));
+    assert.equal(
+      evaluate(`return find('[data-testid="pr-policy-publication"]').element.value;`),
+      'inherit',
+    );
+    cdp(
+      'select',
+      'prs',
+      evaluate(`return find('[data-testid="pr-policy-publication"]').path;`),
+      'results-only',
+    );
+    await screenshot('rule-publication');
+    click(selector('pr-rule-save'));
+    await waitUI(
+      `return Boolean(find('[data-testid="pr-rule-edit"]')?.element.getClientRects().length);`,
+    );
+    const savedPublicationRules = await connection.call<PRRulesListResult>('prRules.list');
+    const savedPublicationRule = savedPublicationRules.rules.find(
+      (rule) => rule.config.name === 'Repair draft validation',
+    )!;
+    assert.equal(
+      savedPublicationRule.config.actions.find((action) => action.kind === 'review')?.review
+        ?.publishReview,
+      false,
+    );
+    await json(path.join(evidence, 'rule-publication.json'), savedPublicationRule);
     click(selector('pr-rule-edit'));
     await waitUI(`return Boolean(find('pr-rule-form'));`);
     await clearRepairDraft('rule');
@@ -543,12 +883,152 @@ process.stdout.write(JSON.stringify(body));
     await waitUI(
       `return find('pr-automation-panel')?.element.shadowRoot.textContent.includes('must be an array');`,
     );
-    assert.equal((await connection.call<{ runs: unknown[] }>('run.list')).runs.length, 0);
+    assert.deepEqual(
+      (await connection.call<{ runs: Array<{ id: string }> }>('run.list')).runs
+        .map((run) => run.id)
+        .filter((id) => !id.startsWith('ui-ownership-'))
+        .sort(),
+      ['ui-automatic-qa', 'ui-publication-published', 'ui-qa-profile'],
+    );
+    for (const [id, testid, expected] of [
+      ['ui-qa-profile', 'run-qa-profile', 'Daily changes'],
+      ['ui-automatic-qa', 'run-automatic-qa', 'Automatic QA is disabled'],
+    ]) {
+      cdp('goto', `http://127.0.0.1:${uiPort}/#runs?run=${id}`);
+      const deadline = Date.now() + 30000;
+      let text = '';
+      while (Date.now() < deadline) {
+        text = JSON.parse(
+          cdp(
+            'eval',
+            'runs',
+            walk +
+              `return { value: find('[data-testid="${testid}"]')?.element.textContent ?? '' };`,
+          ),
+        ).value;
+        if (text.includes(expected)) break;
+        await delay(200);
+      }
+      assert(text.includes(expected), `Missing run context ${testid}: ${text}`);
+      if (id === 'ui-qa-profile') {
+        const badge = JSON.parse(
+          cdp(
+            'eval',
+            'runs',
+            walk + `return {label:find('[data-testid="runs-flow"]').element.textContent.trim()};`,
+          ),
+        );
+        assert.equal(badge.label, 'QA');
+        const filter = JSON.parse(
+          cdp(
+            'eval',
+            'runs',
+            walk + `return {path:find('[data-testid="runs-flow-filter"]').path};`,
+          ),
+        );
+        cdp('select', 'runs', filter.path, 'qa');
+        const selected = JSON.parse(
+          cdp(
+            'eval',
+            'runs',
+            walk +
+              `return {value:find('[data-testid="runs-flow-filter"]').element.value,hash:location.hash};`,
+          ),
+        );
+        assert.equal(selected.value, 'qa');
+        assert.match(selected.hash, /flow=qa/);
+        cdp('screenshot', 'runs', path.join(evidence, 'qa-flow-filter.png'));
+        cdp('select', 'runs', filter.path, '');
+      }
+
+      cdp('screenshot', 'runs', path.join(evidence, testid + '.png'));
+    }
+
+    const publicationEvents: unknown[] = [];
+    const unsubscribePublication = connection.onEvent((event) => {
+      const run = (
+        event.payload as { run?: { id: string; reviewPublication?: unknown } } | undefined
+      )?.run;
+      if (event.event === 'run.updated' && run?.id === 'ui-automatic-qa')
+        publicationEvents.push(run.reviewPublication);
+    });
+    const publicationBefore = JSON.parse(
+      cdp(
+        'eval',
+        'runs',
+        walk + `return {text:find('[data-testid="run-review-publication"]').element.textContent};`,
+      ),
+    ).text;
+    assert.match(publicationBefore, /Needs attention/);
+    assert.match(publicationBefore, /fixture-reviewer/);
+    cdp(
+      'eval',
+      'runs',
+      walk +
+        `const button=find('[data-testid="run-review-publication-retry"]').element;if(button.disabled)throw new Error('Retry is disabled');button.click();return true;`,
+    );
+    let publicationText = '';
+    for (let attempt = 0; attempt < 100; attempt++) {
+      publicationText = JSON.parse(
+        cdp(
+          'eval',
+          'runs',
+          walk +
+            `return {text:find('[data-testid="run-review-publication"]').element.textContent};`,
+        ),
+      ).text;
+      if (publicationText.includes('Only a completed workspace static review')) break;
+      await delay(200);
+    }
+    assert.match(publicationText, /Only a completed workspace static review/);
+    const publicationRun = await connection.call<any>('run.get', { runId: 'ui-automatic-qa' });
+    assert.match(
+      publicationRun.run.reviewPublication.error,
+      /Only a completed workspace static review/,
+    );
+    unsubscribePublication();
+    assert(publicationEvents.length > 0, 'Publication update event missing');
+    await json(path.join(evidence, 'publication-events.json'), publicationEvents);
+    await json(path.join(evidence, 'publication-retry-error.json'), {
+      ui: publicationText,
+      stored: publicationRun.run.reviewPublication,
+    });
+    cdp('screenshot', 'runs', path.join(evidence, 'publication-retry-error.png'));
+    cdp('eval', 'runs', `location.hash='#runs?run=ui-publication-published';return true;`);
+    let publishedText = '';
+    for (let attempt = 0; attempt < 100; attempt++) {
+      publishedText = JSON.parse(
+        cdp(
+          'eval',
+          'runs',
+          walk +
+            `return {text:find('[data-testid="run-review-publication"]')?.element.textContent ?? ''};`,
+        ),
+      ).text;
+      if (publishedText.includes('Published')) break;
+      await delay(200);
+    }
+    assert.match(publishedText, /Published/);
+    const publishedControls = JSON.parse(
+      cdp(
+        'eval',
+        'runs',
+        walk +
+          `return {retry:Boolean(find('[data-testid="run-review-publication-retry"]')),url:find('[data-testid="run-review-publication"]')?.element.querySelector('a')?.href};`,
+      ),
+    );
+    assert.equal(publishedControls.retry, false);
+    assert.equal(
+      publishedControls.url,
+      'https://github.com/example/app/pull/42#pullrequestreview-77',
+    );
+    cdp('screenshot', 'runs', path.join(evidence, 'publication-published.png'));
+
     console.log(
       JSON.stringify({
         passed: true,
         evidence,
-        submissions: [first.id, second.id, third.id],
+        submissions: [first.id, second.id, third.id, fourth.id],
         teamId: team.id,
       }),
     );
@@ -595,7 +1075,7 @@ process.stdout.write(JSON.stringify(body));
         );
     }
     await servers.stop();
-    if (!failure) await rm(fixture, { recursive: true, force: true });
+    await rm(fixture, { recursive: true, force: true });
   }
   if (failure) throw failure;
 }

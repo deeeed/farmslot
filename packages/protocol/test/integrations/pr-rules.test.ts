@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { PRRulePredicate, PRRuleSubject } from '../../src/contracts/pr-rules.js';
-import { assertPRReviewOptions } from '../../src/integrations/pr-rule-config.js';
+import {
+  assertPRReviewOptions,
+  assertPRTriggerRuleConfig,
+} from '../../src/integrations/pr-rule-config.js';
 import {
   assertPRRulePredicate,
   evaluatePRRulePredicate,
@@ -33,6 +36,31 @@ const label: PRRulePredicate = {
   value: ['team-example'],
 };
 
+test('automatic repair rules cannot consume a static review workspace policy', () => {
+  const rule = {
+    name: 'Repair',
+    teamId: 'team',
+    predicate: repository,
+    actions: [
+      {
+        kind: 'monitor',
+        policy: {
+          mode: 'automatic-repair',
+          execution: {
+            workspacePolicy: { kind: 'exact', machine: 'review-node' },
+            transport: 'native',
+            models: [{ runner: 'codex', model: 'gpt-6-astra' }],
+          },
+        },
+      },
+    ],
+    pollIntervalMs: 300000,
+    maxAdmissionsPerScan: 10,
+    rereviewOnHeadChange: true,
+  };
+  assert.throws(() => assertPRTriggerRuleConfig(rule), /slot/);
+});
+
 test('review configuration validates explicit session, scope and QA choices', () => {
   const options = { sessionIntent: 'resume', scope: 'incremental', validationDepth: 'full-live' };
   assert.doesNotThrow(() => assertPRReviewOptions(options));
@@ -42,8 +70,11 @@ test('review configuration validates explicit session, scope and QA choices', ()
   );
   assert.throws(() => assertPRReviewOptions({ ...options, scope: 'changed-files' }), /scope/);
   assert.throws(
-    () => assertPRReviewOptions({ ...options, validationDepth: undefined }),
+    () => assertPRReviewOptions({ ...options, validationDepth: 'sometimes-live' }),
     /validation/,
+  );
+  assert.doesNotThrow(() =>
+    assertPRReviewOptions({ ...options, validationDepth: undefined, workflow: 'qa' }),
   );
   assert.throws(
     () => assertPRReviewOptions({ ...options, sessionId: 'untrusted-session' }),

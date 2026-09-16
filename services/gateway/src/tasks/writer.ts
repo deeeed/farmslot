@@ -64,6 +64,7 @@ import {
   resolveRunPlanningContext,
   writePlanningContextInput,
 } from './planning-context.js';
+import { buildQaTaskSection, writeQaInput } from './qa-input.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
   readWorkerTerminalProjectConfig,
@@ -573,9 +574,13 @@ async function buildPRCompleteContext(
   return { commentSummary: renderCommentSummary(rows), hasRecipe, rows };
 }
 
-export function buildTaskFolderPrefix(ticketOrPr: string, variant?: string | null): string {
-  const tSlug = computeTicketSlug(ticketOrPr);
-  const variantSuffix = variant ? `-${computeTicketSlug(variant)}` : '';
+export function buildTaskFolderPrefix(
+  ticketOrPr: string,
+  variant?: string | null,
+  flowType?: string,
+): string {
+  const tSlug = computeTicketSlug(ticketOrPr, flowType);
+  const variantSuffix = variant ? `-${computeTicketSlug(variant, flowType)}` : '';
   return `${tSlug}${variantSuffix}-`;
 }
 
@@ -583,8 +588,9 @@ export function findTaskDirCollisions(
   entries: string[],
   ticketOrPr: string,
   variant?: string | null,
+  flowType?: string,
 ): string[] {
-  const prefix = buildTaskFolderPrefix(ticketOrPr, variant);
+  const prefix = buildTaskFolderPrefix(ticketOrPr, variant, flowType);
   return entries.filter((e) => e.startsWith(prefix));
 }
 
@@ -597,7 +603,7 @@ export function findTaskDirCollisions(
 export async function precheckTaskDirCollision(
   run: Run,
 ): Promise<{ existingDirs: string[]; ticketSlug: string }> {
-  const ticketSlug = computeTicketSlug(run.ticketOrPr);
+  const ticketSlug = computeTicketSlug(run.ticketOrPr, run.flowType);
   const projectVars = await loadProjectVars(run.project);
   const fDir = computeFlowDir(run.flowType);
   const tasksBaseDir = path.join(
@@ -611,6 +617,7 @@ export async function precheckTaskDirCollision(
       entries,
       run.ticketOrPr,
       run.lane === 'comparison' ? run.variant : null,
+      run.flowType,
     );
     return { existingDirs, ticketSlug };
   } catch (err) {
@@ -810,7 +817,7 @@ export async function writeTaskFile(
   // Inject mode preamble after first heading line (# Worker: Dev, # Session Context, etc.)
   const modePreamble =
     run.mode === 'autonomous'
-      ? '> Fully autonomous — zero human input. Execute all phases without stopping.'
+      ? '> Autonomous execution: complete the authorized work. Respect task and repository approval requirements; missing authority is a blocker. This mode grants no additional permission.'
       : run.flowType === 'pr-complete' && run.mode === 'interactive'
         ? '> Interactive PR-complete — reload prior PR/run context and perform the PR-complete work, then stop before terminal SIGNAL.json so the operator can take over.'
         : isLightweightInteractiveDevRun(run)
@@ -831,9 +838,9 @@ export async function writeTaskFile(
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const timestamp = `${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const tSlug = computeTicketSlug(run.ticketOrPr);
+  const tSlug = computeTicketSlug(run.ticketOrPr, run.flowType);
   const fDir = computeFlowDir(run.flowType);
-  const variantSuffix = run.variant ? `-${computeTicketSlug(run.variant)}` : '';
+  const variantSuffix = run.variant ? `-${computeTicketSlug(run.variant, run.flowType)}` : '';
   const baseFolderId = `${tSlug}${variantSuffix}-${timestamp}`;
   const tasksBaseDir = path.join(
     getOrchestratorTaskRoot(run.project, projectVars.projectJson),
@@ -850,6 +857,7 @@ export async function writeTaskFile(
         entries,
         run.ticketOrPr,
         run.lane === 'comparison' ? run.variant : null,
+        run.flowType,
       );
       if (collisions.length > 0) {
         throw new TaskCollisionError(collisions, tSlug);
@@ -1234,7 +1242,7 @@ export async function writeTaskFile(
       runtimeCapabilities?.providers ?? null,
       planningContext,
     );
-    return `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n`;
+    return `${withRuntimeContext.trimEnd()}\n${buildReviewExecutionContract(run, previousReviewPaths, staticReviewInstructionPaths)}\n${buildQaTaskSection(vars.TASK_DIR, run)}`;
   };
 
   let finalContent: string;
@@ -1306,13 +1314,16 @@ export async function writeTaskFile(
     run.flowType === 'review-pr' ||
     run.flowType === 'pr-complete' ||
     run.flowType === 'update-branch';
-  const handoffSourceKind: HandoffSourceKind = ticket.jiraKey
-    ? 'jira'
-    : ticket.githubIssue
-      ? 'github-issue'
-      : isPrFlow
-        ? 'github-pr'
-        : 'text';
+  const handoffSourceKind: HandoffSourceKind =
+    run.flowType === 'qa' && run.qaSource
+      ? 'github-pr'
+      : ticket.jiraKey
+        ? 'jira'
+        : ticket.githubIssue
+          ? 'github-issue'
+          : isPrFlow
+            ? 'github-pr'
+            : 'text';
   const { executionTemplate: selectedReference, ...portableProvenance } = templateProvenance;
   const handoff = buildHandoffMetadata({
     attemptId: run.id,
@@ -1345,6 +1356,10 @@ export async function writeTaskFile(
     handoff,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+  });
+  await writeQaInput(taskAbsDir, {
+    ...run,
+    executionTemplate: templateProvenance.executionTemplate ?? run.executionTemplate,
   });
 
   // Download Jira image attachments to assets/

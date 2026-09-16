@@ -60,6 +60,7 @@ export abstract class RunDetailState extends LitElement {
   _postureGateKey = '';
   _posturePreviewRequestSeq = 0;
   @state() _rescueInProgress = false;
+  @state() _publicationActions: Record<string, { busy: boolean; error?: string }> = {};
   @state() _interactiveDevActionInProgress: string | null = null;
   @state() _handoffSignalCheckBusy = false;
   @state() _handoffSignalCheckError: string | null = null;

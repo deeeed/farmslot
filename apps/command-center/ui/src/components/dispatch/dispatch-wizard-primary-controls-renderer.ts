@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { DevInteractiveProfile, FlowType, ReviewValidationDepth } from '@farmslot/protocol';
+import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
 import '../shared/slot-prepare-options.js';
@@ -14,7 +14,6 @@ import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 import { DISPATCH_HELP } from './dispatch-wizard-help.js';
 
 type DispatchMode = 'interactive' | 'autonomous';
-type ReviewTier = '' | 'light' | 'standard' | 'full';
 
 interface FlowOption {
   type: FlowType;
@@ -24,17 +23,11 @@ interface FlowOption {
 
 const FLOW_OPTIONS: readonly FlowOption[] = [
   { type: 'fix-bug', label: 'Fix Bug', key: 'B' },
-  { type: 'review-pr', label: 'Review PR', key: 'R' },
+  { type: 'review-pr', label: 'Review', key: 'R' },
+  { type: 'qa', label: 'QA', key: 'Q' },
   { type: 'dev', label: 'Dev', key: 'D' },
   { type: 'pr-complete', label: 'PR Complete', key: 'C' },
 ];
-
-const REVIEW_TIER_HELP: Record<ReviewTier, string> = {
-  '': 'Auto — LLM picks evidence depth from the PR diff; you confirm at the gate.',
-  light: 'Smoke only — backend regression test, no UI evidence.',
-  standard: 'Targeted evidence — smoke + screenshots for changed UI surfaces.',
-  full: 'Full QA — screenshots plus opt-in video when motion proof helps.',
-};
 
 export interface DispatchWizardPrimaryControlsRenderContext {
   transport: 'tmux' | 'native';
@@ -57,8 +50,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   runner: string;
   model: string;
   effort: EffortLevel;
-  reviewTier: ReviewTier;
-  reviewValidationDepth: ReviewValidationDepth;
+  workflowControls: unknown;
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -73,8 +65,6 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   setRunner: (runner: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
-  setReviewTier: (reviewTier: ReviewTier) => void;
-  setReviewValidationDepth: (depth: ReviewValidationDepth) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
   setPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
@@ -86,52 +76,58 @@ export function renderDispatchWizardPrimaryControls(
   return html`
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
-    ${renderRunnerModelConfig(ctx)}
-    <div>
-      <div class="section-label" id="worker-interface-label" title=${DISPATCH_HELP.interface.text}>
-        Worker interface
-      </div>
-      <div
-        class="pill-row"
-        role="group"
-        aria-labelledby="worker-interface-label"
-        data-testid="dispatch-transport"
-      >
-        <button
-          type="button"
-          class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
-          data-transport="tmux"
-          aria-pressed=${ctx.transport === 'tmux'}
-          @click=${() => ctx.setTransport('tmux')}
-        >
-          Terminal
-        </button>
-        <button
-          type="button"
-          class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
-          data-transport="native"
-          aria-pressed=${ctx.transport === 'native'}
-          ?disabled=${!ctx.nativeWorkerAvailable}
-          title=${ctx.nativeWorkerAvailable
-            ? 'Messages, tools and approvals in Farmslot'
-            : 'Native workers are unavailable for this runner'}
-          @click=${() => ctx.setTransport('native')}
-        >
-          Conversation
-        </button>
-      </div>
-    </div>
-    ${ctx.nativeCatalogError
-      ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
-      : nothing}
-    ${ctx.transport === 'native'
-      ? html`<p class="section-help" data-testid="dispatch-interface-help">
-          Messages, tools and approvals appear in Farmslot. The selected runner keeps its own login
-          and model.
-        </p>`
-      : nothing}
-    ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}
-    ${renderReviewTierSelector(ctx)} ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
+    ${ctx.workflowControls} ${renderRunnerModelConfig(ctx)}
+    ${ctx.flowType === 'review-pr'
+      ? nothing
+      : html`<div>
+            <div
+              class="section-label"
+              id="worker-interface-label"
+              title=${DISPATCH_HELP.interface.text}
+            >
+              Worker interface
+            </div>
+            <div
+              class="pill-row"
+              role="group"
+              aria-labelledby="worker-interface-label"
+              data-testid="dispatch-transport"
+            >
+              <button
+                type="button"
+                class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
+                data-transport="tmux"
+                aria-pressed=${ctx.transport === 'tmux'}
+                @click=${() => ctx.setTransport('tmux')}
+              >
+                Terminal
+              </button>
+              <button
+                type="button"
+                class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
+                data-transport="native"
+                aria-pressed=${ctx.transport === 'native'}
+                ?disabled=${!ctx.nativeWorkerAvailable}
+                title=${ctx.nativeWorkerAvailable
+                  ? 'Messages, tools and approvals in Farmslot'
+                  : 'Native workers are unavailable for this runner'}
+                @click=${() => ctx.setTransport('native')}
+              >
+                Conversation
+              </button>
+            </div>
+          </div>
+          ${ctx.nativeCatalogError
+            ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
+            : nothing}
+          ${ctx.transport === 'native'
+            ? html`<p class="section-help" data-testid="dispatch-interface-help">
+                Messages, tools and approvals appear in Farmslot. The selected runner keeps its own
+                login and model.
+              </p>`
+            : nothing}
+          ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
+    ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
   `;
 }
 
@@ -139,8 +135,7 @@ function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <div>
       <div class="section-label" title=${DISPATCH_HELP.ticket.text}>
-        Ticket /
-        PR${ctx.matchingProject
+        ${ctx.flowType === 'qa' ? 'Validation context' : 'Ticket / PR'}${ctx.matchingProject
           ? html` <span
               style="color:${colors.textMuted}; text-transform:none; letter-spacing:normal"
               >detecting...</span
@@ -154,8 +149,11 @@ function renderTicketInput(ctx: DispatchWizardPrimaryControlsRenderContext) {
       </div>
       <input
         class="ticket-input"
+        data-testid="dispatch-ticket"
         type="text"
-        placeholder="PROJ-2368, PR #123, or paste Jira/GitHub URL"
+        placeholder=${ctx.flowType === 'qa'
+          ? 'PR URL, release or change window'
+          : 'PROJ-2368, PR #123, or paste Jira/GitHub URL'}
         .value=${ctx.ticketId}
         @input=${(event: InputEvent) => ctx.setTicket((event.target as HTMLInputElement).value)}
         @keydown=${(event: KeyboardEvent) => {
@@ -181,6 +179,7 @@ function renderFlowSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
           (option) => html`
             <button
               class="pill ${ctx.flowType === option.type ? 'selected' : ''}"
+              data-testid=${`dispatch-flow-${option.type}`}
               @click=${() => ctx.selectFlowType(option.type)}
             >
               ${option.label}<span class="pill-key">${option.key}</span>
@@ -207,6 +206,7 @@ function renderProjectSelector(ctx: DispatchWizardPrimaryControlsRenderContext) 
           (project) => html`
             <button
               class="pill ${ctx.project === project ? 'selected' : ''}"
+              data-testid=${`dispatch-project-${project}`}
               @click=${() => ctx.selectProject(project)}
             >
               ${project}
@@ -255,49 +255,8 @@ function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext
   `;
 }
 
-function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
-  if (ctx.flowType !== 'review-pr') return nothing;
-  return html`
-    <div class="config-group">
-      <div class="section-label" title=${DISPATCH_HELP.review.text}>Review Tier</div>
-      <div class="pill-row">
-        ${(['', 'light', 'standard', 'full'] as ReviewTier[]).map(
-          (tier) => html`
-            <button
-              class="pill ${ctx.reviewTier === tier ? 'selected' : ''}"
-              @click=${() => ctx.setReviewTier(tier)}
-            >
-              ${tier || 'auto'}
-            </button>
-          `,
-        )}
-      </div>
-      <div class="section-help">${REVIEW_TIER_HELP[ctx.reviewTier]}</div>
-      <div class="section-label" style="margin-top:8px">Validation</div>
-      <div class="pill-row">
-        <button
-          class="pill ${ctx.reviewValidationDepth === 'static-code' ? 'selected' : ''}"
-          @click=${() => ctx.setReviewValidationDepth('static-code')}
-        >
-          Static
-        </button>
-        <button
-          class="pill ${ctx.reviewValidationDepth === 'full-live' ? 'selected' : ''}"
-          @click=${() => ctx.setReviewValidationDepth('full-live')}
-        >
-          Full live
-        </button>
-      </div>
-      <div class="section-help">
-        ${ctx.reviewValidationDepth === 'static-code'
-          ? 'Default — audit the frozen PR diff and linked Farmslot evidence without preparing the app.'
-          : 'Explicit escalation — prepare the project and run live validation.'}
-      </div>
-    </div>
-  `;
-}
-
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
+  if (ctx.flowType === 'review-pr') return nothing;
   const profiles = ctx.prepareProfiles;
   return html`
     <div class="config-group" style="margin-top: 4px" title=${DISPATCH_HELP.prepare.text}>

@@ -39,3 +39,14 @@ export class GitHubPRUnavailableError extends Error {
     this.name = 'GitHubPRUnavailableError';
   }
 }
+
+/** HTTP status from gh api --include, retained separately from rendered CLI errors. */
+export class GitHubHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GitHubHttpError';
+  }
+}

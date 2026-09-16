@@ -8,6 +8,7 @@ export type NudgeIntent = 'nudge' | 'fresh';
 export interface CandidateResultStateInput {
   candidates: DispatchCandidatesResult['candidates'];
   previousOverride: string;
+  explicitOverride?: boolean;
   nudgeIntents: ReadonlyMap<string, NudgeIntent>;
   flowType: FlowType | null;
   normalizedTicket: string;
@@ -27,6 +28,7 @@ export interface CandidateResultState {
 
 export interface DispatchFleetViewStateInput {
   slots: readonly SlotStatus[];
+  configuredProjects?: readonly string[];
   currentProject: string;
   globalProjectFilters: readonly string[];
   globalMachineFilters: readonly string[];
@@ -69,17 +71,19 @@ export function deriveCandidateResultState(input: CandidateResultStateInput): Ca
   // A pressure-rejected row is not dispatchable, but the operator may have
   // deliberately selected it to review the decision or collect an override.
   // periodic candidate refreshes must not bounce the selection off it.
-  const overrideStillValid =
-    !scoringChanged &&
+  // An explicit pin is intent, even while unavailable; admission reports its blocker.
+  const keepOverride =
     Boolean(input.previousOverride) &&
-    input.candidates.some(
-      (candidate) =>
-        candidate.slotId === input.previousOverride &&
-        (candidateDispatchable(candidate) || pressureOverrideAvailable(candidate)),
-    );
+    (input.explicitOverride ||
+      (!scoringChanged &&
+        input.candidates.some(
+          (candidate) =>
+            candidate.slotId === input.previousOverride &&
+            (candidateDispatchable(candidate) || pressureOverrideAvailable(candidate)),
+        )));
   return {
     candidates: input.candidates,
-    slotOverride: overrideStillValid ? input.previousOverride : (dispatchable[0]?.slotId ?? ''),
+    slotOverride: keepOverride ? input.previousOverride : (dispatchable[0]?.slotId ?? ''),
     nudgeIntents,
     nudgeIntentsChanged,
     scoringKey,
@@ -96,7 +100,15 @@ export function deriveDispatchFleetViewState(
       (input.globalProjectFilters.length === 0 ||
         input.globalProjectFilters.includes(slot.project)),
   );
-  const availableProjects = [...new Set(slots.map((slot) => slot.project))].sort();
+  const availableProjects = [
+    ...new Set([
+      ...slots.map((slot) => slot.project),
+      ...(input.configuredProjects ?? []).filter(
+        (project) =>
+          !input.globalProjectFilters.length || input.globalProjectFilters.includes(project),
+      ),
+    ]),
+  ].sort();
 
   let project = input.currentProject;
   let projectAutoSelected = false;

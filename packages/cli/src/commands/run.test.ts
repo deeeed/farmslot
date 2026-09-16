@@ -684,3 +684,204 @@ test('static review flags preserve machine, native runner and effort while refus
   ])
     assert.throws(() => buildRunCreateParams({ ...base, reviewMachine: 'node', ...patch }));
 });
+
+test('QA CLI flags preserve opaque nested skill inputs and require the explicit QA flow', () => {
+  const inputs = {
+    scope: { since: '2026-09-14T00:00:00Z' },
+    recipes: ['login', 'account'],
+    smoke: true,
+    limit: 3,
+    optional: null,
+  };
+  const base = { project: 'example-farm', flowType: 'qa', ticket: 'changes-in-window' };
+  const params = buildRunCreateParams({
+    ...base,
+    qaProfile: 'daily-check',
+    qaInputs: JSON.stringify(inputs),
+    slot: 'runtime-1',
+    runner: 'codex',
+    model: 'gpt-6-astra',
+    effort: 'high',
+    transport: 'native',
+  });
+  assert.equal(params.qaProfileId, 'daily-check');
+  assert.deepEqual(params.qaInputs, inputs);
+  assert.equal(params.flowType, 'qa');
+  assert.equal(params.slotId, 'runtime-1');
+  assert.equal(params.effort, 'high');
+  assert.equal(params.transport, 'native');
+  assert.equal('sessionIntent' in params, false);
+  assert.equal('scope' in params, false);
+  assert.equal('qaProfileId' in buildRunCreateParams(base), false);
+  assert.equal('qaInputs' in buildRunCreateParams(base), false);
+  assert.deepEqual(buildRunCreateParams({ ...base, qaInputs: '{}' }).qaInputs, {});
+  for (const flowType of ['review-pr', 'dev', undefined]) {
+    for (const qa of [{ qaProfile: 'daily-check' }, { qaInputs: '{}' }]) {
+      assert.throws(
+        () => buildRunCreateParams({ ...base, flowType, ...qa }),
+        /require explicit --flow-type qa/,
+      );
+    }
+  }
+  assert.throws(() => buildRunCreateParams({ ...base, qaProfile: ' ' }), /QA preset id/);
+  assert.throws(
+    () => buildRunCreateParams({ ...base, reviewMachine: 'static-machine' }),
+    /QA uses a runtime slot/,
+  );
+  assert.throws(
+    () => buildRunCreateParams({ ...base, reviewValidationDepth: 'static-code' }),
+    /conflicts with legacy validation depth/,
+  );
+});
+
+test('QA CLI rejects malformed JSON, non-object roots and unrepresentable JSON numbers', () => {
+  const base = { project: 'example-farm', flowType: 'qa', ticket: 'changes-in-window' };
+  for (const qaInputs of ['{', '', '{"nested":{"value":1e999}}']) {
+    assert.throws(
+      () => buildRunCreateParams({ ...base, qaInputs }),
+      /--qa-inputs must be a valid JSON object/,
+    );
+  }
+  for (const qaInputs of ['null', '[]', '"text"', '1', 'false']) {
+    assert.throws(() => buildRunCreateParams({ ...base, qaInputs }), /QA inputs.*object/);
+  }
+});
+
+test('run create and dispatch preview register QA flags and forward only typed QA fields', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  server.on('connection', (socket) => {
+    socket.on('message', (data) => {
+      const request = JSON.parse(String(data));
+      if (request.method !== 'auth.connect')
+        calls.push({ method: request.method, params: request.params });
+      socket.send(
+        JSON.stringify({
+          type: 'res',
+          id: request.id,
+          ok: true,
+          payload:
+            request.method === 'auth.connect'
+              ? {}
+              : { run: { id: 'qa-cli-run' }, preview: { flowType: 'qa' } },
+        }),
+      );
+    });
+  });
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const url = `ws://127.0.0.1:${address.port}`;
+  const home = mkdtempSync(path.join(tmpdir(), 'farmslot-qa-cli-'));
+  const inputs = {
+    scope: { from: 'release-base', to: 'release-head' },
+    recipes: ['smoke'],
+    enabled: true,
+  };
+  try {
+    for (const command of [
+      ['run', 'create'],
+      ['dispatch', 'preview'],
+    ]) {
+      const result = await spawnRunCli(
+        [
+          '--url',
+          url,
+          '--timeout',
+          '3000',
+          '--json',
+          ...command,
+          '--project',
+          'example-farm',
+          '--flow-type',
+          'qa',
+          '--ticket',
+          'change-range',
+          '--qa-profile',
+          'release-check',
+          '--qa-inputs',
+          JSON.stringify(inputs),
+          '--slot',
+          'runtime-1',
+          '--runner',
+          'codex',
+          '--model',
+          'gpt-6-astra',
+          '--effort',
+          'high',
+          '--transport',
+          'native',
+        ],
+        home,
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const params = calls.at(-1)!.params;
+      assert.equal(params.flowType, 'qa');
+      assert.equal(params.qaProfileId, 'release-check');
+      assert.deepEqual(params.qaInputs, inputs);
+      assert.equal(params.slotId, 'runtime-1');
+      assert.equal(params.runner, 'codex');
+      assert.equal(params.model, 'gpt-6-astra');
+      assert.equal(params.effort, 'high');
+      assert.equal(params.transport, 'native');
+      assert.equal('sessionIntent' in params, false);
+      assert.equal('scope' in params, false);
+    }
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['run.createNative', 'dispatch.preview'],
+    );
+    for (const command of [
+      ['run', 'create'],
+      ['dispatch', 'preview'],
+    ]) {
+      const before = calls.length;
+      const invalid = await spawnRunCli(
+        [
+          '--url',
+          url,
+          '--timeout',
+          '3000',
+          '--json',
+          ...command,
+          '--project',
+          'example-farm',
+          '--flow-type',
+          'qa',
+          '--ticket',
+          'change-range',
+          '--qa-inputs',
+          '[1,2]',
+        ],
+        home,
+      );
+      assert.notEqual(invalid.status, 0);
+      assert.match(invalid.stdout + invalid.stderr, /QA inputs.*object/);
+      assert.equal(calls.length, before, 'invalid inputs must not reach the create/preview RPC');
+    }
+  } finally {
+    for (const socket of server.clients) socket.terminate();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('direct publication flags preserve unset, explicit true and explicit false values', () => {
+  const base = {
+    project: 'farm',
+    flowType: 'review-pr',
+    ticket: 'example/app#42',
+    reviewMachine: 'machine',
+    runner: 'codex',
+    model: 'gpt-6-luna',
+  };
+  assert.equal(buildRunCreateParams(base).publishReview, undefined);
+  assert.equal(
+    buildRunCreateParams({ ...base, publishReview: true, reviewTeam: 'team' }).publishReview,
+    true,
+  );
+  assert.equal(buildRunCreateParams({ ...base, publishReview: false }).publishReview, false);
+  assert.equal(buildRunCreateParams({ ...base, reviewTeam: 'team' }).reviewTeamId, 'team');
+});

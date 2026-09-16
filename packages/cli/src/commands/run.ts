@@ -7,6 +7,7 @@ import type { Command } from 'commander';
 import {
   AGENT_ROLES,
   type AgentRole,
+  assertPRReviewOptions,
   buildRunResolveDecisionParams,
   type EventFrame,
   failedRunCancelEffects,
@@ -16,8 +17,10 @@ import {
   observedReviewSessionContinuity,
   type ReviewChainEntry,
   reviewChainForRun,
+  reviewPublicationPolicyForRun,
   type Run,
   type RunCancelEffect,
+  type RunCreateParams,
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
@@ -103,6 +106,11 @@ export async function executeRunCreate(
           : result.run.slotId || '(slot pending)',
       )} (${result.run.flowType})\n`,
     );
+    const publication = reviewPublicationPolicyForRun(result.run);
+    if (publication)
+      ctx.output.write(
+        `Publication: ${publication.enabled ? `PR review as ${publication.account!.login}` : 'Farmslot results only'} · ${publication.source}\n`,
+      );
   }
 }
 
@@ -227,6 +235,9 @@ export function parseTaskPath(taskFile: string): {
 }
 
 export interface RunCreateCliOptions {
+  publishReview?: boolean;
+  reviewTeam?: string;
+  team?: string;
   project?: string;
   flowType?: string;
   ticket?: string;
@@ -234,6 +245,8 @@ export interface RunCreateCliOptions {
   slot?: string;
   reviewMachine?: string;
   reviewValidationDepth?: string;
+  qaProfile?: string;
+  qaInputs?: string;
   effort?: string;
   skipPrepare?: boolean;
   prepareProfile?: string;
@@ -334,7 +347,54 @@ export function buildReviewDispatchParams(
   };
 }
 
+/** Farm selection stays on the gateway; the CLI validates and forwards explicit QA inputs. */
+export function buildQaDispatchParams(
+  opts: Pick<
+    RunCreateCliOptions,
+    'flowType' | 'qaProfile' | 'qaInputs' | 'reviewMachine' | 'reviewValidationDepth'
+  >,
+): Pick<RunCreateParams, 'qaProfileId' | 'qaInputs'> {
+  if (opts.flowType !== 'qa') {
+    if (opts.qaProfile !== undefined || opts.qaInputs !== undefined)
+      throw new Error('--qa-profile and --qa-inputs require explicit --flow-type qa');
+    return {};
+  }
+  if (opts.reviewMachine)
+    throw new Error('--review-machine selects a static review workspace; QA uses a runtime slot');
+  let inputs: unknown;
+  if (opts.qaInputs !== undefined) {
+    try {
+      inputs = JSON.parse(opts.qaInputs, (_key, value: unknown) => {
+        if (typeof value === 'number' && !Number.isFinite(value))
+          throw new Error('numbers must be finite');
+        return value;
+      });
+    } catch (error) {
+      throw new Error(`--qa-inputs must be a valid JSON object: ${(error as Error).message}`);
+    }
+  }
+  // Reuse the protocol's QA field validation without selecting a farm preset here.
+  // Session/scope selectors belong only to this validation envelope, not the RPC.
+  const review: unknown = {
+    sessionIntent: 'reset',
+    scope: 'full',
+    workflow: 'qa',
+    ...(opts.reviewValidationDepth !== undefined
+      ? { validationDepth: opts.reviewValidationDepth }
+      : {}),
+    ...(opts.qaProfile !== undefined ? { qaProfileId: opts.qaProfile } : {}),
+    ...(opts.qaInputs !== undefined ? { qaInputs: inputs } : {}),
+  };
+  assertPRReviewOptions(review);
+  return {
+    ...(review.qaProfileId !== undefined ? { qaProfileId: review.qaProfileId } : {}),
+    ...(review.qaInputs !== undefined ? { qaInputs: review.qaInputs } : {}),
+  };
+}
+
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
+  if (opts.reviewTeam && opts.team && opts.reviewTeam !== opts.team)
+    throw new Error('--team and --review-team disagree');
   if (opts.transport !== undefined && opts.transport !== 'native' && opts.transport !== 'tmux')
     throw new Error('--transport must be native or tmux');
   if (opts.ticket && opts.task) {
@@ -349,6 +409,9 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   const base = {
     slotId: opts.slot || undefined,
     ...buildReviewDispatchParams(opts),
+    ...(opts.publishReview === undefined ? {} : { publishReview: opts.publishReview }),
+    ...((opts.reviewTeam ?? opts.team) ? { reviewTeamId: opts.reviewTeam ?? opts.team } : {}),
+    ...buildQaDispatchParams(opts),
     ...(opts.effort ? { effort: opts.effort } : {}),
     skipPrepare: opts.skipPrepare || undefined,
     prepareProfile: opts.prepareProfile || undefined,
@@ -810,12 +873,24 @@ export function registerRunCommand(program: Command): void {
     .command('create')
     .description('Create a supervised run from a ticket/ref or an existing task file')
     .option('--project <name>', 'Project name; required with --ticket')
-    .option('--flow-type <type>', 'Flow type (fix-bug, review-pr, dev, pr-complete)')
+    .option('--flow-type <type>', 'Flow type (fix-bug, review-pr, qa, dev, pr-complete)')
     .option('--ticket <ref>', 'Jira key/URL or GitHub issue/PR URL/ref')
     .option('--task <path>', 'Existing TASK.md to dispatch through the run pipeline')
     .option('--slot <id>', 'Specific slot ID')
     .option('--review-machine <machine>', 'Machine for a static review workspace')
-    .option('--review-validation-depth <depth>', 'Review validation: static-code or full-live')
+    .option('--publish-review', 'Publish this static review to its PR')
+    .option('--no-publish-review', 'Keep this static review in Farmslot only')
+    .option('--review-team <id>', 'PR team/account for publication; inferred when unique')
+    .option('--team <id>', 'Alias for --review-team')
+    .option(
+      '--review-validation-depth <depth>',
+      'Legacy compatibility: static-code or full-live; use --flow-type qa for runtime QA',
+    )
+    .option(
+      '--qa-profile <id>',
+      'Farm-owned QA profile for --flow-type qa (otherwise farm default)',
+    )
+    .option('--qa-inputs <json>', 'JSON object of skill inputs for --flow-type qa')
     .option('--effort <effort>', 'Runner effort override')
     .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
     .option(

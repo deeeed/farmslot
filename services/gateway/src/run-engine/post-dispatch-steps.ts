@@ -21,6 +21,7 @@ import {
 } from '../evals/package-store.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { slotRelease } from '../methods/slot.js';
+import { assertQaCompletion } from '../qa/completion.js';
 import {
   independentReviewPolicySatisfied,
   repairLegacyDispatchReviewDepth,
@@ -530,6 +531,11 @@ export async function executeMonitorStep(
       });
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
+      if (after.flowType === 'qa') {
+        const qaEvidence = await assertQaCompletion(after);
+        if (!canSettle()) return retiredResult();
+        (stepOutputs as Record<string, unknown>).qaEvidence = qaEvidence;
+      }
       // Worker-owned-push flows must have the branch published before the run
       // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
       // `done` is an accepted terminal alias for `complete` (isTerminalWorkerSignal),
@@ -1150,6 +1156,8 @@ export async function executeCompleteStep(
   const { broadcastFn, getDiffStat, refreshRunLinks } = context;
   const current = repairRunReviewDepthIfNeeded(runId);
   if (!current.slotId) throw new Error('No slot assigned');
+  // Revalidate on completion/replay so a checklist or force-skipped monitor cannot supply QA proof.
+  if (current.flowType === 'qa') await assertQaCompletion(current);
   const noCodeDisposition = isNoCodeTerminalDisposition(current.metrics.disposition);
   const artifactOnly = isArtifactOnlyRun(current);
   const inputs: Record<string, unknown> = {

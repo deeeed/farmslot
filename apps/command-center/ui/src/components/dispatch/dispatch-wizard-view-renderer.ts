@@ -72,8 +72,7 @@ interface DispatchWizardViewContext {
   runner: string;
   model: string;
   effort: EffortLevel;
-  reviewTier: '' | 'light' | 'standard' | 'full';
-  reviewValidationDepth: ReviewValidationDepth;
+  workflowControls: unknown;
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
@@ -121,8 +120,6 @@ interface DispatchWizardViewContext {
   setRunner: (runner: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
-  setReviewTier: (reviewTier: '' | 'light' | 'standard' | 'full') => void;
-  setReviewValidationDepth: (depth: ReviewValidationDepth) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
   setPrepareProfile: (prepareProfile: string) => void;
   applySuggestedPrepareProfile: (prepareProfile: string) => void;
@@ -230,12 +227,14 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
                   applySuggestedPrepareProfile: ctx.applySuggestedPrepareProfile,
                 })}
               `,
-              taskTemplateSelector: renderTaskTemplateSelector(ctx),
+              taskTemplateSelector:
+                ctx.flowType === 'review-pr' || ctx.flowType === 'qa'
+                  ? nothing
+                  : renderTaskTemplateSelector(ctx),
               runner: ctx.runner,
               model: ctx.model,
               effort: ctx.effort,
-              reviewTier: ctx.reviewTier,
-              reviewValidationDepth: ctx.reviewValidationDepth,
+              workflowControls: ctx.workflowControls,
               skipPrepare: ctx.skipPrepare,
               prepareProfiles: ctx.prepareProfiles,
               prepareProfile: ctx.prepareProfile,
@@ -250,8 +249,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               setRunner: ctx.setRunner,
               setModel: ctx.setModel,
               setEffort: ctx.setEffort,
-              setReviewTier: ctx.setReviewTier,
-              setReviewValidationDepth: ctx.setReviewValidationDepth,
+
               setSkipPrepare: ctx.setSkipPrepare,
               setPrepareProfile: ctx.setPrepareProfile,
               setDevInteractiveProfile: ctx.setDevInteractiveProfile,
@@ -276,33 +274,37 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               addWorkerReviewLoop: ctx.addWorkerReviewLoop,
               addExternalReviewLoop: ctx.addExternalReviewLoop,
             })}
-            ${renderDispatchCandidateSelection({
-              project: ctx.project,
-              slotOverride: ctx.selectedSlotOverride,
-              loadingCandidates: ctx.loadingCandidates,
-              candidateRefreshFailed: ctx.candidateRefreshFailed,
-              candidates: ctx.candidates,
-              dispatchableCandidates: ctx.dispatchableCandidates,
-              nudgeIntents: ctx.nudgeIntents,
-              nudgeIntentVersion: ctx.nudgeIntentVersion,
-              sameTaskSlot: ctx.sameTaskSlot,
-              candidateDispatchable: ctx.candidateDispatchable,
-              pressureOverrideAvailable: ctx.pressureOverrideAvailable,
-              slotSummaryLabel: ctx.slotSummaryLabel,
-              selectSlot: ctx.selectSlot,
-              allowAutomaticSlot: ctx.allowAutomaticSlot,
-              refreshSlots: ctx.refreshSlots,
-              setNudgeIntent: ctx.setNudgeIntent,
-              beginPressureOverride: ctx.beginPressureOverride,
-            })}
-            ${renderDispatchPressurePanel({
-              decision: ctx.selectedPressureDecision,
-              overrideConfirmed: ctx.pressureOverrideConfirmed,
-              overrideReason: ctx.pressureOverrideReason,
-              setOverrideConfirmed: ctx.setPressureOverrideConfirmed,
-              setOverrideReason: ctx.setPressureOverrideReason,
-              refreshDecision: ctx.refreshPressureDecision,
-            })}
+            ${ctx.flowType === 'review-pr'
+              ? nothing
+              : renderDispatchCandidateSelection({
+                  project: ctx.project,
+                  slotOverride: ctx.selectedSlotOverride,
+                  loadingCandidates: ctx.loadingCandidates,
+                  candidateRefreshFailed: ctx.candidateRefreshFailed,
+                  candidates: ctx.candidates,
+                  dispatchableCandidates: ctx.dispatchableCandidates,
+                  nudgeIntents: ctx.nudgeIntents,
+                  nudgeIntentVersion: ctx.nudgeIntentVersion,
+                  sameTaskSlot: ctx.sameTaskSlot,
+                  candidateDispatchable: ctx.candidateDispatchable,
+                  pressureOverrideAvailable: ctx.pressureOverrideAvailable,
+                  slotSummaryLabel: ctx.slotSummaryLabel,
+                  selectSlot: ctx.selectSlot,
+                  allowAutomaticSlot: ctx.allowAutomaticSlot,
+                  refreshSlots: ctx.refreshSlots,
+                  setNudgeIntent: ctx.setNudgeIntent,
+                  beginPressureOverride: ctx.beginPressureOverride,
+                })}
+            ${ctx.flowType === 'review-pr'
+              ? nothing
+              : renderDispatchPressurePanel({
+                  decision: ctx.selectedPressureDecision,
+                  overrideConfirmed: ctx.pressureOverrideConfirmed,
+                  overrideReason: ctx.pressureOverrideReason,
+                  setOverrideConfirmed: ctx.setPressureOverrideConfirmed,
+                  setOverrideReason: ctx.setPressureOverrideReason,
+                  refreshDecision: ctx.refreshPressureDecision,
+                })}
             ${renderActionFooter(ctx)}
           `
         : nothing}

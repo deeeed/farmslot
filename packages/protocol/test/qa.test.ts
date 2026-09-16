@@ -1,0 +1,165 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { prReviewPurpose, samePRReviewOptions } from '../src/contracts/pr-rules.js';
+import {
+  type ProjectQaConfig,
+  resolveReviewQaDispatch,
+  selectQaProfile,
+  validateQaConfig,
+} from '../src/contracts/qa.js';
+import { assertPRReviewOptions } from '../src/integrations/pr-rule-config.js';
+
+const config: ProjectQaConfig = {
+  default_profile: 'changes',
+  profiles: [
+    {
+      id: 'changes',
+      title: 'Validate changes',
+      template_id: 'validation/autonomous',
+      inputs: { scope: { kind: 'window', hours: 24 }, domain: 'payments' },
+    },
+    { id: 'candidate', title: 'Validate candidate', template_id: 'candidate/validation' },
+  ],
+};
+
+test('each farm controls its default and explicit selections stay in that farm', () => {
+  assert.equal(selectQaProfile(config).profile.id, 'changes');
+  assert.equal(selectQaProfile(config, 'candidate').profile.template_id, 'candidate/validation');
+  const other: ProjectQaConfig = {
+    default_profile: 'quick',
+    profiles: [{ id: 'quick', title: 'Quick check', template_id: 'check/default' }],
+  };
+  assert.equal(selectQaProfile(other).profile.id, 'quick');
+  assert.throws(() => selectQaProfile(other, 'candidate'), /does not exist in this farm/);
+  assert.throws(() => selectQaProfile(undefined), /no QA presets/);
+});
+
+test('explicit inputs replace defaults without interpreting project scope semantics', () => {
+  const selected = selectQaProfile(config, undefined, { scope: { kind: 'candidate', ref: 'v2' } });
+  assert.deepEqual(selected.inputs, {
+    scope: { kind: 'candidate', ref: 'v2' },
+    domain: 'payments',
+  });
+  assert.deepEqual(config.profiles[0].inputs?.scope, { kind: 'window', hours: 24 });
+});
+
+test('selected profile and nested inputs are detached from configuration and caller edits', () => {
+  const local = JSON.parse(JSON.stringify(config)) as ProjectQaConfig;
+  const inputs = { targets: ['one'] };
+  const selected = selectQaProfile(local, undefined, inputs);
+  local.profiles[0].title = 'Changed';
+  local.profiles[0].inputs!.scope = 'changed';
+  inputs.targets.push('two');
+  assert.equal(selected.profile.title, 'Validate changes');
+  assert.deepEqual(selected.inputs.scope, { kind: 'window', hours: 24 });
+  assert.deepEqual(selected.inputs.targets, ['one']);
+});
+
+test('invalid defaults and duplicate IDs cannot silently select a different workflow', () => {
+  assert.throws(
+    () => validateQaConfig({ ...config, default_profile: 'missing' }),
+    /does not exist/,
+  );
+  assert.throws(
+    () => validateQaConfig({ ...config, profiles: [config.profiles[0], config.profiles[0]] }),
+    /Duplicate QA preset/,
+  );
+  assert.throws(() => selectQaProfile(config, ''), /nonempty/);
+});
+
+test('presets reject embedded workflow fields and invalid input values', () => {
+  assert.throws(
+    () => validateQaConfig({ ...config, profiles: [{ ...config.profiles[0], steps: ['launch'] }] }),
+    /steps is not a supported preset field/,
+  );
+  assert.throws(
+    () =>
+      validateQaConfig({ ...config, profiles: [{ ...config.profiles[0], inputs: { n: NaN } }] }),
+    /JSON values/,
+  );
+  assert.throws(() => validateQaConfig({ default_profile: 'x', profiles: [] }), /at least one/);
+});
+
+test('explicit live review becomes QA with the original settings retained', () => {
+  const selected = resolveReviewQaDispatch(
+    { flowType: 'review-pr', reviewValidationDepth: 'full-live', reviewTier: 'full' },
+    config,
+  );
+  assert.equal(selected?.flowType, 'qa');
+  assert.equal(selected?.qa?.profile.id, 'changes');
+  assert.deepEqual(selected?.contract.legacy, { validationDepth: 'full-live', tier: 'full' });
+});
+
+test('ambiguous legacy settings require a choice and cannot silently become static', () => {
+  for (const input of [
+    { reviewTier: 'full' },
+    { recipeStrategy: 'smoke' },
+    { reviewValidationDepth: 'static-code', reviewTier: 'standard' },
+    { reviewValidationDepth: 'static-code', recipeStrategy: 'full-qa' },
+  ]) {
+    assert.throws(
+      () => resolveReviewQaDispatch({ flowType: 'review-pr', ...input }, config),
+      /ambiguous/,
+    );
+  }
+  assert.throws(
+    () => resolveReviewQaDispatch({ flowType: 'qa', reviewValidationDepth: 'static-code' }, config),
+    /conflicts/,
+  );
+  assert.throws(
+    () => resolveReviewQaDispatch({ flowType: 'review-pr', reviewValidationDepth: 'full-live' }),
+    /Configure this farm/,
+  );
+});
+
+test('modern static Review has no implicit QA and unrelated flows cannot smuggle QA inputs', () => {
+  assert.deepEqual(resolveReviewQaDispatch({ flowType: 'review-pr' }), {
+    flowType: 'review-pr',
+    contract: { version: 1 },
+  });
+  assert.equal(resolveReviewQaDispatch({ flowType: 'dev' }), undefined);
+  assert.throws(
+    () => resolveReviewQaDispatch({ flowType: 'review-pr', qaProfileId: 'changes' }, config),
+    /Static Review cannot/,
+  );
+  assert.throws(
+    () => resolveReviewQaDispatch({ flowType: 'dev', qaInputs: {} }, config),
+    /require the QA flow/,
+  );
+});
+
+test('review intake accepts modern workflows and distinguishes QA profile/input purposes', () => {
+  const review = {
+    sessionIntent: 'resume' as const,
+    scope: 'incremental' as const,
+    workflow: 'review' as const,
+  };
+  const qa = {
+    ...review,
+    workflow: 'qa' as const,
+    qaProfileId: 'change-proof',
+    qaInputs: { a: 1, b: { c: true } },
+  };
+  assert.doesNotThrow(() => assertPRReviewOptions(review));
+  assert.doesNotThrow(() => assertPRReviewOptions(qa));
+  assert.notEqual(prReviewPurpose(review), prReviewPurpose(qa));
+  assert.notEqual(prReviewPurpose(qa), prReviewPurpose({ ...qa, qaProfileId: 'another' }));
+  assert.equal(prReviewPurpose(qa), prReviewPurpose({ ...qa, qaInputs: { b: { c: true }, a: 1 } }));
+  assert.equal(
+    samePRReviewOptions(review, {
+      sessionIntent: 'resume',
+      scope: 'incremental',
+      validationDepth: 'static-code',
+    }),
+    true,
+  );
+  assert.throws(
+    () => assertPRReviewOptions({ ...review, qaProfileId: 'change-proof' }),
+    /require the QA workflow/,
+  );
+  assert.throws(
+    () => assertPRReviewOptions({ ...qa, validationDepth: 'static-code' }),
+    /conflicts/,
+  );
+});

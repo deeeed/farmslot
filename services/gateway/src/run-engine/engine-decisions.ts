@@ -8,6 +8,7 @@ import {
   type EvidenceManifestEntry,
   isTerminalRunStatus,
   type PRReviewOptions,
+  prReviewWorkflow,
   type RepeatReviewContext,
   type ReviewChainEntry,
   reviewChainForRun,
@@ -439,7 +440,7 @@ export function automatedRepeatReviewSelection(
     ...context,
     contextMode: reuse ? 'reuse' : 'fresh',
     reviewScope: incremental ? 'incremental' : 'full',
-    validationDepth: options.validationDepth,
+    validationDepth: prReviewWorkflow(options) === 'qa' ? 'full-live' : 'static-code',
     sessionIntent: incremental ? 'resume' : 'reset',
     ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
   };

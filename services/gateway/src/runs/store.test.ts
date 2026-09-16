@@ -1038,3 +1038,40 @@ test('pending backlog reconciliation blocks archive and delete eviction', async 
   await assert.rejects(() => deleteRun(run.id), /backlog reconciliation is pending/);
   assert.ok(getRun(run.id), 'reconciliation evidence must remain live until it settles');
 });
+
+test('direct publication authority is detached, immutable and never accepted from public parameters', async (t) => {
+  const direct = {
+    ownerId: 'owner',
+    pr: { host: 'github.com', repo: 'example/app', number: 42 },
+    requested: true,
+    policy: {
+      enabled: true as const,
+      source: 'request' as const,
+      teamId: 'team',
+      account: { host: 'github.com', login: 'reviewer' },
+    },
+  };
+  const params = {
+    flowType: 'review-pr' as const,
+    project: 'fixture',
+    ticketOrPr: 'example/app#42',
+  };
+  assert.throws(
+    () => createRun({ ...params, reviewPublication: { direct } } as never),
+    /cannot be supplied/,
+  );
+  const run = createRun(params, { createdByPrincipalId: 'owner', directReviewPublication: direct });
+  t.after(() => cleanupRun(run.id));
+  direct.policy.account.login = 'other';
+  assert.equal(run.reviewPublication?.direct?.policy.account?.login, 'reviewer');
+  assert.throws(
+    () =>
+      updateRun(run.id, {
+        reviewPublication: {
+          ...run.reviewPublication!,
+          direct: { ...run.reviewPublication!.direct!, ownerId: 'other' },
+        },
+      }),
+    /immutable/,
+  );
+});

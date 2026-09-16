@@ -7,6 +7,7 @@ import {
   type PRExecutionProfile,
   type ProjectConfig,
   type PRReviewOptions,
+  prReviewWorkflow,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -48,8 +49,8 @@ export class PRReviewPolicyEditor extends LitElement {
   render() {
     const farm = this.farms.find((item) => item.name === this.project);
     const selectedReview = this.review ?? this.inheritedReview;
-    const runtime = selectedReview?.validationDepth === 'full-live';
-    const defaults = runtime ? undefined : farm?.workflowDefaults?.['review-pr'];
+    const workflow = prReviewWorkflow(selectedReview);
+    const defaults = farm?.workflowDefaults?.[workflow === 'qa' ? 'qa' : 'review-pr'];
     const review = selectedReview ?? defaults?.review ?? DEFAULT_PR_REVIEW_OPTIONS;
     const execution = this.execution ?? this.inheritedExecution ?? defaults?.execution;
     return html`<fieldset ?disabled=${this.disabled}>
@@ -60,12 +61,15 @@ export class PRReviewPolicyEditor extends LitElement {
           .checked=${!!this.review}
           @change=${(event: Event) =>
             this.change({
-              review: (event.target as HTMLInputElement).checked ? { ...review } : undefined,
+              review: (event.target as HTMLInputElement).checked
+                ? { ...review, publishReview: undefined }
+                : undefined,
             })}
         />Set review options here</label
       >
       <p class="muted">${this.review ? 'Explicit review options' : 'Inherited review options'}</p>
       <pr-review-options-picker
+        .qa=${farm?.qa}
         .testIdPrefix=${this.testIdPrefix}
         .value=${review}
         .disabled=${this.disabled || !this.review}
@@ -83,7 +87,7 @@ export class PRReviewPolicyEditor extends LitElement {
             this.change({
               execution: (event.target as HTMLInputElement).checked
                 ? structuredClone(
-                    execution ?? (runtime ? newPRExecution() : newPRWorkspaceExecution()),
+                    execution ?? (workflow === 'qa' ? newPRExecution() : newPRWorkspaceExecution()),
                   )
                 : undefined,
             })}
@@ -95,7 +99,7 @@ export class PRReviewPolicyEditor extends LitElement {
             </p>
             <pr-execution-picker
               .pools=${this.pools}
-              .resource=${runtime ? 'slot' : 'workspace'}
+              .resource=${workflow === 'qa' ? 'slot' : 'workspace'}
               .value=${execution}
               .slots=${this.slots}
               .project=${this.project}

@@ -9,12 +9,15 @@ import {
   type PRExecutionProfile,
   type PRRulePreview,
   type PRWorkspaceExecutionProfile,
+  resolveReviewQaDispatch,
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot, removeQueueItemInternalNow } from '../backlog/dispatch-queue.js';
+import { migrateQueuedReviewQa } from '../backlog/review-qa-migration.js';
 import { createRun, deleteRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { PRReviewDispatcher } from './dispatch.js';
+import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleService } from './service.js';
 import { PRRuleStore } from './store.js';
 
@@ -98,7 +101,8 @@ async function fixture(t: test.TestContext, profile: PRExecutionProfile = execut
   await store.applyPreview('owner', preview);
   const intent = store.snapshot().intents[0];
   t.after(async () => {
-    for (const item of getQueueSnapshot().filter((entry) => entry.prWork?.sourceId === intent.id))
+    const ids = new Set(store.snapshot().intents.map((entry) => entry.id));
+    for (const item of getQueueSnapshot().filter((entry) => ids.has(entry.prWork?.sourceId ?? '')))
       await removeQueueItemInternalNow(item.id, 'test-cleanup');
   });
   const dispatcher = (current: PRRuleStore) =>
@@ -145,23 +149,32 @@ test('review admission reuses one durable queue entry across concurrent ticks an
   assert.equal(next.store.intent(intent.id)?.queueItemId, queued[0].id);
 });
 
-test('changing static review to full-live creates distinct work that survives restart', async (t) => {
+test('changing static review to QA creates distinct work that survives restart', async (t) => {
   const { store, intent, dispatcher, preview, restart } = await fixture(t);
   await dispatcher.reconcile();
   const first = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
-  preview.items[0].review = { sessionIntent: 'reset', scope: 'full', validationDepth: 'full-live' };
+  preview.items[0].review = {
+    sessionIntent: 'reset',
+    scope: 'full',
+    workflow: 'qa',
+    qaProfileId: 'changes',
+    qaInputs: { scope: 'pr' },
+  };
   preview.items[0].execution = {
     slotPolicy: { kind: 'exact', slotId: 'test-slot' },
     models: execution.models,
   };
   await store.applyPreview('owner', preview);
   await dispatcher.reconcile();
-  const current = getQueueSnapshot().find(
-    (item) => item.flowType === 'review-pr' && item.reviewValidationDepth === 'full-live',
-  )!;
+  const current = getQueueSnapshot().find((item) => item.flowType === 'qa')!;
   assert.notEqual(first.id, current.id);
   assert.notEqual(current.prWork?.sourceId, intent.id);
-  assert.equal(current.reviewValidationDepth, 'full-live');
+  assert.equal(current.reviewValidationDepth, undefined);
+  assert.equal(current.qaProfileId, 'changes');
+  assert.deepEqual(current.qaInputs, { scope: 'pr' });
+  assert.match(current.initialContext ?? '', /runtime evidence/);
+  assert.equal((await dispatcher.prepare({ ...current, qaProfileId: 'different' })).ready, false);
+  assert.equal((await dispatcher.prepare({ ...current, flowType: 'review-pr' })).ready, false);
   assert.deepEqual(current.prWork?.review?.options, preview.items[0].review);
   assert.equal((await dispatcher.prepare(first)).ready, false);
   const next = await restart();
@@ -184,6 +197,81 @@ test('removing an unstarted automatic review holds it instead of silently requeu
   await dispatcher.reconcile();
   assert.match(store.intent(intent.id)?.dispatchHold ?? '', /removed/);
   assert.equal(getQueueSnapshot().filter((item) => item.prWork?.sourceId === intent.id).length, 0);
+});
+
+test('QA completion uses the verified runtime receipt and cannot inherit static review evidence', async (t) => {
+  for (const receipt of ['missing', 'wrong-head', 'empty', 'invalid-digest', 'valid']) {
+    const valid = receipt === 'valid';
+    const { store, dispatcher, preview, restart } = await fixture(t);
+    preview.items[0].review = {
+      sessionIntent: 'resume',
+      scope: 'full',
+      workflow: 'qa',
+      qaProfileId: 'changes',
+    };
+    preview.items[0].execution = {
+      slotPolicy: { kind: 'exact', slotId: 'test-slot' },
+      models: execution.models,
+    };
+    await store.applyPreview('owner', preview);
+    await dispatcher.reconcile();
+    const intent = store
+      .snapshot()
+      .intents.find((item) =>
+        item.contributions.some((source) => source.eligible && source.review?.workflow === 'qa'),
+      )!;
+    const queued = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
+    const qa = resolveReviewQaDispatch(
+      { flowType: 'qa', qaProfileId: 'changes' },
+      {
+        default_profile: 'changes',
+        profiles: [{ id: 'changes', title: 'Changes', template_id: 'validation/shared' }],
+      },
+    );
+    const run = createRun(
+      {
+        flowType: 'qa',
+        project: 'project',
+        ticketOrPr: `owner/repo#${intent.pr.number}`,
+        slotId: 'test-slot',
+      },
+      { deferBackgroundPersist: true, reviewQa: qa },
+    );
+    run.prWork = queued.prWork;
+    run.status = 'done';
+    run.reviewResult = {
+      reviewMd: 'Static report',
+      recommendation: 'APPROVE',
+      lineComments: [],
+      reviewSnapshot: {
+        headSha: intent.headSha,
+        source: 'github-pr',
+        capturedAt: new Date().toISOString(),
+      },
+    };
+    if (receipt !== 'missing')
+      run.steps.find((step) => step.name === 'monitor')!.outputs = {
+        qaEvidence: {
+          headSha: receipt === 'wrong-head' ? 'other-head' : intent.headSha,
+          packages:
+            receipt === 'empty'
+              ? []
+              : [
+                  {
+                    path: 'suite/smoke',
+                    digest: receipt === 'invalid-digest' ? 'invalid' : `sha256:${'a'.repeat(64)}`,
+                  },
+                ],
+        },
+      };
+    run.steps.find((step) => step.name === 'monitor')!.status = 'done';
+    await persistRunNow(run, 'qa-completion-test');
+    t.after(() => deleteRun(run.id));
+    const restored = await restart();
+    await restored.dispatcher.reconcile();
+    assert.equal(restored.store.intent(intent.id)?.status, valid ? 'completed' : 'failed', receipt);
+    assert.equal(restored.store.intent(intent.id)?.reviewedSha, valid ? intent.headSha : undefined);
+  }
 });
 
 test('a durable run created before the source link is recovered without another queue or run', async (t) => {
@@ -402,4 +490,91 @@ test('GitHub approval and an existing review on this head remove queued duplicat
   await dispatcher.reconcile();
   assert(!getQueueSnapshot().some((item) => item.prWork?.sourceId === intent.id));
   assert.match(store.intent(intent.id)?.waitingReason ?? '', /Review is not needed/);
+});
+
+test('publication selection and account are frozen into queue admission and cannot be substituted', async (t) => {
+  const { store, intent, dispatcher, preview } = await fixture(t);
+  preview.items[0].review = {
+    sessionIntent: 'reset',
+    scope: 'full',
+    workflow: 'review',
+    publishReview: true,
+  };
+  preview.items[0].policySources = { execution: 'rule', review: 'rule', publication: 'rule' };
+  await store.applyPreview('owner', preview);
+  await dispatcher.reconcile();
+  const queued = getQueueSnapshot().find((item) => item.prWork?.sourceId === intent.id)!;
+  assert.equal(queued.prWork?.publication?.enabled, true);
+  assert.equal(queued.prWork?.publication?.source, 'rule');
+  assert.equal(queued.prWork?.publication?.teamId, preview.teamId);
+  assert.deepEqual(
+    queued.prWork?.publication?.account,
+    store.team(preview.teamId, 'owner').config.account,
+  );
+  const substituted = {
+    ...queued,
+    prWork: {
+      ...queued.prWork!,
+      publication: {
+        ...queued.prWork!.publication!,
+        account: { host: 'github.com', login: 'other' },
+      },
+    },
+  };
+  const result = await dispatcher.prepare(substituted);
+  assert.equal(result.ready, false);
+  if (!result.ready) assert.match(result.reason, /publication policy or account changed/);
+});
+
+test('farm QA inputs stay identical through PR preview, queue migration and admission', async (t) => {
+  const { store, dispatcher, preview } = await fixture(t);
+  const qa = {
+    default_profile: 'pr',
+    profiles: [
+      { id: 'pr', title: 'PR QA', template_id: 'validation/shared', inputs: { scope: 'pr' } },
+    ],
+  };
+  const workflowDefaults = {
+    qa: {
+      review: {
+        workflow: 'qa' as const,
+        sessionIntent: 'reset' as const,
+        scope: 'full' as const,
+        qaInputs: { domain: 'payments', chain: 'default' },
+      },
+    },
+  };
+  preview.items[0].review = {
+    workflow: 'qa',
+    sessionIntent: 'reset',
+    scope: 'full',
+    qaInputs: { chain: 'requested' },
+  };
+  preview.items[0].execution = {
+    slotPolicy: { kind: 'exact', slotId: 'test-slot' },
+    models: execution.models,
+  };
+  resolvePreviewQaPreset(preview.items[0], qa, workflowDefaults);
+  await store.applyPreview('owner', preview);
+  await dispatcher.reconcile();
+  const queued = getQueueSnapshot().find(
+    (item) =>
+      item.prWork?.sourceId ===
+      store
+        .snapshot()
+        .intents.find((item) =>
+          item.contributions.some((source) => source.review?.workflow === 'qa'),
+        )?.id,
+  )!;
+  assert(queued);
+  migrateQueuedReviewQa(queued, qa, workflowDefaults);
+  assert.deepEqual(queued.qaInputs, { scope: 'pr', domain: 'payments', chain: 'requested' });
+  assert.deepEqual(queued.qaInputs, queued.prWork?.review?.options.qaInputs);
+  const prepared = await dispatcher.prepare(queued);
+  assert.equal(prepared.ready, true, JSON.stringify(prepared));
+  await dispatcher.reconcile();
+  assert.equal(
+    getQueueSnapshot().find((item) => item.prWork?.sourceId === queued.prWork?.sourceId)?.id,
+    queued.id,
+  );
 });

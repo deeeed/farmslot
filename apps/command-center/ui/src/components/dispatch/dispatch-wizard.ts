@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 
@@ -64,6 +64,7 @@ import {
   projectApps,
   projectPrepareProfiles,
   publicationReviewsEnabled,
+  qaDispatchFields,
   selectedDispatchApp,
   selectedTaskTemplate,
   selectedTemplateMode,
@@ -78,11 +79,7 @@ import {
   requestProjectConfigs,
   requestUnfilteredTemplateOptions,
 } from './dispatch-wizard-loaders.js';
-import {
-  parseDispatchWizardHash,
-  shouldUsePrefillSlot,
-  syncPublicationReviewsHash,
-} from './dispatch-wizard-prefill.js';
+import { parseDispatchWizardHash, syncPublicationReviewsHash } from './dispatch-wizard-prefill.js';
 import {
   candidateDispatchable,
   dispatchableCandidates,
@@ -126,6 +123,8 @@ export class DispatchWizard extends DispatchWizardState {
     if (this.mockMode && changed.has('mockProjectConfigs') && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
       this._syncSelectedAppForProject(this._project);
+      this._syncWorkflowSelection();
+      this._syncFleet(getState());
     }
     if (this.mockMode && changed.has('mockCandidates') && this._project) {
       void this._fetchCandidates();
@@ -161,6 +160,8 @@ export class DispatchWizard extends DispatchWizardState {
     if (this.mockMode && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
       this._syncSelectedAppForProject(this._project);
+      this._syncWorkflowSelection();
+      this._syncFleet(getState());
     } else {
       void this._loadProjectConfigs();
     }
@@ -241,6 +242,7 @@ export class DispatchWizard extends DispatchWizardState {
     const { projects: fp, machines: fm } = s.globalFilters;
     const fleetView = deriveDispatchFleetViewState({
       slots: s.fleet?.slots ?? [],
+      configuredProjects: this._projectConfigs.map((project) => project.name),
       currentProject: this._project,
       globalProjectFilters: fp,
       globalMachineFilters: fm,
@@ -251,6 +253,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (fleetView.projectAutoSelected) {
       this._project = fleetView.project;
       this._slotOverride = '';
+      this._slotOverrideExplicit = false;
       this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
       this._applyVisibleCandidates();
@@ -270,6 +273,7 @@ export class DispatchWizard extends DispatchWizardState {
     }
 
     this._allProjectSlots = fleetView.allProjectSlots;
+    this._syncWorkflowSelection();
     this._queueItems = s.queueItems ?? [];
 
     const machineSig = fleetView.machineFilterSignature;
@@ -294,7 +298,7 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _tryHydrateComparisonParentEngine(runs: readonly Run[]): void {
     const parentTransport = runs.find((run) => run.id === this._comparisonParentRunId);
-    if (parentTransport && !this._transportChosen) {
+    if (parentTransport && !this._transportChosen && this._flowType !== 'review-pr') {
       this._transport = parentTransport.transport ?? 'tmux';
       this._transportChosen = true;
     }
@@ -325,6 +329,8 @@ export class DispatchWizard extends DispatchWizardState {
     if (this.mockMode && this.mockProjectConfigs) {
       this._projectConfigs = this.mockProjectConfigs;
       this._syncSelectedAppForProject(this._project);
+      this._syncWorkflowSelection();
+      this._syncFleet(getState());
       return;
     }
     if (this._loadingProjectConfigs) return;
@@ -332,6 +338,8 @@ export class DispatchWizard extends DispatchWizardState {
     try {
       this._projectConfigs = await requestProjectConfigs();
       this._syncSelectedAppForProject(this._project);
+      this._syncWorkflowSelection();
+      this._syncFleet(getState());
     } catch (err) {
       // Config loading is optional for single-app projects; keep the wizard usable
       // and retry on the next reconnect/manual project selection.
@@ -354,6 +362,15 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _applyVisibleCatalog(): void {
+    if (this._flowType === 'review-pr' || this._flowType === 'qa') {
+      this._executionTemplates = null;
+      this._selectedExecutionTemplateId = '';
+      this._templateOptions = [];
+      this._selectedTaskTemplateFileName = '';
+      this._templateOptionsError = '';
+      this._templateOptionsLoading = false;
+      return;
+    }
     if (!this._project || !this._flowType) {
       const cleared = clearTemplateOptionsState();
       this._templateOptions = cleared.options;
@@ -416,7 +433,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _prefetchMissingCatalogs(projects: readonly string[]): void {
-    if (this.mockMode) return;
+    if (this.mockMode || this._flowType === 'review-pr' || this._flowType === 'qa') return;
     for (const project of projects) {
       if (!project || this._templateOptionsCache.has(project)) continue;
       void requestUnfilteredTemplateOptions(project)
@@ -432,7 +449,12 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _fetchTemplateOptions(): Promise<void> {
-    if (!this._project || this.mockMode) {
+    if (
+      !this._project ||
+      this.mockMode ||
+      this._flowType === 'review-pr' ||
+      this._flowType === 'qa'
+    ) {
       this._applyVisibleCatalog();
       return;
     }
@@ -530,14 +552,20 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _selectProject(project: string, autoProject = ''): void {
     this._closeExecutionTemplatePreview(false);
+    const preservePin = Boolean(
+      autoProject && project === this._project && this._slotOverrideExplicit,
+    );
     this._project = project;
     this._autoProject = autoProject;
-    this._slotOverride = '';
+    if (!preservePin) {
+      this._slotOverride = '';
+      this._slotOverrideExplicit = false;
+    }
     this._restoreTemplatePreference();
     this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
-    this._applyVisibleCandidates('');
+    this._applyVisibleCandidates(this._slotOverride);
     void this._fetchTemplateOptions();
     void this._fetchCandidates({ silent: this._allCandidates.length > 0 });
     this._checkActiveRunConflict();
@@ -563,6 +591,10 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _setTicket(ticketId: string): void {
+    if (ticketId !== this._ticketId && this._nudgeIntents.size) {
+      this._nudgeIntents.clear();
+      this._nudgeIntentVersion++;
+    }
     this._ticketId = ticketId;
     this._normalizedTicket = '';
     this._error = '';
@@ -581,6 +613,12 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _applyVisibleCandidates(previousOverride?: string): void {
+    if (this._flowType === 'review-pr') {
+      this._candidates = [];
+      this._slotOverride = '';
+      this._slotOverrideExplicit = false;
+      return;
+    }
     let visible = filterDispatchCandidatesForProject(this._allCandidates, this._project);
     if (
       this._transport === 'native' &&
@@ -600,6 +638,15 @@ export class DispatchWizard extends DispatchWizardState {
   private async _fetchCandidates(
     options: { silent?: boolean; force?: boolean } = {},
   ): Promise<void> {
+    if (this._flowType === 'review-pr') {
+      this._fetchGen++;
+      this._candidates = [];
+      this._slotOverride = '';
+      this._slotOverrideExplicit = false;
+      this._loadingCandidates = false;
+      this._candidateRefreshFailed = false;
+      return;
+    }
     const st = getState();
     const machines = [...st.globalFilters.machines].sort();
     this._lastFetchMachines = machines.join(',');
@@ -653,7 +700,7 @@ export class DispatchWizard extends DispatchWizardState {
       if (!silent) {
         this._allCandidates = [];
         this._candidates = [];
-        this._slotOverride = '';
+        if (!this._slotOverrideExplicit) this._slotOverride = '';
       }
     } finally {
       if (gen === this._fetchGen) this._loadingCandidates = false;
@@ -670,6 +717,8 @@ export class DispatchWizard extends DispatchWizardState {
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
     if (
+      this._flowType === 'review-pr' ||
+      this._flowType === 'qa' ||
       project !== 'farmslot-farm' ||
       !this._flowType ||
       !this._ticketId.trim() ||
@@ -706,6 +755,7 @@ export class DispatchWizard extends DispatchWizardState {
     const next = deriveCandidateResultState({
       candidates: res.candidates,
       previousOverride: prevOverride,
+      explicitOverride: this._slotOverrideExplicit,
       nudgeIntents: this._nudgeIntents,
       flowType: this._flowType,
       normalizedTicket: this._normalizedTicket,
@@ -849,7 +899,7 @@ export class DispatchWizard extends DispatchWizardState {
   };
 
   private _exitComparisonMode(): void {
-    this._transport = 'tmux';
+    this._transport = this._flowType === 'review-pr' ? 'native' : 'tmux';
     this._transportChosen = false;
     const next = exitedComparisonModeState();
     this._comparisonLane = next.comparisonLane;
@@ -883,11 +933,19 @@ export class DispatchWizard extends DispatchWizardState {
     this._model = next.model;
     this._ticketId = run.ticketOrPr;
     this._normalizedTicket = '';
-    this._assignFlowType(run.flowType);
+    this._assignFlowType(
+      run.flowType === 'review-pr' && run.reviewValidationDepth === 'full-live'
+        ? 'qa'
+        : run.flowType,
+    );
     this._autoFlowType = false;
     this._autoProject = '';
     if (run.project) {
       this._selectProject(run.project);
+    }
+    if (run.flowType === 'qa' && run.qa) {
+      this._qaProfileId = run.qa.profile.id;
+      this._qaInputsText = JSON.stringify(run.qa.inputs, null, 2);
     }
     this._comparePickerOpen = false;
     this._comparisonParentEngineHydrated = true;
@@ -968,6 +1026,10 @@ export class DispatchWizard extends DispatchWizardState {
       this._assignFlowType(prefill.flowType);
       if (prefill.ticketId) this._ticketId = prefill.ticketId;
     }
+    if (prefill.reviewMachine) this._reviewMachine = prefill.reviewMachine;
+    if (prefill.qaProfileId) this._qaProfileId = prefill.qaProfileId;
+    if (prefill.qaInputs !== undefined) this._qaInputsText = prefill.qaInputs;
+    this._legacyReviewPlacementError = prefill.configurationError ?? '';
     if (prefill.publicationReviewLoops.length > 0) {
       this._publicationReviewLoops = prefill.publicationReviewLoops;
       this._nextPublicationReviewLoopId = prefill.publicationReviewLoops.length + 1;
@@ -1005,9 +1067,9 @@ export class DispatchWizard extends DispatchWizardState {
     if (prefill.project) {
       this._project = prefill.project;
       this._restoreTemplatePreference();
-      const machinesActive = getState().globalFilters.machines;
-      if (shouldUsePrefillSlot(prefill.slot, machinesActive)) {
-        this._slotOverride = prefill.slot ?? '';
+      if (prefill.slot) {
+        this._slotOverride = prefill.slot;
+        this._slotOverrideExplicit = true;
       }
       void this._fetchCandidates();
       void this._fetchTemplateOptions();
@@ -1038,6 +1100,7 @@ export class DispatchWizard extends DispatchWizardState {
   private _beginPressureOverride(slotId: string, intent?: 'nudge' | 'fresh'): void {
     this._closeExecutionTemplatePreview(false);
     this._slotOverride = slotId;
+    this._slotOverrideExplicit = true;
     this._resetPressureOverrideDraft();
     // A rejected busy nudge candidate keeps its explicit reuse intent through
     // the override flow. The created run carries nudgeReuse/freshReuse, never
@@ -1062,6 +1125,7 @@ export class DispatchWizard extends DispatchWizardState {
     // also their pick of the slot. Without this, the intent flips on a row that's not the
     // active one and the next Dispatch click ignores it.
     this._slotOverride = slotId;
+    this._slotOverrideExplicit = true;
     this._applyVisibleCatalog();
   }
 
@@ -1088,6 +1152,17 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonParentRunId: this._comparisonParentRunId,
       pressureOverrideReady: this._pressureOverrideReady(),
     });
+    const workflowReason = this._workflowSelectionError();
+    if (this._flowType === 'review-pr') {
+      return {
+        ...base,
+        allowedSlots: undefined,
+        dispatchBlockedReason: workflowReason ?? base.dispatchBlockedReason,
+        queueBlockedReason: workflowReason ?? base.queueBlockedReason,
+        dispatchBlocked: base.dispatchBlocked || !!workflowReason,
+        queueBlocked: base.queueBlocked || !!workflowReason,
+      };
+    }
     const catalogView =
       this._executionTemplates && this._flowType
         ? deriveExecutionTemplatePickerView(
@@ -1101,15 +1176,17 @@ export class DispatchWizard extends DispatchWizardState {
             },
           )
         : null;
-    const templateReason = this._templateOptionsError
-      ? 'Execution-template options are unavailable.'
-      : this._templateOptionsLoading
-        ? 'Loading execution-template options.'
-        : catalogView && !this._selectedExecutionTemplateId
-          ? catalogView.rows.length === 0
-            ? 'No compatible execution template is available.'
-            : 'Select one exact execution template.'
-          : null;
+    const templateReason =
+      workflowReason ??
+      (this._templateOptionsError
+        ? 'Execution-template options are unavailable.'
+        : this._templateOptionsLoading
+          ? 'Loading execution-template options.'
+          : catalogView && !this._selectedExecutionTemplateId
+            ? catalogView.rows.length === 0
+              ? 'No compatible execution template is available.'
+              : 'Select one exact execution template.'
+            : null);
     const profileContext = {
       runner: this._runner,
       slotId: this._slotOverride,
@@ -1169,13 +1246,16 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _dispatchPayloadDraft() {
-    const mode = this._executionTemplates
-      ? this._catalogMode
-      : selectedTemplateMode(
-          this._flowType,
-          this._templateOptions,
-          this._selectedTaskTemplateFileName,
-        );
+    const mode =
+      this._flowType === 'review-pr' || this._flowType === 'qa'
+        ? 'autonomous'
+        : this._executionTemplates
+          ? this._catalogMode
+          : selectedTemplateMode(
+              this._flowType,
+              this._templateOptions,
+              this._selectedTaskTemplateFileName,
+            );
     const taskTemplate = this._executionTemplates
       ? undefined
       : selectedTaskTemplate(this._templateOptions, this._selectedTaskTemplateFileName);
@@ -1205,14 +1285,18 @@ export class DispatchWizard extends DispatchWizardState {
           }
         : undefined;
     return buildDispatchWizardPayloadDraft({
-      transport: this._transport,
+      transport: this._flowType === 'review-pr' ? 'native' : this._transport,
       nativeProfile:
-        this._transport === 'native' ? this._nativeProfileSelection?.profile : undefined,
+        this._transport === 'native' && this._flowType !== 'review-pr'
+          ? this._nativeProfileSelection?.profile
+          : undefined,
       pressureOverride,
       pressureAdmissionRef,
       flowType: this._flowType,
       project: this._project,
       ticketId: this._ticketId,
+      reviewMachine: this._flowType === 'review-pr' ? this._workspaceMachine() : undefined,
+      ...(this._flowType === 'qa' ? this._qaFields() : {}),
       slotOverride: this._slotOverride,
       allowedSlots: this._blockingState().allowedSlots,
       branch: this._resolveTargetBranch(getState().prs),
@@ -1232,8 +1316,7 @@ export class DispatchWizard extends DispatchWizardState {
       }),
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
-      reviewTier: this._reviewTier,
-      reviewValidationDepth: this._reviewValidationDepth,
+
       ...buildPublicationReviewGateParams(
         this._flowType,
         this._runner,
@@ -1283,6 +1366,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _selectFlowType(flowType: FlowType): void {
+    this._legacyReviewPlacementError = '';
     this._assignFlowType(flowType);
     this._autoFlowType = false;
     this._applyVisibleCatalog();
@@ -1294,6 +1378,146 @@ export class DispatchWizard extends DispatchWizardState {
     this._flowType = flowType;
     this._catalogMode = modeForFlow(flowType);
     this._restoreTemplatePreference();
+    this._syncWorkflowSelection();
+  }
+
+  private _syncWorkflowSelection(): void {
+    if (this._flowType !== 'review-pr' && this._flowType !== 'qa') {
+      this._workflowSelectionKey = '';
+      return;
+    }
+    if (this._flowType === 'review-pr') this._transport = 'native';
+    const project = this._projectConfigs.find((entry) => entry.name === this._project);
+    if (!project) return;
+    const key = `${this._project}|${this._flowType}`;
+    if (key === this._workflowSelectionKey) return;
+    const changedContext = !!this._workflowSelectionKey;
+    this._workflowSelectionKey = key;
+    this._catalogMode = 'autonomous';
+    if (changedContext) {
+      this._qaProfileId = '';
+      this._qaInputsText = '';
+      this._reviewMachine = '';
+    }
+    this._nativeProfileSelection = null;
+    this._nativeProfileRefreshVersion++;
+    const execution = project.workflowDefaults?.[this._flowType]?.execution;
+    const model = execution?.models[0];
+    if (model && !this._comparisonLane) {
+      this._runner = model.runner;
+      this._model = model.model;
+      this._effort = (model.effort ?? '') as typeof this._effort;
+    }
+    if (this._flowType === 'qa' && !this._transportChosen)
+      this._transport = execution?.transport ?? 'tmux';
+    if (changedContext || this._flowType === 'review-pr') {
+      this._slotOverride = '';
+      this._slotOverrideExplicit = false;
+    }
+    this._skipPrepare = false;
+    this._prepareProfile = '';
+  }
+
+  private _qaFields() {
+    return qaDispatchFields(
+      this._projectConfigs.find((entry) => entry.name === this._project)?.qa,
+      this._qaProfileId,
+      this._qaInputsText,
+    );
+  }
+
+  private _workspaceMachine(): string {
+    const filters = getState().globalFilters.machines;
+    return this._reviewMachine.trim() || (filters.length === 1 ? filters[0] : '');
+  }
+
+  private _workflowSelectionError(): string | null {
+    if (this._flowType === 'qa') {
+      try {
+        this._qaFields();
+        return null;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    }
+    if (this._flowType !== 'review-pr') return null;
+    if (this._legacyReviewPlacementError) return this._legacyReviewPlacementError;
+    const filters = getState().globalFilters.machines;
+    const machine = this._workspaceMachine();
+    if (filters.length > 1 && !machine)
+      return 'Choose a review machine from the active machine filter.';
+    if (filters.length && machine && !filters.includes(machine))
+      return 'Review machine is outside the active machine filter.';
+    return null;
+  }
+
+  private _renderWorkflowControls() {
+    if (this._flowType === 'review-pr')
+      return html`<div class="config-group">
+        <label class="section-label" for="review-machine">Review machine</label>
+        <input
+          id="review-machine"
+          data-testid="dispatch-review-machine"
+          class="ticket-input"
+          placeholder="Farm default"
+          .value=${this._reviewMachine}
+          @input=${(event: InputEvent) => {
+            this._reviewMachine = (event.target as HTMLInputElement).value;
+            this._legacyReviewPlacementError = '';
+          }}
+        />
+        <p class="section-help">
+          Static source review in a managed workspace. No app slot or preparation is used. Leave the
+          machine empty to inherit farm defaults. Active machine filters still apply.
+        </p>
+        ${this._workflowSelectionError()
+          ? html`<p class="section-help" role="alert">${this._workflowSelectionError()}</p>`
+          : nothing}
+      </div>`;
+    if (this._flowType !== 'qa') return nothing;
+    const config = this._projectConfigs.find((entry) => entry.name === this._project)?.qa;
+    const selectedId = this._qaProfileId || config?.default_profile || '';
+    const selected = config?.profiles.find((profile) => profile.id === selectedId);
+    const error = this._workflowSelectionError();
+    return html`<div class="config-group" data-testid="dispatch-qa-profile-controls">
+      <label class="section-label" for="qa-profile">QA profile</label>
+      <select
+        id="qa-profile"
+        class="ticket-input"
+        data-testid="dispatch-qa-profile"
+        .value=${selectedId}
+        @change=${(event: Event) => {
+          this._qaProfileId = (event.target as HTMLSelectElement).value;
+          this._qaInputsText = '';
+        }}
+      >
+        ${!config
+          ? html`<option value="">No farm QA profiles configured</option>`
+          : config.profiles.map(
+              (profile) =>
+                html`<option value=${profile.id} ?selected=${profile.id === selectedId}>
+                  ${profile.title}${profile.id === config.default_profile ? ' (farm default)' : ''}
+                </option>`,
+            )}
+      </select>
+      ${selected?.description ? html`<p class="section-help">${selected.description}</p>` : nothing}
+      <label class="section-label" for="qa-inputs">Input overrides (JSON)</label>
+      <textarea
+        id="qa-inputs"
+        data-testid="dispatch-qa-inputs"
+        class="ticket-input"
+        rows="4"
+        .value=${this._qaInputsText}
+        placeholder=${JSON.stringify(selected?.inputs ?? {}, null, 2)}
+        @input=${(event: InputEvent) => {
+          this._qaInputsText = (event.target as HTMLTextAreaElement).value;
+        }}
+      ></textarea>
+      <p class="section-help">
+        Leave empty to use the profile inputs. The farm's skill selects its validation recipes.
+      </p>
+      ${error ? html`<p class="section-help" role="alert">${error}</p>` : nothing}
+    </div>`;
   }
 
   private _preferredExecutionTemplateId(): string {
@@ -1401,13 +1625,16 @@ export class DispatchWizard extends DispatchWizardState {
 
   render() {
     const blockers = this._blockingState();
-    const mode = this._executionTemplates
-      ? this._catalogMode
-      : selectedTemplateMode(
-          this._flowType,
-          this._templateOptions,
-          this._selectedTaskTemplateFileName,
-        );
+    const mode =
+      this._flowType === 'review-pr' || this._flowType === 'qa'
+        ? 'autonomous'
+        : this._executionTemplates
+          ? this._catalogMode
+          : selectedTemplateMode(
+              this._flowType,
+              this._templateOptions,
+              this._selectedTaskTemplateFileName,
+            );
     const view = renderDispatchWizardView({
       transport: this._transport,
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
@@ -1473,8 +1700,7 @@ export class DispatchWizard extends DispatchWizardState {
       runner: this._runner,
       model: this._model,
       effort: this._effort,
-      reviewTier: this._reviewTier,
-      reviewValidationDepth: this._reviewValidationDepth,
+      workflowControls: this._renderWorkflowControls(),
       skipPrepare: this._skipPrepare,
       prepareProfiles: projectPrepareProfiles(this._projectConfigs, this._project),
       prepareProfile: this._prepareProfile,
@@ -1555,12 +1781,6 @@ export class DispatchWizard extends DispatchWizardState {
       setEffort: (effort) => {
         this._effort = effort;
       },
-      setReviewTier: (reviewTier) => {
-        this._reviewTier = reviewTier;
-      },
-      setReviewValidationDepth: (depth) => {
-        this._reviewValidationDepth = depth;
-      },
       setSkipPrepare: (skipPrepare) => {
         this._skipPrepare = skipPrepare;
       },
@@ -1615,6 +1835,7 @@ export class DispatchWizard extends DispatchWizardState {
         this._closeExecutionTemplatePreview(false);
         if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
+        this._slotOverrideExplicit = Boolean(slotId);
         this._applyVisibleCandidates();
         this._applyVisibleCatalog();
       },

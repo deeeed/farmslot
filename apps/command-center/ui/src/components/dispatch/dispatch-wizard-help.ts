@@ -11,7 +11,7 @@ export const DISPATCH_HELP = {
   },
   flow: {
     label: 'Flow',
-    text: 'Fix Bug investigates and fixes an issue. Review PR reviews an existing change. Dev implements a task. PR Complete works through the remaining checks and review feedback on an existing PR.',
+    text: 'Fix Bug investigates and fixes an issue. Review audits a PR in a workspace without an app slot. QA runs a farm-owned validation profile on runtime slots. Dev implements a task. PR Complete works through the remaining checks and review feedback on an existing PR.',
   },
   project: {
     label: 'Project / App',
@@ -34,8 +34,8 @@ export const DISPATCH_HELP = {
     text: 'Full Prepare runs the project’s setup before starting the worker. Skip Prepare uses the workspace as it is; choose it only when that slot is already ready. Available preparation profiles come from the project.',
   },
   review: {
-    label: 'Review Tier / Validation',
-    text: 'Review Tier chooses evidence depth: light for smoke checks, standard for targeted evidence, full for broader QA, or auto for a suggested depth. Static audits code and existing evidence; Full live prepares the app and runs live checks.',
+    label: 'Review / QA',
+    text: 'Review reads source and existing evidence without preparing the app. QA selects a profile from the farm; its skill chooses the checks and runtime evidence. Input overrides are JSON values passed to that skill.',
   },
   interactive: {
     label: 'Interactive dev',

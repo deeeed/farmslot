@@ -6,11 +6,16 @@ import type {
 } from './pr-monitoring.js';
 import type { ReviewScope, ReviewSessionIntent, ReviewValidationDepth } from './runs.js';
 
-/** Uses the same Continue/Fresh and review-depth choices as manual review rounds. */
+/** Review execution policy; old validationDepth values are read only for compatibility. */
 export interface PRReviewOptions {
   sessionIntent: ReviewSessionIntent;
   scope: ReviewScope;
-  validationDepth: ReviewValidationDepth;
+  workflow?: 'review' | 'qa';
+  /** Publish the static verdict to its PR after authority/head checks. Omitted inherits defaults. */
+  publishReview?: boolean;
+  qaProfileId?: string;
+  qaInputs?: Record<string, import('./qa.js').QaInput>;
+  validationDepth?: ReviewValidationDepth;
   /** Wait for the compatible saved reviewer's slot, or allow a fresh session elsewhere. */
   busySession?: 'wait' | 'fresh';
 }
@@ -18,12 +23,28 @@ export interface PRReviewOptions {
 export const DEFAULT_PR_REVIEW_OPTIONS: Readonly<PRReviewOptions> = {
   sessionIntent: 'resume',
   scope: 'incremental',
-  validationDepth: 'static-code',
+  workflow: 'review',
 };
 
-/** Preserve static intent ids while distinguishing runtime review of the same head. */
+export function prReviewWorkflow(options?: PRReviewOptions): 'review' | 'qa' {
+  return options?.workflow ?? (options?.validationDepth === 'full-live' ? 'qa' : 'review');
+}
+
+/** A stable purpose key keeps runtime QA distinct from static review of the same head. */
 export function prReviewPurpose(options?: PRReviewOptions): string {
-  return options?.validationDepth === 'full-live' ? 'full-live' : 'review';
+  if (prReviewWorkflow(options) === 'review') return 'review';
+  function canonical(value: import('./qa.js').QaInput): import('./qa.js').QaInput {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, canonical(value[key])]),
+      );
+    }
+    return value;
+  }
+  return JSON.stringify(['qa', options?.qaProfileId ?? null, canonical(options?.qaInputs ?? {})]);
 }
 
 export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): boolean {
@@ -33,7 +54,8 @@ export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): b
     left.sessionIntent === right.sessionIntent &&
     left.scope === right.scope &&
     (left.busySession ?? 'wait') === (right.busySession ?? 'wait') &&
-    left.validationDepth === right.validationDepth
+    (left.publishReview === true) === (right.publishReview === true) &&
+    prReviewPurpose(left) === prReviewPurpose(right)
   );
 }
 
@@ -293,6 +315,8 @@ export interface PRTriggerRule {
 }
 
 export interface PRReviewRequest {
+  /** Link QA to an owned completed static review; the gateway freezes and verifies its head. */
+  sourceReviewRunId?: string;
   teamId: string;
   pr: MonitoredPRIdentity;
   idempotencyKey: string;
@@ -304,6 +328,7 @@ export interface PRReviewRequest {
 }
 
 export interface PRReviewSubmission {
+  sourceReview?: PRQaSourceReview;
   id: string;
   ownerId: string;
   revision: number;
@@ -318,7 +343,21 @@ export interface PRReviewSubmission {
   updatedAt: string;
 }
 
+/** Gateway-owned provenance, never accepted as part of a client request. */
+export interface PRQaSourceReview {
+  runId: string;
+  headSha: string;
+}
+
+/** Gateway-derived correspondence between configured QA inputs and resolved farm defaults. */
+export interface PRReviewPurposeResolution {
+  configured: string;
+  resolved: string;
+}
+
 export type PRReviewContribution = {
+  policySources?: import('./config.js').PRWorkflowDefaultSources;
+  sourceReview?: PRQaSourceReview;
   reviewObservation?: PRReviewObservation;
   teamId: string;
   teamRevision: number;
@@ -327,6 +366,7 @@ export type PRReviewContribution = {
   project?: string;
   execution?: PRExecutionProfile;
   review?: PRReviewOptions;
+  reviewPurpose?: PRReviewPurposeResolution;
   autoStart: boolean;
   eligible: boolean;
   configurationErrors: string[];
@@ -366,6 +406,7 @@ export interface PRReviewIntent {
 }
 
 export interface PRRulePreviewItem {
+  sourceReview?: PRQaSourceReview;
   policySources?: import('./config.js').PRWorkflowDefaultSources;
   subject: PRRuleSubject;
   match: PRRuleMatch;
@@ -373,6 +414,7 @@ export interface PRRulePreviewItem {
   reviewProfile: string;
   execution?: PRExecutionProfile;
   review?: PRReviewOptions;
+  reviewPurpose?: PRReviewPurposeResolution;
   configurationErrors: string[];
   actionErrors?: Partial<Record<PRRuleAction['kind'], string[]>>;
   /** Supplemental team policy observations; never merge authority. */

@@ -43,6 +43,40 @@ test('the queue orders by what the viewer must do next', () => {
   );
 });
 
+test('PR approval does not hide an outstanding QA request', () => {
+  const value = entry({ decision: 'APPROVED' });
+  value.reviews = [
+    {
+      id: 'runtime-check',
+      pr: { host: 'github.com', repo: 'org/repo', number: 1 },
+      headSha: 'head2',
+      reviewProfile: 'default',
+      status: 'held',
+      contributions: [
+        {
+          submissionId: 'qa-request',
+          submissionRevision: 1,
+          ownerId: 'owner',
+          teamId: 'team',
+          teamRevision: 1,
+          reasons: [],
+          eligible: true,
+          autoStart: false,
+          configurationErrors: [],
+          review: { workflow: 'qa', sessionIntent: 'reset', scope: 'full' },
+        },
+      ],
+      createdAt: base.observedAt,
+      updatedAt: base.observedAt,
+    },
+  ];
+  assert.equal(prReviewQueue(value).group, 'QA pending');
+  value.reviews[0].status = 'running';
+  assert.equal(prReviewQueue(value).group, 'QA in progress');
+  value.reviews[0].status = 'completed';
+  assert.equal(prReviewQueue(value).group, 'Reviewed by you');
+});
+
 test('approvals distinguish "done" from "others still required"', () => {
   const approved = { state: 'APPROVED', commit: 'head2', submittedAt: null };
   const done = prReviewQueue(entry({ review: approved, decision: 'APPROVED' }));

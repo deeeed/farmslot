@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Separate static Review from farm-configured QA profiles in PR requests and policies. Choose publication inheritance or overrides, and inspect or retry publication from run detail.
+
 - Launch static PR reviews on configured machines, inherit farm defaults, and keep on-device review on runtime slots.
 
 - A review run finished or blocked with "Review is stale" shows **Re-review on latest head**; it follows the chained run when the reviewer session was handed the follow-up, or opens the queued round in Need Review.

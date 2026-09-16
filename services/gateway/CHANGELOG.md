@@ -6,6 +6,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Task documents no longer carry a `STATUS:` line and interactive PR-complete handoffs no longer ask the worker to set one. Run state comes from the `mark` signal file (ADR-045); the field had no reader.
 
+- Separate runtime QA from static Review with farm profiles, frozen inputs, legacy-request migration and verified smoke evidence. Preserve opted-in QA follow-ups when source reviews are archived. Publish requested workspace reviews with account/head checks and durable retry receipts. Read terminal signals again after worker-exit checks so fast completion is not mistaken for missing evidence. Autonomous task context preserves approval requirements.
+
+- Resolve internal static and runtime review checklists from the shared catalog and retain their content provenance.
+
 - Bind owned native filesystem operations and responses to the authorized node connection.
 
 - `run.rereviewLatestHead` re-reviews a review-pr run whose review could not be posted because the head moved: when the run's reviewer session is still alive on its slot, a chained review-pr run hands the follow-up into that session (warm handoff) with the incremental repeat-review context attached; otherwise a manual review request (resume session, incremental scope, same slot/runner/model preferred) goes through the review queue. Reviewer continuity treats a review blocked at posting as the prior round.

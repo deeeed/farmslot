@@ -4,6 +4,10 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Configure static-review publication and its PR team when creating runs.
+
+- Select farm-owned QA profiles and JSON skill inputs with `run create` and `dispatch preview` using explicit `--flow-type qa`.
+
 - Launch and preview static reviews with machine, depth and effort overrides, and show workspace placement.
 
 - `farmslot pr list` asks the gateway for a fresh GitHub read; `--cached` accepts the gateway's warm copy and prints when it was fetched.

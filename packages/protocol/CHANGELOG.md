@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Define farm-owned QA presets with JSON skill inputs and explicit legacy review migration contracts. Resolve static-review publication opt-in and overrides independently, retaining their policy source.
+
 - Add machine-owned static-review workspace placement and retained source/support bindings, while keeping runtime reviews and repairs on slots.
 
 - `run.rereviewLatestHead` starts a continuity review round on the PR's current head for a blocked or finished review-pr run.

@@ -273,3 +273,37 @@ test('native profile registration is identical in direct and queued payloads and
     undefined,
   );
 });
+
+test('Review workspace and QA profile payloads stay distinct for create and queue', () => {
+  const base = {
+    project: 'farm',
+    ticketOrPr: 'owner/repo#1',
+    mode: 'autonomous' as const,
+    devInteractiveProfile: 'lightweight' as const,
+    comparison: {},
+  };
+  for (const build of [buildRunCreateParams, buildDispatchQueueAddParams]) {
+    const review = build({
+      ...base,
+      flowType: 'review-pr',
+      transport: 'native',
+      reviewWorkspaceTarget: { machine: 'node-a' },
+    });
+    assert.deepEqual(review.reviewWorkspaceTarget, { machine: 'node-a' });
+    assert.equal(review.slotId, undefined);
+    assert.equal(review.qaProfileId, undefined);
+    assert.equal(review.reviewValidationDepth, undefined);
+    const qa = build({
+      ...base,
+      flowType: 'qa',
+      slotId: 'runtime-1',
+      qaProfileId: 'daily',
+      qaInputs: { scope: { since: 'yesterday' }, recipes: ['smoke'] },
+    });
+    assert.equal(qa.slotId, 'runtime-1');
+    assert.equal(qa.qaProfileId, 'daily');
+    assert.deepEqual(qa.qaInputs, { scope: { since: 'yesterday' }, recipes: ['smoke'] });
+    assert.equal(qa.reviewWorkspaceTarget, undefined);
+    assert.equal(qa.reviewValidationDepth, undefined);
+  }
+});

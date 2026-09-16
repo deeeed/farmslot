@@ -66,7 +66,8 @@ export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRo
   // Non-worker orchestration flows (pr-complete, update-branch) and null/undefined
   // use the canonical primary worker window. Warm handoff may still bind a
   // chained run directly to its parent's flow-owned window.
-  if (!flowType || flowType === 'pr-complete' || flowType === 'update-branch') return 'primary';
+  if (!flowType || flowType === 'qa' || flowType === 'pr-complete' || flowType === 'update-branch')
+    return 'primary';
   throw new Error(`primaryRoleForFlow: unknown flow type '${flowType}'`);
 }
 

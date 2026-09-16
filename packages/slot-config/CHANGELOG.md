@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Allow farms to select canonical internal review templates for static and runtime validation.
+
 - Validate machine capacity and frozen skill, library and runtime support for static-review workspaces.
 
 - Pool files accept a machine-level `env` map (validated shell variable names, string values), surfaced as `machineEnv` on slot vars. The gateway exports it into every shell it runs on that machine (it wins over the project's `command_env`), so machine-specific tool locations such as a project harness binary stay out of `project.json`.

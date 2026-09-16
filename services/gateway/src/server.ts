@@ -16,6 +16,7 @@ import {
   type PairingExchangeParams,
   type RequestFrame,
   type ResponseFrame,
+  ReviewQaConfigurationError,
 } from '@farmslot/protocol';
 import { SlotConfigError } from '@farmslot/slot-config';
 
@@ -743,6 +744,8 @@ async function handleMessage(
       code = err.code;
       userAction = err.userAction;
       details = err.details;
+    } else if (err instanceof ReviewQaConfigurationError) {
+      code = err.code;
     } else if (err instanceof ChatActionRejectError) {
       // A specific err.code (e.g. 'RequiresExplicitMergeMain') wins over the
       // generic CHAT_ACTION_REJECT_<REASON> derivation so callers can

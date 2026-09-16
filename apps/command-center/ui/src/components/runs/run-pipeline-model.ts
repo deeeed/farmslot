@@ -172,6 +172,14 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
     'human-gate': { col: 1, lane: 'post', width: MONITOR_W },
     complete: { col: 2, lane: 'post', width: MONITOR_W },
   },
+  qa: {
+    'find-slot': { col: 0, lane: 'orch' },
+    'write-task': { col: 1, lane: 'orch' },
+    prepare: { col: 2, lane: 'orch' },
+    dispatch: { col: 1, lane: 'worker' },
+    monitor: { col: 2, lane: 'worker', width: MONITOR_W },
+    complete: { col: 1, lane: 'post', width: MONITOR_W },
+  },
   'pr-complete': {
     'find-slot': { col: 0, lane: 'orch' },
     'write-task': { col: 1, lane: 'orch' },

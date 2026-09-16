@@ -51,6 +51,7 @@ export const FLOW_OPTIONS: { label: string; value: FlowType | '' }[] = [
   { label: 'All flows', value: '' },
   { label: 'Bug Fix', value: 'fix-bug' },
   { label: 'Review', value: 'review-pr' },
+  { label: 'QA', value: 'qa' },
   { label: 'Dev', value: 'dev' },
   { label: 'PR Complete', value: 'pr-complete' },
 ];

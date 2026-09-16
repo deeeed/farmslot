@@ -15,6 +15,7 @@ export type InternalDispatchQueueAddParams = DispatchQueueAddParams &
     | 'launchAttempt'
     | 'executionTemplate'
     | 'workflowExecution'
+    | 'reviewQaContract'
   > & {
     autoDispatch?: boolean;
   };

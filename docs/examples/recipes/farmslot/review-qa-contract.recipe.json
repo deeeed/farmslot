@@ -1,0 +1,154 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Separate Review and QA request contracts",
+  "description": "Exercise isolated production gateways with deterministic read-only GitHub CLI fixtures. Proves configuration, queue migration, historical intake preservation and QA authorization; excludes worker execution and runtime QA.",
+  "workflow": {
+    "entry": "farm-profiles",
+    "nodes": {
+      "farm-profiles": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts profiles",
+        "timeout_ms": 60000,
+        "intent": "Each farm exposes its own thin skill preset and inputs through the project API.",
+        "next": "qa-pool"
+      },
+      "legacy-live-request": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts legacy-queue",
+        "timeout_ms": 60000,
+        "intent": "A legacy full-live request becomes distinct QA work, retains placement and provenance, and selects the canonical template unchanged.",
+        "next": "conflicting-requests"
+      },
+      "conflicting-requests": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts conflicts",
+        "timeout_ms": 60000,
+        "intent": "Ambiguous review settings and another farm's QA preset create no queued work.",
+        "next": "completed-legacy-qa"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "completed-legacy-qa": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts legacy-completed",
+        "timeout_ms": 60000,
+        "intent": "Gateway rescan resolves farm presets without duplicating or rewriting completed legacy QA.",
+        "next": "pending-legacy-qa"
+      },
+      "pending-legacy-qa": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts legacy-pending",
+        "timeout_ms": 60000,
+        "intent": "Gateway rescan preserves a legacy pending receipt id and its eligible contribution.",
+        "next": "approved-pr-qa"
+      },
+      "approved-pr-qa": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts approved-qa",
+        "timeout_ms": 60000,
+        "intent": "Explicit QA acceptance succeeds on an approved PR through fresh provider observation and durable intake.",
+        "next": "bare-pr-migration"
+      },
+      "bare-pr-migration": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts bare-pr",
+        "timeout_ms": 60000,
+        "intent": "Legacy live requests canonicalize bare PR numbers before entering the QA queue.",
+        "next": "linked-source-qa"
+      },
+      "linked-source-qa": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts linked-qa",
+        "timeout_ms": 60000,
+        "intent": "Link QA to an owned completed review, preserve its exact head, deduplicate retries and reject foreign or stale sources through gateway endpoints.",
+        "next": "automatic-source-qa"
+      },
+      "automatic-source-qa": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts automatic-qa",
+        "timeout_ms": 90000,
+        "intent": "Archive a completed source review through the gateway, preserve its opted-in QA follow-up across restarts, deduplicate receipts, reject disabled policy and avoid historical backfill.",
+        "next": "publication-defaults"
+      },
+      "publication-defaults": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-defaults",
+        "timeout_ms": 60000,
+        "intent": "Verify project publication opt-in survives unrelated review overrides, explicit opt-out wins, and values/origins persist across gateway restart without posting to GitHub.",
+        "next": "publication-accounts"
+      },
+      "publication-delivery-pass": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/pass pass",
+        "timeout_ms": 60000,
+        "intent": "Publish one pinned review with inline findings and retain a duplicate-safe receipt across archive, restart and explicit retry.",
+        "next": "publication-delivery-rejected"
+      },
+      "publication-delivery-stale": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/stale stale",
+        "timeout_ms": 60000,
+        "intent": "Reject a moved PR head through automatic and explicit publication with no provider mutation.",
+        "next": "publication-delivery-revoked"
+      },
+      "publication-delivery-revoked": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/revoked revoked",
+        "timeout_ms": 60000,
+        "intent": "Reject withdrawn publication policy, then permit one explicit retry after policy is restored.",
+        "next": "publication-delivery-lost-response"
+      },
+      "publication-delivery-lost-response": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/lost-response lost-response",
+        "timeout_ms": 60000,
+        "intent": "Recover a successful provider post after a lost response by its owned marker; never create a second review.",
+        "next": "done"
+      },
+      "publication-accounts": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-accounts",
+        "timeout_ms": 60000,
+        "intent": "Retain each selected GitHub account and hold a shared review when publication accounts conflict, including after gateway restart.",
+        "next": "publication-direct"
+      },
+      "publication-direct": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-direct temp/publication-proof/direct",
+        "timeout_ms": 120000,
+        "intent": "Create runs through the workspace CLI with publication inheritance, opt-out and explicit team selection; refuse forged authority and publish/retry the captured direct authority without launching workers.",
+        "next": "publication-delivery-pass"
+      },
+      "publication-delivery-rejected": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/rejected rejected",
+        "timeout_ms": 60000,
+        "intent": "An explicit HTTP 422 retains a retryable receipt; corrected provider acceptance publishes once and archived retries do not repost.",
+        "next": "publication-delivery-concurrent"
+      },
+      "qa-pool": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts qa-pool",
+        "timeout_ms": 60000,
+        "intent": "Pool QA queues without pinning an arbitrary slot, preserves both allowed candidates across restart, and retains explicit user pins.",
+        "next": "legacy-live-request"
+      },
+      "publication-delivery-concurrent": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/concurrent concurrent",
+        "timeout_ms": 60000,
+        "intent": "A concurrent publish RPC cannot replace the active durable receipt with a transient error; only one POST is sent.",
+        "next": "publication-delivery-concurrent-tick"
+      },
+      "publication-delivery-concurrent-tick": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-review-qa-contract.mts publication-delivery temp/publication-proof/concurrent-tick concurrent-tick",
+        "timeout_ms": 90000,
+        "intent": "The real scheduled publication tick cannot write a durable error while a manual publication POST is in progress.",
+        "next": "publication-delivery-stale"
+      }
+    }
+  }
+}

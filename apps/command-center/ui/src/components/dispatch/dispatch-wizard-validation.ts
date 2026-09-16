@@ -39,6 +39,8 @@ export function dispatchBlockedReason(input: {
   /** Operator confirmed the deliberate pressure override and gave a reason. */
   pressureOverrideReady?: boolean;
 }): string | null {
+  if (input.slotOverride && !input.selectedCandidate)
+    return 'Selected slot is unavailable — choose another slot or use Queue.';
   if (input.selectedCandidate && !candidateDispatchable(input.selectedCandidate)) {
     if (pressureOverrideAvailable(input.selectedCandidate)) {
       return input.pressureOverrideReady

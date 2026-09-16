@@ -203,6 +203,38 @@ test('isMockModeProject detects external mock_mode flag', () => {
   assert.equal(isMockModeProject({} as any), false);
 });
 
+test('loadProjectVars preserves QA skill inputs and rejects an invalid farm default', async (t) => {
+  const qa = {
+    default_profile: 'changes',
+    profiles: [
+      {
+        id: 'changes',
+        title: 'Validate changes',
+        template_id: 'validation/shared',
+        inputs: { scope: { kind: 'window', hours: 24 } },
+      },
+    ],
+  };
+  for (const invalid of [false, true]) {
+    const project = `qa-config-${process.pid}-${invalid}`;
+    const directory = path.join(farmslotRoot, 'projects', project);
+    await mkdir(directory, { recursive: true });
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await writeFile(
+      path.join(directory, 'project.json'),
+      JSON.stringify({
+        name: project,
+        qa: { ...qa, default_profile: invalid ? 'missing' : 'changes' },
+      }),
+    );
+    if (invalid) {
+      await assert.rejects(() => loadProjectVars(project), /QA default preset does not exist/);
+    } else {
+      assert.deepEqual((await loadProjectVars(project)).projectJson.qa, qa);
+    }
+  }
+});
+
 test('execution-template config accepts portable sources/defaults and rejects unsafe roots', () => {
   const valid: RawProjectJson = {
     execution_templates: {

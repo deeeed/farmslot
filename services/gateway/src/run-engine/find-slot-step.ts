@@ -4,6 +4,7 @@ import {
   type DispatchPreviewParams,
   Events,
   isDispatchScoreStale,
+  ReviewQaConfigurationError,
   type Run,
   type RunDecision,
   type RunDecisionPayload,
@@ -68,6 +69,9 @@ import {
   resolveConfiguredExecutionTemplateForSlot,
 } from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
+
+import { BlockedRunError } from './errors.js';
+import { canReconcileReviewQaRun, reviewQaMigrationPatch } from './review-qa-migration.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -317,6 +321,36 @@ export async function executeFindSlotStep(
   run: Run,
   context: FindSlotStepContext,
 ): Promise<StepIO> {
+  if (canReconcileReviewQaRun(run)) {
+    const generation = run.engineState?.generation ?? 0;
+    const project = await loadProjectConfig(run.project);
+    const current = getRun(runId);
+    if (
+      !current ||
+      (current.engineState?.generation ?? 0) !== generation ||
+      !canReconcileReviewQaRun(current)
+    )
+      throw new Error('Run changed while resolving its Review/QA migration');
+    run = current;
+    try {
+      const patch = reviewQaMigrationPatch(current, project?.qa, project?.workflowDefaults);
+      if (patch) {
+        run = updateRun(runId, patch);
+        await persistRunNow(run, 'review-qa-migration');
+        const persisted = getRun(runId);
+        if (
+          !persisted ||
+          (persisted.engineState?.generation ?? 0) !== generation ||
+          !canReconcileReviewQaRun(persisted)
+        )
+          throw new Error('Run changed while persisting its Review/QA migration');
+        run = persisted;
+      }
+    } catch (error) {
+      if (!(error instanceof ReviewQaConfigurationError)) throw error;
+      throw new BlockedRunError(error.message, 'review-qa-needs-configuration');
+    }
+  }
   if (run.nativeProfile) {
     await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile);
     const allowedSlots = await nativeProfileAllowedSlots(
@@ -978,7 +1012,10 @@ export async function executeFindSlotStep(
   }
 
   const result = await dispatchPreview(
-    buildDispatchPreviewParamsForRun(run),
+    {
+      ...buildDispatchPreviewParamsForRun(run),
+      ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+    },
     // Delayed engine preview: the audit principal was resolved and persisted
     // at run.create; never re-derive it from ambient context here.
     run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {},

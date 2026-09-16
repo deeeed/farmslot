@@ -1316,3 +1316,27 @@ test('a restore does not suppress anything when the run never chose free-slot', 
     },
   );
 });
+
+test('QA cannot bypass runtime evidence through force completion', async (t) => {
+  const run = createRun(
+    { flowType: 'qa', project: 'example-mobile-farm', ticketOrPr: `QA-${Date.now()}` },
+    {
+      reviewQa: {
+        flowType: 'qa',
+        contract: { version: 1 },
+        qa: {
+          profile: { id: 'changes', title: 'Changes', template_id: 'validation/shared' },
+          inputs: {},
+        },
+      },
+    },
+  );
+  updateRun(run.id, { status: 'blocked', prNumber: 42 });
+  t.after(() => cleanupRun(run.id));
+  await assert.rejects(
+    () => runForceComplete({ runId: run.id, prNumber: 42 }, () => {}),
+    /QA cannot be force-completed/,
+  );
+  assert.equal(getRun(run.id)?.status, 'blocked');
+  assert.notEqual(getRun(run.id)?.metrics.outcome, 'success');
+});

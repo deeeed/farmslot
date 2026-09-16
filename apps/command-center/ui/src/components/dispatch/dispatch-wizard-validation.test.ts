@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { deriveDispatchWizardBlockingState } from './dispatch-wizard-blockers.js';
 import {
   canDispatch,
   dispatchBlockedReason,
@@ -171,4 +172,62 @@ test('queue blockers protect stale connection and empty allowed slot filters', (
     isQueueBlocked({ queueBlockedReason: null, canDispatch: true, connectionStale: false }),
     false,
   );
+});
+
+test('static review admission ignores device-slot availability while QA retains slot admission', () => {
+  const input = {
+    flowType: 'review-pr' as const,
+    ticketId: 'owner/repo#1',
+    project: 'static-farm',
+    matchingProject: false,
+    slotOverride: '',
+    candidates: [],
+    machineFilters: ['review-node'],
+    fleetSlots: [],
+    dispatching: false,
+    connectionStale: false,
+    hydrating: false,
+    bootstrapFailed: false,
+    loadingCandidates: true,
+    candidateRefreshFailed: true,
+    activeRunConflict: false,
+    variantInputBlocked: false,
+    comparisonFlow: false,
+    comparisonParentRunId: '',
+    pressureOverrideReady: false,
+  };
+  const review = deriveDispatchWizardBlockingState(input);
+  assert.equal(review.dispatchBlocked, false);
+  assert.equal(review.queueBlocked, false);
+  assert.equal(review.allowedSlots, undefined);
+  const qa = deriveDispatchWizardBlockingState({ ...input, flowType: 'qa' });
+  assert.equal(qa.dispatchBlocked, true);
+  assert.equal(qa.queueBlocked, true);
+});
+
+test('a pinned slot outside the actual machine filter is refused, not replaced', () => {
+  const result = deriveDispatchWizardBlockingState({
+    flowType: 'qa',
+    ticketId: 'owner/repo#1',
+    project: 'farm',
+    matchingProject: false,
+    slotOverride: 'opaque-slot',
+    candidates: [],
+    machineFilters: ['allowed-machine'],
+    fleetSlots: [],
+    dispatching: false,
+    connectionStale: false,
+    hydrating: false,
+    bootstrapFailed: false,
+    loadingCandidates: false,
+    candidateRefreshFailed: false,
+    activeRunConflict: false,
+    variantInputBlocked: false,
+    comparisonFlow: false,
+    comparisonParentRunId: '',
+    pressureOverrideReady: false,
+  });
+  assert.equal(result.dispatchBlocked, true);
+  assert.equal(result.queueBlocked, true);
+  assert.match(result.dispatchBlockedReason ?? '', /outside the active/);
 });

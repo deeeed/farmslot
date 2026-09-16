@@ -276,3 +276,48 @@ test('deriveIssueTypeFlowState only auto-selects flow while auto mode is allowed
   assert.equal(deriveIssueTypeFlowState('Task', 'review-pr', false), null);
   assert.equal(deriveIssueTypeFlowState('Epic', null, false), null);
 });
+
+test('configured farms remain selectable without device slots', () => {
+  const result = deriveDispatchFleetViewState({
+    slots: [],
+    configuredProjects: ['static-farm'],
+    currentProject: 'static-farm',
+    globalProjectFilters: [],
+    globalMachineFilters: ['review-node'],
+  });
+  assert.deepEqual(result.availableProjects, ['static-farm']);
+  assert.equal(result.project, 'static-farm');
+  assert.equal(result.projectCleared, false);
+  assert.deepEqual(result.allProjectSlots, []);
+  assert.deepEqual(
+    deriveDispatchFleetViewState({
+      slots: [],
+      configuredProjects: ['static-farm', 'other'],
+      currentProject: '',
+      globalProjectFilters: ['other'],
+      globalMachineFilters: [],
+    }).availableProjects,
+    ['other'],
+  );
+});
+
+test('explicit runtime pins survive first scoring, changed tickets and unavailable candidates', () => {
+  const input = {
+    candidates,
+    previousOverride: 'free-slot',
+    explicitOverride: true,
+    nudgeIntents: new Map(),
+    flowType: 'qa' as const,
+    normalizedTicket: 'owner/repo#2',
+    ticketId: 'owner/repo#2',
+    comparisonLane: false,
+    comparisonFamilyId: '',
+    lastFetchScoringKey: undefined,
+  };
+  assert.equal(deriveCandidateResultState(input).slotOverride, 'free-slot');
+  assert.equal(deriveCandidateResultState({ ...input, candidates: [] }).slotOverride, 'free-slot');
+  assert.equal(
+    deriveCandidateResultState({ ...input, ticketId: 'owner/repo#3' }).slotOverride,
+    'free-slot',
+  );
+});

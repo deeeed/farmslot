@@ -134,7 +134,8 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   const taskDocument = await readFile(taskFile, 'utf-8');
   if (process.env.FARMSLOT_SPLIT_TEST_DUMP) console.log(taskDocument);
   assert.match(taskDocument, /^# fix-bug: Saving a note drops the last character/m);
-  assert.match(taskDocument, /> Fully autonomous — zero human input/);
+  assert.match(taskDocument, /> Autonomous execution: complete the authorized work/);
+  assert.match(taskDocument, /This mode grants no additional permission/);
   assert.match(taskDocument, /^TICKET: SPLIT-\d+$/m);
   assert.doesNotMatch(taskDocument, /^STATUS:/m);
   assert.match(
@@ -152,7 +153,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /## Runtime capability proof plan/);
   assert.doesNotMatch(taskDocument, /- \[ \]/);
   assert.equal(enumerateChecklistCheckboxes(taskDocument).length, 0);
-  assert.doesNotMatch(checklist, /Fully autonomous/);
+  assert.doesNotMatch(checklist, /Autonomous execution/);
 
   // The pre-0.9 provenance twins are gone; handoff.json is the one task record.
   // No manifest either: absent means CHECKLIST.md + SIGNAL.json.
@@ -212,4 +213,36 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.equal(handoff.taskDocument, 'TASK.md');
   assert.match(String(handoff.report), /^artifacts\//);
   assert.equal(handoff.learnings, 'artifacts/learnings.md');
+
+  // QA consumes the same catalog bytes, with its admitted input snapshot beside the task.
+  const qaRun = makeSplitRun(`QA-SPLIT-${Date.now()}`);
+  qaRun.id = 'run-qa-split';
+  qaRun.flowType = 'qa';
+  qaRun.executionTemplateId = 'fix-bug/default';
+  qaRun.qa = {
+    profile: { id: 'daily', title: 'Daily checks', template_id: 'fix-bug/default' },
+    inputs: { since: '2026-09-14T00:00:00Z', targets: ['notes'] },
+  };
+  projectJson.qa = { default_profile: 'daily', profiles: [qaRun.qa.profile] };
+  await writeFile(path.join(tempProject, 'project.json'), JSON.stringify(projectJson));
+  const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
+  invalidateProjectVarsCache('farmslot-farm');
+  const qaTask = await writeTaskFile(qaRun);
+  t.after(() => rm(path.dirname(qaTask), { recursive: true, force: true }));
+  const qaInputsText = await readFile(path.join(path.dirname(qaTask), 'inputs/qa.json'), 'utf8');
+  const qaInput = JSON.parse(qaInputsText);
+  assert.deepEqual(qaInput.inputs, qaRun.qa.inputs);
+  assert.equal(qaInput.profile.id, 'daily');
+  assert.equal(qaInput.runId, qaRun.id);
+  assert.equal(qaInput.executionTemplate.sha256, handoff.executionTemplate.sha256);
+  assert.equal(
+    await readFile(path.join(path.dirname(qaTask), 'CHECKLIST.md'), 'utf8'),
+    TEMPLATE_SOURCE,
+  );
+  assert.match(await readFile(qaTask, 'utf8'), /inputs\/qa\.json/);
+  qaRun.qa.inputs.since = 'tomorrow';
+  assert.equal(
+    await readFile(path.join(path.dirname(qaTask), 'inputs/qa.json'), 'utf8'),
+    qaInputsText,
+  );
 });

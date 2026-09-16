@@ -319,20 +319,21 @@ async function persistBody(run: Run): Promise<void> {
   }
 }
 
-async function enqueueRunPersist(run: Run): Promise<void> {
-  const prev = runPersistChains.get(run.id) ?? Promise.resolve();
-  const next = prev.then(
-    () => persistBody(run),
-    () => persistBody(run),
-  );
-  runPersistChains.set(run.id, next);
+async function enqueueRunWrite(id: string, write: () => Promise<void>): Promise<void> {
+  const prev = runPersistChains.get(id) ?? Promise.resolve();
+  const next = prev.then(write, write);
+  runPersistChains.set(id, next);
   try {
     await next;
   } finally {
-    if (runPersistChains.get(run.id) === next) {
-      runPersistChains.delete(run.id);
+    if (runPersistChains.get(id) === next) {
+      runPersistChains.delete(id);
     }
   }
+}
+
+function enqueueRunPersist(run: Run): Promise<void> {
+  return enqueueRunWrite(run.id, () => persistBody(run));
 }
 
 function persistRunBackground(run: Run, reason: string): void {
@@ -637,14 +638,34 @@ export function createRun(
      * Used by queue claim create so the Run file cannot land before the stamp.
      */
     deferBackgroundPersist?: boolean;
+    reviewQa?: import('@farmslot/protocol').ReviewQaDispatchSelection;
     workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
+    qaAfterReview?: import('@farmslot/protocol').QaAfterReview;
+    directReviewPublication?: import('@farmslot/protocol').DirectReviewPublication;
   },
 ): Run {
   if ('nativeOwnerPrincipalId' in params || 'createdByPrincipalId' in params)
     throw new Error('Run ownership cannot be supplied in run parameters');
-  if ('reviewWorkspace' in params || 'reviewWorkspaceSubject' in params) {
+  if ('reviewPublication' in params || 'directReviewPublication' in params)
+    throw new Error('Publication authority cannot be supplied in run parameters');
+  if (options?.directReviewPublication && params.flowType !== 'review-pr')
+    throw new Error('Direct publication requires a direct static review');
+  if ('qaAfterReview' in params)
+    throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
+  if (options?.qaAfterReview && params.flowType !== 'review-pr')
+    throw new Error('Automatic QA can only follow static review');
+  if (
+    'qa' in params ||
+    'reviewQaContract' in params ||
+    'reviewWorkspace' in params ||
+    'reviewWorkspaceSubject' in params
+  ) {
     throw new Error('Workspace bindings cannot be supplied in run parameters');
   }
+  if (params.flowType === 'qa' && options?.reviewQa?.flowType !== 'qa')
+    throw new Error('QA creation requires a resolved farm profile');
+  if (options?.reviewQa && options.reviewQa.flowType !== params.flowType)
+    throw new Error('Resolved workflow does not match run flow');
   const parent = params.parentRunId ? runs.get(params.parentRunId) : undefined;
   const transport = params.transport ?? parent?.transport;
   if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
@@ -773,6 +794,15 @@ export function createRun(
       : params.engineState;
   const run: Run = {
     id,
+    ...(options?.qaAfterReview ? { qaAfterReview: structuredClone(options.qaAfterReview) } : {}),
+    ...(options?.directReviewPublication
+      ? {
+          reviewPublication: {
+            direct: structuredClone(options.directReviewPublication),
+            checkedAt: new Date().toISOString(),
+          },
+        }
+      : {}),
     ...(transport ? { transport } : {}),
     ...(nativeOwnerPrincipalId ? { nativeOwnerPrincipalId } : {}),
     ...(nativeProfile ? { nativeProfile } : {}),
@@ -785,6 +815,12 @@ export function createRun(
     taskTemplate: params.taskTemplate ? { ...params.taskTemplate } : undefined,
     executionTemplateId: params.executionTemplateId,
     flowType: params.flowType,
+    ...(options?.reviewQa
+      ? {
+          reviewQaContract: structuredClone(options.reviewQa.contract),
+          ...(options.reviewQa.qa ? { qa: structuredClone(options.reviewQa.qa) } : {}),
+        }
+      : {}),
     mode: params.mode,
     devInteractiveProfile,
     status: 'created',
@@ -835,7 +871,9 @@ export function createRun(
     reviewTier: params.reviewTier,
     reviewScope: params.flowType === 'review-pr' ? (params.reviewScope ?? 'full') : undefined,
     reviewValidationDepth:
-      params.flowType === 'review-pr' ? (params.reviewValidationDepth ?? 'static-code') : undefined,
+      params.flowType === 'review-pr' && !options?.reviewQa
+        ? (params.reviewValidationDepth ?? 'static-code')
+        : undefined,
     safetyTier: resolvedTier,
     engineState,
     ticketData: params.ticketData,
@@ -1009,6 +1047,26 @@ export function listRunTags(): Array<{ tag: string; count: number }> {
 export function updateRun(id: string, partial: Partial<Run>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  if (
+    'reviewPublication' in partial &&
+    !isDeepStrictEqual(partial.reviewPublication?.direct, run.reviewPublication?.direct)
+  )
+    throw new Error('Direct publication authority is immutable');
+  if ('qaAfterReview' in partial) {
+    const before = run.qaAfterReview;
+    const after = partial.qaAfterReview;
+    if (
+      !before ||
+      !after ||
+      before.version !== after.version ||
+      before.capturedAt !== after.capturedAt ||
+      !isDeepStrictEqual(before.selection, after.selection) ||
+      !isDeepStrictEqual(before.execution, after.execution) ||
+      !isDeepStrictEqual(before.review, after.review)
+    ) {
+      throw new Error('Automatic QA admission snapshot cannot be added, removed or changed');
+    }
+  }
   if ('transport' in partial && (partial.transport ?? 'tmux') !== (run.transport ?? 'tmux'))
     throw new Error('Worker transport is fixed for the run; create a new run to switch transport');
   if ('nativeProfile' in partial && !isDeepStrictEqual(partial.nativeProfile, run.nativeProfile))
@@ -1313,7 +1371,88 @@ export async function getAllRunsWithArchived(): Promise<Run[]> {
   return [...byId.values()];
 }
 
+/** Synchronous admission checks fail closed until an archived record has been loaded. */
+export function getCachedRunWithArchived(id: string): Run | undefined {
+  return getRun(id) ?? archivedRunsCache?.find((run) => run.id === id);
+}
+
+/** Read historical authority without making archived runs eligible for execution. */
+export async function getRunWithArchived(id: string): Promise<Run | undefined> {
+  const live = getRun(id);
+  if (live) return live;
+  const archived = (await getArchivedRuns()).find((run) => run.id === id);
+  return getRun(id) ?? archived;
+}
+
+/** Only follow-up delivery state may change on an archived review. */
+export async function updateQaFollowUp(
+  id: string,
+  patch: Partial<
+    Pick<
+      NonNullable<Run['qaAfterReview']>,
+      'state' | 'teamId' | 'submissionId' | 'intentId' | 'error'
+    >
+  >,
+): Promise<boolean> {
+  let changed = false;
+  await enqueueRunWrite(id, async () => {
+    const run = await getRunWithArchived(id);
+    if (!run?.qaAfterReview) return;
+    const next = { ...run.qaAfterReview, ...patch };
+    if (isDeepStrictEqual(run.qaAfterReview, next)) return;
+    next.checkedAt = new Date().toISOString();
+    if (getRun(id) === run) {
+      run.qaAfterReview = next;
+      await persistBody(run);
+    } else {
+      const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
+      const temporary = `${file}.tmp.${randomUUID()}`;
+      await writeFile(temporary, JSON.stringify({ ...run, qaAfterReview: next }, null, 2), {
+        mode: 0o600,
+      });
+      await rename(temporary, file);
+      invalidateArchivedRunsCache();
+    }
+    changed = true;
+  });
+  return changed;
+}
+
+/** Publication receipts remain durable when the source review is archived. */
+export async function updateReviewPublication(
+  id: string,
+  patch: Partial<Pick<NonNullable<Run['reviewPublication']>, 'receipt' | 'error'>>,
+): Promise<void> {
+  await enqueueRunWrite(id, async () => {
+    const run = await getRunWithArchived(id);
+    if (!run) throw new Error('Review run is unavailable');
+    const publication = { ...run.reviewPublication, ...patch, checkedAt: new Date().toISOString() };
+    if (getRun(id) === run) {
+      run.reviewPublication = publication;
+      await persistBody(run);
+    } else {
+      const file = path.join(ARCHIVE_DIR, `${run.id}.json`);
+      const temporary = `${file}.tmp.${randomUUID()}`;
+      await writeFile(
+        temporary,
+        JSON.stringify({ ...run, reviewPublication: publication }, null, 2),
+        { mode: 0o600 },
+      );
+      await rename(temporary, file);
+      invalidateArchivedRunsCache();
+    }
+  });
+}
+
 export async function archiveRun(id: string): Promise<boolean> {
+  let archived = false;
+  await enqueueRunWrite(id, async () => {
+    archived = await archiveRunBody(id);
+  });
+  return archived;
+}
+
+async function archiveRunBody(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
   if (ACTIVE_STATUSES.has(run.status)) {
