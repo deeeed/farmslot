@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Task documents no longer carry a `STATUS:` line and interactive PR-complete handoffs no longer ask the worker to set one. Run state comes from the `mark` signal file (ADR-045); the field had no reader. Artifact-only replays now also rewrite an approval step that is followed directly by the next checklist step (the mobile dev-interactive shape), which the old `STATUS: done` anchor never matched.
+
 - Separate runtime QA from static Review with farm profiles, frozen inputs, legacy-request migration and verified smoke evidence. Preserve opted-in QA follow-ups when source reviews are archived. Publish requested workspace reviews with account/head checks and durable retry receipts. Read terminal signals again after worker-exit checks so fast completion is not mistaken for missing evidence. Autonomous task context preserves approval requirements.
 
 - Resolve internal static and runtime review checklists from the shared catalog and retain their content provenance.

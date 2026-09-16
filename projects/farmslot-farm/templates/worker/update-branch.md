@@ -39,7 +39,7 @@ the concrete strategy you actually used in the outcome artifact.
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in TASK.md, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Confirm target + strategy** — verify `PR_NUMBER` and `PR_BRANCH`; resolve `BRANCH_UPDATE_STRATEGY` (rebase | merge | project-default) to the concrete strategy you will use.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Update branch** — update from the base branch using the selected strategy and resolve any conflicts on `{{PR_BRANCH}}`.
@@ -51,4 +51,4 @@ the concrete strategy you actually used in the outcome artifact.
 - [ ] **7. Push** — publish the updated branch. For `rebase`, use `git push --force-with-lease`; for `merge`, a normal `git push`. Record the exact push command used.
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: **selected strategy** (rebase | merge), **validation notes** (typecheck + test results), **conflict resolution summary**, **push command used**, and **risk notes** (force-push impact, follow-up needed).
 - [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **10. Update status and signal** — set `STATUS: done` in TASK.md, then run: `{{TASK_DIR}}/mark complete --mark-last`
+- [ ] **10. Signal completion** — run `{{TASK_DIR}}/mark complete --mark-last`

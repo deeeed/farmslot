@@ -137,7 +137,7 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   assert.match(taskDocument, /> Autonomous execution: complete the authorized work/);
   assert.match(taskDocument, /This mode grants no additional permission/);
   assert.match(taskDocument, /^TICKET: SPLIT-\d+$/m);
-  assert.match(taskDocument, /^STATUS: pending$/m);
+  assert.doesNotMatch(taskDocument, /^STATUS:/m);
   assert.match(
     taskDocument,
     /## Acceptance Criteria\n\n- Tapping Save persists the full text\n- No error toast appears\n- Undo restores the note\n {2}within one tap\n {2}and keeps focus\n/,

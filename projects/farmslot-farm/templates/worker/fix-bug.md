@@ -6,7 +6,7 @@
 
 ### Early no-change exit (before code/PR mutations)
 
-After `STATUS: working`, first decide if a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (investigation notes — or `- Nothing relevant — bug not reproducible/already fixed.`), then:
+After `mark start`, first decide if a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (investigation notes — or `- Nothing relevant — bug not reproducible/already fixed.`), then:
 
 ```bash
 {{TASK_DIR}}/mark no-change --reason "<one sentence>"
@@ -15,7 +15,7 @@ After `STATUS: working`, first decide if a code fix is still needed. If the bug 
 Add `--already-fixed` when the bug is already fixed on the current branch. Use `{{TASK_DIR}}/mark blocked --reason "<one sentence>"` for branch/env/auth/device/CDP/precondition problems. Never call setup failure `not_reproducible`.
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in TASK.md, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
+- [ ] **2. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug + required surfaces** — understand the issue and record **which surfaces it needs** (only what ACs require): `gateway-cli` | `command-center` | `companion-device` (Companion on sim/device: install + launch; Metro alone ≠ ready). Boot/install **only** those surfaces: `command-center` → sandbox UI + CDP; `companion-device` → Companion **installed** on slot sim/device (`companion-prepare.sh full` or install scripts if missing; verify simctl/adb); `gateway-cli` → skip boots/installs. Block if a required surface cannot be made ready. Do not start unrelated runtimes.
 
 > **Recipe scope.** Recipes prove a protocol action through a real client endpoint — Command Center,
@@ -100,6 +100,5 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   }
   ```
 - [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **20. Update status** — set `STATUS: done` in TASK.md.
-- [ ] **21. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
+- [ ] **20. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
