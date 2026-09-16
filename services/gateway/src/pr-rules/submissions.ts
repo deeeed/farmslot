@@ -3,9 +3,11 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   monitoredPRKey,
+  type PRQaSourceReview,
   type PRReviewContribution,
   type PRReviewRequest,
   type PRReviewSubmission,
+  prReviewWorkflow,
   type PRRulePreviewItem,
   samePRReviewOptions,
 } from '@farmslot/protocol';
@@ -16,12 +18,14 @@ import {
   sameReviewPurpose,
   updateReviewDisplay,
 } from './intents.js';
+import { samePublicationAuthority } from './publication-policy.js';
 import type { PRRuleStoreData } from './store.js';
 
 export function createReviewSubmission(
   data: PRRuleStoreData,
   ownerId: string,
   request: PRReviewRequest,
+  sourceReview?: PRQaSourceReview,
 ): PRReviewSubmission {
   const normalized = structuredClone(request);
   normalized.pr = {
@@ -37,6 +41,8 @@ export function createReviewSubmission(
       throw new Error('Idempotency key was already used for a different review request');
     return existing;
   }
+  if (request.sourceReviewRunId !== sourceReview?.runId)
+    throw new Error('Linked QA requires gateway-verified source review provenance');
   const team = data.teams.find((item) => item.id === request.teamId && item.ownerId === ownerId);
   if (!team) throw new Error('Team profile not found');
   if (request.pr.host.toLowerCase() !== team.config.account.host.toLowerCase())
@@ -47,6 +53,7 @@ export function createReviewSubmission(
     ownerId,
     revision: 1,
     request: normalized,
+    ...(sourceReview ? { sourceReview: structuredClone(sourceReview) } : {}),
     priorExecutionIds: data.intents
       .filter(
         (intent) =>
@@ -95,6 +102,13 @@ export function applyReviewSubmission(
   if ('error' in result) submission.error = result.error;
   else {
     const { item } = result;
+    if (!isDeepStrictEqual(item.sourceReview, submission.sourceReview))
+      throw new Error('QA source review provenance changed');
+    if (
+      item.sourceReview &&
+      (prReviewWorkflow(item.review) !== 'qa' || item.subject.headSha !== item.sourceReview.headSha)
+    )
+      throw new Error('Linked QA must retain the reviewed source head');
     if (monitoredPRKey(item.subject.pr) !== monitoredPRKey(submission.request.pr))
       throw new Error('Review observation returned a different PR');
     delete submission.error;
@@ -124,7 +138,9 @@ export function applyReviewSubmission(
               (source) =>
                 source.project === item.project &&
                 isDeepStrictEqual(source.execution, item.execution) &&
-                samePRReviewOptions(source.review, item.review),
+                samePRReviewOptions(source.review, item.review) &&
+                (item.review?.publishReview !== true ||
+                  samePublicationAuthority(source, { ownerId, teamId: team.id }, data.teams)),
             ),
       );
       let intent =
@@ -159,6 +175,9 @@ export function applyReviewSubmission(
         project: item.project,
         execution: item.execution,
         review: item.review,
+        policySources: item.policySources,
+        reviewPurpose: item.reviewPurpose,
+        ...(item.sourceReview ? { sourceReview: item.sourceReview } : {}),
         autoStart: submission.request.autoStart,
         eligible: true,
         configurationErrors: item.configurationErrors,
@@ -173,6 +192,6 @@ export function applyReviewSubmission(
       submission.intentId = intent.id;
     }
   }
-  for (const intent of data.intents) reconcileReviewIntent(intent);
+  for (const intent of data.intents) reconcileReviewIntent(intent, data.teams);
   return submission;
 }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { prExecutionText, prReviewText } from '../../../lib/pr-automation';
+import { ReviewPublication } from '../../workspace-shared/ReviewPublication';
 import { styles } from '../styles/pr-automation-styles';
 import type { PRAutomationController } from '../use-pr-automation-controller';
 
@@ -139,6 +140,12 @@ export function PRReviewCards({ viewModel: vm, actions }: PRAutomationController
                     onPress={() => actions.openRun(intent.runId!)}
                   />
                 )}
+                <PRButton
+                  label="Run QA"
+                  disabled={vm.disabled}
+                  onPress={() => actions.openQA(intent, run)}
+                />
+                {run && <ReviewPublication run={run} />}
                 {run?.repeatReviewContext?.session && (
                   <Text style={styles.muted}>
                     Session {run.repeatReviewContext.session.continuity}

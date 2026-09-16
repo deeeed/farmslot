@@ -103,6 +103,7 @@ export function renderRunListSearchRow<
       />
       <select
         class="filter-select"
+        data-testid="runs-flow-filter"
         @change=${(event: Event) => {
           ctx.setFlowFilter((event.target as HTMLSelectElement).value as Flow);
         }}

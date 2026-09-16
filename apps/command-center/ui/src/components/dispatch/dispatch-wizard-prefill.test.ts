@@ -5,11 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import { buildRerunAlongsideHref } from '../runs/run-detail-model.js';
 
-import {
-  parseDispatchWizardHash,
-  shouldUsePrefillSlot,
-  syncPublicationReviewsHash,
-} from './dispatch-wizard-prefill.js';
+import { parseDispatchWizardHash, syncPublicationReviewsHash } from './dispatch-wizard-prefill.js';
 
 const runners = ['claude', 'codex', 'opencode'] as const;
 
@@ -101,9 +97,27 @@ test('syncPublicationReviewsHash preserves unrelated query params', () => {
   );
 });
 
-test('shouldUsePrefillSlot respects active machine filters', () => {
-  assert.equal(shouldUsePrefillSlot('runner-a-mobile-1', []), true);
-  assert.equal(shouldUsePrefillSlot('runner-a-mobile-1', ['runner-a']), true);
-  assert.equal(shouldUsePrefillSlot('runner-a-mobile-1', ['vegeta']), false);
-  assert.equal(shouldUsePrefillSlot(undefined, ['runner-a']), false);
+test('QA links preserve selected profile/JSON and legacy full-live links open the QA flow', () => {
+  const inputs = '{"scope":"release"}';
+  const qa = parseDispatchWizardHash(
+    `#dispatch?flow=qa&project=mobile&slot=runtime-1&qaProfileId=release&qaInputs=${encodeURIComponent(inputs)}`,
+    runners,
+  );
+  assert.equal(qa?.flowType, 'qa');
+  assert.equal(qa?.qaProfileId, 'release');
+  assert.equal(qa?.qaInputs, inputs);
+  assert.equal(qa?.slot, 'runtime-1');
+  const legacy = parseDispatchWizardHash(
+    '#dispatch?flow=review-pr&validationDepth=full-live&slot=runtime-1',
+    runners,
+  );
+  assert.equal(legacy?.flowType, 'qa');
+  assert.equal(legacy?.slot, 'runtime-1');
+  const staticLink = parseDispatchWizardHash(
+    '#dispatch?flow=review-pr&reviewMachine=node-a',
+    runners,
+  );
+  assert.equal(staticLink?.reviewMachine, 'node-a');
+  const pinned = parseDispatchWizardHash('#dispatch?flow=review-pr&slot=runtime-1', runners);
+  assert.match(pinned?.configurationError ?? '', /runtime slot/);
 });

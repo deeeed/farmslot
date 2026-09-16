@@ -4,6 +4,7 @@ import type {
   NativeProfileReference,
   PressureAdmissionReference,
   PressureDispatchOverride,
+  QaInput,
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewValidationDepth,
@@ -28,6 +29,9 @@ export interface DispatchPayloadDraftInput {
   flowType: FlowType | null;
   project: string;
   ticketId: string;
+  reviewMachine?: string;
+  qaProfileId?: string;
+  qaInputs?: Record<string, QaInput>;
   slotOverride: string;
   allowedSlots: string[] | undefined;
   branch: string | undefined;
@@ -43,8 +47,8 @@ export interface DispatchPayloadDraftInput {
   nudgeIntent: 'nudge' | 'fresh' | undefined;
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
-  reviewTier: '' | 'light' | 'standard' | 'full';
-  reviewValidationDepth: ReviewValidationDepth;
+  reviewTier?: '' | 'light' | 'standard' | 'full';
+  reviewValidationDepth?: ReviewValidationDepth;
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
   pressureAdmissionRef?: PressureAdmissionReference;
@@ -56,6 +60,7 @@ export function buildDispatchWizardPayloadDraft(
   input: DispatchPayloadDraftInput,
 ): DispatchPayloadDraft | null {
   if (!input.flowType) return null;
+  const workspace = input.flowType === 'review-pr' && input.reviewValidationDepth !== 'full-live';
   const variant = input.comparison.variant?.trim() ?? '';
   const branch = resolveComparisonDispatchBranch({
     comparisonLane: Boolean(input.comparison.lane === 'comparison'),
@@ -70,8 +75,14 @@ export function buildDispatchWizardPayloadDraft(
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketId,
-    slotId: input.slotOverride || undefined,
-    allowedSlots: input.allowedSlots,
+    ...(workspace && input.reviewMachine
+      ? { reviewWorkspaceTarget: { machine: input.reviewMachine } }
+      : {}),
+    ...(input.flowType === 'qa'
+      ? { qaProfileId: input.qaProfileId, qaInputs: input.qaInputs }
+      : {}),
+    slotId: workspace ? undefined : input.slotOverride || undefined,
+    allowedSlots: workspace ? undefined : input.allowedSlots,
     branch,
     model: input.model || undefined,
     runner: input.runner || undefined,
@@ -80,10 +91,10 @@ export function buildDispatchWizardPayloadDraft(
     taskTemplate: input.taskTemplate,
     domain: input.domain,
     executionTemplateId: input.executionTemplateId,
-    skipPrepare: input.skipPrepare || undefined,
-    prepareProfile: input.prepareProfile || undefined,
-    nudgeReuse: input.nudgeIntent === 'nudge' ? true : undefined,
-    freshReuse: input.nudgeIntent === 'fresh' ? true : undefined,
+    skipPrepare: workspace ? undefined : input.skipPrepare || undefined,
+    prepareProfile: workspace ? undefined : input.prepareProfile || undefined,
+    nudgeReuse: !workspace && input.nudgeIntent === 'nudge' ? true : undefined,
+    freshReuse: !workspace && input.nudgeIntent === 'fresh' ? true : undefined,
     mode: input.mode,
     devInteractiveProfile: input.devInteractiveProfile,
     reviewTier: input.reviewTier || undefined,
@@ -91,8 +102,8 @@ export function buildDispatchWizardPayloadDraft(
     reviewValidationDepth: input.flowType === 'review-pr' ? input.reviewValidationDepth : undefined,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
-    pressureAdmissionRef: input.pressureAdmissionRef,
-    pressureOverride: input.pressureOverride,
+    pressureAdmissionRef: workspace ? undefined : input.pressureAdmissionRef,
+    pressureOverride: workspace ? undefined : input.pressureOverride,
     comparison: input.comparison,
   };
 }

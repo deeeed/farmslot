@@ -180,6 +180,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `prPush.unregister`                     | admin          |                                                          |
 | `prReview.cancel`                       | admin          |                                                          |
 | `prReview.get`                          | admin          |                                                          |
+| `prReview.publish`                      | admin          |                                                          |
 | `prReview.submit`                       | admin          |                                                          |
 | `prRules.accept`                        | admin          |                                                          |
 | `prRules.acknowledgeAction`             | admin          |                                                          |

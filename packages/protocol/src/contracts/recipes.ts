@@ -97,6 +97,7 @@ export const RECIPE_QUALITY_FALLBACK_SOURCES = [
 ] as const;
 
 const RECIPE_QUALITY_FLOW_TYPES = [
+  'qa',
   'fix-bug',
   'review-pr',
   'dev',

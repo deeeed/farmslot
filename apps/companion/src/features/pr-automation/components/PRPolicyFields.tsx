@@ -4,11 +4,18 @@ import { Text, View } from 'react-native';
 import {
   isPRWorkspaceExecutionProfile,
   type PRExecutionProfile,
+  type ProjectQaConfig,
   type PRReviewOptions,
+  prReviewWorkflow,
   type SlotStatus,
 } from '@farmslot/protocol';
 
-import { newPRExecution, prExecutionText, togglePRSlot } from '../../../lib/pr-automation';
+import {
+  newPRExecution,
+  prExecutionText,
+  togglePRSlot,
+  updatePRReviewOptions,
+} from '../../../lib/pr-automation';
 import { styles } from '../styles/pr-automation-styles';
 
 import { PRButton, PRInput } from './PRControls';
@@ -17,68 +24,113 @@ export function PRReviewFields({
   value,
   onChange,
   disabled,
+  qa,
 }: {
   value: PRReviewOptions;
   onChange: (value: PRReviewOptions) => void;
   disabled: boolean;
+  qa?: ProjectQaConfig;
 }) {
+  const runtime = prReviewWorkflow(value) === 'qa';
+  const change = (patch: Partial<PRReviewOptions>) => onChange(updatePRReviewOptions(value, patch));
   return (
     <View style={styles.card}>
-      <Text style={styles.muted}>Reviewer session</Text>
+      <Text style={styles.muted}>Workflow</Text>
       <View style={styles.row}>
-        {(['resume', 'reset'] as const).map((sessionIntent) => (
+        {(['review', 'qa'] as const).map((workflow) => (
           <PRButton
-            key={sessionIntent}
-            label={sessionIntent === 'resume' ? 'Continue' : 'Fresh'}
+            key={workflow}
+            testID={`companion-pr-workflow-${workflow}`}
+            label={workflow === 'qa' ? 'QA' : 'Review'}
+            selected={prReviewWorkflow(value) === workflow}
             disabled={disabled}
-            selected={value.sessionIntent === sessionIntent}
-            onPress={() => onChange({ ...value, sessionIntent })}
+            onPress={() => change({ workflow })}
           />
         ))}
       </View>
-      <Text style={styles.muted}>Review scope</Text>
-      <View style={styles.row}>
-        {(['incremental', 'full'] as const).map((scope) => (
-          <PRButton
-            key={scope}
-            label={
-              scope === 'incremental' ? 'Changes since last review' : 'Full independent review'
-            }
-            selected={value.scope === scope}
-            disabled={disabled}
-            onPress={() => onChange({ ...value, scope })}
-          />
-        ))}
-      </View>
-      <Text style={styles.muted}>Validation depth</Text>
-      <View style={styles.row}>
-        {(['static-code', 'full-live'] as const).map((validationDepth) => (
-          <PRButton
-            key={validationDepth}
-            testID={`companion-pr-depth-${validationDepth}`}
-            label={validationDepth === 'full-live' ? 'Review and live QA' : 'Static code'}
-            selected={value.validationDepth === validationDepth}
-            disabled={disabled}
-            onPress={() => onChange({ ...value, validationDepth })}
-          />
-        ))}
-      </View>
-      <Text style={styles.muted}>When the saved reviewer is busy</Text>
-      <View style={styles.row}>
-        {(['wait', 'fresh'] as const).map((busySession) => (
-          <PRButton
-            key={busySession}
-            label={busySession === 'wait' ? 'Wait for reviewer' : 'Allow fresh slot'}
-            selected={(value.busySession ?? 'wait') === busySession}
-            disabled={disabled}
-            onPress={() => onChange({ ...value, busySession })}
-          />
-        ))}
-      </View>
-      <Text style={styles.muted}>
-        Initial rounds and full reviews start fresh. Saved sessions do not reserve a slot between
-        rounds.
-      </Text>
+      {runtime ? (
+        <>
+          <Text style={styles.muted}>Farm QA profile</Text>
+          <View style={styles.row}>
+            <PRButton
+              label="Farm default"
+              selected={!value.qaProfileId}
+              disabled={disabled}
+              onPress={() => change({ qaProfileId: undefined, qaInputs: undefined })}
+            />
+            {qa?.profiles.map((profile) => (
+              <PRButton
+                key={profile.id}
+                label={profile.title}
+                selected={value.qaProfileId === profile.id}
+                disabled={disabled}
+                onPress={() => change({ qaProfileId: profile.id, qaInputs: undefined })}
+              />
+            ))}
+          </View>
+          <Text style={styles.muted}>
+            QA executes the farm validation skill and requires runtime evidence.
+          </Text>
+        </>
+      ) : (
+        <>
+          <Text style={styles.muted}>Publication</Text>
+          <View style={styles.row}>
+            {([undefined, true, false] as const).map((publishReview) => (
+              <PRButton
+                key={String(publishReview)}
+                testID={`companion-pr-publication-${String(publishReview)}`}
+                label={
+                  publishReview === undefined
+                    ? 'Inherit policy'
+                    : publishReview
+                      ? 'Publish review to PR'
+                      : 'Farmslot results only'
+                }
+                selected={value.publishReview === publishReview}
+                disabled={disabled}
+                onPress={() => change({ publishReview })}
+              />
+            ))}
+          </View>
+          <Text style={styles.muted}>Reviewer session</Text>
+          <View style={styles.row}>
+            {(['resume', 'reset'] as const).map((sessionIntent) => (
+              <PRButton
+                key={sessionIntent}
+                label={sessionIntent === 'resume' ? 'Continue' : 'Fresh'}
+                selected={value.sessionIntent === sessionIntent}
+                disabled={disabled}
+                onPress={() => change({ sessionIntent })}
+              />
+            ))}
+          </View>
+          <Text style={styles.muted}>Review scope</Text>
+          <View style={styles.row}>
+            {(['incremental', 'full'] as const).map((scope) => (
+              <PRButton
+                key={scope}
+                label={scope === 'full' ? 'Full independent review' : 'Changes since last review'}
+                selected={value.scope === scope}
+                disabled={disabled}
+                onPress={() => change({ scope })}
+              />
+            ))}
+          </View>
+          <Text style={styles.muted}>When the saved reviewer is busy</Text>
+          <View style={styles.row}>
+            {(['wait', 'fresh'] as const).map((busySession) => (
+              <PRButton
+                key={busySession}
+                label={busySession === 'wait' ? 'Wait for reviewer' : 'Allow fresh reviewer'}
+                selected={(value.busySession ?? 'wait') === busySession}
+                disabled={disabled}
+                onPress={() => change({ busySession })}
+              />
+            ))}
+          </View>
+        </>
+      )}
     </View>
   );
 }

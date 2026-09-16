@@ -1,5 +1,6 @@
 import {
   assertPRExecutionProfile,
+  type FlowType,
   isPRWorkspaceExecutionProfile,
   parseNativeProfileReference,
   prExecutionChoices,
@@ -8,6 +9,9 @@ import {
   type PRWorkflowDefaultSources,
   type PRWorkspaceExecutionChoice,
   resolvePRWorkflowDefaults,
+  resolveReviewQaDispatch,
+  type ReviewQaDispatchInput,
+  type ReviewQaDispatchSelection,
   type RunCreateParams,
   sameNativeProfileReference,
 } from '@farmslot/protocol';
@@ -17,6 +21,9 @@ import {
   isNodeTransportUnavailableError,
   type NodeTransportUnavailableError,
 } from '../fleet/node-rpc.js';
+import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import { isFreeSlot } from '../methods/dispatch/slot-scoring.js';
+import { isKnownRunner, runnerSupportsEffort, runnerSupportsModel } from '../runners/registry.js';
 
 import {
   assertReviewWorkspaceAdmitted,
@@ -25,29 +32,30 @@ import {
   type ReviewWorkspaceAdmission,
 } from './admission.js';
 
-export type DirectWorkflowRequest = Pick<
-  RunCreateParams,
-  | 'flowType'
-  | 'reviewValidationDepth'
-  | 'project'
-  | 'domain'
-  | 'runner'
-  | 'model'
-  | 'effort'
-  | 'transport'
-  | 'nativeProfile'
-  | 'reviewWorkspaceTarget'
-  | 'slotId'
-  | 'allowedSlots'
-  | 'reviewScope'
-  | 'mode'
-  | 'executionTemplateId'
-  | 'taskTemplate'
-  | 'completionPolicy'
->;
+export type DirectWorkflowRequest = ReviewQaDispatchInput &
+  Pick<
+    RunCreateParams,
+    | 'reviewValidationDepth'
+    | 'project'
+    | 'domain'
+    | 'runner'
+    | 'model'
+    | 'effort'
+    | 'transport'
+    | 'nativeProfile'
+    | 'reviewWorkspaceTarget'
+    | 'slotId'
+    | 'allowedSlots'
+    | 'reviewScope'
+    | 'mode'
+    | 'executionTemplateId'
+    | 'taskTemplate'
+    | 'completionPolicy'
+  > & { flowType: FlowType };
 
 export interface DirectWorkflowDefaultsResult<T> {
   params: T;
+  reviewQa?: ReviewQaDispatchSelection;
   execution?: PRExecutionProfile;
   sources?: PRWorkflowDefaultSources;
   admission?: ReviewWorkspaceAdmission;
@@ -114,7 +122,8 @@ export function constrainDirectWorkflowExecution(
       selected.nativeProfile = nativeProfile;
     }
   } else {
-    if (input.reviewWorkspaceTarget) unavailable('Full-live review requires runtime slots');
+    if (input.reviewWorkspaceTarget)
+      unavailable('QA requires runtime slots, not a review workspace');
     const allowed =
       selected.slotPolicy.kind === 'exact'
         ? [selected.slotPolicy.slotId]
@@ -142,43 +151,81 @@ export function constrainDirectWorkflowExecution(
   return selected;
 }
 
-/** Apply static farm defaults, then choose a machine through shared admission. */
+/** Apply farm defaults before legacy normalization, then choose through shared admission. */
 export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequest>(
   original: T,
-  project: Pick<ProjectConfig, 'workflowDefaults' | 'staticReview'> | null | undefined,
+  project: Pick<ProjectConfig, 'workflowDefaults' | 'qa' | 'staticReview'> | null | undefined,
   options: {
     purpose: 'preview' | 'queue' | 'run';
     ownerId?: string;
     execution?: PRExecutionProfile;
   },
 ): Promise<DirectWorkflowDefaultsResult<T & DirectWorkflowRequest>> {
-  if (original.flowType !== 'review-pr' || original.reviewValidationDepth === 'full-live') {
+  if (original.flowType !== 'review-pr' && original.flowType !== 'qa') {
+    resolveReviewQaDispatch(original, project?.qa);
     assertReviewWorkspacePlacement(original);
     return { params: original };
   }
-  if (original.taskTemplate)
-    unavailable('Workspace review requires the configured static-review catalog template');
-  if (
-    original.executionTemplateId &&
-    original.executionTemplateId !== project?.staticReview?.templateId
-  )
-    unavailable('Select the configured static-review template');
+  const flow =
+    original.flowType === 'qa' || original.reviewValidationDepth === 'full-live'
+      ? 'qa'
+      : 'review-pr';
+  if (flow === 'review-pr') {
+    if (original.taskTemplate)
+      unavailable('Workspace review requires the configured static-review catalog template');
+    if (
+      original.executionTemplateId &&
+      original.executionTemplateId !== project?.staticReview?.templateId
+    )
+      unavailable('Select the configured static-review template');
+  }
   if (original.reviewWorkspaceTarget) assertReviewWorkspacePlacement(original);
-  const defaults = resolvePRWorkflowDefaults({ farm: project?.workflowDefaults });
+  const defaults = resolvePRWorkflowDefaults({ workflow: flow, farm: project?.workflowDefaults });
   let params = {
     ...original,
     mode: original.mode ?? ('autonomous' as const),
     reviewScope: original.reviewScope ?? defaults.review.scope,
-    ...(original.domain === undefined && project?.staticReview?.domain
+    ...(flow === 'review-pr' && original.domain === undefined && project?.staticReview?.domain
       ? { domain: project.staticReview.domain }
       : {}),
   };
-  if (params.slotId || params.allowedSlots?.length)
+  if (flow === 'qa') {
+    params = {
+      ...params,
+      qaProfileId: original.qaProfileId ?? defaults.review.qaProfileId,
+      qaInputs: { ...defaults.review.qaInputs, ...original.qaInputs },
+    };
+  }
+  const reviewQa = resolveReviewQaDispatch(params, project?.qa);
+  if (reviewQa) {
+    params = {
+      ...params,
+      flowType: reviewQa.flowType,
+      reviewTier: undefined,
+      reviewValidationDepth: undefined,
+    };
+    if (reviewQa.qa)
+      params = {
+        ...params,
+        taskTemplate: undefined,
+        executionTemplateId: reviewQa.qa.profile.template_id,
+        qaProfileId: reviewQa.qa.profile.id,
+        qaInputs: reviewQa.qa.inputs,
+        completionPolicy: 'artifact-only',
+      };
+  }
+  if (flow === 'review-pr' && (params.slotId || params.allowedSlots?.length))
     unavailable(
       'Select an authorized review machine; legacy slot placement requires explicit migration',
     );
   let profile = options.execution ?? defaults.execution;
-  if (!profile && params.reviewWorkspaceTarget && params.runner && params.model) {
+  if (
+    !profile &&
+    flow === 'review-pr' &&
+    params.reviewWorkspaceTarget &&
+    params.runner &&
+    params.model
+  ) {
     profile = {
       workspacePolicy: { kind: 'exact', machine: params.reviewWorkspaceTarget.machine },
       models: [{ runner: params.runner, model: params.model, effort: params.effort }],
@@ -186,8 +233,8 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
       nativeProfile: params.nativeProfile,
     };
   }
-  if (!profile) return { params: params as T, sources: defaults.sources };
-  if (!isPRWorkspaceExecutionProfile(profile))
+  if (!profile) return { params: params as T, reviewQa, sources: defaults.sources };
+  if (isPRWorkspaceExecutionProfile(profile) !== (flow === 'review-pr'))
     unavailable('Workflow execution policy uses the wrong resource type');
   const execution = constrainDirectWorkflowExecution(profile, params);
   if (isPRWorkspaceExecutionProfile(execution)) {
@@ -243,10 +290,45 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
     assertReviewWorkspacePlacement(params);
     return {
       params: params as T,
+      reviewQa,
       execution,
       sources: defaults.sources,
       admission: waiting.admission,
     };
   }
-  unavailable('Static review requires a workspace execution policy');
+  const [fleet, pools] = await Promise.all([loadFleetStatus(), loadPoolConfigs()]);
+  const choices = prExecutionChoices(execution).filter((choice) =>
+    pools.some((pool) =>
+      pool.slots.some(
+        (slot) => slot.id === choice.slotId && (slot.project ?? pool.project) === params.project,
+      ),
+    ),
+  );
+  const choice =
+    choices.find((candidate) =>
+      fleet.slots.some((slot) => slot.slot === candidate.slotId && isFreeSlot(slot)),
+    ) ?? choices[0];
+  if (!choice) unavailable('No configured runtime slot matches the workflow execution policy');
+  if (
+    !isKnownRunner(choice.runner) ||
+    !runnerSupportsModel(choice.runner, choice.model) ||
+    !runnerSupportsEffort(choice.runner, choice.model, choice.effort)
+  )
+    unavailable('Selected runner/model/effort is unsupported');
+  params = {
+    ...params,
+    slotId: options.purpose !== 'queue' || params.slotId ? choice.slotId : undefined,
+    allowedSlots: choices
+      .filter(
+        (candidate) =>
+          candidate.runner === choice.runner &&
+          candidate.model === choice.model &&
+          candidate.effort === choice.effort,
+      )
+      .map((candidate) => candidate.slotId),
+    runner: choice.runner,
+    model: choice.model,
+    effort: choice.effort,
+  };
+  return { params: params as T, reviewQa, execution, sources: defaults.sources };
 }

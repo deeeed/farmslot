@@ -23,6 +23,7 @@ import {
   type SlotPhase,
   type SlotStatus,
   type TmuxWorkerFilterConfig,
+  validateQaConfig,
 } from '@farmslot/protocol';
 
 import {
@@ -780,6 +781,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const raw = JSON.parse(content);
         const staticReview = normalizeRawStaticReview(raw.static_review, configPath);
         const workflowDefaults = normalizeProjectWorkflowDefaults(raw.workflow_defaults);
+        if (raw.qa !== undefined) validateQaConfig(raw.qa);
         const ciCheckGroups = normalizeProjectCICheckGroups(raw.ci);
         const resources = normalizeProjectResources(raw.resources);
         const slotActions = normalizeSlotActions(raw.slot_actions);
@@ -915,6 +917,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
           ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
           ...(staticReview ? { staticReview } : {}),
+          ...(raw.qa ? { qa: raw.qa } : {}),
           ...(workflowDefaults ? { workflowDefaults } : {}),
           ...(raw.execution_templates &&
           typeof raw.execution_templates === 'object' &&

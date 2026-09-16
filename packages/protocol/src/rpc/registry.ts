@@ -174,6 +174,7 @@ export const Methods = {
   PR_REVIEW_ACCEPT: 'prRules.accept',
   PR_REVIEW_DEFER: 'prRules.defer',
   PR_REVIEW_REQUEST: 'prReview.submit',
+  PR_REVIEW_PUBLISH: 'prReview.publish',
   PR_REVIEW_REQUEST_GET: 'prReview.get',
   PR_REVIEW_REQUEST_CANCEL: 'prReview.cancel',
   PR_REVIEW_COMMENTS: 'pr.reviewComments',

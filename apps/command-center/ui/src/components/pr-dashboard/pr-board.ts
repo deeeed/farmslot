@@ -1489,10 +1489,10 @@ export class PRBoard extends LitElement {
         <button
           data-testid="pr-automation-tab-reviews"
           aria-current=${this._section === 'reviews' ? 'page' : nothing}
-          title="PRs matched by your review teams and rules"
+          title="PR review and runtime QA requests"
           @click=${() => this._navigate({ section: 'reviews' })}
         >
-          Need Review
+          Review / QA
         </button>
         <button
           data-testid="pr-workspace-automation"

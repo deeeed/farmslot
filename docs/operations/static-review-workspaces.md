@@ -1,6 +1,6 @@
 # Static review workspaces
 
-Configure and launch slot-free PR reviews under [ADR-058](../adr/058-static-review-and-farm-owned-qa.md). This is the operational reference for the static execution stage; existing `full-live` reviews still use runtime slots.
+Configure and launch slot-free PR reviews under [ADR-058](../adr/058-static-review-and-farm-owned-qa.md). Runtime validation uses the separate [farm QA flow](farm-qa.md).
 
 ## Configure the farm
 
@@ -56,7 +56,7 @@ PR requests inherit complete policies in this order: request, rule, repository, 
 
 ## Launch reviews
 
-In Command Center, open **PRs → Reviews → Request review**, enter a PR URL, and choose **Static review**. A unique matching team is selected automatically. Advanced options expose execution overrides. Enable **Start when the configured resources are available** to queue execution automatically.
+In Command Center, open **PRs → Review / QA → Request review / QA**, enter a PR URL, and choose **Review**. A unique matching team is selected automatically. Advanced options expose execution overrides. Enable **Start when the configured resources are available** to queue execution automatically.
 
 From a checkout, use the local CLI in `apps/command-center`:
 
@@ -72,6 +72,43 @@ Completion, failure and a worker-reported blocker retain task artifacts and rele
 
 ## Existing runtime reviews
 
-`review-pr` requests with `reviewValidationDepth: full-live` keep their slot placement and existing runtime template. The CLI accepts `--review-validation-depth full-live --slot <slot-id>`. Static farm defaults do not replace those choices.
+Unstarted `review-pr` requests with `reviewValidationDepth: full-live` normalize to QA using the configured farm profile. Their slot constraints and original settings remain recorded. Missing profiles or ambiguous legacy tier/recipe settings require configuration. New callers should send `flowType: qa` and a profile.
+
+Already-running work and historical results retain their original contract. Migration does not relabel an old verdict as newly verified QA.
 
 An unstarted static request pinned to a slot requires explicit workspace configuration. The gateway does not interpret a slot pin as permission to use its host. Existing historical records keep their original execution identity.
+
+## PR review publication
+
+PR-intake requests can set `review.publishReview` to true or false. Omission inherits
+request/rule, repository, team and farm policy, in that order; the built-in default
+keeps results in Farmslot. Publication inherits independently of session/scope choices.
+Projects opt in through `workflow_defaults["review-pr"].review.publishReview`.
+QA cannot enable static-review publication.
+
+Admission freezes the publication choice, policy source, team and GitHub account.
+Completed workspace reviews publish through the gateway after current owner, account,
+project policy and PR-head checks. Workers retain read-only workspace permissions and artifact-only completion. Publication is a separate, explicitly requested gateway action after completion.
+The body and inline findings are submitted together against the reviewed commit.
+A self-authored PR receives a comment event because GitHub forbids self-approval.
+
+The run retains the provider receipt and any publication error, including after
+archival. Errors do not erase completed review results or start an endless retry loop.
+An authenticated owner can retry a requested publication through
+`prReview.publish` with `{ "runId": "..." }`. A lost response is reconciled by the
+owned publication marker. If the outcome cannot be established, Farmslot reports
+uncertainty and does not post again.
+
+Command Center exposes inheritance and explicit publication choices in PR requests and
+policy editors. Run detail shows the account, policy source, receipt link and retry errors.
+Direct `run create` also captures publication policy while returning the normal Run result:
+
+```bash
+yarn farmslot run create --project example --flow-type review-pr --ticket example/app#42 --publish-review --review-team <team-id>
+yarn farmslot run create --project example --flow-type review-pr --ticket example/app#42 --no-publish-review
+```
+
+`--team` aliases `--review-team`. A unique owned team mapped to the project/repository
+is inferred. Ambiguous configured publication policies require an explicit team;
+opt-out needs no account. Omitted publication flags inherit policy. The gateway freezes
+the selection, rejects client-forged authority and revalidates it before publication.

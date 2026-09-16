@@ -1,13 +1,17 @@
+import { prReviewWorkflow } from '@farmslot/protocol';
+
 import { prReviewReadiness } from './pr-review-status.js';
 import type { PRWorkspaceEntry } from './pr-workspace.js';
 
 /**
- * What the viewer has to do next on a PR in the Need Review section, in the
+ * What the viewer has to do next on a PR in the Review / QA section, in the
  * order the list shows them. Derived from the configured review account's last
  * review versus the PR head (PRReviewObservation) and, when no observation
  * exists yet, from GitHub's overall review decision.
  */
 export const PR_REVIEW_QUEUE_GROUPS = [
+  'QA in progress',
+  'QA pending',
   'Re-review: author pushed since',
   'Not reviewed yet',
   'Waiting on author',
@@ -32,6 +36,21 @@ export interface PRReviewQueueItem {
  * for one account is not hidden behind another account's approval.
  */
 export function prReviewQueue(entry: PRWorkspaceEntry): PRReviewQueueItem {
+  const qa = entry.reviews.find(
+    (intent) =>
+      !['completed', 'failed', 'withdrawn'].includes(intent.status) &&
+      intent.contributions.some(
+        (source) => source.eligible && prReviewWorkflow(source.review) === 'qa',
+      ),
+  );
+  if (qa)
+    return {
+      group: qa.status === 'running' ? 'QA in progress' : 'QA pending',
+      label: qa.status === 'running' ? 'QA in progress' : 'QA requested',
+      detail:
+        qa.waitingReason ?? 'Runtime validation has its own outcome, independent of PR approval.',
+      tone: 'warn',
+    };
   const latestByReviewer = new Map<string, PRWorkspaceEntry['reviewObservations'][number]>();
   for (const observation of entry.reviewObservations) {
     const key = observation.reviewer.toLowerCase();

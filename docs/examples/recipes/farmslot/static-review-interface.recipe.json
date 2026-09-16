@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Static and on-device review request interface",
-  "description": "Real Chrome controls and an isolated production gateway prove inherited farm execution, team inference, explicit review-machine override, preserved full-live selection and persisted distinct requests. Requests remain unstarted.",
+  "title": "Static Review and farm QA request interface",
+  "description": "Real Chrome controls and an isolated production gateway prove inherited farm execution, team inference, review-machine overrides, farm QA profile selection and distinct persisted requests. Requests remain unstarted.",
   "workflow": {
     "entry": "request-interface",
     "nodes": {
@@ -9,10 +9,13 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-interface-live",
         "timeout_ms": 240000,
-        "intent": "Submit static and on-device review requests through real browser controls, then assert their stored policies through gateway RPC and retain screenshots.",
+        "intent": "Submit Review and QA through real browser controls; prove publication inheritance/opt-out, QA exclusion, persisted choices, run receipt/error display, retry refusal and live run-update events with gateway reads and screenshots.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

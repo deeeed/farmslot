@@ -321,9 +321,12 @@ export class PRRuleForm extends LitElement {
                   .checked=${review.autoStart}
                   @input=${(event: Event) =>
                     this.review({ autoStart: (event.target as HTMLInputElement).checked })}
-                />Start automatically when an allowed slot is available</label
+                />Start automatically when allowed capacity is available</label
               >
-              <p class="muted">Otherwise matches wait for acceptance and occupy no slot.</p>
+              <p class="muted">
+                Otherwise matches wait for acceptance. Static reviews use review machines; QA uses
+                runtime slots.
+              </p>
               <label
                 >Show inherited settings for<choice-picker
                   data-testid="pr-rule-inheritance-repository"

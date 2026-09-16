@@ -66,6 +66,7 @@ import { useRunStore } from '../../store/runs';
 import { NativeWorkerLinks } from '../native-conversation/components/NativeWorkerLinks';
 import { formatDuration } from '../workspace-shared/format';
 import { useReviewPackageTab } from '../workspace-shared/review-package-tabs';
+import { ReviewPublication } from '../workspace-shared/ReviewPublication';
 
 import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
 import {
@@ -559,6 +560,7 @@ export default function RunDetailScreen() {
         ) : null}
 
         <RunPosturePanel state={runPosture} gatePark={liveGateParkView(run)} />
+        <ReviewPublication run={run} />
 
         {reviewPackageActiveTab === 'evidence' && focusedArtifactPath ? (
           <RunFocusedArtifactCard

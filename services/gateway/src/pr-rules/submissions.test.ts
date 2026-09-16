@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import type { PRReviewRequest, PRRulePreviewItem, PRTeamProfile } from '@farmslot/protocol';
 
+import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleStore } from './store.js';
 
 const pr = { host: 'github.com', repo: 'owner/repo', number: 42 };
@@ -363,4 +364,158 @@ test('an identical retry returns its durable receipt after the team changes prov
     store.submit('owner', { ...request, idempotencyKey: 'new-request' }),
     /host must match/,
   );
+});
+
+test('concurrent static Review and QA requests have separate durable intents', async (t) => {
+  const { store, team, request, item, file } = await fixture(t);
+  const review = {
+    sessionIntent: 'resume' as const,
+    scope: 'incremental' as const,
+    workflow: 'review' as const,
+  };
+  const runtime = { ...review, workflow: 'qa' as const, qaProfileId: 'changed-area' };
+  const first = await store.submit('owner', { ...request, review });
+  const second = await store.submit('owner', { ...request, idempotencyKey: 'qa', review: runtime });
+  const staticReceipt = await store.applySubmission(
+    'owner',
+    first.id,
+    first.revision,
+    team.revision,
+    { item: { ...item, review } },
+  );
+  const qaReceipt = await store.applySubmission(
+    'owner',
+    second.id,
+    second.revision,
+    team.revision,
+    { item: { ...item, review: runtime } },
+  );
+  assert.notEqual(staticReceipt.intentId, qaReceipt.intentId);
+  assert.equal(store.intent(staticReceipt.intentId!)?.status, 'held');
+  assert.equal(store.intent(qaReceipt.intentId!)?.status, 'held');
+  const restarted = await PRRuleStore.load(file);
+  assert.equal(restarted.snapshot().intents.length, 2);
+  assert.equal(
+    (await restarted.submit('owner', { ...request, idempotencyKey: 'qa', review: runtime }))
+      .intentId,
+    qaReceipt.intentId,
+  );
+});
+
+test('direct QA receipts persist configured and resolved purpose through restart', async (t) => {
+  const { store, team, request, item, file } = await fixture(t);
+  const review = {
+    sessionIntent: 'resume' as const,
+    scope: 'incremental' as const,
+    workflow: 'qa' as const,
+  };
+  const submission = await store.submit('owner', { ...request, review });
+  const resolved: PRRulePreviewItem = { ...item, review };
+  resolvePreviewQaPreset(resolved, {
+    default_profile: 'pr',
+    profiles: [
+      {
+        id: 'pr',
+        title: 'PR QA',
+        template_id: 'validation/shared',
+        inputs: { domain: 'payments' },
+      },
+    ],
+  });
+  const receipt = await store.applySubmission(
+    'owner',
+    submission.id,
+    submission.revision,
+    team.revision,
+    { item: resolved },
+  );
+  const restarted = await PRRuleStore.load(file);
+  assert.deepEqual(
+    restarted.intent(receipt.intentId!)?.contributions[0].reviewPurpose,
+    resolved.reviewPurpose,
+  );
+  assert.notEqual(resolved.reviewPurpose?.configured, resolved.reviewPurpose?.resolved);
+});
+
+test('publication requests with different accounts hold pending work and cannot join a running review', async (t) => {
+  for (const started of [false, true]) {
+    const f = await fixture(t);
+    const second = await f.store.saveTeam('owner', {
+      ...f.team.config,
+      name: 'Other publisher',
+      account: { host: 'github.com', login: 'other-publisher' },
+    });
+    const review = {
+      sessionIntent: 'reset' as const,
+      scope: 'full' as const,
+      workflow: 'review' as const,
+      publishReview: true,
+    };
+    const item = { ...f.item, review };
+    const first = await f.store.submit('owner', { ...f.request, review });
+    const delayed = await f.store.submit('owner', {
+      ...f.request,
+      review,
+      teamId: second.id,
+      idempotencyKey: 'other-account',
+    });
+    const linked = await f.store.applySubmission(
+      'owner',
+      first.id,
+      first.revision,
+      f.team.revision,
+      { item },
+    );
+    if (started)
+      await f.store.updateDispatch(linked.intentId!, { status: 'running', runId: 'owned-run' });
+    const result = await f.store.applySubmission(
+      'owner',
+      delayed.id,
+      delayed.revision,
+      second.revision,
+      { item },
+    );
+    if (started) {
+      assert.notEqual(result.intentId, linked.intentId);
+      assert.equal(f.store.intent(linked.intentId!)?.contributions.length, 1);
+      assert.equal(f.store.intent(linked.intentId!)?.runId, 'owned-run');
+    } else {
+      assert.equal(result.intentId, linked.intentId);
+      assert.equal(f.store.intent(result.intentId!)?.status, 'needs-configuration');
+      assert.match(
+        f.store.intent(result.intentId!)?.waitingReason ?? '',
+        /one owner and GitHub account/,
+      );
+    }
+  }
+});
+
+test('publication authority cannot move to another owner sharing the same GitHub account', async (t) => {
+  const f = await fixture(t);
+  const other = await teamFor(f.store, 'other-owner');
+  const review = {
+    sessionIntent: 'reset' as const,
+    scope: 'full' as const,
+    workflow: 'review' as const,
+    publishReview: true,
+  };
+  const first = await f.store.submit('owner', { ...f.request, review });
+  const delayed = await f.store.submit('other-owner', {
+    ...f.request,
+    review,
+    teamId: other.id,
+    idempotencyKey: 'other-owner',
+  });
+  const linked = await f.store.applySubmission('owner', first.id, first.revision, f.team.revision, {
+    item: { ...f.item, review },
+  });
+  await f.store.updateDispatch(linked.intentId!, { status: 'running', runId: 'owned-run' });
+  const result = await f.store.applySubmission(
+    'other-owner',
+    delayed.id,
+    delayed.revision,
+    other.revision,
+    { item: { ...f.item, review } },
+  );
+  assert.notEqual(result.intentId, linked.intentId);
 });

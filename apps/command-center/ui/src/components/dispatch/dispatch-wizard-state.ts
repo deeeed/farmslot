@@ -11,7 +11,6 @@ import type {
   ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
-  ReviewValidationDepth,
   Run,
   SlotStatus,
   TemplatePreview,
@@ -60,6 +59,7 @@ export abstract class DispatchWizardState extends LitElement {
   _nativeAutomaticSlot = false;
   @state() _effort: EffortLevel = '';
   @state() _slotOverride = '';
+  _slotOverrideExplicit = false;
   @state() _project = '';
   @state() _app = '';
   @state() _availableProjects: string[] = [];
@@ -91,8 +91,11 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _prepareProfile = '';
   @state() _profileFitSuggestion: ProfileFitSuggestion | null = null;
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
-  @state() _reviewTier: '' | 'light' | 'standard' | 'full' = '';
-  @state() _reviewValidationDepth: ReviewValidationDepth = 'static-code';
+  @state() _reviewMachine = '';
+  @state() _legacyReviewPlacementError = '';
+  @state() _qaProfileId = '';
+  @state() _qaInputsText = '';
+  _workflowSelectionKey = '';
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];
   _nextPublicationReviewLoopId = 1;
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];

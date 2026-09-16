@@ -3,6 +3,7 @@ import {
   isPRWorkspaceExecutionChoice,
   type PRExecutionChoice,
   type PRReviewIntent,
+  prReviewWorkflow,
   type Run,
 } from '@farmslot/protocol';
 
@@ -23,6 +24,7 @@ export function preferRetainedReviewer(
   const source = intent.contributions.find((item) => item.eligible);
   if (!source) return [];
   const options = source.review ?? DEFAULT_PR_REVIEW_OPTIONS;
+  if (prReviewWorkflow(options) === 'qa') return choices;
   if (options.sessionIntent !== 'resume' || options.scope !== 'incremental') return choices;
   const identity = {
     id: `review:${intent.id}`,

@@ -2,7 +2,11 @@ import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
 import type { FailureCategory } from './chat.js';
 import type { ProjectExecutionTemplatesConfig } from './execution-templates.js';
-import type { PRExecutionProfile, PRWorkspaceExecutionProfile } from './pr-monitoring.js';
+import type {
+  PRExecutionProfile,
+  PRSlotExecutionProfile,
+  PRWorkspaceExecutionProfile,
+} from './pr-monitoring.js';
 import type { PRReviewOptions } from './pr-rules.js';
 import type { ResourceDefinition, SlotActionDefinition } from './resources.js';
 import type { FlowType } from './runs.js';
@@ -17,15 +21,18 @@ export interface PRWorkflowPolicy {
   review?: PRReviewOptions;
 }
 
-/** Farm defaults for static review. Explicit full-live requests keep their slot policies. */
+/** Farm placement defaults are separate from skill-owned QA profiles. */
 export interface ProjectWorkflowDefaults {
   'review-pr'?: { execution?: PRWorkspaceExecutionProfile; review?: PRReviewOptions };
+  qa?: { execution?: PRSlotExecutionProfile; review?: PRReviewOptions };
 }
 
 export type PRWorkflowDefaultSource = 'request' | 'rule' | 'repository' | 'team' | 'farm';
 export interface PRWorkflowDefaultSources {
   execution: PRWorkflowDefaultSource | null;
   review: PRWorkflowDefaultSource | 'built-in';
+  /** Omitted on historical records created before publication defaults. */
+  publication?: PRWorkflowDefaultSource | 'built-in';
 }
 
 export interface PoolConfig {
@@ -246,6 +253,8 @@ export interface ProjectConfig {
   recipeRunSupportsVideoRecording?: boolean;
   /** Optional shared execution-template sources and deterministic defaults. */
   executionTemplates?: ProjectExecutionTemplatesConfig;
+  /** Thin farm-owned presets selecting shared validation skills and inputs. */
+  qa?: import('./qa.js').ProjectQaConfig;
 }
 
 export interface ProjectCICheckGroup {

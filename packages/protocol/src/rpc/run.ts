@@ -65,6 +65,9 @@ export type { DecisionListResult, DecisionResolveParams } from './decisions.js';
 // ─── Run param/result types ───
 
 export interface RunCreateParams {
+  /** Farm preset and skill inputs, resolved and frozen at admission. */
+  qaProfileId?: string;
+  qaInputs?: Record<string, import('../contracts/qa.js').QaInput>;
   flowType: FlowType;
   project: string;
   ticketOrPr: string;
@@ -151,6 +154,8 @@ export interface RunCreateParams {
    * light → smoke; standard → smoke|targeted; full → targeted|full-qa. */
   reviewTier?: string;
   /** Code breadth for review-pr. Omitted review-pr runs default to full. */
+  publishReview?: boolean;
+  reviewTeamId?: string;
   reviewScope?: import('../contracts/index.js').ReviewScope;
   /** Runtime validation depth for review-pr. Omitted review-pr runs default to static-code. */
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;

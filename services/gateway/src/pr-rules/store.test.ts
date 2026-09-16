@@ -12,7 +12,8 @@ import type {
   PRTriggerRule,
 } from '@farmslot/protocol';
 
-import { reviewIntentId } from './intents.js';
+import { reviewIntentAuthorized, reviewIntentId } from './intents.js';
+import { resolvePreviewQaPreset } from './qa-preset.js';
 import { PRRuleStore } from './store.js';
 
 const execution: PRExecutionProfile = {
@@ -46,7 +47,10 @@ test('overlapping static review policies with different continuity hold one shar
   await store.applyPreview('owner', changed);
   assert.equal(store.snapshot().intents.length, 1);
   assert.equal(store.snapshot().intents[0].status, 'needs-configuration');
-  assert.match(store.snapshot().intents[0].waitingReason ?? '', /continuity or validation depth/);
+  assert.match(
+    store.snapshot().intents[0].waitingReason ?? '',
+    /incompatible review or publication choices/,
+  );
 });
 
 test('a legacy full-live id cannot capture a new static review after restart', async (t) => {
@@ -344,5 +348,138 @@ test('later matching and nonmatching scans preserve completed and failed review 
     assert.deepEqual(store.intent(intent.id), before);
     await store.setEnabled('owner', changed.id, changed.revision, false, false);
     assert.deepEqual(store.intent(intent.id), before);
+  }
+});
+
+const qaPresets = {
+  default_profile: 'pr',
+  profiles: [
+    { id: 'pr', title: 'PR QA', template_id: 'validation/pr', inputs: { domain: 'payments' } },
+    { id: 'release', title: 'Release QA', template_id: 'validation/release' },
+  ],
+};
+
+test('resolving farm defaults preserves completed legacy QA without equating a different explicit preset', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  const live = preview(team, rule);
+  live.items[0].review = {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    validationDepth: 'full-live',
+  };
+  await store.applyPreview('owner', live);
+  const legacy = store.snapshot();
+  const historical = legacy.intents[0];
+  historical.id = reviewIntentId({ ...live.items[0], review: undefined });
+  historical.status = 'completed';
+  historical.runId = 'historical-live-run';
+  historical.reviewedSha = 'head-a';
+  await writeFile(file, JSON.stringify(legacy));
+  const restarted = await PRRuleStore.load(file);
+  resolvePreviewQaPreset(live.items[0], qaPresets);
+  await restarted.applyPreview('owner', live);
+  assert.deepEqual(restarted.snapshot().intents, JSON.parse(JSON.stringify([historical])));
+
+  const additional = await ruleFor(restarted, 'owner', true);
+  const explicit = preview(additional.team, additional.rule);
+  explicit.items[0].review = {
+    sessionIntent: 'resume',
+    scope: 'incremental',
+    workflow: 'qa',
+    qaProfileId: 'release',
+  };
+  resolvePreviewQaPreset(explicit.items[0], qaPresets);
+  await restarted.applyPreview('owner', explicit);
+  assert.equal(restarted.snapshot().intents.length, 2);
+  assert.deepEqual(restarted.intent(historical.id), JSON.parse(JSON.stringify(historical)));
+  assert.equal(restarted.snapshot().intents[1].contributions[0].review?.qaProfileId, 'release');
+});
+
+test('pending QA refreshes changed defaults in place and persists purpose correspondence', async (t) => {
+  const { store, file } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  const initial = preview(team, rule);
+  initial.items[0].review = { sessionIntent: 'resume', scope: 'incremental', workflow: 'qa' };
+  resolvePreviewQaPreset(initial.items[0], qaPresets);
+  await store.applyPreview('owner', initial);
+  const id = store.snapshot().intents[0].id;
+  const restarted = await PRRuleStore.load(file);
+  const changed = preview(team, rule);
+  changed.items[0].review = { sessionIntent: 'resume', scope: 'incremental', workflow: 'qa' };
+  resolvePreviewQaPreset(changed.items[0], { ...qaPresets, default_profile: 'release' });
+  await restarted.applyPreview('owner', changed);
+  assert.equal(restarted.snapshot().intents.length, 1);
+  assert.equal(restarted.snapshot().intents[0].id, id);
+  assert.equal(restarted.intent(id)?.contributions[0].review?.qaProfileId, 'release');
+  assert.equal(restarted.intent(id)?.contributions[0].eligible, true);
+  assert.deepEqual(
+    restarted.intent(id)?.contributions[0].reviewPurpose,
+    changed.items[0].reviewPurpose,
+  );
+});
+
+test('approved and previously reviewed PRs still allow explicit QA acceptance', async (t) => {
+  const { store } = await fixture(t);
+  const { team, rule } = await ruleFor(store, 'owner', true);
+  for (const [index, decision] of ['APPROVED', null].entries()) {
+    const live = preview(team, rule, `head-${index}`);
+    live.items[0].review = {
+      sessionIntent: 'resume',
+      scope: 'incremental',
+      workflow: 'qa',
+      qaProfileId: 'pr',
+    };
+    live.items[0].subject.reviewObservation = {
+      observedAt: live.checkedAt,
+      headSha: `head-${index}`,
+      state: 'open',
+      draft: false,
+      decision,
+      reviewer: 'reader',
+      requested: false,
+      review: { state: 'COMMENTED', commit: `head-${index}`, submittedAt: live.checkedAt },
+    };
+    resolvePreviewQaPreset(live.items[0], qaPresets);
+    await store.applyPreview('owner', live);
+    const intent = store.snapshot().intents.find((entry) => entry.headSha === `head-${index}`)!;
+    const accepted = await store.decideReview(intent.id, 'owner', 'accept');
+    assert.equal(reviewIntentAuthorized(accepted), true);
+    assert.equal(accepted.waitingReason, 'Awaiting dispatch admission');
+  }
+});
+
+test('QA admission retains closed and draft restrictions while static review retains approval suppression', async (t) => {
+  for (const [index, options] of [
+    { workflow: 'qa' as const, state: 'closed' as const, draft: false },
+    { workflow: 'qa' as const, state: 'open' as const, draft: true },
+    { workflow: 'review' as const, state: 'open' as const, draft: false },
+  ].entries()) {
+    const { store } = await fixture(t);
+    const { team, rule } = await ruleFor(store, 'owner', true);
+    const live = preview(team, rule, `blocked-${index}`);
+    live.items[0].review = {
+      sessionIntent: 'resume',
+      scope: 'incremental',
+      workflow: options.workflow,
+    };
+    live.items[0].subject.reviewObservation = {
+      observedAt: live.checkedAt,
+      headSha: `blocked-${index}`,
+      state: options.state,
+      draft: options.draft,
+      decision: 'APPROVED',
+      reviewer: 'reader',
+      requested: false,
+      review: null,
+    };
+    resolvePreviewQaPreset(live.items[0], qaPresets);
+    await store.applyPreview('owner', live);
+    const intent = store.snapshot().intents[0];
+    await assert.rejects(
+      store.decideReview(intent.id, 'owner', 'accept'),
+      /closed|draft|already satisfied/,
+    );
+    assert.equal(reviewIntentAuthorized(intent), false);
   }
 });

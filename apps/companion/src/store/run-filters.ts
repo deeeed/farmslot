@@ -3,7 +3,14 @@ import { create } from 'zustand';
 
 import { normalizeFlowType } from '@farmslot/protocol';
 
-export type FlowFilter = '' | 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'update-branch';
+export type FlowFilter =
+  | ''
+  | 'fix-bug'
+  | 'review-pr'
+  | 'qa'
+  | 'dev'
+  | 'pr-complete'
+  | 'update-branch';
 export type LaneFilter = '' | 'production' | 'validation' | 'comparison';
 export type SortOption = 'newest' | 'oldest' | 'duration';
 

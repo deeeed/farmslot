@@ -224,11 +224,20 @@ export function flowDir(flowType: string): string {
   return FLOW_DIR_MAP[flowType] ?? flowType;
 }
 
-export function ticketSlug(ticketOrPr: string): string {
+export function ticketSlug(ticketOrPr: string, flowType?: string): string {
   // GitHub: owner/repo#123 or #123 → just the number
   const ghMatch = ticketOrPr.match(/#(\d+)$/);
   if (ghMatch) return ghMatch[1];
-  // Jira: PROJ-2636 → proj-2636 (unchanged)
+  if (flowType === 'qa') {
+    return (
+      ticketOrPr
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80) || 'task'
+    );
+  }
+  // Keep established ticket/eval identifiers stable.
   return ticketOrPr.replace(/[#\/]/g, '-').toLowerCase();
 }
 
@@ -241,8 +250,8 @@ export function buildSmartBranch(
   branchFormat?: string,
 ): string {
   const dir = flowDir(flowType);
-  const tSlug = ticketSlug(ticketOrPr);
-  const variantSuffix = variant ? `-${ticketSlug(variant)}` : '';
+  const tSlug = ticketSlug(ticketOrPr, flowType);
+  const variantSuffix = variant ? `-${ticketSlug(variant, flowType)}` : '';
 
   if (branchFormat) {
     const ticketRaw = ticketOrPr.replace(/[~^:?*[\]\\@{}\x00-\x1f\x7f]/g, '').replace(/\//g, '-');

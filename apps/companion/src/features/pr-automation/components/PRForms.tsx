@@ -1,7 +1,9 @@
 import React from 'react';
 import { Text, View } from 'react-native';
 
-import { prExecutionText, prReviewText } from '../../../lib/pr-automation';
+import { prReviewWorkflow } from '@farmslot/protocol';
+
+import { prExecutionText } from '../../../lib/pr-automation';
 import { styles } from '../styles/pr-automation-styles';
 import type { PRAutomationController } from '../use-pr-automation-controller';
 
@@ -42,7 +44,7 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
           {vm.effectiveRequest.reviewProfile}
         </Text>
         <PRToggle
-          label="Start automatically when an allowed slot is available"
+          label="Start when allowed capacity is available"
           value={vm.requestDraft.autoStart}
           disabled={vm.disabled}
           onChange={(autoStart) => actions.editRequest({ autoStart })}
@@ -55,17 +57,45 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
           disabled={vm.disabled}
           onChange={(overrideReview) => actions.editRequest({ overrideReview })}
         />
-        {vm.requestDraft.overrideReview ? (
-          <PRReviewFields
-            value={vm.effectiveRequest.review}
+        <PRReviewFields
+          value={{
+            ...vm.effectiveRequest.review,
+            publishReview: vm.requestDraft.overrideReview
+              ? vm.requestDraft.review.publishReview
+              : undefined,
+          }}
+          qa={vm.effectiveRequest.qa}
+          disabled={vm.disabled}
+          onChange={(review) => actions.editRequest({ overrideReview: true, review })}
+        />
+        {prReviewWorkflow(vm.effectiveRequest.review) === 'qa' ? (
+          <PRInput
+            label="QA inputs (JSON)"
+            multiline
+            testID="companion-pr-qa-inputs"
+            value={
+              vm.requestDraft.qaInputsText ?? JSON.stringify(vm.effectiveRequest.qaInputs, null, 2)
+            }
             disabled={vm.disabled}
-            onChange={(review) => actions.editRequest({ review })}
+            onChange={(qaInputsText) =>
+              actions.editRequest({
+                overrideReview: true,
+                review: { ...vm.effectiveRequest.review, publishReview: undefined },
+                qaInputsText,
+              })
+            }
           />
         ) : (
-          <Text style={styles.text}>{prReviewText(vm.effectiveRequest.review)}</Text>
+          <Text style={styles.muted}>
+            Publication:{' '}
+            {vm.effectiveRequest.review.publishReview
+              ? 'Publish review to PR'
+              : 'Farmslot results only'}{' '}
+            · {vm.effectiveRequest.sources.publication ?? 'built-in'}
+          </Text>
         )}
         <PRToggle
-          label="Override inherited slots and models"
+          label="Override inherited execution"
           value={vm.requestDraft.overrideExecution}
           disabled={vm.disabled}
           onChange={(overrideExecution) => actions.editRequest({ overrideExecution })}
@@ -82,7 +112,9 @@ export function PRForms({ viewModel: vm, actions }: PRAutomationController) {
           <Text style={styles.muted}>{prExecutionText(vm.effectiveRequest.execution)}</Text>
         )}
         <PRButton
-          label="Request review"
+          label={
+            prReviewWorkflow(vm.effectiveRequest.review) === 'qa' ? 'Request QA' : 'Request review'
+          }
           testID="companion-pr-request-submit"
           disabled={vm.disabled}
           onPress={actions.saveEditor}

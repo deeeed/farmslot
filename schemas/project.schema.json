@@ -596,7 +596,7 @@
     },
     "workflow_defaults": {
       "type": "object",
-      "description": "Farm defaults for static-review execution and options. Request, rule, repository and team choices take precedence. Explicit full-live reviews retain their slot policies.",
+      "description": "Farm defaults for Review and QA execution and review options. Request/rule, repository and team selections take precedence. These placement policies are separate from QA skill presets.",
       "properties": {
         "review-pr": {
           "type": "object",
@@ -606,13 +606,108 @@
               "$ref": "#/$defs/workflowWorkspaceExecution"
             },
             "review": {
-              "$ref": "#/$defs/workflowReviewOptions"
+              "allOf": [
+                {
+                  "$ref": "#/$defs/workflowReviewOptions"
+                },
+                {
+                  "properties": {
+                    "workflow": {
+                      "const": "review"
+                    },
+                    "validationDepth": {
+                      "const": "static-code"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "qa": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "execution": {
+              "$ref": "#/$defs/workflowSlotExecution"
+            },
+            "review": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/workflowReviewOptions"
+                },
+                {
+                  "properties": {
+                    "workflow": {
+                      "const": "qa"
+                    },
+                    "validationDepth": {
+                      "const": "full-live"
+                    },
+                    "publishReview": { "const": false }
+                  }
+                }
+              ]
             }
           },
           "additionalProperties": false
         }
       },
       "additionalProperties": false
+    },
+    "qa": {
+      "type": "object",
+      "description": "Thin farm-owned presets selecting shared validation templates and project-defined inputs. Workflow and recipe-selection logic stays in the shared skill.",
+      "additionalProperties": false,
+      "required": ["default_profile", "profiles"],
+      "properties": {
+        "after_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "profile_id"],
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "profile_id": { "type": "string", "minLength": 1 }
+          },
+          "description": "Opt-in QA after newly admitted static reviews; never backfills older runs."
+        },
+        "default_profile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "template_id"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "template_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inputs": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
     },
     "static_review": {
       "type": "object",
@@ -1062,6 +1157,22 @@
           "default": 30,
           "minimum": 5,
           "maximum": 120
+        },
+        "execution_templates": {
+          "type": "object",
+          "description": "Canonical catalog entries for internal static and runtime review. Both selections are required; a runtime gate cannot silently use the static template.",
+          "additionalProperties": false,
+          "required": ["static-code", "full-live"],
+          "properties": {
+            "static-code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "full-live": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       },
       "additionalProperties": false
@@ -2226,7 +2337,7 @@
     },
     "workflowReviewOptions": {
       "type": "object",
-      "required": ["sessionIntent", "scope", "validationDepth"],
+      "required": ["sessionIntent", "scope"],
       "properties": {
         "sessionIntent": {
           "enum": ["resume", "reset"]
@@ -2234,11 +2345,191 @@
         "scope": {
           "enum": ["incremental", "full"]
         },
-        "validationDepth": {
-          "const": "static-code"
+        "workflow": {
+          "enum": ["review", "qa"]
+        },
+        "qaProfileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        "qaInputs": {
+          "type": "object"
+        },
+        "publishReview": {
+          "type": "boolean",
+          "description": "Publish static review results to the PR. Omitted inherits policy; false keeps Farmslot-only results. QA cannot enable this."
         },
         "busySession": {
           "enum": ["wait", "fresh"]
+        },
+        "validationDepth": {
+          "enum": ["static-code", "full-live"]
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "anyOf": [
+          {
+            "required": ["qaProfileId"]
+          },
+          {
+            "required": ["qaInputs"]
+          }
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": ["workflow"],
+            "properties": {
+              "workflow": {
+                "const": "qa"
+              }
+            }
+          },
+          {
+            "required": ["validationDepth"],
+            "properties": {
+              "validationDepth": {
+                "const": "full-live"
+              }
+            }
+          }
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              { "required": ["workflow"], "properties": { "workflow": { "const": "qa" } } },
+              {
+                "required": ["validationDepth"],
+                "properties": { "validationDepth": { "const": "full-live" } }
+              }
+            ]
+          },
+          "then": { "properties": { "publishReview": { "const": false } } }
+        },
+        {
+          "if": {
+            "required": ["workflow"],
+            "properties": {
+              "workflow": {
+                "const": "qa"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "validationDepth": {
+                "const": "full-live"
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "required": ["workflow"]
+            },
+            "then": {
+              "properties": {
+                "validationDepth": {
+                  "const": "static-code"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "workflowSlotExecution": {
+      "type": "object",
+      "required": ["slotPolicy", "models"],
+      "properties": {
+        "slotPolicy": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "slotId"],
+              "properties": {
+                "kind": {
+                  "const": "exact"
+                },
+                "slotId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "allowedSlots"],
+              "properties": {
+                "kind": {
+                  "const": "pool"
+                },
+                "allowedSlots": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["runner", "model"],
+            "properties": {
+              "runner": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "effort": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              "allowedSlots": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

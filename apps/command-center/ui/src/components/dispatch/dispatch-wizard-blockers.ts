@@ -51,11 +51,18 @@ export interface DispatchWizardBlockingState {
 export function deriveDispatchWizardBlockingState(
   input: DispatchWizardBlockingInput,
 ): DispatchWizardBlockingState {
-  const allowedSlots = resolveAllowedSlots({
-    machines: input.machineFilters,
-    fleetSlots: input.fleetSlots,
-    project: input.project,
-  });
+  const workspace = input.flowType === 'review-pr';
+  const allowedSlots = workspace
+    ? undefined
+    : resolveAllowedSlots({
+        machines: input.machineFilters,
+        fleetSlots: input.fleetSlots,
+        project: input.project,
+      });
+  const slotFilterReason =
+    !workspace && input.slotOverride && allowedSlots && !allowedSlots.includes(input.slotOverride)
+      ? 'Selected slot is outside the active machine or project filter.'
+      : null;
   const canDispatchValue = canDispatch({
     flowType: input.flowType,
     ticketId: input.ticketId,
@@ -71,20 +78,26 @@ export function deriveDispatchWizardBlockingState(
     comparisonFlow: input.comparisonFlow,
     comparisonParentRunId: input.comparisonParentRunId,
   });
-  const dispatchBlockedReasonValue = dispatchBlockedReason({
-    machineFilterActive: input.machineFilters.length > 0,
-    slotOverride: input.slotOverride,
-    selectedCandidate: selectedCandidate(input.candidates, input.slotOverride),
-    dispatchableCandidateCount: dispatchableCandidates(input.candidates).length,
-    pressureOverrideReady: input.pressureOverrideReady,
-  });
-  const queueBlockedReasonValue = queueBlockedReason({
-    canDispatch: canDispatchValue,
-    validationHint: validationHintValue,
-    connectionStale: input.connectionStale,
-    machineFilterActive: input.machineFilters.length > 0,
-    allowedSlots,
-  });
+  const dispatchBlockedReasonValue =
+    slotFilterReason ??
+    (workspace
+      ? null
+      : dispatchBlockedReason({
+          machineFilterActive: !workspace && input.machineFilters.length > 0,
+          slotOverride: input.slotOverride,
+          selectedCandidate: selectedCandidate(input.candidates, input.slotOverride),
+          dispatchableCandidateCount: dispatchableCandidates(input.candidates).length,
+          pressureOverrideReady: input.pressureOverrideReady,
+        }));
+  const queueBlockedReasonValue =
+    slotFilterReason ??
+    queueBlockedReason({
+      canDispatch: canDispatchValue,
+      validationHint: validationHintValue,
+      connectionStale: input.connectionStale,
+      machineFilterActive: !workspace && input.machineFilters.length > 0,
+      allowedSlots,
+    });
   return {
     allowedSlots,
     canDispatch: canDispatchValue,
@@ -96,8 +109,8 @@ export function deriveDispatchWizardBlockingState(
       connectionStale: input.connectionStale,
       hydrating: input.hydrating,
       bootstrapFailed: input.bootstrapFailed,
-      loadingCandidates: input.loadingCandidates,
-      candidateRefreshFailed: input.candidateRefreshFailed,
+      loadingCandidates: !workspace && input.loadingCandidates,
+      candidateRefreshFailed: !workspace && input.candidateRefreshFailed,
       activeRunConflict: input.activeRunConflict,
       variantInputBlocked: input.variantInputBlocked,
       dispatchBlockedReason: dispatchBlockedReasonValue,

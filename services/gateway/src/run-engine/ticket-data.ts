@@ -68,6 +68,24 @@ export async function fetchPRData(
 
   // Fetch PR metadata (branch, title, body)
   const prData = await fetchGitHubPR(prRef);
+  if (run.flowType === 'qa') {
+    if (!/^[a-f0-9]{40}$/i.test(prData.headSha) || !/^[a-f0-9]{40}$/i.test(prData.baseSha))
+      throw new Error('PR QA requires exact source commits');
+    const expectedHead = run.qaSource?.headSha ?? run.prWork?.headSha;
+    if (expectedHead && expectedHead !== prData.headSha)
+      throw new Error('PR head changed after QA admission; refresh the request');
+    updateRun(runId, {
+      qaSource: run.qaSource ?? { baseSha: prData.baseSha, headSha: prData.headSha },
+      ...(!run.startRef
+        ? {
+            startRef: {
+              requestedRef: prData.headSha,
+              source: { kind: 'git-ref' as const, ref: prData.headSha },
+            },
+          }
+        : {}),
+    });
+  }
 
   // Build ticket data from PR
   const ticketData: RunTicketData = {

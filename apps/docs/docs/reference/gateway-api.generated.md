@@ -217,6 +217,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `prPush.unregister`                     | prPush           | bounded-write | —      | —      | PrPush Unregister gateway method.                     |
 | `prReview.cancel`                       | prReview         | bounded-write | —      | —      | PrReview Cancel gateway method.                       |
 | `prReview.get`                          | prReview         | read-only     | —      | —      | PrReview Get gateway method.                          |
+| `prReview.publish`                      | prReview         | bounded-write | —      | —      | PrReview Publish gateway method.                      |
 | `prReview.submit`                       | prReview         | bounded-write | —      | —      | PrReview Submit gateway method.                       |
 | `prRules.accept`                        | prRules          | bounded-write | —      | —      | PrRules Accept gateway method.                        |
 | `prRules.acknowledgeAction`             | prRules          | bounded-write | —      | —      | PrRules AcknowledgeAction gateway method.             |

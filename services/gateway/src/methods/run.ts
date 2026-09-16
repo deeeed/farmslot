@@ -1,5 +1,8 @@
 // methods/run.ts — run CRUD, lifecycle, grading, cleanup
+import { isDeepStrictEqual } from 'node:util';
+
 import {
+  captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   type DevInteractiveActionRecord,
   type DevInteractiveProfile,
@@ -22,8 +25,13 @@ import {
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
+  type QaInput,
+  type QueueItem,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
+  resolvePRWorkflowDefaults,
+  ReviewQaConfigurationError,
+  type ReviewQaDispatchSelection,
   type Run,
   type RunCreateParams,
   type RunCreateResult,
@@ -54,6 +62,7 @@ import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
+import { captureDirectReviewPublication } from '../review-publication/direct.js';
 import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
@@ -218,7 +227,7 @@ function interactiveDevProfileFor(
   return params.devInteractiveProfile ?? DEFAULT_DEV_INTERACTIVE_PROFILE;
 }
 
-function buildInteractiveDevTicketData(
+function buildManualTicketData(
   initialContext: string,
   existing?: RunCreateParams['ticketData'],
 ): NonNullable<RunCreateParams['ticketData']> {
@@ -236,7 +245,48 @@ function buildInteractiveDevTicketData(
   };
 }
 
+export interface QueuedQaExpectation {
+  profileId: string;
+  templateId: string;
+  inputs: Record<string, QaInput>;
+}
+
+/** Internal handoff metadata is captured from the validated queue row, never RPC input. */
+export function queuedQaExpectation(
+  item: Pick<QueueItem, 'flowType' | 'qaProfileId' | 'executionTemplateId' | 'qaInputs'>,
+): QueuedQaExpectation | undefined {
+  if (item.flowType !== 'qa') return undefined;
+  if (!item.qaProfileId || !item.executionTemplateId || item.qaInputs === undefined)
+    throw new ReviewQaConfigurationError(
+      'Queued QA lacks its admitted profile, template or inputs',
+    );
+  return {
+    profileId: item.qaProfileId,
+    templateId: item.executionTemplateId,
+    inputs: structuredClone(item.qaInputs),
+  };
+}
+
+export function assertExpectedQaSelection(
+  current: ReviewQaDispatchSelection | undefined,
+  expected: QueuedQaExpectation | undefined,
+): void {
+  if (!expected) return;
+  if (
+    current?.flowType !== 'qa' ||
+    current.qa.profile.id !== expected.profileId ||
+    current.qa.profile.template_id !== expected.templateId ||
+    !isDeepStrictEqual(current.qa.inputs, expected.inputs)
+  )
+    throw new ReviewQaConfigurationError(
+      'QA selection changed while queued; review the current profile and inputs, then requeue',
+    );
+}
+
 interface RunCreateInternalOptions {
+  prWork?: Run['prWork'];
+  expectedQa?: QueuedQaExpectation;
+  reviewQaContract?: import('@farmslot/protocol').ReviewQaContract;
   workflowExecution?: import('@farmslot/protocol').PRExecutionProfile;
   beforeCreateAsync?: () => Promise<void>;
   expectedExecutionTemplate?: ExecutionTemplateReference;
@@ -292,8 +342,15 @@ export async function runCreate(
 ): Promise<RunCreateResult> {
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
+  if ('expectedQa' in params)
+    throw new Error('QA admission expectations cannot be supplied in run parameters');
+  const expectedQa = options.expectedQa ? structuredClone(options.expectedQa) : undefined;
   if ('workflowExecution' in params)
     throw new Error('Workflow execution snapshots cannot be supplied in run parameters');
+  if ('reviewPublication' in params || 'directReviewPublication' in params)
+    throw new Error('Publication authority cannot be supplied in run parameters');
+  if ('qaAfterReview' in params)
+    throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
 
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
@@ -317,6 +374,24 @@ export async function runCreate(
       : {}),
   });
   params = workflowDefaults.params;
+  if (
+    (params.publishReview === true || params.reviewTeamId) &&
+    (params.flowType !== 'review-pr' || params.reviewValidationDepth === 'full-live')
+  )
+    throw new Error('Publication flags require static review-pr');
+  const publicationOwner =
+    !options.prWork &&
+    params.flowType === 'review-pr' &&
+    params.reviewValidationDepth !== 'full-live'
+      ? resolveReviewWorkspaceOwner()
+      : undefined;
+  const directPublication = publicationOwner
+    ? captureDirectReviewPublication(params, projectConfig, publicationOwner)
+    : undefined;
+
+  const reviewQa = workflowDefaults.reviewQa;
+  if (reviewQa && options.reviewQaContract)
+    reviewQa.contract = structuredClone(options.reviewQaContract);
   const initialContext = params.ticketOrPr;
   assertReviewWorkspacePlacement(params);
   let workspaceAdmission: ReviewWorkspaceAdmission | undefined;
@@ -441,14 +516,23 @@ export async function runCreate(
     }
   }
 
-  if (!isInternalArtifactOnlyEvalTicket(params)) {
+  if (params.flowType === 'qa') {
+    if (!params.ticketOrPr.trim()) throw new Error('QA requires a task title or change reference');
+    if (!parseGitHubRef(params.ticketOrPr))
+      params.ticketData = buildManualTicketData(
+        params.initialContext ?? params.ticketOrPr,
+        params.ticketData,
+      );
+    else
+      assertTicketRefMatchesProjectRepo(params.ticketOrPr, params.project, projectConfig?.ci?.repo);
+  } else if (!isInternalArtifactOnlyEvalTicket(params)) {
     if (
       params.flowType === 'dev' &&
       params.mode === 'interactive' &&
       !isValidTicketForFlow(params.ticketOrPr, params.flowType)
     ) {
       params.initialContext = params.initialContext || initialContext;
-      params.ticketData = buildInteractiveDevTicketData(initialContext, params.ticketData);
+      params.ticketData = buildManualTicketData(initialContext, params.ticketData);
       params.ticketOrPr = buildLocalDevRef(initialContext);
       params.familyRootTicketOrPr = params.familyRootTicketOrPr ?? params.ticketOrPr;
     } else if (
@@ -590,14 +674,34 @@ export async function runCreate(
       resolveReviewWorkspaceOwner(),
     );
   }
+  if (publicationOwner) {
+    const currentPublication = captureDirectReviewPublication(
+      params,
+      await loadProjectConfig(params.project),
+      publicationOwner,
+    );
+    if (!isDeepStrictEqual(currentPublication, directPublication))
+      throw new Error('Publication policy changed during admission; create the run again');
+  }
   options.beforeCreate?.();
   if (workspaceAdmission) assertReviewWorkspaceAdmitted(workspaceAdmission);
+  assertExpectedQaSelection(reviewQa, expectedQa);
+  const qaAfterReview =
+    params.flowType === 'review-pr' && projectConfig?.qa?.after_review?.enabled
+      ? captureQaAfterReview(
+          projectConfig.qa,
+          resolvePRWorkflowDefaults({ workflow: 'qa', farm: projectConfig.workflowDefaults }),
+        )
+      : undefined;
   // Defer background persist on the claim handoff path so the Run file cannot
   // appear on disk before durableStamp writes the queue runId (restart would
   // otherwise redispatch an unstamped row while the Run already exists).
   let run = createRun(createParams, {
     deferBackgroundPersist: Boolean(options.awaitPersist),
     workflowExecution: options.workflowExecution ?? workflowDefaults.execution,
+    reviewQa,
+    qaAfterReview,
+    directReviewPublication: directPublication,
   });
   // Apply the resolved execution-template snapshot before the first durable
   // handoff write so a crash cannot leave a stamped Run without the queue-time

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking } from 'react-native';
 
 import {
+  type ConfigProjectsResult,
   type DispatchQueueListResult,
   Events,
   Methods,
@@ -17,6 +18,7 @@ import {
   type PRRulesListResult,
   type PRTriggerRule,
   type PRWatchListResult,
+  type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -30,6 +32,7 @@ import {
   newPRRequestDraft,
   type PRMonitorDraft,
   type PRRequestDraft,
+  qaRequestFromReview,
   validatePRRepair,
 } from '../../lib/pr-automation';
 import {
@@ -59,6 +62,7 @@ interface Snapshot {
   reviews: PRRulesListResult;
   queue: DispatchQueueListResult;
   push: PRPushListResult;
+  farms: ConfigProjectsResult;
 }
 
 export function usePRAutomationController(
@@ -172,9 +176,10 @@ export function usePRAutomationController(
             client.request<PRRulesListResult>(Methods.PR_RULES_LIST, {}),
             client.request<DispatchQueueListResult>(Methods.DISPATCH_QUEUE_LIST, {}),
             client.request<PRPushListResult>(Methods.PR_PUSH_LIST, {}),
+            client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}),
           ]);
           if (!active || client.connectionGeneration !== generation) return;
-          const [watches, reviews, queue, push] = results;
+          const [watches, reviews, queue, push, farms] = results;
           const failures = results
             .filter((result) => result.status === 'rejected')
             .map((result) => String(result.reason));
@@ -182,7 +187,8 @@ export function usePRAutomationController(
             watches.status === 'fulfilled' &&
             reviews.status === 'fulfilled' &&
             queue.status === 'fulfilled' &&
-            push.status === 'fulfilled'
+            push.status === 'fulfilled' &&
+            farms.status === 'fulfilled'
           ) {
             setSnapshot({
               client,
@@ -193,6 +199,7 @@ export function usePRAutomationController(
               reviews: reviews.value,
               queue: queue.value,
               push: push.value,
+              farms: farms.value,
             });
             setError('');
           } else setError(failures.join('; '));
@@ -287,10 +294,21 @@ export function usePRAutomationController(
   };
   const editRequest = (patch: Partial<PRRequestDraft>) => {
     setRequestDraft((draft) => {
-      const effective = effectivePRRequest(draft, current?.reviews.teams ?? []);
+      const effective = effectivePRRequest(
+        draft,
+        current?.reviews.teams ?? [],
+        current?.farms.projects ?? [],
+      );
       return {
         ...draft,
-        ...(patch.overrideReview ? { review: { ...effective.review } } : {}),
+        ...(patch.overrideReview
+          ? { review: { ...effective.review, publishReview: draft.review.publishReview } }
+          : {}),
+        ...(patch.review &&
+        (patch.review.workflow !== effective.review.workflow ||
+          patch.review.qaProfileId !== effective.review.qaProfileId)
+          ? { qaInputsText: undefined }
+          : {}),
         ...(patch.overrideExecution
           ? { execution: structuredClone(effective.execution ?? newPRExecution()) }
           : {}),
@@ -395,7 +413,11 @@ export function usePRAutomationController(
           : undefined,
       monitorDraft,
       requestDraft,
-      effectiveRequest: effectivePRRequest(requestDraft, data?.reviews.teams ?? []),
+      effectiveRequest: effectivePRRequest(
+        requestDraft,
+        data?.reviews.teams ?? [],
+        data?.farms.projects ?? [],
+      ),
       watches: data?.watches ?? { monitors: [] },
       reviews: data?.reviews ?? { teams: [], rules: [], intents: [] },
       queue: data?.queue.items ?? [],
@@ -477,6 +499,14 @@ export function usePRAutomationController(
       openPolicy,
       openRepair,
       openRequest,
+      openQA: (intent: PRReviewIntent, run?: Run) => {
+        setRequestDraft(
+          qaRequestFromReview(intent, run, useConnectionStore.getState().principalId),
+        );
+        requestKey.current = undefined;
+        setEditor({ kind: 'request' });
+        setActionError('');
+      },
       editMonitor: (patch: Partial<PRMonitorDraft>) =>
         setMonitorDraft((draft) => ({ ...draft, ...patch })),
       editRequest,

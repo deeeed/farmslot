@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "QA runtime completion evidence",
+  "description": "An isolated production gateway dispatches project-owned scripted commands. Actual Recipe v1 runs exercise an HTTP counter controller. Missing, failing and incomplete evidence must block QA despite successful worker signals and checked checklists.",
+  "workflow": {
+    "entry": "qa-runtime",
+    "nodes": {
+      "qa-runtime": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-qa-runtime.mts",
+        "timeout_ms": 900000,
+        "intent": "Verify generated autonomous task text preserves approval boundaries, passing controller smoke, six incomplete or failing evidence cases, and refusal of force completion through gateway RPC.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -22,6 +22,7 @@ import {
   type ProjectConfig,
   type ProjectExecutionTemplatesConfig,
   type ProjectHostPressureAdmissionConfig,
+  type ProjectQaConfig,
   type ProjectWorkflowDefaults,
   type ReviewSessionPolicy,
   type ReviewWorkspaceSupportConfig,
@@ -30,6 +31,7 @@ import {
   type RuntimeCapabilityAffectedOwnership,
   type RuntimeCapabilityAffectedReleaseEffect,
   type SlotActionDefinition,
+  validateQaConfig,
 } from '@farmslot/protocol';
 
 import { SlotConfigError } from './error.js';
@@ -231,6 +233,7 @@ export interface RawProjectJson {
     >;
   };
   execution_templates?: ProjectExecutionTemplatesConfig;
+  qa?: ProjectQaConfig;
   workflow_defaults?: ProjectWorkflowDefaults;
   eval_harnesses?: Record<
     string,
@@ -455,6 +458,7 @@ export interface RawProjectJson {
     model?: string;
     max_retries?: number;
     review_timeout_min?: number;
+    execution_templates?: Record<'static-code' | 'full-live', string>;
     // Reviewer session lifecycle across one run's review loops:
     // 'warm-per-reviewer' (default) resumes the same reviewer session for
     // re-reviews within the run; 'fresh-per-pass' relaunches cold every pass.
@@ -834,6 +838,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateExecutionTemplatesConfig(projectJson, projectConfig);
   normalizeRawStaticReview(projectJson.static_review, projectConfig);
   normalizeProjectWorkflowDefaults(projectJson.workflow_defaults);
+  if (projectJson.qa !== undefined) validateQaConfig(projectJson.qa);
 
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';

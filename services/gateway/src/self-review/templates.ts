@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { DEFAULT_TASK_DIR, type ReviewValidationDepth } from '@farmslot/protocol';
@@ -20,6 +21,7 @@ import {
 } from '../core/hooks.js';
 import { buildIndependentReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { getRun } from '../runs/store.js';
+import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
 import { parseReviewSessionPolicy, type ReviewSessionPolicy } from './session-policy.js';
 
@@ -45,6 +47,60 @@ export async function expandSelfReviewTemplate(
   const project = run?.project;
   if (!project)
     throw new Error(`Cannot expand self-review template without a project for run ${runId}`);
+
+  const configured = await loadProjectVars(project);
+  const references = configured.projectJson.self_review?.execution_templates;
+  if (references !== undefined) {
+    if (
+      !references ||
+      ['static-code', 'full-live'].some(
+        (depth) =>
+          typeof references[depth as ReviewValidationDepth] !== 'string' ||
+          !references[depth as ReviewValidationDepth].trim(),
+      )
+    )
+      throw new Error(
+        'Self-review execution_templates must select both static-code and full-live templates',
+      );
+    const selected = resolveConfiguredExecutionTemplateForSlot(configured, {
+      flow: 'self-review',
+      platform: vars.platform,
+      runMode: 'autonomous',
+      explicitId: references[validationDepth],
+      ...(run.domain ? { explicitDomain: run.domain } : {}),
+      ...(vars.domain ? { slotDomain: vars.domain } : {}),
+    });
+    if (!selected.reference.labels.includes(`review-depth:${validationDepth}`))
+      throw new Error(`Self-review template must declare review-depth:${validationDepth}`);
+    let provenanceArtifact: string | undefined;
+    if (run.taskFile) {
+      const content = `${JSON.stringify({ executionTemplate: selected.reference }, null, 2)}\n`;
+      provenanceArtifact = `artifacts/review-template-${createHash('sha256').update(content).digest('hex')}.json`;
+      const destination = path.join(path.dirname(run.taskFile), provenanceArtifact);
+      await mkdir(path.dirname(destination), { recursive: true });
+      try {
+        await writeFile(destination, content, { flag: 'wx' });
+      } catch (error) {
+        if (
+          (error as NodeJS.ErrnoException).code !== 'EEXIST' ||
+          (await readFile(destination, 'utf8')) !== content
+        )
+          throw error;
+      }
+    }
+    const bindings = {
+      runId,
+      taskDir,
+      repositoryPath: vars.remoteRepo,
+      validationDepth,
+      executionTemplate: selected.reference,
+      ...(provenanceArtifact ? { retainedProvenanceArtifact: provenanceArtifact } : {}),
+      checklistFile: 'SELF-REVIEW.md',
+      signalFile: 'SELF-REVIEW-SIGNAL.json',
+    };
+    const planningBrief = await buildIndependentReviewPlanningBrief(run.taskFile ?? null, taskDir);
+    return `${selected.markdown}\n## Review execution bindings\n\n\`\`\`json\n${JSON.stringify(bindings, null, 2)}\n\`\`\`\n\nUse the task's mark wrapper for this reviewer checklist. Preserve the parent worker's CHECKLIST.md. The gateway retains the indexed provenance artifact and owns session termination.\n${planningBrief}\n`;
+  }
 
   let template: string;
   try {

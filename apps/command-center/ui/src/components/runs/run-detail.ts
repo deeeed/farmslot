@@ -1042,6 +1042,8 @@ export class RunDetail extends RunDetailState {
       _slotHealthForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
+      _publicationActions: this._publicationActions,
+      _retryReviewPublication: (run) => this._retryReviewPublication(run),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);
         this.requestUpdate();
@@ -1166,6 +1168,21 @@ export class RunDetail extends RunDetailState {
       this._sessionStates = {
         ...this._sessionStates,
         [row.contextId]: { status: 'error', message: (err as Error).message },
+      };
+    }
+  }
+
+  private async _retryReviewPublication(run: Run): Promise<void> {
+    if (this._publicationActions[run.id]?.busy || this._actionsBlocked()) return;
+    this._publicationActions = { ...this._publicationActions, [run.id]: { busy: true } };
+    try {
+      await gateway.request(Methods.PR_REVIEW_PUBLISH, { runId: run.id }, 60_000);
+      this._publicationActions = { ...this._publicationActions, [run.id]: { busy: false } };
+      if (this.run?.id === run.id) await this.fetchRun(run.id);
+    } catch (error) {
+      this._publicationActions = {
+        ...this._publicationActions,
+        [run.id]: { busy: false, error: error instanceof Error ? error.message : String(error) },
       };
     }
   }

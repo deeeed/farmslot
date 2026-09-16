@@ -10,6 +10,7 @@ import { type CommandOutput, Events, type GitHubRateLimitPayload } from '@farmsl
 
 import {
   GitHubCursorError,
+  GitHubHttpError,
   GitHubPRUnavailableError,
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
@@ -288,7 +289,8 @@ async function runGh(
         ? new GitHubCursorError()
         : unavailablePR
           ? new GitHubPRUnavailableError()
-          : new Error(
+          : new GitHubHttpError(
+              parsed.status,
               `gh api ${args.slice(1).join(' ')} failed: HTTP ${parsed.status} ${parsed.body.slice(0, 400)}`,
             );
       cacheNegative(key, err);

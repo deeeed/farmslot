@@ -49,6 +49,8 @@ export type PRExecutionChoice = PRSlotExecutionChoice | PRWorkspaceExecutionChoi
 
 /** Gateway-owned linkage; public run/queue mutation requests cannot supply it. */
 export interface PRWorkReference {
+  /** Publication selection frozen by PR admission, never supplied by a public mutation. */
+  publication?: import('./review-publication.js').ReviewPublicationPolicy;
   kind: 'review' | 'repair';
   id: string;
   sourceId: string;

@@ -690,6 +690,11 @@
       "command": "farmslot rpc prReview.get",
       "note": "Read the authenticated owner's review request and linked work."
     },
+    "prReview.publish": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc prReview.publish",
+      "note": "Publish or reconcile a completed static review using its recorded account and authority."
+    },
     "prReview.submit": {
       "surface": "rpc-only",
       "command": "farmslot rpc prReview.submit",

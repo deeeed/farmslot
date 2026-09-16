@@ -83,3 +83,10 @@ export interface PRRuleSetEnabledParams {
   enabled: boolean;
   backfill: boolean;
 }
+
+export interface PRReviewPublishParams {
+  runId: string;
+}
+export interface PRReviewPublishResult {
+  receipt: import('../contracts/review-publication.js').ReviewPublicationReceipt;
+}

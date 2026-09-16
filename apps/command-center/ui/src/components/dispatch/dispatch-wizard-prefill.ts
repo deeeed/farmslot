@@ -10,6 +10,10 @@ export interface DispatchWizardPrefill {
   ticketId?: string;
   project?: string;
   slot?: string;
+  reviewMachine?: string;
+  qaProfileId?: string;
+  qaInputs?: string;
+  configurationError?: string;
   startRefRedirectHash?: string;
   /** Enter comparison-lane dispatch without a pre-selected baseline run. */
   comparisonIntent?: boolean;
@@ -23,7 +27,7 @@ export interface DispatchWizardPrefill {
   publicationReviewLoops: PublicationReviewLoopDraft[];
 }
 
-const VALID_FLOWS: readonly FlowType[] = ['fix-bug', 'review-pr', 'dev', 'pr-complete'];
+const VALID_FLOWS: readonly FlowType[] = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete'];
 
 export function parsePublicationReviews(
   raw: string | null,
@@ -62,7 +66,9 @@ export function parseDispatchWizardHash(
   if (qIdx < 0) return null;
   const base = raw.slice(0, qIdx) || 'dispatch';
   const params = new URLSearchParams(raw.slice(qIdx + 1));
-  const flow = params.get('flow');
+  const rawFlow = params.get('flow');
+  const legacyDepth = params.get('reviewValidationDepth') ?? params.get('validationDepth');
+  const flow = rawFlow === 'review-pr' && legacyDepth === 'full-live' ? 'qa' : rawFlow;
   const startRefRedirectHash = buildStartRefRedirectHash(base, params);
   const familyId = params.get('familyId') ?? '';
   const laneComparison = params.get('lane') === 'comparison';
@@ -76,6 +82,15 @@ export function parseDispatchWizardHash(
     ticketId: params.get('ticket') ?? undefined,
     project: params.get('project') ?? undefined,
     slot: params.get('slot') ?? undefined,
+    ...(params.get('reviewMachine') ? { reviewMachine: params.get('reviewMachine')! } : {}),
+    ...(params.get('qaProfileId') ? { qaProfileId: params.get('qaProfileId')! } : {}),
+    ...(params.has('qaInputs') ? { qaInputs: params.get('qaInputs')! } : {}),
+    ...(flow === 'review-pr' && params.get('slot')
+      ? {
+          configurationError:
+            'This link selects a runtime slot. Choose QA, or explicitly choose Review and a review machine.',
+        }
+      : {}),
     startRefRedirectHash,
     comparisonIntent: (laneComparison || intentComparison) && !familyId,
     comparison:
@@ -102,15 +117,6 @@ function buildStartRefRedirectHash(base: string, params: URLSearchParams): strin
   next.delete('start_ref');
   const qs = next.toString();
   return qs ? `#${base}?${qs}` : `#${base}`;
-}
-
-export function shouldUsePrefillSlot(
-  slot: string | undefined,
-  activeMachines: ReadonlyArray<string>,
-): boolean {
-  if (!slot) return false;
-  if (activeMachines.length === 0) return true;
-  return activeMachines.some((machine) => slot === machine || slot.startsWith(`${machine}-`));
 }
 
 export function syncPublicationReviewsHash(

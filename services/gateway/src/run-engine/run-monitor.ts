@@ -1196,6 +1196,16 @@ export async function monitorRun(
       );
     }
     if (startupAgent !== 'working') {
+      // The worker can write its signal while the startup/liveness probes await.
+      const terminalSignal = await checkSignalFile();
+      if (terminalSignal)
+        return {
+          pollCount: 0,
+          exitReason: 'worker-done',
+          violations: allViolations,
+          snapshots,
+          workerSignal: terminalSignal,
+        };
       console.log(
         `[run-monitor] run ${runId.slice(0, 8)} — worker already done on start (agent=${startupAgent})`,
       );
@@ -1306,6 +1316,16 @@ export async function monitorRun(
           recoveredContext?.id,
         );
         if (recoveredStatus !== 'working') {
+          // Re-read completion after confirming exit; the earlier read predates that probe.
+          const terminalSignal = await checkSignalFile();
+          if (terminalSignal)
+            return {
+              pollCount,
+              exitReason: 'worker-done',
+              violations: allViolations,
+              snapshots,
+              workerSignal: terminalSignal,
+            };
           console.log(
             `[run-monitor] run ${runId.slice(0, 8)} — worker done (agent=${agentStatus}, confirmed=${recoveredStatus})`,
           );
