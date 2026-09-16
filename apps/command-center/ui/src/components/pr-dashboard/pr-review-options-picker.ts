@@ -30,7 +30,10 @@ export class PRReviewOptionsPicker extends LitElement {
   private change(patch: Partial<PRReviewOptions>) {
     const { validationDepth: _legacyDepth, ...current } = this.value;
     const next = { ...current, workflow: prReviewWorkflow(this.value), ...patch };
-    if (next.workflow === 'qa') delete next.publishReview;
+    if (next.workflow === 'qa') {
+      delete next.publishReview;
+      delete next.autoFinish;
+    }
     if (next.workflow === 'review') {
       delete next.qaProfileId;
       delete next.qaInputs;
@@ -123,6 +126,19 @@ export class PRReviewOptionsPicker extends LitElement {
                 Static review uses an isolated workspace without a device slot.
               </p>`}
         </fieldset>
+        <label ?hidden=${qa || this.presentation === 'reviewer'}>
+          <input
+            type="checkbox"
+            data-testid="pr-review-auto-finish"
+            .checked=${this.value.autoFinish === true}
+            @change=${(event: Event) =>
+              this.change({
+                autoFinish: (event.target as HTMLInputElement).checked,
+                ...((event.target as HTMLInputElement).checked ? { publishReview: true } : {}),
+              })}
+          />
+          Publish and finish automatically
+        </label>
         <label ?hidden=${qa || this.presentation === 'reviewer'}>
           Publication
           <select

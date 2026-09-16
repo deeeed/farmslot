@@ -51,6 +51,7 @@ export function assertPRReviewOptions(value: unknown): asserts value is PRReview
     'validationDepth',
     'busySession',
     'publishReview',
+    'autoFinish',
   ]);
   if (value.sessionIntent !== 'resume' && value.sessionIntent !== 'reset')
     throw new Error('Review session must be Continue or Fresh');
@@ -70,6 +71,8 @@ export function assertPRReviewOptions(value: unknown): asserts value is PRReview
     (value.workflow === 'qa') !== (value.validationDepth === 'full-live')
   )
     throw new Error('Review workflow conflicts with legacy validation depth');
+  if (value.autoFinish !== undefined && typeof value.autoFinish !== 'boolean')
+    throw new Error('autoFinish must be boolean');
   if (value.publishReview !== undefined && typeof value.publishReview !== 'boolean')
     throw new Error('publishReview must be boolean');
   if (

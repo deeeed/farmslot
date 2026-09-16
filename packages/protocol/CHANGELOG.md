@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow terminal requests to target an allocated review run without a slot.
+
 - Expose managed-workspace review support in the native runner catalog.
 
 - Define farm-owned QA presets with JSON skill inputs and explicit legacy review migration contracts. Resolve static-review publication opt-in and overrides independently, retaining their policy source.

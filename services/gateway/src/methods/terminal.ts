@@ -32,16 +32,24 @@ import {
   writePty,
 } from '../runtime/pty-stream.js';
 import { sendKeys, snapshot, subscribe, unsubscribe } from '../runtime/tmux-stream.js';
+import {
+  isWorkspaceTerminal,
+  resolveWorkspaceTerminal,
+  workspaceTerminalKey,
+  workspaceTerminalOperation,
+} from '../runtime/workspace-terminal.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 type HasPtyFn = (key: string) => boolean;
 
 export function terminalKey(params: {
   slotId: string;
+  runId?: string;
   role?: string;
   contextId?: string;
   target?: string;
 }): string {
+  if (isWorkspaceTerminal(params)) return workspaceTerminalKey(params.runId!);
   // 'primary' role uses bare slotId — same key as legacy (no dedicated window).
   // This prevents key collisions between legacy bare-slotId PTYs and new primary-role PTYs.
   if (params.contextId && params.contextId !== 'primary')
@@ -54,9 +62,11 @@ const TERMINAL_KEY_ROLES = new Set<AgentRole>(AGENT_ROLES);
 
 export function parseTerminalKey(key: string): {
   slotId: string;
+  runId?: string;
   role?: AgentRole;
   contextId?: string;
 } {
+  if (key.startsWith('workspace:')) return { slotId: '', runId: key.slice('workspace:'.length) };
   const separator = key.indexOf(':');
   const slotId = separator === -1 ? key : key.slice(0, separator);
   const contextId = separator === -1 ? undefined : key.slice(separator + 1);
@@ -86,6 +96,7 @@ export function terminalEventIdentity(params: {
 }
 
 export async function resolveTerminalKey(params: TerminalSubscribeParams): Promise<string> {
+  if (isWorkspaceTerminal(params)) return (await resolveWorkspaceTerminal(params)).key;
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   return terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
 }
@@ -201,6 +212,16 @@ export async function terminalSubscribe(
   ptyHandler?: PtyDataHandler;
   identity: ReturnType<typeof terminalEventIdentity>;
 }> {
+  if (isWorkspaceTerminal(params)) {
+    const { run, key, session, sshTarget } = await resolveWorkspaceTerminal(params);
+    await workspaceTerminalOperation(run, 'ensure');
+    const identity = terminalEventIdentity({ slotId: '', runId: run.id });
+    const ptyHandler: PtyDataHandler = (data) =>
+      emit('terminal.data', { ...identity, data, timestamp: Date.now() });
+    subscribePty(key, session, ptyHandler, params.cols, params.rows, { sshTarget });
+    emit('terminal.mode', { ...identity, mode: 'pty' });
+    return { key, handler: (_data: TerminalData) => {}, ptyHandler, identity };
+  }
   // Bare-session mode skips agent-context resolution so a postmortem viewer can attach
   // to the slot's tmux session even after a blocked run's role pane is gone.
   const bare = params.bareSession === true;
@@ -302,6 +323,12 @@ async function resolveMachine(slotId: string): Promise<string | undefined> {
 }
 
 export async function terminalInput(params: TerminalInputParams): Promise<void> {
+  if (isWorkspaceTerminal(params)) {
+    const { key } = await resolveWorkspaceTerminal(params);
+    if (!hasPty(key)) throw new Error('Open the worktree terminal before typing');
+    writePty(key, params.data);
+    return;
+  }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   // PTY mode: write directly to local pty
@@ -330,6 +357,11 @@ export async function terminalInput(params: TerminalInputParams): Promise<void> 
 }
 
 export async function terminalResize(params: TerminalResizeParams): Promise<void> {
+  if (isWorkspaceTerminal(params)) {
+    const { key } = await resolveWorkspaceTerminal(params);
+    if (hasPty(key)) resizePty(key, params.cols, params.rows);
+    return;
+  }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const key = terminalKey({ ...params, role: resolved.role, contextId: resolved.contextId });
   const ptyKey = selectPtyKey(params.slotId, key, hasPty);
@@ -339,6 +371,11 @@ export async function terminalResize(params: TerminalResizeParams): Promise<void
 export async function terminalReinit(
   params: TerminalReinitParams,
 ): Promise<{ reinitialized: boolean }> {
+  if (isWorkspaceTerminal(params)) {
+    const { run } = await resolveWorkspaceTerminal(params);
+    await workspaceTerminalOperation(run, 'ensure');
+    return { reinitialized: true };
+  }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const session = resolved.session;
   const repoDir = await resolveRepoDir(params.slotId);
@@ -351,6 +388,14 @@ export async function terminalReinit(
 }
 
 export async function terminalSend(params: TerminalSendParams): Promise<void> {
+  if (isWorkspaceTerminal(params)) {
+    const { run } = await resolveWorkspaceTerminal(params);
+    await workspaceTerminalOperation(run, 'send', {
+      text: params.text,
+      enter: params.enter ?? true,
+    });
+    return;
+  }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   if ((params.enter ?? true) && params.bareSession !== true && !resolved.runner) {
     throw new Error(
@@ -375,6 +420,11 @@ export async function terminalSend(params: TerminalSendParams): Promise<void> {
 export async function terminalSnapshot(
   params: TerminalSnapshotParams,
 ): Promise<TerminalSnapshotResult> {
+  if (isWorkspaceTerminal(params)) {
+    const { run } = await resolveWorkspaceTerminal(params);
+    const lines = await workspaceTerminalOperation(run, 'snapshot', { lines: params.lines ?? 200 });
+    return { slotId: '', lines, timestamp: Date.now() };
+  }
   const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   if (!(await isInteractiveTargetReady(params.slotId, resolved.target, resolved.session))) {
     return {

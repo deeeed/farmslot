@@ -100,6 +100,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _qaProfileId = '';
   @state() _qaInputsText = '';
   _workflowSelectionKey = '';
+  @state() _reviewAutoFinish = false;
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];
   _nextPublicationReviewLoopId = 1;
   @state() _candidates: DispatchCandidatesResult['candidates'] = [];

@@ -239,6 +239,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                 ${isReview
                   ? html`
                       <review-workspace
+                        .workspaceView=${Boolean(run.reviewWorkspace)}
                         .runId=${run.id}
                         .decision=${pending}
                         slotId=${run.slotId ?? ''}

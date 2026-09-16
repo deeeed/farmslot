@@ -105,6 +105,9 @@ export interface QueueItem {
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */
   reviewDepth?: ReviewDepthPolicy;
+  /** Explicitly finish static review without waiting for operator questions/publication. */
+  reviewAutoFinish?: boolean;
+  publishReview?: boolean;
   reviewScope?: ReviewScope;
   reviewValidationDepth?: ReviewValidationDepth;
   /** Ordered independent review loops to run before the first ready gate. */

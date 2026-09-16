@@ -8,6 +8,7 @@ import { execFileArgv, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { execNativeNodeArgv, routeNativeExecution } from '../runners/native/node.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { workspaceTerminalOperation } from '../runtime/workspace-terminal.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
 import type { ReviewWorkspaceAdmission } from './admission.js';
@@ -31,7 +32,7 @@ function ownedRun(runId: string): Run {
   if (
     !run ||
     run.flowType !== 'review-pr' ||
-    run.transport !== 'native' ||
+    !['native', 'tmux'].includes(run.transport ?? '') ||
     run.slotId !== null ||
     !run.reviewWorkspaceTarget ||
     !run.nativeOwnerPrincipalId
@@ -231,6 +232,8 @@ export async function cleanupReviewWorkspace(
       throw new Error('Confirm native worker process closure before deleting a review checkout');
     const subject = run.reviewWorkspaceSubject;
     if (!subject) throw new Error('Review workspace has no frozen source subject');
+    await workspaceTerminalOperation(run, 'stop');
+    await options.assertCurrent();
     await removeReviewWorkspaceSkills(run);
     await options.assertCurrent();
     await executeWorkspace(run, 'cleanup', { ...subject, assertCurrent: options.assertCurrent });

@@ -645,6 +645,7 @@
                     "validationDepth": {
                       "const": "full-live"
                     },
+                    "autoFinish": { "type": "boolean", "default": false },
                     "publishReview": { "const": false }
                   }
                 }

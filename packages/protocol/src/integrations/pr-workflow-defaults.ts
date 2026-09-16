@@ -122,6 +122,10 @@ export function resolvePRWorkflowDefaults(
   const publishReview = publicationLayer?.[1]?.review?.publishReview;
   if (publishReview !== undefined && typeof publishReview !== 'boolean')
     throw new Error('publishReview must be boolean');
+  const autoFinish = layers.find(([, policy]) => policy?.review?.autoFinish !== undefined)?.[1]
+    ?.review?.autoFinish;
+  if (autoFinish !== undefined && typeof autoFinish !== 'boolean')
+    throw new Error('autoFinish must be boolean');
   const executionLayer = layers.find(([, policy]) => policy?.execution !== undefined);
   const execution = executionLayer?.[1]?.execution;
   if (execution) assertPRExecutionProfile(execution);
@@ -131,6 +135,7 @@ export function resolvePRWorkflowDefaults(
     review: structuredClone({
       ...(selectedReview ?? DEFAULT_PR_REVIEW_OPTIONS),
       ...(publishReview === undefined ? {} : { publishReview }),
+      ...(workflow === 'review-pr' && autoFinish !== undefined ? { autoFinish } : {}),
       ...(selectedReview?.workflow === undefined && selectedReview?.validationDepth === undefined
         ? { workflow: workflow === 'qa' ? ('qa' as const) : ('review' as const) }
         : {}),

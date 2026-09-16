@@ -366,7 +366,7 @@ export async function ensureReviewWorkspaceSupport(
       !initial?.reviewWorkspace ||
       initial.flowType !== 'review-pr' ||
       initial.slotId !== null ||
-      initial.transport !== 'native' ||
+      !['native', 'tmux'].includes(initial.transport ?? '') ||
       isTerminalRunStatus(initial.status)
     )
       throw new Error('Review support requires an active allocated native workspace');
@@ -429,7 +429,11 @@ export async function ensureReviewWorkspaceSupport(
         durableWrite(admissionPath, { identity: expected, fingerprint: null, digest: null });
         return undefined;
       }
-      if (initial.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt))
+      if (
+        initial.agentContexts?.some(
+          (context) => context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+        )
+      )
         throw new Error('Cannot add review support after reviewer launch');
       const fingerprint = sourceFingerprint(project.projectConfig, config, deps.env());
       manifest = await gatewayBundle(project, config, fingerprint, deps);
@@ -442,7 +446,11 @@ export async function ensureReviewWorkspaceSupport(
       )
         throw new Error('Review support source changed before admission');
       const current = await check();
-      if (current.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt))
+      if (
+        current.agentContexts?.some(
+          (context) => context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+        )
+      )
         throw new Error('Cannot add review support after reviewer launch');
       admission = { identity: expected, fingerprint, digest: manifest.sha256 };
       await mkdir(path.dirname(admissionPath), { recursive: true });
@@ -503,8 +511,10 @@ export async function ensureReviewWorkspaceSupport(
         checkout: current.reviewWorkspace!.checkoutPath,
         skills: binding.skills,
         verifyOnly:
-          current.agentContexts?.some((context) => context.nativeSession?.launchRequestedAt) ??
-          false,
+          current.agentContexts?.some(
+            (context) =>
+              context.nativeSession?.launchRequestedAt || context.promptDeliveryStartedAt,
+          ) ?? false,
       }),
     ]);
     if (installation.exitCode !== 0)

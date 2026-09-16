@@ -6,7 +6,11 @@ import type { AgentContext } from '@farmslot/protocol';
 
 import '../chat/native-session-view.js';
 
-import { archivedNativeWorkerTargets, nativeWorkerViewKey } from '../chat/native-worker-target.js';
+import {
+  archivedNativeWorkerTargets,
+  nativeWorkerViewKey,
+  type NativeWorkerViewTarget,
+} from '../chat/native-worker-target.js';
 
 @customElement('native-worker-history')
 export class NativeWorkerHistory extends LitElement {
@@ -29,21 +33,41 @@ export class NativeWorkerHistory extends LitElement {
       padding: 7px;
     }
     native-session-view {
-      display: block;
+      display: flex;
       height: 600px;
+      max-height: 75vh;
+      overflow: hidden;
       margin-top: 12px;
+    }
+    native-session-view:fullscreen {
+      height: 100vh;
+      max-height: none;
+      margin: 0;
     }
   `;
 
   render() {
-    const attempts = archivedNativeWorkerTargets(this.contexts);
+    const current: NativeWorkerViewTarget[] = this.contexts.flatMap((context) =>
+      !context.slotId && context.nativeSession?.generation
+        ? [
+            {
+              runId: context.runId,
+              contextId: context.id,
+              label: context.label,
+              binding: context.nativeSession,
+              readOnly: Boolean(context.nativeSession.closedAt || context.nativeSession.releasedAt),
+            },
+          ]
+        : [],
+    );
+    const attempts = [...current, ...archivedNativeWorkerTargets(this.contexts)];
     if (!attempts.length) return nothing;
     const attemptKey = (target: (typeof attempts)[number]) =>
       JSON.stringify([nativeWorkerViewKey(target), target.binding.generation]);
     const selected = attempts.find((target) => attemptKey(target) === this.selected);
     return html`
       <label
-        >Previous worker attempts
+        >${current.length ? 'Reviewer conversation' : 'Previous worker attempts'}
         <select
           data-testid="native-worker-history-select"
           .value=${selected ? this.selected : ''}

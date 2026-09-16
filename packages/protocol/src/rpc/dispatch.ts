@@ -199,6 +199,9 @@ export interface DispatchQueueAddParams {
   startRefSource?: import('../contracts/index.js').RunStartRefSource;
   /** Same semantics as RunCreateParams.reviewDepth — persisted onto the created run. */
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
+  /** Explicitly finish static review without waiting for operator questions/publication. */
+  reviewAutoFinish?: boolean;
+  publishReview?: boolean;
   reviewScope?: import('../contracts/index.js').ReviewScope;
   reviewTier?: string;
   recipeStrategy?: string;

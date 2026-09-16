@@ -16,6 +16,8 @@ import { ghRequest } from '../integrations/github-client.js';
 import { GitHubHttpError } from '../integrations/github-errors.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
+import { selectedReviewResult } from './selection.js';
+
 export type { ReviewPublicationReceipt } from '@farmslot/protocol';
 
 export interface PublishWorkspaceReviewInput {
@@ -70,7 +72,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
   if (!ref || ref.repo.toLowerCase() !== pr.repo.toLowerCase() || ref.number !== pr.number)
     throw new Error('Publication PR differs from the original review request');
   const subject = run.reviewWorkspaceSubject;
-  const result = run.reviewResult;
+  const result = selectedReviewResult(run);
   if (
     !result?.reviewMd?.trim() ||
     ('stale' in result && result.stale === true) ||

@@ -156,6 +156,8 @@ export interface RunCreateParams {
   /** Code breadth for review-pr. Omitted review-pr runs default to full. */
   publishReview?: boolean;
   reviewTeamId?: string;
+  /** Explicitly finish static review without waiting for operator questions/publication. */
+  reviewAutoFinish?: boolean;
   reviewScope?: import('../contracts/index.js').ReviewScope;
   /** Runtime validation depth for review-pr. Omitted review-pr runs default to static-code. */
   reviewValidationDepth?: import('../contracts/index.js').ReviewValidationDepth;

@@ -20,6 +20,8 @@ import {
   reviewPublicationPolicyForRun,
 } from '@farmslot/protocol';
 
+import '../slot-view/worker-session-history.js';
+
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
@@ -36,6 +38,7 @@ import {
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
+import { renderRunReviewResult } from './run-review-result-renderer.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,
@@ -589,6 +592,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
+    ${renderRunReviewResult(r, () => void ctx._onReplayStep('human-gate'), actionsBlocked)}
+    ${r.reviewWorkspace ? ctx.renderGateSection(r) : nothing}
     ${r.qa
       ? html`<p data-testid="run-qa-profile">QA profile: <strong>${r.qa.profile.title}</strong></p>`
       : nothing}
@@ -947,7 +952,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               .step=${ctx.selectedStep}
               .run=${ctx.run}
               .taskProgress=${ctx.selectedStep?.name === 'monitor'
-                ? null
+                ? ctx.taskProgress
                 : ctx.selectedStepProgress}
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
@@ -969,27 +974,31 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         ? ctx._renderCiStatus(r)
         : ''}
     </div>
-    ${ctx._renderInteractivePackets(r)} ${ctx._renderRunEvidence(r)}
-    ${boundSlotId
+    ${ctx._renderInteractivePackets(r)} ${r.reviewWorkspace ? nothing : ctx._renderRunEvidence(r)}
+    ${boundSlotId || (r.reviewWorkspace && !r.reviewWorkspace.cleanedAt)
       ? html`
           <button
+            data-testid="run-terminal-toggle"
             class="terminal-toggle ${ctx._showTerminal ? 'active' : ''}"
             @click=${() => {
               ctx.toggleTerminal();
             }}
           >
-            ${ctx._showTerminal ? '- Hide' : '+ Show'} Terminal (${boundSlotId})
+            ${ctx._showTerminal ? '- Hide' : '+ Show'}
+            ${boundSlotId
+              ? `Terminal (${boundSlotId})`
+              : `Worktree terminal (${r.reviewWorkspace!.machine})`}
           </button>
           ${ctx._showTerminal
             ? html`
                 <div class="terminal-section">
-                  <terminal-view .slotId=${boundSlotId} .runId=${r.id}></terminal-view>
+                  <terminal-view .slotId=${boundSlotId ?? ''} .runId=${r.id}></terminal-view>
                 </div>
               `
             : nothing}
         `
       : nothing}
-    ${ctx.renderGateSection(r)}
+    ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
     ${r.error
       ? html`
           <div class="error-box">

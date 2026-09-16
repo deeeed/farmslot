@@ -80,56 +80,54 @@ export function renderDispatchWizardPrimaryControls(
     <details class="config-group" data-testid="dispatch-execution-options">
       <summary>Execution options · ${ctx.runner} / ${ctx.model}</summary>
       ${renderRunnerModelConfig(ctx)}
-      ${ctx.flowType === 'review-pr'
-        ? nothing
-        : html`<div>
-              <div
-                class="section-label"
-                id="worker-interface-label"
-                title=${DISPATCH_HELP.interface.text}
-              >
-                Worker interface
-              </div>
-              <div
-                class="pill-row"
-                role="group"
-                aria-labelledby="worker-interface-label"
-                data-testid="dispatch-transport"
-              >
-                <button
-                  type="button"
-                  class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
-                  data-transport="tmux"
-                  aria-pressed=${ctx.transport === 'tmux'}
-                  @click=${() => ctx.setTransport('tmux')}
-                >
-                  Terminal
-                </button>
-                <button
-                  type="button"
-                  class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
-                  data-transport="native"
-                  aria-pressed=${ctx.transport === 'native'}
-                  ?disabled=${!ctx.nativeWorkerAvailable}
-                  title=${ctx.nativeWorkerAvailable
-                    ? 'Messages, tools and approvals in Farmslot'
-                    : 'Native workers are unavailable for this runner'}
-                  @click=${() => ctx.setTransport('native')}
-                >
-                  Conversation
-                </button>
-              </div>
-            </div>
-            ${ctx.nativeCatalogError
-              ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
-              : nothing}
-            ${ctx.transport === 'native'
-              ? html`<p class="section-help" data-testid="dispatch-interface-help">
-                  Messages, tools and approvals appear in Farmslot. The selected runner keeps its
-                  own login and model.
-                </p>`
-              : nothing}
-            ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
+      ${html`<div>
+          <div
+            class="section-label"
+            id="worker-interface-label"
+            title=${DISPATCH_HELP.interface.text}
+          >
+            Worker interface
+          </div>
+          <div
+            class="pill-row"
+            role="group"
+            aria-labelledby="worker-interface-label"
+            data-testid="dispatch-transport"
+          >
+            <button
+              type="button"
+              class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
+              data-transport="tmux"
+              aria-pressed=${ctx.transport === 'tmux'}
+              @click=${() => ctx.setTransport('tmux')}
+            >
+              Terminal
+            </button>
+            <button
+              type="button"
+              class="pill ${ctx.transport === 'native' ? 'selected' : ''}"
+              data-transport="native"
+              aria-pressed=${ctx.transport === 'native'}
+              ?disabled=${!ctx.nativeWorkerAvailable}
+              title=${ctx.nativeWorkerAvailable
+                ? 'Messages, tools and approvals in Farmslot'
+                : 'Native workers are unavailable for this runner'}
+              @click=${() => ctx.setTransport('native')}
+            >
+              Conversation
+            </button>
+          </div>
+        </div>
+        ${ctx.nativeCatalogError
+          ? html`<p class="section-help" role="status">${ctx.nativeCatalogError}</p>`
+          : nothing}
+        ${ctx.transport === 'native'
+          ? html`<p class="section-help" data-testid="dispatch-interface-help">
+              Messages, tools and approvals appear in Farmslot. The selected runner keeps its own
+              login and model.
+            </p>`
+          : nothing}
+        ${ctx.transport === 'native' ? ctx.nativeProfileControl : nothing}`}
     </details>
     ${renderPrepareToggle(ctx)} ${renderInteractiveDevProfile(ctx)}
   `;

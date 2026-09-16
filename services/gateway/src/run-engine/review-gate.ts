@@ -21,6 +21,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import { auditEvidenceQuality } from '../intelligence/engine.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import { readReviewWorkspaceCompletion } from '../review-workspaces/task.js';
 import {
   assertCaptionConfidence,
   autoDetectEvidenceManifest,
@@ -34,7 +35,7 @@ import {
   type SessionCostSnapshot,
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 
 import { findLatestResolvedDecision } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './diff-artifacts.js';
@@ -514,6 +515,23 @@ export async function refreshReviewGate(runId: string): Promise<Run> {
     throw new Error('No pending review_posting decision to refresh');
   }
 
+  if (run.reviewWorkspace) {
+    if (run.reviewWorkspace.cleanedAt) return run;
+    const completion = await readReviewWorkspaceCompletion(runId);
+    if (!completion?.result || completion.signal.outcome !== 'success')
+      throw new Error('Reviewer has not finished its updated result');
+    const refreshed = updateRun(runId, {
+      reviewResult: completion.result,
+      decisions: run.decisions.map((entry) =>
+        entry.id === decision.id
+          ? { ...entry, payload: { ...(entry.payload as ReviewGatePayload), ...completion.result } }
+          : entry,
+      ),
+    });
+    await persistRunNow(refreshed, 'refresh workspace review gate');
+    broadcastFn(Events.RUN_UPDATED, { run: refreshed });
+    return refreshed;
+  }
   await copyWorkerArtifacts(runId);
   const review = await readReviewArtifacts(runId);
   const workerLearnings = await readTaskArtifactText(run.taskFile, 'learnings.md');

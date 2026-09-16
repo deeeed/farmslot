@@ -803,27 +803,28 @@ async function routeAuthorizedMethod(
     // Terminal
     case Methods.TERMINAL_SUBSCRIBE: {
       const sub = p as TerminalSubscribeParams;
+      const registration = sub.slotId || terminalKey(sub);
       // Capture and bump the subscribe sequence BEFORE any await: rapid role
       // tab switches fire two SUBSCRIBE calls back-to-back, and without this
       // gate the older completer's terminalHandlers.set clobbers the newer
       // registration silently.
-      const mySeq = (state.terminalSubscribeSeq.get(sub.slotId) ?? 0) + 1;
-      state.terminalSubscribeSeq.set(sub.slotId, mySeq);
+      const mySeq = (state.terminalSubscribeSeq.get(registration) ?? 0) + 1;
+      state.terminalSubscribeSeq.set(registration, mySeq);
       const key = await resolveTerminalKey(sub);
       // Pre-remove gate: if a newer subscribe already ran during
       // resolveTerminalKey above, we must NOT touch the existing handlers —
       // the newer call has already registered its own and removing them now
       // would leave the client with no active subscription.
-      if (state.terminalSubscribeSeq.get(sub.slotId) !== mySeq) {
+      if (state.terminalSubscribeSeq.get(registration) !== mySeq) {
         return { subscribed: false };
       }
       // One browser client should have at most one interactive terminal handler
       // per slot. Role/context tabs use distinct PTY keys, so a resubscribe
       // removes only this client's stale same-slot handlers before attaching the
       // newly selected role.
-      const keysToRemove = sub.interactive ? terminalKeysForSlot(state, sub.slotId) : [key];
+      const keysToRemove = sub.interactive ? terminalKeysForSlot(state, registration) : [key];
       for (const oldKey of keysToRemove) {
-        removeTerminalSubscriptionForKey(state, sub.slotId, oldKey);
+        removeTerminalSubscriptionForKey(state, registration, oldKey);
       }
       const {
         key: subscribedKey,
@@ -836,7 +837,7 @@ async function routeAuthorizedMethod(
       // pty-stream and (for poll mode) the poll subscriber; we must release
       // both so the orphaned subscriber does not keep an empty PTY session
       // alive after the newer subscribe finishes against a different key.
-      if (state.terminalSubscribeSeq.get(sub.slotId) !== mySeq || !isActiveClient(state)) {
+      if (state.terminalSubscribeSeq.get(registration) !== mySeq || !isActiveClient(state)) {
         if (ptyHandler) unsubscribePty(subscribedKey, ptyHandler);
         unsubscribeTerminalPoll(subscribedKey, handler);
         // Defensive: terminalSubscribe never wrote to terminalIdentities for

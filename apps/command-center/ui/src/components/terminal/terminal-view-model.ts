@@ -73,14 +73,18 @@ export function workerRefsMatch(a: TmuxWorkerRef | undefined, b: TmuxWorkerRef |
   return Boolean(a && b && a.nodeId === b.nodeId && a.target === b.target);
 }
 
-export function terminalHasTarget(state: Pick<TerminalTargetState, 'slotId' | 'worker'>): boolean {
-  return Boolean(state.slotId || state.worker);
+export function terminalHasTarget(
+  state: Pick<TerminalTargetState, 'slotId' | 'worker'> & { runId?: string },
+): boolean {
+  return Boolean(state.slotId || state.worker || state.runId);
 }
 
-export function terminalTargetLabel(state: Pick<TerminalTargetState, 'slotId' | 'worker'>): string {
+export function terminalTargetLabel(
+  state: Pick<TerminalTargetState, 'slotId' | 'worker'> & { runId?: string },
+): string {
   return state.worker
     ? `${state.worker.nodeId}:${state.worker.session}`
-    : state.slotId || 'No terminal';
+    : state.slotId || (state.runId ? 'Worktree terminal' : 'No terminal');
 }
 
 export function terminalTargetParams(state: TerminalTargetState) {
@@ -102,6 +106,7 @@ export function terminalMatchesTarget(
   payload: TerminalTargetPayload,
 ): boolean {
   if (state.worker) return workerRefsMatch(payload.worker, state.worker);
+  if (!state.slotId && state.runId) return !payload.slotId && payload.runId === state.runId;
   if (!payload.slotId || payload.slotId !== state.slotId) return false;
   if (state.postmortem) return true;
   if (state.runId && (!('runId' in payload) || payload.runId !== state.runId)) return false;

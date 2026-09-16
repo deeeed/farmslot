@@ -13,6 +13,8 @@ export interface PRReviewOptions {
   workflow?: 'review' | 'qa';
   /** Publish the static verdict to its PR after authority/head checks. Omitted inherits defaults. */
   publishReview?: boolean;
+  /** Explicitly skip the operator review gate. Defaults to false. */
+  autoFinish?: boolean;
   qaProfileId?: string;
   qaInputs?: Record<string, import('./qa.js').QaInput>;
   validationDepth?: ReviewValidationDepth;
@@ -55,6 +57,7 @@ export function samePRReviewOptions(a?: PRReviewOptions, b?: PRReviewOptions): b
     left.scope === right.scope &&
     (left.busySession ?? 'wait') === (right.busySession ?? 'wait') &&
     (left.publishReview === true) === (right.publishReview === true) &&
+    (left.autoFinish === true) === (right.autoFinish === true) &&
     prReviewPurpose(left) === prReviewPurpose(right)
   );
 }

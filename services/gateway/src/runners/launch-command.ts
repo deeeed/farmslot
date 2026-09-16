@@ -175,6 +175,9 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   promptPath: string;
   repo: string;
   safetyTier?: SafetyTier;
+  binary?: string;
+  effort?: string;
+  trustWorkspace?: boolean;
 }): string | null {
   const runnerId = options.runner.trim();
   if (!runnerId) return null;
@@ -184,10 +187,11 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   if (runnerId === 'codex') {
     const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
     return [
-      shellQuote(resolveCodexBinary()),
+      shellQuote(resolveCodexBinary(options.binary)),
       `--cd ${shellQuote(options.repo)}`,
       codexSafety,
       modelFlag.trim(),
+      options.effort ? codexReasoningEffortFlag(options.effort, options.model).trim() : '',
       promptArg,
     ]
       .filter(Boolean)
@@ -195,14 +199,14 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   }
   if (runnerId === 'cursor') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(resolveCursorAgentBinary())} --workspace ${shellQuote(options.repo)}${flags}${modelFlag} ${promptArg}`;
+    return `${shellQuote(resolveCursorAgentBinary(options.binary))}${options.trustWorkspace ? ' --trust' : ''} --workspace ${shellQuote(options.repo)}${flags}${modelFlag} ${promptArg}`;
   }
   if (runnerId === 'grok') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote(resolveGrokBinary())}${flags}${modelFlag} ${promptArg}`;
+    return `${shellQuote(resolveGrokBinary(options.binary))}${flags}${modelFlag} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  return `${shellQuote(runnerId)}${flags}${modelFlag} ${promptArg}`;
+  return `${shellQuote(options.binary || runnerId)}${flags}${modelFlag} ${promptArg}`;
 }
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */

@@ -288,6 +288,7 @@ export function renderReviewFileTab(input: {
 }
 
 export function renderReviewCommentItem(input: {
+  readOnly?: boolean;
   comment: ReviewLineComment;
   selected: boolean;
   included: boolean;
@@ -303,6 +304,7 @@ export function renderReviewCommentItem(input: {
       <input
         type="checkbox"
         .checked=${input.included}
+        ?disabled=${input.readOnly}
         @click=${(event: Event) => event.stopPropagation()}
         @change=${input.toggle}
       />

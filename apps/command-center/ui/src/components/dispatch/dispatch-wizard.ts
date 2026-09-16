@@ -1309,6 +1309,8 @@ export class DispatchWizard extends DispatchWizardState {
       project: this._project,
       ticketId: this._ticketId,
       reviewMachine: this._flowType === 'review-pr' ? this._workspaceMachine() : undefined,
+      reviewAutoFinish: this._reviewAutoFinish,
+      ...(this._reviewAutoFinish ? { publishReview: true } : {}),
       ...(this._flowType === 'qa' ? this._qaFields() : {}),
       slotOverride: this._slotOverride,
       allowedSlots: this._blockingState().allowedSlots,
@@ -1399,7 +1401,6 @@ export class DispatchWizard extends DispatchWizardState {
       this._workflowSelectionKey = '';
       return;
     }
-    if (this._flowType === 'review-pr') this._transport = 'native';
     const project = this._projectConfigs.find((entry) => entry.name === this._project);
     if (!project) return;
     const key = `${this._project}|${this._flowType}`;
@@ -1416,13 +1417,14 @@ export class DispatchWizard extends DispatchWizardState {
     this._nativeProfileRefreshVersion++;
     const execution = project.workflowDefaults?.[this._flowType]?.execution;
     const model = execution?.models[0];
+    this._reviewAutoFinish =
+      project.workflowDefaults?.[this._flowType]?.review?.autoFinish === true;
     if (model && !this._comparisonLane) {
       this._runner = model.runner;
       this._model = model.model;
       this._effort = (model.effort ?? '') as typeof this._effort;
     }
-    if (this._flowType === 'qa' && !this._transportChosen)
-      this._transport = execution?.transport ?? 'tmux';
+    if (!this._transportChosen) this._transport = execution?.transport ?? 'tmux';
     if (changedContext || this._flowType === 'review-pr') {
       this._slotOverride = '';
       this._slotOverrideExplicit = false;
@@ -1521,6 +1523,19 @@ export class DispatchWizard extends DispatchWizardState {
           </choice-picker>
         </label>
         <p class="section-help">Reviews run in a temporary workspace without using an app slot.</p>
+        <label
+          ><input
+            type="checkbox"
+            data-testid="dispatch-review-auto-finish"
+            .checked=${this._reviewAutoFinish}
+            @change=${(event: Event) => {
+              this._reviewAutoFinish = (event.target as HTMLInputElement).checked;
+            }}
+          />Publish and finish automatically</label
+        >
+        <p class="section-help">
+          Otherwise, pause at the review gate so you can ask the reviewer questions.
+        </p>
         ${this._reviewPoolsError
           ? html`<p class="section-help" role="alert">${this._reviewPoolsError}</p>`
           : nothing}

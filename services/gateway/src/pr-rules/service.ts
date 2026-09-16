@@ -33,6 +33,7 @@ import {
   publishWorkspaceReview,
   ReviewPublicationInProgressError,
 } from '../review-publication/provider.js';
+import { approvedReviewDecision } from '../review-publication/selection.js';
 import {
   getAllRuns,
   getAllRunsWithArchived,
@@ -173,13 +174,16 @@ export class PRRuleService {
     const existing = await getRunWithArchived(runId);
     if (!existing) throw new Error('Review run is unavailable');
     const run = structuredClone(existing);
-    const direct = run.reviewPublication?.direct;
+    const gate = run.reviewPublication?.gate;
+    if (gate && approvedReviewDecision(run)?.id !== gate.decisionId)
+      throw new Error('Publication gate is not approved');
+    const direct = gate?.publication ?? run.reviewPublication?.direct;
     const policy = reviewPublicationPolicyForRun(run);
     if (!policy?.enabled || (!direct && run.prWork?.kind !== 'review'))
       throw new Error('PR publication was not requested when this review was admitted');
     if ((direct?.ownerId ?? run.prWork?.review?.ownerId) !== ownerId)
       throw new Error('Review publication belongs to another principal');
-    if (direct && run.prWork) throw new Error('Ambiguous publication authority');
+    if (direct && run.prWork && !gate) throw new Error('Ambiguous publication authority');
     if (run.status !== 'done') throw new Error('Review must complete before publication');
     const pr = direct?.pr ?? run.prWork!.pr;
     const authorize = async () => {
@@ -190,7 +194,9 @@ export class PRRuleService {
         current.status !== 'done' ||
         !isDeepStrictEqual(current.prWork, run.prWork) ||
         !isDeepStrictEqual(current.reviewResult, run.reviewResult) ||
-        !isDeepStrictEqual(current.reviewPublication?.direct, direct)
+        !isDeepStrictEqual(approvedReviewDecision(current), approvedReviewDecision(run)) ||
+        !isDeepStrictEqual(current.reviewPublication?.gate, gate) ||
+        !isDeepStrictEqual(current.reviewPublication?.direct, run.reviewPublication?.direct)
       )
         throw new Error('Review source changed during publication');
       if (direct) {
@@ -247,7 +253,7 @@ export class PRRuleService {
         team: team.config,
         farm: project?.workflowDefaults,
       });
-      if (resolved.review.publishReview !== true)
+      if (resolved.review.publishReview !== true && !approvedReviewDecision(run))
         throw new Error('Current policy does not permit review publication');
       this.assertAuthorized(ownerId);
     };

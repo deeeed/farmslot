@@ -25,6 +25,7 @@ import type {
 
 import { execArgvOnSlot, loadSlotVars } from '../core/index.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { workspaceReviewGit } from '../review-workspaces/git.js';
 
 async function resolveRepoPath(slotId: string): Promise<string> {
   const pools = await loadPoolConfigs();
@@ -42,6 +43,7 @@ async function resolveRepoPath(slotId: string): Promise<string> {
  * Run a git command for a slot — locally via execFile, or remotely via agent exec.
  */
 export interface GitExecDeps {
+  runCommand?: (args: string[]) => Promise<CommandOutput>;
   resolveRepo?: typeof resolveRepoPath;
   loadVars?: typeof loadSlotVars;
   runOnSlot?: typeof execArgvOnSlot;
@@ -53,6 +55,7 @@ export async function gitExec(
   opts?: { maxBuffer?: number },
   deps: GitExecDeps = {},
 ): Promise<CommandOutput> {
+  if (deps.runCommand) return deps.runCommand(args);
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
   const result = await (deps.runOnSlot ?? execArgvOnSlot)(slotVars, ['git', ...args], {
@@ -320,6 +323,7 @@ export async function gitDiff(
   params: GitDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitDiffResult> {
+  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
   if (params.head && !params.base) {
     throw new Error('An exact review head requires a base ref');
   }
@@ -383,9 +387,15 @@ export async function gitLog(params: GitLogParams): Promise<GitLogResult> {
 }
 
 export async function gitShow(params: GitShowParams): Promise<GitShowResult> {
-  const { stdout } = await gitExec(params.slotId, ['show', `${params.ref}:${params.path}`], {
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  const deps = params.runId ? await workspaceReviewGit({ ...params, runId: params.runId }) : {};
+  const { stdout } = await gitExec(
+    params.slotId,
+    ['show', `${params.ref}:${params.path}`],
+    {
+      maxBuffer: 10 * 1024 * 1024,
+    },
+    deps,
+  );
   return { content: stdout };
 }
 
@@ -436,6 +446,7 @@ export async function gitBranchDiff(
   params: GitBranchDiffParams,
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
+  if (params.runId) deps = await workspaceReviewGit({ ...params, runId: params.runId });
   if (params.head && !params.base) {
     throw new Error('An exact review head requires a base ref');
   }

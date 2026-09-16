@@ -23,9 +23,11 @@ import {
   launchReviewWorkspaceWorker,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
+import { launchReviewTmux, reviewTmuxOperation } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
+import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
 import { ensureReviewWorkspaceSupport } from './support.js';
 import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
 import {
@@ -182,7 +184,9 @@ export async function teardownReviewWorkspace(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
   const generation = run.engineState?.generation ?? 0;
-  await cancelReviewWorkspaceWorker(runId);
+  if (run.transport === 'tmux') {
+    if (run.agentContexts?.some((c) => c.target)) await reviewTmuxOperation(run, 'stop');
+  } else await cancelReviewWorkspaceWorker(runId);
   if (run.reviewWorkspace.cleanedAt) return;
   const check = () => {
     currentWorkspaceRun(runId, generation, true);
@@ -236,6 +240,7 @@ export function reconcileReviewWorkspaceCleanup(
         !run.reviewWorkspace ||
         (run.reviewWorkspace.cleanedAt && !hasHeldReviewWorker(run)) ||
         hasUncertainReviewOperation(run) ||
+        waitingAtReviewGate(run) ||
         !['done', 'failed', 'cancelled', 'blocked'].includes(run.status)
       )
         continue;
@@ -320,6 +325,12 @@ export async function executeReviewWorkspaceStep(
       const started =
         run.steps.find((entry) => entry.name === PipelineSteps.DISPATCH)?.startedAt ??
         new Date().toISOString();
+      if (run.transport === 'tmux') {
+        const started = await launchReviewTmux(runId, task.prompt, () =>
+          admittedRun(runId, generation),
+        );
+        return { outputs: { ...started, slotId: null, transport: 'tmux' } };
+      }
       const snapshot = await launchReviewWorkspaceWorker({
         runId,
         project: project.projectJson,
@@ -349,6 +360,40 @@ export async function executeReviewWorkspaceStep(
       const deadline = Date.parse(started) + config.totalTimeoutMs;
       while (Date.now() < deadline) {
         check();
+        if (run.transport === 'tmux') {
+          const completion = await readReviewWorkspaceCompletion(runId);
+          check();
+          if (completion) {
+            if (!completion.result || completion.signal.outcome !== 'success')
+              throw new BlockedRunError(
+                completion.signal.reason ?? 'Review did not complete',
+                'review-incomplete',
+              );
+            await persistRunNow(
+              updateRun(runId, { reviewResult: completion.result }),
+              'workspace review result',
+            );
+            emit(Events.RUN_UPDATED, { run: getRun(runId) });
+            return {
+              outputs: {
+                workerSignal: completion.signal,
+                headSha: run.reviewWorkspaceSubject?.headSha,
+              },
+            };
+          }
+          const state = await reviewTmuxOperation(
+            currentWorkspaceRun(runId, generation),
+            'inspect',
+          );
+          check();
+          if (!state.exists)
+            throw new BlockedRunError(
+              'Reviewer exited before completing its review',
+              'review-worker-stopped',
+            );
+          await delay(1000);
+          continue;
+        }
         const snapshot = await readReviewWorkspaceWorker(runId, { deadline });
         check();
         run = currentWorkspaceRun(runId, generation);
@@ -409,14 +454,7 @@ export async function executeReviewWorkspaceStep(
       );
     }
     case PipelineSteps.HUMAN_GATE:
-      if (!run.reviewResult) throw new Error('Workspace review result is missing');
-      return {
-        outputs: {
-          skipped: true,
-          reason: 'artifact-only-review',
-          recommendation: run.reviewResult.recommendation,
-        },
-      };
+      return { outputs: await holdWorkspaceReview(runId) };
     case PipelineSteps.COMPLETE:
       if (!run.reviewResult)
         throw new Error('Cannot complete a workspace review without its result');

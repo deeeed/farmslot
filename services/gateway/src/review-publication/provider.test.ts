@@ -67,6 +67,7 @@ async function fixture(overrides: Record<string, unknown> = {}) {
     id: randomUUID(),
     flowType: 'review-pr',
     status: 'done',
+    decisions: [],
     ticketOrPr: 'example/app#42',
     createdByPrincipalId: 'owner',
     reviewWorkspaceSubject: { repository: 'example/app', headSha: head },
@@ -120,6 +121,51 @@ test('one pinned review contains body and inline findings; receipt retries do no
   await f.reload();
   assert.deepEqual(await publishWorkspaceReview(f.input), receipt);
   assert.equal((await f.state()).posts, 1);
+});
+
+test('publication uses the gate recommendation and selected comments without rewriting the saved report', async () => {
+  const f = await fixture();
+  const original = structuredClone(f.input.run.reviewResult);
+  f.input.run.decisions.push({
+    id: 'publish-choice',
+    type: 'engine_review_posting',
+    title: 'Review',
+    description: '',
+    actions: [],
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    resolvedAction: 'post',
+    payload: { kind: 'review', prNumber: 42, repo: 'example/app', ...original! },
+    selectionData: { recommendation: 'COMMENT', includedIndices: [] },
+  });
+  await publishWorkspaceReview(f.input);
+  const state = await f.state();
+  assert.equal(state.payload.event, 'COMMENT');
+  assert.equal(state.payload.comments?.length ?? 0, 0);
+  assert.deepEqual(f.input.run.reviewResult, original);
+});
+
+test('a changed result after gate approval cannot be published', async () => {
+  const f = await fixture();
+  f.input.run.decisions.push({
+    id: 'stale-choice',
+    type: 'engine_review_posting',
+    title: 'Review',
+    description: '',
+    actions: [],
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    resolvedAction: 'post',
+    payload: {
+      kind: 'review',
+      prNumber: 42,
+      repo: 'example/app',
+      ...structuredClone(f.input.run.reviewResult!),
+    },
+  });
+  f.input.run.reviewResult!.reviewMd = 'Changed after approval';
+  await assert.rejects(publishWorkspaceReview(f.input), /changed after the publication decision/);
+  assert.equal((await f.state()).posts, 0);
 });
 
 test('lost response recovers an owned exact-content provider review from the durable attempt', async () => {

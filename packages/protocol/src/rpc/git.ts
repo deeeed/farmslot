@@ -10,6 +10,8 @@ export interface GitStatusParams {
 
 export interface GitDiffParams {
   slotId: string;
+  /** Slotless review source. Requires the frozen base/head and empty slotId. */
+  runId?: string;
   path?: string;
   /** Rename old side — included in the path limiter so renames diff correctly. */
   oldPath?: string;
@@ -31,6 +33,7 @@ export interface GitLogParams {
 
 export interface GitShowParams {
   slotId: string;
+  runId?: string;
   ref: string;
   path: string;
 }
@@ -160,6 +163,7 @@ export interface GitShowResult {
 
 export interface GitBranchDiffParams {
   slotId: string;
+  runId?: string;
   base?: string; // defaults to 'main'
   /** Exact reviewed head SHA. When present, list merge-base(base, head)..head instead of live HEAD. */
   head?: string;

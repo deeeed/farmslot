@@ -671,7 +671,7 @@ export function createRun(
   if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
     throw new Error('Unknown worker transport');
   const nativeOwnerPrincipalId =
-    transport === 'native'
+    transport === 'native' || (transport === 'tmux' && params.reviewWorkspaceTarget)
       ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(
           options?.nativeOwnerPrincipalId ?? parent?.nativeOwnerPrincipalId,
         )
@@ -701,6 +701,11 @@ export function createRun(
     );
   }
   const now = new Date().toISOString();
+  if (
+    params.reviewAutoFinish !== undefined &&
+    (params.flowType !== 'review-pr' || typeof params.reviewAutoFinish !== 'boolean')
+  )
+    throw new Error('reviewAutoFinish requires a static review boolean');
   if (params.reviewScope !== undefined && !isReviewScope(params.reviewScope)) {
     throw new Error(`Invalid reviewScope: ${String(params.reviewScope)}`);
   }
@@ -869,6 +874,8 @@ export function createRun(
       runnerSessionPath: null,
     },
     reviewTier: params.reviewTier,
+    reviewAutoFinish:
+      params.flowType === 'review-pr' ? params.reviewAutoFinish === true : undefined,
     reviewScope: params.flowType === 'review-pr' ? (params.reviewScope ?? 'full') : undefined,
     reviewValidationDepth:
       params.flowType === 'review-pr' && !options?.reviewQa

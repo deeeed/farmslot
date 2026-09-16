@@ -114,8 +114,8 @@ export async function inspectReviewWorkspaceTarget(
     );
   }
   if (
-    input.transport !== 'native' ||
-    !runnerSupportsNativeTaskReuse(input.runner) ||
+    !['native', 'tmux'].includes(input.transport ?? '') ||
+    (input.transport === 'native' && !runnerSupportsNativeTaskReuse(input.runner)) ||
     !runnerSupportsReadonlyReviewWorkspace(input.runner)
   ) {
     throw new GatewayMethodError(

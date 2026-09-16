@@ -29,6 +29,7 @@ export interface RunSessionRowState {
 export interface RunSessionRow {
   nativeHref?: string;
   nativeHistory?: boolean;
+  workspaceView?: boolean;
   contextId: string;
   role: AgentContext['role'];
   label: string;
@@ -44,6 +45,9 @@ export function runAgentSessionRows(run: Pick<Run, 'agentContexts' | 'metrics'>)
   return (run.agentContexts ?? []).map((context) => {
     const sessionId = context.runnerSessionId?.trim() ? context.runnerSessionId.trim() : null;
     return {
+      ...(!context.slotId && (context.nativeSession || context.target)
+        ? { workspaceView: true }
+        : {}),
       ...(context.nativeSessionHistory?.length ? { nativeHistory: true } : {}),
       ...((context.nativeSession || context.nativeSessionOwner) && context.runId && context.slotId
         ? {
@@ -215,8 +219,8 @@ export function renderRunAgentSessions(
     <section class="agent-sessions" aria-label="Runner sessions" data-testid="run-agent-sessions">
       <div class="agent-sessions-title">Runner sessions</div>
       <div class="agent-sessions-hint">
-        ${rows.some((row) => row.nativeHref || row.nativeHistory)
-          ? 'Open a task conversation to view its history and available controls.'
+        ${rows.some((row) => row.nativeHref || row.nativeHistory || row.workspaceView)
+          ? 'Use the run terminal or conversation below to inspect this worker.'
           : "Copy a terminal command to resume this runner's history, or attach its tmux pane."}
       </div>
       ${rows.map((row) => {
@@ -253,7 +257,7 @@ export function renderRunAgentSessions(
                     href=${row.nativeHref}
                     >Open conversation</a
                   >`
-                : row.nativeHistory
+                : row.nativeHistory || row.workspaceView
                   ? nothing
                   : html`<button
                         class="agent-session-btn"
