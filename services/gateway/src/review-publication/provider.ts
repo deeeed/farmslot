@@ -16,6 +16,7 @@ import { ghRequest } from '../integrations/github-client.js';
 import { GitHubHttpError } from '../integrations/github-errors.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
+import { locatePublicationComments } from './diff-comments.js';
 import { selectedReviewResult } from './selection.js';
 
 export type { ReviewPublicationReceipt } from '@farmslot/protocol';
@@ -121,7 +122,7 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       JSON.stringify([run.id, ownerId, pr.host.toLowerCase(), pr.repo.toLowerCase(), pr.number]),
     )
     .digest('hex')} -->`;
-  const publishedBody = `${result.reviewMd.trim()}\n\n${marker}`;
+  let publishedBody = `${result.reviewMd.trim()}\n\n${marker}`;
   await input.authorize();
   const binding = await resolvePRSourceAccount(account, ownerId);
   const endpoint = `repos/${pr.repo}/pulls/${pr.number}`;
@@ -167,7 +168,9 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
       !record(review.user) ||
       typeof review.user.login !== 'string' ||
       review.user.login.toLowerCase() !== account.login.toLowerCase() ||
-      review.body !== publishedBody ||
+      typeof review.body !== 'string' ||
+      createHash('sha256').update(review.body).digest('hex') !==
+        (receipt.bodySha256 ?? createHash('sha256').update(publishedBody).digest('hex')) ||
       typeof review.submitted_at !== 'string' ||
       !Number.isFinite(Date.parse(review.submitted_at)) ||
       review.state !==
@@ -209,6 +212,12 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     live.user?.login?.toLowerCase() === account.login.toLowerCase()
       ? 'COMMENT'
       : (recommendation as ReviewPublicationReceipt['event']);
+  const located = locatePublicationComments(
+    comments,
+    comments.length ? await get('/files?per_page=100', ['--paginate', '--slurp']) : [],
+    { host: pr.host, repo: pr.repo, headSha: subject.headSha },
+  );
+  publishedBody = `${result.reviewMd.trim()}${located.bodySuffix}\n\n${marker}`;
   const receipt: ReviewPublicationReceipt = {
     version: 1,
     state: 'posting',
@@ -221,13 +230,19 @@ async function publishOnce(input: PublishWorkspaceReviewInput): Promise<ReviewPu
     marker,
     event,
     attemptedAt: new Date().toISOString(),
+    bodySha256: createHash('sha256').update(publishedBody).digest('hex'),
   };
   const directory = await mkdtemp(path.join(os.tmpdir(), 'review-publication-'));
   try {
     const file = path.join(directory, 'review.json');
     await writeFile(
       file,
-      JSON.stringify({ commit_id: subject.headSha, event, body: publishedBody, comments }),
+      JSON.stringify({
+        commit_id: subject.headSha,
+        event,
+        body: publishedBody,
+        comments: located.inline,
+      }),
       { mode: 0o600 },
     );
     await input.authorize();
