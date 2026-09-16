@@ -4,7 +4,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-- Recipe Cook lane: the runner envelope reports `terminal_status` (`done|blocked|failed`) and `terminal_reason`; the lane no longer reads or rewrites a `STATUS:` line in the run-local TASK.md, and `meta.json` records `terminal_reason`. Templates and skill text drop the field.
+- Recipe Cook lane: the runner envelope reports `terminal_status` (`done|blocked|failed`) and `terminal_reason`; the lane no longer reads or rewrites a `STATUS:` line in the run-local TASK.md, and `meta.json` records `terminal_reason`. Templates and skill text drop the field. An envelope without a valid `terminal_status`, or a blocked/failed one without `terminal_reason`, fails the run; the model output stays in `runner-output.txt`. The `tmux-model-driver` launcher and watcher stop mentioning or parsing the field.
 
 ## 0.3.0 - 2026-08-03
 

@@ -98,7 +98,7 @@ It must include:
 - [ ] **10. Handle unavailable validation honestly** — if the repo has no validator or runner, write `validation unavailable` with the reason. Do not fake success.
 - [ ] **11. Write the learning artifact** — write `artifacts/recipe-cook-learning.json` with evidence verdict and proposed next delta.
 - [ ] **12. Audit unresolved targets** — update `## Resolved vs Unresolved` and `## Recipe Coverage Audit` after validation evidence exists.
-- [ ] **13. Final completion gate** — report `terminal_status: done` only after recipe writing, validation evidence, learning artifact, and unresolved-target audit are all present.
+- [ ] **13. Final completion gate** — reach the Success outcome only after recipe writing, validation evidence, learning artifact, and unresolved-target audit are all present.
 
 ## Failure Conditions
 

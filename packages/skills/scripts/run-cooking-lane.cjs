@@ -778,7 +778,9 @@ function renderValidationEvidence(validationResults, cdpPort, repoRoot) {
 function deriveTerminalState(envelope, taskMarkdown, validationResults) {
   const text = String(taskMarkdown || '');
   // A reason only travels with a non-done envelope; a note attached to a done
-  // envelope must not be presented as the blocker or failure cause.
+  // envelope must not be presented as the blocker or failure cause. The two
+  // evidence overrides below are reachable only for done envelopes, so they
+  // synthesize their own reason.
   const reason =
     envelope.terminal_status !== 'done' &&
     typeof envelope.terminal_reason === 'string' &&
@@ -795,7 +797,7 @@ function deriveTerminalState(envelope, taskMarkdown, validationResults) {
     return {
       status: 'blocked',
       outcome: 'partial',
-      reason: reason || 'a required proof target remains UNRESOLVED',
+      reason: 'a required proof target remains UNRESOLVED',
     };
   }
 
@@ -806,7 +808,7 @@ function deriveTerminalState(envelope, taskMarkdown, validationResults) {
     return {
       status: 'failed',
       outcome: 'failure',
-      reason: reason || `validation step ${failingStep[0]} exited ${failingStep[1].exit_code}`,
+      reason: `validation step ${failingStep[0]} exited ${failingStep[1].exit_code}`,
     };
   }
 

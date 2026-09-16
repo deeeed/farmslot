@@ -531,6 +531,88 @@ function testCookingLaneFailsClosedWithoutTerminalStatus() {
   assert.ok(fs.existsSync(path.join(outputDir, 'runner-output.txt')), 'model output stays on disk');
 }
 
+function testCookingLaneFailsClosedWithoutTerminalReason() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'recipe-cook-lane-no-terminal-reason-'));
+  const taskArtifacts = path.join(
+    root,
+    'projects',
+    'example-browser-farm',
+    'tasks',
+    'fix',
+    '456',
+    'artifacts',
+  );
+  mkdirSync(taskArtifacts, { recursive: true });
+  writeFileSync(path.join(taskArtifacts, 'comments-report.md'), 'Fix context.\n', 'utf8');
+
+  const scenarioConfig = path.join(root, 'recipe-cook', 'assets', 'scenarios.json');
+  writeJson(scenarioConfig, {
+    version: 1,
+    scenarios: [
+      {
+        id: 'fix-zero-balance-cta',
+        lane: 'fix',
+        repo: 'example-browser',
+        task_artifact_dir: 'projects/example-browser-farm/tasks/fix/456/artifacts',
+      },
+    ],
+  });
+
+  const runnerPath = path.join(root, 'runner.js');
+  writeFileSync(
+    runnerPath,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const input = fs.readFileSync(0, 'utf8');",
+      'const artifactMatch = input.match(/- output_artifacts_dir: (.+)/);',
+      "const artifactsDir = artifactMatch ? artifactMatch[1].trim() : 'artifacts';",
+      'process.stdout.write(JSON.stringify({',
+      "  task_markdown: ['# Recipe Cook Task', '', '## Task', '', '```text', 'TARGET_REPO: example-browser', 'SOURCE_KIND: fix', 'SOURCE_REF: fix-zero-balance-cta', `ARTIFACT_DIR: ${artifactsDir}`, 'VALIDATION_MODE: state', '```', '', '## Validation Evidence', '', 'RECIPE_COOK_VALIDATION_PENDING', ''].join('\\n'),",
+      "  recipe_json: { version: 1, steps: [{ id: 'step-1', action: 'assert' }] },",
+      '  recipe_cook_json: null,',
+      "  terminal_status: 'blocked',",
+      '  terminal_reason: null,',
+      "  evidence_verdict: 'ok',",
+      "  next_delta: 'Add stronger fix-specific source prompts.',",
+      "  summary: 'No validator available.'",
+      '}));',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const script = path.resolve(__dirname, '../scripts/run-cooking-lane.cjs');
+  const outputDir = path.join(root, 'run-output');
+  const result = spawnSync(
+    process.execPath,
+    [
+      script,
+      '--scenario',
+      'fix-zero-balance-cta',
+      '--scenario-config',
+      scenarioConfig,
+      '--repo-root',
+      path.join(root, 'missing-repo'),
+      '--output-dir',
+      outputDir,
+      '--runner-cmd',
+      `node ${runnerPath}`,
+      '--runner-mode',
+      'batch',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.notEqual(result.status, 0, 'lane must fail closed when blocked has no reason');
+  const output = `${result.stderr}\n${result.stdout}`;
+  assert.match(output, /missing terminal_reason for terminal_status blocked/);
+  assert.match(output, /runner-output\.txt/);
+  assert.ok(fs.existsSync(path.join(outputDir, 'runner-output.txt')), 'model output stays on disk');
+}
+
 function testCookingLanePreservesBlockedStatus() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'recipe-cook-lane-blocked-'));
   const taskArtifacts = path.join(
@@ -1012,6 +1094,7 @@ function main() {
   testCookingLanePreservesFailedStatus();
   testCookingLaneFailsOnFailingValidationDespiteDone();
   testCookingLaneFailsClosedWithoutTerminalStatus();
+  testCookingLaneFailsClosedWithoutTerminalReason();
   testRepoLocalAutoResolution();
   testStreamingRunnerMirrorsProgress();
   process.stdout.write('run-cooking-lane tests: ok\n');
