@@ -322,6 +322,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `tmux.sendKeys`                         | admin          |                                                          |
 | `tmux.split`                            | admin          |                                                          |
 | `tmux.synchronizePanes`                 | admin          |                                                          |
+| `tmux.worker.endSession`                | admin          |                                                          |
 | `tmux.worker.list`                      | admin          |                                                          |
 | `tmux.worker.restore`                   | admin          |                                                          |
 | `tmux.zoomPane`                         | admin          |                                                          |

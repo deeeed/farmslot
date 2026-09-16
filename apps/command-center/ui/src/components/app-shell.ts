@@ -84,13 +84,15 @@ import {
 import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
 import { ATTENTION_ALERT_EVENT, type AttentionAlertDetail } from '../utils/notifications.js';
 import {
-  listPinnedSlots as listPinnedSlotPreferences,
+  listPinnedWorkspaces as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
-  type PinnedSlotPreference,
-  unpinSlot,
+  type PinnedWorkspacePreference,
+  unpinWorkspace,
 } from '../utils/pinned-slots.js';
+import { hashParams } from '../utils/url-state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
+import { runStatusColor } from './runs/run-utils.js';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
@@ -217,7 +219,8 @@ export class FarmApp extends LitElement {
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
-  @state() private pinnedSlots: PinnedSlotPreference[] = [];
+  @state() private terminalRunParam = '';
+  @state() private pinnedSlots: PinnedWorkspacePreference[] = [];
   @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
   @state() private chatOpen = false;
@@ -721,6 +724,7 @@ export class FarmApp extends LitElement {
     }
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
+    this.terminalRunParam = hash === 'terminal' ? (hashParams().get('run') ?? '') : '';
     this.devCaptureMode = this.isDevCaptureHash(raw);
     // Deep links to a hidden alpha route (including its 'violations' alias)
     // bounce to fleet instead — hiding the nav entry alone isn't enough.
@@ -1102,9 +1106,9 @@ export class FarmApp extends LitElement {
     const hiddenCount = this.pinnedSlots.length - pins.length;
     if (!this._sidebarExpanded) return nothing;
     return html`
-      <div class="fa-active-runs" aria-label="Pinned slots">
+      <div class="fa-active-runs" aria-label="Pinned workspaces">
         <div class="fa-active-runs-head">
-          <span>Pinned slots</span>
+          <span>Pinned workspaces</span>
           <span>${pins.length}${hiddenCount > 0 ? `/${this.pinnedSlots.length}` : ''}</span>
         </div>
         ${pins.length === 0
@@ -1116,14 +1120,19 @@ export class FarmApp extends LitElement {
     `;
   }
 
-  private filteredPinnedSlots(): PinnedSlotPreference[] {
+  private filteredPinnedSlots(): PinnedWorkspacePreference[] {
     const { projects, machines } = this.globalFilters;
     if (projects.length === 0 && machines.length === 0) return this.pinnedSlots;
     return this.pinnedSlots.filter((pin) => {
-      const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
-      if (!slot) return false;
-      if (projects.length > 0 && !projects.includes(slot.project)) return false;
-      if (machines.length > 0 && !machines.includes(slot.machine)) return false;
+      const workspace =
+        'runId' in pin
+          ? this.runs.find((run) => run.id === pin.runId)
+          : this.fleetSlots.find((slot) => slot.slot === pin.slotId);
+      if (!workspace) return false;
+      const machine =
+        'machine' in workspace ? workspace.machine : workspace.reviewWorkspace?.machine;
+      if (projects.length > 0 && !projects.includes(workspace.project)) return false;
+      if (machines.length > 0 && (!machine || !machines.includes(machine))) return false;
       return true;
     });
   }
@@ -1232,42 +1241,69 @@ export class FarmApp extends LitElement {
     );
   }
 
-  private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
-    const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
-    const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId, slot?.lifecycle === 'busy');
+  private renderPinnedSlotShortcut(pin: PinnedWorkspacePreference) {
+    const slotId = 'slotId' in pin ? pin.slotId : undefined;
+    const runId = 'runId' in pin ? pin.runId : undefined;
+    const slot = this.fleetSlots.find((candidate) => candidate.slot === slotId);
+    const run = runId
+      ? (this.runs.find((candidate) => candidate.id === runId) ?? null)
+      : this.pinnedSlotRun(slotId!, slot?.currentRunId, slot?.lifecycle === 'busy');
     const selected =
-      (this.route === 'slot' && pin.slotId === this.slotParam) ||
+      (this.route === 'slot' && slotId === this.slotParam) ||
+      (this.route === 'terminal' && runId === this.terminalRunParam) ||
       (this.route === 'run' && !!run && run.id === this.runParam);
-    const worker = this.tmuxWorkerForSlot(slot);
-    const displayLabel = pin.label?.trim() || pin.slotId;
-    const needsAttention = this.pinnedSlotNeedsAttention(worker);
-    const workerStatus = needsAttention ? 'needs attention' : this.pinnedSlotWorkerStatus(worker);
-    const statusColor = this.pinnedSlotWorkerColor(workerStatus);
+    const worker = runId
+      ? (this.tmuxWorkers.find((worker) => worker.linkedRunId === runId) ?? null)
+      : this.tmuxWorkerForSlot(slot);
+    const displayLabel =
+      pin.label?.trim() || (runId ? run?.ticketOrPr || `Review ${runId.slice(0, 8)}` : slotId);
+    const needsAttention =
+      this.pinnedSlotNeedsAttention(worker) ||
+      Boolean(runId && run?.decisions.some((decision) => !decision.resolvedAt));
+    const workerStatus = runId
+      ? (run?.status ?? 'unavailable')
+      : needsAttention
+        ? 'needs attention'
+        : this.pinnedSlotWorkerStatus(worker);
+    const statusColor = needsAttention
+      ? '#ffcc00'
+      : runId && run
+        ? runStatusColor(run.status)
+        : this.pinnedSlotWorkerColor(workerStatus);
+    const machine = slot?.machine ?? run?.reviewWorkspace?.machine;
+    const href = runId
+      ? !run?.reviewWorkspace || run.reviewWorkspace.cleanedAt
+        ? `#run/${encodeURIComponent(runId)}`
+        : `#terminal?run=${encodeURIComponent(runId)}`
+      : `#slot/${slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`;
     return html`
       <div class="fa-active-run-wrap">
         <a
           class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
             ? 'needs-attention'
             : ''}"
-          href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
-          title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
+          href=${href}
+          title=${`${slotId ?? runId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
         >
           <div class="fa-active-run-top">
             <span class="fa-active-run-ticket">${displayLabel}</span>
-            ${slot?.machine || pin.label
+            ${machine || pin.label
               ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
-                  >${pin.label ? pin.slotId : slot?.machine}</span
+                  >${machine}</span
                 >`
               : nothing}
           </div>
           <div class="fa-active-run-summary">
-            ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
+            ${run?.summary ||
+            run?.ticketOrPr ||
+            slot?.branch ||
+            (runId ? 'Saved review workspace' : 'Slot not in current fleet')}
           </div>
           <div class="fa-active-run-meta">
             <span
               class="fa-active-run-worker"
               style="--worker-color:${statusColor}"
-              title=${this.pinnedSlotWorkerTitle(worker)}
+              title=${runId ? `Run status: ${workerStatus}` : this.pinnedSlotWorkerTitle(worker)}
             >
               <span class="fa-active-run-worker-dot"></span>${workerStatus}
             </span>
@@ -1276,7 +1312,7 @@ export class FarmApp extends LitElement {
               : nothing}
             ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
             ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
-            ${run ? html`<span>${run.status}</span>` : nothing}
+            ${run && !runId ? html`<span>${run.status}</span>` : nothing}
           </div>
           ${run
             ? html`<run-pipeline-mini
@@ -1288,12 +1324,12 @@ export class FarmApp extends LitElement {
         </a>
         <button
           class="fa-active-run-unpin"
-          title=${`Unpin ${pin.slotId}`}
-          aria-label=${`Unpin ${pin.slotId}`}
+          title=${`Unpin ${displayLabel}`}
+          aria-label=${`Unpin ${displayLabel}`}
           @click=${(event: Event) => {
             event.preventDefault();
             event.stopPropagation();
-            unpinSlot(pin.slotId);
+            unpinWorkspace(pin);
           }}
         >
           ×
@@ -1457,7 +1493,10 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
-        return html`<terminal-split-view .initialSlot=${this.slotParam}></terminal-split-view>`;
+        return html`<terminal-split-view
+          .initialSlot=${this.slotParam}
+          .initialRun=${this.terminalRunParam}
+        ></terminal-split-view>`;
       case 'devices':
         return html`<device-grid></device-grid>`;
       case 'dispatch':

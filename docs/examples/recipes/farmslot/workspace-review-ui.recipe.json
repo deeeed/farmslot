@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "yarn --cwd apps/command-center tsx ../../scripts/e2e-workspace-review-lifecycle.mts temp/workspace-review-recipe/tmux-fixture tmux-fixture",
         "timeout_ms": 180000,
-        "intent": "Dispatch through the real wizard with native/terminal selection, then prove skill discovery, terminal input, progress, held publish gate, inline comments and artifact viewing, rejected publication recovery, cleanup and reopening the saved gate without another worker.",
+        "intent": "Dispatch through the real wizard with native/terminal selection, then prove skill discovery, terminal input, shared workspace pinning and active/pinned terminal navigation, progress, held publish gate, inline comments and artifact viewing, rejected publication recovery, cleanup and reopening the saved gate without another worker.",
         "next": "done"
       },
       "done": {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Share workspace pins across run, terminal and slot views. Show worktrees alongside active terminals, provide searchable session cards with explicit session-ending controls, and expose review progress and checklists in an optional process panel.
+
 - Reuse terminal, conversation and checklist views for slot-free reviews, with Terminal or native execution. Hold reviews at the publish gate by default; keep the shared diff, comments and artifact viewer available in run history.
 
 - Keep manual Review runner and model choices consistent with other flows, including custom models; farm defaults remain overridable.

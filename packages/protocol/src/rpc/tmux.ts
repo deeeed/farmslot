@@ -48,6 +48,8 @@ export interface TmuxWorkerSummary {
   cwd?: string;
   command?: string;
   pid?: number;
+  /** Gateway supports ending this unmanaged session with a fresh identity check. */
+  canEndSession?: boolean;
   width?: number;
   height?: number;
   active?: boolean;
@@ -86,6 +88,12 @@ export interface TmuxWorkerListParams {
   machine?: string;
   /** Limit inventory collection to a set of machines. */
   machines?: string[];
+}
+
+export interface TmuxWorkerEndSessionParams {
+  worker: TmuxWorkerRef;
+  /** Pane process shown when the operator confirmed the action. */
+  expectedPid: number;
 }
 
 export interface TmuxWorkerListResult {

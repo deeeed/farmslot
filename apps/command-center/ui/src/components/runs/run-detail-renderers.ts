@@ -7,6 +7,7 @@ import type {
   PRStatus,
   Run,
   RunGrade,
+  TaskProgressStructured,
 } from '@farmslot/protocol';
 import {
   canActivateRunOnSlot,
@@ -21,10 +22,10 @@ import {
 } from '@farmslot/protocol';
 
 import '../slot-view/worker-session-history.js';
+import '../shared/workspace-pin.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { isSlotPinned } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { ticketUrlForRun } from './family-observability-link-model.js';
@@ -38,7 +39,7 @@ import {
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
-import { renderRunReviewResult } from './run-review-result-renderer.js';
+import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,
@@ -89,7 +90,6 @@ export interface RunDetailViewContext {
   _slotBranchForRun: (run: Run) => string;
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
-  _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
   _shouldShowCiStatus: (run: Run) => boolean;
@@ -171,6 +171,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 }
 
 export interface RunEvidenceRenderContext {
+  taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
   evidenceLightboxIndex: number;
@@ -183,6 +184,8 @@ export interface RunEvidenceRenderContext {
 }
 
 export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
+  if (run.reviewWorkspaceTarget)
+    return html`${renderReviewProcess(run, ctx)}${renderEvidenceLightbox(ctx)}`;
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runEvidenceSummary(run, artifacts);
   if (!evidence.shouldRender) return nothing;
@@ -228,17 +231,20 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
             ></step-artifacts>
           `
         : html`<div class="evidence-empty">${evidence.emptyMessage}</div>`}
-      <media-lightbox
-        .items=${ctx.evidenceLightboxItems}
-        .open=${ctx.evidenceLightboxOpen}
-        .selectedIndex=${ctx.evidenceLightboxIndex}
-        scopeLabel="Replay evidence"
-        @lightbox-close=${() => ctx.closeEvidenceLightbox()}
-        @lightbox-navigate=${(event: CustomEvent) =>
-          ctx.navigateEvidenceLightbox(event.detail.index)}
-      ></media-lightbox>
+      ${renderEvidenceLightbox(ctx)}
     </div>
   `;
+}
+
+function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
+  return html`<media-lightbox
+    .items=${ctx.evidenceLightboxItems}
+    .open=${ctx.evidenceLightboxOpen}
+    .selectedIndex=${ctx.evidenceLightboxIndex}
+    scopeLabel="Replay evidence"
+    @lightbox-close=${() => ctx.closeEvidenceLightbox()}
+    @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
+  ></media-lightbox>`;
 }
 
 export function renderRunGrade(grade: RunGrade): unknown {
@@ -592,6 +598,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
+    ${r.reviewWorkspaceTarget ? ctx._renderRunEvidence(r) : nothing}
     ${renderRunReviewResult(r, () => void ctx._onReplayStep('human-gate'), actionsBlocked)}
     ${r.reviewWorkspace ? ctx.renderGateSection(r) : nothing}
     ${r.qa
@@ -748,7 +755,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         <div class="meta-value">${r.project}</div>
       </div>
       <div class="meta-item">
-        <div class="meta-label">Slot</div>
+        <div class="meta-label">${r.reviewWorkspaceTarget ? 'Workspace' : 'Slot'}</div>
         <div class="meta-value">
           ${boundSlotId
             ? html`<a
@@ -756,17 +763,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   style="color:${colors.accent}; text-decoration:none"
                   >${boundSlotId}</a
                 >
-                <button
-                  style="margin-left:8px; border:1px solid ${isSlotPinned(boundSlotId)
-                    ? colors.accent
-                    : colors.bgCardHover}; color:${isSlotPinned(boundSlotId)
-                    ? colors.accent
-                    : colors.textMuted}; background:transparent; border-radius:4px; font-size:10px; font-family:${fonts.mono}; cursor:pointer"
-                  @click=${() => ctx._togglePinnedSlot(boundSlotId)}
-                  title="Toggle this run's slot in pinned slots"
-                >
-                  ${isSlotPinned(boundSlotId) ? 'pinned' : 'pin'}
-                </button>
+                <workspace-pin .slotId=${boundSlotId}></workspace-pin>
                 ${slotFreedByPark
                   ? html`<span
                       data-testid="run-slot-freed-by-park"
@@ -778,7 +775,22 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                       >freed for dispatch</span
                     >`
                   : nothing}`
-            : 'pending'}
+            : r.reviewWorkspace
+              ? html`<span
+                    data-testid="run-workspace-location"
+                    title=${r.reviewWorkspace.checkoutPath}
+                    >${r.reviewWorkspace.machine} ·
+                    ${r.reviewWorkspace.cleanedAt ? 'cleaned' : 'worktree'}</span
+                  >
+                  <workspace-pin .runId=${r.id} .label=${r.ticketOrPr}></workspace-pin>
+                  ${!r.reviewWorkspace.cleanedAt
+                    ? html`<a class="ext-link" href=${`#terminal?run=${encodeURIComponent(r.id)}`}
+                        >Terminal</a
+                      >`
+                    : nothing}`
+              : r.reviewWorkspaceTarget
+                ? 'Allocating worktree…'
+                : 'pending'}
         </div>
       </div>
       ${r.branch
@@ -974,7 +986,8 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         ? ctx._renderCiStatus(r)
         : ''}
     </div>
-    ${ctx._renderInteractivePackets(r)} ${r.reviewWorkspace ? nothing : ctx._renderRunEvidence(r)}
+    ${ctx._renderInteractivePackets(r)}
+    ${r.reviewWorkspaceTarget ? nothing : ctx._renderRunEvidence(r)}
     ${boundSlotId || (r.reviewWorkspace && !r.reviewWorkspace.cleanedAt)
       ? html`
           <button

@@ -2,7 +2,7 @@ import { html } from 'lit';
 
 import { Methods } from '@farmslot/protocol';
 
-import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import '../shared/workspace-pin.js';
 
 import {
   terminalAttachOverlay,
@@ -231,6 +231,7 @@ export interface TerminalChromeContext {
   model: string;
   summary: string;
   slotId: string;
+  runId: string;
   targetLabel: string;
   hasTarget: boolean;
   taskMarkdown: string;
@@ -269,28 +270,25 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
         : ''}
       ${ctx.summary ? html`<span class="task-summary">${ctx.summary}</span>` : ''}
       <span style="flex:1"></span>
-      ${!ctx.isWorkerTarget && ctx.slotId
+      ${!ctx.isWorkerTarget && (ctx.slotId || ctx.runId)
         ? html`
-            <button
-              class="slot-link"
-              type="button"
-              @click=${(event: Event) => {
-                event.stopPropagation();
-                togglePinnedSlot(ctx.slotId);
-              }}
-              title=${isSlotPinned(ctx.slotId)
-                ? 'Remove this slot from pinned slots'
-                : 'Add this slot to pinned slots'}
-            >
-              ${isSlotPinned(ctx.slotId) ? 'unpin' : '+pin'}
-            </button>
+            <workspace-pin .slotId=${ctx.slotId} .runId=${ctx.runId}></workspace-pin>
             <a
               class="slot-link"
-              href="#slot/${ctx.slotId}"
+              href=${ctx.slotId ? `#slot/${ctx.slotId}` : `#run/${encodeURIComponent(ctx.runId)}`}
               @click=${(event: Event) => event.stopPropagation()}
-              title="Open slot view"
+              title="Open workspace"
               >&#x2197;</a
             >
+            ${!ctx.slotId
+              ? html`<a
+                  class="slot-link"
+                  href=${`#terminal?run=${encodeURIComponent(ctx.runId)}`}
+                  @click=${(event: Event) => event.stopPropagation()}
+                  title="Open in Terminals"
+                  >Terminals</a
+                >`
+              : ''}
           `
         : ''}
       ${ctx.hasTarget

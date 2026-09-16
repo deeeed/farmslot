@@ -1390,6 +1390,11 @@
     "workspace.metro.unsubscribe": {
       "surface": "na",
       "note": "Slot Workspace IDE view (web UI)."
+    },
+    "tmux.worker.endSession": {
+      "surface": "rpc-only",
+      "command": "farmslot rpc tmux.worker.endSession",
+      "note": "Command Center ends an explicitly confirmed unmanaged session after checking current pane identity."
     }
   }
 }

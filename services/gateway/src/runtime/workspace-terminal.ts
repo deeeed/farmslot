@@ -40,12 +40,12 @@ export async function resolveWorkspaceTerminal(params: SlotAgentTargetParams) {
   return {
     run,
     key: workspaceTerminalKey(run.id),
-    session: run.transport === 'tmux' ? reviewTmuxSession(run) : sessionName(run),
+    session: run.transport === 'tmux' ? reviewTmuxSession(run) : reviewWorkspaceShellSession(run),
     sshTarget: local ? undefined : `${pool.sshUser}@${pool.host}`,
   };
 }
 
-function sessionName(run: Run): string {
+export function reviewWorkspaceShellSession(run: Run): string {
   const id = run.reviewWorkspace!.workspaceId;
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Invalid review workspace identity');
   return `review-shell-${id}`;
@@ -93,7 +93,7 @@ export async function workspaceTerminalOperation(
     script,
     JSON.stringify({
       action,
-      session: run.transport === 'tmux' ? reviewTmuxSession(run) : sessionName(run),
+      session: run.transport === 'tmux' ? reviewTmuxSession(run) : reviewWorkspaceShellSession(run),
       workspaceId: workspace.workspaceId,
       cwd: workspace.checkoutPath,
       ...input,

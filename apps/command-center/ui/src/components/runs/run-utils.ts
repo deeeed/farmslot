@@ -385,6 +385,16 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
     artifacts.push(artifact);
   };
 
+  for (const artifact of run.reviewResult?.artifactManifest ?? []) {
+    add({
+      ...artifact,
+      runId: run.id,
+      familyId: run.familyId,
+      stepName: 'monitor',
+      source: 'artifact-manifest',
+    });
+  }
+
   for (const artifact of packageEvidence) {
     add({
       runId: run.id,

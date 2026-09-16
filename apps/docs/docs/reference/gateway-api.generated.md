@@ -365,6 +365,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `tmux.sendKeys`                         | tmux             | bounded-write | —      | —      | Tmux SendKeys gateway method.                         |
 | `tmux.split`                            | tmux             | bounded-write | —      | —      | Tmux Split gateway method.                            |
 | `tmux.synchronizePanes`                 | tmux             | bounded-write | —      | —      | Tmux SynchronizePanes gateway method.                 |
+| `tmux.worker.endSession`                | tmux             | bounded-write | —      | —      | Tmux Worker EndSession gateway method.                |
 | `tmux.worker.list`                      | tmux             | read-only     | —      | —      | Tmux Worker List gateway method.                      |
 | `tmux.worker.restore`                   | tmux             | bounded-write | —      | —      | Tmux Worker Restore gateway method.                   |
 | `tmux.zoomPane`                         | tmux             | bounded-write | —      | —      | Tmux ZoomPane gateway method.                         |
