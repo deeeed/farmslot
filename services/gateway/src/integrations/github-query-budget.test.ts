@@ -71,6 +71,16 @@ test('spend snapshot ignores remaining from a GraphQL window that already reset'
   assert.equal(snap.resetAt, '2026-09-17T14:00:00.000Z');
 });
 
+test('resetForTests clears reserved credentials and spend', () => {
+  const budget = new GitHubQueryBudget();
+  const now = Date.parse('2026-09-17T12:00:00.000Z');
+  budget.observe('account', { remaining: 0, cost: 1, resetAt: '2026-09-17T13:00:00.000Z' });
+  budget.record('pr.list:prefetch', 12, 1, now);
+  budget.resetForTests();
+  assert.equal(budget.anyReserved(now), undefined);
+  assert.equal(budget.spendSnapshot(now).hourCost, 0);
+});
+
 test('spend snapshot attributes GraphQL cost to callers inside a rolling hour', () => {
   const budget = new GitHubQueryBudget();
   const now = Date.parse('2026-09-17T12:00:00.000Z');

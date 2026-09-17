@@ -109,6 +109,11 @@ export class GitHubQueryBudget {
       this.spend = this.spend.slice(this.spend.length - MAX_SPEND_EVENTS);
   }
 
+  resetForTests(): void {
+    this.quotas.clear();
+    this.spend = [];
+  }
+
   spendSnapshot(now = Date.now()): GitHubQuerySpendSnapshot {
     const cutoff = now - HOUR_MS;
     this.spend = this.spend.filter((event) => event.at >= cutoff);

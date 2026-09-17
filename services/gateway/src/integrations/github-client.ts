@@ -15,7 +15,11 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
-import { githubQueryBudget, resolveGitHubQueryCaller } from './github-query-budget.js';
+import {
+  githubQueryBudget,
+  GitHubQueryBudgetError,
+  resolveGitHubQueryCaller,
+} from './github-query-budget.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -221,25 +225,43 @@ function attachSharedAbortSignal(
   });
 }
 
-function isGraphQLBudgetArgs(args: string[]): boolean {
-  return (
-    args.includes('graphql') || (args[0] === 'pr' && ['view', 'list', 'checks'].includes(args[1]))
-  );
+const GH_FLAGS_WITH_VALUES = new Set([
+  '-f',
+  '-F',
+  '-H',
+  '-X',
+  '--hostname',
+  '--jq',
+  '--header',
+  '--raw-field',
+  '--field',
+  '--input',
+  '--method',
+]);
+
+/** GraphQL endpoint or `gh pr` porcelain that GitHub serves over GraphQL. */
+export function isGraphQLBudgetArgs(args: string[]): boolean {
+  if (args[0] === 'pr' && ['view', 'list', 'checks'].includes(args[1] ?? '')) return true;
+  if (args[0] !== 'api') return false;
+  const idx = args.indexOf('graphql');
+  if (idx <= 0) return false;
+  return !GH_FLAGS_WITH_VALUES.has(args[idx - 1] ?? '');
 }
 
 function inferredGitHubQueryCaller(args: string[]): string {
-  if (args.includes('graphql')) return 'graphql';
   if (args[0] === 'pr' && args[1]) return `gh:pr-${args[1]}`;
   return 'graphql';
 }
 
-function graphqlCostFromBody(body: string): number {
-  if (!body.trim().startsWith('{')) return 0;
+export function graphqlCostFromBody(body: string): number {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith('{')) return 0;
   try {
-    const parsed = JSON.parse(body) as { data?: { rateLimit?: { cost?: unknown } } };
+    const parsed = JSON.parse(trimmed) as { data?: { rateLimit?: { cost?: unknown } } };
     const cost = parsed.data?.rateLimit?.cost;
     return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 ? cost : 0;
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     return 0;
   }
 }
@@ -263,15 +285,13 @@ async function runGh(
 ): Promise<CommandOutput> {
   await acquire();
   try {
-    // Dashboard batches and gh PR read commands use GraphQL too. Respect the
-    // same reserve as rule/monitor discovery, including requests queued before a low-quota response.
-    if (
-      args.includes('graphql') ||
-      (args[0] === 'pr' && ['view', 'list', 'checks'].includes(args[1]))
-    )
-      githubQueryBudget.assertAvailable(
-        githubRequestCacheKey([], account ? { ...account, scope: 'query-budget' } : undefined),
-      );
+    // Dashboard batches and gh PR reads share one keyring token. Remaining
+    // often lands on a hashed account key while later calls use ambient, so
+    // fail closed when any tracked GraphQL credential is reserved.
+    if (isGraphQLBudgetArgs(args)) {
+      const retryAt = githubQueryBudget.anyReserved();
+      if (retryAt) throw new GitHubQueryBudgetError(retryAt);
+    }
     const isApi = args[0] === 'api';
     const isPaginated = args.includes('--paginate');
     const useEtag = isApi && !isPaginated && !force;
@@ -323,7 +343,7 @@ async function runGh(
       }
       let invalidCursor = false;
       let unavailablePR = false;
-      if (args.includes('graphql') && parsed.body.trim().startsWith('{')) {
+      if (isGraphQLBudgetArgs(args) && parsed.body.trim().startsWith('{')) {
         try {
           const errors = JSON.parse(parsed.body).errors;
           invalidCursor = hasInvalidGitHubCursor(errors);
@@ -345,10 +365,13 @@ async function runGh(
       throw err;
     }
 
-    // Non-api / paginated: no headers. Count the query so unmetered GraphQL
-    // still shows up in the caller tally.
+    // Non-api / paginated: no headers. GraphQL still costs at least 1 point;
+    // parse rateLimit.cost when the body kept it (no --jq).
     const raw = await spawnGh(args, signal, account);
-    recordGraphQLSpend(args, caller, 0);
+    if (isGraphQLBudgetArgs(args)) {
+      const bodyCost = graphqlCostFromBody(raw.stdout);
+      recordGraphQLSpend(args, caller, bodyCost > 0 ? bodyCost : 1);
+    }
     return raw;
   } catch (err) {
     if (!(err instanceof Error)) throw err;

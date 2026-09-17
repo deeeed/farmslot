@@ -6,10 +6,13 @@ import test from 'node:test';
 
 import { Events, type PRStatus } from '@farmslot/protocol';
 
+import { githubQueryBudget } from '../../integrations/github-query-budget.js';
+
 import {
   loadPRListCache,
   peekPRList,
   PR_LIST_CARRY_MAX_MS,
+  PR_LIST_CLIENT_INTEREST_MS,
   PR_LIST_STALE_MS,
   resetPRListCacheForTests,
   servePRList,
@@ -42,6 +45,7 @@ function isolate(): { dir: string; cleanup: () => void } {
   const previous = process.env.FARMSLOT_DIR;
   process.env.FARMSLOT_DIR = dir;
   resetPRListCacheForTests();
+  githubQueryBudget.resetForTests();
   return {
     dir,
     cleanup: () => {
@@ -178,7 +182,7 @@ test('the snapshot on disk is served on the next start; malformed files are igno
   }
 });
 
-test('the refresher only fetches while a client is connected and broadcasts changed lists', async () => {
+test('the refresher only fetches while a client is connected and recently asked for pr.list', async () => {
   const { cleanup } = isolate();
   try {
     let calls = 0;
@@ -186,8 +190,11 @@ test('the refresher only fetches while a client is connected and broadcasts chan
     const events: Array<{ event: string; count: number | undefined }> = [];
     const fetch = async () => {
       calls += 1;
-      return list([pr(1)]);
+      return list([pr(calls)]);
     };
+    const t0 = Date.now() - PR_LIST_STALE_MS - 1;
+    await servePRList(fetch, { now: t0 });
+    assert.equal(calls, 1);
     const stop = startPRListRefresher(fetch, {
       broadcast: (event, payload) =>
         events.push({ event, count: (payload as { prs?: PRStatus[] }).prs?.length }),
@@ -195,15 +202,13 @@ test('the refresher only fetches while a client is connected and broadcasts chan
       initialDelayMs: 1,
       intervalMs: 5,
     });
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    assert.equal(calls, 0, 'no clients, no GitHub traffic');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 1, 'no clients, no GitHub traffic even when the copy is stale');
     clients = true;
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     stop();
-    assert.ok(calls >= 1, 'a connected client triggers the cold refresh');
+    assert.ok(calls >= 2, 'a connected client with recent pr.list interest refreshes a stale copy');
     assert.deepEqual(events[0], { event: Events.PR_LIST_UPDATED, count: 1 });
-    // A fresh copy is not refetched by later ticks within PR_LIST_STALE_MS.
-    assert.equal(calls, 1);
   } finally {
     cleanup();
   }
@@ -229,19 +234,45 @@ test('servePRList backs off after an unchanged refresh', async () => {
   }
 });
 
-test('the refresher does not poll a warm list after clients leave the PR board', async () => {
+test('the refresher does not poll after pr.list interest expires', async () => {
   const { cleanup } = isolate();
   try {
     let calls = 0;
-    await servePRList(async () => {
+    const fetch = async () => {
       calls += 1;
       return list([pr(1)]);
-    });
+    };
+    await servePRList(fetch, { now: Date.now() - PR_LIST_CLIENT_INTEREST_MS - 1 });
     assert.equal(calls, 1);
+    const stop = startPRListRefresher(fetch, {
+      broadcast: () => {},
+      hasClients: () => true,
+      initialDelayMs: 1,
+      intervalMs: 5,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    stop();
+    assert.equal(calls, 1, 'stale copy is not refetched after interest expires');
+  } finally {
+    cleanup();
+  }
+});
+
+test('the refresher does not poll a disk snapshot until a client asks for pr.list', async () => {
+  const { dir, cleanup } = isolate();
+  try {
+    const cacheDir = path.join(dir, '.farm-cache');
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(
+      path.join(cacheDir, 'pr-list.json'),
+      JSON.stringify({ version: 1, fetchedAt: '2026-09-15T00:00:00.000Z', prs: [pr(4)] }),
+    );
+    loadPRListCache();
+    let calls = 0;
     const stop = startPRListRefresher(
       async () => {
         calls += 1;
-        return list([pr(1)]);
+        return list([pr(5)]);
       },
       {
         broadcast: () => {},
@@ -252,7 +283,8 @@ test('the refresher does not poll a warm list after clients leave the PR board',
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
     stop();
-    assert.equal(calls, 1, 'fresh warm copy is not refetched inside the stale window');
+    assert.equal(calls, 0, 'restart with connected clients is not pr.list interest');
+    assert.equal(peekPRList()?.prs[0].pr, 4);
   } finally {
     cleanup();
   }

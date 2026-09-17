@@ -454,7 +454,7 @@ async function loadPRList(
   }
   const spend = githubQueryBudget.spendSnapshot();
   console.log(
-    `[github-quota] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
+    `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
       spend.callers
         .slice(0, 4)
         .map((row) => `${row.caller}:${row.cost}/${row.queries}`)

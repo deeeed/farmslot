@@ -54,6 +54,7 @@ let broadcastFn: Broadcast = () => {};
 const carriedSince = new Map<string, number>();
 let lastClientListAt = 0;
 let unchangedStreak = 0;
+let lastReserveLogAt = 0;
 
 function cacheFile(): string {
   return farmCacheFile(CACHE_FILE_NAME);
@@ -154,6 +155,7 @@ export function resetPRListCacheForTests(): void {
   carriedSince.clear();
   lastClientListAt = 0;
   unchangedStreak = 0;
+  lastReserveLogAt = 0;
 }
 
 function ageMs(snap: PRListSnapshot, now: number): number {
@@ -167,7 +169,17 @@ function unchangedRefreshDelayMs(): number {
 }
 
 function graphqlBudgetReserved(now = Date.now()): boolean {
-  return Boolean(githubQueryBudget.anyReserved(now));
+  const retryAt = githubQueryBudget.anyReserved(now);
+  if (!retryAt) return false;
+  if (now - lastReserveLogAt > 60_000) {
+    console.warn(`[pr.list] GraphQL budget reserved until ${retryAt}; keeping warm list`);
+    lastReserveLogAt = now;
+  }
+  return true;
+}
+
+function hasRecentClientInterest(now: number): boolean {
+  return lastClientListAt > 0 && now - lastClientListAt <= PR_LIST_CLIENT_INTEREST_MS;
 }
 
 /**
@@ -318,7 +330,7 @@ export function peekPRList(): PRListSnapshot | null {
 
 /**
  * Keep the warm list fresh while someone is looking: every `intervalMs`, if a
- * client is connected and the copy is stale, refresh it. Returns a stop function.
+ * client recently called `pr.list` and the copy is stale, refresh it. Returns a stop function.
  */
 export function startPRListRefresher(
   fetch: PRListFetcher,
@@ -335,8 +347,7 @@ export function startPRListRefresher(
     const now = Date.now();
     if (!opts.hasClients() || inflight) return;
     if (graphqlBudgetReserved(now)) return;
-    if (snapshot && lastClientListAt > 0 && now - lastClientListAt > PR_LIST_CLIENT_INTEREST_MS)
-      return;
+    if (!hasRecentClientInterest(now)) return;
     if (snapshot && ageMs(snapshot, now) <= unchangedRefreshDelayMs()) return;
     refresh(fetch, false).catch(logBackgroundFailure);
   };

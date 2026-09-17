@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { beforeEach, mock, test } from 'node:test';
 import { promisify } from 'node:util';
 
 import type { GitHubRateLimitPayload } from '@farmslot/protocol';
@@ -28,6 +28,11 @@ const fakeExecFile = Object.assign(
 mock.module('node:child_process', { namedExports: { execFile: fakeExecFile } });
 const { ghRequest } = await import('./github-client.js');
 const { githubGraphQL } = await import('./github-graphql.js');
+const { githubQueryBudget } = await import('./github-query-budget.js');
+
+beforeEach(() => {
+  githubQueryBudget.resetForTests();
+});
 
 test('GraphQL HTTP 200 errors remain failed while their reset headers fence later queries', async () => {
   calls = 0;
@@ -111,6 +116,40 @@ test('only structured missing repository or PR errors mean the target is unavail
       assert.equal(error instanceof GitHubPRUnavailableError, index < 2);
     }
   }
+});
+
+test('paginated GraphQL records at least one point when the body has no rateLimit', async () => {
+  responses.push({ stdout: '{"comments":[]}' });
+  await ghRequest(['api', 'graphql', '--paginate', '-f', 'query=query { viewer { login } }']);
+  const snap = githubQueryBudget.spendSnapshot();
+  assert.equal(snap.hourCost, 1);
+  assert.equal(snap.hourQueries, 1);
+});
+
+test('a reserved GraphQL credential fails closed for later GraphQL on another key', async () => {
+  const reset = Math.floor(Date.now() / 1000) + 600;
+  responses.push({
+    failed: true,
+    stdout: `HTTP/2.0 200 OK\r\nx-ratelimit-resource: graphql\r\nx-ratelimit-remaining: 0\r\nx-ratelimit-reset: ${reset}\r\n\r\n{"errors":[{"message":"API rate limit exceeded"}]}`,
+  });
+  await assert.rejects(
+    githubGraphQL(
+      'query { viewer { login } }',
+      {},
+      { host: 'github.com', token: 'cred-a', scope: 'owner' },
+    ),
+    /rate limit/,
+  );
+  const before = calls;
+  await assert.rejects(
+    githubGraphQL(
+      'query { viewer { id } }',
+      {},
+      { host: 'github.com', token: 'cred-b', scope: 'owner' },
+    ),
+    /query budget is reserved/,
+  );
+  assert.equal(calls, before, 'a second credential must not spend after fail-closed reserve');
 });
 
 test('legacy dashboard GraphQL reads obey the observed reserve without blocking REST', async () => {

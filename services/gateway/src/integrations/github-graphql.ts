@@ -5,7 +5,7 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
-import { githubQueryBudget as queryBudget } from './github-query-budget.js';
+import { githubQueryBudget as queryBudget, GitHubQueryBudgetError } from './github-query-budget.js';
 
 export interface GitHubPage<T> {
   nodes: T[];
@@ -21,7 +21,8 @@ export async function githubGraphQL<T>(
   caller?: string,
 ): Promise<T> {
   const quotaKey = githubRequestCacheKey([], { ...account, scope: 'query-budget' });
-  queryBudget.assertAvailable(quotaKey);
+  const retryAt = queryBudget.anyReserved();
+  if (retryAt) throw new GitHubQueryBudgetError(retryAt);
   const metered = document.replace(/}\s*$/, ' rateLimit { cost remaining resetAt } }');
   const args = ['api', '--hostname', account.host, 'graphql', '-f', `query=${metered}`];
   for (const [key, value] of Object.entries(variables)) {
