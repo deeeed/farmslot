@@ -31,8 +31,8 @@ test('buildPRChecksArgs uses JSON buckets so pending checks remain data, not com
 
 // ─── ADR-028 GraphQL batch tests ───
 
-test('chunkPRsByRepo splits a >25-PR repo and leaves smaller repos alone', () => {
-  const big = Array.from({ length: 30 }, (_, i) => 100 + i);
+test('chunkPRsByRepo splits a repo above the per-query cap and leaves smaller repos alone', () => {
+  const big = Array.from({ length: 20 }, (_, i) => 100 + i);
   const small = [42, 43];
   const chunks = chunkPRsByRepo(
     new Map([
@@ -42,11 +42,13 @@ test('chunkPRsByRepo splits a >25-PR repo and leaves smaller repos alone', () =>
   );
   const ext = chunks.filter((c) => c.repo === 'example-org/example-browser');
   const mob = chunks.filter((c) => c.repo === 'example-org/example-mobile');
-  assert.equal(ext.length, 2, 'big repo splits into 2 chunks');
-  assert.equal(ext[0].prs.length, 25);
-  assert.equal(ext[1].prs.length, 5);
-  assert.deepEqual(ext[0].prs, big.slice(0, 25));
-  assert.deepEqual(ext[1].prs, big.slice(25));
+  assert.equal(ext.length, 3, 'big repo splits into 8-PR chunks');
+  assert.equal(ext[0].prs.length, 8);
+  assert.equal(ext[1].prs.length, 8);
+  assert.equal(ext[2].prs.length, 4);
+  assert.deepEqual(ext[0].prs, big.slice(0, 8));
+  assert.deepEqual(ext[1].prs, big.slice(8, 16));
+  assert.deepEqual(ext[2].prs, big.slice(16));
   assert.equal(mob.length, 1);
   assert.deepEqual(mob[0].prs, small);
   assert.equal(ext[0].owner, 'example-org');
@@ -468,11 +470,9 @@ test('prefetchPRBatchViaGraphQL early-returns on empty input without firing Grap
 });
 
 test('isPRBatchTruncated returns true when GraphQL connections capped at 100', () => {
-  // A PR with >100 review threads or >100 status contexts is silently truncated by
-  // the batch's `first: 100` slice. The REST/per-PR-paginated path sees them all,
-  // so the batch must NOT seed the cache for these PRs — bot findings in late
-  // threads or check failures past index 100 would otherwise vanish from
-  // matchBotComments / matchCheckGroups until the cache expired.
+  // A PR with >100 review threads or >100 status contexts is truncated by the
+  // batch's `first: 100` slice. We still seed that first page for pr.list (the
+  // per-PR GraphQL fallback was the quota hog) and warn so pr.status can paginate.
   assert.equal(isPRBatchTruncated(null), false);
   assert.equal(isPRBatchTruncated(undefined), false);
 
@@ -485,7 +485,7 @@ test('isPRBatchTruncated returns true when GraphQL connections capped at 100', (
     false,
   );
 
-  // Truncated review threads → must skip cache seed.
+  // Truncated review threads.
   assert.equal(
     isPRBatchTruncated({
       statusCheckRollup: { contexts: { pageInfo: { hasNextPage: false }, nodes: [] } },
@@ -494,7 +494,7 @@ test('isPRBatchTruncated returns true when GraphQL connections capped at 100', (
     true,
   );
 
-  // Truncated status check rollup → must skip cache seed (PR with 101+ checks).
+  // Truncated status check rollup (PR with 101+ checks).
   assert.equal(
     isPRBatchTruncated({
       statusCheckRollup: { contexts: { pageInfo: { hasNextPage: true }, nodes: [] } },

@@ -15,7 +15,7 @@ import {
   hasInvalidGitHubCursor,
   hasUnavailableGitHubPR,
 } from './github-errors.js';
-import { githubQueryBudget } from './github-query-budget.js';
+import { githubQueryBudget, resolveGitHubQueryCaller } from './github-query-budget.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +33,8 @@ export interface GhRequestOpts {
   signal?: AbortSignal; // cancel the underlying gh child process
   /** Explicit account binding. Tokens remain process-local and are never cache keys or log fields. */
   account?: { host: string; token: string; scope: string };
+  /** Spend attribution for GraphQL / `gh pr` query-budget reads. */
+  caller?: string;
 }
 
 interface CacheEntry {
@@ -143,6 +145,7 @@ export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<C
   const force = opts?.force === true;
   const signal = opts?.signal;
   const canShareInFlight = !force;
+  const caller = resolveGitHubQueryCaller(opts?.caller);
 
   // Negative cache: collapse repeated failures inside the TTL window.
   if (!force) {
@@ -154,16 +157,18 @@ export async function ghRequest(args: string[], opts?: GhRequestOpts): Promise<C
     const existing = inFlight.get(key);
     if (existing) return attachSharedAbortSignal(existing, signal);
     const controller = new AbortController();
-    const promise = runGh(args, key, force, controller.signal, opts?.account).finally(() => {
-      inFlight.delete(key);
-    });
+    const promise = runGh(args, key, force, controller.signal, opts?.account, caller).finally(
+      () => {
+        inFlight.delete(key);
+      },
+    );
     const entry: InFlightEntry = { promise, controller, refCount: 0 };
     inFlight.set(key, entry);
     return attachSharedAbortSignal(entry, signal);
   }
 
   // Forced calls bypass the in-flight share map; signal kills the child directly.
-  return runGh(args, key, force, signal, opts?.account);
+  return runGh(args, key, force, signal, opts?.account, caller);
 }
 
 export function githubRequestCacheKey(args: string[], account?: GhRequestOpts['account']): string {
@@ -216,12 +221,45 @@ function attachSharedAbortSignal(
   });
 }
 
+function isGraphQLBudgetArgs(args: string[]): boolean {
+  return (
+    args.includes('graphql') || (args[0] === 'pr' && ['view', 'list', 'checks'].includes(args[1]))
+  );
+}
+
+function inferredGitHubQueryCaller(args: string[]): string {
+  if (args.includes('graphql')) return 'graphql';
+  if (args[0] === 'pr' && args[1]) return `gh:pr-${args[1]}`;
+  return 'graphql';
+}
+
+function graphqlCostFromBody(body: string): number {
+  if (!body.trim().startsWith('{')) return 0;
+  try {
+    const parsed = JSON.parse(body) as { data?: { rateLimit?: { cost?: unknown } } };
+    const cost = parsed.data?.rateLimit?.cost;
+    return typeof cost === 'number' && Number.isFinite(cost) && cost > 0 ? cost : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function recordGraphQLSpend(args: string[], caller: string, cost: number): void {
+  if (!isGraphQLBudgetArgs(args)) return;
+  githubQueryBudget.record(
+    caller === 'graphql' ? inferredGitHubQueryCaller(args) : caller,
+    cost,
+    1,
+  );
+}
+
 async function runGh(
   args: string[],
   key: string,
   force: boolean,
   signal?: AbortSignal,
   account?: GhRequestOpts['account'],
+  caller = 'graphql',
 ): Promise<CommandOutput> {
   await acquire();
   try {
@@ -256,6 +294,7 @@ async function runGh(
         [],
         account ? { ...account, scope: 'query-budget' } : undefined,
       );
+      const previousRemaining = githubQueryBudget.peek(quotaKey)?.remaining;
       updateQuotaFromHeaders(parsed.headers, quotaKey);
       githubQueryBudget.observeHeaders(quotaKey, parsed.headers);
 
@@ -263,6 +302,15 @@ async function runGh(
         return { stdout: cached.body, stderr: '' };
       }
       if (!raw.failed && parsed.status >= 200 && parsed.status < 300) {
+        const remaining = Number(parsed.headers.get('x-ratelimit-remaining'));
+        const bodyCost = graphqlCostFromBody(parsed.body);
+        const delta =
+          Number.isFinite(remaining) &&
+          previousRemaining !== undefined &&
+          previousRemaining > remaining
+            ? previousRemaining - remaining
+            : 0;
+        recordGraphQLSpend(args, caller, bodyCost || delta);
         const etag = parsed.headers.get('etag');
         if (etag) {
           etagCache.set(key, { etag, body: parsed.body, at: Date.now() });
@@ -297,8 +345,10 @@ async function runGh(
       throw err;
     }
 
-    // Non-api: plain execFile, no ETag. Still de-duped and concurrency-bounded.
+    // Non-api / paginated: no headers. Count the query so unmetered GraphQL
+    // still shows up in the caller tally.
     const raw = await spawnGh(args, signal, account);
+    recordGraphQLSpend(args, caller, 0);
     return raw;
   } catch (err) {
     if (!(err instanceof Error)) throw err;

@@ -48,3 +48,34 @@ test('HTTP GraphQL quota headers fence subsequent reads even when the response h
     budget.observeHeaders('other', new Map([['x-ratelimit-resource', 'graphql']])),
   );
 });
+
+test('anyReserved is true when some other credential is already below the reserve', () => {
+  const budget = new GitHubQueryBudget();
+  const now = Date.parse('2026-09-17T12:00:00.000Z');
+  budget.observe('account-hashed', {
+    remaining: 0,
+    cost: 1,
+    resetAt: '2026-09-17T13:00:00.000Z',
+  });
+  assert.equal(budget.anyReserved(now), '2026-09-17T13:00:00.000Z');
+  assert.equal(budget.nextEligibleAt('["ambient",[]]', now), undefined);
+});
+
+test('spend snapshot attributes GraphQL cost to callers inside a rolling hour', () => {
+  const budget = new GitHubQueryBudget();
+  const now = Date.parse('2026-09-17T12:00:00.000Z');
+  budget.record('pr.list:prefetch', 12, 1, now);
+  budget.record('pr.raw:threads', 0, 3, now + 1_000);
+  budget.record('pr.list:prefetch', 8, 1, now + 2_000);
+  budget.record('pr-monitor:observe', 4, 2, now - 3_600_001);
+  const snap = budget.spendSnapshot(now + 3_000);
+  assert.equal(snap.hourCost, 20);
+  assert.equal(snap.hourQueries, 5);
+  assert.deepEqual(
+    snap.callers.map((row) => [row.caller, row.cost, row.queries]),
+    [
+      ['pr.list:prefetch', 20, 2],
+      ['pr.raw:threads', 0, 3],
+    ],
+  );
+});

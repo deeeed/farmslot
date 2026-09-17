@@ -209,6 +209,35 @@ test('the refresher only fetches while a client is connected and broadcasts chan
   }
 });
 
+test('the refresher does not poll a warm list after clients leave the PR board', async () => {
+  const { cleanup } = isolate();
+  try {
+    let calls = 0;
+    await servePRList(async () => {
+      calls += 1;
+      return list([pr(1)]);
+    });
+    assert.equal(calls, 1);
+    const stop = startPRListRefresher(
+      async () => {
+        calls += 1;
+        return list([pr(1)]);
+      },
+      {
+        broadcast: () => {},
+        hasClients: () => true,
+        initialDelayMs: 1,
+        intervalMs: 5,
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    stop();
+    assert.equal(calls, 1, 'fresh warm copy is not refetched inside the stale window');
+  } finally {
+    cleanup();
+  }
+});
+
 test('an unchanged refresh still announces completion, without shipping the list', async () => {
   const { cleanup } = isolate();
   try {

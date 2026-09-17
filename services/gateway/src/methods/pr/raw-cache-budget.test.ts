@@ -34,3 +34,18 @@ test('quota-held refresh fails visibly without replacing confirmed PR data', asy
     GitHubQueryBudgetError,
   );
 });
+
+test('prefetch does not call GitHub when the query budget is already reserved', async () => {
+  const { githubQueryBudget } = await import('../../integrations/github-query-budget.js');
+  githubQueryBudget.observe('other-credential', {
+    remaining: 0,
+    cost: 1,
+    resetAt: new Date(Date.now() + 120_000).toISOString(),
+  });
+  const before = calls;
+  await assert.rejects(
+    prefetchPRBatchViaGraphQL(new Map([['owner/repo', [3]]])),
+    GitHubQueryBudgetError,
+  );
+  assert.equal(calls, before, 'reserved budget must not fire GraphQL chunks');
+});

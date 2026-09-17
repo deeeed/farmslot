@@ -82,18 +82,21 @@ export async function prReviewComments(
     }
   `;
 
-  const { stdout } = await ghRequest([
-    'api',
-    'graphql',
-    '-f',
-    `query=${query}`,
-    '-f',
-    `owner=${owner}`,
-    '-f',
-    `name=${name}`,
-    '-F',
-    `pr=${pr}`,
-  ]);
+  const { stdout } = await ghRequest(
+    [
+      'api',
+      'graphql',
+      '-f',
+      `query=${query}`,
+      '-f',
+      `owner=${owner}`,
+      '-f',
+      `name=${name}`,
+      '-F',
+      `pr=${pr}`,
+    ],
+    { caller: 'review-comments:threads' },
+  );
 
   const data = JSON.parse(stdout) as {
     data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: GqlReviewThread[] } } } };
@@ -172,6 +175,7 @@ export async function prResolveThread(
     : 'mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }';
   await ghRequest(['api', 'graphql', '-f', `query=${mutation}`, '-f', `id=${params.threadId}`], {
     force: true,
+    caller: 'review-comments:mutate',
   });
   return { ok: true };
 }

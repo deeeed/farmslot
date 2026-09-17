@@ -49,7 +49,11 @@ import {
   setBinding,
 } from '../integrations/github-bindings-cache.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { GitHubQueryBudgetError } from '../integrations/github-query-budget.js';
+import {
+  githubQueryBudget,
+  GitHubQueryBudgetError,
+  withGitHubQueryCaller,
+} from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
 import { servePRList } from './pr/list-cache.js';
@@ -284,6 +288,12 @@ export interface PRListFetchResult {
 export async function fetchPRList(
   opts: { force?: boolean; project?: string } = {},
 ): Promise<PRListFetchResult> {
+  return withGitHubQueryCaller('pr.list', () => loadPRList(opts));
+}
+
+async function loadPRList(
+  opts: { force?: boolean; project?: string } = {},
+): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
   // Keyed by `repo#number`: PR numbers repeat across repos, and a farm can
@@ -431,13 +441,24 @@ export async function fetchPRList(
   }
   let seeded = new Set<string>();
   try {
-    seeded = await prefetchPRBatchViaGraphQL(prsByRepo);
+    seeded = await withGitHubQueryCaller('pr.list:prefetch', () =>
+      prefetchPRBatchViaGraphQL(prsByRepo),
+    );
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     console.warn(
       `[pr.batch] prefetch_failed err=${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
     );
   }
+  const spend = githubQueryBudget.spendSnapshot();
+  console.log(
+    `[github-quota] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
+      spend.callers
+        .slice(0, 4)
+        .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
+        .join(',') || 'none'
+    }`,
+  );
 
   // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
   // (truncated node, failed chunk) still has to reach GitHub, so force only

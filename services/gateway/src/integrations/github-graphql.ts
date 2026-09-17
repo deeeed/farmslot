@@ -18,6 +18,7 @@ export async function githubGraphQL<T>(
   document: string,
   variables: Variables,
   account: GitHubQueryAccount,
+  caller?: string,
 ): Promise<T> {
   const quotaKey = githubRequestCacheKey([], { ...account, scope: 'query-budget' });
   queryBudget.assertAvailable(quotaKey);
@@ -26,7 +27,7 @@ export async function githubGraphQL<T>(
   for (const [key, value] of Object.entries(variables)) {
     if (value !== null) args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
   }
-  const { stdout } = await ghRequest(args, { account });
+  const { stdout } = await ghRequest(args, { account, caller });
   const result = JSON.parse(stdout) as {
     data?: T & { rateLimit?: unknown };
     errors?: { message: string }[];
