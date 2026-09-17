@@ -8,6 +8,7 @@ import type { AgentContext, Run, RunSessionCommandResult } from '@farmslot/proto
 import {
   livenessLabel,
   runAgentSessionRows,
+  runnerSessionOpenRefusal,
   runSessionCommandTextForKind,
   runSessionCopyButtonLabel,
   runSessionCopyButtonState,
@@ -134,6 +135,27 @@ test('Open on host reloads a dead pane only while the run is still live', () => 
     true,
   );
   assert.equal(shouldRestoreRunnerSessionOnHost({ liveness: 'dead', runStatus: 'done' }), false);
+});
+
+test('Open on host refuses transferred or unproved slot ownership', () => {
+  assert.equal(runnerSessionOpenRefusal({ ...supported, ownership: 'owned' }), null);
+  assert.match(
+    runnerSessionOpenRefusal({
+      ...supported,
+      ownership: 'transferred',
+      ownerRunId: 'run-successor',
+    }) ?? '',
+    /run-successor/,
+  );
+  assert.match(runnerSessionOpenRefusal({ ...supported, ownership: 'unknown' }) ?? '', /unknown/);
+  assert.match(runnerSessionOpenRefusal(supported) ?? '', /unknown/);
+});
+
+test('switching runs clears the bound terminal context so the next run cannot inherit it', () => {
+  const detail = readFileSync(path.resolve(import.meta.dirname, 'run-detail.ts'), 'utf8');
+  assert.match(detail, /this\._terminalContextId = '';/);
+  assert.match(detail, /this\._terminalRole = '';/);
+  assert.match(detail, /this\.runId !== this\._lastRequestedRunId/);
 });
 
 test('copy buttons use only the command the gateway built', () => {

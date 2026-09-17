@@ -10,6 +10,7 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 
 import {
+  runnerSessionOpenRefusal,
   runSessionCommandTextForKind,
   type RunSessionRow,
   shouldRestoreRunnerSessionOnHost,
@@ -26,6 +27,8 @@ export interface OpenRunnerSessionOnHostResult {
   tmuxTarget?: string | null;
   command?: string;
   message: string;
+  ownership?: 'owned' | 'transferred' | 'unknown';
+  ownerRunId?: string;
 }
 
 function locationFromResult(result: RunSessionCommandResult): {
@@ -34,6 +37,8 @@ function locationFromResult(result: RunSessionCommandResult): {
   tmuxTarget?: string | null;
   command?: string;
   liveness?: RunSessionLiveness;
+  ownership?: 'owned' | 'transferred' | 'unknown';
+  ownerRunId?: string;
 } {
   if (!result.supported) return { slotId: null };
   return {
@@ -42,6 +47,8 @@ function locationFromResult(result: RunSessionCommandResult): {
     tmuxTarget: result.tmuxTarget,
     command: runSessionCommandTextForKind(result, 'reopen') ?? result.attachCommand ?? undefined,
     liveness: result.liveness,
+    ...(result.ownership ? { ownership: result.ownership } : {}),
+    ...(result.ownerRunId ? { ownerRunId: result.ownerRunId } : {}),
   };
 }
 
@@ -79,6 +86,8 @@ export async function openRunnerSessionOnHost(input: {
   const location = locationFromResult(result);
   const slotId = location.slotId ?? input.row.slotId;
   if (!result.supported) return failed(result.detail, location);
+  const refusal = runnerSessionOpenRefusal(result);
+  if (refusal) return failed(refusal, { ...location, slotId });
 
   if (
     !shouldRestoreRunnerSessionOnHost({ liveness: result.liveness, runStatus: input.runStatus })

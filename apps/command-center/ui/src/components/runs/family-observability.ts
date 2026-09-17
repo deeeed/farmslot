@@ -1069,6 +1069,8 @@ export class FamilyObservability extends FamilyObservabilityState {
         machine: opened.machine,
         slotId: opened.slotId ?? undefined,
         tmuxTarget: opened.tmuxTarget,
+        ownership: opened.ownership,
+        ownerRunId: opened.ownerRunId,
         message: opened.message,
       },
     };

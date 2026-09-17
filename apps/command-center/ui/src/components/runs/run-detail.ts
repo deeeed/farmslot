@@ -222,6 +222,8 @@ export class RunDetail extends RunDetailState {
       // previous run's liveness.
       this._sessionStates = {};
       this._sessionRequestSeq = {};
+      this._terminalContextId = '';
+      this._terminalRole = '';
       this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
@@ -1149,6 +1151,8 @@ export class RunDetail extends RunDetailState {
           machine: opened.machine,
           slotId: opened.slotId ?? undefined,
           tmuxTarget: opened.tmuxTarget,
+          ownership: opened.ownership,
+          ownerRunId: opened.ownerRunId,
           message: opened.message,
         },
       };
@@ -1166,6 +1170,8 @@ export class RunDetail extends RunDetailState {
         machine: opened.machine,
         slotId: opened.slotId ?? undefined,
         tmuxTarget: opened.tmuxTarget,
+        ownership: opened.ownership,
+        ownerRunId: opened.ownerRunId,
         message: opened.message,
       },
     };

@@ -23,6 +23,8 @@ export interface RunSessionRowState {
   machine?: string;
   slotId?: string;
   tmuxTarget?: string | null;
+  ownership?: 'owned' | 'transferred' | 'unknown';
+  ownerRunId?: string;
   message?: string;
   /**
    * The gateway answered but the browser refused the clipboard. A discrete flag
@@ -107,6 +109,8 @@ export function runSessionRowStateFromResult(
     machine: result.machine,
     slotId: result.slotId,
     tmuxTarget: result.tmuxTarget,
+    ...(result.ownership ? { ownership: result.ownership } : {}),
+    ...(result.ownerRunId ? { ownerRunId: result.ownerRunId } : {}),
   };
   if (!command) {
     return {
@@ -184,6 +188,19 @@ export function shouldRestoreRunnerSessionOnHost(input: {
   if (input.liveness === 'live') return false;
   if (input.runStatus && isTerminalRunStatus(input.runStatus)) return false;
   return true;
+}
+
+/**
+ * Open/restore may steer a pane. Copy remains the path when this run no longer
+ * owns the slot (warm handoff) or ownership could not be proved.
+ */
+export function runnerSessionOpenRefusal(result: RunSessionCommandResult): string | null {
+  if (!result.supported) return result.detail;
+  if (result.ownership === 'owned') return null;
+  if (result.ownership === 'transferred' && result.ownerRunId) {
+    return `This session moved to run ${result.ownerRunId}. Copy the command and paste it on ${result.machine}.`;
+  }
+  return `Slot ownership is unknown. Copy the command and paste it on ${result.machine}.`;
 }
 
 export interface RunSessionRenderContext {
@@ -475,7 +492,11 @@ export function renderRunAgentSessions(
         const location = runSessionLocationLabel(row);
         const pasteOn = state ? runSessionPasteOnLabel(state) : null;
         return html`
-          <div class="agent-session-row" data-testid="run-agent-session-${row.contextId}">
+          <div
+            class="agent-session-row"
+            data-testid="run-agent-session-${row.contextId}"
+            data-ownership=${state?.ownership ?? ''}
+          >
             <span
               class="agent-session-role"
               data-testid="run-agent-session-role-${row.contextId}"

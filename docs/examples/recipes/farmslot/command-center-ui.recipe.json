@@ -94,7 +94,7 @@
         "action": "ui.wait_for",
         "next": "assert-family-reopen-control",
         "test_id": "run-agent-sessions",
-        "text_contains": ["Copy reopen", "Copy attach"],
+        "text_contains": ["Copy reopen", "Copy attach", "Open on host"],
         "intent": "Verify the selected family run remounts runner-session copy controls for reopen and tmux attach."
       },
       "assert-family-reopen-control": {
