@@ -9,7 +9,6 @@ import {
   type PRTriggerRule,
 } from '@farmslot/protocol';
 
-import { githubRequestCacheKey } from '../integrations/github-client.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import {
   collectGitHubPages as pages,
@@ -161,9 +160,7 @@ async function loadPRRuleSources(
   );
   if (!result.complete && (result.progress.pendingConnections || result.progress.nextAttemptAt)) {
     result.progress.nextAttemptAt =
-      githubQueryBudget.nextEligibleAt(
-        githubRequestCacheKey([], { ...account, scope: 'query-budget' }),
-      ) ?? new Date(Date.now() + 30_000).toISOString();
+      githubQueryBudget.anyReserved() ?? new Date(Date.now() + 30_000).toISOString();
   }
   return result;
 }

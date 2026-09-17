@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Human-gate independent review loops honor per-loop `model` and `effort` instead of always inheriting the worker run, including after gateway restart recovery.
-- Attribute GitHub GraphQL points to callers and expose a rolling-hour tally on `gateway.status.githubQuerySpend`. Skip GraphQL and `gh pr` reads while any tracked credential is reserved, poll the board only while a client recently asked for `pr.list` (including after restart), back off 1→2→5 minutes when nothing changed, seed truncated GraphQL first pages for the list only, and cap aliased batch chunks at 8 PRs so large-repo queries actually seed.
+- Attribute GitHub GraphQL points to callers and expose a rolling-hour tally on `gateway.status.githubQuerySpend`. Skip GraphQL and `gh pr` reads while any tracked credential is reserved, keep serving the warm PR list without a refresh-failed event, poll only while a client recently asked for `pr.list` (including after restart), back off 1→2→5 minutes when nothing changed, seed truncated GraphQL first pages for the list only, and cap aliased batch chunks at 8 PRs so large-repo queries actually seed.
 
 ## 0.13.0 - 2026-09-17
 

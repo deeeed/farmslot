@@ -453,14 +453,16 @@ async function loadPRList(
     );
   }
   const spend = githubQueryBudget.spendSnapshot();
-  console.log(
-    `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
-      spend.callers
-        .slice(0, 4)
-        .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
-        .join(',') || 'none'
-    }`,
-  );
+  if (spend.hourQueries > 0 || (spend.remaining !== null && spend.remaining < 100)) {
+    console.log(
+      `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
+        spend.callers
+          .slice(0, 4)
+          .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
+          .join(',') || 'none'
+      }`,
+    );
+  }
 
   // Fetch all PRs in parallel. Under `force`, a PR the batch did not fully
   // seed (failed chunk, or truncated first page) still has to reach GitHub.

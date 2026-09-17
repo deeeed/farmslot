@@ -330,7 +330,7 @@ async function runGh(
           previousRemaining > remaining
             ? previousRemaining - remaining
             : 0;
-        recordGraphQLSpend(args, caller, bodyCost || delta);
+        recordGraphQLSpend(args, caller, bodyCost || delta || (isGraphQLBudgetArgs(args) ? 1 : 0));
         const etag = parsed.headers.get('etag');
         if (etag) {
           etagCache.set(key, { etag, body: parsed.body, at: Date.now() });

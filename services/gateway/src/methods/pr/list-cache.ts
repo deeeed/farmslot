@@ -302,7 +302,8 @@ export async function servePRList(
   opts: { force?: boolean; now?: number } = {},
 ): Promise<ServedPRList> {
   if (!loaded) loadPRListCache();
-  lastClientListAt = opts.now ?? Date.now();
+  const now = opts.now ?? Date.now();
+  lastClientListAt = now;
   if (opts.force || !snapshot) {
     const fresh = await refresh(fetch, opts.force === true, opts.now);
     return {
@@ -312,7 +313,7 @@ export async function servePRList(
       truncated: fresh.truncated === true,
     };
   }
-  if (ageMs(snapshot, opts.now ?? Date.now()) > unchangedRefreshDelayMs() && !inflight)
+  if (ageMs(snapshot, now) > unchangedRefreshDelayMs() && !inflight && !graphqlBudgetReserved(now))
     refresh(fetch, false, opts.now).catch(logBackgroundFailure);
   return {
     prs: snapshot.prs,

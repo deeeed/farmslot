@@ -25,8 +25,6 @@ interface SpendEvent {
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SPEND_EVENTS = 4_000;
 const githubQueryCaller = new AsyncLocalStorage<string>();
-/** Ambient `gh` credential quota key (`githubRequestCacheKey([], undefined)`). */
-export const DEFAULT_QUERY_BUDGET_KEY = '["ambient",[]]';
 
 export function withGitHubQueryCaller<T>(caller: string, run: () => T): T {
   const label = caller.trim();
