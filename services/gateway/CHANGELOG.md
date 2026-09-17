@@ -4,55 +4,37 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.13.0 - 2026-09-17
+
 - The execution-template catalog offers the same templates for every run mode; a run's mode now only matches the project's default rules.
-
 - Register `pi` as a TUI-first worker runner. Launch copies a Farmslot PI extension that writes `hooks.jsonl`, delivers `TASK.md` on session start, and registers `farmslot_mark` / `farmslot_signal` tools plus `/farmslot` commands. Default model is `grok-4.6`. `--thinking` applies to every PI model (default `medium`; use `low` for cheap test runs). OpenAI-compatible sources (Ollama, LiteLLM, `FARMSLOT_PI_ROUTER_URL`) still register live `/v1/models` ids.
-
 - Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated "Recorded in canonical library" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts.
-
 - Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate.
 - Correlate review worktrees in terminal inventory and support confirmed termination of unmanaged tmux sessions with identity checks.
 - Publish findings outside PR diff hunks in the review body instead of failing the entire review; keep valid findings inline and preserve retry safety.
-
 - Hold static reviews at the shared publish gate by default, with an explicit automatic-finish override. Support owned tmux worktrees, terminal/progress access and saved diff reads after cleanup.
-
 - Launch static reviews with the selected runner and install frozen review skills into fresh worktrees before startup.
-
 - Advertise read-only workspace review capabilities so clients offer compatible runners.
-
 - Task documents no longer carry a `STATUS:` line and interactive PR-complete handoffs no longer ask the worker to set one. Run state comes from the `mark` signal file (ADR-045); the field had no reader. Artifact-only replays now also rewrite an approval step that is followed directly by the next checklist step (the mobile dev-interactive shape), which the old `STATUS: done` anchor never matched.
-
 - Separate runtime QA from static Review with farm profiles, frozen inputs, legacy-request migration and verified smoke evidence. Preserve opted-in QA follow-ups when source reviews are archived. Publish requested workspace reviews with account/head checks and durable retry receipts. Read terminal signals again after worker-exit checks so fast completion is not mistaken for missing evidence. Autonomous task context preserves approval requirements.
-
 - Resolve internal static and runtime review checklists from the shared catalog and retain their content provenance.
-
 - Bind owned native filesystem operations and responses to the authorized node connection.
-
 - `run.rereviewLatestHead` re-reviews a review-pr run whose review could not be posted because the head moved: when the run's reviewer session is still alive on its slot, a chained review-pr run hands the follow-up into that session (warm handoff) with the incremental repeat-review context attached; otherwise a manual review request (resume session, incremental scope, same slot/runner/model preferred) goes through the review queue. Reviewer continuity treats a review blocked at posting as the prior round.
-
 - `pr.list` / `pr.status` read each reviewer's standing verdict (GitHub `latestOpinionatedReviews`, so a changes-requested reviewer who later commented still shows as blocking) and outstanding review requests (batch GraphQL and per-PR GraphQL), and flag when the author pushed after the newest changes-requested verdict.
-
 - `pr.list` also returns PRs that have an active review intent or monitor, when a project declares their repository, so tracked PRs get the same checks, review state and recommendation as run-owned ones.
-
 - The gateway keeps a warm copy of the PR dashboard list in memory and in `.farm-cache/pr-list.json`: `pr.list` answers from it at once (`fetchedAt`, `refreshing`), refreshes from GitHub in the background once it is a minute old while a client is connected, accepts `force` to re-fetch every PR from GitHub before answering, and broadcasts `pr.list.updated` after every refresh (with the list only when it changed). Project-scoped `pr.list` calls filter the same copy, or rediscover per project when the shared copy hit the candidate cap. A PR GitHub cannot be read for keeps its last known row (for up to an hour) rather than a blank placeholder, a PR GitHub reports gone is dropped, and a refresh that reads nothing keeps the whole copy and reports the failure to every client. One-shot readers (`farmslot pr list`, the Co-Pilot `list_pull_requests` tool) read GitHub fresh; the carry clock for unreadable rows survives restarts.
-
 - `pr.list` / `pr.status` recommend NEEDS_ATTENTION for a PR whose reviewer requested changes, so a human review round shows up on the board next to CI failures and conflicts; the ci-monitor dedup path keeps that signal.
-
 - After a pr-complete, dev, fix-bug or update-branch round finalizes on a PR, the gateway re-requests review from every reviewer whose latest verdict is still CHANGES_REQUESTED, so an addressed PR goes back into their queue instead of sitting on "changes requested"; the finalize step records who was re-requested.
-
 - `run.list` no longer ships large decision payload values (input snapshots, PR packages, review markdown, artifact manifests: 59 MB of an 85 MB list for 642 runs); it names the dropped keys in `payloadTrimmed`. `run.get`, `run.forSlot` and run events stay complete. The UI bootstrap request had been timing out on that list, which paused every run-page action behind "Run refresh failed".
 - The PR description's shape no longer fails a run at `complete`: sections the worker left out of `artifacts/pr-description.md` are appended from the repository PR template (heading and boilerplate) and the PR is created; the completion log names what was added.
 - Every runner launch on a remote slot (dispatch, self-review, inline CI fix, retained-session resume and recovery) first syncs the slot's node support bundle with the gateway's tree; prepare is no longer the only writer, so a gateway-side change to `scripts/` (such as the runner installer) can no longer strand a previously prepared slot on a bundle that cannot launch its runner.
 - Gateway intelligence can use an explicit local load-balancer provider with Astra/low defaults, an environment-provided client key, and no automatic provider fallback. Other providers retain their existing reasoning defaults.
-
 - A chained pr-complete that blocks because the slot's live retained worker would not accept the handoff no longer tears that worker down on the way out; it only drops its reservation and leaves the slot for the operator. The inline CI fix also keeps waiting while the runner hook still reports the worker busy after a gateway-restart recovery, instead of declaring the turn inactive and chaining a conflicting follow-up.
-
 - Grok Build launches seed the checkout into `~/.grok/trusted_folders.toml` on the slot host before the TUI starts, so a fresh slot no longer stalls on the "Do you trust the contents of this directory?" prompt (the launch used to fail after 120s with the prompt unanswered).
-
 - Publication packages render the PR body through the pack's `vars.pr_body_cmd` (MetaMask packs: `mm-harness pr-body render`) before validating it: the worker writes the description, the recipe and run log sections are inserted from artifacts, and the existing PR template check runs on the result.
-
 - Task dirs no longer carry a default-valued `checklist-target.json`; the one-release compatibility write is gone now that every node runs the 0.9 `mark` engine (absent means `CHECKLIST.md` + `SIGNAL.json`; role switches still write one).
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Respect configured pool and project directories in fleet discovery so valid slots remain dispatchable.
 - Bind native node ownership to issued principals, reject competing machine claims and recheck credential authority around remote native requests. Authentication tells clients whether to open the farm or an owner-only native workspace.
 - Add opt-in native workers and retained reviewers with leased input, task handoff, explicit completion signals, task-scoped history and recovery across gateway and runner restarts. Queued tasks preserve their creator’s ownership. Native workers can release resources while parked and restore their saved conversation in an eligible sibling worktree, preserving the task and leaving the original slot available.
