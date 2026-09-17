@@ -2887,6 +2887,25 @@ export const DEFAULT_GROK_EFFORT = 'xhigh';
 /** Default PI coding-agent model. Grok/xAI subscription, not Codex-LB or Claude Max. */
 export const DEFAULT_PI_MODEL = 'grok-4.6';
 
+/** PI `--thinking` levels. Harness-wide, not Grok-specific; models may clamp. */
+export const PI_THINKING_LEVELS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
+
+/** Default PI thinking when dispatch omits effort. */
+export const DEFAULT_PI_THINKING = 'medium';
+
+export function isPiThinkingLevel(value: string): value is PiThinkingLevel {
+  return (PI_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
 export type DecisionType =
   | 'collision_check'
   | 'plan_confirmation'

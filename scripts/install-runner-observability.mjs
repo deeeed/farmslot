@@ -1325,6 +1325,7 @@ function installPi({ repo, runtimeDir, slotId }) {
     'pi-farmslot-observability.ts',
     'pi-farmslot-hook-writer.mjs',
     'pi-farmslot-providers.mjs',
+    'pi-farmslot-task.mjs',
   ]) {
     const source = path.join(srcDir, name);
     if (!fs.existsSync(source)) throw new Error(`missing PI observability file: ${source}`);

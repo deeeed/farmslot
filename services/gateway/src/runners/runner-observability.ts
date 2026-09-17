@@ -12,6 +12,7 @@ export const RUNNER_OBSERVABILITY_COPY_PATHS = [
   'scripts/runners/pi-farmslot-observability.ts',
   'scripts/runners/pi-farmslot-hook-writer.mjs',
   'scripts/runners/pi-farmslot-providers.mjs',
+  'scripts/runners/pi-farmslot-task.mjs',
 ] as const;
 
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [

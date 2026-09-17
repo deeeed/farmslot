@@ -6,6 +6,8 @@ import {
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
+  DEFAULT_PI_THINKING,
+  PI_THINKING_LEVELS,
 } from '@farmslot/protocol';
 
 import {
@@ -53,6 +55,10 @@ test('PI is a dispatch runner defaulting to Grok', () => {
   assert.deepEqual(MODELS_BY_RUNNER.pi, [DEFAULT_PI_MODEL]);
   assert.equal(modelForRunnerChange('pi', ''), DEFAULT_PI_MODEL);
   assert.match(PI_COMPAT_MODEL_HINT, /OLLAMA_HOST/);
+  assert.equal(DEFAULT_EFFORT.pi, DEFAULT_PI_THINKING);
+  assert.deepEqual(EFFORT_BY_RUNNER.pi, [...PI_THINKING_LEVELS]);
+  assert.deepEqual(effortsForRunner('pi', 'grok-4.6'), [...PI_THINKING_LEVELS]);
+  assert.deepEqual(effortsForRunner('pi', 'ollama/qwen2.5-coder'), [...PI_THINKING_LEVELS]);
 });
 
 test('Claude fable is selectable but not the default model', () => {

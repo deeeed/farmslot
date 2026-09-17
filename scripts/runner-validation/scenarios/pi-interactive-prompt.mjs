@@ -2,13 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT } from '../lib/common.mjs';
 import * as digest from '../lib/digest.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { eventName, readHookLines, writePromptSentinel } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
-import { sendTmuxLine } from '../lib/tmux-input.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'pi-interactive-prompt';
@@ -62,6 +61,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     paneId = shell.paneId;
 
     installHooks(runner, repo, runtimeDir, slotId);
+    const taskFile = path.join(repo, 'TASK.md');
+    fs.writeFileSync(taskFile, `${DEFAULT_PROMPT}\n`);
     const { digest: expectedDigest } = writePromptSentinel(
       obsDirFor(repo, runtimeDir),
       DEFAULT_PROMPT,
@@ -70,28 +71,23 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.digest = expectedDigest;
 
     const beforeCount = readHookLines(logPath).length;
-    sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand(repo, runtimeDir)]);
-
-    const startRows = pollHookRows(
-      logPath,
-      beforeCount,
-      ['SessionStart'],
-      Math.min(timeoutMs, 60000),
-    );
-    report.sessionStarted = startRows.some((row) => eventName(row) === 'SessionStart');
-    if (!report.sessionStarted) {
-      throw new Error('timed out waiting for SessionStart hook from interactive PI TUI');
-    }
-
-    sleepMs(2500);
-    sendTmuxLine(paneId, DEFAULT_PROMPT);
+    sendShellScript(paneId, repo, [
+      runnerAdapter.buildInteractiveLaunchCommand(repo, runtimeDir, 'xai/grok-4.6', {
+        taskFile,
+        thinking: 'low',
+      }),
+    ]);
 
     const afterRows = pollHookRows(
       logPath,
       beforeCount,
-      ['UserPromptSubmit', 'Stop'],
-      Math.min(timeoutMs, 120000),
+      ['SessionStart', 'UserPromptSubmit', 'Stop'],
+      Math.min(timeoutMs, 180000),
     );
+    report.sessionStarted = afterRows.some((row) => eventName(row) === 'SessionStart');
+    if (!report.sessionStarted) {
+      throw new Error('timed out waiting for SessionStart hook from interactive PI TUI');
+    }
     const submit = afterRows.find(
       (row) => eventName(row) === 'UserPromptSubmit' && row.runnerPromptDigest === expectedDigest,
     );
