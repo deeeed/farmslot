@@ -487,7 +487,7 @@ function piThinkingFlag(effort?: string | null): string {
   if (!isPiThinkingLevel(normalized)) {
     throw new Error(`Invalid PI thinking level: ${effort}`);
   }
-  assertSafeRunnerArgumentValue('thinking', normalized);
+  assertSafeRunnerArgumentValue('effort', normalized);
   return ` --thinking ${quoteRunnerArgValue(normalized)}`;
 }
 
