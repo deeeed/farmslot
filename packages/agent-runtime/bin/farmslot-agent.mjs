@@ -15,7 +15,7 @@ function usage(exitCode = 0) {
     'Commands:',
     '  mark <task-md> <signal-json> <args...>',
     '  artifact-check <task-dir> [args...]',
-    '  task init <task-dir> --flow f --run-mode m --platform p --template id --title t [options]',
+    '  task init <task-dir> --flow f --platform p --template id --title t [--run-mode m] [options]',
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
     '    (flags override top-level input fields; training fields are merged)',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',

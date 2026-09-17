@@ -101,7 +101,7 @@ await writeFile(
 );
 await writeFile(
   path.join(project, 'shared/validation/shared.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Controller QA\n\n- [ ] Execute controller smoke and retain the suite evidence.\n',
+  '---\nplatforms: [cli]\n---\n\n# Controller QA\n\n- [ ] Execute controller smoke and retain the suite evidence.\n',
 );
 const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const commands: Record<string, unknown> = {};

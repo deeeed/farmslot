@@ -63,7 +63,6 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
     "id": "fix-bug/autonomous.mobile",
     "sourceId": "package:example-checklists",
     "flow": "fix-bug",
-    "runMode": "autonomous",
     "platforms": ["mobile", "ios", "android"],
     "labels": [],
     "relativePath": "fix-bug/autonomous.mobile.md",

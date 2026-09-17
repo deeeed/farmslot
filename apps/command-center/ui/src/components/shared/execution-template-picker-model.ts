@@ -1,7 +1,7 @@
 // Pure view-model for the execution-template catalog picker. The gateway
 // supplies the catalog (a full snapshot when the client asked for unfiltered).
-// This model filters that snapshot locally so farm/flow/domain/mode switches
-// do not refetch. Dispatch still validates the chosen source and digest.
+// This model filters that snapshot locally so farm/flow/domain switches do not
+// refetch. Dispatch still validates the chosen source and digest.
 import type {
   DomainRestrictedExecutionTemplateSource,
   ExecutionTemplateCatalogOption,
@@ -13,7 +13,6 @@ import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
 export interface ExecutionTemplatePickerFilters {
   /** Active domain filter; empty string means general (no domain). */
   domain: string;
-  runMode: 'autonomous' | 'interactive';
   /** When set, hide templates for other flows. */
   flow?: string;
   /** When set, hide templates that do not list this platform or `*`. */
@@ -52,7 +51,7 @@ export function optionDomains(option: ExecutionTemplateCatalogOption): string[] 
 }
 
 export function activeFilterSummary(filters: ExecutionTemplatePickerFilters): string {
-  return `domain: ${filters.domain || 'general'} · mode: ${filters.runMode}`;
+  return `domain: ${filters.domain || 'general'}`;
 }
 
 export function optionMatchesPickerFilters(
@@ -60,7 +59,6 @@ export function optionMatchesPickerFilters(
   filters: ExecutionTemplatePickerFilters,
 ): boolean {
   if (filters.flow && option.flow !== filters.flow) return false;
-  if (option.runMode != null && option.runMode !== filters.runMode) return false;
   if (
     filters.platform &&
     !option.platforms.includes('*') &&
@@ -95,7 +93,6 @@ export function localDomainRestrictedSources(
   const bySource = new Map<string, Set<string>>();
   for (const option of options) {
     if (filters.flow && option.flow !== filters.flow) continue;
-    if (option.runMode != null && option.runMode !== filters.runMode) continue;
     if (
       filters.platform &&
       !option.platforms.includes('*') &&

@@ -27,7 +27,6 @@ function withProject(fn: (projectVars: ProjectVars) => void): void {
       path.join(templatesDir, 'worker', 'fix-bug-mm.md'),
       `---
 labels: [domain:money-movement]
-runMode: autonomous
 platforms: [ios]
 ---
 
@@ -43,7 +42,6 @@ id: fix-bug/perps-mobile
 title: Perps mobile proof
 description: Choose for autonomous Perps bug reproduction on Mobile.
 flow: fix-bug
-runMode: autonomous
 platforms: [ios]
 ---
 
@@ -196,6 +194,31 @@ test('configured capability lists domains, sources, selection, and unavailable r
   });
 });
 
+test('the catalog run mode selects a default rule and never filters the offered options', () => {
+  withProject((projectVars) => {
+    const base = { flow: 'fix-bug', platform: 'ios', domain: 'perps' } as const;
+    const autonomous = configuredExecutionTemplateOptions(projectVars, {
+      ...base,
+      runMode: 'autonomous',
+    });
+    const interactive = configuredExecutionTemplateOptions(projectVars, {
+      ...base,
+      runMode: 'interactive',
+    });
+
+    // Same offered set for either mode — the rule below is the only difference.
+    assert.deepEqual(
+      interactive.options.map((option) => option.id),
+      autonomous.options.map((option) => option.id),
+    );
+    assert.equal(autonomous.selectionReason, 'configured-default');
+    // The rule is scoped to autonomous runs, so an interactive run falls
+    // through to the ordinary single-candidate path.
+    assert.equal(interactive.selectionReason, 'single-domain-candidate');
+    assert.equal(interactive.selectedId, 'fix-bug/perps-mobile');
+  });
+});
+
 test('configured resolution snapshots the same source digest exposed by capability options', () => {
   withProject((projectVars) => {
     const capability = configuredExecutionTemplateOptions(projectVars, {
@@ -258,7 +281,6 @@ test('configured preview can read an offered source shadowed outside the active 
       path.join(canonicalRoot, 'mobile.md'),
       `---
 id: fix-bug/perps-mobile
-runMode: autonomous
 platforms: [ios]
 ---
 

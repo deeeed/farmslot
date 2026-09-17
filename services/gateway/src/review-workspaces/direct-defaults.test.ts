@@ -34,7 +34,7 @@ process.stdout.write(JSON.stringify(body));
 for (const flow of ['review-pr', 'validation'])
   writeFileSync(
     path.join(root, `projects/farm/shared/${flow}/default.md`),
-    '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n- [ ] Complete selected work.\n',
+    '---\nplatforms: [cli]\n---\n\n- [ ] Complete selected work.\n',
   );
 const execution: PRWorkspaceExecutionProfile = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['one', 'two'] },

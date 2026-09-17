@@ -1,9 +1,8 @@
 export { createExecutionTemplate } from './create.js';
 export {
+  frontmatterOptsOutOfChecklist,
   frontmatterPlatforms,
-  frontmatterRunMode,
   normalizePlatforms,
-  normalizeRunMode,
   parseMarkdownDocument,
 } from './frontmatter.js';
 export {
@@ -13,7 +12,6 @@ export {
   inferFlowFromBasename,
   inferFlowFromPath,
   inferPlatformsFromBasename,
-  inferRunModeFromBasename,
   inferTemplateMetadata,
 } from './infer.js';
 export { lintExecutionTemplates, lintExecutionTemplateText } from './lint.js';

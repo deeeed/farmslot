@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- The execution-template picker no longer filters or shows a template run mode; the run's mode still selects the project default and the remembered per-mode choice.
+
 - Dispatch and comparison pickers include the `pi` runner, defaulting to `grok-4.6`, with a hint for Ollama/LiteLLM/router model ids.
 
 - Runner-session reopen and tmux attach controls copy a command for the named node instead of looking like they execute, keep the command visible if the clipboard is refused, and Open on host recovers a dead session then attaches the terminal to that pane.

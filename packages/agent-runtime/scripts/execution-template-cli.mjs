@@ -17,10 +17,12 @@ function usage(exitCode = 0) {
     'list   --dir <path> --domain-dir <domain=path> --project-worker <path> --package-templates <path>',
     '       [--project-name name] [--package-id id] [--flow f] [--run-mode m]',
     '       [--platform p] [--domain d] [--no-include-shadowed] [--json]',
-    'materialize <output> --flow f --run-mode m --platform p [--domain d] [--id id]',
+    'materialize <output> --flow f --platform p [--run-mode m] [--domain d] [--id id]',
     '       [the same source options as list] [--provenance path] [--json]',
     'lint   <file-or-dir> [--json]',
-    'new    <path> [--flow f] [--run-mode m] [--platform p] [--title t] [--force] [--json]',
+    'new    <path> [--flow f] [--platform p] [--title t] [--force] [--json]',
+    '',
+    '--run-mode is the run mode used to match project default rules; templates have none.',
   ].join('\n');
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
@@ -174,18 +176,17 @@ async function cmdList(args, runtime) {
   if (opts.id) throw new Error('--id is only valid with materialize');
   const sources = buildSources(opts, runtime);
   const templates =
-    opts.flow && opts.platform && opts.runMode
+    opts.flow && opts.platform
       ? runtime.listCompatibleExecutionTemplates({
           sources,
           flow: opts.flow,
           platform: opts.platform,
-          runMode: opts.runMode,
+          ...(opts.runMode ? { runMode: opts.runMode } : {}),
           ...(opts.domain ? { domain: opts.domain } : {}),
         })
       : runtime.listExecutionTemplates({
           sources,
           flow: opts.flow,
-          runMode: opts.runMode,
           platform: opts.platform,
           domain: opts.domain,
           includeShadowed: opts.includeShadowed,
@@ -203,7 +204,7 @@ async function cmdList(args, runtime) {
   for (const entry of catalog) {
     const shadow = entry.shadowedBy ? ` (shadowed by ${entry.shadowedBy})` : '';
     process.stdout.write(
-      `${entry.id}\t${entry.flow}\t${entry.runMode ?? '-'}\t${entry.platforms.join(',')}\t${entry.sourceId}${shadow}\n`,
+      `${entry.id}\t${entry.flow}\t${entry.platforms.join(',')}\t${entry.sourceId}${shadow}\n`,
     );
   }
 }
@@ -212,7 +213,6 @@ async function cmdMaterialize(args, runtime) {
   const opts = parseCatalogArgs(args, { materialize: true });
   if (!opts.output) throw new Error('materialize requires <output>');
   if (!opts.flow) throw new Error('materialize requires --flow');
-  if (!opts.runMode) throw new Error('materialize requires --run-mode');
   if (!opts.platform) throw new Error('materialize requires --platform');
   const output = resolve(opts.output);
   if (existsSync(output)) {
@@ -227,7 +227,7 @@ async function cmdMaterialize(args, runtime) {
     sources: buildSources(opts, runtime),
     flow: opts.flow,
     platform: opts.platform,
-    runMode: opts.runMode,
+    ...(opts.runMode ? { runMode: opts.runMode } : {}),
     ...(opts.domain ? { domain: opts.domain } : {}),
     ...(opts.id ? { explicitId: opts.id } : {}),
   });
@@ -282,7 +282,6 @@ async function cmdNew(args, runtime) {
   let pathArg = null;
   const opts = {
     flow: undefined,
-    runMode: undefined,
     platforms: undefined,
     title: undefined,
     force: false,
@@ -291,7 +290,6 @@ async function cmdNew(args, runtime) {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--flow') opts.flow = takeValue(args, i++, arg);
-    else if (arg === '--run-mode') opts.runMode = parseRunMode(takeValue(args, i++, arg));
     else if (arg === '--platform') {
       opts.platforms = takeValue(args, i++, arg)
         .split(',')
@@ -308,7 +306,6 @@ async function cmdNew(args, runtime) {
   const created = runtime.createExecutionTemplate({
     path: pathArg,
     flow: opts.flow,
-    runMode: opts.runMode,
     platforms: opts.platforms,
     title: opts.title,
     force: opts.force,

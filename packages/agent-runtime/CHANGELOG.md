@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Execution templates no longer declare a run mode. Selection matches flow, platform and domain; run mode stays an optional `task init` / `execution-template` input that matches project default rules. Conversation-driven templates opt out of the checklist requirement with `checklist: none` instead of relying on an `interactive` filename.
+
 - Allow Cursor's Application Support directory and `/tmp/cursor-agent-persist-<uid>` in the review sandbox so `cursor-agent` can lock its chat and start.
 
 - Retain exact terminal reviewer chat identities across managed worktrees.

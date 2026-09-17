@@ -1,25 +1,22 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { inferFlowFromPath, inferRunModeFromBasename } from './infer.js';
+import { inferFlowFromPath } from './infer.js';
 import { lintExecutionTemplateText } from './lint.js';
-import type { CreateExecutionTemplateOptions, ExecutionRunMode } from './types.js';
+import type { CreateExecutionTemplateOptions } from './types.js';
 
-function defaultTitle(flow: string, runMode: ExecutionRunMode | null): string {
-  const modeLabel = runMode ? ` (${runMode})` : '';
-  return `${flow} execution template${modeLabel}`;
+function defaultTitle(flow: string): string {
+  return `${flow} execution template`;
 }
 
 function renderTemplate(input: {
   flow: string;
-  runMode: ExecutionRunMode | null;
   platforms: string[];
   title: string;
   description?: string;
 }): string {
   const meta: string[] = [];
   if (input.description) meta.push(`description: ${JSON.stringify(input.description)}`);
-  if (input.runMode) meta.push(`runMode: ${input.runMode}`);
   if (input.platforms.length > 0 && !(input.platforms.length === 1 && input.platforms[0] === '*')) {
     meta.push(`platforms: [${input.platforms.join(', ')}]`);
   }
@@ -74,12 +71,10 @@ export function createExecutionTemplate(options: CreateExecutionTemplateOptions)
     );
   }
 
-  const runMode = options.runMode ?? inferRunModeFromBasename(basename);
   const platforms = options.platforms ?? ['*'];
-  const title = options.title ?? defaultTitle(flow, runMode);
+  const title = options.title ?? defaultTitle(flow);
   const body = renderTemplate({
     flow,
-    runMode,
     platforms,
     title,
     description: options.description?.trim() || undefined,

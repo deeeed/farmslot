@@ -67,7 +67,7 @@ const project = path.join(fixture, 'projects/review');
 await mkdir(path.join(project, 'shared/review-pr'), { recursive: true });
 await writeFile(
   path.join(project, 'shared/review-pr/shared.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Review greeting\n\n- [ ] Inspect the frozen diff and write the required static review artifacts. This small greeting-only change needs no build, runtime test or external lookup.\n',
+  '---\nplatforms: [cli]\n---\n\n# Review greeting\n\n- [ ] Inspect the frozen diff and write the required static review artifacts. This small greeting-only change needs no build, runtime test or external lookup.\n',
 );
 async function json(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });

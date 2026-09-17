@@ -34,7 +34,7 @@ Do not hand-write `SIGNAL.json`. The runtime preserves pass-through fields, reco
 ## CLI
 
 ```bash
-farmslot-agent task init <task-dir> --flow <flow> --run-mode <mode> --platform <p> --template <id> --package-templates <catalog> --title "…"
+farmslot-agent task init <task-dir> --flow <flow> --platform <p> --template <id> --package-templates <catalog> --title "…" [--run-mode <mode>]
 farmslot-agent mark <task-md> <signal-json> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json

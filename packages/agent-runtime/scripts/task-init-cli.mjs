@@ -12,10 +12,11 @@ import { buildSources, loadRuntime, parseCatalogArgs } from './execution-templat
 
 function usage(exitCode = 0) {
   const text = [
-    'Usage: task init <task-dir> --flow f --run-mode m --platform p --template id --title t [options]',
+    'Usage: task init <task-dir> --flow f --platform p --template id --title t [options]',
     '',
     '  Template sources: --dir <path> --domain-dir <domain=path> --project-worker <path>',
     '                    --package-templates <path> [--package-id id] [--project-name name] [--domain d]',
+    '  Run:              [--run-mode m] — run mode used to match project default rules',
     '  Task:             --title t [--task-text s | --task-file path] [--ticket key] [--source-ref url]',
     '  Identity:         [--surface s] [--project name] [--repo owner/name] [--attempt-id id]',
     '  Rendering:        [--var KEY=VALUE]... [--task-dir-label label] [--mode-preamble text]',
@@ -88,7 +89,6 @@ function parseArgs(args) {
   if (!opts.title) throw new Error('task init requires --title');
   const catalog = parseCatalogArgs([...catalogArgs, '--id', opts.template]);
   if (!catalog.flow) throw new Error('task init requires --flow');
-  if (!catalog.runMode) throw new Error('task init requires --run-mode');
   if (!catalog.platform) throw new Error('task init requires --platform');
   return { opts, catalog };
 }
@@ -128,7 +128,7 @@ async function main() {
     taskDir: path.resolve(opts.taskDir),
     taskDirLabel: opts.taskDirLabel ?? opts.taskDir,
     flow: catalog.flow,
-    runMode: catalog.runMode,
+    ...(catalog.runMode ? { runMode: catalog.runMode } : {}),
     platform: catalog.platform,
     ...(catalog.domain ? { domain: catalog.domain } : {}),
     template: { sources: buildSources(catalog, runtime), explicitId: opts.template },

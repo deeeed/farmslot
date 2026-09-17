@@ -21,6 +21,7 @@ export interface ConfiguredExecutionTemplateSource {
 export interface ExecutionTemplateDefaultMatch {
   flow?: string;
   platform?: string;
+  /** Run mode of the dispatched run — templates declare none. */
   runMode?: ExecutionTemplateRunMode;
   domain?: string;
 }
@@ -50,7 +51,6 @@ export interface ExecutionTemplateReference {
   id: string;
   sourceId: string;
   flow: string;
-  runMode?: ExecutionTemplateRunMode;
   platforms: string[];
   labels: string[];
   relativePath: string;

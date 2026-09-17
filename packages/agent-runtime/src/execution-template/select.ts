@@ -49,7 +49,6 @@ function isCompatible(
   if (entry.shadowedBy) return false;
   if (entry.flow !== options.flow) return false;
   if (!entry.platforms.includes('*') && !entry.platforms.includes(options.platform)) return false;
-  if (entry.runMode !== null && entry.runMode !== options.runMode) return false;
   return executionTemplateEntryParticipates(entry, options.domain);
 }
 
@@ -90,10 +89,10 @@ export function listCompatibleExecutionTemplates(
 }
 
 /**
- * Diagnose an explicit-id miss: templates whose id/flow/platform/runMode all
- * match but that were excluded solely by the domain gate (source `domains` or
- * entry `domain:` labels). Returns the domains that would make each selectable
- * so the selection error can name them instead of failing silently.
+ * Diagnose an explicit-id miss: templates whose id/flow/platform all match but
+ * that were excluded solely by the domain gate (source `domains` or entry
+ * `domain:` labels). Returns the domains that would make each selectable so the
+ * selection error can name them instead of failing silently.
  */
 function domainExcludedExplicitMatches(
   options: SelectExecutionTemplateOptions,
@@ -104,7 +103,6 @@ function domainExcludedExplicitMatches(
     if (entry.id !== options.explicitId) continue;
     if (entry.flow !== options.flow) continue;
     if (!entry.platforms.includes('*') && !entry.platforms.includes(options.platform)) continue;
-    if (entry.runMode !== null && entry.runMode !== options.runMode) continue;
     const source = options.sources.find((candidate) => candidate.id === entry.sourceId);
     const sourceDomains = source?.domains ?? [];
     const entryDomains = domainLabels(entry).map((label) =>

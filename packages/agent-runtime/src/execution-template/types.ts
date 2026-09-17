@@ -38,9 +38,13 @@ export interface ExecutionTemplateFrontmatter {
   description?: string;
   flow?: string;
   version?: string | number;
-  runMode?: ExecutionRunMode;
   platforms?: string[];
   labels?: string[];
+  /**
+   * `none` opts a conversation-driven template out of the checkbox requirement.
+   * It is the only accepted value.
+   */
+  checklist?: string;
   [key: string]: unknown;
 }
 
@@ -50,7 +54,6 @@ export interface ExecutionTemplateEntry {
   description?: string;
   flow: string;
   version: string;
-  runMode: ExecutionRunMode | null;
   platforms: string[];
   labels: string[];
   path: string;
@@ -71,7 +74,11 @@ export interface SelectExecutionTemplateOptions {
   sources: ExecutionTemplateSource[];
   flow: string;
   platform: string;
-  runMode: ExecutionRunMode;
+  /**
+   * Run mode of the RUN being dispatched. Templates carry no run mode; this is
+   * purely a selector input matched against `defaults[].when.runMode`.
+   */
+  runMode?: ExecutionRunMode;
   domain?: string;
   explicitId?: string;
   defaults?: ExecutionTemplateDefault[];
@@ -112,7 +119,6 @@ export class ExecutionTemplateSelectionError extends Error {
 export interface ListExecutionTemplatesOptions {
   sources: ExecutionTemplateSource[];
   flow?: string;
-  runMode?: ExecutionRunMode;
   platform?: string;
   /** Keep general templates plus templates for this exact domain. */
   domain?: string;
@@ -135,7 +141,6 @@ export interface LintExecutionTemplatesResult {
 export interface CreateExecutionTemplateOptions {
   path: string;
   flow?: string;
-  runMode?: ExecutionRunMode;
   platforms?: string[];
   title?: string;
   description?: string;

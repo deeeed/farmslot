@@ -84,11 +84,12 @@ export interface ConfigTemplateOptionsParams {
   /** Required unless `unfiltered` is true. */
   flowType?: FlowType;
   platform?: string;
+  /** Run mode of the run being prepared; matches project default rules only. */
   runMode?: ExecutionTemplateRunMode;
   domain?: string;
   executionTemplateId?: string;
   /**
-   * Return the full project catalog (every domain and mode, including
+   * Return the full project catalog (every domain, including
    * domain-restricted and shadowed sources). Clients filter locally.
    * `flowType` may be omitted. When set, worker-template options and the
    * execution-template catalog are both limited to that flow.

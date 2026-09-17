@@ -26,7 +26,7 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 writeFileSync(
   path.join(root, 'projects/farm/shared/review-pr/default.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n- [ ] Review the source.\n',
+  '---\nplatforms: [cli]\n---\n\n- [ ] Review the source.\n',
 );
 writeFileSync(
   path.join(root, 'bin/codex'),

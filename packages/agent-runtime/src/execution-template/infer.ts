@@ -4,13 +4,11 @@ import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
 
 import {
   frontmatterPlatforms,
-  frontmatterRunMode,
   type ParsedMarkdownDocument,
   parseMarkdownDocument,
 } from './frontmatter.js';
 import { sha256Text } from './snapshot.js';
 import type {
-  ExecutionRunMode,
   ExecutionTemplateEntry,
   ExecutionTemplateFrontmatter,
   ExecutionTemplateLayout,
@@ -64,23 +62,6 @@ export function inferFlowFromPath(absolutePath: string): string | null {
   return inferFlowFromBasename(path.basename(absolutePath));
 }
 
-export function inferRunModeFromBasename(basename: string): ExecutionRunMode | null {
-  const stem = basename.replace(/\.md$/i, '').toLowerCase();
-  if (/(?:^|[.-])interactive(?:[.-]|$)/.test(stem)) {
-    return 'interactive';
-  }
-  if (/(?:^|[.-])autonomous(?:[.-]|$)/.test(stem)) {
-    return 'autonomous';
-  }
-  if (/(?:^|[.-])validation(?:[.-]|$)/.test(stem)) {
-    return 'validation';
-  }
-  // A bare flow name encodes no mode: dispatch mode is a run property, and
-  // flows like review-pr run interactive as often as autonomous — defaulting
-  // here would misclassify them, so leave the mode unresolved.
-  return null;
-}
-
 export function inferPlatformsFromBasename(basename: string): string[] | null {
   const stem = basename.replace(/\.md$/i, '').toLowerCase();
   for (const platform of PLATFORM_SUFFIXES) {
@@ -132,8 +113,6 @@ export function inferTemplateMetadata(input: {
   const versionRaw = fm?.version;
   const version = versionRaw == null || versionRaw === '' ? '1' : String(versionRaw);
 
-  const runMode = frontmatterRunMode(fm) ?? inferRunModeFromBasename(basename);
-
   const platforms = frontmatterPlatforms(fm) ?? inferPlatformsFromBasename(basename) ?? ['*'];
 
   const frontmatterLabels = Array.isArray(fm?.labels)
@@ -154,7 +133,6 @@ export function inferTemplateMetadata(input: {
     ...(descriptionFromFm ? { description: descriptionFromFm } : {}),
     flow,
     version,
-    runMode,
     platforms,
     labels,
     path: input.absolutePath,

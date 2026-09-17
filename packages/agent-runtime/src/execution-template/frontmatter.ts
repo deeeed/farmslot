@@ -1,6 +1,4 @@
-import type { ExecutionRunMode, ExecutionTemplateFrontmatter } from './types.js';
-
-const RUN_MODES = new Set<ExecutionRunMode>(['autonomous', 'interactive', 'validation']);
+import type { ExecutionTemplateFrontmatter } from './types.js';
 
 export interface ParsedMarkdownDocument {
   frontmatter: ExecutionTemplateFrontmatter | null;
@@ -99,12 +97,6 @@ export function parseMarkdownDocument(text: string): ParsedMarkdownDocument {
   return { frontmatter, body, heading };
 }
 
-export function normalizeRunMode(value: unknown): ExecutionRunMode | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return RUN_MODES.has(normalized as ExecutionRunMode) ? (normalized as ExecutionRunMode) : null;
-}
-
 export function normalizePlatforms(value: unknown): string[] | null {
   if (value == null) return null;
   if (typeof value === 'string') {
@@ -119,11 +111,16 @@ export function normalizePlatforms(value: unknown): string[] | null {
   return platforms.length > 0 ? platforms : null;
 }
 
-export function frontmatterRunMode(
+/**
+ * True when the template declares `checklist: none` — the explicit opt-out for
+ * conversation-driven templates that legitimately carry no checkboxes.
+ */
+export function frontmatterOptsOutOfChecklist(
   frontmatter: ExecutionTemplateFrontmatter | null,
-): ExecutionRunMode | null {
-  if (!frontmatter) return null;
-  return normalizeRunMode(frontmatter.runMode ?? frontmatter.run_mode);
+): boolean {
+  if (!frontmatter) return false;
+  const value = frontmatter.checklist;
+  return typeof value === 'string' && value.trim().toLowerCase() === 'none';
 }
 
 export function frontmatterPlatforms(

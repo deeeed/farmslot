@@ -271,3 +271,31 @@ No MetaMask domain, team, route, or recipe behavior belongs in Farmslot core.
 - [ADR-034](034-recipe-protocol-v1.md) — Recipe Protocol v1
 - [ADR-045](045-worker-terminal-contract.md) — Worker Terminal Contract
 - [ADR-030](030-replay-provenance-and-reference-evals.md) — portable replay provenance
+
+## Amendment — 2026-09-17: run mode is a run property, not a template property
+
+Run mode (`autonomous` | `interactive` | `validation`) describes a run on the
+control plane. A template does not have one. You select a template; the run
+carries the mode.
+
+Run mode survives in the template system in exactly one role: a selector input
+for project default rules, `execution_templates.defaults[].when.runMode`. A pack
+saying "for an interactive `dev` run use this template" is making a statement
+about the run, and that stays supported.
+
+What no longer holds in the original text above:
+
+- the frontmatter field table listed `runMode` as a template field with a
+  filename-convention fallback. There is no such field and no such inference. A
+  template file that still carries `runMode:` parses, and the key is ignored.
+- compatibility required "exact run mode or no declared run mode". Compatibility
+  is now flow, platform, and domain only.
+- the portable provenance record carried `runMode`. New records do not; records
+  persisted before this change still validate with the leftover key.
+- the launch-surface tuple still names run mode, but only as the default-rule
+  selector described above.
+
+Templates that legitimately have no checklist (conversation-driven ones) used to
+be exempted from the checkbox lint rule whenever the run mode inferred from the
+filename was `interactive`. They now opt out explicitly with `checklist: none`
+in frontmatter, which is a statement about the template's own content.

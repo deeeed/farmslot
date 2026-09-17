@@ -50,7 +50,6 @@ function matchesFilters(
   options: ListExecutionTemplatesOptions,
 ): boolean {
   if (options.flow && entry.flow !== options.flow) return false;
-  if (options.runMode && entry.runMode !== null && entry.runMode !== options.runMode) return false;
   if (options.platform) {
     const platforms = entry.platforms;
     if (!platforms.includes('*') && !platforms.includes(options.platform)) return false;

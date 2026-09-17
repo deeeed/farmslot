@@ -90,7 +90,7 @@ const project = path.join(fixture, 'projects', 'review');
 await mkdir(path.join(project, 'shared', 'review-pr'), { recursive: true });
 await writeFile(
   path.join(project, 'shared/review-pr/shared.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
+  '---\nplatforms: [cli]\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
 );
 const execution = {
   workspacePolicy: { kind: 'pool', allowedMachines: ['review-node', 'review-other'] },
@@ -141,7 +141,7 @@ for (const [machine, capacity] of [
 }
 await writeFile(
   path.join(project, 'shared/review-pr/runtime.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n- [ ] Run the selected validation.\n',
+  '---\nplatforms: [cli]\n---\n\n- [ ] Run the selected validation.\n',
 );
 await mkdir(path.join(fixture, 'repo'));
 const runtimePool = path.join(fixture, 'pool/runtime.json');

@@ -133,12 +133,12 @@ for (const [name, profile] of [
   await mkdir(path.join(project, 'shared', 'validation'), { recursive: true });
   await writeFile(
     path.join(project, 'shared', 'validation', 'shared.md'),
-    '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Shared validation\n\n- [ ] Execute the selected runtime proof.\n',
+    '---\nplatforms: [cli]\n---\n\n# Shared validation\n\n- [ ] Execute the selected runtime proof.\n',
   );
   await mkdir(path.join(project, 'shared', 'review-pr'));
   await writeFile(
     path.join(project, 'shared', 'review-pr', 'shared.md'),
-    '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
+    '---\nplatforms: [cli]\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
   );
   await json(path.join(project, 'project.json'), {
     name,

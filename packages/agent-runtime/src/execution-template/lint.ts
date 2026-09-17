@@ -1,13 +1,16 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-import { frontmatterPlatforms, frontmatterRunMode, parseMarkdownDocument } from './frontmatter.js';
+import {
+  frontmatterOptsOutOfChecklist,
+  frontmatterPlatforms,
+  parseMarkdownDocument,
+} from './frontmatter.js';
 import {
   catalogRelativeId,
   FARMSLOT_FLOW_PREFIXES,
   inferFlowFromBasename,
   inferFlowFromPath,
-  inferRunModeFromBasename,
 } from './infer.js';
 import type { LintExecutionTemplatesResult, LintIssue } from './types.js';
 
@@ -106,14 +109,12 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
         message: `frontmatter flow '${fmFlow}' contradicts the path's flow '${fileFlow}'`,
       });
     }
-    if (frontmatter.runMode != null || frontmatter.run_mode != null) {
-      if (!frontmatterRunMode(frontmatter)) {
-        issues.push({
-          path: filePath,
-          severity: 'error',
-          message: 'frontmatter runMode must be autonomous|interactive|validation',
-        });
-      }
+    if (frontmatter.checklist != null && !frontmatterOptsOutOfChecklist(frontmatter)) {
+      issues.push({
+        path: filePath,
+        severity: 'error',
+        message: "frontmatter checklist must be 'none' when present",
+      });
     }
     if (frontmatter.platforms != null && !frontmatterPlatforms(frontmatter)) {
       issues.push({
@@ -157,10 +158,10 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
     });
   }
 
-  // Interactive templates are conversation-driven and legitimately have no
-  // checklist; only non-interactive templates must carry parseable checkboxes.
-  const runMode = frontmatterRunMode(frontmatter) ?? inferRunModeFromBasename(basename);
-  if (checkboxCount === 0 && runMode !== 'interactive') {
+  // Conversation-driven templates legitimately have no checklist, but that is a
+  // property of the template's own content, not of any run mode: they declare
+  // `checklist: none` to opt out explicitly.
+  if (checkboxCount === 0 && !frontmatterOptsOutOfChecklist(frontmatter)) {
     issues.push({
       path: filePath,
       severity: 'error',
