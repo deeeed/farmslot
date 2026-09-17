@@ -2,25 +2,20 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-09-17
+
 - Execution templates no longer declare a run mode. Selection matches flow, platform and domain; run mode stays an optional `task init` / `execution-template` input that matches project default rules. Conversation-driven templates opt out of the checklist requirement with `checklist: none` instead of relying on an `interactive` filename.
-
 - Allow Cursor's Application Support directory and `/tmp/cursor-agent-persist-<uid>` in the review sandbox so `cursor-agent` can lock its chat and start.
-
 - Retain exact terminal reviewer chat identities across managed worktrees.
-
 - Share review filesystem protection between native and terminal launches while preserving task artifacts.
-
 - Support managed review workers across native runners on macOS with source protection and exact model selection.
-
 - Task documents no longer carry a `STATUS:` line; run state is the `mark` signal file (farmslot ADR-045) and the field had no reader.
-
 - Recognize shared QA execution templates independently of static PR review.
-
 - Run static reviewers with read-only source permissions and cancel native initialization safely.
-
 - `writeTaskDir` drops the transition `writeChecklistManifest` option; a task dir never carries a default-valued `checklist-target.json`.
 - Keep native worker state outside recyclable workspaces and support saved-conversation relocation across eligible sibling worktrees. Native sandboxed Git operations can write their repository metadata.
-
 - Supervise leased worker sessions with duplicate-safe task delivery, retained conversation transfer, saved-session recovery, task-scoped history and verified process cleanup, including shutdown races where fresh OS checks confirm the processes have exited. Share asynchronous process scans and fail ownership checks when a census exceeds its deadline.
 - Manage optional node-local native configuration profiles, retain native credential storage for default directories, and preserve session bindings across login rotation and recovery. Worker environments exclude node and gateway access credentials.
 - Add standalone native conversations for Cursor and Grok through their installed runners and native login, with streaming, permissions, interruption and saved-session resume.
