@@ -135,6 +135,7 @@ export interface SelfReviewResult {
   timeline?: ReviewLoopTimelineSegment[];
   runner?: string;
   model?: string;
+  effort?: string | null;
   crossRunner?: boolean;
   retryCount: number;
   maxRetries?: number;
@@ -311,6 +312,7 @@ async function executeOwnedSelfReview(
         usage: recoveredFixResult.attempts?.at(-1)?.usage,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
       };
     }
@@ -324,6 +326,7 @@ async function executeOwnedSelfReview(
           ...options.resumeFromResult,
           runner: reviewRunner,
           model,
+          effort: options.effort,
           crossRunner: isCrossRunnerReview,
         };
       }
@@ -371,6 +374,7 @@ async function executeOwnedSelfReview(
         usage: retryResult.attempts?.at(-1)?.usage,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
       };
     }
@@ -405,6 +409,7 @@ async function executeOwnedSelfReview(
         reason: 'no-feedback-file',
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
         retryCount: 0,
         validationDepth,
@@ -433,6 +438,7 @@ async function executeOwnedSelfReview(
         timeline: result.timeline,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
         retryCount: 0,
         durationMs: Date.now() - start,
@@ -462,6 +468,7 @@ async function executeOwnedSelfReview(
       usage: retryResult.attempts?.at(-1)?.usage,
       runner: reviewRunner,
       model,
+      effort: options.effort,
       crossRunner: isCrossRunnerReview,
     };
   } finally {

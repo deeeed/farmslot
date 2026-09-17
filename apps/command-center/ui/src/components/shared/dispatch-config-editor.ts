@@ -259,9 +259,16 @@ export class DispatchConfigEditor extends LitElement {
     index: number,
     patch: Partial<Pick<ReviewLoopRequest, 'runner' | 'validationDepth'>>,
   ) {
-    const next = this.pendingReviewPlan.map((loop, currentIndex) =>
-      currentIndex === index ? { ...loop, ...patch } : loop,
-    );
+    const next = this.pendingReviewPlan.map((loop, currentIndex) => {
+      if (currentIndex !== index) return loop;
+      if (patch.runner && patch.runner !== loop.runner) {
+        const rest = { ...loop };
+        delete rest.model;
+        delete rest.effort;
+        return { ...rest, ...patch };
+      }
+      return { ...loop, ...patch };
+    });
     this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
   }
 

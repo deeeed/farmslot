@@ -954,6 +954,7 @@ export async function runReviewAgent(
     reviewLoopNumber: loopNumber,
     runner,
     model,
+    ...(launchEffort ? { effort: launchEffort } : {}),
     target: null,
   });
 
@@ -985,6 +986,7 @@ export async function runReviewAgent(
         label: allocated.label,
         runner,
         model,
+        ...(launchEffort ? { effort: launchEffort } : {}),
         target: {
           session,
           window: reviewWindow,

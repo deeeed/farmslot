@@ -622,7 +622,8 @@ interface CallLog {
   fixBaseShas: Array<string | null>;
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
-  sessionPolicies: Array<string | undefined>; // 11th runReviewAgent arg per re-review
+  sessionPolicies: Array<string | undefined>;
+  reviewEfforts: Array<string | null | undefined>;
   progressDetails: string[];
 }
 
@@ -637,6 +638,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     waitBaselines: [],
     artifactScopes: [],
     sessionPolicies: [],
+    reviewEfforts: [],
     progressDetails: [],
   };
   let reviewIdx = 0;
@@ -723,9 +725,12 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       _validationDepth,
       artifactScope,
       sessionPolicy,
+      _sessionIntent,
+      effort,
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.sessionPolicies.push(sessionPolicy);
+      calls.reviewEfforts.push(effort);
       calls.reviewAgent += 1;
       const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
       reviewIdx += 1;
@@ -1262,6 +1267,25 @@ test('runSelfReviewRetryLoop: forwards artifactScope to fix deltas and re-review
 
   assert.equal(result.verdict, 'pass');
   assert.deepEqual(calls.artifactScopes, ['independent-review-7', 'independent-review-7']);
+});
+
+test('runSelfReviewRetryLoop: re-review launches with the loop effort', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    effort: 'low',
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'pass');
+  assert.deepEqual(calls.reviewEfforts, ['low']);
 });
 
 test('runSelfReviewRetryLoop: records worker-fix timeline segment before re-review', async () => {

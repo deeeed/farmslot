@@ -450,6 +450,8 @@ export interface IndependentReviewStatus {
   source?: 'dispatch' | 'human-gate' | 'self-review';
   runner?: string | null;
   model?: string | null;
+  /** Reasoning / thinking level this reviewer launched with. */
+  effort?: string | null;
   reviewerSessionId?: string | null;
   crossRunner: boolean;
   loopNumber: number;

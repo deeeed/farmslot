@@ -172,6 +172,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           reviewLoopNumber: loopNumber,
           runner,
           model,
+          ...(input.effort?.trim() ? { effort: input.effort.trim() } : {}),
           target: null,
         }))!;
         await removeSlotFiles(

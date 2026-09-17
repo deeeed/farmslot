@@ -158,6 +158,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     timeline: review.timeline,
     runner: review.runner ?? undefined,
     model: review.model ?? undefined,
+    effort: review.effort ?? undefined,
     crossRunner: review.crossRunner,
     retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
     feedbackSent: review.feedbackSent,
@@ -204,6 +205,7 @@ async function resumeInterruptedPublicationReviewOnce(
     result = await executeReview(runId, slotId, {
       reviewRunner: interrupted.runner ?? null,
       model: interrupted.model ?? null,
+      effort: interrupted.effort ?? null,
       validationDepth: interrupted.validationDepth ?? null,
       artifactScope: interrupted.id,
       publicationReview: true,
@@ -225,6 +227,7 @@ async function resumeInterruptedPublicationReviewOnce(
     requestedRunner: interrupted.runner ?? null,
     workerRunner: latest.metrics.runner,
     model: interrupted.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
+    effort: result.effort ?? interrupted.effort ?? null,
     reviewId: interrupted.id,
     reviewedPackage: await readPreparedPackage(latest),
   });
@@ -421,6 +424,7 @@ export async function executePublishGateReviewPlan(
         latest.metrics.actualModel ??
         latest.metrics.model ??
         null,
+      effort: reviewResult.effort ?? planStep.effort ?? null,
       reviewId,
       reviewedPackage,
     });

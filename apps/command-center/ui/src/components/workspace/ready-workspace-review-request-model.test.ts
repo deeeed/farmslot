@@ -57,6 +57,8 @@ test('ready workspace review request model mutates loops with max and minimum gu
     { id: 1, runner: 'claude', sessionIntent: 'reset' },
     { id: 2, runner: 'codex', sessionIntent: 'reset', model: 'gpt-6-astra', effort: 'high' },
   ]);
+  const customized = setReadyReviewLoopModelEffort(state.loops, 2, 'sonnet', 'low');
+  assert.deepEqual(setReadyReviewLoopRunner(customized, 2, 'claude'), customized);
   assert.deepEqual(setReadyReviewLoopDepth(state.loops, 1, 'full-live'), [
     {
       id: 1,

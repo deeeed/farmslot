@@ -190,6 +190,7 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
                     .model=${loop.model ?? ''}
                     .effort=${loop.effort ?? ''}
                     .showRunner=${false}
+                    .showDefaultEffort=${false}
                     @runner-model-effort-change=${(
                       event: CustomEvent<RunnerModelEffortChangeDetail>,
                     ) => ctx.setModelEffort(loop.id, event.detail.model, event.detail.effort)}

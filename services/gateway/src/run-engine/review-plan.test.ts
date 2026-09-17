@@ -372,6 +372,7 @@ test('recoveryReviewPlanForActiveFix restores the latest reviewer work order', (
           runId: 'run-1',
           runner: 'codex',
           model: 'gpt-5.6-sol',
+          effort: 'low',
           attemptStartedAt: '2026-07-30T03:24:00.000Z',
         },
         {
@@ -406,6 +407,7 @@ test('recoveryReviewPlanForActiveFix restores the latest reviewer work order', (
         order: 1,
         runner: 'codex',
         model: 'gpt-5.6-sol',
+        effort: 'low',
         validationDepth: 'static-code',
       },
     ],

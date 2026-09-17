@@ -51,6 +51,7 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
             source: 'dispatch',
             runner: 'codex',
             model: 'gpt-5.6-sol',
+            effort: 'low',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'issues',
@@ -81,8 +82,10 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
         executions += 1;
         assert.ok(options);
         assert.equal(options.artifactScope, 'independent-review-1');
+        assert.equal(options.effort, 'low');
         assert.equal(options.resumeFromResult?.verdict, 'issues');
         assert.equal(options.resumeFromResult?.issues?.length, 1);
+        assert.equal(options.resumeFromResult?.effort, 'low');
         return {
           verdict: 'pass',
           issues: [],

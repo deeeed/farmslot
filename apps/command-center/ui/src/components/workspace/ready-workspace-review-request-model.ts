@@ -64,9 +64,11 @@ export function setReadyReviewLoopRunner(
   id: number,
   runner: ReviewRunnerChoice,
 ): ReviewLoopDraft[] {
-  return loops.map((loop) =>
-    loop.id === id ? { ...loop, runner, ...defaultsForRunner(runner) } : loop,
-  );
+  return loops.map((loop) => {
+    if (loop.id !== id) return loop;
+    if (loop.runner === runner) return loop;
+    return { ...loop, runner, ...defaultsForRunner(runner) };
+  });
 }
 
 export function setReadyReviewLoopModelEffort(

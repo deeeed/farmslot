@@ -121,6 +121,8 @@ export interface AgentContext {
   reviewResultValidatedAt?: string;
   runner?: string | null;
   model?: string | null;
+  /** Reasoning / thinking level for this reviewer or worker attempt. */
+  effort?: string | null;
   target?: AgentContextTarget | null;
   /** Native sessions have no tmux target. */
   nativeSession?: NativeWorkerSessionBinding;
