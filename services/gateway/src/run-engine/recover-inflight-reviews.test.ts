@@ -715,7 +715,7 @@ test('buildRecoveredReview ingests a completed ISSUES review as an extra review'
       runnerSessionPath: null,
     },
   });
-  const ctx = reviewerContext({ runner: 'codex' });
+  const ctx = reviewerContext({ runner: 'codex', effort: 'low' });
   const review = buildRecoveredReview({
     run,
     ctx,
@@ -730,6 +730,7 @@ test('buildRecoveredReview ingests a completed ISSUES review as an extra review'
   assert.equal(review.verdict, 'issues');
   assert.equal(review.unresolvedCount, 1);
   assert.equal(review.loopNumber, 1);
+  assert.equal(review.effort, 'low');
   // Reviewer runner differs from the worker runner → cross-runner review.
   assert.equal(review.crossRunner, true);
   // Unstamped: no package supplied, so it certifies nothing.
