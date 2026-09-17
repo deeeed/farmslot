@@ -8,10 +8,13 @@ import {
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
+  DEFAULT_PI_THINKING,
+  PI_THINKING_LEVELS,
+  type PiThinkingLevel,
   type ReviewRunnerId,
 } from '@farmslot/protocol';
 
-export type EffortLevel = '' | CodexReasoningEffort;
+export type EffortLevel = '' | CodexReasoningEffort | PiThinkingLevel;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
 
@@ -44,7 +47,7 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
 
 /** Dispatch hint: PI accepts OpenAI-compatible ids once the worker registers them. */
 export const PI_COMPAT_MODEL_HINT =
-  'Ollama/LiteLLM/router: type ollama/<id> or litellm/<id>. Pool env: OLLAMA_HOST, LITELLM_URL, FARMSLOT_PI_ROUTER_URL.';
+  'Ollama/LiteLLM/router: type ollama/<id> or litellm/<id>. Pool env: OLLAMA_HOST, LITELLM_URL, FARMSLOT_PI_ROUTER_URL. Thinking applies to every PI model.';
 
 export const DEFAULT_MODEL: Record<string, string> = {
   claude: DEFAULT_CLAUDE_MODEL,
@@ -76,13 +79,14 @@ export function modelForRunnerChange(
   return DEFAULT_MODEL[runner] ?? allowed[0] ?? '';
 }
 
-// Effort: claude/cursor don't use it. Codex and Grok expose runner-specific levels.
+// Effort: claude/cursor don't use it. Codex and Grok are runner-specific.
+// PI `--thinking` is harness-wide (every PI model; some clamp).
 export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   claude: [],
   codex: [...codexReasoningEfforts()],
   cursor: [],
   grok: ['low', 'medium', 'high', 'xhigh', 'max'],
-  pi: [],
+  pi: [...PI_THINKING_LEVELS],
 };
 
 /** Select efforts supported by the runner and the selected model. */
@@ -98,7 +102,7 @@ export const DEFAULT_EFFORT: Record<string, EffortLevel> = {
   codex: DEFAULT_CODEX_EFFORT as EffortLevel,
   cursor: '',
   grok: DEFAULT_GROK_EFFORT as EffortLevel,
-  pi: '',
+  pi: DEFAULT_PI_THINKING,
 };
 
 // Comparison/eval candidates share the same runner allowlist. Cursor is
