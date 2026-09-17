@@ -847,6 +847,7 @@ export async function runReviewAgent(
   artifactScope?: string | null,
   sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   sessionIntent: ReviewSessionIntent = 'reset',
+  effort?: string | null,
 ): Promise<ReviewAgentResult> {
   if (getRun(_runId)?.transport === 'native') {
     const { runNativeReviewAgent } = await import('./native-review-agent.js');
@@ -862,6 +863,7 @@ export async function runReviewAgent(
       artifactScope,
       sessionPolicy,
       sessionIntent,
+      effort,
     });
   }
   const session = await resolveTmuxSession(vars.slotId, vars);
@@ -879,6 +881,8 @@ export async function runReviewAgent(
     artifactScope,
   });
   if (recovered) return recovered;
+  const parentRun = getRun(_runId);
+  const launchEffort = effort?.trim() || parentRun?.effort;
   const startedAt = new Date().toISOString();
   const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
@@ -1081,7 +1085,7 @@ export async function runReviewAgent(
       buildLaunchCommand(vars, runner, model, taskPrompt, {
         taskFile: taskMdPath,
         taskDir,
-        effort: parentRun?.effort,
+        effort: launchEffort,
         safetyTier: parentSafetyTier,
         runtimeDir,
       });
@@ -1164,7 +1168,7 @@ export async function runReviewAgent(
           sessionId: sessionMeta.runnerSessionId,
           sessionPath: sessionMeta.runnerSessionPath,
           model,
-          effort: parentRun?.effort,
+          effort: launchEffort,
           safetyTier: parentSafetyTier,
           runtimeDir,
           taskDir,
@@ -1186,7 +1190,7 @@ export async function runReviewAgent(
         sessionId: resetContext ? null : sessionMeta.runnerSessionId,
         sessionPath: resetContext ? null : sessionMeta.runnerSessionPath,
         model,
-        effort: parentRun?.effort,
+        effort: launchEffort,
         prompt,
         promptMarker: reviewChecklistTarget.checklist,
         safetyTier: parentSafetyTier,
@@ -1390,7 +1394,7 @@ export async function runReviewAgent(
         runner,
         model,
         warmSession.runnerSessionId,
-        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir, taskDir },
+        { effort: launchEffort, safetyTier: parentSafetyTier, runtimeDir, taskDir },
       )}`;
       try {
         await launchReviewer(reloadCmd, taskPrompt, warmSession);

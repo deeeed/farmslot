@@ -366,6 +366,7 @@ export async function executePublishGateReviewPlan(
       reviewResult = await executeReview(runId, slotId, {
         reviewRunner: requestedRunner,
         model: planStep.model ?? null,
+        effort: planStep.effort ?? null,
         validationDepth,
         artifactScope: reviewId,
         publicationReview: true,

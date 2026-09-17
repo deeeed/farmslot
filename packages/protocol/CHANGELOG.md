@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Independent-review loops accept an optional `effort` (thinking / reasoning level) alongside `model`.
 
 ## 0.28.0 - 2026-09-17
 

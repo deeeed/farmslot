@@ -3,7 +3,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 export function readyWorkspaceReviewModalStyles(): string {
   return `
       ready-workspace .rdy-review-modal {
-        width: min(760px, calc(100vw - 48px));
+        width: min(920px, calc(100vw - 48px));
         background: ${colors.bgBase};
         border: 1px solid #2a2a44;
         border-radius: ${radii.lg};
@@ -169,15 +169,25 @@ export function readyWorkspaceReviewModalStyles(): string {
         display: grid;
         gap: ${spacing.sm};
       }
+      ready-workspace .rdy-review-loop {
+        display: grid;
+        gap: ${spacing.sm};
+        border: 1px solid #2a2a44;
+        border-radius: ${radii.md};
+        background: ${colors.bgSurface};
+        padding: ${spacing.sm};
+      }
+      ready-workspace .rdy-review-loop-runtime {
+        min-width: 0;
+      }
       ready-workspace .rdy-review-loop-row {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
         gap: ${spacing.sm};
         align-items: center;
-        border: 1px solid #2a2a44;
-        border-radius: ${radii.md};
-        background: ${colors.bgSurface};
-        padding: ${spacing.sm};
+        padding: 0;
+        border: 0;
+        background: transparent;
       }
       ready-workspace .rdy-review-loop-index {
         width: 24px;

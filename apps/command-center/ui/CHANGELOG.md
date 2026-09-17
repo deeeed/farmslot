@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Independent-review sequence rows expose model and effort (thinking) again, not only runner.
 
 ## 0.13.0 - 2026-09-17
 

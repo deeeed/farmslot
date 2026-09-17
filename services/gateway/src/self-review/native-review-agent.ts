@@ -78,6 +78,7 @@ type NativeReviewInput = {
   artifactScope?: string | null;
   sessionPolicy: ReviewSessionPolicy;
   sessionIntent: ReviewSessionIntent;
+  effort?: string | null;
 };
 
 export async function runNativeReviewAgent(input: NativeReviewInput): Promise<ReviewAgentResult> {
@@ -271,7 +272,7 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
         taskId: run.ticketOrPr,
         runner,
         model,
-        effort: run.effort,
+        effort: input.effort?.trim() || run.effort,
         safetyTier: run.safetyTier ?? runnerDefaultSafetyTier(runner),
         project: projectVars.projectJson,
         projectVars,

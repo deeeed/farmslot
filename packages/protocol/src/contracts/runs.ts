@@ -346,6 +346,8 @@ export interface ReviewLoopRequest {
   order: number;
   runner: 'same' | ReviewRunnerId;
   model?: string | null;
+  /** Reasoning / thinking level for this reviewer. Runner-specific (Codex, Grok, PI). */
+  effort?: string | null;
   validationDepth?: ReviewValidationDepth;
   /** Resume this run's reviewer context, or reset it before this review generation. */
   sessionIntent?: ReviewSessionIntent;

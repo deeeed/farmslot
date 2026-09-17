@@ -36,6 +36,8 @@ export function reviewPlanFromSelection(
       typeof record.runner === 'string' && record.runner.trim() ? record.runner.trim() : 'same';
     const model =
       typeof record.model === 'string' && record.model.trim() ? record.model.trim() : null;
+    const effort =
+      typeof record.effort === 'string' && record.effort.trim() ? record.effort.trim() : null;
     const validationDepth = isReviewValidationDepth(record.validationDepth)
       ? record.validationDepth
       : reviewValidationDepthForLoop(index, rawLoops.length);
@@ -48,6 +50,7 @@ export function reviewPlanFromSelection(
         order: index + 1,
         runner: runner as ReviewLoopRequest['runner'],
         model,
+        ...(effort ? { effort } : {}),
         validationDepth,
         ...(sessionIntent ? { sessionIntent } : {}),
       },

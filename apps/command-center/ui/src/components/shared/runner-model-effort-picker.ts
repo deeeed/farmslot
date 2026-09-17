@@ -27,6 +27,7 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) allowDefault = false;
   @property({ type: Boolean }) showEffort = true;
+  @property({ type: Boolean }) showRunner = true;
   @property({ attribute: false }) catalog?: NativeRunnerOption[];
 
   static styles = css`
@@ -177,22 +178,24 @@ export class RunnerModelEffortPicker extends LitElement {
     const efforts = this.effortOptions();
     return html`
       <div class="config-row">
-        <div class="config-group">
-          <div class="section-label">Runner</div>
-          <div class="pill-row">
-            ${this.runnerOptions().map(
-              (runner) =>
-                html`<button
-                  class="pill ${this.runner === runner ? 'selected' : ''}"
-                  type="button"
-                  ?disabled=${this.disabled}
-                  @click=${() => this.selectRunner(runner)}
-                >
-                  ${runner || 'default'}
-                </button>`,
-            )}
-          </div>
-        </div>
+        ${this.showRunner
+          ? html`<div class="config-group">
+              <div class="section-label">Runner</div>
+              <div class="pill-row">
+                ${this.runnerOptions().map(
+                  (runner) =>
+                    html`<button
+                      class="pill ${this.runner === runner ? 'selected' : ''}"
+                      type="button"
+                      ?disabled=${this.disabled}
+                      @click=${() => this.selectRunner(runner)}
+                    >
+                      ${runner || 'default'}
+                    </button>`,
+                )}
+              </div>
+            </div>`
+          : nothing}
 
         <div class="config-group">
           <div class="section-label">Model</div>
