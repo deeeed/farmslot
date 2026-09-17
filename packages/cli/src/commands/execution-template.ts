@@ -77,6 +77,11 @@ interface ListOptions {
   packageTemplates?: string;
   packageId?: string;
   flow?: string;
+  /**
+   * Accepted so existing callers keep working, but unread: a template has no
+   * run mode, so it cannot narrow a listing. `options` still sends it to the
+   * gateway, where it matches the project's default rules.
+   */
   runMode?: string;
   platform?: string;
   includeShadowed?: boolean;
@@ -89,7 +94,6 @@ interface LintOptions {
 
 interface NewOptions {
   flow?: string;
-  runMode?: string;
   platform?: string;
   title?: string;
   description?: string;
@@ -155,11 +159,10 @@ function formatListHuman(entries: ExecutionTemplateEntry[]): string {
   if (entries.length === 0) return `${dim('no templates found')}\n`;
   const lines: string[] = [];
   for (const entry of entries) {
-    const mode = entry.runMode ?? '-';
     const platforms = entry.platforms.join(',');
     const shadow = entry.shadowedBy ? ` ${yellow(`(shadowed by ${entry.shadowedBy})`)}` : '';
     lines.push(
-      `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}`,
+      `${entry.id}\t${entry.flow}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}`,
     );
     if (entry.description) {
       lines.push(`  ${dim(entry.description.replace(/\s+/g, ' ').trim())}`);
@@ -177,7 +180,7 @@ function formatCatalogHuman(catalog: ExecutionTemplateOptions): string {
       `${option.id}${selected}\n` +
         `  ${option.title} · ${option.sourceId} (${option.sourceKind})\n` +
         `${option.description ? `  ${option.description.replace(/\s+/g, ' ').trim()}\n` : ''}` +
-        `  ${option.runMode ?? '*'} · ${option.platforms.join(',')} · ${domain ?? 'general'} · ${option.sha256.slice(0, 12)}`,
+        `  ${option.platforms.join(',')} · ${domain ?? 'general'} · ${option.sha256.slice(0, 12)}`,
     );
   }
   if (catalog.availableDomains.length > 0) {
@@ -220,7 +223,10 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .requiredOption('--project <name>', 'Project name')
     .requiredOption('--flow <flow>', 'Flow type')
     .option('--platform <platform>', 'Slot platform')
-    .option('--run-mode <mode>', 'autonomous|interactive|validation')
+    .option(
+      '--run-mode <mode>',
+      'Run mode used to match project default rules (autonomous|interactive|validation)',
+    )
     .option('--domain <domain>', 'Project domain')
     .option('--id <id>', 'Validate one exact template id')
     .action(async (opts: CatalogOptions, command: Command) => {
@@ -266,7 +272,10 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--package-templates <path>', 'Shared package flow-tree templates root')
     .option('--package-id <id>', 'Label for --package-templates source', 'shared')
     .option('--flow <flow>', 'Filter by flow (e.g. dev, fix-bug)')
-    .option('--run-mode <mode>', 'Filter by runMode (autonomous|interactive|validation)')
+    .option(
+      '--run-mode <mode>',
+      'Run mode used to match project default rules; it does not filter this listing',
+    )
     .option('--platform <platform>', 'Filter by platform (mobile|extension|core)')
     .option('--include-shadowed', 'Include shadowed duplicates (default true)', true)
     .option('--no-include-shadowed', 'Hide shadowed duplicates')
@@ -278,7 +287,6 @@ export function registerExecutionTemplateCommand(program: Command): void {
         const entries = rt.listExecutionTemplates({
           sources: buildSources(rt, opts),
           flow: opts.flow,
-          runMode: parseRunMode(opts.runMode),
           platform: opts.platform,
           includeShadowed: opts.includeShadowed !== false,
         });
@@ -332,7 +340,6 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .description('Create a starter Markdown execution template')
     .argument('<path>', 'Destination .md path')
     .option('--flow <flow>', 'Flow name when not inferable from filename')
-    .option('--run-mode <mode>', 'autonomous|interactive|validation')
     .option('--platform <platform>', 'Single platform for frontmatter (repeat via comma)')
     .option('--title <title>', 'Template title')
     .option('--description <text>', 'Short guidance for when to select this template')
@@ -350,7 +357,6 @@ export function registerExecutionTemplateCommand(program: Command): void {
         const created = (await loadAgentRuntime()).createExecutionTemplate({
           path: pathArg,
           flow: opts.flow,
-          runMode: parseRunMode(opts.runMode),
           platforms,
           title: opts.title,
           description: opts.description,

@@ -91,7 +91,7 @@ const project = path.join(fixture, 'projects', 'review');
 await mkdir(path.join(project, 'shared', 'review-pr'), { recursive: true });
 await writeFile(
   path.join(project, 'shared/review-pr/shared.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
+  '---\nplatforms: [cli]\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
 );
 await json(path.join(project, 'project.json'), {
   name: 'review',

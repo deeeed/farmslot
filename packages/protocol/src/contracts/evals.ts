@@ -483,10 +483,8 @@ function isExecutionTemplateReference(value: unknown): value is ExecutionTemplat
     value.sourceId.length > 0 &&
     typeof value.flow === 'string' &&
     value.flow.length > 0 &&
-    (value.runMode == null ||
-      value.runMode === 'autonomous' ||
-      value.runMode === 'interactive' ||
-      value.runMode === 'validation') &&
+    // Records persisted before templates lost their run mode still carry
+    // `runMode`; it is read tolerantly and never required.
     Array.isArray(value.platforms) &&
     value.platforms.every((item) => typeof item === 'string') &&
     Array.isArray(value.labels) &&

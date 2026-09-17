@@ -43,7 +43,7 @@ For the terminal status shape see [Worker signal protocol](worker-signal-protoco
 ## CLI
 
 ```bash
-farmslot-agent task init <task-dir> --flow <flow> --run-mode <mode> --platform <p> --template <id> --package-templates <catalog> --title "…"
+farmslot-agent task init <task-dir> --flow <flow> --platform <p> --template <id> --package-templates <catalog> --title "…" [--run-mode <mode>]
 farmslot-agent mark <task-dir> complete --mark-last
 farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe

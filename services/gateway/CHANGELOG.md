@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The execution-template catalog offers the same templates for every run mode; a run's mode now only matches the project's default rules.
+
 - Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated "Recorded in canonical library" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts.
 
 - Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate.

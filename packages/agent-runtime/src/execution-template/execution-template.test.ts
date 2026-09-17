@@ -14,12 +14,7 @@ import test from 'node:test';
 
 import { createExecutionTemplate } from './create.js';
 import { parseMarkdownDocument } from './frontmatter.js';
-import {
-  catalogRelativeId,
-  inferFlowFromBasename,
-  inferRunModeFromBasename,
-  inferTemplateMetadata,
-} from './infer.js';
+import { catalogRelativeId, inferFlowFromBasename, inferTemplateMetadata } from './infer.js';
 import { lintExecutionTemplates, lintExecutionTemplateText } from './lint.js';
 import {
   listProjectWorkerTemplateOptions,
@@ -31,7 +26,7 @@ import {
   packageFlowTreeTemplateSource,
   projectWorkerTemplateSource,
 } from './resolve.js';
-import { selectExecutionTemplate } from './select.js';
+import { listCompatibleExecutionTemplates, selectExecutionTemplate } from './select.js';
 import {
   executionTemplateReference,
   materializeExecutionTemplate,
@@ -64,16 +59,6 @@ test('inferFlowFromBasename uses longest Farmslot flow prefix', () => {
   assert.equal(inferFlowFromBasename('dev.md'), 'dev');
   assert.equal(inferFlowFromBasename('review-pr.md'), 'review-pr');
   assert.equal(inferFlowFromBasename('notes.md'), null);
-});
-
-test('inferRunModeFromBasename resolves only explicit mode tokens', () => {
-  // A bare flow name encodes no mode — review-pr/update-branch run interactive
-  // as often as autonomous, so nothing may default here.
-  assert.equal(inferRunModeFromBasename('dev.md'), null);
-  assert.equal(inferRunModeFromBasename('review-pr.md'), null);
-  assert.equal(inferRunModeFromBasename('dev-interactive.md'), 'interactive');
-  assert.equal(inferRunModeFromBasename('dev-autonomous.mobile.md'), 'autonomous');
-  assert.equal(inferRunModeFromBasename('fix-bug-interactive.extension.md'), 'interactive');
 });
 
 test('self-review-fix resolves as its own prefix, not self-review', () => {
@@ -192,7 +177,10 @@ version: 2
   assert.equal(meta.description, 'Choose for autonomous Mobile feature work.');
   assert.equal(meta.flow, 'dev');
   assert.equal(meta.version, '2');
-  assert.equal(meta.runMode, 'autonomous');
+  // A legacy `runMode:` key parses into raw frontmatter and is ignored: it is
+  // not promoted to an entry field, because templates have no run mode.
+  assert.equal(meta.frontmatter?.runMode, 'autonomous');
+  assert.equal('runMode' in meta, false);
   assert.deepEqual(meta.platforms, ['mobile']);
   assert.equal(
     meta.sha256,
@@ -255,7 +243,7 @@ test('standalone domain filters keep general and exact-domain templates only', (
   });
 });
 
-test('configured selection treats missing mode as compatible without ranking it above exact mode', () => {
+test('a template is compatible regardless of any legacy runMode frontmatter or filename', () => {
   withTemp((root) => {
     const source = join(root, 'catalog');
     mkdirSync(join(source, 'dev'), { recursive: true });
@@ -266,33 +254,90 @@ test('configured selection treats missing mode as compatible without ranking it 
     );
     const sources = [packageFlowTreeTemplateSource('catalog', source)];
 
-    assert.equal(
-      listExecutionTemplates({ sources, runMode: 'autonomous' }).some(
-        (entry) => entry.id === 'dev/general.mobile',
-      ),
-      true,
-    );
+    // Both are listed for either run mode: the legacy marker filters nothing.
+    for (const runMode of ['autonomous', 'interactive'] as const) {
+      assert.deepEqual(
+        listCompatibleExecutionTemplates({ sources, flow: 'dev', platform: 'mobile', runMode })
+          .map((entry) => entry.id)
+          .sort(),
+        ['dev/autonomous.mobile', 'dev/general.mobile'],
+      );
 
+      assert.throws(
+        () => selectExecutionTemplate({ sources, flow: 'dev', platform: 'mobile', runMode }),
+        /ambiguous/,
+      );
+    }
+
+    const explicit = selectExecutionTemplate({
+      sources,
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'interactive',
+      explicitId: 'dev/autonomous.mobile',
+    });
+    assert.equal(explicit.entry.title, 'Exact');
+    assert.equal(explicit.reason, 'explicit');
+  });
+});
+
+test('default rules match the run mode of the run, not any property of a template', () => {
+  withTemp((root) => {
+    // Worker-flat pack holding BOTH dev.md and dev-interactive.md: the only
+    // thing that distinguishes them is a legacy filename token, so selection
+    // must come from the project default rules and nowhere else.
+    const worker = join(root, 'templates', 'worker');
+    mkdirSync(worker, { recursive: true });
+    writeFileSync(join(worker, 'dev.md'), '# Dev\n\n- [ ] Run\n');
+    writeFileSync(join(worker, 'dev-interactive.md'), '---\nchecklist: none\n---\n\n# Dev chat\n');
+    const sources = [projectWorkerTemplateSource('pack', join(root, 'templates'))];
+    const defaults = [
+      { when: { flow: 'dev', runMode: 'interactive' as const }, templateId: 'dev/interactive' },
+      { when: { flow: 'dev' }, templateId: 'dev/default' },
+    ];
+
+    const interactive = selectExecutionTemplate({
+      sources,
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'interactive',
+      defaults,
+    });
+    assert.equal(interactive.entry.id, 'dev/interactive');
+    assert.equal(interactive.reason, 'configured-default');
+
+    const autonomous = selectExecutionTemplate({
+      sources,
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      defaults,
+    });
+    assert.equal(autonomous.entry.id, 'dev/default');
+    assert.equal(autonomous.reason, 'configured-default');
+
+    // Without a rule the two are just two general candidates: the selector
+    // reports the normal ambiguity instead of silently picking by mode.
     assert.throws(
       () =>
         selectExecutionTemplate({
           sources,
           flow: 'dev',
           platform: 'mobile',
-          runMode: 'autonomous',
+          runMode: 'interactive',
         }),
-      /ambiguous/,
+      /ambiguous.*dev\/default, dev\/interactive/s,
     );
 
-    const explicit = selectExecutionTemplate({
+    // A run with no mode at all falls through the interactive rule to the
+    // catch-all instead of inventing a default mode.
+    const noMode = selectExecutionTemplate({
       sources,
       flow: 'dev',
       platform: 'mobile',
-      runMode: 'autonomous',
-      explicitId: 'dev/autonomous.mobile',
+      defaults,
     });
-    assert.equal(explicit.entry.title, 'Exact');
-    assert.equal(explicit.reason, 'explicit');
+    assert.equal(noMode.entry.id, 'dev/default');
   });
 });
 
@@ -675,13 +720,13 @@ test('createExecutionTemplate writes lint-clean starter with optional frontmatte
     const target = join(root, 'dev', 'dev-autonomous.mobile.md');
     const created = createExecutionTemplate({
       path: target,
-      runMode: 'autonomous',
       platforms: ['mobile'],
       description: 'Choose when the agent should implement without operator checkpoints.',
     });
     assert.equal(created.created, true);
     const text = readFileSync(target, 'utf8');
-    assert.match(text, /runMode: autonomous/);
+    // A starter never writes a run mode: the filename token does not become one.
+    assert.doesNotMatch(text, /runMode/);
     assert.match(text, /platforms: \[mobile\]/);
     assert.match(
       text,
@@ -839,17 +884,37 @@ test('lint rejects traversal-like frontmatter ids and flow/filename contradictio
   assert.ok(bad.some((i) => /contradicts the path's flow/.test(i.message)));
 });
 
-test('lint exempts interactive templates from the checkbox requirement', () => {
-  const interactive = lintExecutionTemplateText(
+test('only `checklist: none` exempts a template from the checkbox requirement', () => {
+  const optedOut = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '---\nchecklist: none\n---\n\n# Conversational template\n\nNo checklist by design.\n',
+  );
+  assert.equal(optedOut.filter((i) => i.severity === 'error').length, 0);
+
+  // An "interactive" filename is no longer an implicit waiver: the template
+  // must say so itself.
+  const implied = lintExecutionTemplateText(
     '/virtual/dev-interactive.md',
     '# Conversational template\n\nNo checklist by design.\n',
   );
-  assert.equal(interactive.filter((i) => i.severity === 'error').length, 0);
-  const autonomous = lintExecutionTemplateText(
+  assert.ok(implied.some((i) => /no parseable checkbox/.test(i.message)));
+
+  const plain = lintExecutionTemplateText('/virtual/dev.md', '# Missing checklist\n\nprose only\n');
+  assert.ok(plain.some((i) => /no parseable checkbox/.test(i.message)));
+
+  const badValue = lintExecutionTemplateText(
     '/virtual/dev.md',
-    '# Missing checklist\n\nprose only\n',
+    '---\nchecklist: optional\n---\n\n# Bad opt-out\n\n- [ ] step\n',
   );
-  assert.ok(autonomous.some((i) => /no parseable checkbox/.test(i.message)));
+  assert.ok(badValue.some((i) => /checklist must be 'none'/.test(i.message)));
+});
+
+test('a legacy runMode frontmatter key is ignored rather than rejected', () => {
+  const issues = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '---\nrunMode: nonsense\n---\n\n# Legacy\n\n- [ ] step\n',
+  );
+  assert.deepEqual(issues, []);
 });
 
 test('lint flags unterminated frontmatter instead of silently treating it as body', () => {
@@ -864,8 +929,8 @@ test('create with no metadata renders without a frontmatter block and round-trip
   const dir = mkdtempSync(join(tmpdir(), 'et-roundtrip-'));
   try {
     mkdirSync(join(dir, 'worker'), { recursive: true });
-    // Bare title: no runMode token in the filename, default platforms — the
-    // generated file must still lint clean and be discoverable.
+    // Bare title, default platforms — the generated file must still lint clean
+    // and be discoverable.
     createExecutionTemplate({ path: join(dir, 'worker', 'fix-bug.core.md'), title: 'Round trip' });
     const text = readFileSync(join(dir, 'worker', 'fix-bug.core.md'), 'utf8');
     assert.ok(!text.startsWith('---'), 'no empty frontmatter fence pair');
@@ -913,11 +978,6 @@ test('parent flow directory wins over a contradicting basename, and lint flags i
   const issues = lintExecutionTemplateText('/tmp/fix-bug/dev.md', '# T\n\n- [ ] step\n');
   // …and the misleading name is an authoring error.
   assert.ok(issues.some((i) => /contradicts the flow directory/.test(i.message)));
-});
-
-test('mode tokens are exact, not substrings', () => {
-  assert.equal(inferRunModeFromBasename('dev-interactively.md'), null);
-  assert.equal(inferRunModeFromBasename('dev-autonomousness.md'), null);
 });
 
 test('a line merely starting with --- is not a closing fence', () => {

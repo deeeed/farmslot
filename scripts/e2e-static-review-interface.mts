@@ -142,11 +142,11 @@ async function main() {
   await mkdir(path.join(project, 'shared/validation'), { recursive: true });
   await writeFile(
     path.join(project, 'shared/review-pr/shared.md'),
-    '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Review\n\n- [ ] Review frozen source.\n',
+    '---\nplatforms: [cli]\n---\n\n# Review\n\n- [ ] Review frozen source.\n',
   );
   await writeFile(
     path.join(project, 'shared/validation/shared.md'),
-    '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Validate changes\n\n- [ ] Execute selected recipes and report coverage.\n',
+    '---\nplatforms: [cli]\n---\n\n# Validate changes\n\n- [ ] Execute selected recipes and report coverage.\n',
   );
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
   const workspaceExecution = {

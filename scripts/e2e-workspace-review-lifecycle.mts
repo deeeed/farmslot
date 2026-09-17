@@ -175,7 +175,7 @@ await writeFile(
 );
 await writeFile(
   path.join(project, 'shared/review-pr/shared.md'),
-  '---\nplatforms: [cli]\nrunMode: autonomous\n---\n\n# Review greeting\n\n' +
+  '---\nplatforms: [cli]\n---\n\n# Review greeting\n\n' +
     (scenario === 'readonly'
       ? `- [ ] Run the authorized fixture-only permission probe once in the checkout directory with exactly this shell command: \`${writeProbe}\`. Do not wrap it, request expanded permissions or retry. Record its actual exit outcome. If it succeeded, remove only the newly created readonly-source-probe.txt so the fixture checkout is restored. Continue the review either way; the validation driver checks the recorded outcome. This file is disposable test data.\n`
       : '') +

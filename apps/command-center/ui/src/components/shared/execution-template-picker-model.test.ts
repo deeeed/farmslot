@@ -17,7 +17,6 @@ function option(
   return {
     sourceId: 'project:example-farm',
     flow: 'fix-bug',
-    runMode: 'autonomous',
     platforms: ['mobile'],
     labels: [],
     relativePath: `${overrides.id}.md`,
@@ -55,7 +54,7 @@ test('rows carry stripped domains, selection, and gateway-default provenance', (
       selectionReason: 'configured-default',
     }),
     'fix-bug/sentry-cuf-autonomous.mobile',
-    { domain: 'perps', runMode: 'autonomous' },
+    { domain: 'perps' },
   );
   assert.equal(view.resultCount, 2);
   assert.deepEqual(optionDomains(perpsOption), ['perps']);
@@ -76,7 +75,7 @@ test('a filter change that drops the selected id invalidates the selection', () 
   const view = deriveExecutionTemplatePickerView(
     catalog({ options: [generalOption] }),
     'fix-bug/sentry-cuf-autonomous.mobile',
-    { domain: '', runMode: 'autonomous' },
+    { domain: '' },
   );
   assert.equal(view.selectionValid, false);
   assert.equal(view.selectedRow, null);
@@ -85,16 +84,14 @@ test('a filter change that drops the selected id invalidates the selection', () 
 test('empty catalogs name the active filters instead of collapsing to a blank state', () => {
   const view = deriveExecutionTemplatePickerView(catalog({ options: [] }), '', {
     domain: 'money-movement',
-    runMode: 'interactive',
   });
   assert.equal(
     view.emptyStateMessage,
-    'No compatible execution template for domain: money-movement · mode: interactive.',
+    'No compatible execution template for domain: money-movement.',
   );
-  assert.equal(
-    activeFilterSummary({ domain: '', runMode: 'autonomous' }),
-    'domain: general · mode: autonomous',
-  );
+  // Run mode is a property of the run, never of a template, so it is not part
+  // of the filter summary the picker shows.
+  assert.equal(activeFilterSummary({ domain: '' }), 'domain: general');
 });
 
 test('unavailable and domain-filtered sources surface as notices with the enabling domains', () => {
@@ -105,7 +102,7 @@ test('unavailable and domain-filtered sources surface as notices with the enabli
       filteredSources: [{ id: 'team:perps', reason: 'domain-restricted', domains: ['perps'] }],
     }),
     '',
-    { domain: '', runMode: 'autonomous' },
+    { domain: '' },
   );
   assert.deepEqual(view.sourceNotices, [
     'package:consensys-recipe-cook: missing-root',
@@ -121,7 +118,7 @@ test('gateway-default selection summary is reported when nothing is explicitly s
       selectionReason: 'single-general-candidate',
     }),
     '',
-    { domain: '', runMode: 'autonomous' },
+    { domain: '' },
   );
   assert.equal(
     view.selectionSummary,
@@ -134,16 +131,14 @@ test('a catalog from an older gateway without filteredSources yields no notices'
   delete (legacy as Partial<ExecutionTemplateOptions>).filteredSources;
   const view = deriveExecutionTemplatePickerView(legacy, '', {
     domain: '',
-    runMode: 'autonomous',
   });
   assert.deepEqual(view.sourceNotices, []);
 });
 
-test('a full catalog filters locally by domain, mode, and flow', () => {
+test('a full catalog filters locally by domain and flow', () => {
   const interactive = option({
     id: 'dev/interactive',
     flow: 'dev',
-    runMode: 'interactive',
   });
   const perpsSourced = option({
     id: 'fix-bug/perps-mobile',
@@ -157,7 +152,6 @@ test('a full catalog filters locally by domain, mode, and flow', () => {
   });
   const perpsView = deriveExecutionTemplatePickerView(full, '', {
     domain: 'perps',
-    runMode: 'autonomous',
     flow: 'fix-bug',
   });
   assert.deepEqual(perpsView.rows.map((row) => row.option.id).sort(), [
@@ -169,7 +163,6 @@ test('a full catalog filters locally by domain, mode, and flow', () => {
 
   const generalView = deriveExecutionTemplatePickerView(full, perpsSourced.id, {
     domain: '',
-    runMode: 'autonomous',
     flow: 'fix-bug',
   });
   assert.deepEqual(
@@ -181,14 +174,11 @@ test('a full catalog filters locally by domain, mode, and flow', () => {
     generalView.sourceNotices.some((notice) => notice.includes('team:perps: domain-restricted')),
   );
 
-  assert.equal(
-    optionMatchesPickerFilters(interactive, {
-      domain: '',
-      runMode: 'interactive',
-      flow: 'dev',
-    }),
-    true,
-  );
+  // The run-mode selector never excludes a row: an id that reads "interactive"
+  // is matched for an autonomous run just the same.
+  {
+    assert.equal(optionMatchesPickerFilters(interactive, { domain: '', flow: 'dev' }), true);
+  }
   assert.equal(
     pickCompatibleExecutionTemplateId({
       options: [generalOption],
@@ -225,7 +215,6 @@ test('a full catalog resurrects a shadowed domain source after local domain filt
   const full = catalog({ options: [workspace, shadowedPackage], availableDomains: ['perps'] });
   const general = deriveExecutionTemplatePickerView(full, '', {
     domain: '',
-    runMode: 'autonomous',
     flow: 'fix-bug',
   });
   assert.deepEqual(
@@ -234,7 +223,6 @@ test('a full catalog resurrects a shadowed domain source after local domain filt
   );
   const perps = deriveExecutionTemplatePickerView(full, '', {
     domain: 'perps',
-    runMode: 'autonomous',
     flow: 'fix-bug',
   });
   assert.deepEqual(

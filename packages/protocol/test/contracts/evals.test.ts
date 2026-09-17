@@ -127,6 +127,8 @@ test('isResultPackageManifest accepts package kernel manifests', () => {
           templatePath: 'templates/worker/fix-bug.md',
           templateName: 'fix-bug.md',
           contentHash: 'abc123',
+          // A record persisted before templates lost their run mode: the
+          // leftover `runMode` must still validate, never be required.
           executionTemplate: {
             id: 'fix-bug/autonomous.mobile',
             sourceId: 'package:canonical',

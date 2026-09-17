@@ -39,7 +39,7 @@ The finish contract is **not Farmslot-specific**. It is a small, portable conven
 
 ```bash
 # Standalone (skills-only) — no gateway, no slot
-farmslot-agent task init temp/tasks/my-task --flow fix-bug --run-mode autonomous --platform mobile \
+farmslot-agent task init temp/tasks/my-task --flow fix-bug --platform mobile \
   --template fix-bug/autonomous.mobile --package-templates <catalog> --title "…" --task-text "…"
 cd temp/tasks/my-task
 # CHECKLIST.md is the checklist; no manifest is needed

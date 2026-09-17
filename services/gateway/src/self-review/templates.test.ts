@@ -18,7 +18,7 @@ test('configured review depth selects canonical bytes and records provenance wit
   const contents = Object.fromEntries(
     ['static-code', 'full-live'].map((depth) => [
       depth,
-      `---\nplatforms: [cli]\nrunMode: autonomous\nlabels: [review-depth:${depth}]\n---\n\n# ${depth}\n\n- [ ] Follow the shared ${depth} review.\n`,
+      `---\nplatforms: [cli]\nlabels: [review-depth:${depth}]\n---\n\n# ${depth}\n\n- [ ] Follow the shared ${depth} review.\n`,
     ]),
   );
   for (const [depth, content] of Object.entries(contents))

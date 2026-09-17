@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot execution-template` no longer shows a run-mode column or accepts `--run-mode` on `new`; `--run-mode` elsewhere is optional and matches project default rules.
+
 - Configure static-review publication and its PR team when creating runs.
 
 - Select farm-owned QA profiles and JSON skill inputs with `run create` and `dispatch preview` using explicit `--flow-type qa`.

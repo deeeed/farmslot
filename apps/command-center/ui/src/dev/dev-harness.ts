@@ -3404,7 +3404,7 @@ All checks passed.`;
     `;
   }
 
-  // Full catalog snapshot. The picker filters locally by domain and mode.
+  // Full catalog snapshot. The picker filters locally by domain.
   private _pickerCatalog(): ExecutionTemplateOptions {
     const all: ExecutionTemplateCatalogOption[] = [
       {
@@ -3412,7 +3412,6 @@ All checks passed.`;
         sourceId: 'project:example-mobile-farm',
         sourceKind: 'project',
         flow: 'fix-bug',
-        runMode: 'autonomous',
         platforms: ['mobile'],
         labels: [],
         relativePath: 'fix-bug.md',
@@ -3424,7 +3423,6 @@ All checks passed.`;
         sourceId: 'team:money-movement',
         sourceKind: 'workspace',
         flow: 'fix-bug',
-        runMode: 'interactive',
         platforms: ['mobile'],
         labels: ['domain:money-movement'],
         sourceDomains: ['money-movement'],
@@ -3437,7 +3435,6 @@ All checks passed.`;
         sourceId: 'package:consensys-recipe-cook',
         sourceKind: 'package',
         flow: 'fix-bug',
-        runMode: 'autonomous',
         platforms: ['mobile'],
         labels: [],
         relativePath: 'fix-bug/autonomous.mobile.md',
@@ -3450,7 +3447,6 @@ All checks passed.`;
         sourceId: 'team:perps',
         sourceKind: 'workspace',
         flow: 'fix-bug',
-        runMode: 'autonomous',
         platforms: ['mobile'],
         labels: ['domain:perps'],
         sourceDomains: ['perps'],
@@ -3464,7 +3460,6 @@ All checks passed.`;
         sourceId: 'team:money-movement',
         sourceKind: 'workspace',
         flow: 'fix-bug',
-        runMode: 'autonomous',
         platforms: ['mobile'],
         labels: ['domain:money-movement'],
         sourceDomains: ['money-movement'],

@@ -1,6 +1,6 @@
 // Reusable execution-template catalog picker (MANUAL-000076 UX addendum).
-// Renders a catalog snapshot as a filterable table. Domain, run-mode, flow,
-// and platform filters run locally. Selection changes are emitted as events;
+// Renders a catalog snapshot as a filterable table. Domain, flow, and platform
+// filters run locally. Selection changes are emitted as events;
 // the host owns state. The gateway still validates source and digest at claim.
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
@@ -191,7 +191,6 @@ export class ExecutionTemplatePicker extends LitElement {
       </td>
       <td>${option.sourceId}</td>
       <td>${row.domains.length > 0 ? row.domains.join(', ') : 'general'}</td>
-      <td>${option.runMode ?? 'any'}</td>
       <td>${option.platforms.join('/')}</td>
       <td>
         <div class="provenance" title=${option.sha256}>${option.sha256.slice(0, 12)}</div>
@@ -233,7 +232,6 @@ export class ExecutionTemplatePicker extends LitElement {
     if (!this.catalog) return nothing;
     const view = deriveExecutionTemplatePickerView(this.catalog, this.selectedId, {
       domain: this.domain,
-      runMode: this.mode,
       ...(this.flow ? { flow: this.flow } : {}),
       ...(this.platform ? { platform: this.platform } : {}),
     });
@@ -287,7 +285,6 @@ export class ExecutionTemplatePicker extends LitElement {
                 <th>Template</th>
                 <th>Source</th>
                 <th>Domains</th>
-                <th>Mode</th>
                 <th>Platforms</th>
                 <th>Digest</th>
                 <th></th>

@@ -429,7 +429,6 @@ export class DispatchWizard extends DispatchWizardState {
       this._selectedExecutionTemplateId,
       {
         domain: this._domain,
-        runMode: this._catalogMode,
         flow: this._flowType,
         ...(platform ? { platform } : {}),
       },
@@ -1187,7 +1186,6 @@ export class DispatchWizard extends DispatchWizardState {
             this._selectedExecutionTemplateId,
             {
               domain: this._domain,
-              runMode: this._catalogMode,
               flow: this._flowType,
               ...(this._selectedSlotPlatform() ? { platform: this._selectedSlotPlatform() } : {}),
             },

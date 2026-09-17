@@ -33,7 +33,7 @@ const PLAIN_TEMPLATE = [
   '',
 ].join('\n');
 
-function init(taskDir, templateRoot, extra = []) {
+function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}) {
   return spawnSync(
     process.execPath,
     [
@@ -43,8 +43,7 @@ function init(taskDir, templateRoot, extra = []) {
       taskDir,
       '--flow',
       'fix-bug',
-      '--run-mode',
-      'autonomous',
+      ...(runMode ? ['--run-mode', runMode] : []),
       '--platform',
       'mobile',
       '--template',
@@ -279,6 +278,30 @@ function init(taskDir, templateRoot, extra = []) {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unknown option|requires <task-dir>/);
   assert.ok(!existsSync(path.join(work, 'x', 'TASK.md')));
+}
+
+// 7. --run-mode is optional: it selects default rules and fills MODE, so a run
+//    without one still initialises and simply renders no MODE line.
+{
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-task-init-no-mode-'));
+  const taskDir = path.join(work, 'task');
+  const result = init(taskDir, catalog(PLAIN_TEMPLATE), [], { runMode: null });
+  assert.equal(result.status, 0, result.stderr);
+  const task = readFileSync(path.join(taskDir, 'TASK.md'), 'utf8');
+  assert.match(task, /^FLOW: fix-bug$/m);
+  assert.doesNotMatch(task, /^MODE:/m);
+  const handoff = JSON.parse(readFileSync(path.join(taskDir, 'inputs', 'handoff.json'), 'utf8'));
+  assert.equal(handoff.executionTemplate.id, 'fix-bug/autonomous.mobile');
+  assert.equal(handoff.executionTemplate.runMode, undefined, 'templates carry no run mode');
+
+  // A template that spells {{MODE}} fails the placeholder guard rather than
+  // rendering an invented default.
+  const needsMode = path.join(work, 'task-mode');
+  const withMode = init(needsMode, catalog(`${PLAIN_TEMPLATE}\nMode: {{MODE}}\n`), [], {
+    runMode: null,
+  });
+  assert.notEqual(withMode.status, 0);
+  assert.match(withMode.stderr, /\{\{MODE\}\}/);
 }
 
 process.stdout.write('agent-runtime task init tests: ok\n');

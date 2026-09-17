@@ -30,10 +30,14 @@ import type { ProjectVars } from '../core/config.js';
 export interface ExecutionTemplateCatalogQuery {
   flow?: string;
   platform?: string;
+  /**
+   * Run mode of the run being resolved. Templates declare none; it only feeds
+   * the project default rules (`defaults[].when.runMode`).
+   */
   runMode?: ExecutionTemplateRunMode;
   domain?: string;
   explicitId?: string;
-  /** Include domain-restricted sources and skip flow/mode/platform/domain filters. */
+  /** Include domain-restricted sources and skip flow/platform/domain filters. */
   unfiltered?: boolean;
 }
 
@@ -97,7 +101,6 @@ function domainFilteredSources(
     flow: query.flow,
     includeShadowed: false,
     ...(query.platform ? { platform: query.platform } : {}),
-    ...(query.runMode ? { runMode: query.runMode } : {}),
   });
   for (const entry of relevant) {
     if (executionTemplateEntryParticipates(entry, query.domain)) continue;
@@ -214,33 +217,29 @@ export function configuredExecutionTemplateOptions(
   }
 
   const flow = catalogFlow(projectVars, sources, query.flow, query.explicitId);
-  const options =
-    query.platform && query.runMode
-      ? listCompatibleExecutionTemplates({
-          sources,
-          flow,
-          platform: query.platform,
-          runMode: query.runMode,
-          ...(query.domain ? { domain: query.domain } : {}),
-        })
-      : listExecutionTemplates({
-          sources: sources.filter((source) =>
-            executionTemplateSourceParticipates(source, query.domain),
-          ),
-          flow,
-          includeShadowed: false,
-          ...(query.platform ? { platform: query.platform } : {}),
-          ...(query.runMode ? { runMode: query.runMode } : {}),
-        }).filter((entry) => executionTemplateEntryParticipates(entry, query.domain));
+  const options = query.platform
+    ? listCompatibleExecutionTemplates({
+        sources,
+        flow,
+        platform: query.platform,
+        ...(query.domain ? { domain: query.domain } : {}),
+      })
+    : listExecutionTemplates({
+        sources: sources.filter((source) =>
+          executionTemplateSourceParticipates(source, query.domain),
+        ),
+        flow,
+        includeShadowed: false,
+      }).filter((entry) => executionTemplateEntryParticipates(entry, query.domain));
 
   let selected: SelectedExecutionTemplate | undefined;
-  if (query.platform && query.runMode) {
+  if (query.platform) {
     try {
       selected = selectExecutionTemplate({
         sources,
         flow,
         platform: query.platform,
-        runMode: query.runMode,
+        ...(query.runMode ? { runMode: query.runMode } : {}),
         ...(query.domain ? { domain: query.domain } : {}),
         ...(query.explicitId ? { explicitId: query.explicitId } : {}),
         defaults,

@@ -122,15 +122,11 @@ try {
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
   for (const name of ['wizard-farm', 'workspace-only']) {
     const project = path.join(fixture, 'projects', name);
-    for (const [flow, mode] of [
-      ['review-pr', 'autonomous'],
-      ['validation', 'autonomous'],
-      ['dev', 'interactive'],
-    ]) {
+    for (const flow of ['review-pr', 'validation', 'dev']) {
       await mkdir(path.join(project, 'shared', flow), { recursive: true });
       await writeFile(
         path.join(project, 'shared', flow, 'shared.md'),
-        `---\nplatforms: [cli]\nrunMode: ${mode}\n---\n\n# ${flow}\n\n- [ ] Perform the selected task and report the result.\n`,
+        `---\nplatforms: [cli]\n---\n\n# ${flow}\n\n- [ ] Perform the selected task and report the result.\n`,
       );
     }
     await json(path.join(project, 'project.json'), {

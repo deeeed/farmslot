@@ -71,7 +71,11 @@ export interface TaskInitSpec {
   /** How the worker should refer to the task dir (`TASK_DIR` placeholder); defaults to `taskDir` as given. */
   taskDirLabel?: string;
   flow: string;
-  runMode: ExecutionTemplateRunMode;
+  /**
+   * Run mode of this run. Templates carry none; it selects project default
+   * rules (`when.runMode`), fills `{{MODE}}`, and picks the terminal contract.
+   */
+  runMode?: ExecutionTemplateRunMode;
   platform: string;
   domain?: string;
   template: TaskInitTemplateSelection;
@@ -110,7 +114,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     sources: spec.template.sources,
     flow: spec.flow,
     platform: spec.platform,
-    runMode: spec.runMode,
+    ...(spec.runMode ? { runMode: spec.runMode } : {}),
     ...(spec.domain ? { domain: spec.domain } : {}),
     ...(spec.template.explicitId ? { explicitId: spec.template.explicitId } : {}),
   });
@@ -119,7 +123,10 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     TICKET: spec.task.ticket ?? '',
     TITLE: spec.task.title,
     FLOW: spec.flow,
-    MODE: spec.runMode,
+    // Same rule as DOMAIN below: an unset value supplies no placeholder, so a
+    // template that spells {{MODE}} fails the guard instead of rendering a
+    // made-up default.
+    ...(spec.runMode ? { MODE: spec.runMode } : {}),
     PLATFORM: spec.platform,
     ...(spec.domain ? { DOMAIN: spec.domain } : {}),
     TEMPLATE: selected.entry.id,
@@ -145,7 +152,8 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   };
 
   const terminalContract =
-    spec.terminalContract ?? builtinTerminalContract(spec.flow, { mode: spec.runMode });
+    spec.terminalContract ??
+    builtinTerminalContract(spec.flow, { ...(spec.runMode ? { mode: spec.runMode } : {}) });
   const handoffMetadata = buildHandoffMetadata({
     attemptId: spec.handoff.attemptId ?? randomUUID(),
     surface: spec.handoff.surface,

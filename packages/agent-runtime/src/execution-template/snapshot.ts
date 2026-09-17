@@ -19,7 +19,6 @@ export function executionTemplateReference(
     id: entry.id,
     sourceId: entry.sourceId,
     flow: entry.flow,
-    ...(entry.runMode ? { runMode: entry.runMode } : {}),
     platforms: entry.platforms,
     labels: entry.labels,
     relativePath: entry.relativePath,
