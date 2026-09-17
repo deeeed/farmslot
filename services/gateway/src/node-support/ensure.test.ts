@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { farmslotRoot, type ProjectVars, type SlotVars } from '../core/index.js';
+import { RUNNER_OBSERVABILITY_SUPPORT_PATHS } from '../runners/runner-observability.js';
 
 import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 
@@ -103,7 +104,12 @@ test('a slot on a stale bundle gets the current bundle published and selected; l
   };
   assert.equal(manifest.hash, state.hash);
   assert.ok(manifest.paths.includes('scripts/install-runner-observability.mjs'));
-  assert.equal(manifest.fileCount, 3, 'a project without hooks bundles only the installer files');
+  assert.ok(manifest.paths.includes('scripts/runners/pi-farmslot-providers.mjs'));
+  assert.equal(
+    manifest.fileCount,
+    RUNNER_OBSERVABILITY_SUPPORT_PATHS.length,
+    'a project without hooks bundles only the installer files',
+  );
   // The slot's pointer is the last write and names the published bundle.
   const selection = rec.written.at(-1)!;
   assert.equal(selection.base, '/Users/deeeed/dev/x/.agent/.observability');
