@@ -23,6 +23,7 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
+import type { EffortLevel } from '../../utils/runner-options.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import {
@@ -69,6 +70,7 @@ import {
   readyRunnerLabel,
   removeReadyReviewLoop,
   setReadyReviewLoopDepth,
+  setReadyReviewLoopModelEffort,
   setReadyReviewLoopRunner,
   setReadyReviewLoopSessionIntent,
 } from './ready-workspace-review-request-model.js';
@@ -660,6 +662,10 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   _setReviewLoopRunner(id: number, runner: ReviewRunnerChoice) {
     this._reviewLoops = setReadyReviewLoopRunner(this._reviewLoops, id, runner);
+  }
+
+  _setReviewLoopModelEffort(id: number, model: string, effort: EffortLevel) {
+    this._reviewLoops = setReadyReviewLoopModelEffort(this._reviewLoops, id, model, effort);
   }
 
   _setReviewLoopDepth(id: number, validationDepth: ReviewValidationDepth) {

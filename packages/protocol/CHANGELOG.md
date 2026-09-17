@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Independent-review loops accept an optional `effort` (thinking / reasoning level) alongside `model`. Reviewer agent context and independent-review status persist that effort so restart recovery can relaunch the same thinking level.
 
 ## 0.28.0 - 2026-09-17
 

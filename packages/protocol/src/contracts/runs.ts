@@ -346,6 +346,8 @@ export interface ReviewLoopRequest {
   order: number;
   runner: 'same' | ReviewRunnerId;
   model?: string | null;
+  /** Reasoning / thinking level for this reviewer. Runner-specific (Codex, Grok, PI). */
+  effort?: string | null;
   validationDepth?: ReviewValidationDepth;
   /** Resume this run's reviewer context, or reset it before this review generation. */
   sessionIntent?: ReviewSessionIntent;
@@ -448,6 +450,8 @@ export interface IndependentReviewStatus {
   source?: 'dispatch' | 'human-gate' | 'self-review';
   runner?: string | null;
   model?: string | null;
+  /** Reasoning / thinking level this reviewer launched with. */
+  effort?: string | null;
   reviewerSessionId?: string | null;
   crossRunner: boolean;
   loopNumber: number;

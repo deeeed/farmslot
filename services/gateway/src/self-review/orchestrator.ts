@@ -135,6 +135,7 @@ export interface SelfReviewResult {
   timeline?: ReviewLoopTimelineSegment[];
   runner?: string;
   model?: string;
+  effort?: string | null;
   crossRunner?: boolean;
   retryCount: number;
   maxRetries?: number;
@@ -160,6 +161,7 @@ function resolveWorkerModel(
 export interface SelfReviewOptions {
   reviewRunner?: string | null;
   model?: string | null;
+  effort?: string | null;
   maxRetries?: number | null;
   validationDepth?: ReviewValidationDepth | null;
   artifactScope?: string | null;
@@ -293,6 +295,7 @@ async function executeOwnedSelfReview(
       start,
       reviewRunner,
       model,
+      effort: options.effort,
       workerRunner,
       maxRetries,
       reviewTimeoutMs,
@@ -309,6 +312,7 @@ async function executeOwnedSelfReview(
         usage: recoveredFixResult.attempts?.at(-1)?.usage,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
       };
     }
@@ -322,6 +326,7 @@ async function executeOwnedSelfReview(
           ...options.resumeFromResult,
           runner: reviewRunner,
           model,
+          effort: options.effort,
           crossRunner: isCrossRunnerReview,
         };
       }
@@ -351,6 +356,7 @@ async function executeOwnedSelfReview(
         workerRunner,
         reviewRunner,
         model,
+        effort: options.effort,
         // An explicit operator "send feedback" action authorizes one fix pass
         // even when automatic self-review retries are disabled for the project.
         maxRetries: Math.max(priorRetryCount + 1, maxRetries),
@@ -368,6 +374,7 @@ async function executeOwnedSelfReview(
         usage: retryResult.attempts?.at(-1)?.usage,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
       };
     }
@@ -389,6 +396,7 @@ async function executeOwnedSelfReview(
       artifactScope,
       sessionPolicy,
       options.reviewSessionIntent ?? 'reset',
+      options.effort,
     );
 
     if (result.incomplete) {
@@ -401,6 +409,7 @@ async function executeOwnedSelfReview(
         reason: 'no-feedback-file',
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
         retryCount: 0,
         validationDepth,
@@ -429,6 +438,7 @@ async function executeOwnedSelfReview(
         timeline: result.timeline,
         runner: reviewRunner,
         model,
+        effort: options.effort,
         crossRunner: isCrossRunnerReview,
         retryCount: 0,
         durationMs: Date.now() - start,
@@ -444,6 +454,7 @@ async function executeOwnedSelfReview(
       workerRunner,
       reviewRunner,
       model,
+      effort: options.effort,
       maxRetries,
       reviewTimeoutMs,
       reviewResult: result,
@@ -457,6 +468,7 @@ async function executeOwnedSelfReview(
       usage: retryResult.attempts?.at(-1)?.usage,
       runner: reviewRunner,
       model,
+      effort: options.effort,
       crossRunner: isCrossRunnerReview,
     };
   } finally {
@@ -533,6 +545,8 @@ export interface SelfReviewRetryDeps {
     validationDepth?: ReviewValidationDepth,
     artifactScope?: string | null,
     sessionPolicy?: ReviewSessionPolicy,
+    sessionIntent?: ReviewSessionIntent,
+    effort?: string | null,
   ) => Promise<ReviewAgentResult>;
   captureFixDelta: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -662,6 +676,7 @@ export async function runSelfReviewRetryLoop({
   workerRunner,
   reviewRunner,
   model,
+  effort,
   maxRetries,
   reviewTimeoutMs,
   reviewResult,
@@ -681,6 +696,7 @@ export async function runSelfReviewRetryLoop({
   workerRunner: string;
   reviewRunner: string;
   model: string;
+  effort?: string | null;
   maxRetries: number;
   reviewTimeoutMs: number;
   reviewResult: ReviewAgentResult;
@@ -990,6 +1006,8 @@ export async function runSelfReviewRetryLoop({
         validationDepth,
         artifactScope,
         sessionPolicy,
+        undefined,
+        effort,
       );
       const retryAttempt: IndependentReviewAttempt = {
         ...reviewAttemptFromResult(
@@ -1349,6 +1367,7 @@ async function recoverSelfReviewFixPass({
   start,
   reviewRunner,
   model,
+  effort,
   workerRunner,
   maxRetries,
   reviewTimeoutMs,
@@ -1365,6 +1384,7 @@ async function recoverSelfReviewFixPass({
   start: number;
   reviewRunner: string;
   model: string;
+  effort?: string | null;
   workerRunner: string;
   maxRetries: number;
   reviewTimeoutMs: number;
@@ -1601,6 +1621,7 @@ async function recoverSelfReviewFixPass({
         workerRunner,
         reviewRunner,
         model,
+        effort,
         maxRetries,
         reviewTimeoutMs,
         reviewResult: { verdict: 'issues', issues, validationDepth },
@@ -1686,6 +1707,8 @@ async function recoverSelfReviewFixPass({
       validationDepth,
       artifactScope,
       sessionPolicy,
+      undefined,
+      effort,
     );
     const seededReviewResult = {
       ...retryResult,
@@ -1728,6 +1751,7 @@ async function recoverSelfReviewFixPass({
       workerRunner,
       reviewRunner,
       model,
+      effort,
       maxRetries,
       reviewTimeoutMs,
       reviewResult: seededReviewResult,

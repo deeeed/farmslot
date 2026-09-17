@@ -36,6 +36,8 @@ export function reviewPlanFromSelection(
       typeof record.runner === 'string' && record.runner.trim() ? record.runner.trim() : 'same';
     const model =
       typeof record.model === 'string' && record.model.trim() ? record.model.trim() : null;
+    const effort =
+      typeof record.effort === 'string' && record.effort.trim() ? record.effort.trim() : null;
     const validationDepth = isReviewValidationDepth(record.validationDepth)
       ? record.validationDepth
       : reviewValidationDepthForLoop(index, rawLoops.length);
@@ -48,6 +50,7 @@ export function reviewPlanFromSelection(
         order: index + 1,
         runner: runner as ReviewLoopRequest['runner'],
         model,
+        ...(effort ? { effort } : {}),
         validationDepth,
         ...(sessionIntent ? { sessionIntent } : {}),
       },
@@ -66,6 +69,13 @@ export function reviewPlanFromSelection(
 }
 export function effectiveReviewRunner(loop: ReviewLoopRequest): string | null {
   return loop.runner && loop.runner !== 'same' ? normalizeRunner(loop.runner) : null;
+}
+
+export function reviewerContextEffort(
+  context: Pick<AgentContext, 'effort'> & { nativeSession?: { effort?: string } },
+): string | null {
+  const value = context.effort?.trim() || context.nativeSession?.effort?.trim();
+  return value || null;
 }
 
 export function requestedReviewLoopCount(
@@ -284,11 +294,13 @@ export function recoveryReviewPlanForActiveFix(
   const matchingReview = [...(run.engineState?.publishGate?.independentReviews ?? [])]
     .reverse()
     .find((review) => normalizeRunner(review.runner) === normalizedRunner);
+  const effort = reviewerContextEffort(reviewer) ?? (matchingReview?.effort?.trim() || null);
   return [
     {
       order: 1,
       runner,
-      model: reviewer.model ?? null,
+      model: reviewer.model ?? matchingReview?.model ?? null,
+      ...(effort ? { effort } : {}),
       validationDepth: matchingReview?.validationDepth ?? 'full-live',
     },
   ];

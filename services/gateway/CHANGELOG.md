@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Human-gate independent review loops honor per-loop `model` and `effort` instead of always inheriting the worker run, including after gateway restart recovery.
 
 ## 0.13.0 - 2026-09-17
 

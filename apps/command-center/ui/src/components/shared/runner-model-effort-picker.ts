@@ -5,6 +5,7 @@ import type { NativeRunnerOption } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
+  DEFAULT_EFFORT,
   DEFAULT_MODEL,
   type EffortLevel,
   effortsForRunner,
@@ -27,6 +28,8 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property({ type: Boolean }) allowDefault = false;
   @property({ type: Boolean }) showEffort = true;
+  @property({ type: Boolean }) showRunner = true;
+  @property({ type: Boolean }) showDefaultEffort = true;
   @property({ attribute: false }) catalog?: NativeRunnerOption[];
 
   static styles = css`
@@ -126,11 +129,10 @@ export class RunnerModelEffortPicker extends LitElement {
 
   private effortOptions(): EffortLevel[] {
     const options = effortsForRunner(this.runner, this.model);
-    return [
-      ...new Set(
-        ['' as EffortLevel, ...options, this.effort].filter((effort) => effort !== undefined),
-      ),
-    ];
+    const values: EffortLevel[] = this.showDefaultEffort ? ['' as EffortLevel] : [];
+    values.push(...options);
+    if (this.effort && !values.includes(this.effort)) values.push(this.effort);
+    return [...new Set(values)];
   }
 
   private emitChange(detail: RunnerModelEffortChangeDetail) {
@@ -161,10 +163,16 @@ export class RunnerModelEffortPicker extends LitElement {
 
   private selectModel(model: string) {
     const efforts = effortsForRunner(this.runner, model);
+    const preferred = DEFAULT_EFFORT[this.runner] ?? '';
+    const fallback = this.showDefaultEffort
+      ? ''
+      : efforts.includes(preferred)
+        ? preferred
+        : (efforts[0] ?? '');
     this.emitChange({
       runner: this.runner,
       model,
-      effort: efforts.includes(this.effort) ? this.effort : '',
+      effort: efforts.includes(this.effort) ? this.effort : fallback,
     });
   }
 
@@ -177,22 +185,24 @@ export class RunnerModelEffortPicker extends LitElement {
     const efforts = this.effortOptions();
     return html`
       <div class="config-row">
-        <div class="config-group">
-          <div class="section-label">Runner</div>
-          <div class="pill-row">
-            ${this.runnerOptions().map(
-              (runner) =>
-                html`<button
-                  class="pill ${this.runner === runner ? 'selected' : ''}"
-                  type="button"
-                  ?disabled=${this.disabled}
-                  @click=${() => this.selectRunner(runner)}
-                >
-                  ${runner || 'default'}
-                </button>`,
-            )}
-          </div>
-        </div>
+        ${this.showRunner
+          ? html`<div class="config-group">
+              <div class="section-label">Runner</div>
+              <div class="pill-row">
+                ${this.runnerOptions().map(
+                  (runner) =>
+                    html`<button
+                      class="pill ${this.runner === runner ? 'selected' : ''}"
+                      type="button"
+                      ?disabled=${this.disabled}
+                      @click=${() => this.selectRunner(runner)}
+                    >
+                      ${runner || 'default'}
+                    </button>`,
+                )}
+              </div>
+            </div>`
+          : nothing}
 
         <div class="config-group">
           <div class="section-label">Model</div>

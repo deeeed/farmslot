@@ -52,6 +52,7 @@ import {
   normalizeExhaustedReviewContinuation,
 } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
+import { reviewerContextEffort } from './review-plan.js';
 
 export { isTerminalReviewArtifactError, TerminalReviewArtifactError };
 
@@ -313,6 +314,7 @@ export function buildRecoveredReview(params: {
     validationDepth: feedback.validationDepth,
     runner: ctx.runner ?? undefined,
     model: ctx.model ?? undefined,
+    effort: reviewerContextEffort(ctx),
     retryCount: 0,
     reviewSnapshot,
     attempts: [
@@ -338,6 +340,7 @@ export function buildRecoveredReview(params: {
     requestedRunner: ctx.runner ?? null,
     workerRunner: run.metrics.runner,
     model: ctx.model ?? run.metrics.actualModel ?? run.metrics.model ?? null,
+    effort: reviewerContextEffort(ctx),
     reviewId,
     reviewedPackage: reviewedPackage ?? null,
   });
@@ -735,6 +738,7 @@ async function persistRecoveredFailedReviewer(
       reason: `reviewer-${signal.status}`,
       runner: ctx.runner ?? undefined,
       model: ctx.model ?? undefined,
+      effort: reviewerContextEffort(ctx),
       retryCount: 0,
       validationDepth,
       attempts: [
@@ -751,6 +755,7 @@ async function persistRecoveredFailedReviewer(
     requestedRunner: ctx.runner ?? null,
     workerRunner: latest.metrics.runner,
     model: ctx.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
+    effort: reviewerContextEffort(ctx),
     reviewId,
     reviewedPackage: reviewedPackage ?? null,
   });

@@ -161,6 +161,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       addLoop: () => this._addReviewLoop(),
       removeLoop: (id) => this._removeReviewLoop(id),
       setRunner: (id, runner) => this._setReviewLoopRunner(id, runner),
+      setModelEffort: (id, model, effort) => this._setReviewLoopModelEffort(id, model, effort),
       setDepth: (id, validationDepth) => this._setReviewLoopDepth(id, validationDepth),
       setSessionIntent: (id, sessionIntent) => this._setReviewLoopSessionIntent(id, sessionIntent),
       submit: () => this._submitReviewRequest(),

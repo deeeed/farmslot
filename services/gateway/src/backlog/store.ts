@@ -421,6 +421,9 @@ function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undef
       ...(typeof entry.model === 'string' && entry.model.trim()
         ? { model: entry.model.trim() }
         : {}),
+      ...(typeof entry.effort === 'string' && entry.effort.trim()
+        ? { effort: entry.effort.trim() }
+        : {}),
       ...(validationDepth ? { validationDepth } : {}),
       ...(sessionIntent ? { sessionIntent } : {}),
     };

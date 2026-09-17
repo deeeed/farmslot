@@ -8,6 +8,7 @@ import {
   readyRunnerLabel,
   removeReadyReviewLoop,
   setReadyReviewLoopDepth,
+  setReadyReviewLoopModelEffort,
   setReadyReviewLoopRunner,
   setReadyReviewLoopSessionIntent,
 } from './ready-workspace-review-request-model.js';
@@ -20,6 +21,15 @@ test('ready workspace review request model labels and creates loops', () => {
     id: 2,
     runner: 'claude',
     sessionIntent: 'reset',
+    model: 'opus',
+    effort: '',
+  });
+  assert.deepEqual(createReadyReviewLoop(3, 'pi'), {
+    id: 3,
+    runner: 'pi',
+    sessionIntent: 'reset',
+    model: 'grok-4.6',
+    effort: 'medium',
   });
 });
 
@@ -32,12 +42,12 @@ test('ready workspace review request model mutates loops with max and minimum gu
   assert.deepEqual(state, {
     loops: [
       { id: 1, runner: 'claude', sessionIntent: 'reset' },
-      { id: 2, runner: 'claude', sessionIntent: 'reset' },
+      { id: 2, runner: 'claude', sessionIntent: 'reset', model: 'opus', effort: '' },
     ],
     nextId: 3,
   });
   assert.deepEqual(removeReadyReviewLoop(state.loops, 1), [
-    { id: 2, runner: 'claude', sessionIntent: 'reset' },
+    { id: 2, runner: 'claude', sessionIntent: 'reset', model: 'opus', effort: '' },
   ]);
   assert.deepEqual(
     removeReadyReviewLoop([{ id: 1, runner: 'claude', sessionIntent: 'resume' }], 1),
@@ -45,8 +55,10 @@ test('ready workspace review request model mutates loops with max and minimum gu
   );
   assert.deepEqual(setReadyReviewLoopRunner(state.loops, 2, 'codex'), [
     { id: 1, runner: 'claude', sessionIntent: 'reset' },
-    { id: 2, runner: 'codex', sessionIntent: 'reset' },
+    { id: 2, runner: 'codex', sessionIntent: 'reset', model: 'gpt-6-astra', effort: 'high' },
   ]);
+  const customized = setReadyReviewLoopModelEffort(state.loops, 2, 'sonnet', 'low');
+  assert.deepEqual(setReadyReviewLoopRunner(customized, 2, 'claude'), customized);
   assert.deepEqual(setReadyReviewLoopDepth(state.loops, 1, 'full-live'), [
     {
       id: 1,
@@ -54,11 +66,15 @@ test('ready workspace review request model mutates loops with max and minimum gu
       sessionIntent: 'reset',
       validationDepth: 'full-live',
     },
-    { id: 2, runner: 'claude', sessionIntent: 'reset' },
+    { id: 2, runner: 'claude', sessionIntent: 'reset', model: 'opus', effort: '' },
   ]);
   assert.deepEqual(setReadyReviewLoopSessionIntent(state.loops, 2, 'resume'), [
     { id: 1, runner: 'claude', sessionIntent: 'reset' },
-    { id: 2, runner: 'claude', sessionIntent: 'resume' },
+    { id: 2, runner: 'claude', sessionIntent: 'resume', model: 'opus', effort: '' },
+  ]);
+  assert.deepEqual(setReadyReviewLoopModelEffort(state.loops, 2, 'sonnet', 'low'), [
+    { id: 1, runner: 'claude', sessionIntent: 'reset' },
+    { id: 2, runner: 'claude', sessionIntent: 'reset', model: 'sonnet', effort: 'low' },
   ]);
 
   state = addReadyReviewLoop({
@@ -83,6 +99,8 @@ test('ready workspace review request model builds ordered request payload', () =
         runner: 'codex',
         validationDepth: 'full-live',
         sessionIntent: 'reset',
+        model: 'gpt-6-astra',
+        effort: 'low',
       },
     ],
     'claude',
@@ -93,12 +111,21 @@ test('ready workspace review request model builds ordered request payload', () =
     payload.loops.map((loop) => [
       loop.order,
       loop.runner,
+      loop.model,
+      loop.effort,
       loop.validationDepth,
       loop.sessionIntent,
     ]),
     [
-      [1, 'claude', 'static-code', 'resume'],
-      [2, 'codex', 'full-live', 'reset'],
+      [1, 'claude', undefined, undefined, 'static-code', 'resume'],
+      [2, 'codex', 'gpt-6-astra', 'low', 'full-live', 'reset'],
     ],
+  );
+
+  const piPayload = readyReviewLoopRequestPayload([createReadyReviewLoop(1, 'pi')], 'claude');
+  assert.equal(piPayload.requireCrossRunner, true);
+  assert.deepEqual(
+    piPayload.loops.map((loop) => [loop.runner, loop.model, loop.effort]),
+    [['pi', 'grok-4.6', 'medium']],
   );
 });

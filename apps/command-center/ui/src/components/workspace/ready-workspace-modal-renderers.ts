@@ -10,8 +10,12 @@ import type {
 } from '@farmslot/protocol';
 import { reviewValidationDepthForLoop } from '@farmslot/protocol';
 
+import '../shared/runner-model-effort-picker.js';
+
 import { reviewHasPendingContinuationPhases } from '../../utils/review-gate-display.js';
+import type { EffortLevel } from '../../utils/runner-options.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
+import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
@@ -21,6 +25,8 @@ export type ReviewRunnerChoice = ReviewLoopRequest['runner'];
 export interface ReviewLoopDraft {
   id: number;
   runner: ReviewRunnerChoice | '';
+  model?: string;
+  effort?: EffortLevel;
   validationDepth?: ReviewValidationDepth;
   sessionIntent: ReviewSessionIntent;
 }
@@ -72,6 +78,7 @@ export interface ReadyReviewRequestModalContext {
   addLoop: () => void;
   removeLoop: (id: number) => void;
   setRunner: (id: number, runner: ReviewRunnerChoice) => void;
+  setModelEffort: (id: number, model: string, effort: EffortLevel) => void;
   setDepth: (id: number, validationDepth: ReviewValidationDepth) => void;
   setSessionIntent: (id: number, sessionIntent: ReviewSessionIntent) => void;
   submit: () => void | Promise<void>;
@@ -97,9 +104,8 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
             <div class="rdy-review-modal-eyebrow">Independent review</div>
             <h3>Build review sequence</h3>
             <p>
-              Each row runs after the previous row passes. Choose another runner to require runner
-              diversity, and choose whether that runner continues its same-run context or starts
-              clean.
+              Each row runs after the previous row passes. Choose runner, model, and effort, then
+              whether that runner continues its same-run context or starts clean.
             </p>
           </div>
           <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
@@ -110,70 +116,86 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
             const validationDepth =
               loop.validationDepth ?? reviewValidationDepthForLoop(index, ctx.loops.length);
             return html`
-              <div class="rdy-review-loop-row">
-                <span class="rdy-review-loop-index">${index + 1}</span>
-                <div class="rdy-review-runner-picker" aria-label="Review runner">
-                  ${(
-                    [ctx.currentRunner, 'claude', 'codex', 'cursor', 'grok', 'pi'].filter(
-                      (runner, runnerIndex, runners) =>
-                        runner && runners.indexOf(runner) === runnerIndex,
-                    ) as ReviewRunnerChoice[]
-                  ).map(
-                    (runner) => html`
-                      <button
-                        class="rdy-runner-chip ${selectedRunner === runner ? 'active' : ''}"
-                        @click=${() => ctx.setRunner(loop.id, runner)}
-                        aria-pressed=${selectedRunner === runner ? 'true' : 'false'}
-                      >
-                        ${ctx.runnerLabel(runner)}
-                      </button>
-                    `,
-                  )}
+              <div class="rdy-review-loop">
+                <div class="rdy-review-loop-row">
+                  <span class="rdy-review-loop-index">${index + 1}</span>
+                  <div class="rdy-review-runner-picker" aria-label="Review runner">
+                    ${(
+                      [ctx.currentRunner, 'claude', 'codex', 'cursor', 'grok', 'pi'].filter(
+                        (runner, runnerIndex, runners) =>
+                          runner && runners.indexOf(runner) === runnerIndex,
+                      ) as ReviewRunnerChoice[]
+                    ).map(
+                      (runner) => html`
+                        <button
+                          class="rdy-runner-chip ${selectedRunner === runner ? 'active' : ''}"
+                          @click=${() => ctx.setRunner(loop.id, runner)}
+                          aria-pressed=${selectedRunner === runner ? 'true' : 'false'}
+                        >
+                          ${ctx.runnerLabel(runner)}
+                        </button>
+                      `,
+                    )}
+                  </div>
+                  <div class="rdy-review-depth-picker" aria-label="Validation depth">
+                    ${(['static-code', 'full-live'] as ReviewValidationDepth[]).map(
+                      (candidate) => html`
+                        <button
+                          class="rdy-runner-chip ${validationDepth === candidate ? 'active' : ''}"
+                          title=${candidate === 'static-code'
+                            ? 'Static analysis only: no build, no tests, no recipe.'
+                            : 'Final live validation: recipe/evidence checks may run.'}
+                          @click=${() => ctx.setDepth(loop.id, candidate)}
+                          aria-pressed=${validationDepth === candidate ? 'true' : 'false'}
+                        >
+                          ${candidate === 'static-code' ? 'Static' : 'Full live'}
+                        </button>
+                      `,
+                    )}
+                  </div>
+                  <div class="rdy-review-session-picker" aria-label="Reviewer session">
+                    ${(['resume', 'reset'] as ReviewSessionIntent[]).map(
+                      (candidate) => html`
+                        <button
+                          class="rdy-runner-chip ${loop.sessionIntent === candidate
+                            ? 'active'
+                            : ''}"
+                          title=${candidate === 'resume'
+                            ? "Continue this runner's same-run review context; start fresh if it cannot be resumed."
+                            : 'Reset reviewer reasoning and start clean in the same runner window.'}
+                          @click=${() => ctx.setSessionIntent(loop.id, candidate)}
+                          aria-pressed=${loop.sessionIntent === candidate ? 'true' : 'false'}
+                        >
+                          ${candidate === 'resume' ? 'Continue' : 'Fresh'}
+                        </button>
+                      `,
+                    )}
+                  </div>
+                  <span class="rdy-review-loop-kind"
+                    >${selectedRunner === ctx.currentRunner
+                      ? 'worker runner'
+                      : 'runner diversity'}</span
+                  >
+                  <button
+                    class="rdy-modal-close"
+                    ?disabled=${ctx.loops.length <= 1}
+                    @click=${() => ctx.removeLoop(loop.id)}
+                  >
+                    Remove
+                  </button>
                 </div>
-                <div class="rdy-review-depth-picker" aria-label="Validation depth">
-                  ${(['static-code', 'full-live'] as ReviewValidationDepth[]).map(
-                    (candidate) => html`
-                      <button
-                        class="rdy-runner-chip ${validationDepth === candidate ? 'active' : ''}"
-                        title=${candidate === 'static-code'
-                          ? 'Static analysis only: no build, no tests, no recipe.'
-                          : 'Final live validation: recipe/evidence checks may run.'}
-                        @click=${() => ctx.setDepth(loop.id, candidate)}
-                        aria-pressed=${validationDepth === candidate ? 'true' : 'false'}
-                      >
-                        ${candidate === 'static-code' ? 'Static' : 'Full live'}
-                      </button>
-                    `,
-                  )}
+                <div class="rdy-review-loop-runtime">
+                  <runner-model-effort-picker
+                    .runner=${selectedRunner}
+                    .model=${loop.model ?? ''}
+                    .effort=${loop.effort ?? ''}
+                    .showRunner=${false}
+                    .showDefaultEffort=${false}
+                    @runner-model-effort-change=${(
+                      event: CustomEvent<RunnerModelEffortChangeDetail>,
+                    ) => ctx.setModelEffort(loop.id, event.detail.model, event.detail.effort)}
+                  ></runner-model-effort-picker>
                 </div>
-                <div class="rdy-review-session-picker" aria-label="Reviewer session">
-                  ${(['resume', 'reset'] as ReviewSessionIntent[]).map(
-                    (candidate) => html`
-                      <button
-                        class="rdy-runner-chip ${loop.sessionIntent === candidate ? 'active' : ''}"
-                        title=${candidate === 'resume'
-                          ? "Continue this runner's same-run review context; start fresh if it cannot be resumed."
-                          : 'Reset reviewer reasoning and start clean in the same runner window.'}
-                        @click=${() => ctx.setSessionIntent(loop.id, candidate)}
-                        aria-pressed=${loop.sessionIntent === candidate ? 'true' : 'false'}
-                      >
-                        ${candidate === 'resume' ? 'Continue' : 'Fresh'}
-                      </button>
-                    `,
-                  )}
-                </div>
-                <span class="rdy-review-loop-kind"
-                  >${selectedRunner === ctx.currentRunner
-                    ? 'worker runner'
-                    : 'runner diversity'}</span
-                >
-                <button
-                  class="rdy-modal-close"
-                  ?disabled=${ctx.loops.length <= 1}
-                  @click=${() => ctx.removeLoop(loop.id)}
-                >
-                  Remove
-                </button>
               </div>
             `;
           })}

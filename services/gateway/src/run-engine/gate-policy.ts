@@ -175,6 +175,7 @@ export function buildPublishGateReviewStatus({
   requestedRunner,
   workerRunner,
   model,
+  effort,
   reviewId,
   reviewedPackage,
 }: {
@@ -184,6 +185,7 @@ export function buildPublishGateReviewStatus({
   requestedRunner: string | null;
   workerRunner?: string | null;
   model?: string | null;
+  effort?: string | null;
   reviewId?: string;
   reviewedPackage?: Pick<
     ReadyGatePrPackage,
@@ -227,6 +229,9 @@ export function buildPublishGateReviewStatus({
     source,
     runner: reviewRunner,
     model: reviewResult.model ?? model ?? null,
+    ...(reviewResult.effort?.trim() || effort?.trim()
+      ? { effort: reviewResult.effort?.trim() || effort?.trim() }
+      : {}),
     reviewerSessionId:
       finalAttempt.usage?.runnerSessionId ?? reviewResult.usage?.runnerSessionId ?? null,
     crossRunner:

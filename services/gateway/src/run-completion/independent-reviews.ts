@@ -39,6 +39,7 @@ export async function materializeIndependentReviewArtifacts(
         typeof out.model === 'string'
           ? out.model
           : (run.metrics.actualModel ?? run.metrics.model ?? null),
+      ...(typeof out.effort === 'string' && out.effort.trim() ? { effort: out.effort.trim() } : {}),
       reviewerSessionId:
         finalAttempt.usage?.runnerSessionId ??
         (typeof out.reviewerSessionId === 'string' ? out.reviewerSessionId : null),
@@ -123,6 +124,7 @@ export async function materializeIndependentReviewArtifacts(
       typeof out.model === 'string'
         ? out.model
         : (run.metrics.actualModel ?? run.metrics.model ?? null),
+    ...(typeof out.effort === 'string' && out.effort.trim() ? { effort: out.effort.trim() } : {}),
     reviewerSessionId:
       out.usage &&
       typeof out.usage === 'object' &&

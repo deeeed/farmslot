@@ -19,6 +19,28 @@ test('an item with no dispatch config, wait policy included, stays hidden', () =
   assert.equal(summarizeBacklogDispatchConfig({}).visible, false);
 });
 
+test('pending review loops show model and effort in the read-only summary', () => {
+  const summary = summarizeBacklogDispatchConfig({
+    pendingReviewPlan: [
+      {
+        order: 1,
+        runner: 'pi',
+        model: 'grok-4.6',
+        effort: 'low',
+        validationDepth: 'static-code',
+      },
+    ],
+  });
+  assert.equal(summary.visible, true);
+  assert.deepEqual(summary.reviewSteps, [
+    {
+      label: 'review 1',
+      runner: 'pi',
+      detail: 'grok-4.6 / low / static-code',
+    },
+  ]);
+});
+
 test('every protocol wait policy renders, so none is silently dropped', () => {
   for (const policy of RESOURCE_POSTURE_WAIT_POLICIES) {
     const summary = summarizeBacklogDispatchConfig({ waitPolicy: policy });
