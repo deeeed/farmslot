@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-17T06:58:34.962Z",
+  "host": "macwork",
+  "scenario": "hook-smoke",
+  "runner": "pi",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-4zqVYP",
+  "slotId": "runner-validate-macwork-pi",
+  "session": "runner-validate-pi-hook-smoke-18333",
+  "launchMode": "pi-print",
+  "registeredExpected": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
+  "registeredInstalled": ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"],
+  "observedEvents": ["SessionStart", "Stop", "UserPromptSubmit"],
+  "newRows": [
+    {
+      "schemaVersion": 1,
+      "observedAt": 1789628306855,
+      "timestamp": 1789628306855,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "pi-session",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-4zqVYP",
+      "tmuxPane": "%460",
+      "runner": "pi",
+      "turnActive": false,
+      "rootSessionId": "pi-session"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1789628306856,
+      "timestamp": 1789628306856,
+      "hook_event_name": "UserPromptSubmit",
+      "event": "UserPromptSubmit",
+      "session_id": "pi-session",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-4zqVYP",
+      "tmuxPane": "%460",
+      "runner": "pi",
+      "turnStartedAt": 1789628306856,
+      "turnActive": true,
+      "rootSessionId": "pi-session"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1789628308582,
+      "timestamp": 1789628308582,
+      "hook_event_name": "Stop",
+      "event": "Stop",
+      "session_id": "pi-session",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-4zqVYP",
+      "tmuxPane": "%460",
+      "runner": "pi",
+      "turnStartedAt": 1789628306856,
+      "turnActive": false,
+      "rootSessionId": "pi-session"
+    }
+  ],
+  "tmuxPaneSeen": true,
+  "requiredEventsSeen": {
+    "SessionStart": true,
+    "UserPromptSubmit": true,
+    "Stop": true
+  },
+  "unknownEvents": [],
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.95Cvy5/launch-2b50f19e28d319c5.sh\nTMUX_HOOK_OK\nbash-5.3$"
+}

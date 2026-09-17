@@ -92,6 +92,7 @@ export function registerWorkspaceCommand(program: Command): void {
             codex: runnerPath('codex'),
             cursor: runnerPath('cursor-agent'),
             grok: runnerPath('grok'),
+            pi: runnerPath('pi'),
           },
         });
         writePool(poolAbsPath, pool);

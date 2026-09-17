@@ -6,6 +6,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 - `farmslot execution-template` no longer shows a run-mode column or accepts `--run-mode` on `new`; `--run-mode` elsewhere is optional and matches project default rules.
 
+- Pool onboarding accepts optional `pi_path` for the PI coding-agent binary.
+
 - Configure static-review publication and its PR team when creating runs.
 
 - Select farm-owned QA profiles and JSON skill inputs with `run create` and `dispatch preview` using explicit `--flow-type qa`.

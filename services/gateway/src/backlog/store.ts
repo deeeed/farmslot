@@ -156,7 +156,14 @@ const BACKLOG_UPDATE_KEYS = new Set([
 
 const DISPATCH_MODES = new Set(['interactive', 'autonomous']);
 const DEV_INTERACTIVE_PROFILES = new Set(['lightweight', 'reviewed']);
-const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
+const REVIEW_RUNNERS = new Set<ReviewRunnerId>([
+  'claude',
+  'codex',
+  'cursor',
+  'grok',
+  'opencode',
+  'pi',
+]);
 
 let _broadcast: BroadcastFn | null = null;
 const items: BacklogRecord[] = [];

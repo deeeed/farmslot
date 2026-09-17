@@ -2,20 +2,22 @@ import * as claude from './claude.mjs';
 import * as codex from './codex.mjs';
 import * as cursor from './cursor.mjs';
 import * as grok from './grok.mjs';
+import * as pi from './pi.mjs';
 
 const RUNNERS = {
   claude,
   codex,
   cursor,
   grok,
+  pi,
 };
 
 /** Preset groups for orchestrator --runner */
 export const RUNNER_GROUPS = {
   both: ['claude', 'codex'],
-  hooks: ['claude', 'codex'],
+  hooks: ['claude', 'codex', 'pi'],
   'pane-only': ['cursor'],
-  all: ['claude', 'codex', 'cursor', 'grok'],
+  all: ['claude', 'codex', 'cursor', 'grok', 'pi'],
 };
 
 export function getRunnerAdapter(runnerId) {

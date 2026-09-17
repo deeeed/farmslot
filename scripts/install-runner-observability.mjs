@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
 import {
@@ -1240,6 +1241,106 @@ function grokTrustedFolderPaths(content) {
  * Seed that record for the slot checkout so a fresh slot launches straight to the
  * composer; a TUI prompt is never answered from pane text.
  */
+const PI_XAI_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
+
+function jwtExpMs(token) {
+  try {
+    const parts = String(token).split('.');
+    if (parts.length !== 3) return undefined;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Same xAI OAuth client as PI `/login xai`. Do not log tokens. */
+function grokCliXaiOauth() {
+  const grokDir = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
+  const authPath = path.join(grokDir, 'auth.json');
+  if (!fs.existsSync(authPath)) return null;
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  for (const [id, value] of Object.entries(raw)) {
+    if (!id.includes('auth.x.ai') || !id.includes(PI_XAI_CLIENT_ID)) continue;
+    if (!value || typeof value !== 'object') continue;
+    const access = value.key;
+    const refresh = value.refresh_token;
+    if (typeof access !== 'string' || access.length < 50) continue;
+    if (typeof refresh !== 'string' || !refresh) continue;
+    const expires = jwtExpMs(access);
+    return {
+      type: 'oauth',
+      access,
+      refresh,
+      ...(typeof expires === 'number' ? { expires } : {}),
+    };
+  }
+  return null;
+}
+
+function seedPiXaiFromGrokCli() {
+  let oauth;
+  try {
+    oauth = grokCliXaiOauth();
+  } catch {
+    return { seeded: false, reason: 'grok-xai-unreadable' };
+  }
+  if (!oauth) return { seeded: false, reason: 'no-grok-xai' };
+  try {
+    const piDir = path.join(os.homedir(), '.pi', 'agent');
+    fs.mkdirSync(piDir, { recursive: true, mode: 0o700 });
+    const authPath = path.join(piDir, 'auth.json');
+    let store = {};
+    if (fs.existsSync(authPath)) {
+      const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8') || '{}');
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) store = parsed;
+    }
+    if (store.xai && typeof store.xai === 'object' && store.xai.type) {
+      return { seeded: false, reason: 'pi-xai-present' };
+    }
+    store.xai = oauth;
+    const tmp = `${authPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(store)}\n`, { mode: 0o600 });
+    fs.renameSync(tmp, authPath);
+    fs.chmodSync(authPath, 0o600);
+    return { seeded: true };
+  } catch {
+    return { seeded: false, reason: 'grok-xai-unreadable' };
+  }
+}
+
+function installPi({ repo, runtimeDir, slotId }) {
+  if (!repo) throw new Error('missing --repo');
+  const repoPath = path.resolve(repo);
+  const obsDir = path.resolve(repoPath, runtimeDir || '.agent', '.observability');
+  fs.mkdirSync(obsDir, { recursive: true });
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runners');
+  for (const name of [
+    'pi-farmslot-observability.ts',
+    'pi-farmslot-hook-writer.mjs',
+    'pi-farmslot-providers.mjs',
+  ]) {
+    const source = path.join(srcDir, name);
+    if (!fs.existsSync(source)) throw new Error(`missing PI observability file: ${source}`);
+    fs.copyFileSync(source, path.join(obsDir, name));
+  }
+  const xaiSeed = seedPiXaiFromGrokCli();
+  writeObservabilityInstallManifest(obsDir, {
+    runner: 'pi',
+    slotId: slotId || null,
+    events: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'],
+    xaiSeed: xaiSeed.seeded ? 'grok-cli' : xaiSeed.reason,
+  });
+  ensureCompatObservabilityLink(repoPath, obsDir);
+  return { obsDir };
+}
+
 function installGrok({ repo }) {
   if (!repo) throw new Error('missing --repo');
   const grokDir = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
@@ -1265,6 +1366,7 @@ async function install(args) {
   if (runner === 'claude') installClaude(args);
   else if (runner === 'codex') await installCodex(args);
   else if (runner === 'grok') installGrok(args);
+  else if (runner === 'pi') installPi(args);
   else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 

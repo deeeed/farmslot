@@ -65,8 +65,14 @@ function runnersForArg(runnerArg) {
 
 function scenariosForArg(scenarioArg) {
   if (scenarioArg === 'all') return listScenarios();
-  if (!SCENARIOS[scenarioArg]) throw new Error(`unsupported scenario: ${scenarioArg}`);
-  return [scenarioArg];
+  const names = scenarioArg
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  for (const name of names) {
+    if (!SCENARIOS[name]) throw new Error(`unsupported scenario: ${name}`);
+  }
+  return names;
 }
 
 async function main() {
