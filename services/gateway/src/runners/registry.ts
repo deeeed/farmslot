@@ -484,6 +484,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
     promptSubmitKey: 'Enter',
+    // PI has no sandbox CLI flags yet. `--approve` is project trust only, set in
+    // buildPiLaunch. Add a sandboxed flag here when PI exposes one.
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_PI_MODEL,

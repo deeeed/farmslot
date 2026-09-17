@@ -11,8 +11,8 @@ function obsDir() {
 
 function sessionIdFrom(ctx: { sessionManager?: { getSessionFile?: () => string | null } }) {
   const file = ctx.sessionManager?.getSessionFile?.() ?? '';
-  if (!file) return 'pi-session';
-  return path.basename(file).replace(/\.jsonl?$/, '') || 'pi-session';
+  if (!file) return `pi-session-${process.pid}`;
+  return path.basename(file).replace(/\.jsonl?$/, '') || `pi-session-${process.pid}`;
 }
 
 function promptText(value: unknown): string | null {
@@ -42,6 +42,8 @@ export default async function (pi: {
     }
   }
 
+  // Operator-owned slot: this extension is copied per run. Auto-trust this checkout
+  // so launch is not blocked on a TUI prompt. Do not persist (`remember`).
   pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
   pi.on(

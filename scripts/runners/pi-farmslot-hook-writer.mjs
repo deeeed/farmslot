@@ -23,8 +23,13 @@ export function runnerPromptDigest(message) {
 function loadSentinel(sentDir, digest) {
   const full = path.join(sentDir, `${digest}.json`);
   if (!fs.existsSync(full)) return null;
-  const body = JSON.parse(fs.readFileSync(full, 'utf8'));
-  return { digest: body.digest || digest, sentAt: body.sentAt };
+  try {
+    const body = JSON.parse(fs.readFileSync(full, 'utf8'));
+    return { digest: body.digest || digest, sentAt: body.sentAt };
+  } catch {
+    // Corrupt sentinel must not drop the hook write.
+    return null;
+  }
 }
 
 function matchSentinelForPrompt(sentDir, promptText) {
@@ -40,7 +45,12 @@ function matchSentinelForPrompt(sentDir, promptText) {
     throw error;
   }
   for (const file of files) {
-    const body = JSON.parse(fs.readFileSync(path.join(sentDir, file), 'utf8'));
+    let body;
+    try {
+      body = JSON.parse(fs.readFileSync(path.join(sentDir, file), 'utf8'));
+    } catch {
+      continue;
+    }
     const prompt = typeof body.prompt === 'string' ? body.prompt : '';
     if (
       needle &&

@@ -81,11 +81,12 @@ function modelEntry(id) {
 
 export async function resolvePiProviderCatalog(env = process.env, opts = {}) {
   const sources = listPiProviderSources(env);
-  const catalog = [];
-  for (const source of sources) {
-    const ids = await fetchOpenAiModelIds(source.baseUrl, source.apiKey, opts);
-    if (ids.length === 0) continue;
-    catalog.push({ ...source, models: ids.map(modelEntry) });
-  }
-  return catalog;
+  const resolved = await Promise.all(
+    sources.map(async (source) => {
+      const ids = await fetchOpenAiModelIds(source.baseUrl, source.apiKey, opts);
+      if (ids.length === 0) return null;
+      return { ...source, models: ids.map(modelEntry) };
+    }),
+  );
+  return resolved.filter(Boolean);
 }
