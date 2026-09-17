@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - The execution-template catalog offers the same templates for every run mode; a run's mode now only matches the project's default rules.
 
-- Register `pi` as a TUI-first worker runner. Launch copies a Farmslot PI extension that writes `hooks.jsonl` (prompt-accepted digest, turn complete) without parsing pane text. Default model is `grok-4.6` via xAI. The same extension registers live OpenAI-compatible sources (Ollama, LiteLLM, `FARMSLOT_PI_ROUTER_URL`) so dispatch can pass `ollama/<id>` or `litellm/<id>`.
+- Register `pi` as a TUI-first worker runner. Launch copies a Farmslot PI extension that writes `hooks.jsonl`, delivers `TASK.md` on session start, and registers `farmslot_mark` / `farmslot_signal` tools plus `/farmslot` commands. Default model is `grok-4.6`. `--thinking` applies to every PI model (default `medium`; use `low` for cheap test runs). OpenAI-compatible sources (Ollama, LiteLLM, `FARMSLOT_PI_ROUTER_URL`) still register live `/v1/models` ids.
 
 - Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated "Recorded in canonical library" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts.
 

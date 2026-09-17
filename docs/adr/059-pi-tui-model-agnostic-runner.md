@@ -24,6 +24,10 @@ Pool `pi_path` / `{pi_path}` resolve the binary. Inline launch does not require 
 
 `acceptsModel` is permissive. The default is `grok-4.6`, launched as `xai/grok-4.6`. Operators may pass any PI-catalog model (`provider/id` or a bare id). Cursor subscription quota stays on the `cursor` runner; PI has no Cursor provider.
 
+Thinking is a PI harness flag (`--thinking`), not a Grok-only concept. Dispatch effort maps to `off | minimal | low | medium | high | xhigh | max` for every PI model. Models may clamp the level. Default is `medium`. Pick `low` for cheap test runs.
+
+The Farmslot `-e` extension delivers `TASK.md` on `session_start` (no tmux post-launch prompt), registers `farmslot_mark` / `farmslot_signal` tools, a footer status line, and `/farmslot` plus `/farmslot-task`.
+
 ### OpenAI-compatible routers and local models
 
 Farmslot does not ship a routing engine. The PI extension registers OpenAI-compatible endpoints that are already running:

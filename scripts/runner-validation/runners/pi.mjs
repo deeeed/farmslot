@@ -78,6 +78,7 @@ export function buildLaunchCommand(
     '--approve',
     '--no-session',
     `-e ${shSingleQuote(ext)}`,
+    `--thinking ${shSingleQuote(process.env.FARMSLOT_PI_THINKING || 'low')}`,
     `--model ${shSingleQuote(model)}`,
     `-p ${shSingleQuote(prompt)}`,
   ].join(' ');
@@ -88,15 +89,25 @@ export function launchMode() {
 }
 
 /** Production-parity TUI. Prompt is delivered after SessionStart, not via -p. */
-export function buildInteractiveLaunchCommand(repo, runtimeDir, model = 'xai/grok-4.6') {
+export function buildInteractiveLaunchCommand(
+  repo,
+  runtimeDir,
+  model = 'xai/grok-4.6',
+  extra = {},
+) {
   assertBinary();
   const bin = resolveBinary();
   const ext = extensionPath(repo, runtimeDir);
   const dir = obsDir(repo, runtimeDir);
+  const thinking = extra.thinking || process.env.FARMSLOT_PI_THINKING || 'low';
+  const taskFile = extra.taskFile;
   return [
     `FARMSLOT_OBS_DIR=${shSingleQuote(dir)}`,
     'FARMSLOT_RUNNER=pi',
+    `FARMSLOT_THINKING=${shSingleQuote(thinking)}`,
+    ...(taskFile ? [`FARMSLOT_TASK_FILE=${shSingleQuote(taskFile)}`] : []),
     shSingleQuote(bin),
+    `--thinking ${shSingleQuote(thinking)}`,
     '--approve',
     `-e ${shSingleQuote(ext)}`,
     `--model ${shSingleQuote(model)}`,

@@ -1789,7 +1789,10 @@ describe('buildLaunchCommand', () => {
       assert.equal(runnerDefaultModel('pi'), DEFAULT_PI_MODEL);
       assert.equal(def.acceptsModel('grok-4.6'), true);
       assert.equal(def.acceptsModel('gpt-6-astra'), true);
-      assert.equal(runnerNeedsPostLaunchPrompt('pi'), true);
+      assert.equal(def.acceptsEffort?.('grok-4.6', 'low'), true);
+      assert.equal(def.acceptsEffort?.('ollama/qwen2.5-coder', 'low'), true);
+      assert.equal(def.acceptsEffort?.('xai/grok-4.6', 'off'), true);
+      assert.equal(runnerNeedsPostLaunchPrompt('pi'), false);
     });
 
     it('launches an interactive TUI with the Farmslot extension and no print mode', () => {
@@ -1801,6 +1804,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /-e '\/tmp\/repo\/\.agent\/\.observability\/pi-farmslot-observability\.ts'/,
       );
+      assert.match(cmd, /--thinking medium/);
       assert.match(cmd, /--model xai\/grok-4\.6/);
       assert.doesNotMatch(cmd, /(^|[\s])-p([\s]|$)/);
       assert.doesNotMatch(cmd, /--mode json/);
@@ -1810,13 +1814,17 @@ describe('buildLaunchCommand', () => {
     it('uses the configured pi_path and selected model', () => {
       const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
       const cmd = buildLaunchCommand(vars, 'pi', 'grok-4.5', PROMPT);
-      assert.match(cmd, /\/usr\/local\/bin\/pi --approve -e /);
+      assert.match(cmd, /\/usr\/local\/bin\/pi --thinking medium --approve -e /);
       assert.match(cmd, /--model xai\/grok-4\.5/);
     });
 
     it('passes OpenAI-compatible router ids through without an xAI prefix', () => {
       const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
-      const cmd = buildLaunchCommand(vars, 'pi', 'ollama/qwen2.5-coder', PROMPT);
+      const cmd = buildLaunchCommand(vars, 'pi', 'ollama/qwen2.5-coder', PROMPT, {
+        effort: 'low',
+      });
+      assert.match(cmd, /--thinking low/);
+      assert.match(cmd, /FARMSLOT_THINKING='low'/);
       assert.match(cmd, /--model ollama\/qwen2\.5-coder/);
       assert.doesNotMatch(cmd, /xai\/ollama/);
     });

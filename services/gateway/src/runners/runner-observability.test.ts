@@ -171,6 +171,7 @@ test('remote observability install falls back when an immutable bundle is incomp
       path.join(supportRoot, 'scripts/runners/pi-farmslot-providers.mjs'),
       'providers\n',
     );
+    writeFileSync(path.join(supportRoot, 'scripts/runners/pi-farmslot-task.mjs'), 'task\n');
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
   } finally {

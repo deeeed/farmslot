@@ -6,7 +6,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Execution-template references and catalog options no longer carry `runMode`; run mode remains a run-level input on default rules and catalog queries. Records persisted with the old field still validate.
 
-- Add `pi` as a review/worker runner id and `DEFAULT_PI_MODEL` (`grok-4.6`) for the PI TUI worker spike.
+- Add `pi` as a review/worker runner id, `DEFAULT_PI_MODEL` (`grok-4.6`), and harness-wide `PI_THINKING_LEVELS` / `DEFAULT_PI_THINKING` (`medium`).
 
 - Add `FeedbackCandidate`, `FeedbackConsumption` and `KnowledgeDestination` contracts; retrospectives carry `feedbackCandidates`/`feedbackSummary`, learnings drafts carry their canonical `targetRepo`, destination and unconsumed feedback, and PR monitor feedback signals record the reviewed commit.
 - Allow lightweight farm-owned QA input field declarations with admission validation.

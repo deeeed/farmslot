@@ -1342,6 +1342,7 @@ test('pi install copies the Farmslot observability extension into the slot runti
   assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-hook-writer.mjs')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-providers.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-task.mjs')), true);
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');

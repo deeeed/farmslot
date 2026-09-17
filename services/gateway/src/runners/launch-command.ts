@@ -7,6 +7,8 @@ import {
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   DEFAULT_PI_MODEL,
+  DEFAULT_PI_THINKING,
+  isPiThinkingLevel,
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
@@ -68,6 +70,7 @@ export function resolveRunnerEffort(runnerId: string, effort?: string | null): s
   if (trimmed) return trimmed;
   if (runner === 'codex') return DEFAULT_CODEX_EFFORT;
   if (runner === 'grok') return DEFAULT_GROK_EFFORT;
+  if (runner === 'pi') return DEFAULT_PI_THINKING;
   return undefined;
 }
 
@@ -188,6 +191,8 @@ export function buildPiLaunch(options: {
   runtimeDir?: string;
   slotId?: string;
   safetyTier?: SafetyTier;
+  effort?: string | null;
+  taskFile?: string | null;
 }): string {
   const effectiveModel =
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
@@ -197,12 +202,22 @@ export function buildPiLaunch(options: {
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
   const flagList = runnerFlagsForTier('pi', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
+  const thinkingFlag = piThinkingFlag(options.effort);
+  const thinking = (options.effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+  const taskFile = options.taskFile?.trim()
+    ? path.isAbsolute(options.taskFile)
+      ? options.taskFile
+      : path.posix.join(options.repo, options.taskFile)
+    : '';
   const envPrefix = [
     `FARMSLOT_OBS_DIR=${shellQuote(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shellQuote(options.slotId ?? '')}`,
     'FARMSLOT_RUNNER=pi',
+    `FARMSLOT_THINKING=${shellQuote(thinking)}`,
+    `FARMSLOT_MODEL=${shellQuote(cliModel)}`,
+    ...(taskFile ? [`FARMSLOT_TASK_FILE=${shellQuote(taskFile)}`] : []),
   ].join(' ');
-  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
+  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment}${thinkingFlag} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
 }
 
 /**
@@ -262,6 +277,7 @@ export function buildInteractiveRefinementRunnerCommand(options: {
       model: options.model,
       repo: options.repo,
       safetyTier: options.safetyTier,
+      effort: options.effort,
     })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
@@ -464,6 +480,15 @@ function codexReasoningEffortFlag(effort?: string | null, model?: string | null)
     throw new Error(`Invalid Codex reasoning effort: ${effort}`);
   }
   return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
+}
+
+function piThinkingFlag(effort?: string | null): string {
+  const normalized = (effort?.trim() || DEFAULT_PI_THINKING).toLowerCase();
+  if (!isPiThinkingLevel(normalized)) {
+    throw new Error(`Invalid PI thinking level: ${effort}`);
+  }
+  assertSafeRunnerArgumentValue('thinking', normalized);
+  return ` --thinking ${quoteRunnerArgValue(normalized)}`;
 }
 
 function grokEffortFlag(effort?: string | null): string {
@@ -874,6 +899,8 @@ export function buildLaunchCommand(
           runtimeDir: opts.runtimeDir,
           slotId: vars.slotId,
           safetyTier: tier,
+          effort: resolvedEffort,
+          taskFile: opts.taskFile,
         }),
         installCommand,
       ),
