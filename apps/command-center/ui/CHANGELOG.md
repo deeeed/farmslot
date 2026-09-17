@@ -4,44 +4,30 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.13.0 - 2026-09-17
+
 - The execution-template picker no longer filters or shows a template run mode; the run's mode still selects the project default and the remembered per-mode choice.
-
 - Dispatch and comparison pickers include the `pi` runner, defaulting to `grok-4.6`, with a hint for Ollama/LiteLLM/router model ids.
-
 - Runner-session reopen and tmux attach controls copy a command for the named node instead of looking like they execute, keep the command visible if the clipboard is refused, and Open on host recovers a dead session then attaches the terminal to that pane.
-
 - Show PR feedback candidates (author kind, reviewed commit, revision, attribution, consumption state) on the retrospective rail and inbox card, and show the canonical library destination plus the "Recorded in canonical library" gate on learnings-draft cards.
 - Render farm-defined QA input fields across Dispatch, PR requests and automation; select QA domains in Dispatch.
 - Offer re-review of the latest PR changes from saved worktree review results.
-
 - Share workspace pins across run, terminal and slot views. Show worktrees alongside active terminals, provide searchable session cards with explicit session-ending controls, and expose review progress and checklists in an optional process panel.
-
 - Reuse terminal, conversation and checklist views for slot-free reviews, with Terminal or native execution. Hold reviews at the publish gate by default; keep the shared diff, comments and artifact viewer available in run history.
-
 - Keep manual Review runner and model choices consistent with other flows, including custom models; farm defaults remain overridable.
-
 - Use selectable review machines and a shared default QA profile picker; keep execution overrides and QA input JSON under expandable options.
-
 - Separate static Review from farm-configured QA profiles in PR requests and policies. Choose publication inheritance or overrides, and inspect or retry publication from run detail.
-
 - Launch static PR reviews on configured machines, inherit farm defaults, and keep on-device review on runtime slots.
-
 - A review run finished or blocked with "Review is stale" shows **Re-review on latest head**; it follows the chained run when the reviewer session was handed the follow-up, or opens the queued round in Need Review.
-
 - The PRs page opens on a "Mine" scope (PRs by your GitHub logins plus farmslot-run PRs, editable per browser from the ⚙ next to the pill, prefilled from the gateway's configured GitHub accounts); "Mine" counts PRs a run created, not PRs a run only worked on, and any PR you explicitly take over ("under my guard") from its detail pane; "All PRs" and "Monitored" remain. Clicking a card selects it and updates the URL. Reason chips name who requested changes, say "Fix pushed, awaiting re-review" once the author pushed after that verdict, and list who GitHub is still waiting on. "Need Review" groups PRs by what you must do next: re-review because the author pushed since your changes-requested, not reviewed yet, waiting on the author, reviewed by you, not ready.
-
 - The PRs page shows a loading placeholder while pull requests are fetched from GitHub and a pulsing "Fetching PR info…" note during background refreshes; merged and closed PRs are hidden behind the "Show merged / closed & history" toggle with a hidden count in the header; each card and list row carries a reason chip (merge conflict, failing checks by name, bot comments, changes requested by a reviewer, waiting for review, checks running) with the full list under "Why it needs you"; board cards name the PR author, board columns share the available width and empty columns collapse to their header; the Reviews tab is now "Need Review". The list arrives from the gateway's warm copy, so reloads and reconnects no longer wait on GitHub; the "ago" stamp reflects the GitHub fetch time and "Fetching PR info…" also shows while the gateway refreshes in the background.
-
 - Explain dispatch settings in a collapsible guide and field hints; match the worker-interface choice to existing buttons and reset unsupported Conversation selections to Terminal.
-
 - The run page keeps its direct `run.get` copy when the shared list row has trimmed decision payloads and renders the gate, review and recipe panels from it, refetching when the row moves on; gate approvals and step replays are no longer paused behind "Run refresh failed" on large fleets.
-
 - Select the local load balancer for gateway intelligence using its configured environment key, without an upstream sign-in flow.
-
 - Manage optional native configuration profiles, check their login status and retain the selected configuration when resuming a conversation.
-
 - Give enrolled native-only accounts a conversation workspace without farm navigation or background farm requests; clear prior account views on reconnect or credential changes.
-
 - Dispatch or queue native workers and use a task-bound conversation with tools, files and diffs. Open previous worker attempts from Run Detail and keep their history separate from the successor’s messages and controls. Resume stopped workers from decisions while preserving conversation and task progress, and keep controls reachable on long run pages.
 
 ## 0.12.0 - 2026-09-13

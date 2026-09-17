@@ -4,14 +4,14 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.12.0 - 2026-09-17
+
 - The run-session-command probe asserts copy affordance, the paste-on node, and `data-copy-state` instead of execute-looking button labels.
-
 - Let CDP checks accept or dismiss a confirmation only when its message matches the expected action.
-
 - Add real browser clicks to the CDP helper for fullscreen and other user-gesture checks.
-
 - Update native dispatch probes for the worker-interface button controls.
-
 - Add live validation controls for native worker profiles, conversation history, account changes, and load-balancer-backed Copilot alongside terminal runners.
 
 ## 0.11.0 - 2026-09-13

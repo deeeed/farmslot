@@ -4,34 +4,25 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.28.0 - 2026-09-17
+
 - Execution-template references and catalog options no longer carry `runMode`; run mode remains a run-level input on default rules and catalog queries. Records persisted with the old field still validate.
-
 - Add `pi` as a review/worker runner id and `DEFAULT_PI_MODEL` (`grok-4.6`) for the PI TUI worker spike.
-
 - Add `FeedbackCandidate`, `FeedbackConsumption` and `KnowledgeDestination` contracts; retrospectives carry `feedbackCandidates`/`feedbackSummary`, learnings drafts carry their canonical `targetRepo`, destination and unconsumed feedback, and PR monitor feedback signals record the reviewed commit.
 - Allow lightweight farm-owned QA input field declarations with admission validation.
-
 - Expose explicit tmux session termination with an inventory capability and expected process identity.
 - Retain a digest of the submitted review body so retries can reconcile an uncertain publication.
-
 - Allow terminal requests to target an allocated review run without a slot.
-
 - Expose managed-workspace review support in the native runner catalog.
-
 - Define farm-owned QA presets with JSON skill inputs and explicit legacy review migration contracts. Resolve static-review publication opt-in and overrides independently, retaining their policy source.
-
 - Add machine-owned static-review workspace placement and retained source/support bindings, while keeping runtime reviews and repairs on slots.
-
 - `run.rereviewLatestHead` starts a continuity review round on the PR's current head for a blocked or finished review-pr run.
-
 - `PRStatus` carries `reviewVerdicts` (each reviewer's standing APPROVED / CHANGES_REQUESTED), `reviewRequests` (teams and users GitHub still waits on) and `pushedAfterChangesRequested`.
-
 - `pr.list` accepts `force` and returns `fetchedAt` / `refreshing`; new `pr.list.updated` event (`PRListUpdatedPayload`) carries the gateway's refreshed list.
-
 - `computePRRecommendation` accepts `changesRequested`; a PR whose GitHub review decision is CHANGES_REQUESTED is recommended NEEDS_ATTENTION (after conflict, failing checks and actionable comments) instead of IN_REVIEW.
-
 - `RunDecision.payloadTrimmed` names the payload keys `run.list` left out; absent on `run.get`, `run.forSlot` and run events.
-
 - Define authenticated administration of native node owner assignments and the authenticated client workspace-access capability.
 - Define native worker transport, worker-capable runner choices, leased agent contexts, task-scoped replay, native parking recovery handles, named native configuration references and input controls pinned to a run and process generation.
 
