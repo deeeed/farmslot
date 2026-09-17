@@ -321,6 +321,41 @@ test('expandDispatchCmd attaches runner arguments before trailing shell commands
   );
 });
 
+test('expandDispatchCmd supports PI runner path placeholders', () => {
+  const slotVars: SlotVars = {
+    slotId: 'runner-browser-1',
+    machine: 'runner-local',
+    platform: 'chrome-extension',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    piPath: '/usr/local/bin/pi',
+    dispatchCmd: 'cd {repo} && {runner} {runner_path} {pi_path} {safety_flags} --model {model}',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'browser-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-browser-farm',
+    resourceVars: { cdp_port: '9222' },
+  };
+
+  assert.equal(
+    expandDispatchCmd(slotVars, {
+      runner: 'pi',
+      model: 'gpt-6-astra',
+    }),
+    'cd /repo && pi /usr/local/bin/pi /usr/local/bin/pi --model gpt-6-astra',
+  );
+});
+
 test('expandDispatchCmd supports Grok runner path placeholders', () => {
   const slotVars: SlotVars = {
     slotId: 'runner-browser-1',

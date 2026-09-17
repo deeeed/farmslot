@@ -147,7 +147,7 @@ test('session-reopen-smoke reads the pane tail from the snapshot lines array', (
 });
 
 test('runner-validation catalog includes supported runners and registered scenarios', () => {
-  assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
+  assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok', 'pi']);
   assert.equal(new Set(listScenarios()).size, listScenarios().length);
   assert.ok(listScenarios().includes('native-session-smoke'));
   assert.ok(listScenarios().includes('native-session-authorization-smoke'));

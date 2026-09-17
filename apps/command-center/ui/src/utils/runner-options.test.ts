@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
+import {
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
+} from '@farmslot/protocol';
 
 import {
   COMPARISON_LANE_RUNNERS,
@@ -13,6 +18,7 @@ import {
   modelForRunnerChange,
   MODELS_BY_RUNNER,
   modelsForRunner,
+  PI_COMPAT_MODEL_HINT,
 } from './runner-options.js';
 
 test('eval candidates expose Cursor and Grok through the shared comparison runner allowlist', () => {
@@ -37,6 +43,16 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
   assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high-fast'), false);
   assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high'), false);
   assert.equal(DEFAULT_MODEL.grok, DEFAULT_GROK_MODEL);
+});
+
+test('PI is a dispatch runner defaulting to Grok', () => {
+  assert.equal(COMPARISON_LANE_RUNNERS.has('pi'), true);
+  assert.equal(EVAL_CANDIDATE_RUNNERS.includes('pi'), true);
+  assert.equal(DEFAULT_PI_MODEL, 'grok-4.6');
+  assert.equal(DEFAULT_MODEL.pi, DEFAULT_PI_MODEL);
+  assert.deepEqual(MODELS_BY_RUNNER.pi, [DEFAULT_PI_MODEL]);
+  assert.equal(modelForRunnerChange('pi', ''), DEFAULT_PI_MODEL);
+  assert.match(PI_COMPAT_MODEL_HINT, /OLLAMA_HOST/);
 });
 
 test('Claude fable is selectable but not the default model', () => {

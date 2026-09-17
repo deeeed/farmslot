@@ -9,6 +9,7 @@ import {
   type EffortLevel,
   effortsForRunner,
   MODELS_BY_RUNNER,
+  PI_COMPAT_MODEL_HINT,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
 
@@ -220,6 +221,7 @@ export class RunnerModelEffortPicker extends LitElement {
                 )}
               </div>`
             : html`<div class="hint">Choose a runner to set a model.</div>`}
+          ${this.runner === 'pi' ? html`<div class="hint">${PI_COMPAT_MODEL_HINT}</div>` : nothing}
           ${!this.catalog && this.runner
             ? html`<details>
                 <summary class="hint">Other model</summary>

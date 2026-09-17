@@ -91,7 +91,7 @@ describe('runnerFlagsForTier', () => {
   });
 
   it('opencode, scripted, and none emit no flags at any tier', () => {
-    for (const runner of ['opencode', 'scripted', 'none'] as const) {
+    for (const runner of ['opencode', 'scripted', 'none', 'pi'] as const) {
       for (const tier of ['sandboxed', 'full-auto', 'dangerous'] as const) {
         assert.deepEqual(runnerFlagsForTier(runner, tier), []);
       }

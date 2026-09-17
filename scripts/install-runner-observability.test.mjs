@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALLER = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
 
-function installToTempDir(runner = 'claude', existingRepo) {
+function installToTempDir(runner = 'claude', existingRepo, env) {
   const repo = existingRepo ?? fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
   execFileSync(
     process.execPath,
@@ -24,7 +24,7 @@ function installToTempDir(runner = 'claude', existingRepo) {
       '--slot-id',
       'install-test',
     ],
-    { stdio: 'pipe' },
+    { stdio: 'pipe', ...(env ? { env: { ...process.env, ...env } } : {}) },
   );
   const obsDir = path.join(repo, '.agent', '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
@@ -1334,4 +1334,59 @@ test('codex install fails closed when bound account auth path is missing', () =>
       ),
     /auth missing|refusing silent bind/,
   );
+});
+
+test('pi install copies the Farmslot observability extension into the slot runtime dir', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-install-home-'));
+  const { repo, obsDir } = installToTempDir('pi', undefined, { HOME: home });
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-hook-writer.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-providers.mjs')), true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
+  assert.equal(manifest.runner, 'pi');
+  assert.equal(manifest.xaiSeed, 'no-grok-xai');
+  assert.ok(fs.existsSync(path.join(repo, '.observability')));
+});
+
+test('pi install continues when Grok auth.json is unreadable', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bad-grok-'));
+  const grokDir = path.join(home, '.grok');
+  fs.mkdirSync(grokDir, { recursive: true });
+  fs.writeFileSync(path.join(grokDir, 'auth.json'), '{not-json');
+  const { obsDir } = installToTempDir('pi', undefined, { HOME: home, GROK_HOME: grokDir });
+  const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
+  assert.equal(manifest.runner, 'pi');
+  assert.equal(manifest.xaiSeed, 'no-grok-xai');
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
+});
+
+test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-seed-home-'));
+  const grokDir = path.join(home, '.grok');
+  fs.mkdirSync(grokDir, { recursive: true });
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(
+    JSON.stringify({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      client_id: 'b1a00492-073a-47ea-816f-4c329264a828',
+    }),
+  ).toString('base64url');
+  const access = `${header}.${payload}.sig`;
+  fs.writeFileSync(
+    path.join(grokDir, 'auth.json'),
+    `${JSON.stringify({
+      'https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828': {
+        key: access,
+        refresh_token: 'refresh-token',
+        auth_mode: 'oidc',
+      },
+    })}\n`,
+  );
+  const { obsDir } = installToTempDir('pi', undefined, { HOME: home, GROK_HOME: grokDir });
+  const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
+  assert.equal(manifest.xaiSeed, 'grok-cli');
+  const piAuth = JSON.parse(fs.readFileSync(path.join(home, '.pi/agent/auth.json'), 'utf8'));
+  assert.equal(piAuth.xai.type, 'oauth');
+  assert.equal(piAuth.xai.refresh, 'refresh-token');
+  assert.equal(typeof piAuth.xai.expires, 'number');
 });

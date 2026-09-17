@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `{pi_path}` as a pool `dispatch_cmd` placeholder.
+
 - Document the guarded terminal session-ending endpoint.
 
 - Worker-prompt customization guide: the example task block no longer shows a `STATUS:` line and the sample checklist starts with `mark start`.

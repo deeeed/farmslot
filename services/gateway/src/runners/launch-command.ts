@@ -6,6 +6,7 @@ import {
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
@@ -165,6 +166,45 @@ export function resolveGrokBinary(preferred?: string | null): string {
   return 'grok';
 }
 
+export function resolvePiBinary(preferred?: string | null): string {
+  if (preferred && preferred.trim()) return preferred.trim();
+  return 'pi';
+}
+
+function piCliModel(model: string): string {
+  if (model.includes('/')) return model;
+  if (model === DEFAULT_PI_MODEL || model.startsWith('grok-')) return `xai/${model}`;
+  return model;
+}
+
+export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
+  return path.posix.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+}
+
+export function buildPiLaunch(options: {
+  binary: string;
+  model?: string | null;
+  repo: string;
+  runtimeDir?: string;
+  slotId?: string;
+  safetyTier?: SafetyTier;
+}): string {
+  const effectiveModel =
+    options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
+  const cliModel = piCliModel(effectiveModel);
+  const runtimeDir = options.runtimeDir ?? '.agent';
+  const obsDir = path.posix.join(options.repo, runtimeDir, '.observability');
+  const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
+  const flagList = runnerFlagsForTier('pi', options.safetyTier);
+  const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
+  const envPrefix = [
+    `FARMSLOT_OBS_DIR=${shellQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shellQuote(options.slotId ?? '')}`,
+    'FARMSLOT_RUNNER=pi',
+  ].join(' ');
+  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
+}
+
 /**
  * Interactive refinement launch argv (roadmap/backlog tmux sessions).
  * Runner-name CLI syntax lives here — not in domain refinement modules.
@@ -215,6 +255,14 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   if (runnerId === 'grok') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
     return `${shellQuote(resolveGrokBinary(options.binary))}${flags}${modelFlag} ${promptArg}`;
+  }
+  if (runnerId === 'pi') {
+    return `${buildPiLaunch({
+      binary: resolvePiBinary(options.binary),
+      model: options.model,
+      repo: options.repo,
+      safetyTier: options.safetyTier,
+    })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
   return `${shellQuote(options.binary || runnerId)}${flags}${modelFlag} ${promptArg}`;
@@ -474,6 +522,7 @@ function dispatchCmdIsRunnerAware(dispatchCmd: string | undefined | null, runner
   if (runner === 'opencode' && dispatchCmd.includes('{opencode_path}')) return true;
   if (runner === 'cursor' && dispatchCmd.includes('{cursor_path}')) return true;
   if (runner === 'grok' && dispatchCmd.includes('{grok_path}')) return true;
+  if (runner === 'pi' && dispatchCmd.includes('{pi_path}')) return true;
   return false;
 }
 
@@ -802,6 +851,28 @@ export function buildLaunchCommand(
           effort: opts.effort,
           prompt,
           repo,
+          safetyTier: tier,
+        }),
+        installCommand,
+      ),
+    );
+  }
+
+  if (runner === 'pi') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
+    return withRecipeTrust(
+      withRequiredRunnerInstall(
+        buildPiLaunch({
+          binary: resolvePiBinary(vars.piPath),
+          model,
+          repo,
+          runtimeDir: opts.runtimeDir,
+          slotId: vars.slotId,
           safetyTier: tier,
         }),
         installCommand,

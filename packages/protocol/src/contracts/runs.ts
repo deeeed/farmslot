@@ -351,7 +351,7 @@ export interface ReviewLoopRequest {
   sessionIntent?: ReviewSessionIntent;
 }
 
-export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'grok' | 'opencode';
+export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'grok' | 'opencode' | 'pi';
 export interface DiffStat {
   files: number;
   additions: number;
@@ -2883,6 +2883,10 @@ export const DEFAULT_GROK_MODEL = 'grok-4.6';
 
 /** Default Grok reasoning effort when dispatch/launch omits effort. */
 export const DEFAULT_GROK_EFFORT = 'xhigh';
+
+/** Default PI coding-agent model. Grok/xAI subscription, not Codex-LB or Claude Max. */
+export const DEFAULT_PI_MODEL = 'grok-4.6';
+
 export type DecisionType =
   | 'collision_check'
   | 'plan_confirmation'

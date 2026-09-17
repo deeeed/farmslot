@@ -10,6 +10,7 @@ import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
   DEFAULT_RUNNER,
   isReviewerWindowName,
   normalizeRunner,
@@ -463,6 +464,35 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     observabilityScope: 'event-driven',
     sessionUsageProvider: null,
   },
+  pi: {
+    id: 'pi',
+    defaultLaunchMode: 'interactive',
+    processMatchers: ['(^|/)pi($| )', 'pi-coding-agent'],
+    supportsInteractivePrompt: true,
+    needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
+    supportsTmuxNudges: true,
+    interruptKeys: ['C-c'],
+    continueCommand: null,
+    contextResetCommand: null,
+    persistsSessionFiles: true,
+    sessionArchive: 'jsonl',
+    sessionReload: 'none',
+    sessionPortability: 'workspace',
+    gracefulExit: null,
+    retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: true,
+    requiresBusyComposerPoll: false,
+    promptSubmitKey: 'Enter',
+    // PI has no sandbox CLI flags yet. `--approve` is project trust only, set in
+    // buildPiLaunch. Add a sandboxed flag here when PI exposes one.
+    flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
+    defaultSafetyTier: 'sandboxed',
+    defaultModel: DEFAULT_PI_MODEL,
+    acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
+    observabilityScope: 'event-driven',
+    sessionUsageProvider: null,
+  },
   opencode: {
     id: 'opencode',
     defaultLaunchMode: 'exec',
@@ -553,6 +583,7 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: claudeHookObservability,
   codex: codexSessionObservability,
   grok: grokLogObservability,
+  pi: claudeHookObservability,
 };
 
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {

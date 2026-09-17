@@ -110,6 +110,7 @@ export interface RawPoolJson {
   opencode_path?: string;
   cursor_path?: string;
   grok_path?: string;
+  pi_path?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
   /** Default domain overlay for dispatches from this machine; slot- and task-level domain override it. */
@@ -181,6 +182,7 @@ export interface SlotVars {
   opencodePath: string;
   cursorPath: string;
   grokPath: string;
+  piPath?: string;
   dispatchCmd: string;
   recycleCmd: string;
   repo: string;
@@ -682,6 +684,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
   const opencodePath = pool.opencode_path || '';
   const cursorPath = pool.cursor_path || '';
   const grokPath = pool.grok_path || '';
+  const piPath = pool.pi_path || '';
   const dispatchCmd = pool.dispatch_cmd || '';
   const recycleCmd = pool.recycle_cmd || '';
 
@@ -752,6 +755,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     opencodePath,
     cursorPath,
     grokPath,
+    piPath,
     dispatchCmd,
     recycleCmd,
     repo,
