@@ -19,6 +19,7 @@ import type {
 
 import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
+import { githubQueryBudget } from '../integrations/github-query-budget.js';
 
 import { workerSessionHistoryEnabled } from './worker-session-history.js';
 
@@ -227,5 +228,6 @@ export async function gatewayStatus(params?: GatewayStatusParams): Promise<Gatew
     capabilities: {
       experimentalWorkerHistory: workerSessionHistoryEnabled(),
     },
+    githubQuerySpend: githubQueryBudget.spendSnapshot(),
   };
 }

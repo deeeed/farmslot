@@ -9,7 +9,6 @@ import {
   type PRTriggerRule,
 } from '@farmslot/protocol';
 
-import { githubRequestCacheKey } from '../integrations/github-client.js';
 import { GitHubPRUnavailableError } from '../integrations/github-errors.js';
 import {
   collectGitHubPages as pages,
@@ -17,7 +16,7 @@ import {
   type GitHubPage as Page,
   type GitHubQueryAccount as Account,
 } from '../integrations/github-graphql.js';
-import { githubQueryBudget } from '../integrations/github-query-budget.js';
+import { githubQueryBudget, withGitHubQueryCaller } from '../integrations/github-query-budget.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
 import {
@@ -140,6 +139,17 @@ export async function collectPRRuleSources(
   checkpoints?: PRSourceCheckpoints,
   requestLimit = 25,
 ): Promise<PRSourceScan> {
+  return withGitHubQueryCaller('pr-rules:sources', () =>
+    loadPRRuleSources(team, rule, checkpoints, requestLimit),
+  );
+}
+
+async function loadPRRuleSources(
+  team: PRTeamProfile,
+  rule: PRTriggerRule,
+  checkpoints?: PRSourceCheckpoints,
+  requestLimit = 25,
+): Promise<PRSourceScan> {
   if (!checkpoints) return collectPRSubjects(team, rule.config.predicate);
   const account = await resolvePRSourceAccount(team.config.account, team.ownerId);
   const result = await checkpoints.read(
@@ -150,9 +160,7 @@ export async function collectPRRuleSources(
   );
   if (!result.complete && (result.progress.pendingConnections || result.progress.nextAttemptAt)) {
     result.progress.nextAttemptAt =
-      githubQueryBudget.nextEligibleAt(
-        githubRequestCacheKey([], { ...account, scope: 'query-budget' }),
-      ) ?? new Date(Date.now() + 30_000).toISOString();
+      githubQueryBudget.anyReserved() ?? new Date(Date.now() + 30_000).toISOString();
   }
   return result;
 }
@@ -162,14 +170,18 @@ export async function collectPRRuleTarget(
   rule: PRTriggerRule,
   pr: MonitoredPRIdentity,
 ): Promise<PRSourceScan> {
-  return collectPRSubjects(team, rule.config.predicate, pr, true);
+  return withGitHubQueryCaller('pr-rules:target', () =>
+    collectPRSubjects(team, rule.config.predicate, pr, true),
+  );
 }
 
 export async function collectPRSubmissionSources(
   team: PRTeamProfile,
   pr: MonitoredPRIdentity,
 ): Promise<PRSourceScan> {
-  return collectPRSubjects(team, { kind: 'all', items: [] }, pr);
+  return withGitHubQueryCaller('pr-rules:sources', () =>
+    collectPRSubjects(team, { kind: 'all', items: [] }, pr),
+  );
 }
 
 async function collectPRSubjects(

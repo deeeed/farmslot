@@ -49,7 +49,11 @@ import {
   setBinding,
 } from '../integrations/github-bindings-cache.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { GitHubQueryBudgetError } from '../integrations/github-query-budget.js';
+import {
+  githubQueryBudget,
+  GitHubQueryBudgetError,
+  withGitHubQueryCaller,
+} from '../integrations/github-query-budget.js';
 import { getAllRuns } from '../runs/store.js';
 
 import { servePRList } from './pr/list-cache.js';
@@ -109,6 +113,8 @@ interface FetchPRDataOptions {
    * overwrite the last known state of a PR with `PR #n` / OPEN defaults.
    */
   rejectIncomplete?: boolean;
+  /** Dashboard list may use truncated GraphQL first pages; pr.status must not. */
+  allowPartial?: boolean;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -284,6 +290,12 @@ export interface PRListFetchResult {
 export async function fetchPRList(
   opts: { force?: boolean; project?: string } = {},
 ): Promise<PRListFetchResult> {
+  return withGitHubQueryCaller('pr.list', () => loadPRList(opts));
+}
+
+async function loadPRList(
+  opts: { force?: boolean; project?: string } = {},
+): Promise<PRListFetchResult> {
   // Discover PRs from active slots + runs
   const fleet = await loadFleetStatus();
   // Keyed by `repo#number`: PR numbers repeat across repos, and a farm can
@@ -431,17 +443,29 @@ export async function fetchPRList(
   }
   let seeded = new Set<string>();
   try {
-    seeded = await prefetchPRBatchViaGraphQL(prsByRepo);
+    seeded = await withGitHubQueryCaller('pr.list:prefetch', () =>
+      prefetchPRBatchViaGraphQL(prsByRepo),
+    );
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
     console.warn(
       `[pr.batch] prefetch_failed err=${err instanceof Error ? err.message.slice(0, 200) : String(err)}`,
     );
   }
+  const spend = githubQueryBudget.spendSnapshot();
+  if (spend.hourQueries > 0 || (spend.remaining !== null && spend.remaining < 100)) {
+    console.log(
+      `[github-query-spend] hourCost=${spend.hourCost} hourQueries=${spend.hourQueries} remaining=${spend.remaining ?? 'n/a'} top=${
+        spend.callers
+          .slice(0, 4)
+          .map((row) => `${row.caller}:${row.cost}/${row.queries}`)
+          .join(',') || 'none'
+      }`,
+    );
+  }
 
-  // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
-  // (truncated node, failed chunk) still has to reach GitHub, so force only
-  // those; seeded PRs read the snapshot the batch just wrote.
+  // Fetch all PRs in parallel. Under `force`, a PR the batch did not fully
+  // seed (failed chunk, or truncated first page) still has to reach GitHub.
   const failed: string[] = [];
   let gone = 0;
   const prs = await Promise.all(
@@ -458,6 +482,7 @@ export async function fetchPRList(
           repoOverride: info.repo,
           force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
           rejectIncomplete: true,
+          allowPartial: true,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
@@ -500,6 +525,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     force,
     repoOverride,
     rejectIncomplete,
+    allowPartial,
   } = opts;
   const { project: resolvedProject, repo: ghRepo } = await resolveProjectRepo(
     project,
@@ -510,7 +536,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   // Raw GitHub data is served from the 60s cache (see getPRRawData) so repeated
   // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
   // share one network round-trip. force=true bypasses both caches.
-  const raw = await getPRRawData(ghRepo, prNum, force);
+  const raw = await getPRRawData(ghRepo, prNum, force, { allowPartial });
   if (rejectIncomplete && raw.prStateStdout.trim() === '') {
     const why = raw.prStateError ?? 'empty response';
     if (PR_GONE_PATTERN.test(why))

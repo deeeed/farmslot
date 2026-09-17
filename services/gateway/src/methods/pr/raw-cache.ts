@@ -3,7 +3,10 @@
 import type { CommandOutput } from '@farmslot/protocol';
 
 import { ghRequest } from '../../integrations/github-client.js';
-import { GitHubQueryBudgetError } from '../../integrations/github-query-budget.js';
+import {
+  githubQueryBudget,
+  GitHubQueryBudgetError,
+} from '../../integrations/github-query-budget.js';
 
 // ─── GitHub raw-response cache ───
 // Shields the GitHub API from the 60s UI poll + ci-monitor tick. Keyed by
@@ -33,11 +36,24 @@ export interface PRRawSnapshot {
    */
   reviewMetaStdout: string;
   fetchedAt: number;
+  /** True when GraphQL first-page connections still have more nodes. */
+  partial?: boolean;
 }
 
-const PR_RAW_TTL_MS = 60 * 1000;
+export const PR_RAW_TTL_MS = 60 * 1000;
 const prRawCache = new Map<string, PRRawSnapshot>();
 const prRawInflight = new Map<string, Promise<PRRawSnapshot>>();
+
+export function isUsablePRRawSnapshot(
+  cached: PRRawSnapshot | undefined,
+  now: number,
+  opts: { force?: boolean; allowPartial?: boolean } = {},
+): cached is PRRawSnapshot {
+  if (!cached || opts.force) return false;
+  if (now - cached.fetchedAt >= PR_RAW_TTL_MS) return false;
+  if (cached.partial && !opts.allowPartial) return false;
+  return true;
+}
 
 function swallowGh(label: string) {
   return (err: unknown): CommandOutput => {
@@ -71,11 +87,13 @@ export async function getPRRawData(
   ghRepo: string,
   prNum: number,
   force?: boolean,
+  opts?: { allowPartial?: boolean },
 ): Promise<PRRawSnapshot> {
   const key = `${ghRepo}#${prNum}`;
   if (!force) {
     const cached = prRawCache.get(key);
-    if (cached && Date.now() - cached.fetchedAt < PR_RAW_TTL_MS) return cached;
+    if (isUsablePRRawSnapshot(cached, Date.now(), { allowPartial: opts?.allowPartial }))
+      return cached;
     const inflight = prRawInflight.get(key);
     if (inflight) return inflight;
   }
@@ -146,7 +164,7 @@ export async function getPRRawData(
               '--jq',
               '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | .comments.nodes[] | {id: .databaseId, author: (if .author.__typename == "Bot" then "\\(.author.login)[bot]" else .author.login end), user_type: .author.__typename, body: (.body[0:300] // ""), path: .path, line: .line, created_at: .createdAt, in_reply_to_id: .replyTo.databaseId, html_url: .url}',
             ],
-            { force },
+            { force, caller: 'pr.raw:threads' },
           );
         })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
         ghRequest(
@@ -175,7 +193,7 @@ export async function getPRRawData(
                 '--jq',
                 '.data.repository.pullRequest | (.latestOpinionatedReviews.nodes[]? | {t: "review", author: (.author.login // ""), state: .state, submittedAt: (.submittedAt // null)}), (.reviewRequests.nodes[]? | .requestedReviewer | select(. != null) | {t: "request", kind: (if .__typename == "Team" then "team" else "user" end), name: (.slug // .login // "")})',
               ],
-              { force },
+              { force, caller: 'pr.raw:verdicts' },
             )
         ).catch(swallowGh(`pr.reviews#${prNum}`)),
       ],
@@ -219,7 +237,7 @@ export function shouldPrefetchPRRawData(ghRepo: string, prNum: number, now = Dat
 //
 // `prList` would otherwise issue O(4·N) REST + O(1·N) GraphQL calls per refresh.
 // `prefetchPRBatchViaGraphQL` issues one aliased GraphQL request per repo
-// (chunked at 25 PRs/repo to stay under GraphQL's per-query cost cap), then
+// (chunked at 8 PRs/repo so large-PR queries actually seed), then
 // synthesizes the same five `*Stdout` strings the per-PR REST path produces.
 // Synthesized snapshots are written into `prRawCache` so the existing
 // `getPRRawData` path becomes a cache-hit for every PR in the batch.
@@ -229,7 +247,10 @@ export function shouldPrefetchPRRawData(ghRepo: string, prNum: number, now = Dat
 // On any GraphQL error the affected PRs simply aren't cached, so REST kicks
 // back in naturally for them.
 
-const PR_BATCH_MAX_PER_REPO = 25;
+// 25-PR aliased queries with reviewThreads/checks regularly fail on large
+// MetaMask PRs (live: mobile chunk of 25 never seeded). 8 stays under GitHub's
+// query size and still collapses the per-PR GraphQL fallback.
+const PR_BATCH_MAX_PER_REPO = 8;
 
 interface BatchedRepoChunk {
   repo: string;
@@ -588,11 +609,14 @@ export function synthesizeRawSnapshotFromGraphQL(
 
 // One GraphQL request per repo chunk. Quota holds fail the refresh; other failures log and continue —
 // `prList` falls through to the per-PR REST path for whichever PRs aren't in cache.
-// Relies on `ghRequest`'s 10MB stdout buffer; a 25-PR chunk with 100 contexts × 100
+// Relies on `ghRequest`'s 10MB stdout buffer; an 8-PR chunk with 100 contexts × 100
 // review threads × 50 comments could in principle approach that ceiling on monster
-// PRs. JSON.parse failure on truncation is caught below and falls back cleanly.
+// PRs. JSON.parse failure is caught below and falls back cleanly.
 async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
-  const query = buildBatchQuery(chunk.prs.length);
+  const query = buildBatchQuery(chunk.prs.length).replace(
+    /}\s*$/,
+    ' rateLimit { cost remaining resetAt } }',
+  );
   const args = [
     'api',
     'graphql',
@@ -607,7 +631,7 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
 
   let stdout = '';
   try {
-    const res = await ghRequest(args);
+    const res = await ghRequest(args, { caller: 'pr.list:prefetch' });
     stdout = res.stdout;
   } catch (err) {
     if (err instanceof GitHubQueryBudgetError) throw err;
@@ -622,8 +646,6 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
   try {
     parsed = JSON.parse(stdout) as GqlBatchResponse;
   } catch (err) {
-    if (err instanceof GitHubQueryBudgetError) throw err;
-    // Per-PR fallback engages — see function-level comment.
     console.warn(`[pr.batch] graphql_parse_failed repo=${chunk.repo} err=${fmtBatchErr(err, 120)}`);
     return;
   }
@@ -635,20 +657,15 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
     const prNum = chunk.prs[i];
     const prNode = repoNode[`pr_${i}`];
     if (!prNode) continue; // partial GraphQL error → REST fallback for this PR
-    // Truncation guard: a single GraphQL connection caps at first/last:100. If a PR
-    // has more checks or review threads than that, the batch slice silently drops
-    // the rest — and the REST/per-PR-paginated path used by pr.status sees them all.
-    // Seeding a truncated snapshot as authoritative would hide late bot findings
-    // (matchBotComments → actionableBotComments) and check failures past index 100.
-    // Skip the cache seed for these PRs; getPRRawData falls back to the per-PR REST
-    // path (which uses --paginate for review threads and --json for all checks).
-    if (isPRBatchTruncated(prNode)) {
-      console.warn(`[pr.batch] truncated repo=${chunk.repo} pr=${prNum} → REST fallback`);
-      continue;
+    const truncated = isPRBatchTruncated(prNode);
+    if (truncated) {
+      console.warn(`[pr.batch] truncated repo=${chunk.repo} pr=${prNum} — seeding first page`);
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
+    if (truncated) snap.partial = true;
     prRawCache.set(`${chunk.repo}#${prNum}`, snap);
-    seeded.add(`${chunk.repo}#${prNum}`);
+    // Complete pages can satisfy force/pr.status. Partial pages are list-only.
+    if (!truncated) seeded.add(`${chunk.repo}#${prNum}`);
   }
 }
 
@@ -665,6 +682,8 @@ export async function prefetchPRBatchViaGraphQL(
 ): Promise<Set<string>> {
   const seeded = new Set<string>();
   if (prsByRepo.size === 0) return seeded;
+  const retryAt = githubQueryBudget.anyReserved();
+  if (retryAt) throw new GitHubQueryBudgetError(retryAt);
   const chunks = chunkPRsByRepo(prsByRepo);
   if (chunks.length === 0) return seeded;
   const totalPRs = chunks.reduce((sum, c) => sum + c.prs.length, 0);

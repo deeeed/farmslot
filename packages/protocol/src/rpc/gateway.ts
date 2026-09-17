@@ -51,6 +51,22 @@ export interface GatewayListenInfo {
   remotePairingAllowed: boolean;
 }
 
+/** One GraphQL caller in the rolling hour window. */
+export interface GitHubQuerySpendCaller {
+  caller: string;
+  cost: number;
+  queries: number;
+}
+
+/** Rolling-hour GraphQL spend for the gateway's GitHub credentials. */
+export interface GitHubQuerySpendSnapshot {
+  remaining: number | null;
+  resetAt: string | null;
+  hourCost: number;
+  hourQueries: number;
+  callers: GitHubQuerySpendCaller[];
+}
+
 export interface GatewayStatusResult {
   /** `@farmslot/gateway` package version. */
   version: string;
@@ -62,6 +78,8 @@ export interface GatewayStatusResult {
   capabilities?: {
     experimentalWorkerHistory?: boolean;
   };
+  /** Rolling-hour GraphQL point spend by caller. */
+  githubQuerySpend?: GitHubQuerySpendSnapshot;
 }
 
 export type GatewayDoctorSectionId =

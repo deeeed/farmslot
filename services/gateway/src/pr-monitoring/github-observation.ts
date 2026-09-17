@@ -13,6 +13,7 @@ import {
   type GitHubPage as Page,
   type GitHubQueryAccount as Account,
 } from '../integrations/github-graphql.js';
+import { withGitHubQueryCaller } from '../integrations/github-query-budget.js';
 
 import { resolvePRSourceAccount } from './github-account.js';
 
@@ -92,6 +93,15 @@ function fingerprint(value: string): string {
 }
 
 export async function fetchPRMonitorObservation(
+  config: PRMonitorConfig,
+  ownerId: string,
+): Promise<PRMonitorObservation> {
+  return withGitHubQueryCaller('pr-monitor:observe', () =>
+    loadPRMonitorObservation(config, ownerId),
+  );
+}
+
+async function loadPRMonitorObservation(
   config: PRMonitorConfig,
   ownerId: string,
 ): Promise<PRMonitorObservation> {

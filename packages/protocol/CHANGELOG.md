@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Independent-review loops accept an optional `effort` (thinking / reasoning level) alongside `model`. Reviewer agent context and independent-review status persist that effort so restart recovery can relaunch the same thinking level.
+- `gateway.status` reports rolling-hour GitHub GraphQL spend by caller (`githubQuerySpend`).
 
 ## 0.28.0 - 2026-09-17
 

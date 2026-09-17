@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
 
-import { GitHubQueryBudgetError } from '../../integrations/github-query-budget.js';
+import {
+  githubQueryBudget,
+  GitHubQueryBudgetError,
+} from '../../integrations/github-query-budget.js';
 
 let paused = false;
 let calls = 0;
@@ -21,6 +24,10 @@ mock.module('../../integrations/github-client.js', {
 });
 const { getPRRawData, prefetchPRBatchViaGraphQL } = await import('./raw-cache.js');
 
+afterEach(() => {
+  githubQueryBudget.resetForTests();
+});
+
 test('quota-held refresh fails visibly without replacing confirmed PR data', async () => {
   const confirmed = await getPRRawData('owner/repo', 1);
   assert.match(confirmed.prStateStdout, /OPEN/);
@@ -33,4 +40,18 @@ test('quota-held refresh fails visibly without replacing confirmed PR data', asy
     prefetchPRBatchViaGraphQL(new Map([['owner/repo', [2]]])),
     GitHubQueryBudgetError,
   );
+});
+
+test('prefetch does not call GitHub when the query budget is already reserved', async () => {
+  githubQueryBudget.observe('other-credential', {
+    remaining: 0,
+    cost: 1,
+    resetAt: new Date(Date.now() + 120_000).toISOString(),
+  });
+  const before = calls;
+  await assert.rejects(
+    prefetchPRBatchViaGraphQL(new Map([['owner/repo', [3]]])),
+    GitHubQueryBudgetError,
+  );
+  assert.equal(calls, before, 'reserved budget must not fire GraphQL chunks');
 });

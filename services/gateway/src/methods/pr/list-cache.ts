@@ -18,6 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { farmCacheFile } from '../../core/farm-cache.js';
+import { githubQueryBudget } from '../../integrations/github-query-budget.js';
 
 export interface PRListSnapshot {
   fetchedAt: string;
@@ -38,6 +39,9 @@ const CACHE_FILE_NAME = 'pr-list.json';
 const PR_LIST_SNAPSHOT_VERSION = 1;
 /** A served list older than this triggers a background refresh. */
 export const PR_LIST_STALE_MS = 60_000;
+/** Gateway-side polling only continues while a client recently asked for `pr.list`. */
+export const PR_LIST_CLIENT_INTEREST_MS = 6 * 60_000;
+const PR_LIST_UNCHANGED_BACKOFF_MS = [PR_LIST_STALE_MS, 2 * 60_000, 5 * 60_000] as const;
 /** A PR GitHub keeps failing to read is carried from the previous copy for at most this long. */
 export const PR_LIST_CARRY_MAX_MS = 60 * 60 * 1000;
 
@@ -48,6 +52,9 @@ let queuedForced: Promise<PRListSnapshot> | null = null;
 let broadcastFn: Broadcast = () => {};
 /** `repo#pr` → when the row first had to be carried because GitHub could not read it. */
 const carriedSince = new Map<string, number>();
+let lastClientListAt = 0;
+let unchangedStreak = 0;
+let lastReserveLogAt = 0;
 
 function cacheFile(): string {
   return farmCacheFile(CACHE_FILE_NAME);
@@ -146,11 +153,33 @@ export function resetPRListCacheForTests(): void {
   queuedForced = null;
   broadcastFn = () => {};
   carriedSince.clear();
+  lastClientListAt = 0;
+  unchangedStreak = 0;
+  lastReserveLogAt = 0;
 }
 
 function ageMs(snap: PRListSnapshot, now: number): number {
   const fetched = Date.parse(snap.fetchedAt);
   return Number.isFinite(fetched) ? now - fetched : Number.POSITIVE_INFINITY;
+}
+
+function unchangedRefreshDelayMs(): number {
+  const index = Math.min(unchangedStreak, PR_LIST_UNCHANGED_BACKOFF_MS.length - 1);
+  return PR_LIST_UNCHANGED_BACKOFF_MS[index];
+}
+
+function graphqlBudgetReserved(now = Date.now()): boolean {
+  const retryAt = githubQueryBudget.anyReserved(now);
+  if (!retryAt) return false;
+  if (now - lastReserveLogAt > 60_000) {
+    console.warn(`[pr.list] GraphQL budget reserved until ${retryAt}; keeping warm list`);
+    lastReserveLogAt = now;
+  }
+  return true;
+}
+
+function hasRecentClientInterest(now: number): boolean {
+  return lastClientListAt > 0 && now - lastClientListAt <= PR_LIST_CLIENT_INTEREST_MS;
 }
 
 /**
@@ -209,6 +238,7 @@ function runRefresh(fetch: PRListFetcher, force: boolean, now: number): Promise<
         truncated: fetched.truncated,
       };
       const changed = !snapshot || JSON.stringify(snapshot.prs) !== JSON.stringify(prs);
+      unchangedStreak = changed ? 0 : unchangedStreak + 1;
       snapshot = next;
       persist(next);
       // Always announce completion so clients that were told `refreshing`
@@ -272,6 +302,8 @@ export async function servePRList(
   opts: { force?: boolean; now?: number } = {},
 ): Promise<ServedPRList> {
   if (!loaded) loadPRListCache();
+  const now = opts.now ?? Date.now();
+  lastClientListAt = now;
   if (opts.force || !snapshot) {
     const fresh = await refresh(fetch, opts.force === true, opts.now);
     return {
@@ -281,7 +313,7 @@ export async function servePRList(
       truncated: fresh.truncated === true,
     };
   }
-  if (ageMs(snapshot, opts.now ?? Date.now()) > PR_LIST_STALE_MS && !inflight)
+  if (ageMs(snapshot, now) > unchangedRefreshDelayMs() && !inflight && !graphqlBudgetReserved(now))
     refresh(fetch, false, opts.now).catch(logBackgroundFailure);
   return {
     prs: snapshot.prs,
@@ -299,7 +331,7 @@ export function peekPRList(): PRListSnapshot | null {
 
 /**
  * Keep the warm list fresh while someone is looking: every `intervalMs`, if a
- * client is connected and the copy is stale, refresh it. Returns a stop function.
+ * client recently called `pr.list` and the copy is stale, refresh it. Returns a stop function.
  */
 export function startPRListRefresher(
   fetch: PRListFetcher,
@@ -313,8 +345,11 @@ export function startPRListRefresher(
   setPRListBroadcast(opts.broadcast);
   if (!loaded) loadPRListCache();
   const tick = () => {
+    const now = Date.now();
     if (!opts.hasClients() || inflight) return;
-    if (snapshot && ageMs(snapshot, Date.now()) <= PR_LIST_STALE_MS) return;
+    if (graphqlBudgetReserved(now)) return;
+    if (!hasRecentClientInterest(now)) return;
+    if (snapshot && ageMs(snapshot, now) <= unchangedRefreshDelayMs()) return;
     refresh(fetch, false).catch(logBackgroundFailure);
   };
   const initial = setTimeout(tick, opts.initialDelayMs ?? 3_000);

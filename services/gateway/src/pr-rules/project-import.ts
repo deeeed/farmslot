@@ -13,11 +13,19 @@ import {
   githubGraphQL,
   type GitHubPage,
 } from '../integrations/github-graphql.js';
+import { withGitHubQueryCaller } from '../integrations/github-query-budget.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
 
 import { GITHUB_PROJECT_FIELD, GITHUB_RULE_PAGE_INFO } from './github-source-types.js';
 
 export async function importPRProject(
+  ownerId: string,
+  params: PRProjectImportParams,
+): Promise<PRProjectImportResult> {
+  return withGitHubQueryCaller('pr-rules:import', () => loadPRProject(ownerId, params));
+}
+
+async function loadPRProject(
   ownerId: string,
   params: PRProjectImportParams,
 ): Promise<PRProjectImportResult> {
