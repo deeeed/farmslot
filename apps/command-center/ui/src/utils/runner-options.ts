@@ -7,12 +7,13 @@ import {
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
   type ReviewRunnerId,
 } from '@farmslot/protocol';
 
 export type EffortLevel = '' | CodexReasoningEffort;
 
-export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok'];
+export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
@@ -38,6 +39,7 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
     'gpt-5.6-sol-max',
   ],
   grok: [DEFAULT_GROK_MODEL],
+  pi: [DEFAULT_PI_MODEL],
 };
 
 export const DEFAULT_MODEL: Record<string, string> = {
@@ -45,6 +47,7 @@ export const DEFAULT_MODEL: Record<string, string> = {
   codex: DEFAULT_CODEX_MODEL,
   cursor: DEFAULT_CURSOR_MODEL,
   grok: DEFAULT_GROK_MODEL,
+  pi: DEFAULT_PI_MODEL,
 };
 
 /** Canonical selectable models for a runner. Never mixes models across runners. */
@@ -75,6 +78,7 @@ export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   codex: [...codexReasoningEfforts()],
   cursor: [],
   grok: ['low', 'medium', 'high', 'xhigh', 'max'],
+  pi: [],
 };
 
 /** Select efforts supported by the runner and the selected model. */
@@ -90,6 +94,7 @@ export const DEFAULT_EFFORT: Record<string, EffortLevel> = {
   codex: DEFAULT_CODEX_EFFORT as EffortLevel,
   cursor: '',
   grok: DEFAULT_GROK_EFFORT as EffortLevel,
+  pi: '',
 };
 
 // Comparison/eval candidates share the same runner allowlist. Cursor is
@@ -100,6 +105,7 @@ export const COMPARISON_LANE_RUNNERS: ReadonlySet<string> = new Set([
   'codex',
   'cursor',
   'grok',
+  'pi',
 ]);
 
 // Eval replay defaults to Codex first to match the dispatch cockpit's current
@@ -109,6 +115,7 @@ export const EVAL_CANDIDATE_RUNNERS: ReviewRunnerId[] = [
   'claude',
   'cursor',
   'grok',
+  'pi',
 ].filter((runner): runner is ReviewRunnerId => COMPARISON_LANE_RUNNERS.has(runner));
 
 export function runnerLabel(runner: string): string {

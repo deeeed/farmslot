@@ -4,6 +4,8 @@ All notable changes to `@farmslot/theme` are tracked here.
 
 ## Unreleased
 
+- Color token for the `pi` runner.
+
 - Label runtime QA consistently across clients.
 
 - Add a shared deterministic project color mapping for consistent project badges across clients.

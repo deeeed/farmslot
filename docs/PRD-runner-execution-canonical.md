@@ -19,7 +19,7 @@ An operator should be able to supervise different agent runners through one Farm
 
 ## Canonical Current State
 
-- Runner-neutral tmux supervision and the approved native transport rollout are shipped. Further runner expansion and rules shims remain separate roadmap work.
+- Runner-neutral tmux supervision and the approved native transport rollout are shipped. The PI TUI worker (`runner=pi`, default `grok-4.6`) is the first model-agnostic harness ([ADR-059](adr/059-pi-tui-model-agnostic-runner.md)). OpenCode TUI+ACP remains a fallback. Rules shims remain separate roadmap work.
 - The approved native structured transport rollout is shipped under [ADR-057](adr/057-structured-runner-transports.md). PRs #615 and #616 delivered adapters and durable sessions, #618 delivered Command Center, #619 and #620 delivered remote foundations, and #635 completed workers, retained reviewers, parking, Companion, additional standalone runners, and account setup.
 - Profiles select native configuration directories for one trusted operator per OS user; each product user owns their execution node. This is not isolation between mutually untrusted users sharing an OS account. Current validation and deferred scope are recorded in the [completed rollout](ROADMAP-next.md#structured-runner-transports).
 

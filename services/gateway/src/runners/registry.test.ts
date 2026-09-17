@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
+import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, DEFAULT_PI_MODEL } from '@farmslot/protocol';
 
 import {
   buildCodexExecLaunch,
@@ -1761,6 +1761,12 @@ describe('buildLaunchCommand', () => {
       assert.equal(isRunnerPaneRetired('grok'), false);
     });
 
+    it('retires PI because hooks are event-driven and the composer is not polled', () => {
+      assert.equal(getRunnerDefinition('pi').observabilityScope, 'event-driven');
+      assert.equal(getRunnerObservability('pi'), getRunnerObservability('claude'));
+      assert.equal(isRunnerPaneRetired('pi'), true);
+    });
+
     it('never retires pane-only or observability-less runners', () => {
       assert.equal(isRunnerPaneRetired('cursor'), false);
       assert.equal(isRunnerPaneRetired('opencode'), false);
@@ -1770,6 +1776,42 @@ describe('buildLaunchCommand', () => {
     it('null/undefined runner is never retired', () => {
       assert.equal(isRunnerPaneRetired(null), false);
       assert.equal(isRunnerPaneRetired(undefined), false);
+    });
+  });
+
+  describe('pi runner', () => {
+    it('is interactive, event-driven, fail-closed on session reload, and accepts any model', () => {
+      const def = getRunnerDefinition('pi');
+      assert.equal(def.defaultLaunchMode, 'interactive');
+      assert.equal(def.observabilityScope, 'event-driven');
+      assert.equal(def.sessionReload, 'none');
+      assert.equal(def.defaultModel, DEFAULT_PI_MODEL);
+      assert.equal(runnerDefaultModel('pi'), DEFAULT_PI_MODEL);
+      assert.equal(def.acceptsModel('grok-4.6'), true);
+      assert.equal(def.acceptsModel('gpt-6-astra'), true);
+      assert.equal(runnerNeedsPostLaunchPrompt('pi'), true);
+    });
+
+    it('launches an interactive TUI with the Farmslot extension and no print mode', () => {
+      const vars = makeVars({ dispatchCmd: '', slotId: 'runner-local-test-1' });
+      const cmd = buildLaunchCommand(vars, 'pi', null, PROMPT);
+      assert.match(cmd, /install-runner-observability\.mjs' --runner 'pi'/);
+      assert.match(cmd, /FARMSLOT_RUNNER=pi/);
+      assert.match(
+        cmd,
+        /-e '\/tmp\/repo\/\.agent\/\.observability\/pi-farmslot-observability\.ts'/,
+      );
+      assert.match(cmd, /--model xai\/grok-4\.6/);
+      assert.doesNotMatch(cmd, /(^|[\s])-p([\s]|$)/);
+      assert.doesNotMatch(cmd, /--mode json/);
+      assert.doesNotMatch(cmd, /Read TASK/);
+    });
+
+    it('uses the configured pi_path and selected model', () => {
+      const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
+      const cmd = buildLaunchCommand(vars, 'pi', 'grok-4.5', PROMPT);
+      assert.match(cmd, /\/usr\/local\/bin\/pi --approve -e /);
+      assert.match(cmd, /--model grok-4\.5/);
     });
   });
 

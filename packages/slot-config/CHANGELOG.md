@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Pool files accept `pi_path` and expand `{pi_path}` in `dispatch_cmd` for the PI coding-agent TUI runner.
+
 - Allow farms to select canonical internal review templates for static and runtime validation.
 
 - Validate machine capacity and frozen skill, library and runtime support for static-review workspaces.

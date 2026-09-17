@@ -10,6 +10,7 @@ import {
   buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
   INSTALLER_RELATIVE_PATH,
+  RUNNER_OBSERVABILITY_COPY_PATHS,
   RUNNER_OBSERVABILITY_SUPPORT_PATHS,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
@@ -98,7 +99,7 @@ function relativeImportClosure(entryPath: string): string[] {
 test('immutable observability support covers the installer relative-import closure', () => {
   assert.deepEqual(
     [...RUNNER_OBSERVABILITY_SUPPORT_PATHS].sort(),
-    relativeImportClosure(INSTALLER_RELATIVE_PATH),
+    [...relativeImportClosure(INSTALLER_RELATIVE_PATH), ...RUNNER_OBSERVABILITY_COPY_PATHS].sort(),
   );
 });
 
@@ -155,8 +156,17 @@ test('remote observability install falls back when an immutable bundle is incomp
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), fallbackInstaller);
 
     mkdirSync(path.join(supportRoot, 'scripts/lib'), { recursive: true });
+    mkdirSync(path.join(supportRoot, 'scripts/runners'), { recursive: true });
     writeFileSync(path.join(supportRoot, 'scripts/lib/provider-accounts.mjs'), 'dependency\n');
     writeFileSync(path.join(supportRoot, 'scripts/lib/toml-scan.mjs'), 'dependency\n');
+    writeFileSync(
+      path.join(supportRoot, 'scripts/runners/pi-farmslot-observability.ts'),
+      'extension\n',
+    );
+    writeFileSync(
+      path.join(supportRoot, 'scripts/runners/pi-farmslot-hook-writer.mjs'),
+      'writer\n',
+    );
     run();
     assert.equal(readFileSync(selectedPath, 'utf8').trim(), immutableInstaller);
   } finally {

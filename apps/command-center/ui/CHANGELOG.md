@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Dispatch and comparison pickers include the `pi` runner, defaulting to `grok-4.6`.
+
 - Runner-session reopen and tmux attach controls copy a command for the named node instead of looking like they execute, keep the command visible if the clipboard is refused, and Open on host recovers a dead session then attaches the terminal to that pane.
 
 - Show PR feedback candidates (author kind, reviewed commit, revision, attribution, consumption state) on the retrospective rail and inbox card, and show the canonical library destination plus the "Recorded in canonical library" gate on learnings-draft cards.

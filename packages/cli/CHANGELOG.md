@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Pool onboarding accepts optional `pi_path` for the PI coding-agent binary.
+
 - Configure static-review publication and its PR team when creating runs.
 
 - Select farm-owned QA profiles and JSON skill inputs with `run create` and `dispatch preview` using explicit `--flow-type qa`.

@@ -237,7 +237,14 @@ export function resolveHumanGateReviewExecutionPlan(input: {
   return fromDecision;
 }
 
-const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
+const REVIEW_RUNNERS = new Set<ReviewRunnerId>([
+  'claude',
+  'codex',
+  'cursor',
+  'grok',
+  'opencode',
+  'pi',
+]);
 
 function contextTimestamp(context: AgentContext): number {
   const value =

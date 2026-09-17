@@ -6,6 +6,7 @@ import {
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
+  DEFAULT_PI_MODEL,
   type SafetyTier,
   type ScriptedRunnerConfig,
 } from '@farmslot/protocol';
@@ -163,6 +164,42 @@ export function buildGrokLaunch(options: {
 export function resolveGrokBinary(preferred?: string | null): string {
   if (preferred && preferred.trim()) return preferred.trim();
   return 'grok';
+}
+
+export function resolvePiBinary(preferred?: string | null): string {
+  if (preferred && preferred.trim()) return preferred.trim();
+  return 'pi';
+}
+
+export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
+  return path.posix.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
+}
+
+export function buildPiLaunch(options: {
+  binary: string;
+  model?: string | null;
+  repo: string;
+  runtimeDir?: string;
+  slotId?: string;
+  safetyTier?: SafetyTier;
+}): string {
+  const effectiveModel =
+    options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
+  const cliModel =
+    effectiveModel.includes('/') || effectiveModel !== DEFAULT_PI_MODEL
+      ? effectiveModel
+      : `xai/${effectiveModel}`;
+  const runtimeDir = options.runtimeDir ?? '.agent';
+  const obsDir = path.posix.join(options.repo, runtimeDir, '.observability');
+  const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
+  const flagList = runnerFlagsForTier('pi', options.safetyTier);
+  const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
+  const envPrefix = [
+    `FARMSLOT_OBS_DIR=${shellQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shellQuote(options.slotId ?? '')}`,
+    'FARMSLOT_RUNNER=pi',
+  ].join(' ');
+  return `cd ${shellQuote(options.repo)} && ${envPrefix} ${options.binary}${flagFragment} --approve -e ${shellQuote(extension)} --model ${quoteRunnerArgValue(assertedModel(cliModel))}`;
 }
 
 /**
@@ -474,6 +511,7 @@ function dispatchCmdIsRunnerAware(dispatchCmd: string | undefined | null, runner
   if (runner === 'opencode' && dispatchCmd.includes('{opencode_path}')) return true;
   if (runner === 'cursor' && dispatchCmd.includes('{cursor_path}')) return true;
   if (runner === 'grok' && dispatchCmd.includes('{grok_path}')) return true;
+  if (runner === 'pi' && dispatchCmd.includes('{pi_path}')) return true;
   return false;
 }
 
@@ -802,6 +840,28 @@ export function buildLaunchCommand(
           effort: opts.effort,
           prompt,
           repo,
+          safetyTier: tier,
+        }),
+        installCommand,
+      ),
+    );
+  }
+
+  if (runner === 'pi') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
+    return withRecipeTrust(
+      withRequiredRunnerInstall(
+        buildPiLaunch({
+          binary: resolvePiBinary(vars.piPath),
+          model,
+          repo,
+          runtimeDir: opts.runtimeDir,
+          slotId: vars.slotId,
           safetyTier: tier,
         }),
         installCommand,

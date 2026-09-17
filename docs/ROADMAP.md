@@ -52,7 +52,7 @@ No-change terminal outcomes, runs/family readiness analytics, `#runs` shareable 
 
 ### Phase 5: Runner-neutral expansion and mobile follow-through
 
-The approved native structured transport rollout is complete through PR #635 on 2026-09-14. Codex and Claude sessions, durable execution, Command Center and Companion controls, workers, retained reviewers, remote nodes, cross-slot parking, Cursor/Grok standalone sessions, and trusted-operator profiles are shipped. Existing tmux defaults remain. See [shipped history](IMPLEMENTED-HISTORY.md#native-structured-runner-transports) and [ADR-057](adr/057-structured-runner-transports.md). OpenCode, PI runtime replacement, and arbitrary live TUI takeover were excluded. Rules shims and unrelated mobile follow-through remain deferred.
+The approved native structured transport rollout is complete through PR #635 on 2026-09-14. Codex and Claude sessions, durable execution, Command Center and Companion controls, workers, retained reviewers, remote nodes, cross-slot parking, Cursor/Grok standalone sessions, and trusted-operator profiles are shipped. Existing tmux defaults remain. See [shipped history](IMPLEMENTED-HISTORY.md#native-structured-runner-transports) and [ADR-057](adr/057-structured-runner-transports.md). Arbitrary live TUI takeover remains excluded. A PI TUI worker spike is captured as [ROADMAP-next](ROADMAP-next.md) item 21; OpenCode stays a fallback if that spike cannot emit structured hooks. Rules shims and unrelated mobile follow-through remain deferred.
 
 ## Near-Term Priority Order
 

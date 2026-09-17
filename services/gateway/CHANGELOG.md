@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Register `pi` as a TUI-first worker runner. Launch copies a Farmslot PI extension that writes `hooks.jsonl` (prompt-accepted digest, turn complete) without parsing pane text. Default model is `grok-4.6` via xAI.
+
 - Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated "Recorded in canonical library" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts.
 
 - Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate.

@@ -1,8 +1,8 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-15
-**Stale by:** 2026-10-15
+**Last updated:** 2026-09-17
+**Stale by:** 2026-10-17
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
@@ -65,3 +65,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [056](056-runner-session-archive.md)                     | Opaque runner session archive at recycle (ADR-047 follow-up)            | Accepted |
 | [057](057-structured-runner-transports.md)               | Structured runner transports                                            | Accepted |
 | [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |
+| [059](059-pi-tui-model-agnostic-runner.md)               | PI TUI as a model-agnostic Farmslot worker                              | Accepted |

@@ -62,6 +62,7 @@ import * as nativeWorkerUiDispatch from './native-worker-ui-dispatch.mjs';
 import * as nativeWorkspaceSmoke from './native-workspace-smoke.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as piAstraIntelligence from './pi-astra-intelligence.mjs';
+import * as piInteractivePrompt from './pi-interactive-prompt.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
 import * as resourcePostureSmoke from './resource-posture-smoke.mjs';
 import * as retainedHandoffSmoke from './retained-handoff-smoke.mjs';
@@ -91,6 +92,7 @@ export const SCENARIOS = {
   'dispatch-prompt-mcp-race': dispatchPromptMcpRace,
   'dispatch-prompt-trust': dispatchPromptTrust,
   'prompt-accepted': promptAccepted,
+  'pi-interactive-prompt': piInteractivePrompt,
   'review-recovery-terminal-contract': reviewRecoveryTerminalContract,
   'runner-stop-process-scan': runnerStopProcessScan,
   'self-review-fix-turn-lease': selfReviewFixTurnLease,
