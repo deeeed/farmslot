@@ -36,11 +36,24 @@ export interface PRRawSnapshot {
    */
   reviewMetaStdout: string;
   fetchedAt: number;
+  /** True when GraphQL first-page connections still have more nodes. */
+  partial?: boolean;
 }
 
-const PR_RAW_TTL_MS = 60 * 1000;
+export const PR_RAW_TTL_MS = 60 * 1000;
 const prRawCache = new Map<string, PRRawSnapshot>();
 const prRawInflight = new Map<string, Promise<PRRawSnapshot>>();
+
+export function isUsablePRRawSnapshot(
+  cached: PRRawSnapshot | undefined,
+  now: number,
+  opts: { force?: boolean; allowPartial?: boolean } = {},
+): cached is PRRawSnapshot {
+  if (!cached || opts.force) return false;
+  if (now - cached.fetchedAt >= PR_RAW_TTL_MS) return false;
+  if (cached.partial && !opts.allowPartial) return false;
+  return true;
+}
 
 function swallowGh(label: string) {
   return (err: unknown): CommandOutput => {
@@ -74,11 +87,13 @@ export async function getPRRawData(
   ghRepo: string,
   prNum: number,
   force?: boolean,
+  opts?: { allowPartial?: boolean },
 ): Promise<PRRawSnapshot> {
   const key = `${ghRepo}#${prNum}`;
   if (!force) {
     const cached = prRawCache.get(key);
-    if (cached && Date.now() - cached.fetchedAt < PR_RAW_TTL_MS) return cached;
+    if (isUsablePRRawSnapshot(cached, Date.now(), { allowPartial: opts?.allowPartial }))
+      return cached;
     const inflight = prRawInflight.get(key);
     if (inflight) return inflight;
   }
@@ -594,9 +609,9 @@ export function synthesizeRawSnapshotFromGraphQL(
 
 // One GraphQL request per repo chunk. Quota holds fail the refresh; other failures log and continue —
 // `prList` falls through to the per-PR REST path for whichever PRs aren't in cache.
-// Relies on `ghRequest`'s 10MB stdout buffer; a 25-PR chunk with 100 contexts × 100
+// Relies on `ghRequest`'s 10MB stdout buffer; an 8-PR chunk with 100 contexts × 100
 // review threads × 50 comments could in principle approach that ceiling on monster
-// PRs. JSON.parse failure on truncation is caught below and falls back cleanly.
+// PRs. JSON.parse failure is caught below and falls back cleanly.
 async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Promise<void> {
   const query = buildBatchQuery(chunk.prs.length).replace(
     /}\s*$/,
@@ -631,8 +646,6 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
   try {
     parsed = JSON.parse(stdout) as GqlBatchResponse;
   } catch (err) {
-    if (err instanceof GitHubQueryBudgetError) throw err;
-    // Per-PR fallback engages — see function-level comment.
     console.warn(`[pr.batch] graphql_parse_failed repo=${chunk.repo} err=${fmtBatchErr(err, 120)}`);
     return;
   }
@@ -644,23 +657,15 @@ async function runBatchChunk(chunk: BatchedRepoChunk, seeded: Set<string>): Prom
     const prNum = chunk.prs[i];
     const prNode = repoNode[`pr_${i}`];
     if (!prNode) continue; // partial GraphQL error → REST fallback for this PR
-    // Truncation guard: a single GraphQL connection caps at first/last:100. If a PR
-    // has more checks or review threads than that, the batch slice silently drops
-    // the rest — and the REST/per-PR-paginated path used by pr.status sees them all.
-    // Seeding a truncated snapshot as authoritative would hide late bot findings
-    // (matchBotComments → actionableBotComments) and check failures past index 100.
-    // Skip the cache seed for these PRs; getPRRawData falls back to the per-PR REST
-    // path (which uses --paginate for review threads and --json for all checks).
-    if (isPRBatchTruncated(prNode)) {
-      // First page still has verdicts, review requests, and the checks/threads
-      // the dashboard shows. Skipping the seed used to fall through to per-PR
-      // GraphQL (verdicts + paginated threads) and burn hundreds of points per
-      // refresh. pr.status / force can still paginate a single PR.
+    const truncated = isPRBatchTruncated(prNode);
+    if (truncated) {
       console.warn(`[pr.batch] truncated repo=${chunk.repo} pr=${prNum} — seeding first page`);
     }
     const snap = synthesizeRawSnapshotFromGraphQL(prNode);
+    if (truncated) snap.partial = true;
     prRawCache.set(`${chunk.repo}#${prNum}`, snap);
-    seeded.add(`${chunk.repo}#${prNum}`);
+    // Complete pages can satisfy force/pr.status. Partial pages are list-only.
+    if (!truncated) seeded.add(`${chunk.repo}#${prNum}`);
   }
 }
 

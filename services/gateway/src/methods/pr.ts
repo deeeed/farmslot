@@ -113,6 +113,8 @@ interface FetchPRDataOptions {
    * overwrite the last known state of a PR with `PR #n` / OPEN defaults.
    */
   rejectIncomplete?: boolean;
+  /** Dashboard list may use truncated GraphQL first pages; pr.status must not. */
+  allowPartial?: boolean;
 }
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -460,9 +462,8 @@ async function loadPRList(
     }`,
   );
 
-  // Fetch all PRs in parallel. Under `force`, a PR the batch did not seed
-  // (truncated node, failed chunk) still has to reach GitHub, so force only
-  // those; seeded PRs read the snapshot the batch just wrote.
+  // Fetch all PRs in parallel. Under `force`, a PR the batch did not fully
+  // seed (failed chunk, or truncated first page) still has to reach GitHub.
   const failed: string[] = [];
   let gone = 0;
   const prs = await Promise.all(
@@ -479,6 +480,7 @@ async function loadPRList(
           repoOverride: info.repo,
           force: opts.force === true && !seeded.has(`${info.repo}#${prNum}`),
           rejectIncomplete: true,
+          allowPartial: true,
         });
       } catch (error) {
         if (error instanceof GitHubQueryBudgetError) throw error;
@@ -521,6 +523,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     force,
     repoOverride,
     rejectIncomplete,
+    allowPartial,
   } = opts;
   const { project: resolvedProject, repo: ghRepo } = await resolveProjectRepo(
     project,
@@ -531,7 +534,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   // Raw GitHub data is served from the 60s cache (see getPRRawData) so repeated
   // callers in the same minute — UI polls, ci-monitor tick, pr.list refetch —
   // share one network round-trip. force=true bypasses both caches.
-  const raw = await getPRRawData(ghRepo, prNum, force);
+  const raw = await getPRRawData(ghRepo, prNum, force, { allowPartial });
   if (rejectIncomplete && raw.prStateStdout.trim() === '') {
     const why = raw.prStateError ?? 'empty response';
     if (PR_GONE_PATTERN.test(why))

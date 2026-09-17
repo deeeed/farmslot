@@ -40,7 +40,7 @@ const PR_LIST_SNAPSHOT_VERSION = 1;
 /** A served list older than this triggers a background refresh. */
 export const PR_LIST_STALE_MS = 60_000;
 /** Gateway-side polling only continues while a client recently asked for `pr.list`. */
-export const PR_LIST_CLIENT_INTEREST_MS = 2 * 60_000;
+export const PR_LIST_CLIENT_INTEREST_MS = 6 * 60_000;
 const PR_LIST_UNCHANGED_BACKOFF_MS = [PR_LIST_STALE_MS, 2 * 60_000, 5 * 60_000] as const;
 /** A PR GitHub keeps failing to read is carried from the previous copy for at most this long. */
 export const PR_LIST_CARRY_MAX_MS = 60 * 60 * 1000;
@@ -300,7 +300,7 @@ export async function servePRList(
       truncated: fresh.truncated === true,
     };
   }
-  if (ageMs(snapshot, opts.now ?? Date.now()) > PR_LIST_STALE_MS && !inflight)
+  if (ageMs(snapshot, opts.now ?? Date.now()) > unchangedRefreshDelayMs() && !inflight)
     refresh(fetch, false, opts.now).catch(logBackgroundFailure);
   return {
     prs: snapshot.prs,

@@ -78,8 +78,8 @@ export interface GatewayStatusResult {
   capabilities?: {
     experimentalWorkerHistory?: boolean;
   };
-  /** Rolling-hour GraphQL point spend by caller. Absent until a GraphQL read has run. */
-  githubQuota?: GitHubQuerySpendSnapshot;
+  /** Rolling-hour GraphQL point spend by caller. */
+  githubQuerySpend?: GitHubQuerySpendSnapshot;
 }
 
 export type GatewayDoctorSectionId =

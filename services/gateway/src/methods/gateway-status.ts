@@ -228,6 +228,6 @@ export async function gatewayStatus(params?: GatewayStatusParams): Promise<Gatew
     capabilities: {
       experimentalWorkerHistory: workerSessionHistoryEnabled(),
     },
-    githubQuota: githubQueryBudget.spendSnapshot(),
+    githubQuerySpend: githubQueryBudget.spendSnapshot(),
   };
 }

@@ -61,6 +61,16 @@ test('anyReserved is true when some other credential is already below the reserv
   assert.equal(budget.nextEligibleAt('["ambient",[]]', now), undefined);
 });
 
+test('spend snapshot ignores remaining from a GraphQL window that already reset', () => {
+  const budget = new GitHubQueryBudget();
+  const now = Date.parse('2026-09-17T13:00:00.000Z');
+  budget.observe('stale', { remaining: 0, cost: 1, resetAt: '2026-09-17T12:00:00.000Z' });
+  budget.observe('live', { remaining: 4200, cost: 1, resetAt: '2026-09-17T14:00:00.000Z' });
+  const snap = budget.spendSnapshot(now);
+  assert.equal(snap.remaining, 4200);
+  assert.equal(snap.resetAt, '2026-09-17T14:00:00.000Z');
+});
+
 test('spend snapshot attributes GraphQL cost to callers inside a rolling hour', () => {
   const budget = new GitHubQueryBudget();
   const now = Date.parse('2026-09-17T12:00:00.000Z');

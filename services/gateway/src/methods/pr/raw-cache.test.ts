@@ -10,8 +10,10 @@ import {
   buildPRChecksArgs,
   chunkPRsByRepo,
   isPRBatchTruncated,
+  isUsablePRRawSnapshot,
   parseJsonLines,
   prefetchPRBatchViaGraphQL,
+  type PRRawSnapshot,
   synthesizeRawSnapshotFromGraphQL,
 } from './raw-cache.js';
 
@@ -467,6 +469,25 @@ test('prefetchPRBatchViaGraphQL early-returns on empty input without firing Grap
   await prefetchPRBatchViaGraphQL(new Map([['no-slash', [1, 2]]]));
   // No assertion target — passing without throwing is the contract. (Coverage
   // for the chunks.length === 0 branch in prefetchPRBatchViaGraphQL.)
+});
+
+test('partial GraphQL pages are list-only and miss for pr.status', () => {
+  const now = Date.parse('2026-09-17T12:00:00.000Z');
+  const snap: PRRawSnapshot = {
+    checksStdout: '',
+    prStateStdout: 'OPEN',
+    commentsStdout: '',
+    reviewCommentsStdout: '',
+    latestCommitStdout: '',
+    reviewMetaStdout: '',
+    fetchedAt: now,
+    partial: true,
+  };
+  assert.equal(isUsablePRRawSnapshot(snap, now, { allowPartial: true }), true);
+  assert.equal(isUsablePRRawSnapshot(snap, now), false);
+  assert.equal(isUsablePRRawSnapshot(snap, now, { force: true, allowPartial: true }), false);
+  const full = { ...snap, partial: undefined };
+  assert.equal(isUsablePRRawSnapshot(full, now), true);
 });
 
 test('isPRBatchTruncated returns true when GraphQL connections capped at 100', () => {

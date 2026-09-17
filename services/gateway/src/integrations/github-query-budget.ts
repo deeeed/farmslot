@@ -129,6 +129,7 @@ export class GitHubQueryBudget {
     let remaining: number | null = null;
     let resetAt: string | null = null;
     for (const quota of this.quotas.values()) {
+      if (Date.parse(quota.resetAt) <= now) continue;
       if (remaining === null || quota.remaining < remaining) {
         remaining = quota.remaining;
         resetAt = quota.resetAt;

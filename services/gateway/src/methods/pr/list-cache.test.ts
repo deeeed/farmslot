@@ -209,6 +209,26 @@ test('the refresher only fetches while a client is connected and broadcasts chan
   }
 });
 
+test('servePRList backs off after an unchanged refresh', async () => {
+  const { cleanup } = isolate();
+  try {
+    let calls = 0;
+    const fetch = async () => {
+      calls += 1;
+      return list([pr(1)]);
+    };
+    const t0 = Date.parse('2026-09-17T12:00:00.000Z');
+    await servePRList(fetch, { now: t0 });
+    assert.equal(calls, 1);
+    await servePRList(fetch, { now: t0 + PR_LIST_STALE_MS + 1 });
+    assert.equal(calls, 2, 'first stale window still refreshes');
+    await servePRList(fetch, { now: t0 + PR_LIST_STALE_MS + 30_000 });
+    assert.equal(calls, 2, 'unchanged copy waits for the 2-minute backoff');
+  } finally {
+    cleanup();
+  }
+});
+
 test('the refresher does not poll a warm list after clients leave the PR board', async () => {
   const { cleanup } = isolate();
   try {
