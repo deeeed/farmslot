@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow Cursor's Application Support directory and `/tmp/cursor-agent-persist-<uid>` in the review sandbox so `cursor-agent` can lock its chat and start.
+
 - Retain exact terminal reviewer chat identities across managed worktrees.
 
 - Share review filesystem protection between native and terminal launches while preserving task artifacts.
