@@ -1,3 +1,6 @@
+---
+checklist: none
+---
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
