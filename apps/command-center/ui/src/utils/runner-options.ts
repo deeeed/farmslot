@@ -42,6 +42,10 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
   pi: [DEFAULT_PI_MODEL],
 };
 
+/** Dispatch hint: PI accepts OpenAI-compatible ids once the worker registers them. */
+export const PI_COMPAT_MODEL_HINT =
+  'Ollama/LiteLLM/router: type ollama/<id> or litellm/<id>. Pool env: OLLAMA_HOST, LITELLM_URL, FARMSLOT_PI_ROUTER_URL.';
+
 export const DEFAULT_MODEL: Record<string, string> = {
   claude: DEFAULT_CLAUDE_MODEL,
   codex: DEFAULT_CODEX_MODEL,

@@ -11,6 +11,7 @@ export const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs
 export const RUNNER_OBSERVABILITY_COPY_PATHS = [
   'scripts/runners/pi-farmslot-observability.ts',
   'scripts/runners/pi-farmslot-hook-writer.mjs',
+  'scripts/runners/pi-farmslot-providers.mjs',
 ] as const;
 
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [

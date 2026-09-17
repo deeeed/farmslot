@@ -171,6 +171,12 @@ export function resolvePiBinary(preferred?: string | null): string {
   return 'pi';
 }
 
+function piCliModel(model: string): string {
+  if (model.includes('/')) return model;
+  if (model === DEFAULT_PI_MODEL || model.startsWith('grok-')) return `xai/${model}`;
+  return model;
+}
+
 export function piObservabilityExtensionPath(repo: string, runtimeDir = '.agent'): string {
   return path.posix.join(repo, runtimeDir, '.observability', 'pi-farmslot-observability.ts');
 }
@@ -185,10 +191,7 @@ export function buildPiLaunch(options: {
 }): string {
   const effectiveModel =
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_PI_MODEL;
-  const cliModel =
-    effectiveModel.includes('/') || effectiveModel !== DEFAULT_PI_MODEL
-      ? effectiveModel
-      : `xai/${effectiveModel}`;
+  const cliModel = piCliModel(effectiveModel);
   const runtimeDir = options.runtimeDir ?? '.agent';
   const obsDir = path.posix.join(options.repo, runtimeDir, '.observability');
   const extension = piObservabilityExtensionPath(options.repo, runtimeDir);
@@ -252,6 +255,14 @@ export function buildInteractiveRefinementRunnerCommand(options: {
   if (runnerId === 'grok') {
     const flags = safetyFlags ? ` ${safetyFlags}` : '';
     return `${shellQuote(resolveGrokBinary(options.binary))}${flags}${modelFlag} ${promptArg}`;
+  }
+  if (runnerId === 'pi') {
+    return `${buildPiLaunch({
+      binary: resolvePiBinary(options.binary),
+      model: options.model,
+      repo: options.repo,
+      safetyTier: options.safetyTier,
+    })} ${promptArg}`;
   }
   const flags = safetyFlags ? ` ${safetyFlags}` : '';
   return `${shellQuote(options.binary || runnerId)}${flags}${modelFlag} ${promptArg}`;

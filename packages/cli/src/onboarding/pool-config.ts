@@ -93,7 +93,7 @@ export interface GeneratePoolOptions {
   machine: string;
   os: 'darwin' | 'linux';
   sshUser: string;
-  runnerPaths: Partial<Record<'claude' | 'codex' | 'cursor' | 'grok', string>>;
+  runnerPaths: Partial<Record<'claude' | 'codex' | 'cursor' | 'grok' | 'pi', string>>;
 }
 
 /**
@@ -114,6 +114,7 @@ export function generatePool(opts: GeneratePoolOptions): PoolConfig {
   if (opts.runnerPaths.codex) pool.codex_path = opts.runnerPaths.codex;
   if (opts.runnerPaths.cursor) pool.cursor_path = opts.runnerPaths.cursor;
   if (opts.runnerPaths.grok) pool.grok_path = opts.runnerPaths.grok;
+  if (opts.runnerPaths.pi) pool.pi_path = opts.runnerPaths.pi;
   return pool;
 }
 

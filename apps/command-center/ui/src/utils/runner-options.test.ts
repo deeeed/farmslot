@@ -18,6 +18,7 @@ import {
   modelForRunnerChange,
   MODELS_BY_RUNNER,
   modelsForRunner,
+  PI_COMPAT_MODEL_HINT,
 } from './runner-options.js';
 
 test('eval candidates expose Cursor and Grok through the shared comparison runner allowlist', () => {
@@ -51,6 +52,7 @@ test('PI is a dispatch runner defaulting to Grok', () => {
   assert.equal(DEFAULT_MODEL.pi, DEFAULT_PI_MODEL);
   assert.deepEqual(MODELS_BY_RUNNER.pi, [DEFAULT_PI_MODEL]);
   assert.equal(modelForRunnerChange('pi', ''), DEFAULT_PI_MODEL);
+  assert.match(PI_COMPAT_MODEL_HINT, /OLLAMA_HOST/);
 });
 
 test('Claude fable is selectable but not the default model', () => {

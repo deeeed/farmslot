@@ -8,7 +8,7 @@
 ## Governance checklist
 
 - **Document type:** approved supporting plan under `docs/plans/`.
-- **Why a new file:** PI as a Farmslot worker changes the runner boundary; the spike is too detailed for the near-term roadmap and not yet accepted as an ADR.
+- **Why a new file:** PI as a Farmslot worker changes the runner boundary; the spike is too detailed for the near-term roadmap. Promoted to [ADR-059](../adr/059-pi-tui-model-agnostic-runner.md).
 - **Canonical support:** runner-agnostic execution. ADR-057 left PI runtime replacement and OpenCode outside the native-transport delivery.
 - **Public-safety:** no private pool names, tokens, hostnames, or credentials.
 

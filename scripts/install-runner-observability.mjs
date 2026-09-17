@@ -1244,10 +1244,14 @@ function grokTrustedFolderPaths(content) {
 const PI_XAI_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
 
 function jwtExpMs(token) {
-  const parts = String(token).split('.');
-  if (parts.length !== 3) return undefined;
-  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-  return typeof payload.exp === 'number' ? payload.exp * 1000 : undefined;
+  try {
+    const parts = String(token).split('.');
+    if (parts.length !== 3) return undefined;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Same xAI OAuth client as PI `/login xai`. Do not log tokens. */
@@ -1255,7 +1259,12 @@ function grokCliXaiOauth() {
   const grokDir = process.env.GROK_HOME?.trim() || path.join(os.homedir(), '.grok');
   const authPath = path.join(grokDir, 'auth.json');
   if (!fs.existsSync(authPath)) return null;
-  const raw = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+  } catch {
+    return null;
+  }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   for (const [id, value] of Object.entries(raw)) {
     if (!id.includes('auth.x.ai') || !id.includes(PI_XAI_CLIENT_ID)) continue;
@@ -1276,25 +1285,34 @@ function grokCliXaiOauth() {
 }
 
 function seedPiXaiFromGrokCli() {
-  const oauth = grokCliXaiOauth();
+  let oauth;
+  try {
+    oauth = grokCliXaiOauth();
+  } catch {
+    return { seeded: false, reason: 'grok-xai-unreadable' };
+  }
   if (!oauth) return { seeded: false, reason: 'no-grok-xai' };
-  const piDir = path.join(os.homedir(), '.pi', 'agent');
-  fs.mkdirSync(piDir, { recursive: true, mode: 0o700 });
-  const authPath = path.join(piDir, 'auth.json');
-  let store = {};
-  if (fs.existsSync(authPath)) {
-    const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8') || '{}');
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) store = parsed;
+  try {
+    const piDir = path.join(os.homedir(), '.pi', 'agent');
+    fs.mkdirSync(piDir, { recursive: true, mode: 0o700 });
+    const authPath = path.join(piDir, 'auth.json');
+    let store = {};
+    if (fs.existsSync(authPath)) {
+      const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8') || '{}');
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) store = parsed;
+    }
+    if (store.xai && typeof store.xai === 'object' && store.xai.type) {
+      return { seeded: false, reason: 'pi-xai-present' };
+    }
+    store.xai = oauth;
+    const tmp = `${authPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(store)}\n`, { mode: 0o600 });
+    fs.renameSync(tmp, authPath);
+    fs.chmodSync(authPath, 0o600);
+    return { seeded: true };
+  } catch {
+    return { seeded: false, reason: 'grok-xai-unreadable' };
   }
-  if (store.xai && typeof store.xai === 'object' && store.xai.type) {
-    return { seeded: false, reason: 'pi-xai-present' };
-  }
-  store.xai = oauth;
-  const tmp = `${authPath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(store)}\n`, { mode: 0o600 });
-  fs.renameSync(tmp, authPath);
-  fs.chmodSync(authPath, 0o600);
-  return { seeded: true };
 }
 
 function installPi({ repo, runtimeDir, slotId }) {
@@ -1303,7 +1321,11 @@ function installPi({ repo, runtimeDir, slotId }) {
   const obsDir = path.resolve(repoPath, runtimeDir || '.agent', '.observability');
   fs.mkdirSync(obsDir, { recursive: true });
   const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runners');
-  for (const name of ['pi-farmslot-observability.ts', 'pi-farmslot-hook-writer.mjs']) {
+  for (const name of [
+    'pi-farmslot-observability.ts',
+    'pi-farmslot-hook-writer.mjs',
+    'pi-farmslot-providers.mjs',
+  ]) {
     const source = path.join(srcDir, name);
     if (!fs.existsSync(source)) throw new Error(`missing PI observability file: ${source}`);
     fs.copyFileSync(source, path.join(obsDir, name));

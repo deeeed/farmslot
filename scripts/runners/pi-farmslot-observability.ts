@@ -3,6 +3,7 @@
 import path from 'node:path';
 
 import { writePiHook } from './pi-farmslot-hook-writer.mjs';
+import { resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
 
 function obsDir() {
   return process.env.FARMSLOT_OBS_DIR || path.join(process.cwd(), '.agent', '.observability');
@@ -19,10 +20,29 @@ function promptText(value: unknown): string | null {
   return null;
 }
 
-export default function (pi: {
+export default async function (pi: {
   on: (event: string, handler: (...args: never[]) => unknown) => void;
+  registerProvider?: (id: string, provider: Record<string, unknown>) => void;
 }) {
-  pi.on('project_trust', async () => ({ trusted: 'yes' as const, remember: true }));
+  try {
+    const catalog = await resolvePiProviderCatalog(process.env);
+    for (const source of catalog) {
+      pi.registerProvider?.(source.id, {
+        name: source.name,
+        baseUrl: source.baseUrl,
+        apiKey: source.apiKey,
+        api: 'openai-completions',
+        models: source.models,
+      });
+    }
+  } catch (error) {
+    // Optional local/router discovery must not block xAI/Grok launch.
+    if (process.env.FARMSLOT_PI_PROVIDERS_DEBUG) {
+      console.error('[farmslot-pi] provider discovery failed', error);
+    }
+  }
+
+  pi.on('project_trust', async () => ({ trusted: 'yes' as const }));
 
   pi.on(
     'session_start',

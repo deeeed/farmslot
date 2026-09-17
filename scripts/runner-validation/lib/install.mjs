@@ -101,7 +101,7 @@ export function readRegisteredEvents(runner, repo, runtimeDir) {
     );
     return Object.keys(settings.hooks).sort();
   }
-  if (runner === 'pi' || runner === 'grok') {
+  if (runner === 'pi') {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(repo, runtimeDir, '.observability', 'install.json'), 'utf8'),
     );

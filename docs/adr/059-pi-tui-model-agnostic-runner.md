@@ -24,6 +24,16 @@ Pool `pi_path` / `{pi_path}` resolve the binary. Inline launch does not require 
 
 `acceptsModel` is permissive. The default is `grok-4.6`, launched as `xai/grok-4.6`. Operators may pass any PI-catalog model (`provider/id` or a bare id). Cursor subscription quota stays on the `cursor` runner; PI has no Cursor provider.
 
+### OpenAI-compatible routers and local models
+
+Farmslot does not ship a routing engine. The PI extension registers OpenAI-compatible endpoints that are already running:
+
+- Ollama: `OLLAMA_HOST` / `OLLAMA_BASE_URL` / `FARMSLOT_PI_OLLAMA_URL` (default `127.0.0.1:11434`). Set `FARMSLOT_PI_OLLAMA=0` to skip.
+- LiteLLM: `LITELLM_URL` / `LITELLM_API_KEY`
+- Custom router: `FARMSLOT_PI_ROUTER_URL` / `FARMSLOT_PI_ROUTER_KEY`
+
+Discovery GETs `/v1/models` with a short timeout and fails open. Dispatch uses `runner=pi` and `model=ollama/qwen2.5-coder` (or `litellm/…`, `router/…`). PI's own `~/.pi/agent/models.json` still applies. Local Ollama is actual on-machine inference; a cloud router only inherits that backend's retention.
+
 ### Observability is a Farmslot PI extension, not pane text
 
 Launch copies `scripts/runners/pi-farmslot-observability.ts` into the slot runtime dir and loads it with `pi -e`. The extension maps PI events (`session_start`, `input`, tool start/end, `agent_settled`) onto the existing Claude-shaped `hooks.jsonl` contract. `getRunnerObservability('pi')` reuses the Claude hook provider. Prompt-accepted is a digest match, not a pane scrape.

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-17T07:14:00.099Z",
+  "host": "macwork",
+  "scenario": "pi-interactive-prompt",
+  "runner": "pi",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-vTrtXA",
+  "slotId": "runner-validate-macwork-pi",
+  "session": "runner-validate-pi-pi-interactive-prompt-36278",
+  "launchMode": "pi-interactive",
+  "digest": "ba978966dfe24946",
+  "hookDigest": "ba978966dfe24946",
+  "sessionStarted": true,
+  "promptSubmitted": true,
+  "turnStopped": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.Uqv1tR/launch-965eb6027705e7d6.sh\n\n pi v0.85.1\n escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o\n more\n Press ctrl+o to show full startup help and loaded resources.\n\n Pi can explain its own features and look up its docs. Ask it how to use or\n extend Pi.\n\n[Skills]\n  agent-chrome, app-store-connect, brainstorm, branch-sync, bugbot, chrome-mcp,\nclaude-review, code-diff, code-factory, codex-debugging, codex-lb, codex-review,\ncross-review-orchestrator, cursor-review, daily-standup, dev-farm, echobridge,\nflights-search, gbrain-recall, github-identity, mac-maintenance,\nnative-app-performance, play-store, pr-recipes, pr-review, pr-workflow,\npublish-farmslot-env, runway-update, sentry-zero, siteed-expo-farmslot,\nsystem-pressure, tplink-router, tv-downloads, unslop, vpndebug, weekly-review\n\n[Extensions]\n  pi-farmslot-observability.ts\n\n\n fd not found. Downloading...\n fd installed to /Users/deeeed/.pi/agent/bin/fd\n\n Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set\n -g extended-keys on` to ~/.tmux.conf and restart tmux.\n\n\n Reply with exactly TMUX_HOOK_OK and nothing else.\n\n\n The user wants me to reply with exactly \"TMUX_HOOK_OK\" and nothing else. This\n is a simple instruction with no tools needed.\n\n TMUX_HOOK_OK\n\n────────────────────────────────────────────────────────────────────────────────\n\n────────────────────────────────────────────────────────────────────────────────\n/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-pi-v...\n↑6.0k ↓36 $0.012 (sub) 1.2%/500k (auto)                        grok-4.6 • medium"
+}

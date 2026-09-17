@@ -1811,7 +1811,14 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
       const cmd = buildLaunchCommand(vars, 'pi', 'grok-4.5', PROMPT);
       assert.match(cmd, /\/usr\/local\/bin\/pi --approve -e /);
-      assert.match(cmd, /--model grok-4\.5/);
+      assert.match(cmd, /--model xai\/grok-4\.5/);
+    });
+
+    it('passes OpenAI-compatible router ids through without an xAI prefix', () => {
+      const vars = makeVars({ dispatchCmd: '', piPath: '/usr/local/bin/pi' });
+      const cmd = buildLaunchCommand(vars, 'pi', 'ollama/qwen2.5-coder', PROMPT);
+      assert.match(cmd, /--model ollama\/qwen2\.5-coder/);
+      assert.doesNotMatch(cmd, /xai\/ollama/);
     });
   });
 

@@ -1341,10 +1341,23 @@ test('pi install copies the Farmslot observability extension into the slot runti
   const { repo, obsDir } = installToTempDir('pi', undefined, { HOME: home });
   assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
   assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-hook-writer.mjs')), true);
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-providers.mjs')), true);
   const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
   assert.equal(manifest.runner, 'pi');
   assert.equal(manifest.xaiSeed, 'no-grok-xai');
   assert.ok(fs.existsSync(path.join(repo, '.observability')));
+});
+
+test('pi install continues when Grok auth.json is unreadable', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-bad-grok-'));
+  const grokDir = path.join(home, '.grok');
+  fs.mkdirSync(grokDir, { recursive: true });
+  fs.writeFileSync(path.join(grokDir, 'auth.json'), '{not-json');
+  const { obsDir } = installToTempDir('pi', undefined, { HOME: home, GROK_HOME: grokDir });
+  const manifest = JSON.parse(fs.readFileSync(path.join(obsDir, 'install.json'), 'utf8'));
+  assert.equal(manifest.runner, 'pi');
+  assert.equal(manifest.xaiSeed, 'no-grok-xai');
+  assert.equal(fs.existsSync(path.join(obsDir, 'pi-farmslot-observability.ts')), true);
 });
 
 test('pi install seeds PI xAI oauth from Grok CLI when PI has none', () => {
