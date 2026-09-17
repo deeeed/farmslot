@@ -76,6 +76,8 @@ export interface RunDetailViewContext {
   _rescueInProgress: boolean;
   _pendingConfirm: string | null;
   _showTerminal: boolean;
+  _terminalContextId: string;
+  _terminalRole: string;
   _actionsBlocked: () => boolean;
   _publicationActions: Record<string, { busy: boolean; error?: string }>;
   _retryReviewPublication: (run: Run) => Promise<void>;
@@ -1010,7 +1012,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ${ctx._showTerminal
             ? html`
                 <div class="terminal-section">
-                  <terminal-view .slotId=${boundSlotId ?? ''} .runId=${r.id}></terminal-view>
+                  <terminal-view
+                    .slotId=${boundSlotId ?? ''}
+                    .runId=${r.id}
+                    .contextId=${ctx._terminalContextId}
+                    .role=${ctx._terminalRole}
+                  ></terminal-view>
                 </div>
               `
             : nothing}

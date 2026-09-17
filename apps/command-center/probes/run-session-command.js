@@ -3,7 +3,7 @@
  * Usage: node apps/command-center/scripts/cdp.mjs eval run/<runId> --file probes/run-session-command.js \
  *          --out docs/operations/evidence/cc-probe-run-session-command.json
  *
- * Clicks the real "Reopen session" button, which drives the same
+ * Clicks the real "Copy reopen" control, which drives the same
  * `run.sessionCommand` round trip an operator triggers. Nothing is injected
  * into component state: the row's liveness label only appears after the gateway
  * answered, so it is the proof the RPC ran through the real UI path.
@@ -17,7 +17,8 @@
  * refuses it for a programmatic click in some profiles. The probe records
  * whether the copy landed (`copyBlocked`) but does not require it — a refused
  * clipboard must still leave the liveness on screen and must never render
- * "Copied". Run `cdp.mjs focus <hash>` first to give the copy its best chance.
+ * data-copy-state="copied". Run `cdp.mjs focus <hash>` first to give the copy its
+ * best chance.
  *
  * Top-level `return` + IIFE: Prettier accepts it (`allowReturnOutsideFunction`)
  * and `cdp.mjs` stmtForm fallback returns the value.
@@ -36,14 +37,24 @@ return (async () => {
     };
   }
 
+  const buttonLabel = (button) =>
+    button?.querySelector('span')?.textContent.trim() ??
+    button?.textContent.replace(/\s+/g, ' ').trim() ??
+    null;
+  const copyStateOf = (button) => button?.getAttribute('data-copy-state') ?? null;
   const rows = [...section.querySelectorAll('[data-testid^="run-agent-session-"]')]
     .filter((node) => node.classList.contains('agent-session-row'))
     .map((node) => {
       const contextId = node.dataset.testid.replace('run-agent-session-', '');
       const roleNode = section.querySelector(`[data-testid="run-agent-session-role-${contextId}"]`);
+      const location = section.querySelector(
+        `[data-testid="run-agent-session-location-${contextId}"]`,
+      );
       return {
         contextId,
         role: roleNode?.getAttribute('data-role') ?? null,
+        location: location?.textContent.trim() ?? null,
+        slot: location?.getAttribute('data-slot') || null,
         text: node.textContent.replace(/\s+/g, ' ').trim(),
       };
     });
@@ -74,7 +85,8 @@ return (async () => {
   const role = firstRow.contextId;
   const reopen = section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`);
   if (!reopen) return { ok: false, error: 'no reopen button rendered', rows };
-  const labelBefore = reopen.textContent.trim();
+  const labelBefore = buttonLabel(reopen);
+  const copyKindBefore = reopen.getAttribute('data-copy-kind');
 
   reopen.click();
 
@@ -83,10 +95,10 @@ return (async () => {
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const button = section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`);
-    const label = button?.textContent.trim() ?? '';
+    const copyState = copyStateOf(button);
     const liveness = section.querySelector(`[data-testid="run-agent-session-liveness-${role}"]`);
     const error = section.querySelector(`[data-testid="run-agent-session-error-${role}"]`);
-    if (label !== 'Loading…' && (label === 'Copied' || liveness || error)) {
+    if (copyState && copyState !== 'loading' && (copyState === 'copied' || liveness || error)) {
       settled = true;
       break;
     }
@@ -95,8 +107,15 @@ return (async () => {
   const liveness = section.querySelector(`[data-testid="run-agent-session-liveness-${role}"]`);
   const errorNode = section.querySelector(`[data-testid="run-agent-session-error-${role}"]`);
   const sessionId = section.querySelector(`[data-testid="run-agent-session-id-${role}"]`);
-  const labelAfter =
-    section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)?.textContent.trim() ??
+  const reopenAfter = section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`);
+  const labelAfter = buttonLabel(reopenAfter);
+  const copyStateAfter = copyStateOf(reopenAfter);
+  const pasteOn =
+    section
+      .querySelector(`[data-testid="run-agent-session-paste-on-${role}"]`)
+      ?.textContent.trim() ?? null;
+  const copiedCommand =
+    section.querySelector(`[data-testid="run-agent-session-copied-${role}"]`)?.textContent.trim() ??
     null;
 
   // The sibling of the row just clicked, when the run has a same-role pair.
@@ -114,16 +133,22 @@ return (async () => {
       const otherDeadline = Date.now() + 20000;
       while (Date.now() < otherDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 250));
-        const label = section
-          .querySelector(`[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`)
-          ?.textContent.trim();
+        const otherButton = section.querySelector(
+          `[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`,
+        );
+        const copyState = copyStateOf(otherButton);
         const otherLiveness = section.querySelector(
           `[data-testid="run-agent-session-liveness-${otherRow.contextId}"]`,
         );
         const otherError = section.querySelector(
           `[data-testid="run-agent-session-error-${otherRow.contextId}"]`,
         );
-        if (label !== 'Loading…' && (label === 'Copied' || otherLiveness || otherError)) break;
+        if (
+          copyState &&
+          copyState !== 'loading' &&
+          (copyState === 'copied' || otherLiveness || otherError)
+        )
+          break;
       }
       secondRow = {
         contextId: otherRow.contextId,
@@ -138,9 +163,9 @@ return (async () => {
             .querySelector(`[data-testid="run-agent-session-liveness-${otherRow.contextId}"]`)
             ?.textContent.trim() ?? null,
         settled:
-          section
-            .querySelector(`[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`)
-            ?.textContent.trim() !== 'Loading…',
+          copyStateOf(
+            section.querySelector(`[data-testid="run-agent-session-reopen-${otherRow.contextId}"]`),
+          ) !== 'loading',
       };
     }
   }
@@ -148,9 +173,8 @@ return (async () => {
   // The first row must not have been stranded by the second row's click: the
   // request sequence is keyed per context.
   const firstRowStillSettled =
-    section
-      .querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)
-      ?.textContent.trim() !== 'Loading…';
+    copyStateOf(section.querySelector(`[data-testid="run-agent-session-reopen-${role}"]`)) !==
+    'loading';
 
   const attach = section.querySelector(`[data-testid="run-agent-session-attach-${role}"]`);
   let attachLabelAfter = null;
@@ -159,12 +183,12 @@ return (async () => {
     const attachDeadline = Date.now() + 20000;
     while (Date.now() < attachDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const label =
-        section
-          .querySelector(`[data-testid="run-agent-session-attach-${role}"]`)
-          ?.textContent.trim() ?? '';
-      if (label !== 'Loading…') {
-        attachLabelAfter = label;
+      const attachButton = section.querySelector(
+        `[data-testid="run-agent-session-attach-${role}"]`,
+      );
+      const copyState = copyStateOf(attachButton);
+      if (copyState && copyState !== 'loading') {
+        attachLabelAfter = buttonLabel(attachButton);
         break;
       }
     }
@@ -179,15 +203,25 @@ return (async () => {
   // Structural flag from the component, not a match on the human-readable
   // message: rendered text is never the signal.
   const copyBlocked = errorNode?.getAttribute('data-copy-blocked') === 'true';
+  const sectionText = section.textContent.replace(/\s+/g, ' ');
+  const executeLooking = /Reopen session|Attach tmux/.test(sectionText);
+  const copyAffordance = copyKindBefore === 'reopen' && labelBefore === 'Copy reopen';
   return {
     ...envelope,
-    // The gateway answered through the real button, the row shows its proved
-    // liveness, and a blocked clipboard never masquerades as a copy.
+    // The gateway answered through the real copy control, the row shows its
+    // proved liveness and paste-on node, and a blocked clipboard never
+    // masquerades as a copy.
     ok:
       settled &&
       !duplicateContextIds &&
       Boolean(liveness) &&
       Boolean(sessionId?.textContent.trim()) &&
+      Boolean(firstRow.location) &&
+      copyAffordance &&
+      !executeLooking &&
+      Boolean(pasteOn?.startsWith('Paste on ')) &&
+      Boolean(copiedCommand) &&
+      (copyStateAfter === 'copied' || copyBlocked) &&
       (labelAfter === 'Copied' || copyBlocked) &&
       firstRowStillSettled &&
       secondRow !== null &&
@@ -202,6 +236,12 @@ return (async () => {
     rows,
     labelBefore,
     labelAfter,
+    copyKindBefore,
+    copyStateAfter,
+    copyAffordance,
+    executeLooking,
+    pasteOn,
+    copiedCommand,
     attachLabelAfter,
     copyBlocked,
     secondRow,

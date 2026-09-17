@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- The run-session-command probe asserts copy affordance, the paste-on node, and `data-copy-state` instead of execute-looking button labels.
+
 - Let CDP checks accept or dismiss a confirmation only when its message matches the expected action.
 
 - Add real browser clicks to the CDP helper for fullscreen and other user-gesture checks.

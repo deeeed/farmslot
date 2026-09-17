@@ -8,6 +8,7 @@ import type {
   FamilyObservabilitySnapshot,
   FamilyReport,
   LLMConfigGetResult,
+  Run,
   RunDecision,
   RunGetResult,
   RunSessionCommandResult,
@@ -29,6 +30,7 @@ import { copyTextToClipboard } from '../../utils/clipboard.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
 
 import {
@@ -111,6 +113,7 @@ import {
 } from './family-observability-url-state.js';
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
+import { openRunnerSessionOnHost } from './run-detail-session-open.js';
 import {
   runSessionCommandTextForKind,
   type RunSessionCopyKind,
@@ -1038,6 +1041,44 @@ export class FamilyObservability extends FamilyObservabilityState {
         const fullRun = this._fullRuns.get(run.runId);
         if (fullRun) void this._copyRunnerSessionCommand(fullRun.id, row, kind);
       },
+      onOpenOnHost: (row) => {
+        const fullRun = this._fullRuns.get(run.runId);
+        if (fullRun) void this._openRunnerSessionOnHost(fullRun.id, fullRun.status, row);
+      },
+    });
+  }
+
+  private async _openRunnerSessionOnHost(
+    runId: string,
+    runStatus: Run['status'],
+    row: RunSessionRow,
+  ): Promise<void> {
+    const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
+    this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
+    const requestStillCurrent = () =>
+      requestSeq === this._sessionRequestSeq[row.contextId] && this.selectedRunId === runId;
+    this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'opening' } };
+    const opened = await openRunnerSessionOnHost({ runId, runStatus, row });
+    if (!requestStillCurrent()) return;
+    this._sessionStates = {
+      ...this._sessionStates,
+      [row.contextId]: {
+        status: opened.ok ? 'ready' : 'error',
+        liveness: opened.liveness,
+        command: opened.command,
+        machine: opened.machine,
+        slotId: opened.slotId ?? undefined,
+        tmuxTarget: opened.tmuxTarget,
+        ownership: opened.ownership,
+        ownerRunId: opened.ownerRunId,
+        message: opened.message,
+      },
+    };
+    if (!opened.ok || !opened.slotId) return;
+    location.hash = slotViewHash({
+      slotId: opened.slotId,
+      runId,
+      contextId: opened.contextId,
     });
   }
 
