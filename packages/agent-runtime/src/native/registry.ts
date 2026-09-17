@@ -68,6 +68,12 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
     reviewRuntimeRoots: (env) => [
       join(env.HOME ?? homedir(), '.cursor'),
       join(env.HOME ?? homedir(), 'Library/Caches/cursor-compile-cache'),
+      join(env.HOME ?? homedir(), 'Library/Application Support/Cursor'),
+      // cursor-agent locks chats under /tmp/cursor-agent-persist-<uid> (realpath
+      // /private/tmp/...). Denying that mkdir kills the tmux reviewer in seconds.
+      ...(typeof process.getuid === 'function'
+        ? [join('/tmp', `cursor-agent-persist-${process.getuid()}`)]
+        : []),
     ],
     adapter: cursorNativeAdapter,
     binary: 'cursor-agent',
