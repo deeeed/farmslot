@@ -166,6 +166,53 @@ test('reviewPlanFromSelection honors explicit loop runners', () => {
   );
 });
 
+test('reviewPlanFromSelection honors per-loop model and effort', () => {
+  assert.deepEqual(
+    reviewPlanFromSelection({
+      reviewRequest: {
+        extraLoopsRequested: 2,
+        requireCrossRunner: true,
+        loops: [
+          {
+            order: 1,
+            runner: 'pi',
+            model: 'grok-4.6',
+            effort: 'low',
+            validationDepth: 'static-code',
+            sessionIntent: 'reset',
+          },
+          {
+            order: 2,
+            runner: 'codex',
+            model: 'gpt-6-astra',
+            effort: 'xhigh',
+            validationDepth: 'full-live',
+            sessionIntent: 'resume',
+          },
+        ],
+      },
+    }),
+    [
+      {
+        order: 1,
+        runner: 'pi',
+        model: 'grok-4.6',
+        effort: 'low',
+        validationDepth: 'static-code',
+        sessionIntent: 'reset',
+      },
+      {
+        order: 2,
+        runner: 'codex',
+        model: 'gpt-6-astra',
+        effort: 'xhigh',
+        validationDepth: 'full-live',
+        sessionIntent: 'resume',
+      },
+    ],
+  );
+});
+
 test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stale claude pending', () => {
   // Reproduction of run 71803bd2: decision[1] requested codex while pending
   // still held claude from the first request / wrong plan preference.

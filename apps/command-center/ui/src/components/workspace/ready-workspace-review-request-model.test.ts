@@ -24,6 +24,13 @@ test('ready workspace review request model labels and creates loops', () => {
     model: 'opus',
     effort: '',
   });
+  assert.deepEqual(createReadyReviewLoop(3, 'pi'), {
+    id: 3,
+    runner: 'pi',
+    sessionIntent: 'reset',
+    model: 'grok-4.6',
+    effort: 'medium',
+  });
 });
 
 test('ready workspace review request model mutates loops with max and minimum guards', () => {
@@ -111,5 +118,12 @@ test('ready workspace review request model builds ordered request payload', () =
       [1, 'claude', undefined, undefined, 'static-code', 'resume'],
       [2, 'codex', 'gpt-6-astra', 'low', 'full-live', 'reset'],
     ],
+  );
+
+  const piPayload = readyReviewLoopRequestPayload([createReadyReviewLoop(1, 'pi')], 'claude');
+  assert.equal(piPayload.requireCrossRunner, true);
+  assert.deepEqual(
+    piPayload.loops.map((loop) => [loop.runner, loop.model, loop.effort]),
+    [['pi', 'grok-4.6', 'medium']],
   );
 });

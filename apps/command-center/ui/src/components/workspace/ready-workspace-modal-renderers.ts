@@ -104,9 +104,8 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
             <div class="rdy-review-modal-eyebrow">Independent review</div>
             <h3>Build review sequence</h3>
             <p>
-              Each row runs after the previous row passes. Choose another runner to require runner
-              diversity, and choose whether that runner continues its same-run context or starts
-              clean.
+              Each row runs after the previous row passes. Choose runner, model, and effort, then
+              whether that runner continues its same-run context or starts clean.
             </p>
           </div>
           <button class="rdy-modal-close" @click=${ctx.close}>Close</button>

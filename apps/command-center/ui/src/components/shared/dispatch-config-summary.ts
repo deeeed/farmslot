@@ -137,7 +137,7 @@ export function summarizeBacklogDispatchConfig(item: DispatchConfigItem): Dispat
   const reviewSteps: DispatchConfigReviewStep[] = (item.pendingReviewPlan ?? []).map(
     (loop, index) => {
       const runnerLabel = loop.runner || 'same';
-      const detail = [loop.model, loop.validationDepth].filter(Boolean).join(' / ');
+      const detail = [loop.model, loop.effort, loop.validationDepth].filter(Boolean).join(' / ');
       return {
         label: `review ${index + 1}`,
         runner: runnerLabel,

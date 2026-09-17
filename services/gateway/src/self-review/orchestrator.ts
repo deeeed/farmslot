@@ -294,6 +294,7 @@ async function executeOwnedSelfReview(
       start,
       reviewRunner,
       model,
+      effort: options.effort,
       workerRunner,
       maxRetries,
       reviewTimeoutMs,
@@ -1359,6 +1360,7 @@ async function recoverSelfReviewFixPass({
   start,
   reviewRunner,
   model,
+  effort,
   workerRunner,
   maxRetries,
   reviewTimeoutMs,
@@ -1375,6 +1377,7 @@ async function recoverSelfReviewFixPass({
   start: number;
   reviewRunner: string;
   model: string;
+  effort?: string | null;
   workerRunner: string;
   maxRetries: number;
   reviewTimeoutMs: number;
@@ -1611,7 +1614,7 @@ async function recoverSelfReviewFixPass({
         workerRunner,
         reviewRunner,
         model,
-        effort: getRun(runId)?.effort,
+        effort,
         maxRetries,
         reviewTimeoutMs,
         reviewResult: { verdict: 'issues', issues, validationDepth },
@@ -1698,7 +1701,7 @@ async function recoverSelfReviewFixPass({
       artifactScope,
       sessionPolicy,
       undefined,
-      getRun(runId)?.effort,
+      effort,
     );
     const seededReviewResult = {
       ...retryResult,
@@ -1741,7 +1744,7 @@ async function recoverSelfReviewFixPass({
       workerRunner,
       reviewRunner,
       model,
-      effort: getRun(runId)?.effort,
+      effort,
       maxRetries,
       reviewTimeoutMs,
       reviewResult: seededReviewResult,

@@ -274,6 +274,8 @@ export class DispatchConfigEditor extends LitElement {
     return plan.slice(0, 5).map((loop, index, all) => ({
       order: index + 1,
       runner: loop.runner || 'same',
+      ...(loop.model?.trim() ? { model: loop.model.trim() } : {}),
+      ...(loop.effort?.trim() ? { effort: loop.effort.trim() } : {}),
       validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, all.length),
       ...(loop.sessionIntent ? { sessionIntent: loop.sessionIntent } : {}),
     }));
