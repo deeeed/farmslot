@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Task directory and agent-runtime references: templates carry no run mode; `--run-mode` is optional and only matches project default rules.
+
 - Document the guarded terminal session-ending endpoint.
 
 - Worker-prompt customization guide: the example task block no longer shows a `STATUS:` line and the sample checklist starts with `mark start`.
