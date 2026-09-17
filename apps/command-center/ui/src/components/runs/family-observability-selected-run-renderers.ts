@@ -69,6 +69,7 @@ interface FamilySelectedRunDetailRenderOptions {
   onTogglePublishGateMaximize: () => void;
   sessionStates: Record<string, RunSessionRowState | undefined>;
   onCopySession: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
+  onOpenOnHost?: (row: RunSessionRow) => void;
 }
 
 export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRenderOptions) {
@@ -93,6 +94,7 @@ function renderFamilyAgentSessions(options: FamilySelectedRunDetailRenderOptions
     return renderRunAgentSessions(options.fullRun, {
       states: options.sessionStates,
       onCopy: options.onCopySession,
+      onOpenOnHost: options.onOpenOnHost,
     });
   }
   if (options.fullRunLoading) {

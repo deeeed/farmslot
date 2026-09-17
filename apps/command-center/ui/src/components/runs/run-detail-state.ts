@@ -68,6 +68,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _resetBranch = false;
   @state() _branchNudgeShowPicker = false;
   @state() _showTerminal = false;
+  @state() _terminalContextId = '';
+  @state() _terminalRole = '';
   @state() _hydrating = false;
   @state() _bootstrapFailed = false;
   @state() _connectionStale = false;

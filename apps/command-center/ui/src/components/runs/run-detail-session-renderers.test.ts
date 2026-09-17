@@ -9,7 +9,13 @@ import {
   livenessLabel,
   runAgentSessionRows,
   runSessionCommandTextForKind,
+  runSessionCopyButtonLabel,
+  runSessionCopyButtonState,
+  runSessionLocationLabel,
+  runSessionOpenButtonLabel,
+  runSessionPasteOnLabel,
   runSessionRowStateFromResult,
+  shouldRestoreRunnerSessionOnHost,
 } from './run-detail-session-renderers.js';
 
 function run(contexts: AgentContext[]): Pick<Run, 'agentContexts' | 'metrics'> {
@@ -76,9 +82,58 @@ test('run detail lists one session row per agent context with a short session id
   assert.equal(rows[0]?.runner, 'codex');
   assert.equal(rows[0]?.model, 'gpt-5.6');
   assert.equal(rows[0]?.sessionIdShort, 'codex-se');
+  assert.equal(rows[0]?.slotId, 'macpro-mm-1');
+  assert.equal(rows[0]?.target, 'mm-1:dev');
   assert.equal(rows[1]?.role, 'self-review');
   assert.equal(rows[1]?.runner, 'claude');
   assert.equal(rows[1]?.sessionIdShort, null);
+});
+
+test('the row names the slot and tmux target before any copy', () => {
+  const row = runAgentSessionRows(run([context()]))[0];
+  assert.equal(runSessionLocationLabel(row!), 'macpro-mm-1 · mm-1:dev');
+  assert.equal(
+    runSessionLocationLabel({
+      slotId: 'runner-local-mobile-1',
+      target: 'runner-local-mobile-1:dev',
+    }),
+    'runner-local-mobile-1:dev',
+  );
+  assert.equal(runSessionLocationLabel({ slotId: null, target: null }), null);
+});
+
+test('copy buttons are labeled as copy, not as execute', () => {
+  assert.equal(runSessionCopyButtonLabel(undefined, 'reopen'), 'Copy reopen');
+  assert.equal(runSessionCopyButtonLabel(undefined, 'attach'), 'Copy attach');
+  assert.equal(runSessionCopyButtonLabel({ status: 'loading' }, 'reopen'), 'Copying…');
+  assert.equal(
+    runSessionCopyButtonLabel({ status: 'ready', copied: 'reopen' }, 'reopen'),
+    'Copied',
+  );
+  assert.equal(
+    runSessionCopyButtonLabel({ status: 'ready', copied: 'reopen' }, 'attach'),
+    'Copy attach',
+  );
+  assert.equal(runSessionCopyButtonState(undefined, 'reopen'), 'idle');
+  assert.equal(runSessionCopyButtonState({ status: 'loading' }, 'attach'), 'loading');
+  assert.equal(
+    runSessionCopyButtonState({ status: 'ready', copied: 'attach' }, 'attach'),
+    'copied',
+  );
+  assert.equal(runSessionOpenButtonLabel(undefined), 'Open on host');
+  assert.equal(runSessionOpenButtonLabel({ status: 'opening' }), 'Opening…');
+});
+
+test('Open on host reloads a dead pane only while the run is still live', () => {
+  assert.equal(
+    shouldRestoreRunnerSessionOnHost({ liveness: 'live', runStatus: 'monitoring' }),
+    false,
+  );
+  assert.equal(
+    shouldRestoreRunnerSessionOnHost({ liveness: 'dead', runStatus: 'monitoring' }),
+    true,
+  );
+  assert.equal(shouldRestoreRunnerSessionOnHost({ liveness: 'dead', runStatus: 'done' }), false);
 });
 
 test('copy buttons use only the command the gateway built', () => {
@@ -99,10 +154,14 @@ test('row state carries the structured liveness the gateway proved', () => {
     liveness: 'dead',
     copied: 'reopen',
     command: "CODEX_HOME=/repo/.agent/codex codex resume 'codex-session-123'",
+    machine: 'macpro',
+    slotId: 'macpro-mm-1',
+    tmuxTarget: 'mm-1:dev',
   });
   assert.equal(livenessLabel('dead'), 'interrupted');
   assert.equal(livenessLabel('live'), 'live');
   assert.equal(livenessLabel('unknown'), 'liveness unknown');
+  assert.equal(runSessionPasteOnLabel(state), 'Paste on macpro · macpro-mm-1 · mm-1:dev');
 });
 
 test('an unsupported runner surfaces its reason and copies nothing', () => {
@@ -137,6 +196,10 @@ test('a refused clipboard keeps the proved liveness and never reports Copied', (
   // A discrete flag, so no caller has to pattern-match the message text.
   assert.equal(state.copyBlocked, true);
   assert.equal(state.message, 'Clipboard copy failed: denied');
+  // The command stays visible so the operator can copy it by hand.
+  assert.equal(state.command, supported.reopenCommand);
+  assert.equal(runSessionPasteOnLabel(state), 'Paste on macpro · macpro-mm-1 · mm-1:dev');
+  assert.equal(runSessionCopyButtonLabel(state, 'reopen'), 'Copy reopen');
 });
 
 test('a gateway-side failure is not marked as a blocked copy', () => {

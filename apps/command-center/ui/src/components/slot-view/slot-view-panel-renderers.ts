@@ -810,6 +810,8 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                   <terminal-view
                                     .slotId=${view.slotId}
                                     .runId=${terminalRunId}
+                                    .contextId=${selectedContextId}
+                                    .role=${selectedRole}
                                     @terminal-subscribe-failed=${(
                                       e: CustomEvent<{ contextId?: string; role?: string }>,
                                     ) => {

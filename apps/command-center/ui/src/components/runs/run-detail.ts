@@ -108,6 +108,7 @@ import {
   renderRunEvidence,
   renderRunGrade,
 } from './run-detail-renderers.js';
+import { openRunnerSessionOnHost } from './run-detail-session-open.js';
 import {
   renderRunAgentSessions,
   runSessionCommandTextForKind,
@@ -1019,6 +1020,8 @@ export class RunDetail extends RunDetailState {
       _rescueInProgress: this._rescueInProgress,
       _pendingConfirm: this._pendingConfirm,
       _showTerminal: this._showTerminal,
+      _terminalContextId: this._terminalContextId,
+      _terminalRole: this._terminalRole,
       _actionsBlocked: () => this._actionsBlocked(),
       _rescueLinkage: (runId) => this._rescueLinkage(runId),
       _confirmForceComplete: (run) => this._confirmForceComplete(run),
@@ -1099,6 +1102,7 @@ export class RunDetail extends RunDetailState {
         renderRunAgentSessions(run, {
           states: this._sessionStates,
           onCopy: (row, kind) => void this._copyRunnerSessionCommand(run, row, kind),
+          onOpenOnHost: (row) => void this._openRunnerSessionOnHost(run, row),
         }),
       _onReplayStep: (stepName, skipPrepare, prepareProfile, freshDispatch) =>
         this._onReplayStep(stepName, skipPrepare, prepareProfile, freshDispatch),
@@ -1117,6 +1121,56 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+  }
+
+  /**
+   * Recover this agent context on the slot's node when needed, then open the
+   * run terminal on that exact pane. Copy stays available if the host refuses.
+   */
+  private async _openRunnerSessionOnHost(run: Run, row: RunSessionRow): Promise<void> {
+    const requestSeq = (this._sessionRequestSeq[row.contextId] ?? 0) + 1;
+    this._sessionRequestSeq = { ...this._sessionRequestSeq, [row.contextId]: requestSeq };
+    const requestStillCurrent = () =>
+      requestSeq === this._sessionRequestSeq[row.contextId] && this.runId === run.id;
+    this._sessionStates = { ...this._sessionStates, [row.contextId]: { status: 'opening' } };
+    const opened = await openRunnerSessionOnHost({
+      runId: run.id,
+      runStatus: run.status,
+      row,
+    });
+    if (!requestStillCurrent()) return;
+    if (!opened.ok) {
+      this._sessionStates = {
+        ...this._sessionStates,
+        [row.contextId]: {
+          status: 'error',
+          liveness: opened.liveness,
+          command: opened.command,
+          machine: opened.machine,
+          slotId: opened.slotId ?? undefined,
+          tmuxTarget: opened.tmuxTarget,
+          message: opened.message,
+        },
+      };
+      return;
+    }
+    this._terminalContextId = opened.contextId;
+    this._terminalRole = opened.role;
+    this._showTerminal = true;
+    this._sessionStates = {
+      ...this._sessionStates,
+      [row.contextId]: {
+        status: 'ready',
+        liveness: opened.liveness,
+        command: opened.command,
+        machine: opened.machine,
+        slotId: opened.slotId ?? undefined,
+        tmuxTarget: opened.tmuxTarget,
+        message: opened.message,
+      },
+    };
+    await this.updateComplete;
+    this.renderRoot.querySelector('terminal-view')?.scrollIntoView({ block: 'nearest' });
   }
 
   /**

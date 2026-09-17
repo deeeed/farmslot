@@ -1,10 +1,11 @@
 import { html, nothing } from 'lit';
 
-import type {
-  AgentContext,
-  Run,
-  RunSessionCommandResult,
-  RunSessionLiveness,
+import {
+  type AgentContext,
+  isTerminalRunStatus,
+  type Run,
+  type RunSessionCommandResult,
+  type RunSessionLiveness,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -13,11 +14,15 @@ import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 export type RunSessionCopyKind = 'reopen' | 'attach';
 
 export interface RunSessionRowState {
-  status: 'idle' | 'loading' | 'ready' | 'error';
+  status: 'idle' | 'loading' | 'opening' | 'ready' | 'error';
   liveness?: RunSessionLiveness;
   copied?: RunSessionCopyKind;
   /** Exact command last copied for this row, so the operator can see what landed. */
   command?: string;
+  /** Gateway machine this command must be pasted on. */
+  machine?: string;
+  slotId?: string;
+  tmuxTarget?: string | null;
   message?: string;
   /**
    * The gateway answered but the browser refused the clipboard. A discrete flag
@@ -37,6 +42,8 @@ export interface RunSessionRow {
   model: string;
   sessionId: string | null;
   sessionIdShort: string | null;
+  slotId: string | null;
+  runId: string;
   target: string | null;
 }
 
@@ -65,6 +72,8 @@ export function runAgentSessionRows(run: Pick<Run, 'agentContexts' | 'metrics'>)
       model: context.model ?? run.metrics.model ?? 'unknown',
       sessionId,
       sessionIdShort: sessionId ? sessionId.slice(0, 8) : null,
+      slotId: context.slotId?.trim() ? context.slotId.trim() : null,
+      runId: context.runId,
       target: context.target?.target ?? null,
     };
   });
@@ -94,17 +103,189 @@ export function runSessionRowStateFromResult(
     return { status: 'error', message: result.detail };
   }
   const command = runSessionCommandTextForKind(result, kind);
+  const location = {
+    machine: result.machine,
+    slotId: result.slotId,
+    tmuxTarget: result.tmuxTarget,
+  };
   if (!command) {
     return {
       status: 'error',
       liveness: result.liveness,
+      ...location,
       message: `No ${kind} command is available for this session.`,
     };
   }
   if (copyError) {
-    return { status: 'error', liveness: result.liveness, message: copyError, copyBlocked: true };
+    return {
+      status: 'error',
+      liveness: result.liveness,
+      ...location,
+      command,
+      message: copyError,
+      copyBlocked: true,
+    };
   }
-  return { status: 'ready', liveness: result.liveness, copied: kind, command };
+  return { status: 'ready', liveness: result.liveness, copied: kind, command, ...location };
+}
+
+/** Slot and tmux target already known on the row, before any RPC. */
+export function runSessionLocationLabel(
+  row: Pick<RunSessionRow, 'slotId' | 'target'>,
+): string | null {
+  const slotId = row.slotId?.trim() || null;
+  const target = row.target?.trim() || null;
+  if (slotId && target && (target === slotId || target.startsWith(`${slotId}:`))) return target;
+  const parts = [slotId, target].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** Where to paste the gateway-built command. Never wraps SSH; the operator pastes on that node. */
+export function runSessionPasteOnLabel(
+  state: Pick<RunSessionRowState, 'machine' | 'slotId' | 'tmuxTarget'>,
+): string | null {
+  const machine = state.machine?.trim() || null;
+  const slotId = state.slotId?.trim() || null;
+  const target = state.tmuxTarget?.trim() || null;
+  if (!machine && !slotId) return null;
+  const where =
+    machine && slotId && machine !== slotId ? `${machine} · ${slotId}` : (machine ?? slotId);
+  return target && target !== slotId ? `Paste on ${where} · ${target}` : `Paste on ${where}`;
+}
+
+export function runSessionCopyButtonState(
+  state: RunSessionRowState | undefined,
+  kind: RunSessionCopyKind,
+): 'idle' | 'loading' | 'copied' {
+  if (state?.status === 'loading' || state?.status === 'opening') return 'loading';
+  if (state?.copied === kind) return 'copied';
+  return 'idle';
+}
+
+export function runSessionCopyButtonLabel(
+  state: RunSessionRowState | undefined,
+  kind: RunSessionCopyKind,
+): string {
+  if (state?.status === 'loading') return 'Copying…';
+  if (state?.copied === kind) return 'Copied';
+  return kind === 'reopen' ? 'Copy reopen' : 'Copy attach';
+}
+
+export function runSessionOpenButtonLabel(state: RunSessionRowState | undefined): string {
+  if (state?.status === 'opening') return 'Opening…';
+  return 'Open on host';
+}
+
+/** Live panes only need the terminal view. Dead panes on a live run get a host reload. */
+export function shouldRestoreRunnerSessionOnHost(input: {
+  liveness?: RunSessionLiveness;
+  runStatus?: Run['status'];
+}): boolean {
+  if (input.liveness === 'live') return false;
+  if (input.runStatus && isTerminalRunStatus(input.runStatus)) return false;
+  return true;
+}
+
+export interface RunSessionRenderContext {
+  states: Record<string, RunSessionRowState | undefined>;
+  onCopy: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
+  onOpenOnHost?: (row: RunSessionRow) => void;
+}
+
+function copyGlyph(state: 'idle' | 'loading' | 'copied') {
+  if (state === 'copied') {
+    return html`<svg
+      class="agent-session-copy-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>`;
+  }
+  return html`<svg
+    class="agent-session-copy-icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>`;
+}
+
+function renderSessionCopyButton(
+  row: RunSessionRow,
+  kind: RunSessionCopyKind,
+  state: RunSessionRowState | undefined,
+  onCopy: RunSessionRenderContext['onCopy'],
+) {
+  const copyState = runSessionCopyButtonState(state, kind);
+  const title =
+    kind === 'reopen'
+      ? "Copy reopen command. Paste it on this slot's node"
+      : "Copy tmux attach command. Paste it on this slot's node";
+  return html`
+    <button
+      class="agent-session-copy"
+      data-testid="run-agent-session-${kind}-${row.contextId}"
+      data-copy-kind=${kind}
+      data-copy-state=${copyState}
+      title=${title}
+      aria-label=${title}
+      ?disabled=${state?.status === 'loading' || state?.status === 'opening'}
+      @click=${() => onCopy(row, kind)}
+    >
+      ${copyGlyph(copyState)}
+      <span>${runSessionCopyButtonLabel(state, kind)}</span>
+    </button>
+  `;
+}
+
+function openGlyph() {
+  return html`<svg
+    class="agent-session-open-icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M5 12h14" />
+    <path d="m12 5 7 7-7 7" />
+  </svg>`;
+}
+
+function renderSessionOpenButton(
+  row: RunSessionRow,
+  state: RunSessionRowState | undefined,
+  onOpenOnHost: (row: RunSessionRow) => void,
+) {
+  const opening = state?.status === 'opening';
+  return html`
+    <button
+      class="agent-session-open"
+      data-testid="run-agent-session-open-${row.contextId}"
+      data-open-state=${opening ? 'opening' : 'idle'}
+      title="Recover this session on the slot's node and open it in the terminal view"
+      aria-label="Open this session on the host"
+      ?disabled=${opening || state?.status === 'loading'}
+      @click=${() => onOpenOnHost(row)}
+    >
+      ${openGlyph()}
+      <span>${runSessionOpenButtonLabel(state)}</span>
+    </button>
+  `;
 }
 
 export function livenessLabel(liveness: RunSessionLiveness): string {
@@ -117,11 +298,6 @@ function livenessColor(liveness: RunSessionLiveness): string {
   if (liveness === 'live') return colors.statusOk;
   if (liveness === 'dead') return colors.statusFail;
   return colors.textMuted;
-}
-
-export interface RunSessionRenderContext {
-  states: Record<string, RunSessionRowState | undefined>;
-  onCopy: (row: RunSessionRow, kind: RunSessionCopyKind) => void;
 }
 
 export function renderRunAgentSessions(
@@ -169,9 +345,13 @@ export function renderRunAgentSessions(
         min-width: 110px;
       }
       .agent-session-engine,
-      .agent-session-id {
+      .agent-session-id,
+      .agent-session-location {
         font-family: ${fonts.mono};
         color: ${colors.textMuted};
+      }
+      .agent-session-location {
+        font-size: ${fonts.sizeXs};
       }
       .agent-session-liveness {
         font-family: ${fonts.mono};
@@ -200,8 +380,70 @@ export function renderRunAgentSessions(
         opacity: 0.5;
         cursor: default;
       }
-      .agent-session-copied {
+      .agent-session-copy {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        border: 1px solid ${colors.textMuted}44;
+        color: ${colors.textSecondary};
+        border-radius: 4px;
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeXs};
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      .agent-session-copy:hover:not(:disabled) {
+        color: ${colors.accent};
+        border-color: ${colors.accent}66;
+        background: ${colors.accent}14;
+      }
+      .agent-session-copy:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .agent-session-copy[data-copy-state='copied'] {
+        color: ${colors.statusOk};
+        border-color: ${colors.statusOk}55;
+      }
+      .agent-session-open {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        border: 1px solid ${colors.accent}66;
+        color: ${colors.accent};
+        border-radius: 4px;
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeXs};
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      .agent-session-open:hover:not(:disabled) {
+        background: ${colors.accent}18;
+      }
+      .agent-session-open:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .agent-session-copy-icon,
+      .agent-session-open-icon {
+        width: 12px;
+        height: 12px;
+        flex-shrink: 0;
+      }
+      .agent-session-copied-block {
         flex-basis: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .agent-session-paste-on {
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeXs};
+        color: ${colors.accent};
+      }
+      .agent-session-copied {
         font-family: ${fonts.mono};
         font-size: ${fonts.sizeXs};
         color: ${colors.textSecondary};
@@ -210,6 +452,11 @@ export function renderRunAgentSessions(
         padding: 6px 8px;
         overflow-x: auto;
         white-space: pre;
+      }
+      .agent-session-opened {
+        color: ${colors.textSecondary};
+        flex-basis: 100%;
+        font-size: ${fonts.sizeXs};
       }
       .agent-session-error {
         color: ${colors.statusFail};
@@ -221,11 +468,12 @@ export function renderRunAgentSessions(
       <div class="agent-sessions-hint">
         ${rows.some((row) => row.nativeHref || row.nativeHistory || row.workspaceView)
           ? 'Use the run terminal or conversation below to inspect this worker.'
-          : "Copy a terminal command to resume this runner's history, or attach its tmux pane."}
+          : 'Copy a command and paste it on the named node, or open it here to recover on the host.'}
       </div>
       ${rows.map((row) => {
         const state = ctx.states[row.contextId];
-        const busy = state?.status === 'loading';
+        const location = runSessionLocationLabel(row);
+        const pasteOn = state ? runSessionPasteOnLabel(state) : null;
         return html`
           <div class="agent-session-row" data-testid="run-agent-session-${row.contextId}">
             <span
@@ -241,6 +489,15 @@ export function renderRunAgentSessions(
               data-testid="run-agent-session-id-${row.contextId}"
               >${row.sessionIdShort ?? 'no session captured'}</span
             >
+            ${location
+              ? html`<span
+                  class="agent-session-location"
+                  title=${row.slotId ?? ''}
+                  data-slot=${row.slotId ?? ''}
+                  data-testid="run-agent-session-location-${row.contextId}"
+                  >${location}</span
+                >`
+              : nothing}
             ${state?.liveness
               ? html`<span
                   class="agent-session-liveness"
@@ -259,38 +516,34 @@ export function renderRunAgentSessions(
                   >`
                 : row.nativeHistory || row.workspaceView
                   ? nothing
-                  : html`<button
-                        class="agent-session-btn"
-                        data-testid="run-agent-session-reopen-${row.contextId}"
-                        title="Copy the command that resumes this runner session"
-                        ?disabled=${busy}
-                        @click=${() => ctx.onCopy(row, 'reopen')}
-                      >
-                        ${busy
-                          ? 'Loading…'
-                          : state?.copied === 'reopen'
-                            ? 'Copied reopen'
-                            : 'Reopen session'}
-                      </button>
-                      <button
-                        class="agent-session-btn"
-                        data-testid="run-agent-session-attach-${row.contextId}"
-                        title="Copy the tmux attach command for this pane"
-                        ?disabled=${busy}
-                        @click=${() => ctx.onCopy(row, 'attach')}
-                      >
-                        ${busy
-                          ? 'Loading…'
-                          : state?.copied === 'attach'
-                            ? 'Copied attach'
-                            : 'Attach tmux'}
-                      </button>`}
+                  : html`${renderSessionCopyButton(row, 'reopen', state, ctx.onCopy)}
+                    ${renderSessionCopyButton(row, 'attach', state, ctx.onCopy)}
+                    ${ctx.onOpenOnHost
+                      ? renderSessionOpenButton(row, state, ctx.onOpenOnHost)
+                      : nothing}`}
             </span>
-            ${state?.command && state.copied
-              ? html`<code
-                  class="agent-session-copied"
-                  data-testid="run-agent-session-copied-${row.contextId}"
-                  >${state.command}</code
+            ${state?.command
+              ? html`<div class="agent-session-copied-block">
+                  ${pasteOn
+                    ? html`<div
+                        class="agent-session-paste-on"
+                        data-testid="run-agent-session-paste-on-${row.contextId}"
+                      >
+                        ${pasteOn}
+                      </div>`
+                    : nothing}
+                  <code
+                    class="agent-session-copied"
+                    data-testid="run-agent-session-copied-${row.contextId}"
+                    >${state.command}</code
+                  >
+                </div>`
+              : nothing}
+            ${state?.status === 'ready' && state.message && !state.copied
+              ? html`<span
+                  class="agent-session-opened"
+                  data-testid="run-agent-session-opened-${row.contextId}"
+                  >${state.message}</span
                 >`
               : nothing}
             ${state?.status === 'error' && state.message
