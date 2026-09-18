@@ -18,7 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars, resolveTaskPaths } from '../core/config.js';
+import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
@@ -103,7 +103,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   };
 
   // Parse structure directly from active task file — no schema file needed
-  const flowType = slot.taskFile.split('/')[0] || 'fix-bug';
+  const flowType = normalizeSlotTaskRel(slot.taskFile, DEFAULT_TASK_DIR).split('/')[0] || 'fix-bug';
   const schema = generateTaskSchema(markdown, flowType);
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);

@@ -2245,6 +2245,18 @@ export interface TaskPaths {
   signalPath: string;
 }
 
+/** Slot.taskFile should be `fix/foo`, not `temp/tasks/fix/foo/TASK.md`. */
+export function normalizeSlotTaskRel(taskFile: string, taskDirName: string): string {
+  let rel = taskFile.replace(/\\/g, '/').replace(/\/+$/, '');
+  const base = rel.split('/').pop() ?? '';
+  if (/\.(md|json)$/i.test(base)) {
+    rel = rel.slice(0, Math.max(0, rel.length - base.length - 1));
+  }
+  const prefix = `${taskDirName.replace(/\\/g, '/')}/`;
+  if (rel.startsWith(prefix)) rel = rel.slice(prefix.length);
+  return rel;
+}
+
 export async function resolveTaskPaths(slotId: string, taskFile: string): Promise<TaskPaths> {
   const vars = await loadSlotVars(slotId);
   let taskDirName = DEFAULT_TASK_DIR;
@@ -2254,7 +2266,8 @@ export async function resolveTaskPaths(slotId: string, taskFile: string): Promis
   } catch {
     /* use default */
   }
-  const taskDir = path.join(vars.remoteRepo, taskDirName, taskFile);
+  const rel = normalizeSlotTaskRel(taskFile, taskDirName);
+  const taskDir = path.join(vars.remoteRepo, taskDirName, rel);
   return {
     vars,
     taskDir,

@@ -12,6 +12,7 @@ import {
   isMockModeProject,
   loadProjectVars,
   normalizeRawRuntimeCapabilities,
+  normalizeSlotTaskRel,
   type RawProjectJson,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
@@ -21,6 +22,21 @@ import {
   validatePrepareConfig,
   validateRuntimeCapabilitiesConfig,
 } from './config.js';
+
+test('normalizeSlotTaskRel strips nested task-dir and TASK.md suffixes', () => {
+  assert.equal(
+    normalizeSlotTaskRel('fix/10294-0918-151416', 'temp/tasks'),
+    'fix/10294-0918-151416',
+  );
+  assert.equal(
+    normalizeSlotTaskRel('temp/tasks/fix/10294-0918-151416/TASK.md', 'temp/tasks'),
+    'fix/10294-0918-151416',
+  );
+  assert.equal(
+    normalizeSlotTaskRel('.task/feat/tat-3215-0622-110508/TASK.md', '.task'),
+    'feat/tat-3215-0622-110508',
+  );
+});
 
 test('prepare core and capability providers validate while legacy profiles remain valid', () => {
   const legacy: RawProjectJson = {
