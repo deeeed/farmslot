@@ -6,6 +6,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.10.0 - 2026-09-18
+
+- Publish against `@farmslot/protocol` 0.29.0 so downstream installs resolve one protocol version.
+
 ## 0.9.2 - 2026-09-17
 
 - Publish against `@farmslot/protocol` 0.28.0 so a consumer that also installs `@farmslot/agent-runtime` 0.10.0 resolves one protocol copy.
