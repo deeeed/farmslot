@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `farmslot run gate --action` documents `approve-publish-unresolved`.
+
 - `farmslot execution-template` no longer shows a run-mode column or accepts `--run-mode` on `new`; `--run-mode` elsewhere is optional and matches project default rules.
 
 - Pool onboarding accepts optional `pi_path` for the PI coding-agent binary.

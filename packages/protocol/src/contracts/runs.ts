@@ -465,6 +465,12 @@ export interface IndependentReviewStatus {
   feedbackSent?: boolean;
   /** Restart recovery explicitly owes this review a worker fix/re-review continuation. */
   recoveryContinuationPending?: boolean;
+  /** Worker-fix attempts already consumed in this review loop. */
+  retryCount?: number;
+  /** Effective worker-fix cap for this loop (`self_review.max_retries`, raised if Continue Fixing authorizes another pass). */
+  maxRetries?: number;
+  /** True when the loop stopped because retryCount reached maxRetries with findings still open. */
+  maxRetriesExhausted?: boolean;
   attempts?: IndependentReviewAttempt[];
   artifactPaths?: string[];
   taskProgressArtifactPath?: string;

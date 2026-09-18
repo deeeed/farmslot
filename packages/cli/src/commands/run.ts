@@ -597,7 +597,10 @@ export function registerRunCommand(program: Command): void {
   run
     .command('gate <runId>')
     .description('List or resolve pending human-gate decisions for a run')
-    .option('--action <id>', 'Action to resolve with (approve-publish|hold|close-as-shipped|…)')
+    .option(
+      '--action <id>',
+      'Action to resolve with (approve-publish|approve-publish-unresolved|hold|close-as-shipped|…)',
+    )
     .option('--decision <id>', 'Decision id when several are pending')
     .action(async (runId: string, opts: { action?: string; decision?: string }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);

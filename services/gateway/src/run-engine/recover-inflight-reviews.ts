@@ -17,13 +17,14 @@
 
 import path from 'node:path';
 
-import type {
-  AgentContext,
-  IndependentReviewStatus,
-  ReadyGatePrPackage,
-  ReviewDiffSnapshot,
-  Run,
-  WorkerSignal,
+import {
+  type AgentContext,
+  independentReviewFixRetriesExhausted,
+  type IndependentReviewStatus,
+  type ReadyGatePrPackage,
+  type ReviewDiffSnapshot,
+  type Run,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { upsertAgentContext } from '../agents/contexts.js';
@@ -183,6 +184,10 @@ type RecoverableReviewRecord = Pick<IndependentReviewStatus, 'id'> &
       | 'feedbackSent'
       | 'recoveryContinuationPending'
       | 'issues'
+      | 'retryCount'
+      | 'maxRetries'
+      | 'maxRetriesExhausted'
+      | 'attempts'
     >
   >;
 
@@ -213,6 +218,10 @@ export function reviewerContextNeedsRecovery(
       recoveryContinuationPending: recorded.recoveryContinuationPending,
       unresolvedCount: recorded.unresolvedCount,
       issues: recorded.issues,
+      retryCount: recorded.retryCount,
+      maxRetries: recorded.maxRetries,
+      maxRetriesExhausted: recorded.maxRetriesExhausted,
+      attempts: recorded.attempts,
     })
   ) {
     return true;
@@ -866,26 +875,60 @@ export function recoveredReviewAlreadyIngested(
   return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
 }
 
-function appendRecoveredContinuationAttempt(
+function applyIndependentReviewRetryCap(
+  review: IndependentReviewStatus,
+  existing?: IndependentReviewStatus,
+): IndependentReviewStatus {
+  const attempts = review.attempts ?? existing?.attempts ?? [];
+  const retryCount = Math.max(
+    existing?.retryCount ?? 0,
+    review.retryCount ?? 0,
+    Math.max(0, attempts.length - 1),
+  );
+  const maxRetries = existing?.maxRetries ?? review.maxRetries;
+  const exhausted = independentReviewFixRetriesExhausted({
+    ...review,
+    retryCount,
+    maxRetries,
+    maxRetriesExhausted: review.maxRetriesExhausted ?? existing?.maxRetriesExhausted,
+    attempts,
+  });
+  return {
+    ...review,
+    retryCount,
+    ...(typeof maxRetries === 'number' ? { maxRetries } : {}),
+    ...(exhausted ? { maxRetriesExhausted: true, recoveryContinuationPending: false } : {}),
+  };
+}
+
+export function appendRecoveredContinuationAttempt(
   existing: IndependentReviewStatus,
   recovered: IndependentReviewStatus,
 ): IndependentReviewStatus {
-  if (!independentReviewNeedsContinuation(existing)) return recovered;
+  if (independentReviewFixRetriesExhausted(existing)) {
+    return applyIndependentReviewRetryCap(existing);
+  }
+  if (!independentReviewNeedsContinuation(existing)) {
+    return applyIndependentReviewRetryCap(recovered, existing);
+  }
   const priorAttempts = existing.attempts ?? [];
   const recoveredAttempt = recovered.attempts?.at(-1);
-  if (!recoveredAttempt) return recovered;
+  if (!recoveredAttempt) return applyIndependentReviewRetryCap(existing);
   const attempts = [
     ...priorAttempts,
     { ...recoveredAttempt, loopNumber: priorAttempts.length + 1 },
   ];
-  return {
-    ...recovered,
-    loopNumber: existing.loopNumber,
-    attempts,
-    artifactPaths: [
-      ...new Set([...(existing.artifactPaths ?? []), ...(recovered.artifactPaths ?? [])]),
-    ],
-    timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
-    startedAt: existing.startedAt ?? recovered.startedAt,
-  };
+  return applyIndependentReviewRetryCap(
+    {
+      ...recovered,
+      loopNumber: existing.loopNumber,
+      attempts,
+      artifactPaths: [
+        ...new Set([...(existing.artifactPaths ?? []), ...(recovered.artifactPaths ?? [])]),
+      ],
+      timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+      startedAt: existing.startedAt ?? recovered.startedAt,
+    },
+    existing,
+  );
 }

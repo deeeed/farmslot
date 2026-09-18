@@ -878,6 +878,25 @@ test('buildPublishGateReviewStatus coalesces retry attempts into one configured 
     'artifacts/review-loop-2/review.diff',
   ]);
 });
+test('buildPublishGateReviewStatus clears continuation when retries are exhausted', () => {
+  const status = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 2,
+    requestedRunner: 'cursor',
+    workerRunner: 'claude',
+    reviewResult: {
+      verdict: 'issues',
+      issues: [{ file: 'a.ts', description: 'still broken' }],
+      retryCount: 3,
+      maxRetries: 3,
+      recoveryContinuationPending: true,
+      feedbackSent: false,
+    },
+  });
+  assert.equal(status.maxRetriesExhausted, true);
+  assert.equal(status.recoveryContinuationPending, false);
+});
+
 test('buildPublishGateReviewStatus stamps the prepared package that was reviewed', () => {
   const status = buildPublishGateReviewStatus({
     source: 'human-gate',

@@ -1,10 +1,12 @@
 import { html, nothing } from 'lit';
 
-import type {
-  ArtifactRef,
-  GitBranchDiffFile,
-  ReadyGatePayload,
-  RunDecision,
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type ArtifactRef,
+  type GitBranchDiffFile,
+  latestExhaustedIndependentReview,
+  type ReadyGatePayload,
+  type RunDecision,
 } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
@@ -37,6 +39,12 @@ export function renderReadyTopBar(input: {
     input.decision?.actions?.some(
       (action) => action.id === 'approve-publish' || action.id === 'ready',
     ) ?? !packageGate;
+  const extraReviewAction = input.decision?.actions?.find(
+    (action) => action.id === 'request-extra-review',
+  );
+  const bypassAction = input.decision?.actions?.find(
+    (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  );
   const reviewBlockingReason =
     packageGate && !canApprove ? readyReviewBlockingReason(input.payload) : '';
   const approveLabel = hasApprovePublish
@@ -44,6 +52,7 @@ export function renderReadyTopBar(input: {
     : 'Mark Ready';
   const approveActionId = hasApprovePublish ? 'approve-publish' : 'ready';
   const pendingApproveConfirm = input.pendingConfirm === approveActionId;
+  const pendingBypassConfirm = input.pendingConfirm === APPROVE_PUBLISH_UNRESOLVED_ACTION;
 
   return html`
     <div class="rdy-top-bar">
@@ -88,14 +97,35 @@ export function renderReadyTopBar(input: {
             </span>
           `
         : html`
-            ${packageGate && input.decision?.actions?.some((a) => a.id === 'request-extra-review')
+            ${packageGate && extraReviewAction
               ? html`
                   <button
-                    class="rdy-btn rdy-btn-secondary"
+                    class="rdy-btn ${extraReviewAction.style === 'primary'
+                      ? 'rdy-btn-primary'
+                      : 'rdy-btn-secondary'}"
+                    data-testid="rdy-request-review"
+                    title=${extraReviewAction.description ?? ''}
                     ?disabled=${input.acting || input.recovering}
                     @click=${input.openReviewRequestModal}
                   >
                     Independent Review
+                  </button>
+                `
+              : nothing}
+            ${bypassAction
+              ? html`
+                  <button
+                    class="rdy-btn ${pendingBypassConfirm ? 'rdy-confirming' : 'rdy-btn-danger'}"
+                    data-testid="rdy-bypass-review"
+                    title=${bypassAction.description ?? reviewBlockingReason}
+                    ?disabled=${input.acting || input.recovering}
+                    @click=${() => input.confirmAction(APPROVE_PUBLISH_UNRESOLVED_ACTION)}
+                  >
+                    ${input.acting
+                      ? 'Submitting…'
+                      : pendingBypassConfirm
+                        ? 'Confirm bypass?'
+                        : 'Bypass Review (dangerous)'}
                   </button>
                 `
               : nothing}
@@ -113,7 +143,12 @@ export function renderReadyTopBar(input: {
                   ? 'Confirm Publish?'
                   : canApprove
                     ? approveLabel
-                    : reviewBlockingReason || 'Review Required'}
+                    : latestExhaustedIndependentReview(
+                          input.payload.independentReviews,
+                          input.payload.prPackage,
+                        )
+                      ? 'Retries exhausted'
+                      : reviewBlockingReason || 'Review Required'}
             </button>
           `}
     </div>

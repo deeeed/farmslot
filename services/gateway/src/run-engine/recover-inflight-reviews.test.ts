@@ -6,6 +6,7 @@ import type { AgentContext, IndependentReviewStatus, WorkerSignal } from '@farms
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  appendRecoveredContinuationAttempt,
   buildRecoveredReview,
   isRecoverableReviewerContext,
   normalizeExhaustedReviewContinuationsForRun,
@@ -313,6 +314,23 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     ]),
     false,
     'a terminal issues verdict without an explicit recovery continuation stays terminal',
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'human-gate',
+        verdict: 'issues',
+        unresolvedCount: 6,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        retryCount: 3,
+        maxRetries: 3,
+        issues: [{ file: 'src/example.ts', description: 'still broken' }],
+      },
+    ]),
+    false,
+    'an exhausted retry cap is not a pending continuation',
   );
   assert.equal(
     reviewerContextNeedsRecovery(reviewerContext({ status: 'complete', artifactScope: null }), []),
@@ -899,4 +917,45 @@ test('startup reconciliation rewriting updatedAt does not reject the genuine pre
     }),
     null,
   );
+});
+
+test('appendRecoveredContinuationAttempt keeps an exhausted review instead of wiping the cap', () => {
+  const existing: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    crossRunner: true,
+    loopNumber: 3,
+    verdict: 'issues',
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'a.ts', description: 'still broken' }],
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+      { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+    ],
+  };
+  const recovered: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    crossRunner: true,
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 6,
+    retryCount: 0,
+    issues: [{ file: 'a.ts', description: 'still broken' }],
+    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 6 }],
+  };
+  const merged = appendRecoveredContinuationAttempt(existing, recovered);
+  assert.equal(merged.retryCount, 3);
+  assert.equal(merged.maxRetries, 3);
+  assert.equal(merged.maxRetriesExhausted, true);
+  assert.equal(merged.recoveryContinuationPending, false);
+  assert.equal(merged.attempts?.length, 4);
+  assert.equal(merged.unresolvedCount, 6);
 });

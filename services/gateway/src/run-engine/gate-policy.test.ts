@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus, RunDecision } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type IndependentReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   buildNoChangeGateInputs,
@@ -10,6 +14,7 @@ import {
   noChangeRejectionMessage,
   normalizeExhaustedReviewContinuation,
   pendingIndependentReviewContinuation,
+  publicationGateDecisionActions,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
@@ -154,6 +159,24 @@ test('exhausted review normalization also repairs a single-attempt ISSUES row', 
     feedbackSent: true,
   });
   assert.equal(normalizeExhaustedReviewContinuation(attemptless), attemptless);
+});
+
+test('exhausted review normalization does not restore continuation after the retry cap', () => {
+  const review = makeApprovingReview({
+    verdict: 'issues',
+    unresolvedCount: 6,
+    issues: [{ file: 'a.ts', description: 'still broken' }],
+    feedbackSent: true,
+    recoveryContinuationPending: false,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+    ],
+  });
+  assert.equal(normalizeExhaustedReviewContinuation(review), review);
 });
 
 function makeApprovingReview(
@@ -439,4 +462,160 @@ test('staleReviewsAreEvidenceOnly respects cross-runner certification requiremen
     false,
   );
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), true);
+});
+
+test('exhausted extra-review offers a new review and a dangerous bypass, not another auto-fix', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+      { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+    ],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    pendingReviewContinuation: exhausted,
+    independentReviews: [exhausted],
+  });
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    false,
+  );
+  const extra = actions.find((action) => action.id === 'request-extra-review');
+  assert.equal(extra?.style, 'primary');
+  const bypass = actions.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  assert.equal(bypass?.style, 'danger');
+  assert.match(bypass?.description ?? '', /3\/3 fix attempts/);
+});
+
+test('exhausted extra-review is not a pending auto-fix continuation', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  assert.equal(pendingIndependentReviewContinuation([exhausted]), undefined);
+});
+
+test('bypass is not offered when review policy is already satisfied', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: true,
+    independentReviews: [exhausted],
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    false,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'approve-publish'),
+    true,
+  );
+});
+
+test('exhausted extra-review still offers bypass when only the review subject hash drifted', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    reviewedHeadSha: 'abc1234',
+    reviewedReviewSubjectHash: 'subject-old',
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    independentReviews: [exhausted],
+    preparedPackage: { headSha: 'abc1234', reviewSubjectHash: 'subject-new' },
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    true,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    false,
+  );
+});
+
+test('bypass is not offered for an older exhausted review after a newer unspent loop', () => {
+  const oldCap: IndependentReviewStatus = {
+    id: 'independent-review-2',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 2,
+    crossRunner: true,
+    unresolvedCount: 4,
+    retryCount: 3,
+    maxRetries: 3,
+    reviewedHeadSha: 'old-head',
+    issues: [{ file: 'src/old.ts', description: 'old' }],
+  };
+  const later: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 2,
+    retryCount: 1,
+    maxRetries: 3,
+    reviewedHeadSha: 'new-head',
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    issues: [{ file: 'src/new.ts', description: 'new' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    pendingReviewContinuation: later,
+    independentReviews: [oldCap, later],
+    preparedPackage: { headSha: 'new-head' },
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    false,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    true,
+  );
 });

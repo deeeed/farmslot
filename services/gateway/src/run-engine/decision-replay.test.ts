@@ -186,6 +186,23 @@ test('human gate approvals remain replayable after resume', () => {
   );
 });
 
+test('latestResolvedHumanGateDecision(approvalOnly) accepts unresolved-publish bypass', () => {
+  const decisions = [
+    {
+      id: 'gate-bypass',
+      type: 'engine_human_gate',
+      title: 'gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-09-18T00:00:00Z',
+      resolvedAt: '2026-09-18T00:05:00Z',
+      resolvedAction: 'approve-publish-unresolved',
+    },
+  ] as unknown as RunDecision[];
+  const latest = latestResolvedHumanGateDecision(decisions, true);
+  assert.equal(latest?.resolvedAction, 'approve-publish-unresolved');
+});
+
 test('latestResolvedHumanGateDecision(approvalOnly) accepts close-as-shipped resolutions', () => {
   const decisions = [
     {

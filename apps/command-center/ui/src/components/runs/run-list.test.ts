@@ -60,7 +60,10 @@ test('human-gating without active review keeps an operator-gate honesty label', 
   const label = compactRunPipelineLabel(run());
   assert.equal(isIndependentReviewLabel(label), false);
   assert.ok(
-    label === 'operator gate' || label === 'publish ready' || label === 'review blocked',
+    label === 'operator gate' ||
+      label === 'publish ready' ||
+      label === 'review blocked' ||
+      label === 'review retries exhausted',
     `unexpected gate label: ${label}`,
   );
 });

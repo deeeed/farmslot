@@ -1,16 +1,20 @@
-import type {
-  DecisionAction,
-  EvidenceManifestEntry,
-  IndependentReviewAttempt,
-  IndependentReviewStatus,
-  NoChangeGatePayload,
-  ReadyGatePrPackage,
-  ReviewDepthPolicy,
-  ReviewDiffSnapshot,
-  Run,
-  RunDecision,
-  WorkerTerminalDisposition,
-  WorkerTerminalEvidence,
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type DecisionAction,
+  type EvidenceManifestEntry,
+  type IndependentReviewAttempt,
+  independentReviewFixRetriesExhausted,
+  independentReviewRetryCapReason,
+  type IndependentReviewStatus,
+  latestExhaustedIndependentReview,
+  type NoChangeGatePayload,
+  type ReadyGatePrPackage,
+  type ReviewDepthPolicy,
+  type ReviewDiffSnapshot,
+  type Run,
+  type RunDecision,
+  type WorkerTerminalDisposition,
+  type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
 
 import {
@@ -53,15 +57,112 @@ export const CONTINUE_REVIEW_FIX_ACTION = 'continue-review-fix';
  * resolve freshness check all recognize the same set rather than scattering
  * string literals that drift apart.
  */
+export { APPROVE_PUBLISH_UNRESOLVED_ACTION };
+
 export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   'ready',
 ]);
 
 export function isPublishApprovalAction(actionId: string | null | undefined): boolean {
   return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
+}
+
+export function reviewerIsActiveForReview(
+  run: Pick<Run, 'agentContexts'>,
+  review: Pick<IndependentReviewStatus, 'id'>,
+): boolean {
+  return (run.agentContexts ?? []).some(
+    (context) =>
+      context.role === 'self-review' &&
+      ['launching', 'working', 'waiting'].includes(context.status) &&
+      context.artifactScope === review.id,
+  );
+}
+
+export function publicationGateDecisionActions(opts: {
+  reviewSatisfied: boolean;
+  mergedPrNumber?: number | null;
+  branchZeroAhead?: boolean;
+  evidenceRefreshAction?: DecisionAction | null;
+  unavailableSnapshotAction?: DecisionAction | null;
+  pendingReviewContinuation?: IndependentReviewStatus;
+  independentReviews?: IndependentReviewStatus[];
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
+}): DecisionAction[] {
+  const exhausted = latestExhaustedIndependentReview(opts.independentReviews, opts.preparedPackage);
+  const continueFix =
+    opts.pendingReviewContinuation &&
+    !independentReviewFixRetriesExhausted(opts.pendingReviewContinuation)
+      ? opts.pendingReviewContinuation
+      : undefined;
+  return [
+    ...(opts.mergedPrNumber || opts.branchZeroAhead
+      ? [
+          {
+            id: CLOSE_AS_SHIPPED_ACTION,
+            label: opts.mergedPrNumber
+              ? `Close as Shipped (PR #${opts.mergedPrNumber} merged)`
+              : 'Close as Shipped (branch has no commits ahead)',
+            style: 'primary' as const,
+          },
+        ]
+      : []),
+    ...(opts.reviewSatisfied
+      ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
+      : []),
+    ...(opts.evidenceRefreshAction ? [opts.evidenceRefreshAction] : []),
+    ...(opts.unavailableSnapshotAction ? [opts.unavailableSnapshotAction] : []),
+    ...(continueFix
+      ? [
+          {
+            id: CONTINUE_REVIEW_FIX_ACTION,
+            label: `Continue Fixing ${continueFix.unresolvedCount} Finding${continueFix.unresolvedCount === 1 ? '' : 's'}`,
+            style: 'primary' as const,
+          },
+        ]
+      : []),
+    { id: 'hold', label: 'Hold', style: 'secondary' as const },
+    {
+      id: 'request-extra-review',
+      label: 'Request Independent Review',
+      style: exhausted ? ('primary' as const) : ('secondary' as const),
+      ...(exhausted
+        ? {
+            description: 'Start a new independent review. Remaining findings are not auto-sent.',
+          }
+        : {}),
+    },
+    {
+      id: 'request-cross-runner-review',
+      label: 'Request Independent Review (runner diversity)',
+      style: 'secondary' as const,
+    },
+    ...(!opts.reviewSatisfied && exhausted
+      ? [
+          {
+            id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+            label: 'Bypass Review (dangerous)',
+            style: 'danger' as const,
+            description: independentReviewRetryCapReason(exhausted),
+          },
+        ]
+      : []),
+  ];
+}
+
+export function assertUnresolvedPublishOverrideAvailable(
+  reviews: readonly IndependentReviewStatus[],
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
+): void {
+  if (!latestExhaustedIndependentReview(reviews, preparedPackage)) {
+    throw new Error(
+      'Bypass publish is only available after the latest independent review stops at its fix-attempt cap on the approved package',
+    );
+  }
 }
 
 export function independentReviewNeedsContinuation(
@@ -73,6 +174,10 @@ export function independentReviewNeedsContinuation(
     | 'recoveryContinuationPending'
     | 'unresolvedCount'
     | 'issues'
+    | 'retryCount'
+    | 'maxRetries'
+    | 'maxRetriesExhausted'
+    | 'attempts'
   >,
 ): boolean {
   return (
@@ -81,7 +186,8 @@ export function independentReviewNeedsContinuation(
     review.feedbackSent !== true &&
     review.recoveryContinuationPending === true &&
     review.unresolvedCount > 0 &&
-    (review.issues?.length ?? 0) > 0
+    (review.issues?.length ?? 0) > 0 &&
+    !independentReviewFixRetriesExhausted(review)
   );
 }
 
@@ -104,6 +210,7 @@ export function normalizeExhaustedReviewContinuation(
     (review.issues?.length ?? 0) === 0 ||
     review.feedbackSent !== true ||
     review.recoveryContinuationPending === true ||
+    independentReviewFixRetriesExhausted(review) ||
     !finalAttempt ||
     finalAttempt.verdict !== 'issues' ||
     finalAttempt.unresolvedCount <= 0
@@ -250,6 +357,15 @@ export function buildPublishGateReviewStatus({
     usage: finalAttempt.usage ?? reviewResult.usage,
     feedbackSent: reviewResult.feedbackSent === true,
     recoveryContinuationPending: reviewResult.recoveryContinuationPending === true,
+    ...(typeof reviewResult.retryCount === 'number' ? { retryCount: reviewResult.retryCount } : {}),
+    ...(typeof reviewResult.maxRetries === 'number' ? { maxRetries: reviewResult.maxRetries } : {}),
+    ...(reviewResult.verdict === 'issues' &&
+    (reviewResult.issues?.length ?? 0) > 0 &&
+    typeof reviewResult.maxRetries === 'number' &&
+    reviewResult.maxRetries > 0 &&
+    reviewResult.retryCount >= reviewResult.maxRetries
+      ? { maxRetriesExhausted: true as const, recoveryContinuationPending: false }
+      : {}),
     attempts,
     artifactPaths: [...new Set(attempts.flatMap((attempt) => attempt.artifactPaths ?? []))],
     taskProgressArtifactPath: finalAttempt.taskProgressArtifactPath,

@@ -87,6 +87,8 @@ export function isHumanPublicationGateLabel(label: string): boolean {
   return (
     normalized === 'operator gate' ||
     normalized === 'publish ready' ||
+    normalized === 'review blocked' ||
+    normalized === 'review retries exhausted' ||
     normalized === 'human gate' ||
     normalized === 'human-gating'
   );

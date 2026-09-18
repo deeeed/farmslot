@@ -65,6 +65,8 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-btn:hover:not(:disabled) { opacity: 0.85; }
       ready-workspace .rdy-btn-primary { background: ${colors.accent}; color: #fff; }
       ready-workspace .rdy-btn-secondary { background: #333344; color: ${colors.textSecondary}; }
+      ready-workspace .rdy-btn-danger { background: ${colors.statusFail}; color: #fff; }
+      ready-workspace .rdy-btn.rdy-confirming { outline: 2px solid ${colors.statusWarn}; }
       ready-workspace .rdy-modal-backdrop {
         position: fixed;
         inset: 0;

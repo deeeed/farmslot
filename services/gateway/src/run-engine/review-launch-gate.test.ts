@@ -89,6 +89,19 @@ test('independent publication re-review allows a clean advanced HEAD', async () 
   );
 });
 
+test('independent publication re-review allows the same HEAD after fix retries are exhausted', async () => {
+  const review = issuesReview('abc123');
+  review.retryCount = 3;
+  review.maxRetries = 3;
+  review.maxRetriesExhausted = true;
+  review.feedbackSent = false;
+  review.recoveryContinuationPending = true;
+  review.issues = [{ file: 'src/example.ts', description: 'still broken' }];
+  await assert.doesNotReject(
+    assertIndependentReviewLaunchState([review], gitExecutor('', 'abc123')),
+  );
+});
+
 test('independent publication continuation can deliver pending findings at the same HEAD', async () => {
   const review = issuesReview('abc123');
   review.feedbackSent = false;
