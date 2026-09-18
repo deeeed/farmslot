@@ -51,6 +51,10 @@ test('retained reviewer delivery uses native reset or a cold process replacement
     kind: 'in-place',
     resetContext: false,
   });
+  assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'resume', 1), {
+    kind: 'in-place',
+    resetContext: false,
+  });
   assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'resume', 2), {
     kind: 'in-place',
     resetContext: false,
@@ -124,7 +128,19 @@ test('re-review prefix is cold on loop 1 and includes worker output from loop 2'
   assert.match(prefix ?? '', /SELF-REVIEW-FIX\.md/);
   assert.match(prefix ?? '', /Self-Review Fixes/);
   assert.match(prefix ?? '', /subset fixed \+ documented refusals/);
+  assert.match(prefix ?? '', /Repeating the same/);
   assert.match(prefix ?? '', /independent-review-3\/review-loop-1/);
+  const resumed = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/foo',
+    loopNumber: 1,
+    resume: true,
+    priorArtifactScope: 'independent-review-4',
+    priorLoopNumber: 1,
+    priorHeadSha: 'oldhead',
+    currentHeadSha: 'newhead',
+  });
+  assert.match(resumed ?? '', /independent-review-4\/review-loop-1/);
+  assert.match(resumed ?? '', /do not re-state it as a new finding/i);
 });
 
 test('review agent instructions use context-scoped checklist, signal, and feedback files', () => {

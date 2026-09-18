@@ -276,7 +276,7 @@ export function workerFixHandoffScope(params: {
   const priorDir = `${params.taskDir}/${reviewArtifactDir(params.priorLoopNumber, params.artifactScope)}`;
   return `## Worker fix handoff (required reading)
 
-This is re-review after a worker fix pass. Loop 1 was the cold first look; this round is not.
+This is a continuation, not a first-look review. The worker already answered the prior findings.
 
 Before filing any finding, read:
 - \`${params.taskDir}/artifacts/report.md\` — latest \`## Self-Review Fixes\` (fixed, disputed, or left open)
@@ -286,23 +286,27 @@ Before filing any finding, read:
 Treat the worker report as first-class:
 - **Fixed:** verify on current HEAD. Re-file only if the defect is still present.
 - **Does not reproduce / wrong:** confirm or refute with evidence. Do not re-file on taste.
-- **Still open / product decision:** do not silently re-state it. Accept the rationale or reject it with why the defect remains required.
+- **Still open / product decision:** do not re-state it as a new finding. Quote the worker rationale and reject it, or drop the issue.
 
-A worker SIGNAL of complete/success can mean "subset fixed + documented refusals." That is not "all findings gone."
+A worker SIGNAL of complete/success can mean "subset fixed + documented refusals." That is not "all findings gone." Repeating the same AC4/AC5/cache finding without engaging the worker write-up is a failed re-review.
 `;
 }
 
-/** Prefix for extra-review loop 2+. First loop stays a cold full review. */
+/** Prefix for extra-review loop 2+ and same-runner resume. Loop 1 reset stays cold. */
 export function reReviewChecklistPrefix(params: {
   taskDir: string;
   loopNumber: number;
   artifactScope?: string | null;
+  priorArtifactScope?: string | null;
+  priorLoopNumber?: number;
   priorHeadSha?: string | null;
   currentHeadSha?: string | null;
+  resume?: boolean;
 }): string | null {
-  if (params.loopNumber <= 1) return null;
-  const priorLoopNumber = params.loopNumber - 1;
-  const priorArtifactDir = `${params.taskDir}/${reviewArtifactDir(priorLoopNumber, params.artifactScope)}`;
+  if (params.loopNumber <= 1 && !params.resume) return null;
+  const priorLoopNumber = params.priorLoopNumber ?? Math.max(1, params.loopNumber - 1);
+  const priorScope = params.priorArtifactScope ?? params.artifactScope;
+  const priorArtifactDir = `${params.taskDir}/${reviewArtifactDir(priorLoopNumber, priorScope)}`;
   return [
     continuationReviewScope({
       priorHeadSha: params.priorHeadSha ?? null,
@@ -312,7 +316,7 @@ export function reReviewChecklistPrefix(params: {
     workerFixHandoffScope({
       taskDir: params.taskDir,
       priorLoopNumber,
-      artifactScope: params.artifactScope,
+      artifactScope: priorScope,
     }),
   ].join('\n');
 }
@@ -1066,19 +1070,43 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    if (loopNumber > 1) {
-      const previous = await readPersistedReviewSnapshot(
-        vars,
-        taskDir,
-        loopNumber - 1,
-        artifactScope,
+    const priorExtraReview = [...(parentRun?.engineState?.publishGate?.independentReviews ?? [])]
+      .reverse()
+      .find(
+        (review) =>
+          review.source !== 'self-review' &&
+          review.id !== artifactScope &&
+          (review.verdict === 'issues' || review.verdict === 'pass'),
       );
+    if (loopNumber > 1 || sessionIntent === 'resume') {
+      const priorScope =
+        loopNumber > 1 ? artifactScope : (priorExtraReview?.id ?? warmSession?.artifactScope);
+      const priorLoop =
+        loopNumber > 1
+          ? loopNumber - 1
+          : Math.max(
+              1,
+              priorExtraReview?.attempts?.length ??
+                priorExtraReview?.loopNumber ??
+                warmSession?.lastLoopNumber ??
+                1,
+            );
+      const previous = priorScope
+        ? await readPersistedReviewSnapshot(vars, taskDir, priorLoop, priorScope)
+        : null;
       const prefix = reReviewChecklistPrefix({
         taskDir,
         loopNumber,
         artifactScope,
-        priorHeadSha: previous?.snapshot.headSha ?? warmSession?.lastReviewedHeadSha ?? null,
+        priorArtifactScope: priorScope,
+        priorLoopNumber: priorLoop,
+        priorHeadSha:
+          previous?.snapshot.headSha ??
+          priorExtraReview?.reviewedHeadSha ??
+          warmSession?.lastReviewedHeadSha ??
+          null,
         currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
+        resume: sessionIntent === 'resume',
       });
       if (prefix) expandedTemplate = `${prefix}\n${expandedTemplate}`;
     } else if (warmSession) {

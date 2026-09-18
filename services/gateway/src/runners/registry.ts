@@ -885,9 +885,11 @@ export function retainedReviewerDeliveryPlan(
 ): RetainedReviewerDeliveryPlan {
   const resetContext = sessionIntent === 'reset' && loopNumber === 1;
   if (runnerRetainedSessionHandoff(runnerId) === 'argv-relaunch') {
-    // Loop 1 still argv-launches. Same-runner extra-review loops must keep the
-    // live process so the reviewer does not start from scratch.
-    if (loopNumber > 1) return { kind: 'in-place', resetContext: false };
+    // Loop 1 reset still argv-launches. Resume (same runner, extra-review) and
+    // loop 2+ keep the live process so the reviewer does not start from scratch.
+    if (loopNumber > 1 || sessionIntent === 'resume') {
+      return { kind: 'in-place', resetContext: false };
+    }
     return { kind: 'cold-relaunch', resetContext: false };
   }
   if (!resetContext) return { kind: 'in-place', resetContext: false };
