@@ -484,7 +484,9 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
   const resolvedAction =
     typeof outputs.resolvedAction === 'string' ? outputs.resolvedAction : undefined;
   const actionColor =
-    resolvedAction === 'ready' || resolvedAction === 'approve-publish'
+    resolvedAction === 'ready' ||
+    resolvedAction === 'approve-publish' ||
+    resolvedAction === 'approve-publish-unresolved'
       ? colors.statusOk
       : resolvedAction === 'hold'
         ? colors.statusWarn
@@ -519,7 +521,15 @@ export function renderHumanGatePipelineNode(n: NodePos, ctx: RunPipelineSpecialN
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
               fill="${actionColor}">
-          ${resolvedAction === 'ready' || resolvedAction === 'approve-publish' ? 'v APPROVED' : resolvedAction === 'hold' ? '! HOLD' : `v ${resolvedAction}`}
+          ${
+            resolvedAction === 'ready' ||
+            resolvedAction === 'approve-publish' ||
+            resolvedAction === 'approve-publish-unresolved'
+              ? 'v APPROVED'
+              : resolvedAction === 'hold'
+                ? '! HOLD'
+                : `v ${resolvedAction}`
+          }
         </text>
       `
           : svg`

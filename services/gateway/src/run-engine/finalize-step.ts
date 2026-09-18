@@ -297,6 +297,7 @@ export async function executeFinalizeStep(
     if (resolvedAction === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
       assertUnresolvedPublishOverrideAvailable(
         current.engineState?.publishGate?.independentReviews ?? [],
+        preparedPackage,
       );
     } else {
       assertPublicationReviewPolicySatisfied(current, preparedPackage);

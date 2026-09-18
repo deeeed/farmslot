@@ -482,3 +482,63 @@ test('exhausted extra-review offers a new review and a dangerous bypass, not ano
   assert.equal(bypass?.style, 'danger');
   assert.match(bypass?.description ?? '', /3\/3 fix attempts/);
 });
+
+test('exhausted extra-review is not a pending auto-fix continuation', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  assert.equal(pendingIndependentReviewContinuation([exhausted]), undefined);
+});
+
+test('bypass is not offered for an older exhausted review after a newer unspent loop', () => {
+  const oldCap: IndependentReviewStatus = {
+    id: 'independent-review-2',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 2,
+    crossRunner: true,
+    unresolvedCount: 4,
+    retryCount: 3,
+    maxRetries: 3,
+    reviewedHeadSha: 'old-head',
+    issues: [{ file: 'src/old.ts', description: 'old' }],
+  };
+  const later: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 2,
+    retryCount: 1,
+    maxRetries: 3,
+    reviewedHeadSha: 'new-head',
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    issues: [{ file: 'src/new.ts', description: 'new' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    pendingReviewContinuation: later,
+    independentReviews: [oldCap, later],
+    preparedPackage: { headSha: 'new-head' },
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    false,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    true,
+  );
+});

@@ -36,6 +36,7 @@ import {
   countStalePublicationReviews,
   pendingIndependentReviewContinuation,
   publicationGateDecisionActions,
+  reviewerIsActiveForReview,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
@@ -252,12 +253,17 @@ export async function refreshPublishPackage(params: {
     prPackage,
     reviewDepth,
   );
-  const exhaustedReview = firstExhaustedIndependentReview(independentReviews);
+  const exhaustedReview = firstExhaustedIndependentReview(independentReviews, prPackage);
+  const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const actions = publicationGateDecisionActions({
     reviewSatisfied,
     evidenceRefreshAction,
-    pendingReviewContinuation: pendingIndependentReviewContinuation(independentReviews),
+    pendingReviewContinuation:
+      pendingReview && !reviewerIsActiveForReview(refreshedRun, pendingReview)
+        ? pendingReview
+        : undefined,
     independentReviews,
+    preparedPackage: prPackage,
   });
   const nextEngineState = {
     ...refreshedRun.engineState,

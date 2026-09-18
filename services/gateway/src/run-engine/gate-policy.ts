@@ -71,6 +71,18 @@ export function isPublishApprovalAction(actionId: string | null | undefined): bo
   return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
 }
 
+export function reviewerIsActiveForReview(
+  run: Pick<Run, 'agentContexts'>,
+  review: Pick<IndependentReviewStatus, 'id'>,
+): boolean {
+  return (run.agentContexts ?? []).some(
+    (context) =>
+      context.role === 'self-review' &&
+      ['launching', 'working', 'waiting'].includes(context.status) &&
+      context.artifactScope === review.id,
+  );
+}
+
 export function publicationGateDecisionActions(opts: {
   reviewSatisfied: boolean;
   mergedPrNumber?: number | null;
@@ -79,8 +91,9 @@ export function publicationGateDecisionActions(opts: {
   unavailableSnapshotAction?: DecisionAction | null;
   pendingReviewContinuation?: IndependentReviewStatus;
   independentReviews?: IndependentReviewStatus[];
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
 }): DecisionAction[] {
-  const exhausted = firstExhaustedIndependentReview(opts.independentReviews);
+  const exhausted = firstExhaustedIndependentReview(opts.independentReviews, opts.preparedPackage);
   const continueFix =
     opts.pendingReviewContinuation &&
     !independentReviewFixRetriesExhausted(opts.pendingReviewContinuation)
@@ -143,10 +156,11 @@ export function publicationGateDecisionActions(opts: {
 
 export function assertUnresolvedPublishOverrideAvailable(
   reviews: readonly IndependentReviewStatus[],
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): void {
-  if (!firstExhaustedIndependentReview(reviews)) {
+  if (!firstExhaustedIndependentReview(reviews, preparedPackage)) {
     throw new Error(
-      'Bypass publish is only available after an independent review stops at its fix-attempt cap',
+      'Bypass publish is only available after the latest independent review stops at its fix-attempt cap on the approved package',
     );
   }
 }
@@ -160,6 +174,10 @@ export function independentReviewNeedsContinuation(
     | 'recoveryContinuationPending'
     | 'unresolvedCount'
     | 'issues'
+    | 'retryCount'
+    | 'maxRetries'
+    | 'maxRetriesExhausted'
+    | 'attempts'
   >,
 ): boolean {
   return (
@@ -168,7 +186,8 @@ export function independentReviewNeedsContinuation(
     review.feedbackSent !== true &&
     review.recoveryContinuationPending === true &&
     review.unresolvedCount > 0 &&
-    (review.issues?.length ?? 0) > 0
+    (review.issues?.length ?? 0) > 0 &&
+    !independentReviewFixRetriesExhausted(review)
   );
 }
 
@@ -342,6 +361,7 @@ export function buildPublishGateReviewStatus({
     ...(reviewResult.verdict === 'issues' &&
     (reviewResult.issues?.length ?? 0) > 0 &&
     typeof reviewResult.maxRetries === 'number' &&
+    reviewResult.maxRetries > 0 &&
     reviewResult.retryCount >= reviewResult.maxRetries
       ? { maxRetriesExhausted: true as const }
       : {}),

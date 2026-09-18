@@ -143,7 +143,10 @@ export function renderReadyTopBar(input: {
                   ? 'Confirm Publish?'
                   : canApprove
                     ? approveLabel
-                    : firstExhaustedIndependentReview(input.payload.independentReviews)
+                    : firstExhaustedIndependentReview(
+                          input.payload.independentReviews,
+                          input.payload.prPackage,
+                        )
                       ? 'Retries exhausted'
                       : reviewBlockingReason || 'Review Required'}
             </button>

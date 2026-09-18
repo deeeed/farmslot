@@ -132,8 +132,10 @@ export {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   firstExhaustedIndependentReview,
   independentReviewFixRetriesExhausted,
+  independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
+  latestIndependentReview,
 } from '../runs/review-retries.js';
 export type {
   CommentsTriageSummary,

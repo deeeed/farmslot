@@ -8,6 +8,7 @@ import {
   type EvidenceRefreshOverrideRecord,
   firstExhaustedIndependentReview,
   GATE_SUMMARY_KINDS,
+  independentReviewFixRetriesExhausted,
   independentReviewRetryCapReason,
   type IndependentReviewStatus,
   isGateParkInFlightOrFreed,
@@ -84,6 +85,7 @@ import {
   pendingIndependentReviewContinuation,
   publicationGateDecisionActions,
   restampStaleApprovingReviewsForEvidenceRefresh,
+  reviewerIsActiveForReview,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
@@ -117,15 +119,6 @@ const activePublicationReviewContinuations = new Map<
   Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null>
 >();
 
-function reviewerIsActiveForReview(run: Run, review: IndependentReviewStatus): boolean {
-  return (run.agentContexts ?? []).some(
-    (context) =>
-      context.role === 'self-review' &&
-      ['launching', 'working', 'waiting'].includes(context.status) &&
-      context.artifactScope === review.id,
-  );
-}
-
 function interruptedPublicationReview(run: Run): IndependentReviewStatus | undefined {
   const activeFix = run.agentContexts?.some(
     (context) => context.role === 'self-review-fix' && context.status === 'working',
@@ -141,6 +134,7 @@ function interruptedPublicationReview(run: Run): IndependentReviewStatus | undef
   if (pending) return reviewerIsActiveForReview(run, pending) ? undefined : pending;
   if (!activeFix) return undefined;
   const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  if (latest && independentReviewFixRetriesExhausted(latest)) return undefined;
   return latest?.verdict === 'issues' &&
     latest.unresolvedCount > 0 &&
     (latest.issues?.length ?? 0) > 0
@@ -758,7 +752,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
 
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
   const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
-  const exhaustedReview = firstExhaustedIndependentReview(independentReviews);
+  const exhaustedReview = firstExhaustedIndependentReview(independentReviews, preparedPackage);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage
@@ -840,6 +834,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
           unavailableSnapshotAction,
           pendingReviewContinuation,
           independentReviews,
+          preparedPackage,
         })
       : [
           { id: 'ready', label: 'Mark Ready', style: 'primary' },
@@ -1085,6 +1080,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
         assertUnresolvedPublishOverrideAvailable(
           getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+          approvedPackage,
         );
       } else {
         assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);

@@ -15,6 +15,9 @@ type ReviewRetryFields = Partial<
     | 'maxRetries'
     | 'maxRetriesExhausted'
     | 'attempts'
+    | 'reviewedHeadSha'
+    | 'reviewedReviewSubjectHash'
+    | 'reviewSnapshot'
   >
 >;
 
@@ -25,20 +28,25 @@ export function independentReviewRetryCount(review: ReviewRetryFields): number {
   return Math.max(0, (review.attempts?.length ?? 1) - 1);
 }
 
-/** True when an extra/independent review stopped auto-fixing with findings still open. */
+/**
+ * True when an extra/independent review consumed its auto-fix budget with
+ * findings still open. `max_retries: 0` is not a cap-hit: the operator still
+ * uses Continue Fixing to authorize the first worker pass.
+ *
+ * Records without `maxRetries` (pre-this-field) are treated as exhausted only
+ * after at least one worker-fix attempt left undelivered findings.
+ */
 export function independentReviewFixRetriesExhausted(review: ReviewRetryFields): boolean {
   if (review.source === 'self-review') return false;
   if (review.verdict !== 'issues') return false;
   const findings = Math.max(review.unresolvedCount ?? 0, review.issues?.length ?? 0);
   if (findings <= 0) return false;
-  if (review.maxRetriesExhausted === true) return true;
   const retryCount = independentReviewRetryCount(review);
   if (typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)) {
+    if (review.maxRetries <= 0) return false;
     return retryCount >= review.maxRetries;
   }
-  return (
-    review.feedbackSent !== true && review.recoveryContinuationPending === true && retryCount >= 1
-  );
+  return review.maxRetriesExhausted === true;
 }
 
 export function independentReviewRetryCapReason(review: ReviewRetryFields): string {
@@ -51,8 +59,39 @@ export function independentReviewRetryCapReason(review: ReviewRetryFields): stri
   return `Independent review stopped after ${retryCount} fix attempt${retryCount === 1 ? '' : 's'}; ${findingLabel} remain. Request another review, or bypass publish (dangerous).`;
 }
 
-export function firstExhaustedIndependentReview(
+export function latestIndependentReview(
   reviews: readonly ReviewRetryFields[] | undefined,
 ): ReviewRetryFields | undefined {
-  return reviews?.find((review) => independentReviewFixRetriesExhausted(review));
+  return [...(reviews ?? [])]
+    .reverse()
+    .find(
+      (review) =>
+        review.source !== 'self-review' &&
+        (review.verdict === 'pass' || review.verdict === 'issues'),
+    );
+}
+
+export function independentReviewMatchesPreparedPackage(
+  review: ReviewRetryFields,
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
+): boolean {
+  if (!preparedPackage) return true;
+  const head = preparedPackage.headSha?.trim();
+  const reviewedHead = (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)?.trim();
+  if (!head || !reviewedHead || reviewedHead !== head) return false;
+  const subject = preparedPackage.reviewSubjectHash?.trim();
+  const reviewedSubject = review.reviewedReviewSubjectHash?.trim();
+  if (subject && reviewedSubject && reviewedSubject !== subject) return false;
+  return true;
+}
+
+/** Latest terminal extra-review that hit its auto-fix cap on this package. */
+export function firstExhaustedIndependentReview(
+  reviews: readonly ReviewRetryFields[] | undefined,
+  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
+): ReviewRetryFields | undefined {
+  const latest = latestIndependentReview(reviews);
+  if (!latest || !independentReviewFixRetriesExhausted(latest)) return undefined;
+  if (!independentReviewMatchesPreparedPackage(latest, preparedPackage)) return undefined;
+  return latest;
 }

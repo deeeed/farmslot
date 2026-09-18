@@ -56,7 +56,17 @@ test('compares retryCount to maxRetries when both are known', () => {
   assert.equal(independentReviewFixRetriesExhausted({ ...base, retryCount: 2 }), false);
 });
 
-test('infers exhaustion from pending undelivered findings after at least one fix', () => {
+test('max_retries 0 is not a cap-hit; missing maxRetries is not inferred', () => {
+  assert.equal(
+    independentReviewFixRetriesExhausted({
+      source: 'human-gate',
+      verdict: 'issues',
+      unresolvedCount: 6,
+      retryCount: 0,
+      maxRetries: 0,
+    }),
+    false,
+  );
   assert.equal(
     independentReviewFixRetriesExhausted({
       source: 'human-gate',
@@ -66,18 +76,47 @@ test('infers exhaustion from pending undelivered findings after at least one fix
       recoveryContinuationPending: true,
       attempts: [attempt(), attempt(), attempt(), attempt()],
     }),
-    true,
+    false,
+  );
+});
+
+test('only the latest extra-review on the current package can be exhausted', () => {
+  const oldCap = {
+    source: 'human-gate' as const,
+    verdict: 'issues' as const,
+    unresolvedCount: 4,
+    retryCount: 3,
+    maxRetries: 3,
+    reviewedHeadSha: 'old',
+  };
+  const laterIssues = {
+    source: 'human-gate' as const,
+    verdict: 'issues' as const,
+    unresolvedCount: 2,
+    retryCount: 1,
+    maxRetries: 3,
+    reviewedHeadSha: 'new',
+  };
+  assert.equal(
+    firstExhaustedIndependentReview([oldCap, laterIssues], { headSha: 'new' }),
+    undefined,
   );
   assert.equal(
-    independentReviewFixRetriesExhausted({
-      source: 'self-review',
-      verdict: 'issues',
-      unresolvedCount: 6,
-      feedbackSent: false,
-      recoveryContinuationPending: true,
-      attempts: [attempt(), attempt()],
-    }),
-    false,
+    firstExhaustedIndependentReview(
+      [
+        oldCap,
+        {
+          source: 'human-gate',
+          verdict: 'issues',
+          unresolvedCount: 2,
+          retryCount: 3,
+          maxRetries: 3,
+          reviewedHeadSha: 'new',
+        },
+      ],
+      { headSha: 'new' },
+    )?.unresolvedCount,
+    2,
   );
 });
 

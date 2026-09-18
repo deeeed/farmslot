@@ -1329,6 +1329,7 @@ async function assertReadyPublishResolveIsFresh(
   } else if (params.actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
     assertUnresolvedPublishOverrideAvailable(
       run.engineState?.publishGate?.independentReviews ?? [],
+      currentPackage,
     );
   } else {
     assertPublicationReviewPolicySatisfied(run, currentPackage);

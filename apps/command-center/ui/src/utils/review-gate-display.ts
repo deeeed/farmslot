@@ -387,7 +387,7 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
 
 export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
   const reviews = payload.independentReviews ?? [];
-  const exhausted = firstExhaustedIndependentReview(reviews);
+  const exhausted = firstExhaustedIndependentReview(reviews, payload.prPackage);
   if (exhausted) return independentReviewRetryCapReason(exhausted);
   const unresolved = reviews.find(
     (review) => review.verdict !== 'pass' || review.unresolvedCount > 0,
