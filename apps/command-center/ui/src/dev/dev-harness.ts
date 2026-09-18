@@ -25,7 +25,12 @@ import type {
   SlotStatus,
   WorkerSessionHistorySnapshot,
 } from '@farmslot/protocol';
-import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type ReadyGatePayload,
+  type ReviewGatePayload,
+  type RunDecision,
+} from '@farmslot/protocol';
 import { INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1 } from '@farmslot/protocol';
 
 import '../components/pr-dashboard/pr-project-field-picker.js';
@@ -2853,6 +2858,61 @@ All checks passed.`;
         <ready-workspace
           runId="mock-run-2"
           .decision=${mockDecision}
+          mock-data
+          slotId="runner-local-mobile-1"
+          branch="fix/proj-2418"
+          runner="claude"
+        ></ready-workspace>
+      </div>
+      <p class="section-label">Ready workspace — independent review retry cap exhausted</p>
+      <div
+        style="height: 160px; border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden; margin-top: 12px"
+      >
+        <ready-workspace
+          runId="mock-run-retry-cap"
+          .decision=${{
+            ...mockDecision,
+            id: 'mock-ready-exhausted-1',
+            description:
+              '**Review retries exhausted:** Independent review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
+            actions: [
+              { id: 'hold', label: 'Hold', style: 'secondary' as const },
+              {
+                id: 'request-extra-review',
+                label: 'Request Independent Review',
+                style: 'primary' as const,
+                description:
+                  'Start a new independent review. Remaining findings are not auto-sent.',
+              },
+              {
+                id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+                label: 'Bypass Review (dangerous)',
+                style: 'danger' as const,
+                description:
+                  'Independent review stopped after 3/3 fix attempts; 6 findings remain. Request another review, or bypass publish (dangerous).',
+              },
+            ],
+            payload: {
+              ...mockPayload,
+              independentReviews: [
+                {
+                  id: 'independent-review-3',
+                  source: 'human-gate' as const,
+                  runner: 'cursor',
+                  model: 'gpt-5.6-sol-high',
+                  crossRunner: true,
+                  loopNumber: 3,
+                  verdict: 'issues' as const,
+                  unresolvedCount: 6,
+                  feedbackSent: false,
+                  recoveryContinuationPending: true,
+                  retryCount: 3,
+                  maxRetries: 3,
+                  maxRetriesExhausted: true,
+                },
+              ],
+            },
+          }}
           mock-data
           slotId="runner-local-mobile-1"
           branch="fix/proj-2418"

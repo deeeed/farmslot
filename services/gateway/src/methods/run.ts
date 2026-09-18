@@ -88,9 +88,11 @@ import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
+  assertUnresolvedPublishOverrideAvailable,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
@@ -1323,6 +1325,10 @@ async function assertReadyPublishResolveIsFresh(
       run.engineState?.publishGate?.independentReviews ?? [],
       currentPackage,
       reviewDepth,
+    );
+  } else if (params.actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
+    assertUnresolvedPublishOverrideAvailable(
+      run.engineState?.publishGate?.independentReviews ?? [],
     );
   } else {
     assertPublicationReviewPolicySatisfied(run, currentPackage);

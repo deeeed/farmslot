@@ -1,11 +1,15 @@
-import type {
-  ArtifactRef,
-  GateSummary,
-  IndependentReviewAttempt,
-  IndependentReviewStatus,
-  ReadyGatePayload,
-  ReviewDepthPolicy,
-  Run,
+import {
+  type ArtifactRef,
+  firstExhaustedIndependentReview,
+  type GateSummary,
+  type IndependentReviewAttempt,
+  independentReviewFixRetriesExhausted,
+  independentReviewRetryCapReason,
+  independentReviewRetryCount,
+  type IndependentReviewStatus,
+  type ReadyGatePayload,
+  type ReviewDepthPolicy,
+  type Run,
 } from '@farmslot/protocol';
 
 export type ReviewFreshnessReason =
@@ -163,6 +167,7 @@ export function compactHumanGateLabel(
   }
 
   const reviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  if (firstExhaustedIndependentReview(reviews)) return 'review retries exhausted';
   if (
     reviews.some(
       (review) =>
@@ -382,6 +387,8 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
 
 export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
   const reviews = payload.independentReviews ?? [];
+  const exhausted = firstExhaustedIndependentReview(reviews);
+  if (exhausted) return independentReviewRetryCapReason(exhausted);
   const unresolved = reviews.find(
     (review) => review.verdict !== 'pass' || review.unresolvedCount > 0,
   );
@@ -609,10 +616,33 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
  * exactly as much as a continuation whose feedback did reach the worker.
  */
 export function reviewHasPendingContinuationPhases(
-  review: Pick<IndependentReviewStatus, 'recoveryContinuationPending'>,
+  review: Pick<IndependentReviewStatus, 'recoveryContinuationPending'> &
+    Partial<
+      Pick<
+        IndependentReviewStatus,
+        | 'source'
+        | 'verdict'
+        | 'unresolvedCount'
+        | 'issues'
+        | 'feedbackSent'
+        | 'retryCount'
+        | 'maxRetries'
+        | 'maxRetriesExhausted'
+        | 'attempts'
+      >
+    >,
   finalAttempt: Pick<IndependentReviewAttempt, 'unresolvedCount'> | undefined,
 ): boolean {
+  if (review.verdict === 'issues' && independentReviewFixRetriesExhausted(review)) return false;
   return review.recoveryContinuationPending === true && (finalAttempt?.unresolvedCount ?? 0) > 0;
+}
+
+export function reviewRetryCapPhaseLabel(review: IndependentReviewStatus): string | null {
+  if (!independentReviewFixRetriesExhausted(review)) return null;
+  const retryCount = independentReviewRetryCount(review);
+  return typeof review.maxRetries === 'number'
+    ? `exhausted ${retryCount}/${review.maxRetries}`
+    : `exhausted after ${retryCount} attempt${retryCount === 1 ? '' : 's'}`;
 }
 
 export function fixDeltaAbsenceReason(

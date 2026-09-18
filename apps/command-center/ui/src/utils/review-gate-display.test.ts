@@ -356,6 +356,46 @@ test('compact human-gate labels distinguish publish-ready from review-blocked', 
     }),
     'review blocked',
   );
+
+  assert.equal(
+    compactHumanGateLabel({
+      decisions: [],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              id: 'independent-review-3',
+              source: 'human-gate',
+              crossRunner: true,
+              loopNumber: 3,
+              verdict: 'issues',
+              unresolvedCount: 6,
+              feedbackSent: false,
+              recoveryContinuationPending: true,
+              retryCount: 3,
+              maxRetries: 3,
+              maxRetriesExhausted: true,
+            },
+          ],
+        },
+      },
+    }),
+    'review retries exhausted',
+  );
+});
+
+test('readyReviewBlockingDisplayReason names the retry cap instead of the first finding file', () => {
+  const fixture = payload({
+    source: 'human-gate',
+    verdict: 'issues',
+    unresolvedCount: 6,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'src/fee.ts', line: 10, description: 'blend is wrong' }],
+  });
+  assert.match(readyReviewBlockingDisplayReason(fixture), /stopped after 3\/3 fix attempts/);
+  assert.doesNotMatch(readyReviewBlockingDisplayReason(fixture), /src\/fee.ts/);
 });
 
 test('readyReviewBlockingDisplayReason cites stale reviews even when fresh quorum is satisfied', () => {

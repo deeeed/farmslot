@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ReadyGatePayload, RunDecision } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type ReadyGatePayload,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   applyReadyPackageRefreshResult,
@@ -35,6 +39,8 @@ test('ready workspace action model derives decision state keys and messages', ()
   assert.equal(readyActionRequiresConfirmation('approve-publish', true), true);
   assert.equal(readyActionRequiresConfirmation('ready', true), true);
   assert.equal(readyActionRequiresConfirmation('request-extra-review', true), false);
+  assert.equal(isReadyPublicationApproval(APPROVE_PUBLISH_UNRESOLVED_ACTION, true), true);
+  assert.equal(readyActionRequiresConfirmation(APPROVE_PUBLISH_UNRESOLVED_ACTION, true), true);
   assert.equal(readyDecisionSubmittingMessage(true), 'Submitting publication decision…');
   assert.equal(
     readyDecisionSuccessMessage(false),

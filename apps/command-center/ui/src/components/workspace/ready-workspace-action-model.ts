@@ -1,4 +1,9 @@
-import type { Run, RunDecision, RunRefreshPublishPackageResult } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type Run,
+  type RunDecision,
+  type RunRefreshPublishPackageResult,
+} from '@farmslot/protocol';
 
 export { readyResolveSelectionData } from '@farmslot/protocol';
 
@@ -15,7 +20,11 @@ export function readyDecisionActionStateKey(decision?: RunDecision): string {
 }
 
 export function isReadyPublicationApproval(actionId: string, packageGate: boolean): boolean {
-  return actionId === 'approve-publish' || (packageGate && actionId === 'ready');
+  return (
+    actionId === 'approve-publish' ||
+    actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION ||
+    (packageGate && actionId === 'ready')
+  );
 }
 
 export function readyActionRequiresConfirmation(actionId: string, packageGate: boolean): boolean {

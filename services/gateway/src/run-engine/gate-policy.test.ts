@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus, RunDecision } from '@farmslot/protocol';
+import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  type IndependentReviewStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import {
   buildNoChangeGateInputs,
@@ -10,6 +14,7 @@ import {
   noChangeRejectionMessage,
   normalizeExhaustedReviewContinuation,
   pendingIndependentReviewContinuation,
+  publicationGateDecisionActions,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
   supersedeStaleHumanGateDecisions,
@@ -439,4 +444,41 @@ test('staleReviewsAreEvidenceOnly respects cross-runner certification requiremen
     false,
   );
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), true);
+});
+
+test('exhausted extra-review offers a new review and a dangerous bypass, not another auto-fix', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+      { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+    ],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    pendingReviewContinuation: exhausted,
+    independentReviews: [exhausted],
+  });
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    false,
+  );
+  const extra = actions.find((action) => action.id === 'request-extra-review');
+  assert.equal(extra?.style, 'primary');
+  const bypass = actions.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION);
+  assert.equal(bypass?.style, 'danger');
+  assert.match(bypass?.description ?? '', /3\/3 fix attempts/);
 });

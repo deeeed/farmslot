@@ -33,7 +33,9 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPublicationReviewPolicySatisfied,
+  assertUnresolvedPublishOverrideAvailable,
   CLOSE_AS_SHIPPED_ACTION,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
@@ -292,7 +294,13 @@ export async function executeFinalizeStep(
     if (!preparedPackage) throw new Error('Approved PR package snapshot missing');
     verifyReadyGatePackageHash(preparedPackage);
     validatePackageApprovalSelection(preparedPackage, gateDecision);
-    assertPublicationReviewPolicySatisfied(current, preparedPackage);
+    if (resolvedAction === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
+      assertUnresolvedPublishOverrideAvailable(
+        current.engineState?.publishGate?.independentReviews ?? [],
+      );
+    } else {
+      assertPublicationReviewPolicySatisfied(current, preparedPackage);
+    }
     const approvedHash = current.engineState?.publishGate?.approvedPackageHash;
     if (approvedHash && approvedHash !== preparedPackage.packageHash) {
       throw new Error(

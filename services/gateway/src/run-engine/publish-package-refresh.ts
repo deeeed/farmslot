@@ -1,9 +1,10 @@
 // publish-package-refresh.ts — Ready-gate package refresh and evidence-selection preservation
 
 import {
-  type DecisionAction,
   Events,
+  firstExhaustedIndependentReview,
   GATE_SUMMARY_KINDS,
+  independentReviewRetryCapReason,
   type IndependentReviewStatus,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -33,6 +34,8 @@ import {
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
+  pendingIndependentReviewContinuation,
+  publicationGateDecisionActions,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
@@ -249,19 +252,13 @@ export async function refreshPublishPackage(params: {
     prPackage,
     reviewDepth,
   );
-  const actions: DecisionAction[] = [
-    ...(reviewSatisfied
-      ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
-      : []),
-    ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
-    { id: 'hold', label: 'Hold', style: 'secondary' },
-    { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
-    {
-      id: 'request-cross-runner-review',
-      label: 'Request Independent Review (runner diversity)',
-      style: 'secondary',
-    },
-  ];
+  const exhaustedReview = firstExhaustedIndependentReview(independentReviews);
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied,
+    evidenceRefreshAction,
+    pendingReviewContinuation: pendingIndependentReviewContinuation(independentReviews),
+    independentReviews,
+  });
   const nextEngineState = {
     ...refreshedRun.engineState,
     publishGate: {
@@ -335,7 +332,7 @@ export async function refreshPublishPackage(params: {
     ...decision,
     actions,
     payload: nextPayload,
-    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}\n\nPackage refreshed. Review the local package before public PR publication.`,
+    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}${exhaustedReview ? `\n**Review retries exhausted:** ${independentReviewRetryCapReason(exhaustedReview)}` : ''}\n\nPackage refreshed. Review the local package before public PR publication.`,
   };
   updateRun(params.runId, {
     engineState: nextEngineState,

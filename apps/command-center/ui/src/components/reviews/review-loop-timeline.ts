@@ -20,6 +20,7 @@ import {
   reviewAttemptLabel,
   reviewHasPendingContinuationPhases,
   reviewPolicyLabel,
+  reviewRetryCapPhaseLabel,
   reviewSourceLabel,
 } from '../../utils/review-gate-display.js';
 
@@ -386,7 +387,12 @@ export class ReviewLoopTimeline extends LitElement {
       `;
       return [fixPhase, reviewPhase];
     });
-    if (reviewHasPendingContinuationPhases(review, attempts.at(-1))) {
+    const retryCap = reviewRetryCapPhaseLabel(review);
+    if (retryCap) {
+      phases.push(html`
+        <div class="phase warn"><span class="phase-title">Fix retries</span>${retryCap}</div>
+      `);
+    } else if (reviewHasPendingContinuationPhases(review, attempts.at(-1))) {
       phases.push(
         html`<div class="phase pending">
           <span class="phase-title">Next fix</span>pending delivery

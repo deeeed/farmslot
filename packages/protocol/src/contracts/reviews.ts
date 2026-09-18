@@ -128,6 +128,13 @@ export interface PRReviewComment {
 }
 
 // Review contracts collect publication, review-gate, and cross-review shapes.
+export {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  firstExhaustedIndependentReview,
+  independentReviewFixRetriesExhausted,
+  independentReviewRetryCapReason,
+  independentReviewRetryCount,
+} from '../runs/review-retries.js';
 export type {
   CommentsTriageSummary,
   IndependentReviewAttempt,

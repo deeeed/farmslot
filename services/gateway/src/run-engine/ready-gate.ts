@@ -6,7 +6,9 @@ import path from 'node:path';
 import {
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
+  firstExhaustedIndependentReview,
   GATE_SUMMARY_KINDS,
+  independentReviewRetryCapReason,
   type IndependentReviewStatus,
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
@@ -68,18 +70,19 @@ import { BlockedRunError } from './errors.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
+  assertUnresolvedPublishOverrideAvailable,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
   buildUnavailableSnapshotAction,
-  CLOSE_AS_SHIPPED_ACTION,
-  CONTINUE_REVIEW_FIX_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
   pendingIndependentReviewContinuation,
+  publicationGateDecisionActions,
   restampStaleApprovingReviewsForEvidenceRefresh,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
@@ -160,7 +163,8 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     model: review.model ?? undefined,
     effort: review.effort ?? undefined,
     crossRunner: review.crossRunner,
-    retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
+    retryCount: review.retryCount ?? Math.max(0, (review.attempts?.length ?? 1) - 1),
+    ...(typeof review.maxRetries === 'number' ? { maxRetries: review.maxRetries } : {}),
     feedbackSent: review.feedbackSent,
     recoveryContinuationPending: review.recoveryContinuationPending,
   };
@@ -753,6 +757,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
   }
 
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
+  const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  const exhaustedReview = firstExhaustedIndependentReview(independentReviews);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage
@@ -772,6 +778,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
                   '**Nothing to publish:** this branch has zero commits ahead of the default branch. Use Close as Shipped instead of re-reviewing.',
                 ]
               : []),
+          ...(exhaustedReview
+            ? [
+                '',
+                `**Review retries exhausted:** ${independentReviewRetryCapReason(exhaustedReview)}`,
+              ]
+            : []),
           ...(videoProofWarning ? ['', videoProofWarning] : []),
           '',
           report?.slice(0, 300) ?? 'Review the local package before public PR publication.',
@@ -795,7 +807,6 @@ export async function executeReadyGate(runId: string): Promise<string> {
       pv?.projectJson,
       current.engineState?.publishGate?.reviewDepth,
     );
-  const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
   const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const pendingReviewContinuation =
     pendingReview && !reviewerIsActiveForReview(current, pendingReview) ? pendingReview : undefined;
@@ -821,44 +832,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
       : null;
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
-      ? [
-          ...(mergedPrNumber || branchZeroAhead
-            ? [
-                {
-                  id: CLOSE_AS_SHIPPED_ACTION,
-                  label: mergedPrNumber
-                    ? `Close as Shipped (PR #${mergedPrNumber} merged)`
-                    : 'Close as Shipped (branch has no commits ahead)',
-                  style: 'primary' as const,
-                },
-              ]
-            : []),
-          ...(reviewSatisfied
-            ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
-            : []),
-          ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
-          ...(unavailableSnapshotAction ? [unavailableSnapshotAction] : []),
-          ...(pendingReviewContinuation
-            ? [
-                {
-                  id: CONTINUE_REVIEW_FIX_ACTION,
-                  label: `Continue Fixing ${pendingReviewContinuation.unresolvedCount} Finding${pendingReviewContinuation.unresolvedCount === 1 ? '' : 's'}`,
-                  style: 'primary' as const,
-                },
-              ]
-            : []),
-          { id: 'hold', label: 'Hold', style: 'secondary' as const },
-          {
-            id: 'request-extra-review',
-            label: 'Request Independent Review',
-            style: 'secondary' as const,
-          },
-          {
-            id: 'request-cross-runner-review',
-            label: 'Request Independent Review (runner diversity)',
-            style: 'secondary' as const,
-          },
-        ]
+      ? publicationGateDecisionActions({
+          reviewSatisfied,
+          mergedPrNumber,
+          branchZeroAhead,
+          evidenceRefreshAction,
+          unavailableSnapshotAction,
+          pendingReviewContinuation,
+          independentReviews,
+        })
       : [
           { id: 'ready', label: 'Mark Ready', style: 'primary' },
           { id: 'hold', label: 'Hold', style: 'secondary' },
@@ -1100,7 +1082,13 @@ export async function executeReadyGate(runId: string): Promise<string> {
     if (isPublishApprovalAction(actionId)) {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
       validatePackageApprovalSelection(approvedPackage, decision);
-      assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);
+      if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
+        assertUnresolvedPublishOverrideAvailable(
+          getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        );
+      } else {
+        assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);
+      }
     }
     const target =
       selectionData?.publicationTarget === 'ready'
