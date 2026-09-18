@@ -8,6 +8,7 @@ const {
   resolveWorkerTerminalContract,
 } = require('./worker-terminal-contract.cjs');
 const {
+  checklistStepName,
   enumerateChecklistCheckboxes,
   parseTaskDirMarkArgs,
   terminalContractInputForChecklist,
@@ -419,14 +420,6 @@ function readJson(file) {
   }
 }
 
-function stripLabel(raw) {
-  return raw
-    .replace(/^\*\*(.*?)\*\*\s*[—-]?\s*/, '$1 ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 // Step enumeration is shared with the gateway parsers (generateTaskSchema in
 // tasks/writer.ts and parseCheckboxStates in methods/task.ts) via the
 // checklist-target enumerator: same skip sections, <details> handling, and
@@ -437,7 +430,7 @@ function parseChecklist(markdown) {
   const lines = markdown.split(/\n/);
   const items = enumerateChecklistCheckboxes(markdown).map((item) => ({
     ...item,
-    label: stripLabel(item.rawLabel),
+    label: checklistStepName(item.rawLabel),
   }));
   return { lines, items };
 }

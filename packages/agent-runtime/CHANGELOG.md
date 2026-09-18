@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `mark` records each step's name in SIGNAL.json (the `step` field and every `checklistTiming` event label) through the protocol's `checklistStepName`: the bold lead of the row, numbering kept, instructions dropped. The gateway task schema, Command Center and `mm-harness status --watch` already name steps this way; `mark` kept its own rule (instruction tail kept, backticks stripped), so the same row had two names.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.11.0 - 2026-09-18
