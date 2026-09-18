@@ -107,8 +107,10 @@ export function enumerateChecklistCheckboxes(markdown: string): ChecklistCheckbo
 /**
  * The name a step is shown under. A bold lead (`**1. Text** — long instructions`)
  * is the name, numbering kept, instructions dropped; anything else is the raw
- * label. Every surface that lists steps (gateway schema, Command Center,
- * `status --watch`) renders the same name through this.
+ * label. The gateway task schema and `mm-harness status --watch` render step
+ * names through this. The `mark` helper still records its own label shape in
+ * SIGNAL.json events (`stripLabel` in mark-checklist-step.cjs); aligning that
+ * changes every recorded event label and is a separate change.
  */
 export function checklistStepName(rawLabel: string): string {
   return rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();

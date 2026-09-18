@@ -1,4 +1,4 @@
-import type { SafetyTier } from '@farmslot/protocol';
+import { isTerminalWorkerSignalStatus, type SafetyTier } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -86,10 +86,6 @@ export type RetainedSessionDeliveryResult =
       retryable?: boolean;
       sendAttempted?: boolean;
     };
-
-function taskSignalIsTerminal(status: string | null): boolean {
-  return status === 'complete' || status === 'done' || status === 'failed' || status === 'blocked';
-}
 
 function taskSignalMatchesAttempt(
   raw: string | null,
@@ -203,12 +199,12 @@ async function relaunchRunnerWithArgvPrompt(
       };
     }
     const preservedReplacementReady = options.replacementReadySignal;
-    const replacementReady = taskSignalIsTerminal(preservedReplacementReady?.status ?? null)
+    const replacementReady = isTerminalWorkerSignalStatus(preservedReplacementReady?.status ?? null)
       ? preservedReplacementReady
       : await readLaunchAckSignalSnapshot(options.vars, replacementReadySignalPath);
     if (
       !replacementReady ||
-      !taskSignalIsTerminal(replacementReady.status) ||
+      !isTerminalWorkerSignalStatus(replacementReady.status) ||
       !taskSignalMatchesAttempt(replacementReady.raw, options.replacementReadySignalAttemptId)
     ) {
       return {

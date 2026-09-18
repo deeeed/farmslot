@@ -28,12 +28,15 @@ export interface WorkerSignal {
 
 export type WorkerSignalStatus = WorkerSignal['status'];
 
-const TERMINAL_WORKER_SIGNAL_STATUSES: ReadonlySet<string> = new Set<WorkerSignalStatus>([
-  'complete',
-  'failed',
-  'done',
-  'blocked',
-]);
+// One entry per status, so adding a member to the union fails to compile here
+// until someone decides whether it is terminal.
+const WORKER_SIGNAL_STATUS_IS_TERMINAL = {
+  running: false,
+  blocked: true,
+  complete: true,
+  failed: true,
+  done: true,
+} satisfies Record<WorkerSignalStatus, boolean>;
 
 /**
  * A status the worker cannot move past. `done` is an accepted terminal alias of
@@ -41,7 +44,12 @@ const TERMINAL_WORKER_SIGNAL_STATUSES: ReadonlySet<string> = new Set<WorkerSigna
  * without first narrowing; an unknown status is not terminal.
  */
 export function isTerminalWorkerSignalStatus(status: string | null | undefined): boolean {
-  return status !== null && status !== undefined && TERMINAL_WORKER_SIGNAL_STATUSES.has(status);
+  return (
+    status !== null &&
+    status !== undefined &&
+    Object.hasOwn(WORKER_SIGNAL_STATUS_IS_TERMINAL, status) &&
+    WORKER_SIGNAL_STATUS_IS_TERMINAL[status as WorkerSignalStatus]
+  );
 }
 
 export function isTerminalWorkerSignal(

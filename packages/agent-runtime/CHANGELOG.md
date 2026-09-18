@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `discoverTaskDirs(tasksRoot)` and `latestTaskDir(tasksRoot)` find the task directories `task init` (or a dispatch) wrote under a checkout's tasks root: the most recently signalled task wins, a checklist-only task is the fallback. Readers such as `mm-harness status --watch` land on the live task through this instead of walking `temp/tasks` with their own layout assumptions.
+- `discoverTaskDirs(tasksRoot)` and `latestTaskDir(tasksRoot)` find the task directories `task init` (or a dispatch) wrote under a checkout's tasks root: the most recently signalled task wins, a checklist-only task is the fallback. For readers that want the task in progress in a checkout (`mm-harness status --watch` is the first consumer, in its next release) instead of each walking `temp/tasks` with its own layout assumptions.
 
 ## 0.10.0 - 2026-09-17
 

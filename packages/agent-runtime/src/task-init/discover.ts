@@ -1,8 +1,9 @@
 // Finding task directories in a checkout. `task init` writes them under the
-// tasks root as `<flow>/<slug>` (a dispatched run mirrors the same layout), so
-// every reader that wants "the task in progress here" needs the same walk:
-// the directory whose signal was written last, else the one whose checklist
-// was touched last.
+// tasks root as `<flow>/<slug>-<stamp>` on the farm and
+// `recipe-cook/<stamp>-<slug>` from the skill (docs/reference/
+// task-directory-contract.md), so every reader that wants "the task in progress
+// here" needs the same walk: the directory whose signal or checklist was written
+// last. Symlinked entries are not followed; a task directory is a real directory.
 
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -13,7 +14,12 @@ import {
   WORKER_SIGNAL_FILE,
 } from '@farmslot/protocol';
 
-/** How deep under the tasks root a task directory may sit (`<flow>/<slug>` is 2). */
+/**
+ * How deep under the tasks root a task directory may sit. Both documented
+ * shapes are depth 2; one extra level covers a grouped flow. The walk stops at
+ * a directory that qualifies, so a task's `artifacts/` (which mirrors task
+ * files) is never mistaken for a task of its own.
+ */
 export const TASK_DIR_SEARCH_DEPTH = 3;
 
 export interface DiscoveredTaskDir {
@@ -49,8 +55,9 @@ export function discoverTaskDirs(tasksRoot: string): DiscoveredTaskDir[] {
       );
       if (signalMtimeMs !== null || checklistMtimeMs !== null) {
         found.push({ dir: child, signalMtimeMs, checklistMtimeMs });
+      } else if (depth < TASK_DIR_SEARCH_DEPTH) {
+        visit(child, depth + 1);
       }
-      if (depth < TASK_DIR_SEARCH_DEPTH) visit(child, depth + 1);
     }
   };
   visit(tasksRoot, 1);
@@ -58,16 +65,21 @@ export function discoverTaskDirs(tasksRoot: string): DiscoveredTaskDir[] {
 }
 
 /**
- * The task directory a reader lands on without naming one: the most recently
- * signalled task, else the most recently touched checklist. A task that has
- * signalled always wins over one that only has a checklist, since a signal is
- * proof of an attempt.
+ * The task directory a reader lands on without naming one: the one written to
+ * last, by signal or by checklist. A checklist counts because between
+ * `task init` and the worker's first `mark start` the live task has no signal
+ * yet, and a reader must not fall back to the previous, finished task then.
+ * Equal times prefer the signalled task, then the lexically first path, so two
+ * readers of one checkout never land on different tasks.
  */
 export function latestTaskDir(tasksRoot: string): string | undefined {
-  const dirs = discoverTaskDirs(tasksRoot);
-  const pick = (key: 'signalMtimeMs' | 'checklistMtimeMs'): DiscoveredTaskDir | undefined =>
-    dirs
-      .filter((entry) => entry[key] !== null)
-      .sort((left, right) => (right[key] as number) - (left[key] as number))[0];
-  return (pick('signalMtimeMs') ?? pick('checklistMtimeMs'))?.dir;
+  const ranked = discoverTaskDirs(tasksRoot)
+    .map((entry) => ({ entry, at: newest(entry.signalMtimeMs, entry.checklistMtimeMs) as number }))
+    .sort(
+      (left, right) =>
+        right.at - left.at ||
+        Number(right.entry.signalMtimeMs !== null) - Number(left.entry.signalMtimeMs !== null) ||
+        left.entry.dir.localeCompare(right.entry.dir),
+    );
+  return ranked[0]?.entry.dir;
 }
