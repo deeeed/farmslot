@@ -4,6 +4,7 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
   type GitBranchDiffFile,
+  independentReviewRetryCapReason,
   latestExhaustedIndependentReview,
   type ReadyGatePayload,
   type RunDecision,
@@ -42,9 +43,17 @@ export function renderReadyTopBar(input: {
   const extraReviewAction = input.decision?.actions?.find(
     (action) => action.id === 'request-extra-review',
   );
-  const bypassAction = input.decision?.actions?.find(
-    (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
-  );
+  const exhaustedReview = latestExhaustedIndependentReview(input.payload.independentReviews);
+  const bypassAction =
+    input.decision?.actions?.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION) ??
+    (exhaustedReview && !canApprove
+      ? {
+          id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
+          label: 'Bypass Review (dangerous)',
+          style: 'danger' as const,
+          description: independentReviewRetryCapReason(exhaustedReview),
+        }
+      : undefined);
   const reviewBlockingReason =
     packageGate && !canApprove ? readyReviewBlockingReason(input.payload) : '';
   const approveLabel = hasApprovePublish
@@ -143,10 +152,7 @@ export function renderReadyTopBar(input: {
                   ? 'Confirm Publish?'
                   : canApprove
                     ? approveLabel
-                    : latestExhaustedIndependentReview(
-                          input.payload.independentReviews,
-                          input.payload.prPackage,
-                        )
+                    : exhaustedReview
                       ? 'Retries exhausted'
                       : reviewBlockingReason || 'Review Required'}
             </button>

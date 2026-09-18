@@ -107,13 +107,12 @@ export function independentReviewMatchesPreparedPackage(
   return true;
 }
 
-/** Latest terminal extra-review that hit its auto-fix cap on this package. */
+/** Latest terminal extra-review that hit its auto-fix cap. HEAD drift does not hide this. */
 export function latestExhaustedIndependentReview(
   reviews: readonly ReviewRetryFields[] | undefined,
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
+  _preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): ReviewRetryFields | undefined {
   const latest = latestIndependentReview(reviews);
   if (!latest || !independentReviewFixRetriesExhausted(latest)) return undefined;
-  if (!independentReviewMatchesPreparedPackage(latest, preparedPackage)) return undefined;
   return latest;
 }

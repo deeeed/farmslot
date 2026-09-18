@@ -180,6 +180,11 @@ test('exhaustion matches the prepared package by HEAD, not subject hash', () => 
     2,
   );
   assert.equal(independentReviewMatchesPreparedPackage(exhausted, { headSha: 'other' }), false);
+  assert.equal(
+    latestExhaustedIndependentReview([exhausted], { headSha: 'other' })?.unresolvedCount,
+    2,
+    'HEAD drift must not hide the exhausted extra-review bypass',
+  );
 });
 
 test('cap copy names the remaining findings and the two unblock paths', () => {
