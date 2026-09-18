@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-09-18
+
 - Ready-gate copy names a review that stopped at its fix-attempt cap, with Independent Review as the unblock and Bypass Review (dangerous) as the override. Run-list gate labels include review-blocked and retries-exhausted.
 - Independent-review sequence rows expose model and effort (thinking) again, not only runner.
 

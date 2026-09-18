@@ -4,7 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Gateway API reference reports protocol `0.28.0`.
+- Gateway API reference reports protocol `0.29.0`.
 
 - Task directory and agent-runtime references: templates carry no run mode; `--run-mode` is optional and only matches project default rules.
 

@@ -1,11 +1,10 @@
 {
-  "version": "0.13.0",
-  "date": "2026-09-17",
+  "version": "0.14.0",
+  "date": "2026-09-18",
   "items": [
-    "The execution-template catalog offers the same templates for every run mode; a run's mode now only matches the project's default rules",
-    "Capture deduplicated PR feedback candidates on retrospectives (provider identity, revision, reviewed commit, bot/human kind, attribution and ledger consumption state) from worker triage and PR monitor incidents; route domain learnings drafts to the project's canonical knowledge library from `static_review`/`reference_repos` (or `vars.knowledge_destination`) and add a human-gated \"Recorded in canonical library\" action that binds consumed feedback to the landed rule in `$FARMSLOT_HOME/state/feedback-ledger.json`. Bulk retro closeout gains `--from-plan` with exact decision-hash, destination and active-run checks plus JSON receipts",
-    "Resume compatible worktree reviewers for incremental PR reviews, carrying the prior findings and returning to a new publication gate",
-    "Correlate review worktrees in terminal inventory and support confirmed termination of unmanaged tmux sessions with identity checks",
-    "Publish findings outside PR diff hunks in the review body instead of failing the entire review; keep valid findings inline and preserve retry safety"
+    "The terminal-signal predicate, the step-name rule and the checklist numbering check now come from `@farmslot/protocol`, including the copy retained-handoff reactivation kept for itself; behaviour is unchanged, the gateway just stops being the only place that knows them",
+    "When an independent review stops at its fix-attempt cap, the ready gate says so and offers a new review or a dangerous publish bypass. Package refresh keeps those actions",
+    "Human-gate independent review loops honor per-loop `model` and `effort` instead of always inheriting the worker run, including after gateway restart recovery",
+    "Attribute GitHub GraphQL points to callers and expose a rolling-hour tally on `gateway.status.githubQuerySpend`. Skip GraphQL and `gh pr` reads while any tracked credential is reserved, keep serving the warm PR list without a refresh-failed event, poll only while a client recently asked for `pr.list` (including after restart), back off 1→2→5 minutes when nothing changed, seed truncated GraphQL first pages for the list only, and cap aliased batch chunks at 8 PRs so large-repo queries actually seed"
   ]
 }
