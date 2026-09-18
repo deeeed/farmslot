@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Doc comments: `checklistStepName` names `mark` among its consumers, and a checklist event `label` is documented as the step name. No code change.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.0 - 2026-09-18
