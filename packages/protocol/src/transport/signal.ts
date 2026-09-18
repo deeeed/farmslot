@@ -80,7 +80,7 @@ export interface WorkerSignalChecklistTiming {
 export interface WorkerSignalChecklistEvent {
   /** 1-based checklist step number, matching the worker-facing `mark N` command. */
   stepNumber: number;
-  /** Human-readable checklist text, copied for resilience if the markdown later changes. */
+  /** The step name (`checklistStepName` of the row), copied so the event survives a later markdown edit. */
   label: string;
   /** UTC ISO8601 timestamp when the item changed from unchecked to checked. */
   checkedAt: string;

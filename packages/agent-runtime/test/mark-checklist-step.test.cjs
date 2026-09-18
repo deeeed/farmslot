@@ -44,6 +44,8 @@ assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(signal, 'utf8'));
 assert.equal(parsed.status, 'running');
 assert.equal(parsed.checklistTiming.events.length, 2);
+// The bold lead is the name; the instruction tail after it is not recorded.
+assert.equal(parsed.checklistTiming.events[1].label, 'Second gate');
 
 result = spawnSync(process.execPath, [helper, dir, 'complete', '--mark-last'], {
   encoding: 'utf8',
