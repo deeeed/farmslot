@@ -1,5 +1,6 @@
 import {
   type ExecResult,
+  independentReviewFixRetriesExhausted,
   type IndependentReviewStatus,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
@@ -145,7 +146,8 @@ export async function assertIndependentReviewLaunchState(
   if (
     priorReview?.verdict === 'issues' &&
     reviewedCommit === headSha &&
-    !independentReviewNeedsContinuation(priorReview)
+    !independentReviewNeedsContinuation(priorReview) &&
+    !independentReviewFixRetriesExhausted(priorReview)
   ) {
     const feedbackPath =
       priorReview.artifactPaths?.find((artifactPath) =>

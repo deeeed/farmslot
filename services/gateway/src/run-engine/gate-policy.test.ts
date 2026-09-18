@@ -500,6 +500,38 @@ test('exhausted extra-review is not a pending auto-fix continuation', () => {
   assert.equal(pendingIndependentReviewContinuation([exhausted]), undefined);
 });
 
+test('exhausted extra-review still offers bypass when only the review subject hash drifted', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    feedbackSent: false,
+    recoveryContinuationPending: true,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    reviewedHeadSha: 'abc1234',
+    reviewedReviewSubjectHash: 'subject-old',
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: false,
+    independentReviews: [exhausted],
+    preparedPackage: { headSha: 'abc1234', reviewSubjectHash: 'subject-new' },
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    true,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'continue-review-fix'),
+    false,
+  );
+});
+
 test('bypass is not offered for an older exhausted review after a newer unspent loop', () => {
   const oldCap: IndependentReviewStatus = {
     id: 'independent-review-2',

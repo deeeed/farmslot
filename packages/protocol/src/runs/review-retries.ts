@@ -33,8 +33,8 @@ export function independentReviewRetryCount(review: ReviewRetryFields): number {
  * findings still open. `max_retries: 0` is not a cap-hit: the operator still
  * uses Continue Fixing to authorize the first worker pass.
  *
- * Records without `maxRetries` (pre-this-field) are treated as exhausted only
- * after at least one worker-fix attempt left undelivered findings.
+ * Records without `maxRetries` are exhausted only when `maxRetriesExhausted`
+ * was persisted. Missing cap fields are not inferred.
  */
 export function independentReviewFixRetriesExhausted(review: ReviewRetryFields): boolean {
   if (review.source === 'self-review') return false;
@@ -79,9 +79,6 @@ export function independentReviewMatchesPreparedPackage(
   const head = preparedPackage.headSha?.trim();
   const reviewedHead = (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)?.trim();
   if (!head || !reviewedHead || reviewedHead !== head) return false;
-  const subject = preparedPackage.reviewSubjectHash?.trim();
-  const reviewedSubject = review.reviewedReviewSubjectHash?.trim();
-  if (subject && reviewedSubject && reviewedSubject !== subject) return false;
   return true;
 }
 

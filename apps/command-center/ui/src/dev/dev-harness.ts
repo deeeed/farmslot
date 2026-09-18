@@ -2909,6 +2909,7 @@ All checks passed.`;
                   retryCount: 3,
                   maxRetries: 3,
                   maxRetriesExhausted: true,
+                  reviewedHeadSha: 'abc123def4567890',
                 },
               ],
             },
