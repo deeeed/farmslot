@@ -105,6 +105,12 @@ function isReviewerChecklistFile(basename: string): boolean {
 
 export function isPublicationReviewProgressActive(run: Run | undefined): boolean {
   if (!run) return false;
+  if (
+    run.status === 'blocked' &&
+    run.decisions.some((decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt)
+  ) {
+    return false;
+  }
   const humanGate = run.steps.find((step) => step.name === 'human-gate');
   const reviewerWorking = run.agentContexts?.some(
     (context) =>
@@ -115,6 +121,28 @@ export function isPublicationReviewProgressActive(run: Run | undefined): boolean
     return false;
   }
   return isReviewerChecklistFile(reviewerChecklistBasename(run)) || Boolean(reviewerWorking);
+}
+
+/** Canvas node that is actually blocking right now (not merely hash-selected). */
+export function currentPipelineNodeId(run: Run | undefined): string | null {
+  if (!run) return null;
+  if (
+    run.status === 'blocked' &&
+    run.decisions.some((decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt)
+  ) {
+    return 'human-gate';
+  }
+  if (isPublicationReviewProgressActive(run)) {
+    const label = run.agentContexts?.find(
+      (context) =>
+        (context.role === 'self-review' || context.role === 'self-review-fix') &&
+        (context.status === 'working' || context.status === 'launching'),
+    );
+    if (label?.id) return label.id;
+    return 'human-gate';
+  }
+  const running = [...run.steps].reverse().find((step) => step.status === 'running');
+  return running?.name ?? null;
 }
 
 function isSelfReviewProgressActive(run: Run | undefined): boolean {

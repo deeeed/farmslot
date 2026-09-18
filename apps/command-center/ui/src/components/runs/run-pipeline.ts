@@ -22,6 +22,7 @@ import {
   activeTaskProgressStepId,
   ciWatchOutputsForRun,
   computeLayout,
+  currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isInlineCiFixActiveFromOutputs,
   type PipelineLayout,
@@ -48,6 +49,7 @@ import {
   renderPipelineArrow,
   renderPipelineDecisions,
   renderPipelineDefs,
+  renderPipelineFocus,
   renderPipelineLanes,
   renderPublicationReviewLoops,
   renderSelfReviewLoop,
@@ -58,6 +60,7 @@ import { effectiveStepStatus } from './run-utils.js';
 export class RunPipeline extends LitElement {
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  @property() selectedStepName?: string;
   @state() private monitorExpanded = false;
   @state() private autoExpandDone = false;
   @state() private cancelPending = false;
@@ -212,6 +215,11 @@ export class RunPipeline extends LitElement {
       ${renderSelfReviewLoop(nodeMap, (step) => this._vis(step.status))}
       ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step.status))}
       ${renderPipelineDecisions(this.run, nodeMap)}
+      ${renderPipelineFocus({
+        nodes: layout.nodes,
+        selectedStepName: this.selectedStepName,
+        currentNodeId: currentPipelineNodeId(this.run),
+      })}
     `;
   }
 

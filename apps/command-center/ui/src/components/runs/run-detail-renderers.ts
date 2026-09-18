@@ -963,6 +963,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <run-pipeline
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
       </run-pipeline>

@@ -17,6 +17,39 @@ import {
 } from './run-pipeline-model.js';
 import { formatDuration, formatElapsed, stepStatusColor } from './run-utils.js';
 
+export function renderPipelineFocus(opts: {
+  nodes: readonly { id: string; x: number; y: number; w: number; step: { name: string } }[];
+  selectedStepName?: string | null;
+  currentNodeId?: string | null;
+}) {
+  const selected = opts.nodes.find(
+    (node) => node.step.name === opts.selectedStepName || node.id === opts.selectedStepName,
+  );
+  const current = opts.currentNodeId
+    ? opts.nodes.find((node) => node.id === opts.currentNodeId)
+    : undefined;
+  return svg`
+    ${
+      current
+        ? svg`
+      <rect x="${current.x - 4}" y="${current.y - 4}" width="${current.w + 8}" height="${NODE_H + 8}"
+            rx="8" fill="none" stroke="${colors.statusWarn}" stroke-width="2"/>
+      <text x="${current.x + current.w / 2}" y="${current.y + NODE_H + 14}"
+            text-anchor="middle" class="node-meta" fill="${colors.statusWarn}">now</text>
+    `
+        : nothing
+    }
+    ${
+      selected && selected.id !== current?.id
+        ? svg`
+      <rect x="${selected.x - 4}" y="${selected.y - 4}" width="${selected.w + 8}" height="${NODE_H + 8}"
+            rx="8" fill="none" stroke="${colors.accent}" stroke-width="1.5" stroke-dasharray="4 3"/>
+    `
+        : nothing
+    }
+  `;
+}
+
 export function renderPipelineDefs() {
   return svg`
     <defs>

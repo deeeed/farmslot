@@ -6,6 +6,7 @@ import type { Run } from '@farmslot/protocol';
 import {
   activeTaskProgressStepId,
   computeLayout,
+  currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isPublicationReviewProgressActive,
   publicationReviewStepForName,
@@ -291,6 +292,32 @@ test('live extra-review progress shows on human-gate and package-refresh inspect
     })?.currentStep,
     'Read worker report',
   );
+});
+
+test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
+  const run = makeRun({
+    status: 'blocked',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW-FIX.md',
+    steps: [{ name: 'human-gate', status: 'running', detail: 'Waiting for operator decision' }],
+    decisions: [
+      {
+        id: 'd1',
+        type: 'engine_human_gate',
+        title: 'gate',
+        actions: [{ id: 'continue-review-fix', label: 'Continue Fixing', style: 'primary' }],
+      } as never,
+    ],
+    agentContexts: [
+      {
+        id: 'self-review-fix',
+        role: 'self-review-fix',
+        status: 'working',
+        runner: 'claude',
+      } as never,
+    ],
+  });
+  assert.equal(isPublicationReviewProgressActive(run), false);
+  assert.equal(currentPipelineNodeId(run), 'human-gate');
 });
 
 test('computeLayout keeps package-refresh pending when a review agent is working', () => {
