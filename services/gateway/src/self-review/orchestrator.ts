@@ -187,6 +187,24 @@ export function shouldSkipForDisabledSelfReviewConfig(
   return !config.enabled && options.publicationReview !== true;
 }
 
+/** Extra-review auto-fix budget. Restart/resume must not raise this past project max_retries. */
+export function resolveSelfReviewMaxRetries(opts: {
+  publicationReview?: boolean | null;
+  configuredMaxRetries?: number;
+  requestedMaxRetries?: number | null;
+  priorRetryCount?: number;
+  resume?: boolean;
+}): number {
+  const projectCap = Math.max(0, opts.configuredMaxRetries ?? 1);
+  const requested = opts.requestedMaxRetries;
+  const hasRequested = typeof requested === 'number' && Number.isFinite(requested);
+  const base = opts.publicationReview
+    ? Math.max(0, hasRequested ? Math.min(projectCap, requested) : projectCap)
+    : Math.max(0, Math.min(5, hasRequested ? requested : projectCap));
+  if (!opts.resume || opts.publicationReview) return base;
+  return Math.max((opts.priorRetryCount ?? 0) + 1, base);
+}
+
 export function resolveSelfReviewRunnerModel(
   workerRunner: string,
   workerModel: string | undefined,
@@ -269,7 +287,11 @@ async function executeOwnedSelfReview(
     model,
     crossRunner: isCrossRunnerReview,
   } = resolveSelfReviewRunnerModel(workerRunner, run.metrics.model ?? undefined, config, options);
-  const maxRetries = Math.max(0, Math.min(5, options.maxRetries ?? config.max_retries ?? 1));
+  const maxRetries = resolveSelfReviewMaxRetries({
+    publicationReview: options.publicationReview,
+    configuredMaxRetries: config.max_retries,
+    requestedMaxRetries: options.maxRetries,
+  });
   const validationDepth = options.validationDepth ?? 'full-live';
   const artifactScope = options.artifactScope ?? null;
   const sessionPolicy =
@@ -357,9 +379,16 @@ async function executeOwnedSelfReview(
         reviewRunner,
         model,
         effort: options.effort,
-        // An explicit operator "send feedback" action authorizes one fix pass
-        // even when automatic self-review retries are disabled for the project.
-        maxRetries: Math.max(priorRetryCount + 1, maxRetries),
+        // Pipeline self-review: Continue Fixing authorizes one more pass even
+        // when project max_retries is 0. Extra-review stays on the project cap
+        // so restart cannot keep raising priorRetryCount+1 forever.
+        maxRetries: resolveSelfReviewMaxRetries({
+          publicationReview: options.publicationReview,
+          configuredMaxRetries: config.max_retries,
+          requestedMaxRetries: maxRetries,
+          priorRetryCount,
+          resume: true,
+        }),
         reviewTimeoutMs,
         reviewResult: initialReviewResult,
         retryCount: priorRetryCount,

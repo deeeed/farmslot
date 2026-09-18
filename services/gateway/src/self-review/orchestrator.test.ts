@@ -7,6 +7,7 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
   resolveRecoveredFixBaseSha,
+  resolveSelfReviewMaxRetries,
   resolveSelfReviewRunnerModel,
   resumeSelfReviewFixPromptDelivery,
   retryDeferredFixDelivery,
@@ -810,6 +811,28 @@ test('runSelfReviewRetryLoop: incomplete re-review surfaces as skipped, not a fa
   assert.equal(result.skipped, true, 'incomplete re-review must not clear unresolved issues');
   assert.equal(result.reason, 'no-feedback-file');
   assert.notEqual(result.verdict, 'pass');
+});
+
+test('resolveSelfReviewMaxRetries keeps extra-review on the project cap', () => {
+  assert.equal(
+    resolveSelfReviewMaxRetries({
+      publicationReview: true,
+      configuredMaxRetries: 3,
+      requestedMaxRetries: 5,
+      priorRetryCount: 6,
+      resume: true,
+    }),
+    3,
+  );
+  assert.equal(
+    resolveSelfReviewMaxRetries({
+      publicationReview: false,
+      configuredMaxRetries: 3,
+      priorRetryCount: 3,
+      resume: true,
+    }),
+    4,
+  );
 });
 
 test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds issues', async () => {
