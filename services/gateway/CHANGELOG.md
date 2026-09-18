@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-09-18
+
 - The terminal-signal predicate, the step-name rule and the checklist numbering check now come from `@farmslot/protocol`, including the copy retained-handoff reactivation kept for itself; behaviour is unchanged, the gateway just stops being the only place that knows them.
 - When an independent review stops at its fix-attempt cap, the ready gate says so and offers a new review or a dangerous publish bypass. Package refresh keeps those actions.
 - Human-gate independent review loops honor per-loop `model` and `effort` instead of always inheriting the worker run, including after gateway restart recovery.
