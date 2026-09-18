@@ -170,6 +170,15 @@ export function selectedStepShowsLiveTaskProgress(
   return false;
 }
 
+/** Inspector already has the live checklist — don't also float it under the canvas. */
+export function pipelineDetachedProgressVisible(
+  run: Run | undefined,
+  selectedStepName: string | undefined,
+): boolean {
+  if (!selectedStepName) return true;
+  return !selectedStepShowsLiveTaskProgress(run, selectedStepName);
+}
+
 export function stepInspectorTaskProgress(opts: {
   selectedStepName: string | undefined;
   run: Run | undefined;

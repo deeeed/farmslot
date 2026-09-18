@@ -25,6 +25,7 @@ import {
   currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isInlineCiFixActiveFromOutputs,
+  pipelineDetachedProgressVisible,
   type PipelineLayout,
 } from './run-pipeline-model.js';
 import {
@@ -173,7 +174,11 @@ export class RunPipeline extends LitElement {
               </div>
             `
           : nothing}
-        ${this.monitorExpanded && this._activeTaskProgress() ? this.renderProgressPanel() : nothing}
+        ${this.monitorExpanded &&
+        this._activeTaskProgress() &&
+        pipelineDetachedProgressVisible(this.run, this.selectedStepName)
+          ? this.renderProgressPanel()
+          : nothing}
       </div>
     `;
   }

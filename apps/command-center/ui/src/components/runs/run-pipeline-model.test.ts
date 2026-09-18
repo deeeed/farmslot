@@ -9,6 +9,7 @@ import {
   currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isPublicationReviewProgressActive,
+  pipelineDetachedProgressVisible,
   publicationReviewStepForName,
   selectedStepShowsLiveTaskProgress,
   stepInspectorTaskProgress,
@@ -292,6 +293,16 @@ test('live extra-review progress shows on human-gate and package-refresh inspect
     })?.currentStep,
     'Read worker report',
   );
+});
+
+test('detached checklist panel hides when the inspector already shows live progress', () => {
+  const run = makeRun({
+    status: 'monitoring',
+    steps: [{ name: 'monitor', status: 'running' }],
+  });
+  assert.equal(pipelineDetachedProgressVisible(run, undefined), true);
+  assert.equal(pipelineDetachedProgressVisible(run, 'monitor'), false);
+  assert.equal(pipelineDetachedProgressVisible(run, 'prepare'), true);
 });
 
 test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
