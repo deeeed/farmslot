@@ -268,6 +268,55 @@ that range only when the delta invalidates a prior assumption, and explain why i
 `;
 }
 
+export function workerFixHandoffScope(params: {
+  taskDir: string;
+  priorLoopNumber: number;
+  artifactScope?: string | null;
+}): string {
+  const priorDir = `${params.taskDir}/${reviewArtifactDir(params.priorLoopNumber, params.artifactScope)}`;
+  return `## Worker fix handoff (required reading)
+
+This is re-review after a worker fix pass. Loop 1 was the cold first look; this round is not.
+
+Before filing any finding, read:
+- \`${params.taskDir}/artifacts/report.md\` — latest \`## Self-Review Fixes\` (fixed, disputed, or left open)
+- \`${params.taskDir}/SELF-REVIEW-FIX.md\` — the issue list sent to the worker
+- \`${priorDir}/review-feedback.md\` — the prior findings
+
+Treat the worker report as first-class:
+- **Fixed:** verify on current HEAD. Re-file only if the defect is still present.
+- **Does not reproduce / wrong:** confirm or refute with evidence. Do not re-file on taste.
+- **Still open / product decision:** do not silently re-state it. Accept the rationale or reject it with why the defect remains required.
+
+A worker SIGNAL of complete/success can mean "subset fixed + documented refusals." That is not "all findings gone."
+`;
+}
+
+/** Prefix for extra-review loop 2+. First loop stays a cold full review. */
+export function reReviewChecklistPrefix(params: {
+  taskDir: string;
+  loopNumber: number;
+  artifactScope?: string | null;
+  priorHeadSha?: string | null;
+  currentHeadSha?: string | null;
+}): string | null {
+  if (params.loopNumber <= 1) return null;
+  const priorLoopNumber = params.loopNumber - 1;
+  const priorArtifactDir = `${params.taskDir}/${reviewArtifactDir(priorLoopNumber, params.artifactScope)}`;
+  return [
+    continuationReviewScope({
+      priorHeadSha: params.priorHeadSha ?? null,
+      currentHeadSha: params.currentHeadSha ?? null,
+      priorArtifactDir,
+    }),
+    workerFixHandoffScope({
+      taskDir: params.taskDir,
+      priorLoopNumber,
+      artifactScope: params.artifactScope,
+    }),
+  ].join('\n');
+}
+
 function structuredReviewResultInstructions(resultRelPath: string): string {
   return `
 
@@ -1017,7 +1066,22 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    if (warmSession) {
+    if (loopNumber > 1) {
+      const previous = await readPersistedReviewSnapshot(
+        vars,
+        taskDir,
+        loopNumber - 1,
+        artifactScope,
+      );
+      const prefix = reReviewChecklistPrefix({
+        taskDir,
+        loopNumber,
+        artifactScope,
+        priorHeadSha: previous?.snapshot.headSha ?? warmSession?.lastReviewedHeadSha ?? null,
+        currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
+      });
+      if (prefix) expandedTemplate = `${prefix}\n${expandedTemplate}`;
+    } else if (warmSession) {
       expandedTemplate = `${continuationReviewScope({
         priorHeadSha: warmSession.lastReviewedHeadSha,
         currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
@@ -1073,7 +1137,7 @@ export async function runReviewAgent(
     const warmPrompt = warmSession
       ? continuingPriorGeneration
         ? `Continue your prior review of this same run. Review only changes since your previous reviewed head and confirm prior findings remain resolved. Prior review artifacts are in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}. Complete the checklist's current output contract (feedback + signal) as written.\n\n${basePrompt}`
-        : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
+        : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
       : basePrompt;
     let taskPrompt = warmPrompt;
 

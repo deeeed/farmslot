@@ -10,6 +10,7 @@ import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
   prependReviewerExecutionContract,
+  reReviewChecklistPrefix,
   resumeReviewAgentPromptDelivery,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
@@ -92,6 +93,30 @@ test('restart recovery reclaims only the newest matching in-flight reviewer', ()
     }),
     null,
   );
+});
+
+test('re-review prefix is cold on loop 1 and includes worker output from loop 2', () => {
+  assert.equal(
+    reReviewChecklistPrefix({
+      taskDir: 'temp/tasks/foo',
+      loopNumber: 1,
+      currentHeadSha: 'abc',
+    }),
+    null,
+  );
+  const prefix = reReviewChecklistPrefix({
+    taskDir: 'temp/tasks/foo',
+    loopNumber: 2,
+    artifactScope: 'independent-review-3',
+    priorHeadSha: 'aaa111',
+    currentHeadSha: 'bbb222',
+  });
+  assert.match(prefix ?? '', /aaa111\.\.bbb222/);
+  assert.match(prefix ?? '', /artifacts\/report\.md/);
+  assert.match(prefix ?? '', /SELF-REVIEW-FIX\.md/);
+  assert.match(prefix ?? '', /Self-Review Fixes/);
+  assert.match(prefix ?? '', /subset fixed \+ documented refusals/);
+  assert.match(prefix ?? '', /independent-review-3\/review-loop-1/);
 });
 
 test('review agent instructions use context-scoped checklist, signal, and feedback files', () => {

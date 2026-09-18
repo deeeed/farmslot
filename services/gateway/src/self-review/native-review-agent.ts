@@ -44,6 +44,7 @@ import {
   persistReviewOutputArtifacts,
   prependReviewerExecutionContract,
   readTerminalReviewSignal,
+  reReviewChecklistPrefix,
   type ReviewAgentResult,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
@@ -194,7 +195,22 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           feedbackRelPath,
           resultRelPath,
         );
-        if (warm) {
+        if (loopNumber > 1) {
+          const previous = await readPersistedReviewSnapshot(
+            vars,
+            taskDir,
+            loopNumber - 1,
+            artifactScope,
+          );
+          const prefix = reReviewChecklistPrefix({
+            taskDir,
+            loopNumber,
+            artifactScope,
+            priorHeadSha: previous?.snapshot.headSha ?? null,
+            currentHeadSha: snapshot.snapshot.headSha ?? null,
+          });
+          if (prefix) template = `${prefix}${template}`;
+        } else if (warm) {
           const previous = await readPersistedReviewSnapshot(
             vars,
             taskDir,
