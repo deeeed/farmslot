@@ -1135,7 +1135,6 @@ export async function runReviewAgent(
     // Interactive runners receive a short prompt after the TUI is ready; the
     // detailed instructions live in the reviewer checklist. Exec runners bake a
     // self-contained prompt into their launch command.
-    const parentRun = getRun(_runId);
     // Pre-flight: a claim whose persisted session file is gone (or was never
     // recorded) cannot resume — downgrade to a fresh cold launch up front
     // instead of burning the 120s ready-timeout on a dead `resume`.
