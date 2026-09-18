@@ -79,10 +79,11 @@ export function effectiveTaskProgress(
 export function activeTaskProgressStepId(
   run: Run | undefined,
   taskProgress: TaskProgressStructured | undefined,
-): 'monitor' | 'self-review' | 'ci-watch' | null {
+): 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null {
   if (isInteractiveCompletionAwaitingOperator(run)) return null;
   const progress = effectiveTaskProgressForRun(run, taskProgress);
   if (!progress?.totalSteps) return null;
+  if (isPublicationReviewProgressActive(run)) return 'human-gate';
   if (isSelfReviewProgressActive(run)) return 'self-review';
   const monitorStep = run?.steps.find((step) => step.name === 'monitor');
   if (isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run))) return 'ci-watch';
@@ -90,14 +91,68 @@ export function activeTaskProgressStepId(
   return null;
 }
 
+function reviewerChecklistBasename(run: Run | undefined): string {
+  return run?.activeTaskFile?.split('/').pop() ?? '';
+}
+
+function isReviewerChecklistFile(basename: string): boolean {
+  return (
+    basename === 'SELF-REVIEW.md' ||
+    basename === 'SELF-REVIEW-FIX.md' ||
+    basename.startsWith('SELF-REVIEW.')
+  );
+}
+
+export function isPublicationReviewProgressActive(run: Run | undefined): boolean {
+  if (!run) return false;
+  const humanGate = run.steps.find((step) => step.name === 'human-gate');
+  const reviewerWorking = run.agentContexts?.some(
+    (context) =>
+      (context.role === 'self-review' || context.role === 'self-review-fix') &&
+      (context.status === 'working' || context.status === 'launching'),
+  );
+  if (run.status !== 'human-gating' && humanGate?.status !== 'running' && !reviewerWorking) {
+    return false;
+  }
+  return isReviewerChecklistFile(reviewerChecklistBasename(run)) || Boolean(reviewerWorking);
+}
+
 function isSelfReviewProgressActive(run: Run | undefined): boolean {
+  if (isPublicationReviewProgressActive(run)) return false;
   const selfReviewStep = run?.steps.find((step) => step.name === 'self-review');
   if (!selfReviewStep) return false;
   return (
     selfReviewStep.status === 'running' ||
     run?.status === 'self-reviewing' ||
-    run?.activeTaskFile?.split('/').pop() === 'SELF-REVIEW.md'
+    isReviewerChecklistFile(reviewerChecklistBasename(run))
   );
+}
+
+export function selectedStepShowsLiveTaskProgress(
+  run: Run | undefined,
+  stepName: string | undefined,
+): boolean {
+  if (!stepName) return false;
+  if (stepName === 'monitor') return true;
+  if (stepName === 'self-review') return isSelfReviewProgressActive(run);
+  if (stepName === 'ci-watch') return isInlineCiFixActiveFromOutputs(ciWatchOutputsForRun(run));
+  if (stepName === 'human-gate' || stepName === 'package-refresh') {
+    return isPublicationReviewProgressActive(run);
+  }
+  return false;
+}
+
+export function stepInspectorTaskProgress(opts: {
+  selectedStepName: string | undefined;
+  run: Run | undefined;
+  liveProgress: TaskProgressStructured | null | undefined;
+  selectedStepProgress: TaskProgressStructured | null | undefined;
+}): TaskProgressStructured | null | undefined {
+  const live = opts.liveProgress;
+  if (live?.totalSteps && selectedStepShowsLiveTaskProgress(opts.run, opts.selectedStepName)) {
+    return live;
+  }
+  return opts.selectedStepProgress;
 }
 
 // --- Layout constants ---

@@ -39,6 +39,7 @@ import {
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
+import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
 import {
   collectRunEvidenceArtifacts,
@@ -970,9 +971,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <step-inspector
               .step=${ctx.selectedStep}
               .run=${ctx.run}
-              .taskProgress=${ctx.selectedStep?.name === 'monitor'
-                ? ctx.taskProgress
-                : ctx.selectedStepProgress}
+              .taskProgress=${stepInspectorTaskProgress({
+                selectedStepName: ctx.selectedStep?.name,
+                run: ctx.run ?? undefined,
+                liveProgress: ctx.taskProgress,
+                selectedStepProgress: ctx.selectedStepProgress,
+              })}
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>

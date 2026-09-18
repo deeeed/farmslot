@@ -104,7 +104,7 @@ export function runFamilyPrStatus(
   return prs.find((pr) => prNumbers.includes(pr.pr)) ?? null;
 }
 
-const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch']);
+const LIVE_PROGRESS_STEPS = new Set(['monitor', 'self-review', 'ci-watch', 'human-gate']);
 
 export function isTaskProgressRunActive(
   run: Pick<Run, 'activeTaskFile' | 'status' | 'taskFile'> & {
@@ -116,6 +116,7 @@ export function isTaskProgressRunActive(
     run.status === 'monitoring' ||
     run.status === 'paused' ||
     run.status === 'self-reviewing' ||
+    run.status === 'human-gating' ||
     run.status === 'ci-watching' ||
     (options.includeCompleting === true && run.status === 'completing') ||
     Boolean(run.activeTaskFile && run.activeTaskFile !== run.taskFile)

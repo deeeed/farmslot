@@ -96,7 +96,7 @@ export function renderRunPipelineSummary(run: Run) {
 
 export function renderPipelineProgressPanel(
   progress: TaskProgressStructured,
-  activeStep: 'monitor' | 'self-review' | 'ci-watch' | null,
+  activeStep: 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null,
   close: () => void,
   activeTaskBasename?: string | null,
 ) {

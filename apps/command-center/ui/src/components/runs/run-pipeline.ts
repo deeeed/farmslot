@@ -284,7 +284,12 @@ export class RunPipeline extends LitElement {
     return activeStep ? this._effectiveTaskProgress() : undefined;
   }
 
-  private _activeTaskProgressStepId(): 'monitor' | 'self-review' | 'ci-watch' | null {
+  private _activeTaskProgressStepId():
+    | 'monitor'
+    | 'self-review'
+    | 'ci-watch'
+    | 'human-gate'
+    | null {
     return activeTaskProgressStepId(this.run, this.taskProgress);
   }
 

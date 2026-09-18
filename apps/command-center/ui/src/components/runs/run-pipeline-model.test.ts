@@ -7,7 +7,10 @@ import {
   activeTaskProgressStepId,
   computeLayout,
   effectiveTaskProgressForRun,
+  isPublicationReviewProgressActive,
   publicationReviewStepForName,
+  selectedStepShowsLiveTaskProgress,
+  stepInspectorTaskProgress,
 } from './run-pipeline-model.js';
 import { pipelineStepTone } from './run-pipeline-status.js';
 
@@ -221,6 +224,73 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
   assert.equal(packageRefresh.step.outputs?.lastReviewVerdict, 'issues');
   assert.equal(pipelineStepTone(review.step), 'warn');
   assert.equal(pipelineStepTone(packageRefresh.step), 'warn');
+});
+
+test('live extra-review progress shows on human-gate and package-refresh inspectors', () => {
+  const run = makeRun({
+    status: 'human-gating',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.rev-cursor.md',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Running human-gate cursor review (1/1)...',
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'rev-cursor',
+        role: 'self-review',
+        status: 'working',
+        runner: 'cursor',
+      } as never,
+    ],
+  });
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Independent review',
+      totalSteps: 2,
+      phases: [
+        {
+          name: 'Checklist',
+          steps: [
+            { index: 1, name: 'Start' },
+            { index: 2, name: 'Read worker report' },
+          ],
+        },
+      ],
+    },
+    phases: [
+      {
+        name: 'Checklist',
+        steps: [
+          { index: 1, name: 'Start', status: 'done' as const },
+          { index: 2, name: 'Read worker report', status: 'running' as const },
+        ],
+        completedSteps: 1,
+        totalSteps: 2,
+      },
+    ],
+    completedSteps: 1,
+    totalSteps: 2,
+    currentPhase: 'Checklist',
+    currentStep: 'Read worker report',
+  };
+  assert.equal(isPublicationReviewProgressActive(run), true);
+  assert.equal(activeTaskProgressStepId(run, live), 'human-gate');
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'package-refresh'), true);
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'human-gate'), true);
+  assert.equal(
+    stepInspectorTaskProgress({
+      selectedStepName: 'package-refresh',
+      run,
+      liveProgress: live,
+      selectedStepProgress: null,
+    })?.currentStep,
+    'Read worker report',
+  );
 });
 
 test('computeLayout keeps package-refresh pending when a review agent is working', () => {
