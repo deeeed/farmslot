@@ -35,6 +35,7 @@ import {
 } from './task-document.js';
 import { writeTaskDir, type WrittenTaskDir } from './write.js';
 
+export * from './discover.js';
 export * from './task-document.js';
 export * from './write.js';
 // The renderer lives in protocol; re-exported so CLI wrappers reach it through the runtime entry.

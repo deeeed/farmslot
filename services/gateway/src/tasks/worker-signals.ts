@@ -1,4 +1,8 @@
-import type { WorkerSignal, WorkerTerminalDisposition } from '@farmslot/protocol';
+import {
+  isTerminalWorkerSignal,
+  type WorkerSignal,
+  type WorkerTerminalDisposition,
+} from '@farmslot/protocol';
 
 /**
  * Runner-neutral worker signal helpers.
@@ -6,6 +10,9 @@ import type { WorkerSignal, WorkerTerminalDisposition } from '@farmslot/protocol
  * Recovery should be based on the durable agent context + signal-file protocol,
  * not on runner/model-specific panes or replayed pipeline-step timestamps.
  */
+
+// The terminal predicate is protocol: harness and gateway must agree on it.
+export { isTerminalWorkerSignal };
 
 export function parseFiniteIsoMs(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -22,15 +29,6 @@ const STRICT_ISO_RE =
 export function parseStrictIsoMs(value: string | null | undefined): number | null {
   if (!value || !STRICT_ISO_RE.test(value)) return null;
   return parseFiniteIsoMs(value);
-}
-
-export function isTerminalWorkerSignal(signal: WorkerSignal): boolean {
-  return (
-    signal.status === 'complete' ||
-    signal.status === 'failed' ||
-    signal.status === 'done' ||
-    signal.status === 'blocked'
-  );
 }
 
 export function terminalWorkerSignalFromRaw(raw: string): WorkerSignal | undefined {

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- `discoverTaskDirs(tasksRoot)` and `latestTaskDir(tasksRoot)` find the task directories `task init` (or a dispatch) wrote under a checkout's tasks root: the most recently signalled task wins, a checklist-only task is the fallback. Readers such as `mm-harness status --watch` land on the live task through this instead of walking `temp/tasks` with their own layout assumptions.
 
 ## 0.10.0 - 2026-09-17
 

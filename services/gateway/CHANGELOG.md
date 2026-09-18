@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- The terminal-signal predicate, the step-name rule and the checklist numbering check now come from `@farmslot/protocol`; behaviour is unchanged, the gateway just stops being the only place that knows them.
 - When an independent review stops at its fix-attempt cap, the ready gate says so and offers a new review or a dangerous publish bypass. Package refresh keeps those actions.
 - Human-gate independent review loops honor per-loop `model` and `effort` instead of always inheriting the worker run, including after gateway restart recovery.
 - Attribute GitHub GraphQL points to callers and expose a rolling-hour tally on `gateway.status.githubQuerySpend`. Skip GraphQL and `gh pr` reads while any tracked credential is reserved, keep serving the warm PR list without a refresh-failed event, poll only while a client recently asked for `pr.list` (including after restart), back off 1→2→5 minutes when nothing changed, seed truncated GraphQL first pages for the list only, and cap aliased batch chunks at 8 PRs so large-repo queries actually seed.

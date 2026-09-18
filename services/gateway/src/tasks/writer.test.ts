@@ -38,7 +38,6 @@ import {
   buildTaskFolderPrefix,
   buildTemplateProvenance,
   checklistForInteractiveDev,
-  checklistNumberingMismatches,
   COMMENT_SUMMARY_MAX_ROWS,
   type CommentRow,
   findTaskDirCollisions,
@@ -1008,34 +1007,6 @@ test('the interactive checklist renders in the shape the schema parser reads', (
     assert.ok(step.name.length > 4, `step ${step.index} has no meaningful name: ${step.name}`);
   }
   assert.match(steps[0].name, /Read the task/);
-});
-
-test('checklistNumberingMismatches flags labels that diverge from step positions', () => {
-  const skewed = [
-    '# Worker: Fix',
-    '',
-    '## Checklist',
-    '',
-    '- [ ] **1. First**',
-    '- [ ] **1a. Sub-step without its own number**',
-    '- [ ] **2. Now sits at position 3**',
-  ].join('\n');
-  // The suffixed label is itself reported, not just the drift it causes one row later.
-  // `mark N` targets positions, so `1a` at position 2 is already the divergence; leaving
-  // it unflagged is how an inserted step silently desynchronises a whole checklist.
-  assert.deepEqual(checklistNumberingMismatches(skewed), [
-    'position 2 is labeled "1a"',
-    'position 3 is labeled "2"',
-  ]);
-
-  const aligned = [
-    '## Checklist',
-    '',
-    '- [ ] **1. First**',
-    '- [ ] Unnumbered box is fine',
-    '- [ ] **3. Matches its position**',
-  ].join('\n');
-  assert.deepEqual(checklistNumberingMismatches(aligned), []);
 });
 
 test('graph-linked backlog run renders a bounded Related planning context section', () => {
