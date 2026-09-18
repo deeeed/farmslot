@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- `mark` records step names in SIGNAL.json (`step` and every `checklistTiming` event label) through the protocol's `checklistStepName`, the same name the gateway schema, Command Center and `mm-harness status --watch` show; its private rule kept the instruction tail.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.12.0 - 2026-09-18
+
+- `mark` records step names in SIGNAL.json (`step` and every `checklistTiming` event label) through the protocol's `checklistStepName`, the same name the gateway schema, Command Center and `mm-harness status --watch` show; its private rule kept the instruction tail.
 
 ## 0.11.0 - 2026-09-18
 
