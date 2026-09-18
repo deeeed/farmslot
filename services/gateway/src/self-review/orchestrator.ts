@@ -1035,7 +1035,7 @@ export async function runSelfReviewRetryLoop({
         validationDepth,
         artifactScope,
         sessionPolicy,
-        undefined,
+        'resume',
         effort,
       );
       const retryAttempt: IndependentReviewAttempt = {
@@ -1737,7 +1737,7 @@ async function recoverSelfReviewFixPass({
       validationDepth,
       artifactScope,
       sessionPolicy,
-      undefined,
+      'resume',
       effort,
     );
     const seededReviewResult = {

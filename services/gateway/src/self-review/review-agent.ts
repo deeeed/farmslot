@@ -1138,7 +1138,9 @@ export async function runReviewAgent(
       ? continuingPriorGeneration
         ? `Continue your prior review of this same run. Review only changes since your previous reviewed head and confirm prior findings remain resolved. Prior review artifacts are in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}. Complete the checklist's current output contract (feedback + signal) as written.\n\n${basePrompt}`
         : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
-      : basePrompt;
+      : loopNumber > 1
+        ? `Continue this same review. The worker applied fixes since your last findings — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's delta against your previous findings. Do NOT run /review.\n\n${basePrompt}`
+        : basePrompt;
     let taskPrompt = warmPrompt;
 
     // 4. Reuse the live reviewer when possible. The runner capability decides
@@ -1202,7 +1204,11 @@ export async function runReviewAgent(
       return binding ? persistLiveReviewerSession(binding) : false;
     };
 
-    const deliverToLiveReviewer = async (prompt: string, resetContext: boolean): Promise<void> => {
+    const deliverToLiveReviewer = async (
+      prompt: string,
+      resetContext: boolean,
+      inPlace = false,
+    ): Promise<void> => {
       // Native resume or cold replacement can create a new runner process even
       // though the canonical tmux window stays the same. Rebind from that live
       // pane before the next retained handoff; the previous claim is lineage
@@ -1250,6 +1256,7 @@ export async function runReviewAgent(
         vars,
         target: reviewTarget,
         runnerId: runner,
+        ...(inPlace ? { handoff: 'in-place' as const } : {}),
         // Native reset may acknowledge before it exposes the successor session.
         // The fresh prompt hook is authoritative until we bind that successor
         // immediately after acceptance.
@@ -1443,14 +1450,12 @@ export async function runReviewAgent(
         }
       } else {
         try {
-          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext);
+          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext, true);
         } catch (err) {
-          if (!deliveryPlan.resetContext) throw err;
           console.warn(
-            `[self-review] retained ${runner} reviewer could not reset (${(err as Error).message}) — replacing its process with a cold fresh launch`,
+            `[self-review] retained ${runner} reviewer could not continue in-place (${(err as Error).message}) — replacing its process with a cold launch that still carries the re-review checklist`,
           );
           warmSession = null;
-          taskPrompt = basePrompt;
           await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
         }
       }

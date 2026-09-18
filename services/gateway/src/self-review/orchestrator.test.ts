@@ -624,6 +624,7 @@ interface CallLog {
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
   sessionPolicies: Array<string | undefined>;
+  sessionIntents: Array<string | undefined>;
   reviewEfforts: Array<string | null | undefined>;
   progressDetails: string[];
 }
@@ -639,6 +640,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     waitBaselines: [],
     artifactScopes: [],
     sessionPolicies: [],
+    sessionIntents: [],
     reviewEfforts: [],
     progressDetails: [],
   };
@@ -726,11 +728,12 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       _validationDepth,
       artifactScope,
       sessionPolicy,
-      _sessionIntent,
+      sessionIntent,
       effort,
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.sessionPolicies.push(sessionPolicy);
+      calls.sessionIntents.push(sessionIntent);
       calls.reviewEfforts.push(effort);
       calls.reviewAgent += 1;
       const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
@@ -1364,6 +1367,7 @@ test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch',
     deps: warm.deps,
   });
   assert.deepEqual(warm.calls.sessionPolicies, ['warm-per-reviewer']);
+  assert.deepEqual(warm.calls.sessionIntents, ['resume']);
 
   const dflt = buildDeps({
     reviewVerdicts: ['pass'],
