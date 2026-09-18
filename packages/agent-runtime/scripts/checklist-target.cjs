@@ -83,6 +83,13 @@ function enumerateChecklistCheckboxes(markdown) {
 }
 const WORKER_TERMINAL_CONTRACT_INPUT = path.join('inputs', 'worker-terminal-contract.json');
 
+// checklistStepName — mirror of the protocol rule for the name a step is shown
+// under: the bold lead, numbering kept, instructions dropped. `mark` records it
+// in SIGNAL.json so events and every step view name a row the same way.
+function checklistStepName(rawLabel) {
+  return rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
+}
+
 function signalFileForChecklist(checklistBasename) {
   if (
     checklistBasename === TASK_PROGRESS_MARKDOWN ||
@@ -268,6 +275,7 @@ function resolveChecklistPaths(taskDir) {
 
 module.exports = {
   CHECKLIST_SKIP_SECTIONS,
+  checklistStepName,
   enumerateChecklistCheckboxes,
   CHECKLIST_TARGET_MANIFEST,
   TASK_PROGRESS_MARKDOWN,

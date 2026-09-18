@@ -74,6 +74,18 @@ const ENUMERATION_FIXTURE = [
   '- [ ] upstream PR-template box',
 ].join('\n');
 
+test('checklist-target.cjs checklistStepName matches protocol behavior', () => {
+  for (const raw of [
+    '**3. Resolve branch and PR number:** — `git branch --show-current`',
+    '**1. Confirm recipe tooling**',
+    '2. **Prompt/task captured** (summary + ACs).',
+    '  5. AC matrix — state/visual/mixed. ',
+    '',
+  ]) {
+    assert.equal(cjs.checklistStepName(raw), protocol.checklistStepName(raw), raw);
+  }
+});
+
 test('checklist-target.cjs enumerateChecklistCheckboxes matches protocol behavior', () => {
   const fromProtocol = protocol.enumerateChecklistCheckboxes(ENUMERATION_FIXTURE);
   const fromCjs = cjs.enumerateChecklistCheckboxes(ENUMERATION_FIXTURE);
