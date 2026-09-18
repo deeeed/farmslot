@@ -54,6 +54,14 @@ test('compares retryCount to maxRetries when both are known', () => {
   };
   assert.equal(independentReviewFixRetriesExhausted(base), true);
   assert.equal(independentReviewFixRetriesExhausted({ ...base, retryCount: 2 }), false);
+  assert.equal(
+    independentReviewFixRetriesExhausted({
+      ...base,
+      retryCount: 2,
+      maxRetriesExhausted: true,
+    }),
+    true,
+  );
 });
 
 test('max_retries 0 is not a cap-hit; missing maxRetries is not inferred', () => {

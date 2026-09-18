@@ -2905,7 +2905,7 @@ All checks passed.`;
                   verdict: 'issues' as const,
                   unresolvedCount: 6,
                   feedbackSent: false,
-                  recoveryContinuationPending: true,
+                  recoveryContinuationPending: false,
                   retryCount: 3,
                   maxRetries: 3,
                   maxRetriesExhausted: true,

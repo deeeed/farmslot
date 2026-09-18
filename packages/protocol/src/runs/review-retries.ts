@@ -44,6 +44,7 @@ export function independentReviewFixRetriesExhausted(review: ReviewRetryFields):
   const retryCount = independentReviewRetryCount(review);
   if (typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)) {
     if (review.maxRetries <= 0) return false;
+    if (review.maxRetriesExhausted === true) return true;
     return retryCount >= review.maxRetries;
   }
   return review.maxRetriesExhausted === true;

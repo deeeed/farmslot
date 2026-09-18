@@ -161,6 +161,24 @@ test('exhausted review normalization also repairs a single-attempt ISSUES row', 
   assert.equal(normalizeExhaustedReviewContinuation(attemptless), attemptless);
 });
 
+test('exhausted review normalization does not restore continuation after the retry cap', () => {
+  const review = makeApprovingReview({
+    verdict: 'issues',
+    unresolvedCount: 6,
+    issues: [{ file: 'a.ts', description: 'still broken' }],
+    feedbackSent: true,
+    recoveryContinuationPending: false,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    attempts: [
+      { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+      { loopNumber: 4, verdict: 'issues', unresolvedCount: 6 },
+    ],
+  });
+  assert.equal(normalizeExhaustedReviewContinuation(review), review);
+});
+
 function makeApprovingReview(
   overrides: Partial<IndependentReviewStatus> = {},
 ): IndependentReviewStatus {
@@ -498,6 +516,33 @@ test('exhausted extra-review is not a pending auto-fix continuation', () => {
     issues: [{ file: 'src/example.ts', description: 'still broken' }],
   };
   assert.equal(pendingIndependentReviewContinuation([exhausted]), undefined);
+});
+
+test('bypass is not offered when review policy is already satisfied', () => {
+  const exhausted: IndependentReviewStatus = {
+    id: 'independent-review-3',
+    source: 'human-gate',
+    verdict: 'issues',
+    loopNumber: 3,
+    crossRunner: true,
+    unresolvedCount: 6,
+    retryCount: 3,
+    maxRetries: 3,
+    maxRetriesExhausted: true,
+    issues: [{ file: 'src/example.ts', description: 'still broken' }],
+  };
+  const actions = publicationGateDecisionActions({
+    reviewSatisfied: true,
+    independentReviews: [exhausted],
+  });
+  assert.equal(
+    actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
+    false,
+  );
+  assert.equal(
+    actions.some((action) => action.id === 'approve-publish'),
+    true,
+  );
 });
 
 test('exhausted extra-review still offers bypass when only the review subject hash drifted', () => {

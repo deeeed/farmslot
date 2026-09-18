@@ -141,7 +141,7 @@ export function publicationGateDecisionActions(opts: {
       label: 'Request Independent Review (runner diversity)',
       style: 'secondary' as const,
     },
-    ...(exhausted
+    ...(!opts.reviewSatisfied && exhausted
       ? [
           {
             id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
@@ -210,6 +210,7 @@ export function normalizeExhaustedReviewContinuation(
     (review.issues?.length ?? 0) === 0 ||
     review.feedbackSent !== true ||
     review.recoveryContinuationPending === true ||
+    independentReviewFixRetriesExhausted(review) ||
     !finalAttempt ||
     finalAttempt.verdict !== 'issues' ||
     finalAttempt.unresolvedCount <= 0
