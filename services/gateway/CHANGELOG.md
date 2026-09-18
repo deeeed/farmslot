@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Gateway restart re-opens the publication gate instead of silently re-sending leftover extra-review findings to the worker.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18

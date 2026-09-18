@@ -9,6 +9,7 @@ import {
   GATE_SUMMARY_KINDS,
   independentReviewFixRetriesExhausted,
   independentReviewRetryCapReason,
+  independentReviewRetryCount,
   type IndependentReviewStatus,
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
@@ -24,6 +25,7 @@ import {
   reviewValidationDepthForLoop,
   type Run,
   type RunDecision,
+  stampIndependentReviewRetryCap,
 } from '@farmslot/protocol';
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
@@ -157,7 +159,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     model: review.model ?? undefined,
     effort: review.effort ?? undefined,
     crossRunner: review.crossRunner,
-    retryCount: review.retryCount ?? Math.max(0, (review.attempts?.length ?? 1) - 1),
+    retryCount: independentReviewRetryCount(review),
     ...(typeof review.maxRetries === 'number' ? { maxRetries: review.maxRetries } : {}),
     feedbackSent: review.feedbackSent,
     recoveryContinuationPending: review.recoveryContinuationPending,
@@ -751,7 +753,33 @@ export async function executeReadyGate(runId: string): Promise<string> {
   }
 
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
-  const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  const configuredMaxRetries =
+    typeof pv?.projectJson?.self_review?.max_retries === 'number'
+      ? pv.projectJson.self_review.max_retries
+      : undefined;
+  const storedReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  const independentReviews = storedReviews.map((review) =>
+    stampIndependentReviewRetryCap(review, configuredMaxRetries),
+  );
+  if (
+    independentReviews.some(
+      (review, index) =>
+        review.retryCount !== storedReviews[index]?.retryCount ||
+        review.maxRetries !== storedReviews[index]?.maxRetries ||
+        review.maxRetriesExhausted !== storedReviews[index]?.maxRetriesExhausted ||
+        review.recoveryContinuationPending !== storedReviews[index]?.recoveryContinuationPending,
+    )
+  ) {
+    updateRun(runId, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          independentReviews,
+        },
+      },
+    });
+  }
   const exhaustedReview = latestExhaustedIndependentReview(independentReviews, preparedPackage);
 
   const baseDescription =

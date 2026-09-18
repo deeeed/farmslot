@@ -136,6 +136,7 @@ export {
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
   latestIndependentReview,
+  stampIndependentReviewRetryCap,
 } from '../runs/review-retries.js';
 export type {
   CommentsTriageSummary,

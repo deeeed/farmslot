@@ -8,6 +8,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isGateParkInFlightOrFreed,
+  latestIndependentReview,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -367,7 +368,18 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
     }
 
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
-    if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
+    const latestExtraReview = latestIndependentReview(
+      run.engineState?.publishGate?.independentReviews ?? [],
+    );
+    const latestHasOpenFindings =
+      latestExtraReview?.verdict === 'issues' &&
+      Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
+    if (
+      run.slotId &&
+      isPublicationReviewRecoveryHeld(run) &&
+      recoveredFixPlan.length > 0 &&
+      !latestHasOpenFindings
+    ) {
       const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
       const recoveredRun =
         pendingReviewPlan.length > 0

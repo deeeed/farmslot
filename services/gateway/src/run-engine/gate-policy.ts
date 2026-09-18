@@ -13,6 +13,7 @@ import {
   type ReviewDiffSnapshot,
   type Run,
   type RunDecision,
+  stampIndependentReviewRetryCap,
   type WorkerTerminalDisposition,
   type WorkerTerminalEvidence,
 } from '@farmslot/protocol';
@@ -376,7 +377,8 @@ export function buildPublishGateReviewStatus({
     startedAt: attempts[0]?.startedAt,
     completedAt: finalAttempt.completedAt ?? new Date().toISOString(),
   };
-  if (!reviewedPackage) return status;
+  const capped = stampIndependentReviewRetryCap(status, reviewResult.maxRetries);
+  if (!reviewedPackage) return capped;
   const finalReviewedHeadSha = status.reviewSnapshot?.headSha ?? null;
   const reviewedPackageHeadSha = reviewedPackage.headSha ?? null;
   // A review loop can legitimately find issues, let the worker fix them, and
@@ -390,9 +392,9 @@ export function buildPublishGateReviewStatus({
     reviewedPackageHeadSha &&
     finalReviewedHeadSha !== reviewedPackageHeadSha
   ) {
-    return status;
+    return capped;
   }
-  return stampPublishGateReviewStatusForPackage(status, reviewedPackage);
+  return stampPublishGateReviewStatusForPackage(capped, reviewedPackage);
 }
 
 export function stampPublishGateReviewStatusForPackage(

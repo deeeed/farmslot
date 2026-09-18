@@ -897,6 +897,32 @@ test('buildPublishGateReviewStatus clears continuation when retries are exhauste
   assert.equal(status.recoveryContinuationPending, false);
 });
 
+test('buildPublishGateReviewStatus repairs a wiped retryCount from attempts', () => {
+  const status = buildPublishGateReviewStatus({
+    source: 'human-gate',
+    priorReviewCount: 2,
+    requestedRunner: 'cursor',
+    workerRunner: 'claude',
+    reviewResult: {
+      verdict: 'issues',
+      issues: [{ file: 'a.ts', description: 'still broken' }],
+      retryCount: 0,
+      maxRetries: 3,
+      recoveryContinuationPending: true,
+      feedbackSent: false,
+      attempts: [
+        { loopNumber: 1, verdict: 'issues', unresolvedCount: 4 },
+        { loopNumber: 2, verdict: 'issues', unresolvedCount: 9 },
+        { loopNumber: 3, verdict: 'issues', unresolvedCount: 8 },
+        { loopNumber: 4, verdict: 'issues', unresolvedCount: 7 },
+      ],
+    },
+  });
+  assert.equal(status.retryCount, 3);
+  assert.equal(status.maxRetriesExhausted, true);
+  assert.equal(status.recoveryContinuationPending, false);
+});
+
 test('buildPublishGateReviewStatus stamps the prepared package that was reviewed', () => {
   const status = buildPublishGateReviewStatus({
     source: 'human-gate',

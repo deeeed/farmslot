@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Independent-review `retryCount` is the max of the persisted field and spent attempts so a wiped `0` cannot hide a spent loop.
 - Doc comments: `checklistStepName` names `mark` among its consumers, and a checklist event `label` is documented as the step name. No code change.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -8,6 +8,7 @@ import {
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
+  stampIndependentReviewRetryCap,
 } from '../../src/runs/review-retries.js';
 
 const attempt = (extras: Partial<IndependentReviewAttempt> = {}): IndependentReviewAttempt => ({
@@ -30,6 +31,32 @@ test('retry count prefers the persisted field then falls back to attempts', () =
     3,
   );
   assert.equal(independentReviewRetryCount({}), 0);
+  assert.equal(
+    independentReviewRetryCount({
+      retryCount: 0,
+      attempts: [attempt(), attempt(), attempt(), attempt()],
+    }),
+    3,
+    'a wiped retryCount: 0 must not hide spent attempts',
+  );
+});
+
+test('stamp repairs a wiped cap so a spent extra-review is exhausted', () => {
+  const stamped = stampIndependentReviewRetryCap(
+    {
+      source: 'human-gate',
+      verdict: 'issues',
+      unresolvedCount: 7,
+      retryCount: 0,
+      recoveryContinuationPending: true,
+      attempts: [attempt(), attempt(), attempt(), attempt()],
+    },
+    3,
+  );
+  assert.equal(stamped.retryCount, 3);
+  assert.equal(stamped.maxRetries, 3);
+  assert.equal(stamped.maxRetriesExhausted, true);
+  assert.equal(stamped.recoveryContinuationPending, false);
 });
 
 test('explicit maxRetriesExhausted wins', () => {
