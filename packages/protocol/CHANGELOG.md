@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Checklist and signal rules every client must agree on are now protocol exports instead of gateway-private code: `isTerminalWorkerSignal` / `isTerminalWorkerSignalStatus` (complete, failed, done, blocked; unknown is never terminal), `checklistStepName` (the bold lead of a row, numbering kept) and `checklistNumberingMismatches` (a generated checklist whose visible labels drift from `mark N` positions). Harness views that re-implemented these disagreed with the gateway on which signals are final and how a step is named.
 - Independent-review status records `retryCount` / `maxRetries` / `maxRetriesExhausted`, and publication gates can approve with `approve-publish-unresolved` after that cap.
 - Independent-review loops accept an optional `effort` (thinking / reasoning level) alongside `model`. Reviewer agent context and independent-review status persist that effort so restart recovery can relaunch the same thinking level.
 - `gateway.status` reports rolling-hour GitHub GraphQL spend by caller (`githubQuerySpend`).

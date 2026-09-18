@@ -26,6 +26,38 @@ export interface WorkerSignal {
   timestamp: string;
 }
 
+export type WorkerSignalStatus = WorkerSignal['status'];
+
+// One entry per status, so adding a member to the union fails to compile here
+// until someone decides whether it is terminal.
+const WORKER_SIGNAL_STATUS_IS_TERMINAL = {
+  running: false,
+  blocked: true,
+  complete: true,
+  failed: true,
+  done: true,
+} satisfies Record<WorkerSignalStatus, boolean>;
+
+/**
+ * A status the worker cannot move past. `done` is an accepted terminal alias of
+ * `complete`. Takes a plain string so readers of an untyped SIGNAL.json can ask
+ * without first narrowing; an unknown status is not terminal.
+ */
+export function isTerminalWorkerSignalStatus(status: string | null | undefined): boolean {
+  return (
+    status !== null &&
+    status !== undefined &&
+    Object.hasOwn(WORKER_SIGNAL_STATUS_IS_TERMINAL, status) &&
+    WORKER_SIGNAL_STATUS_IS_TERMINAL[status as WorkerSignalStatus]
+  );
+}
+
+export function isTerminalWorkerSignal(
+  signal: WorkerSignal | Pick<WorkerSignal, 'status'>,
+): boolean {
+  return isTerminalWorkerSignalStatus(signal.status);
+}
+
 export interface WorkerSignalArtifactWaivers {
   /** The worker explicitly completed with `./mark ... --skip-learnings`. */
   learnings?: boolean;

@@ -18,6 +18,8 @@ import {
 } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
+  checklistNumberingMismatches,
+  checklistStepName,
   enumerateChecklistCheckboxes,
   EXECUTION_CHECKLIST_DOCUMENT,
   type FlowType,
@@ -1388,26 +1390,6 @@ export async function writeTaskFile(
 }
 
 /**
- * Step labels carrying explicit numbering (`**N. …**`) must match the
- * enumerated step position — `mark N` targets positions, and a worker follows
- * the visible label. Sub-step labels (12a) or unnumbered boxes between
- * numbered ones silently shift every later step onto the wrong box.
- */
-export function checklistNumberingMismatches(content: string): string[] {
-  const mismatches: string[] = [];
-  for (const item of enumerateChecklistCheckboxes(content)) {
-    // Capture an optional letter suffix: a label like `17a.` is exactly how an inserted
-    // step silently desynchronises numbering, and matching digits only skipped it —
-    // the drift was reported one row later, at the first purely numeric label.
-    const labeled = item.rawLabel.match(/^\*{0,2}(\d+[a-z]?)[.)]/i);
-    if (labeled && labeled[1] !== String(item.stepNumber)) {
-      mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
-    }
-  }
-  return mismatches;
-}
-
-/**
  * Parse a rendered TASK.md template into a TaskSchema.
  * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
  *
@@ -1434,9 +1416,7 @@ export function generateTaskSchema(templateContent: string, flowType: string): T
       phases.push(currentPhase);
     }
     totalSteps = item.stepNumber;
-    // Step name: bold numbering like "**1. Text**" collapses to "1. Text"
-    const stepName = item.rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
-    currentPhase.steps.push({ index: item.stepNumber, name: stepName });
+    currentPhase.steps.push({ index: item.stepNumber, name: checklistStepName(item.rawLabel) });
   }
 
   // Extract title from first H1 or H2

@@ -104,6 +104,39 @@ export function enumerateChecklistCheckboxes(markdown: string): ChecklistCheckbo
   return items;
 }
 
+/**
+ * The name a step is shown under. A bold lead (`**1. Text** — long instructions`)
+ * is the name, numbering kept, instructions dropped; anything else is the raw
+ * label. The gateway task schema and `mm-harness status --watch` render step
+ * names through this. The `mark` helper still records its own label shape in
+ * SIGNAL.json events (`stripLabel` in mark-checklist-step.cjs); aligning that
+ * changes every recorded event label and is a separate change.
+ */
+export function checklistStepName(rawLabel: string): string {
+  return rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
+}
+
+/**
+ * Step labels carrying explicit numbering (`**N. …**`) must match the
+ * enumerated step position — `mark N` targets positions, and a worker follows
+ * the visible label. Sub-step labels (12a) or unnumbered boxes between
+ * numbered ones silently shift every later step onto the wrong box. Run this
+ * on every generated checklist.
+ */
+export function checklistNumberingMismatches(markdown: string): string[] {
+  const mismatches: string[] = [];
+  for (const item of enumerateChecklistCheckboxes(markdown)) {
+    // Capture an optional letter suffix: a label like `17a.` is exactly how an inserted
+    // step silently desynchronises numbering, and matching digits only skipped it —
+    // the drift was reported one row later, at the first purely numeric label.
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+[a-z]?)[.)]/i);
+    if (labeled && labeled[1] !== String(item.stepNumber)) {
+      mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
+    }
+  }
+  return mismatches;
+}
+
 export interface ChecklistTarget {
   checklist: string;
   signal: string;

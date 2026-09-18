@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { deriveChecklistStepDurations } from '../src/transport/signal.js';
+import {
+  deriveChecklistStepDurations,
+  isTerminalWorkerSignal,
+  isTerminalWorkerSignalStatus,
+} from '../src/transport/signal.js';
+
+test('terminal worker signals are complete, failed, done and blocked; nothing else', () => {
+  for (const status of ['complete', 'failed', 'done', 'blocked']) {
+    assert.equal(isTerminalWorkerSignalStatus(status), true, status);
+  }
+  assert.equal(isTerminalWorkerSignal({ status: 'running' }), false);
+  // An untyped reader may hand over anything; unknown never counts as finished.
+  for (const status of ['started', 'pass', '', undefined, null]) {
+    assert.equal(isTerminalWorkerSignalStatus(status), false, String(status));
+  }
+});
 
 test('deriveChecklistStepDurations orders marks and measures the first step from attempt start', () => {
   assert.deepEqual(

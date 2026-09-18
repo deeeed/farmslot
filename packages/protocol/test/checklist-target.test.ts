@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   agentRoleForChecklistBasename,
   CHECKLIST_TARGET_BY_AGENT_ROLE,
+  checklistNumberingMismatches,
+  checklistStepName,
   checklistTargetForAgentRole,
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -99,4 +101,49 @@ test('nestedLoopProgressLabel uses active checklist basename', () => {
 
 test('checklistTargetForAgentRole reads from registry', () => {
   assert.deepEqual(checklistTargetForAgentRole('ci-fix'), CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix']);
+});
+
+test('checklistStepName keeps the bold lead, numbering included, and drops the instructions', () => {
+  assert.equal(
+    checklistStepName('**3. Resolve branch and PR number:** — `git branch --show-current`'),
+    '3. Resolve branch and PR number:',
+  );
+  assert.equal(checklistStepName('**1. Confirm recipe tooling**'), '1. Confirm recipe tooling');
+  // No bold lead: the raw label is the name.
+  assert.equal(
+    checklistStepName('  5. AC matrix — state/visual/mixed. '),
+    '5. AC matrix — state/visual/mixed.',
+  );
+  assert.equal(
+    checklistStepName('2. **Prompt/task captured** (summary + ACs).'),
+    '2. **Prompt/task captured** (summary + ACs).',
+  );
+});
+
+test('checklistNumberingMismatches flags labels that diverge from step positions', () => {
+  const skewed = [
+    '# Worker: Fix',
+    '',
+    '## Checklist',
+    '',
+    '- [ ] **1. First**',
+    '- [ ] **1a. Sub-step without its own number**',
+    '- [ ] **2. Now sits at position 3**',
+  ].join('\n');
+  // The suffixed label is itself reported, not just the drift it causes one row later.
+  // `mark N` targets positions, so `1a` at position 2 is already the divergence; leaving
+  // it unflagged is how an inserted step silently desynchronises a whole checklist.
+  assert.deepEqual(checklistNumberingMismatches(skewed), [
+    'position 2 is labeled "1a"',
+    'position 3 is labeled "2"',
+  ]);
+
+  const aligned = [
+    '## Checklist',
+    '',
+    '- [ ] **1. First**',
+    '- [ ] Unnumbered box is fine',
+    '- [ ] **3. Matches its position**',
+  ].join('\n');
+  assert.deepEqual(checklistNumberingMismatches(aligned), []);
 });
