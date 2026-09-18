@@ -176,7 +176,7 @@ export class RunPipeline extends LitElement {
           : nothing}
         ${this.monitorExpanded &&
         this._activeTaskProgress() &&
-        pipelineDetachedProgressVisible(this.run, this.selectedStepName)
+        pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
           ? this.renderProgressPanel()
           : nothing}
       </div>

@@ -174,8 +174,9 @@ export function selectedStepShowsLiveTaskProgress(
 export function pipelineDetachedProgressVisible(
   run: Run | undefined,
   selectedStepName: string | undefined,
+  liveProgress?: TaskProgressStructured | null,
 ): boolean {
-  if (!selectedStepName) return true;
+  if (!selectedStepName || !liveProgress?.totalSteps) return true;
   return !selectedStepShowsLiveTaskProgress(run, selectedStepName);
 }
 
@@ -185,7 +186,7 @@ export function stepInspectorTaskProgress(opts: {
   liveProgress: TaskProgressStructured | null | undefined;
   selectedStepProgress: TaskProgressStructured | null | undefined;
 }): TaskProgressStructured | null | undefined {
-  const live = opts.liveProgress;
+  const live = effectiveTaskProgressForRun(opts.run, opts.liveProgress ?? undefined);
   if (live?.totalSteps && selectedStepShowsLiveTaskProgress(opts.run, opts.selectedStepName)) {
     return live;
   }

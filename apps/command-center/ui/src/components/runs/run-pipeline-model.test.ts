@@ -300,9 +300,32 @@ test('detached checklist panel hides when the inspector already shows live progr
     status: 'monitoring',
     steps: [{ name: 'monitor', status: 'running' }],
   });
-  assert.equal(pipelineDetachedProgressVisible(run, undefined), true);
-  assert.equal(pipelineDetachedProgressVisible(run, 'monitor'), false);
-  assert.equal(pipelineDetachedProgressVisible(run, 'prepare'), true);
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Worker',
+      totalSteps: 13,
+      phases: [{ name: 'Checklist', steps: [] }],
+    },
+    phases: [],
+    completedSteps: 9,
+    totalSteps: 13,
+    currentPhase: 'Checklist',
+    currentStep: 'Push PR branch',
+  };
+  assert.equal(pipelineDetachedProgressVisible(run, undefined, live), true);
+  assert.equal(pipelineDetachedProgressVisible(run, 'monitor', live), false);
+  assert.equal(pipelineDetachedProgressVisible(run, 'monitor', null), true);
+  assert.equal(pipelineDetachedProgressVisible(run, 'prepare', live), true);
+  assert.equal(
+    stepInspectorTaskProgress({
+      selectedStepName: 'monitor',
+      run,
+      liveProgress: live,
+      selectedStepProgress: null,
+    })?.totalSteps,
+    13,
+  );
 });
 
 test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
