@@ -3,11 +3,11 @@ import test from 'node:test';
 
 import type { IndependentReviewAttempt } from '../../src/contracts/runs.js';
 import {
-  firstExhaustedIndependentReview,
   independentReviewFixRetriesExhausted,
   independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
+  latestExhaustedIndependentReview,
 } from '../../src/runs/review-retries.js';
 
 const attempt = (extras: Partial<IndependentReviewAttempt> = {}): IndependentReviewAttempt => ({
@@ -98,11 +98,11 @@ test('only the latest extra-review on the current package can be exhausted', () 
     reviewedHeadSha: 'new',
   };
   assert.equal(
-    firstExhaustedIndependentReview([oldCap, laterIssues], { headSha: 'new' }),
+    latestExhaustedIndependentReview([oldCap, laterIssues], { headSha: 'new' }),
     undefined,
   );
   assert.equal(
-    firstExhaustedIndependentReview(
+    latestExhaustedIndependentReview(
       [
         oldCap,
         {
@@ -138,7 +138,7 @@ test('exhaustion matches the prepared package by HEAD, not subject hash', () => 
     true,
   );
   assert.equal(
-    firstExhaustedIndependentReview([exhausted], {
+    latestExhaustedIndependentReview([exhausted], {
       headSha: 'abc',
       reviewSubjectHash: 'new-subject',
     })?.unresolvedCount,
@@ -158,7 +158,7 @@ test('cap copy names the remaining findings and the two unblock paths', () => {
     /3\/3 fix attempts.*6 findings remain.*Request another review.*bypass publish/,
   );
   assert.equal(
-    firstExhaustedIndependentReview([
+    latestExhaustedIndependentReview([
       { source: 'self-review', verdict: 'pass', unresolvedCount: 0 },
       {
         source: 'human-gate',

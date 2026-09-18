@@ -837,7 +837,7 @@ test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds 
     false,
     'the final unresolved generation has not yet been sent even though earlier generations were',
   );
-  assert.equal(result.recoveryContinuationPending, true);
+  assert.equal(result.recoveryContinuationPending, false);
   assert.equal(calls.sendFeedback, 3, 'three fix passes sent (one per retry slot)');
   assert.equal(
     calls.reviewAgent,

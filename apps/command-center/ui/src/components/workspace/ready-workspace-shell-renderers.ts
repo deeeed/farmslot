@@ -3,8 +3,8 @@ import { html, nothing } from 'lit';
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
-  firstExhaustedIndependentReview,
   type GitBranchDiffFile,
+  latestExhaustedIndependentReview,
   type ReadyGatePayload,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -143,7 +143,7 @@ export function renderReadyTopBar(input: {
                   ? 'Confirm Publish?'
                   : canApprove
                     ? approveLabel
-                    : firstExhaustedIndependentReview(
+                    : latestExhaustedIndependentReview(
                           input.payload.independentReviews,
                           input.payload.prPackage,
                         )

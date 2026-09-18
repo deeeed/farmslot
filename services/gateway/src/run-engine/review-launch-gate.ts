@@ -86,9 +86,11 @@ async function executeGitProbe(executeGit: GitExecutor, command: string, probe: 
   }
 }
 
-function latestIndependentReview(
+function latestLaunchIndependentReview(
   reviews: readonly IndependentReviewStatus[],
 ): IndependentReviewStatus | undefined {
+  // Failed/skipped records still occupy the launch slot, unlike protocol
+  // latestIndependentReview which only considers pass/issues.
   return reviews.filter((review) => review.source !== 'self-review').at(-1);
 }
 
@@ -140,7 +142,7 @@ export async function assertIndependentReviewLaunchState(
     );
   }
 
-  const priorReview = latestIndependentReview(reviews);
+  const priorReview = latestLaunchIndependentReview(reviews);
   const reviewedCommit =
     priorReview?.reviewSnapshot?.headSha?.trim() || priorReview?.reviewedHeadSha?.trim();
   if (

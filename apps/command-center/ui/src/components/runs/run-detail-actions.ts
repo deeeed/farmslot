@@ -11,6 +11,7 @@ import type {
   RunResolveDecisionResult,
 } from '@farmslot/protocol';
 import {
+  APPROVE_PUBLISH_UNRESOLVED_ACTION,
   buildRunResolveDecisionParams,
   failedRunCancelEffects,
   Methods,
@@ -271,7 +272,9 @@ export function confirmRunDecision(
   if (context.actionsBlocked()) return;
   // Danger actions require double-click confirmation, others resolve immediately
   const isDanger =
-    actionId === 'abort' || (actionId === 'rework' && decision.type !== 'retrospective');
+    actionId === 'abort' ||
+    actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION ||
+    (actionId === 'rework' && decision.type !== 'retrospective');
   if (!isDanger || context.pendingConfirm() === actionId) {
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);

@@ -1096,6 +1096,7 @@ export async function runSelfReviewRetryLoop({
   // true from an earlier generation, but persisting that historical value
   // makes recovery believe there is nothing left to deliver.
   const latestFindingsPendingDelivery = result.verdict === 'issues' && result.issues.length > 0;
+  const retriesExhausted = maxRetries > 0 && retryCount >= maxRetries;
   return {
     verdict: result.verdict,
     issues: result.issues,
@@ -1108,7 +1109,7 @@ export async function runSelfReviewRetryLoop({
     retryCount,
     maxRetries,
     feedbackSent: latestFindingsPendingDelivery ? false : feedbackSent,
-    recoveryContinuationPending: latestFindingsPendingDelivery,
+    recoveryContinuationPending: latestFindingsPendingDelivery && !retriesExhausted,
     durationMs: Date.now() - start,
   };
 }

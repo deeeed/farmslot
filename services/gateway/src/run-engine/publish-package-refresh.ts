@@ -2,10 +2,10 @@
 
 import {
   Events,
-  firstExhaustedIndependentReview,
   GATE_SUMMARY_KINDS,
   independentReviewRetryCapReason,
   type IndependentReviewStatus,
+  latestExhaustedIndependentReview,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
@@ -253,7 +253,7 @@ export async function refreshPublishPackage(params: {
     prPackage,
     reviewDepth,
   );
-  const exhaustedReview = firstExhaustedIndependentReview(independentReviews, prPackage);
+  const exhaustedReview = latestExhaustedIndependentReview(independentReviews, prPackage);
   const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const actions = publicationGateDecisionActions({
     reviewSatisfied,

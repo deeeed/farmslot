@@ -6,13 +6,13 @@ import path from 'node:path';
 import {
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
-  firstExhaustedIndependentReview,
   GATE_SUMMARY_KINDS,
   independentReviewFixRetriesExhausted,
   independentReviewRetryCapReason,
   type IndependentReviewStatus,
   isGateParkInFlightOrFreed,
   isSlotFreedByPark,
+  latestExhaustedIndependentReview,
   MachineParkEligibilityCodes,
   PipelineSteps,
   type PublicationReviewLaunchRejection,
@@ -752,7 +752,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
 
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
   const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
-  const exhaustedReview = firstExhaustedIndependentReview(independentReviews, preparedPackage);
+  const exhaustedReview = latestExhaustedIndependentReview(independentReviews, preparedPackage);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage

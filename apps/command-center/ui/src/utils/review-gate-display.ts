@@ -1,12 +1,12 @@
 import {
   type ArtifactRef,
-  firstExhaustedIndependentReview,
   type GateSummary,
   type IndependentReviewAttempt,
   independentReviewFixRetriesExhausted,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   type IndependentReviewStatus,
+  latestExhaustedIndependentReview,
   type ReadyGatePayload,
   type ReviewDepthPolicy,
   type Run,
@@ -167,7 +167,7 @@ export function compactHumanGateLabel(
   }
 
   const reviews = run?.engineState?.publishGate?.independentReviews ?? [];
-  if (firstExhaustedIndependentReview(reviews)) return 'review retries exhausted';
+  if (latestExhaustedIndependentReview(reviews)) return 'review retries exhausted';
   if (
     reviews.some(
       (review) =>
@@ -387,7 +387,7 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
 
 export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): string {
   const reviews = payload.independentReviews ?? [];
-  const exhausted = firstExhaustedIndependentReview(reviews, payload.prPackage);
+  const exhausted = latestExhaustedIndependentReview(reviews, payload.prPackage);
   if (exhausted) return independentReviewRetryCapReason(exhausted);
   const unresolved = reviews.find(
     (review) => review.verdict !== 'pass' || review.unresolvedCount > 0,

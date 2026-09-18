@@ -79,11 +79,12 @@ export function independentReviewMatchesPreparedPackage(
   const head = preparedPackage.headSha?.trim();
   const reviewedHead = (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)?.trim();
   if (!head || !reviewedHead || reviewedHead !== head) return false;
+  // HEAD only. Subject-hash drift must not hide bypass.
   return true;
 }
 
 /** Latest terminal extra-review that hit its auto-fix cap on this package. */
-export function firstExhaustedIndependentReview(
+export function latestExhaustedIndependentReview(
   reviews: readonly ReviewRetryFields[] | undefined,
   preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): ReviewRetryFields | undefined {

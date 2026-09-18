@@ -2,11 +2,11 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type DecisionAction,
   type EvidenceManifestEntry,
-  firstExhaustedIndependentReview,
   type IndependentReviewAttempt,
   independentReviewFixRetriesExhausted,
   independentReviewRetryCapReason,
   type IndependentReviewStatus,
+  latestExhaustedIndependentReview,
   type NoChangeGatePayload,
   type ReadyGatePrPackage,
   type ReviewDepthPolicy,
@@ -93,7 +93,7 @@ export function publicationGateDecisionActions(opts: {
   independentReviews?: IndependentReviewStatus[];
   preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
 }): DecisionAction[] {
-  const exhausted = firstExhaustedIndependentReview(opts.independentReviews, opts.preparedPackage);
+  const exhausted = latestExhaustedIndependentReview(opts.independentReviews, opts.preparedPackage);
   const continueFix =
     opts.pendingReviewContinuation &&
     !independentReviewFixRetriesExhausted(opts.pendingReviewContinuation)
@@ -158,7 +158,7 @@ export function assertUnresolvedPublishOverrideAvailable(
   reviews: readonly IndependentReviewStatus[],
   preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): void {
-  if (!firstExhaustedIndependentReview(reviews, preparedPackage)) {
+  if (!latestExhaustedIndependentReview(reviews, preparedPackage)) {
     throw new Error(
       'Bypass publish is only available after the latest independent review stops at its fix-attempt cap on the approved package',
     );
@@ -363,7 +363,7 @@ export function buildPublishGateReviewStatus({
     typeof reviewResult.maxRetries === 'number' &&
     reviewResult.maxRetries > 0 &&
     reviewResult.retryCount >= reviewResult.maxRetries
-      ? { maxRetriesExhausted: true as const }
+      ? { maxRetriesExhausted: true as const, recoveryContinuationPending: false }
       : {}),
     attempts,
     artifactPaths: [...new Set(attempts.flatMap((attempt) => attempt.artifactPaths ?? []))],
