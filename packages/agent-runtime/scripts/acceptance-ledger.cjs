@@ -178,7 +178,11 @@ function ledgerPath(taskDir) {
  * array means this run has no acceptance criteria, so the ledger does not apply.
  */
 function handoffAcceptanceCriteria(taskDir) {
-  const handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
+  return criteriaFromHandoff(readJson(path.join(taskDir, HANDOFF_INPUT)));
+}
+
+/** The `AC-<N>` list a parsed handoff carries; positions are the ids. */
+function criteriaFromHandoff(handoff) {
   const task = isRecord(handoff.task) ? handoff.task : {};
   const criteria = Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [];
   return criteria
@@ -197,10 +201,9 @@ function handoffAcceptanceCriteria(taskDir) {
  * signal written around this engine cannot pass what `mark` refuses.
  */
 function requireHandoffAcceptanceCriteria(taskDir) {
-  const file = path.join(taskDir, HANDOFF_INPUT);
   let handoff;
   try {
-    handoff = readJson(file);
+    handoff = readJson(path.join(taskDir, HANDOFF_INPUT));
   } catch (err) {
     throw new AcceptanceRefusal(handoffReadRefusal(`invalid ${HANDOFF_INPUT}: ${err.message}`));
   }
@@ -210,7 +213,8 @@ function requireHandoffAcceptanceCriteria(taskDir) {
       handoffReadRefusal(`invalid ${HANDOFF_INPUT}: task.acceptanceCriteria must be an array`),
     );
   }
-  return handoffAcceptanceCriteria(taskDir);
+  // One parse: the handoff read above is the only one this path makes.
+  return criteriaFromHandoff(handoff);
 }
 
 /** One message shape for a handoff the acceptance rule cannot read. */

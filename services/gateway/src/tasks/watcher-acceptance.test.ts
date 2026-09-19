@@ -240,6 +240,29 @@ test('other files in artifacts/ never drive a progress update', async () => {
   }
 });
 
+test('a released slot stops reporting ledger writes', async () => {
+  const root = writeTaskDir();
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
+    await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
+
+    // A released slot must stop reporting. This asserts the observable effect —
+    // no emission after unwatch — which the teardown delivers by closing the
+    // acceptance watcher alongside the others and dropping the watch entry.
+    // Closure itself has no observable signal from here without a test-only
+    // export, so the entry removal alone would satisfy this assertion.
+    await unwatchSlot(SLOT_ID);
+    emitted.length = 0;
+    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven'), criterion('AC-2', 'weak')]);
+    await settle();
+    assert.equal(emitted.length, 0, 'the closed watch must not emit');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('the watcher emits the acceptance ledger as verdicts land, without a parent mark', async () => {
   const root = writeTaskDir();
   emitted.length = 0;
