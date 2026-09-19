@@ -611,6 +611,33 @@ async function slotPrepareInner(
       `Base ref ${resolvedStartRef.requestedRef} resolved to ${resolvedStartRef.resolvedSha}`,
     );
   };
+  // On a branch the slot already has, the provenance must describe the tree the
+  // run executes on: reset to the resolved ref, never to whatever origin or the
+  // local branch drifted to. The fresh-branch path bases its branch there too.
+  const resetCurrentBranchToStartRef = async () => {
+    if (!resolvedStartRef) return;
+    const resetR = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd`,
+    );
+    if (resetR.exitCode !== 0) {
+      throw new Error(
+        `reset to start ref ${resolvedStartRef.resolvedSha} failed on ${vars.slotId} (${vars.remoteRepo}): ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
+      );
+    }
+    const dirty = (
+      await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
+    ).stdout.trim();
+    if (dirty) {
+      throw new Error(
+        `Working tree still dirty on ${vars.slotId} after reset to start ref ${resolvedStartRef.resolvedSha}. Refusing to prepare stale/dirty slot. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status`,
+      );
+    }
+    step(
+      'branch',
+      `Already on ${branch}; reset to requested start ref ${resolvedStartRef.resolvedSha}`,
+    );
+  };
   if (branch && opts?.preserveBranch) {
     await resolveRequestedStartRef();
   } else if (branch) {
@@ -649,6 +676,7 @@ async function slotPrepareInner(
         }
         step('branch', `Already on ${branch}; reset to origin/${branch}`);
         await resolveRequestedStartRef();
+        await resetCurrentBranchToStartRef();
       } else {
         const fetchErr = `${fetchBranchR.stderr}\n${fetchBranchR.stdout}`;
         if (!/couldn't find remote ref|could not find remote ref|no such ref/i.test(fetchErr)) {
@@ -658,6 +686,7 @@ async function slotPrepareInner(
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
         await resolveRequestedStartRef();
+        await resetCurrentBranchToStartRef();
       }
     } else {
       const fetchDefaultR = await execOnSlot(
