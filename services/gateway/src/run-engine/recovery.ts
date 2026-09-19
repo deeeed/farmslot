@@ -368,8 +368,8 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
     // An active fix pass only exists while the latest extra-review has open
     // findings, so re-arming here is the in-flight loop resuming, not leftover
-    // findings being resent. The project retry cap bounds what it can do next;
-    // a run parked at the cap has no active fix context and skips this branch.
+    // findings being resent. A run parked at the cap has no active fix
+    // context and skips this branch.
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
     if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
       const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
