@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Gateway restart re-opens the publication gate instead of silently re-sending leftover extra-review findings to the worker. Extra-review auto-fix cannot raise past project `self_review.max_retries`. Re-review after a worker fix (loop 2+) is incremental and must read the worker's Self-Review Fixes report; Cursor still argv-respawns because pane send cannot prove acceptance.
+- Gateway restart re-opens the publication gate instead of silently re-sending leftover extra-review findings to the worker, and leaves a run whose worker signaled `blocked` in that terminal state instead of restarting it at self-review. Extra-review auto-fix cannot raise past project `self_review.max_retries`. Re-review after a worker fix (loop 2+) is incremental and must read the worker's Self-Review Fixes report; Cursor still argv-respawns because pane send cannot prove acceptance.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18

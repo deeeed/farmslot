@@ -451,6 +451,63 @@ test('recoverActiveRuns clears stale human-gate running detail while re-presenti
   assert.deepEqual(stepUpdates, [{ detail: 'Waiting for operator decision' }]);
 });
 
+test('recoverActiveRuns keeps a worker-signal blocked run blocked after restart', async () => {
+  // Shape of a run whose monitor observed `status: blocked`: the terminal
+  // transition stamped completedAt, skipped the remaining steps, and the only
+  // decision is the earlier handoff that the worker's own signal resolved.
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-BLOCKED-TERMINAL',
+    familyRootTicketOrPr: 'RECOVERY-BLOCKED-TERMINAL',
+    taskFile: '/tmp/farmslot-recovery-blocked-terminal/TASK.md',
+    status: 'blocked',
+    completedAt: '2026-09-19T00:18:17.349Z',
+    error: 'Cannot reproduce',
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'self-review', status: 'skipped' },
+      { name: 'complete', status: 'skipped' },
+    ],
+    decisions: [
+      {
+        id: 'handoff-1',
+        type: 'monitor_interactive_handoff',
+        title: 'interactive handoff',
+        description: 'interactive handoff',
+        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
+        createdAt: '2026-09-18T08:50:10.167Z',
+        resolvedAt: '2026-09-19T00:18:17.289Z',
+        resolvedAction: 'signal-written',
+      },
+    ],
+  });
+  const updates: Array<Partial<Run>> = [];
+  let started = false;
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'ready', agent: 'idle' }],
+    }),
+    updateRun: (_id: string, fields: Partial<Run>) => updates.push(fields),
+    updateRunStep: () => {},
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    reconstructStepOutputs: () => null,
+    startRun: async () => {
+      started = true;
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(started, false, 'a terminal blocked run must not re-enter the engine');
+  assert.equal(
+    updates.some((fields) => 'status' in fields),
+    false,
+    'a terminal blocked run keeps its blocked status',
+  );
+});
+
 test('recoverActiveRuns re-arms handoff auto-recovery for a blocked interactive handoff', async () => {
   const run = minimalActiveRun({
     ticketOrPr: 'RECOVERY-3',

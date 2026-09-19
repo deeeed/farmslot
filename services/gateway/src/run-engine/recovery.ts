@@ -694,6 +694,17 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         );
         continue;
       }
+      // A worker-signal or engine block is terminal: the transition stamped
+      // `completedAt` and skipped the remaining steps. Its resolved decisions
+      // are history (an earlier handoff the worker answered with `blocked`),
+      // not a wait that ended while the process was down. Advancing here
+      // restarted self-review on a run whose worker had already said blocked.
+      if (run.completedAt) {
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — blocked terminal state (completed ${run.completedAt}); keeping blocked`,
+        );
+        continue;
+      }
       const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
       const latestResolvedGateDecision = [...run.decisions]
         .reverse()
