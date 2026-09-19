@@ -43,11 +43,7 @@ test('segment globs follow the gitignore-like rules', () => {
 
 test('normalization collapses double-star runs and rejects character classes in both modes', () => {
   assert.equal(normalizeGlobPattern('.\\a\\**/**/**/b'), 'a/**/b');
-  assert.equal(
-    normalizeGlobPattern('x**/**/y'),
-    'x**/**/y',
-    'off-boundary runs reach git unchanged',
-  );
+  assert.equal(normalizeGlobPattern('x**/**/y'), 'x**/y', 'git reads both the same');
   assert.equal(globDoubleStarRuns('**/**/a/**/b'), 2);
   for (const options of [anchored, segment]) {
     const bad = compileGlob('src/[ab].ts', options);
@@ -57,20 +53,41 @@ test('normalization collapses double-star runs and rejects character classes in 
     assert.equal(compileGlob('a?.ts', options).regex.test('ab.ts'), true);
     assert.equal(compileGlob('a?.ts', options).regex.test('abc.ts'), false);
     assert.equal(compileGlob('a.ts', options).regex.test('aXts'), false, 'dots are literal');
-    assert.equal(
-      compileGlob('a**/b', options).regex.test('ax/b'),
-      true,
-      'off a boundary a double star is two plain stars',
-    );
-    assert.equal(
-      compileGlob('a**/b', options).regex.test('ax/y/b'),
-      false,
-      'and never crosses a slash',
-    );
-    assert.equal(
-      compileGlob('src/**', options).regex.test('src/a/b.ts'),
-      true,
-      'trailing /** is everything below',
-    );
+    assert.equal(compileGlob('src/**', options).regex.test('src/a/b.ts'), true);
+  }
+});
+
+// Measured with `git ls-files -- ':(glob)P'` on git 2.54.0 over these paths; the
+// compiler must agree with git on every row so the JS matcher and the emitted
+// pathspec never disagree about a file.
+test('double-star rules match real git :(glob) pathspecs', () => {
+  const paths = [
+    'ab',
+    'a/b',
+    'ax/b',
+    'ax/y/b',
+    'axb',
+    'b',
+    'xy',
+    'x/y',
+    'xa/y',
+    'xa/b/y',
+    'srcfoo.ts',
+    'srcx/y/foo.ts',
+    'src/foo.ts',
+  ];
+  const gitTruth: Record<string, string[]> = {
+    'a**/b': ['a/b', 'ab', 'ax/b', 'ax/y/b'],
+    'a**b': ['ab', 'axb'],
+    '**b': ['ab', 'axb', 'b'],
+    'a**': ['a/b', 'ab', 'ax/b', 'ax/y/b', 'axb'],
+    'x**/**/y': ['x/y', 'xa/b/y', 'xa/y', 'xy'],
+    'x**/y': ['x/y', 'xa/b/y', 'xa/y', 'xy'],
+    'src**/foo.ts': ['src/foo.ts', 'srcfoo.ts', 'srcx/y/foo.ts'],
+    '**/b': ['a/b', 'ax/b', 'ax/y/b', 'b'],
+  };
+  for (const [pattern, expected] of Object.entries(gitTruth)) {
+    const { regex } = compileGlob(pattern, anchored);
+    assert.deepEqual(paths.filter((path) => regex.test(path)).sort(), expected, pattern);
   }
 });

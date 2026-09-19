@@ -43,11 +43,10 @@ export function normalizeGlobPattern(pattern: string): string {
     pattern
       .replace(/\\/g, '/')
       .replace(/^\.\//, '')
-      // Runs of double-star segments at a boundary mean the same as one;
-      // compiling each into its own optional group makes a non-match backtrack
-      // exponentially. Off a boundary the stars are plain `*`s (see compile),
-      // so a run there is left alone and the pattern reaches git unchanged.
-      .replace(/(^|\/)(?:\*\*\/)+/g, '$1**/')
+      // Runs of double-star segments mean the same as one, wherever they sit:
+      // git matches `x**/**/y` and `x**/y` identically. Compiling each into its
+      // own optional group would make a non-match backtrack exponentially.
+      .replace(/(?:\*\*\/)+/g, '**/')
   );
 }
 
@@ -78,19 +77,21 @@ export function compileGlob(pattern: string, options: GlobCompileOptions): Compi
   for (let i = 0; i < glob.length; i++) {
     const ch = glob[i];
     if (ch === '*' && glob[i + 1] === '*') {
-      const atSegmentStart = i === 0 || glob[i - 1] === '/';
-      if (atSegmentStart && glob[i + 2] === '/') {
-        // `**/` — zero or more whole directories, root included, so `**/*.ts`
-        // matches both `foo.ts` and `dir/foo.ts` (git's `:(glob)**/X` agrees).
+      // Measured against git 2.54 `:(glob)` pathspecs: the rule depends only
+      // on what follows the double star, never on what precedes it.
+      if (glob[i + 2] === '/') {
+        // Followed by a slash: zero or more whole directories, root included,
+        // so `**/*.ts` matches `foo.ts` and `dir/foo.ts`, and `a**/b` matches
+        // `ab`, `a/b` and `ax/y/b`.
         body += '(?:.*/)?';
         i += 2;
-      } else if (atSegmentStart && i + 2 >= glob.length) {
-        // Trailing `/**` — everything below.
+      } else if (i + 2 >= glob.length) {
+        // Trailing: everything below, across slashes (`a**` matches `ax/y/b`).
         body += '.*';
         i += 1;
       } else {
-        // Off a segment boundary a double star is two plain stars, as in git
-        // and gitignore: it never crosses a slash.
+        // Anything else: a plain star that never crosses a slash (`a**b`
+        // matches `axb`, not `a/b`).
         body += '[^/]*';
         i += 1;
       }

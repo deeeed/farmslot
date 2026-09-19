@@ -9,8 +9,9 @@ export type DiffFileKind = 'code' | 'test';
 /**
  * Default test-file globs, matched against the repo-relative path.
  *
- * Pattern rules (a subset of gitignore): a double star spans directories,
- * `*` and `?` stay inside one path segment. A pattern without a slash names
+ * Pattern rules (a subset of gitignore): a double star followed by a slash
+ * spans any depth of directories, a trailing one everything below, and any
+ * other double star is a plain star; `*` and `?` stay inside one segment. A pattern without a slash names
  * a path segment anywhere: `fixtures` matches `src/fixtures/a.json` and a
  * file named `fixtures`; `*.snap` matches any `.snap` file. A trailing slash
  * names a directory anywhere: `tests/` matches `src/a/tests/x.ts`. Because a
