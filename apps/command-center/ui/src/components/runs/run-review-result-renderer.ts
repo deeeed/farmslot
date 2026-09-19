@@ -52,7 +52,7 @@ export function renderReviewProcess(run: Run, ctx: RunEvidenceRenderContext) {
     </p>
     <div class="evidence-title">Task progress</div>
     ${ctx.taskProgress
-      ? html`<progress-tracker .structured=${ctx.taskProgress}></progress-tracker>`
+      ? html`<progress-tracker .structured=${ctx.taskProgress} .runId=${run.id}></progress-tracker>`
       : html`<p>Waiting for task progress.</p>`}
     <p>
       The task checklist tracks the overall work. The detailed review checklist records what was

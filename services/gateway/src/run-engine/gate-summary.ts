@@ -104,7 +104,7 @@ function buildChecklistSubtasks(run: Run): NonNullable<GateSummary['checklist']>
   const rows = (run.metrics.subtasks ?? []).flatMap((unit) => {
     const perStepMs = deriveChecklistStepDurations(unit.checklistTiming);
     if (perStepMs.length === 0) return [];
-    return [{ id: unit.id, parent: unit.parent, perStepMs }];
+    return [{ id: unit.id, parent: unit.parent, source: unit.source, perStepMs }];
   });
   return rows.length > 0 ? rows : undefined;
 }

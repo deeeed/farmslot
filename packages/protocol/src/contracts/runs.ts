@@ -599,6 +599,8 @@ export interface GateSummary {
     subtasks?: Array<{
       id: string;
       parent: { checklist: string; stepNumber: number };
+      /** Where the child's markdown came from, so a reader sees the skill/template, not only the id. */
+      source?: SubtaskSource;
       perStepMs: Array<{ stepNumber: number; label: string; durationMs: number }>;
     }>;
   };
