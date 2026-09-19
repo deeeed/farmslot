@@ -60,6 +60,60 @@ export function subtaskPresentation(subtask: TaskStepSubtaskProgress): SubtaskPr
   };
 }
 
+/** One run's view of the open-state memory, as the renderer sees it. */
+export interface SubtaskOpenScope {
+  /** Open state to bind for this unit, seeding the default on first sight. */
+  openFor(subtask: TaskStepSubtaskProgress): boolean;
+  /** Record the viewer's choice, from the `<details>` `toggle` event. */
+  set(id: string, open: boolean): void;
+}
+
+/**
+ * Per-host memory of which child units the viewer has opened.
+ *
+ * The status-derived default (open while the unit is not settled) applies only
+ * the first time a unit id is seen in a run. After that the viewer's own
+ * expand/collapse wins, so live progress updates — which re-render the whole
+ * block on every signal change — cannot snap an open unit shut or re-open one
+ * the viewer closed.
+ *
+ * Entries are keyed by run as well as unit id: a host outlives the run it is
+ * showing (run detail swaps runs in place, the slot view follows a slot from
+ * one run to the next), and a unit id such as `perps-review` repeats across
+ * runs. Without the run in the key, the next run would open showing the last
+ * run's expand state.
+ */
+export class SubtaskOpenState {
+  private readonly open = new Map<string, boolean>();
+  private readonly scopes = new Map<string, SubtaskOpenScope>();
+
+  /**
+   * The scope for a run. Hosts call this every render with their current run
+   * id; a run change hands back a scope whose units start from the default
+   * again, while re-renders inside one run keep what the viewer chose.
+   */
+  scope(runId: string | null | undefined): SubtaskOpenScope {
+    const run = runId?.trim() || 'no-run';
+    const existing = this.scopes.get(run);
+    if (existing) return existing;
+    const scope: SubtaskOpenScope = {
+      openFor: (subtask) => {
+        const key = `${run}:${subtask.id}`;
+        const remembered = this.open.get(key);
+        if (remembered !== undefined) return remembered;
+        const initial = !isSettledSubtaskStatus(subtask.status);
+        this.open.set(key, initial);
+        return initial;
+      },
+      set: (id, open) => {
+        this.open.set(`${run}:${id}`, open);
+      },
+    };
+    this.scopes.set(run, scope);
+    return scope;
+  }
+}
+
 /**
  * Block styles, scoped with an `st-` prefix so a host's own `.step` / `.phase`
  * rules cannot collide. Add to a component's `static styles` array.
@@ -198,10 +252,15 @@ export const subtaskBlockStyles = css`
  * @param renderChildStep the host's own step-row renderer, used so the child
  * rows look like the surface they appear on. It is called for child steps only
  * and must not itself render a nested block.
+ * @param openScope the host's memory of what the viewer expanded, scoped to the
+ * run being shown. Progress updates re-render this block on every signal
+ * change, so the open state must come from there and not from the unit's
+ * status, which would fight the viewer.
  */
 export function renderSubtaskBlock(
   subtask: TaskStepSubtaskProgress,
   renderChildStep: (step: TaskStepProgress) => unknown,
+  openScope: SubtaskOpenScope,
 ): TemplateResult {
   const view = subtaskPresentation(subtask);
   return html`
@@ -210,7 +269,9 @@ export function renderSubtaskBlock(
       data-testid="subtask-unit"
       data-subtask-id=${subtask.id}
       data-subtask-status=${subtask.status}
-      ?open=${!view.settled}
+      ?open=${openScope.openFor(subtask)}
+      @toggle=${(event: Event) =>
+        openScope.set(subtask.id, (event.target as HTMLDetailsElement).open)}
     >
       <summary class="st-summary">
         <span class="st-caret"></span>

@@ -17,7 +17,7 @@ import {
   acceptancePanelStyles,
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
-import { subtaskBlockStyles } from '../progress-tracker/subtask-block.js';
+import { subtaskBlockStyles, SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
@@ -76,6 +76,14 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
   @property() selectedStepName?: string;
   @state() private monitorExpanded = false;
+  /**
+   * Command Center opens an unsettled child on first sight (this panel exists
+   * to watch work in flight); after that the viewer's own expand/collapse wins,
+   * so a progress update cannot reopen what they closed. Scoped by run: this
+   * element is reused when run detail swaps the run, and `runChanged` resets
+   * only the state it knows about.
+   */
+  private readonly subtaskOpen = new SubtaskOpenState();
   @state() private autoExpandDone = false;
   @state() private cancelPending = false;
   @state() private transferProgress: FileTransferUiEntry | null = null;
@@ -296,6 +304,7 @@ export class RunPipeline extends LitElement {
       () => {
         this.monitorExpanded = false;
       },
+      this.subtaskOpen.scope(this.run?.id),
       this.run.activeTaskFile?.split('/').pop(),
     );
   }

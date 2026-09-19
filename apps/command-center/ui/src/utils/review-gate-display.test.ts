@@ -476,6 +476,12 @@ test('checklist timing nests a child unit under the step it hangs off', () => {
         {
           id: 'perps-review',
           parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+          source: {
+            kind: 'skill',
+            ref: '.agents/skills/mms-perps-review-pr/skill.md',
+            sha256: 'a',
+            renderedSha256: 'b',
+          },
           perStepMs: [
             { stepNumber: 1, label: 'Read the diff', durationMs: 30000 },
             { stepNumber: 2, label: 'Run the recipe', durationMs: 60000 },
@@ -491,6 +497,11 @@ test('checklist timing nests a child unit under the step it hangs off', () => {
   assert.equal(parent.duration, '2.0m');
   assert.equal(parent.subtasks?.length, 1);
   assert.equal(parent.subtasks?.[0].id, 'perps-review');
+  assert.equal(parent.subtasks?.[0].title, 'skill.md');
+  assert.match(
+    parent.subtasks?.[0].titleTooltip ?? '',
+    /perps-review · skill · \.agents\/skills\//,
+  );
   assert.deepEqual(
     parent.subtasks?.[0].rows.map((row) => `${row.label} ${row.duration}`),
     ['Read the diff 30.0s', 'Run the recipe 1.0m'],
@@ -517,6 +528,8 @@ test('a child whose parent step never got ticked still gets a row', () => {
   assert.equal(orphan.label, 'CHECKLIST.md step 3');
   assert.equal(orphan.duration, '\u2014');
   assert.equal(orphan.subtasks?.[0].id, 'ci-triage');
+  assert.equal(orphan.subtasks?.[0].title, 'inline', 'a unit with no ref reads as inline');
+  assert.equal(orphan.subtasks?.[0].titleTooltip, 'ci-triage · inline text');
 });
 
 test('a run with no child units keeps the plain parent rows', () => {

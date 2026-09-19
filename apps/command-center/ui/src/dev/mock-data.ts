@@ -845,6 +845,12 @@ export function mockGateSummaryWithSubtasks(): GateSummary {
         {
           id: 'perps-review',
           parent: { checklist: 'CHECKLIST.md', stepNumber: 3 },
+          source: {
+            kind: 'skill',
+            ref: '.agents/skills/mms-perps-review-pr/skill.md',
+            sha256: 'perps-review-source-sha256',
+            renderedSha256: 'perps-review-rendered-sha256',
+          },
           perStepMs: [
             { stepNumber: 1, label: 'Read the diff end to end', durationMs: 300000 },
             { stepNumber: 2, label: 'Check the state derivation', durationMs: 420000 },
