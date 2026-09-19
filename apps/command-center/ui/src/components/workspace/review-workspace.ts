@@ -353,6 +353,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
         this._diffError = err instanceof Error ? err.message : String(err);
         this._diffFiles = [];
+        this._diffTestPatterns = null;
         this._fileDiff = '';
         this._recoveryPhase = 'live';
       } else {

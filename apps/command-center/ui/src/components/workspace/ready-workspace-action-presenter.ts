@@ -495,6 +495,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
         this._diffFiles = [];
+        this._diffTestPatterns = null;
         this._selectedFile = '';
         this._fileDiff = '';
         this._diffError =

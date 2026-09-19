@@ -64,11 +64,14 @@ export const TEST_FILE_PATTERN_ENTRY_LIMIT = 256;
 export const TEST_FILE_PATTERN_CHAR_LIMIT = 256;
 /**
  * Most double-star runs one pattern may keep. Each run compiles to an
- * optional `.*` group, and a non-matching path backtracks across all of them
- * (interleaved `**` and `*` segments are exponential). Two runs cover every
- * real layout (`**` / dir / `**`); patterns with more are dropped.
+ * optional `.*` group and a non-matching path backtracks across all of them.
+ * Four admits `**` / dir / `**` / dir / `**` / glob, the deepest monorepo
+ * shape seen in practice; patterns with more are dropped with a warning.
+ * This trims the surface rather than closing the class: a long run of `*`
+ * inside one segment can still backtrack on a pathological path, which real
+ * repo paths (a few segments, ~100 chars) do not produce.
  */
-export const TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT = 2;
+export const TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT = 4;
 
 function doubleStarRuns(pattern: string): number {
   return (
@@ -84,12 +87,22 @@ export function resolveTestFilePatterns(
 ): readonly string[] {
   const custom = (config?.testPatterns ?? [])
     .map((pattern) => pattern.trim())
-    .filter(
-      (pattern) =>
-        pattern.length > 0 &&
-        pattern.length <= TEST_FILE_PATTERN_CHAR_LIMIT &&
-        doubleStarRuns(pattern) <= TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT,
-    )
+    .filter((pattern) => {
+      if (pattern.length === 0) return false;
+      if (pattern.length > TEST_FILE_PATTERN_CHAR_LIMIT) {
+        console.warn(
+          `[diff-view] dropping test pattern longer than ${TEST_FILE_PATTERN_CHAR_LIMIT} chars: ${pattern.slice(0, 40)}…`,
+        );
+        return false;
+      }
+      if (doubleStarRuns(pattern) > TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT) {
+        console.warn(
+          `[diff-view] dropping test pattern with more than ${TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT} double-star runs: ${pattern}`,
+        );
+        return false;
+      }
+      return true;
+    })
     .slice(0, TEST_FILE_PATTERN_ENTRY_LIMIT);
   const useDefaults = config?.useDefaultTestPatterns !== false;
   return [...(useDefaults ? DEFAULT_TEST_FILE_PATTERNS : []), ...custom];

@@ -614,10 +614,11 @@ async function diffViewTestPatterns(
     project = getRun(params.runId)?.project;
     if (!project) {
       console.warn(
-        `[git] branchDiff for run ${params.runId.slice(0, 8)}: run not in store, using default test patterns`,
+        `[git] branchDiff for run ${params.runId.slice(0, 8)}: run not in store, ${params.slotId ? 'falling back to the slot project' : 'using default test patterns'}`,
       );
     }
-  } else if (params.slotId) {
+  }
+  if (!project && params.slotId) {
     project = (await (deps.loadVars ?? loadSlotVars)(params.slotId)).projectName;
   }
   const projectJson = project

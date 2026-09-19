@@ -121,8 +121,16 @@ test('project patterns are capped and double-star runs cannot hang the matcher',
   assert.deepEqual(
     resolveTestFilePatterns({ testPatterns: [interleaved], useDefaultTestPatterns: false }),
     [],
-    'a pattern with more than two double-star runs is dropped',
+    'a pattern with more than four double-star runs is dropped',
   );
+  const monorepo = compileTestFileMatcher(
+    resolveTestFilePatterns({
+      testPatterns: ['**/packages/**/src/**/*.spec.ts'],
+      useDefaultTestPatterns: false,
+    }),
+  );
+  assert.equal(monorepo('packages/x/src/y/a.spec.ts'), true, 'three runs is an ordinary glob');
+  assert.equal(monorepo('apps/x/src/a.spec.ts'), false);
   const started = Date.now();
   assert.equal(compileTestFileMatcher([interleaved])(`${'x/'.repeat(60)}${'y'.repeat(60)}`), false);
   assert.ok(Date.now() - started < 100, 'the compiler drops it too');
