@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   CI_FIX_CHECKLIST,
+  INTERACTIVE_CHECKLIST_MARKDOWN,
   SELF_REVIEW_CHECKLIST,
   SELF_REVIEW_FIX_CHECKLIST,
   TASK_PROGRESS_MARKDOWN,
@@ -645,5 +646,41 @@ test('a trimmed row is fetched once, again when it moves on, and retried after a
       directRun: null,
     }),
     true,
+  );
+});
+
+test('the acceptance wrapper carries parentChecklist so a child unit update is placed', () => {
+  const workerRun = makeRun({
+    taskFile: TASK_PROGRESS_MARKDOWN,
+    activeTaskFile: TASK_PROGRESS_MARKDOWN,
+  });
+  const selfReviewRun = makeRun({
+    taskFile: TASK_PROGRESS_MARKDOWN,
+    activeTaskFile: SELF_REVIEW_CHECKLIST,
+  });
+  const child = (parentChecklist: string) => ({
+    role: 'subtask' as const,
+    contextId: 'perps-review',
+    parentChecklist,
+  });
+
+  // A child hangs off a checklist, not a role: its contextId never matches the
+  // active role, so without parentChecklist reaching the protocol rule every
+  // child update would be dropped.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(workerRun, child(INTERACTIVE_CHECKLIST_MARKDOWN)),
+    true,
+  );
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child(SELF_REVIEW_CHECKLIST)), true);
+  // A child whose parent checklist is no longer active is not live.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(selfReviewRun, child(INTERACTIVE_CHECKLIST_MARKDOWN)),
+    false,
+  );
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(SELF_REVIEW_CHECKLIST)), false);
+  // No parent link at all: nothing places the update, so it is dropped.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(workerRun, { role: 'subtask', contextId: 'perps-review' }),
+    false,
   );
 });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Task-progress updates from a child checklist unit are accepted while their parent checklist is the active one, through the shared protocol rule (ADR-060). No child rendering yet.
 - Diff file lists (slot view changed files, slot workspace committed changes, and the diff modal used by the review and ready workspaces) show the code/test split and a **Hide tests** toggle that flips every open list together (in the slot view it covers the staged, unstaged and untracked rows as well as the committed group, all with the project's patterns) and is remembered across reloads, so a quick PR review can focus on app code. The open file stays listed while hidden. Test files come from built-in patterns plus the project's `diff_view` overrides; the modal uses the same patterns as the changed-files list.
 - Run detail offers **Archive as blocked** on a blocked run with nothing left to advance (worker signaled blocked, uncertain prompt delivery). It keeps the outcome in history and leaves the active list; step replay stays the retry path. Bulk archive in the run list accepts the same runs.
 - Extra-review checklist progress stays visible on human-gate and package-refresh while the reviewer is working. Waiting on extra-review findings says so instead of "Worker finished", and the pipeline marks the publish-gate as now. Opening a step inspector no longer duplicates the live checklist under the canvas; the inspector keeps the boxes when live progress has not bound yet.

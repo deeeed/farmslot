@@ -180,3 +180,36 @@ test('builds fallback progress summary from running run step when slot phase is 
   assert.equal(summary.meta, 'Watching PR checks');
   assert.equal(summary.percent, null);
 });
+
+test('the shared protocol rule places a child unit update and every role checklist', () => {
+  const base = { slotId: 'slot-1', runId: 'run-1', progress: { slotId: 'slot-1', markdown: '' } };
+  const selfReviewRun = makeRun({ activeTaskFile: '/repo/SELF-REVIEW.md' });
+  const ciFixRun = makeRun({ activeTaskFile: '/repo/CI-FIX.md' });
+  const workerRun = makeRun({ activeTaskFile: '/repo/TASK.md' });
+
+  // The replaced local filter only knew SELF-REVIEW.md and returned true for
+  // every other role checklist, so a stale ci-fix update used to be accepted.
+  assert.equal(shouldAcceptTaskProgressUpdate(ciFixRun, { ...base, contextId: 'ci-fix' }), true);
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(ciFixRun, { ...base, contextId: 'self-review' }),
+    false,
+  );
+
+  // A child checklist unit is accepted while its parent checklist is the active one.
+  const child = (parentChecklist: string) => ({
+    ...base,
+    role: 'subtask' as const,
+    contextId: 'perps-review',
+    parentChecklist,
+  });
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child('CHECKLIST.md')), true);
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child('SELF-REVIEW.md')), true);
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child('CHECKLIST.md')), false);
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child('SELF-REVIEW.md')), false);
+
+  // The slot/run identity pre-check still runs before the shared rule.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(workerRun, { ...child('CHECKLIST.md'), slotId: 'slot-9' }),
+    false,
+  );
+});

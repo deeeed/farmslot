@@ -140,7 +140,9 @@ export function hasActiveInlineCiFix(run: Pick<Run, 'steps'>): boolean {
 
 export function shouldAcceptTaskProgressUpdate(
   run: Pick<Run, 'activeTaskFile' | 'taskFile'> | null,
-  update: Pick<TaskProgressUpdatedPayload, 'contextId' | 'role'>,
+  // `parentChecklist` travels on child-unit updates (ADR-060); the protocol rule
+  // needs it to tell a live child from one whose parent checklist is settled.
+  update: Pick<TaskProgressUpdatedPayload, 'contextId' | 'role' | 'parentChecklist'>,
 ): boolean {
   return shouldAcceptTaskProgressForActiveChecklist(run, update);
 }
