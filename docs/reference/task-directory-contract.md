@@ -33,6 +33,7 @@ This is the only layout the task writer produces. One flow keeps its own pairing
     …                              flow-specific inputs (planning context, PR comments, inherited context)
   assets/                          ticket attachments
   artifacts/                       worker output: reports, recipes, evidence; sandbox.json readiness record
+    acceptance-status.json         acceptance-criteria ledger; written only by `farmslot-agent ac`
 ```
 
 ## Producers and consumers
@@ -49,6 +50,7 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 | `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
 | `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold        |
 | `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                          |
+| `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel   |
 | `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                       |
 | `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow) |
 
@@ -78,18 +80,19 @@ The selected checklist travels inside `inputs/handoff.json` as `executionTemplat
 
 `inputs/handoff.json` is the run's identity for closeout and learning packages:
 
-| Field          | Farmslot value                                                                              | Skill value                                   |
-| -------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `attemptId`    | run id                                                                                      | random UUID                                   |
-| `surface`      | `farmslot`                                                                                  | `skill`                                       |
-| `project`      | project name                                                                                | checkout basename                             |
-| `repo`         | `owner/name` from `repo_url` or `ci.repo`                                                   | `owner/name` from the git remote              |
-| `domain`       | effective run domain, when any                                                              | `--domain`, when any                          |
-| `flow`         | flow type                                                                                   | task kind                                     |
-| `task`         | title, `sourceKind` (`jira`, `github-issue`, `github-pr`, `text`), ticket, source URL       | title, `text` or `file`, ticket, ref          |
-| `taskDocument` | `TASK.md`                                                                                   | `TASK.md`                                     |
-| `report`       | the terminal contract's `complete.report` (`artifacts/pr-description.md` for dev / fix-bug) | `artifacts/pr-description.md` (dev / fix-bug) |
-| `learnings`    | `artifacts/learnings.md`                                                                    | `artifacts/learnings.md`                      |
+| Field                     | Farmslot value                                                                              | Skill value                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `attemptId`               | run id                                                                                      | random UUID                                   |
+| `surface`                 | `farmslot`                                                                                  | `skill`                                       |
+| `project`                 | project name                                                                                | checkout basename                             |
+| `repo`                    | `owner/name` from `repo_url` or `ci.repo`                                                   | `owner/name` from the git remote              |
+| `domain`                  | effective run domain, when any                                                              | `--domain`, when any                          |
+| `flow`                    | flow type                                                                                   | task kind                                     |
+| `task`                    | title, `sourceKind` (`jira`, `github-issue`, `github-pr`, `text`), ticket, source URL       | title, `text` or `file`, ticket, ref          |
+| `task.acceptanceCriteria` | the ticket's criteria, in order; position N is ledger id `AC-N`                             | `--acceptance` values, same ids               |
+| `taskDocument`            | `TASK.md`                                                                                   | `TASK.md`                                     |
+| `report`                  | the terminal contract's `complete.report` (`artifacts/pr-description.md` for dev / fix-bug) | `artifacts/pr-description.md` (dev / fix-bug) |
+| `learnings`               | `artifacts/learnings.md`                                                                    | `artifacts/learnings.md`                      |
 
 ## Outcome file: one name on both surfaces
 
@@ -142,6 +145,7 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `TASK.md` is never enumerated. A `- [ ]` inside an acceptance criterion cannot shift a step number.
 - A ticked box is not proof. Proof is the recipe run, its evidence, and the artifacts the terminal contract requires.
 - `SIGNAL.json` is written by `mark` only. Hand-written signals are rejected by the monitor.
+- `artifacts/acceptance-status.json` is written by `farmslot-agent ac` only. Every criterion in `inputs/handoff.json` needs a verdict before a terminal success mark, and `weak` or `missing` fails unless the flow's terminal contract sets `acceptance.allowWeak`.
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
 See also: [Agent runtime](agent-runtime.md), [Template variables](template-variables.md), and the worker artifacts by flow reference on the documentation site.

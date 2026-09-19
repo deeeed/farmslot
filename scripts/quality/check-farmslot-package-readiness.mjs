@@ -60,6 +60,8 @@ const packages = [
       'scripts/mark-checklist-step.cjs',
       'scripts/worker-terminal-contract.cjs',
       'scripts/check-task-artifact-contract.mjs',
+      'scripts/acceptance-ledger.cjs',
+      'scripts/acceptance-cli.cjs',
     ],
     packRequiredFiles: [
       'README.md',
@@ -70,6 +72,8 @@ const packages = [
       'scripts/mark-checklist-step.cjs',
       'scripts/worker-terminal-contract.cjs',
       'scripts/check-task-artifact-contract.mjs',
+      'scripts/acceptance-ledger.cjs',
+      'scripts/acceptance-cli.cjs',
     ],
     importCheck:
       "const m = await import('./packages/agent-runtime/dist/index.js'); if (m.AGENT_RUNTIME_PACKAGE !== '@farmslot/agent-runtime') throw new Error('missing agent-runtime root export');",

@@ -109,6 +109,11 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
   assert.equal(handoff.learnings, 'artifacts/learnings.md');
   assert.equal(handoff.task.sourceKind, 'text');
   assert.equal(handoff.task.ticket, 'TAT-1');
+  assert.equal(
+    handoff.task.acceptanceCriteria,
+    undefined,
+    'a task with no acceptance criteria carries no ledger ids',
+  );
   assert.ok(handoff.attemptId.length > 0);
   assert.equal(handoff.executionTemplate.id, 'fix-bug/autonomous.mobile');
   assert.equal(handoff.executionTemplate.sourceId, 'package:test-catalog');
@@ -302,6 +307,35 @@ function init(taskDir, templateRoot, extra = [], { runMode = 'autonomous' } = {}
   });
   assert.notEqual(withMode.status, 0);
   assert.match(withMode.stderr, /\{\{MODE\}\}/);
+}
+
+// 8. Acceptance criteria: the handoff carries them in TASK.md order, which is
+//    what gives each one its `AC-<N>` ledger id (ADR-060). List markers are
+//    stripped and blank entries dropped, so an id can never point at a blank row.
+{
+  const work = mkdtempSync(path.join(tmpdir(), 'farmslot-task-init-ac-'));
+  const taskDir = path.join(work, 'task');
+  const result = init(taskDir, catalog(PLAIN_TEMPLATE), [
+    '--acceptance',
+    '- The receipt total includes fees',
+    '--acceptance',
+    '   ',
+    '--acceptance',
+    '[ ] The regression test covers the fee path\nand the refund path',
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  const handoff = JSON.parse(readFileSync(path.join(taskDir, 'inputs', 'handoff.json'), 'utf8'));
+  assert.deepEqual(handoff.task.acceptanceCriteria, [
+    'The receipt total includes fees',
+    'The regression test covers the fee path\nand the refund path',
+  ]);
+
+  // TASK.md rendering is unchanged: bullets, never a live checkbox.
+  const task = readFileSync(path.join(taskDir, 'TASK.md'), 'utf8');
+  assert.match(task, /^- The receipt total includes fees$/m);
+  assert.match(task, /^- The regression test covers the fee path$/m);
+  assert.match(task, /^ {2}and the refund path$/m);
+  assert.doesNotMatch(task, /- \[[ xX]\]/, 'TASK.md never carries a checkbox');
 }
 
 process.stdout.write('agent-runtime task init tests: ok\n');

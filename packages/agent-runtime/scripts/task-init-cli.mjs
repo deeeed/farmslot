@@ -18,6 +18,7 @@ function usage(exitCode = 0) {
     '                    --package-templates <path> [--package-id id] [--project-name name] [--domain d]',
     '  Run:              [--run-mode m] — run mode used to match project default rules',
     '  Task:             --title t [--task-text s | --task-file path] [--ticket key] [--source-ref url]',
+    '                    [--acceptance "criterion"]... — one per criterion; position N becomes ledger id AC-N',
     '  Identity:         [--surface s] [--project name] [--repo owner/name] [--attempt-id id]',
     '  Rendering:        [--var KEY=VALUE]... [--task-dir-label label] [--mode-preamble text]',
     '                    [--addendum-file path] [--mark-command "cmd"] [--json]',
@@ -43,6 +44,7 @@ function parseArgs(args) {
     taskFile: null,
     ticket: null,
     sourceRef: null,
+    acceptance: [],
     surface: 'cli',
     project: null,
     repo: null,
@@ -65,6 +67,7 @@ function parseArgs(args) {
     else if (arg === '--task-file') opts.taskFile = takeValue(args, i++, arg);
     else if (arg === '--ticket') opts.ticket = takeValue(args, i++, arg);
     else if (arg === '--source-ref') opts.sourceRef = takeValue(args, i++, arg);
+    else if (arg === '--acceptance') opts.acceptance.push(takeValue(args, i++, arg));
     else if (arg === '--surface') opts.surface = takeValue(args, i++, arg);
     else if (arg === '--project') opts.project = takeValue(args, i++, arg);
     else if (arg === '--repo') opts.repo = takeValue(args, i++, arg);
@@ -136,6 +139,7 @@ async function main() {
       title: opts.title,
       description,
       sourceKind: opts.taskFile ? 'file' : 'text',
+      ...(opts.acceptance.length > 0 ? { acceptanceCriteria: opts.acceptance } : {}),
       ...(opts.ticket ? { ticket: opts.ticket } : {}),
       ...(opts.sourceRef ? { sourceRef: opts.sourceRef } : {}),
     },

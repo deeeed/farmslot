@@ -5,6 +5,7 @@ export const AGENT_RUNTIME_SCRIPT_EXPORTS = {
   workerTerminalContract: '@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs',
   checkTaskArtifactContract: '@farmslot/agent-runtime/scripts/check-task-artifact-contract.mjs',
   taskInitCli: '@farmslot/agent-runtime/scripts/task-init-cli.mjs',
+  acceptanceCli: '@farmslot/agent-runtime/scripts/acceptance-cli.cjs',
 } as const;
 
 export * from './execution-template/index.js';

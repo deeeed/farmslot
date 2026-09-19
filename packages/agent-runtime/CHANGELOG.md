@@ -11,6 +11,12 @@
   - A child unit has no flow terminal contract: `--report` is its only artifact rule.
   - `--from template:<id>` is refused: resolving a catalog id needs project template sources the task-dir engine cannot read, so materialize the template first and pass its path.
   - The package `test` script ends with the `mark sub` end-to-end scenario, so CI runs it on a real task directory rather than unit tests alone.
+- `farmslot-agent ac` records the acceptance-criteria ledger (ADR-060), the only writer of `artifacts/acceptance-status.json`.
+  - `ac set <AC-N> <proven|weak|missing|untestable> [--proof-mode state|visual|mixed] [--evidence path]... [--recipe-node id]... [--note …]` refuses an id the handoff does not list, a verdict or proof mode outside the vocabulary, evidence that does not exist or escapes the task dir, and a hand-edited ledger; entries stay in handoff order.
+  - `ac list` prints every criterion with its current verdict (`null` when unrecorded); `ac render` prints the coverage table ending with the `Overall recipe coverage:` line.
+  - `task init` persists the criteria as `task.acceptanceCriteria` in `inputs/handoff.json` (new `--acceptance` flag, repeatable), which is where the positional `AC-<N>` ids come from. `TASK.md` rendering is unchanged.
+  - `mark complete` passes `--require-acceptance-status` when the handoff lists criteria: the artifact contract check then fails on a missing ledger, any criterion without a verdict, and `weak` or `missing` unless the flow's terminal contract sets `acceptance.allowWeak`.
+  - The package `test` script ends with the acceptance-ledger end-to-end scenario on a real task directory.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.0 - 2026-09-18

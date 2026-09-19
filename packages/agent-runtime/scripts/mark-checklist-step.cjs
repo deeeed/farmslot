@@ -20,6 +20,7 @@ const {
   signalContentUnchanged,
   writeSignal,
 } = require('./mark-io.cjs');
+const { handoffAcceptanceCriteria } = require('./acceptance-ledger.cjs');
 const {
   openSubtaskRefusal,
   openSubtaskUnits,
@@ -319,6 +320,11 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
+  // A run with acceptance criteria closes on the ledger: every criterion needs a
+  // verdict before `complete` (ADR-060). Runs without criteria are unaffected.
+  if (terminalCommand === 'complete' && handoffAcceptanceCriteria(taskDir).length > 0) {
+    args.push('--require-acceptance-status');
+  }
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
     if (terminalCommand) args.push('--terminal', terminalCommand);

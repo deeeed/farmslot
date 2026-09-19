@@ -109,6 +109,11 @@
       "default": "./dist/contracts/agents.js"
     },
     "./schemas/*": "./schemas/*",
+    "./contracts/acceptance": {
+      "types": "./dist/contracts/acceptance.d.ts",
+      "import": "./dist/contracts/acceptance.js",
+      "default": "./dist/contracts/acceptance.js"
+    },
     "./contracts/backlog": {
       "types": "./dist/contracts/backlog.d.ts",
       "import": "./dist/contracts/backlog.js",
