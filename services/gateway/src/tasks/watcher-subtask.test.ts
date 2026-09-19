@@ -15,9 +15,17 @@ import * as realState from '../core/state.js';
 import * as realFleetState from '../fleet/state.js';
 import * as realRunStore from '../runs/store.js';
 
-const SLOT_ID = 'slot-watch-subtask';
-const RUN_ID = 'run-watch-subtask';
+// Per-test slot and run ids: the watcher keys `activeWatches` and its debounce
+// timers by slot, so two tests sharing one id share that state and the second
+// one can observe the first one's teardown instead of its own setup.
+let SLOT_ID = 'slot-watch-subtask';
+let RUN_ID = 'run-watch-subtask';
 const TASK_REL = 'dev/demo';
+
+function useIds(suffix: string): void {
+  SLOT_ID = `slot-watch-subtask-${suffix}`;
+  RUN_ID = `run-watch-subtask-${suffix}`;
+}
 
 let repoRoot = '';
 
@@ -198,6 +206,7 @@ function childProgressOf(entry: Emitted) {
 }
 
 test('the watcher discovers a child unit registered mid-run and emits its marks', async () => {
+  useIds('discovery');
   const root = writeTaskDir();
   emitted.length = 0;
   try {
@@ -253,6 +262,63 @@ test('the watcher discovers a child unit registered mid-run and emits its marks'
     assert.equal(childProgressOf(marked)?.status, 'running');
     assert.equal(childProgressOf(marked)?.lastEventAt !== null, true);
   } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a corrupt child registry is reported at error level, and the watch survives it', async () => {
+  useIds('corrupt-registry');
+  const root = writeTaskDir();
+  emitted.length = 0;
+  const errors: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(' '));
+  };
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    registerChild(taskDirAbs());
+    await waitFor(
+      'the child registration update',
+      (entry) => childProgressOf(entry)?.id === 'perps-review',
+    );
+
+    // `mark sub` is the registry's only writer, so a file that does not parse is
+    // a real fault. The watch must not die, and the operator must be able to see
+    // WHY progress stopped advancing — both reports are error level.
+    writeFileSync(path.join(taskDirAbs(), 'subtasks', 'index.json'), 'not a registry\n');
+
+    const deadline = Date.now() + 40_000;
+    const seen = () => ({
+      registry: errors.find((line) => line.includes('cannot read subtask registry')),
+      progress: errors.find((line) => line.includes('progress read failed')),
+    });
+    while (Date.now() < deadline && !(seen().registry && seen().progress)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const { registry, progress } = seen();
+    assert.ok(registry, `expected a registry error report; saw ${JSON.stringify(errors)}`);
+    assert.match(registry, new RegExp(`${SLOT_ID}:dev`), 'names the watch key');
+    assert.match(registry, /invalid|expected/, 'carries the parse reason');
+    assert.ok(progress, `expected a progress-read error report; saw ${JSON.stringify(errors)}`);
+    assert.match(
+      progress,
+      /CHECKLIST\.md/,
+      'names the checklist whose progress could not be built',
+    );
+
+    // The watch is still live: repairing the registry resumes child updates
+    // without a re-dispatch.
+    emitted.length = 0;
+    registerChild(taskDirAbs());
+    const recovered = await waitFor(
+      'the update after the registry is repaired',
+      (entry) => childProgressOf(entry)?.id === 'perps-review',
+    );
+    assert.equal(recovered.parentChecklist, 'CHECKLIST.md');
+  } finally {
+    console.error = realError;
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
   }

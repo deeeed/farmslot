@@ -61,15 +61,28 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The child registry could not be read or does not parse. A distinct type so a
+ * caller that must turn it into a worker-facing verdict (the terminal contract
+ * check) can catch exactly this and let every other failure propagate.
+ */
+export class SubtaskRegistryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SubtaskRegistryError';
+  }
+}
+
 /** A required string field, rejected rather than coerced. */
 function requireString(value: unknown, where: string): string {
-  if (typeof value !== 'string' || !value) throw new Error(`${where} must be a non-empty string`);
+  if (typeof value !== 'string' || !value)
+    throw new SubtaskRegistryError(`${where} must be a non-empty string`);
   return value;
 }
 
 /** The parent step a unit hangs off. */
 function parseParentLink(value: unknown, where: string): WorkerSignalParentLink {
-  if (!isPlainRecord(value)) throw new Error(`${where} must be an object`);
+  if (!isPlainRecord(value)) throw new SubtaskRegistryError(`${where} must be an object`);
   const checklist = value.checklist;
   const stepNumber = value.stepNumber;
   if (
@@ -79,7 +92,7 @@ function parseParentLink(value: unknown, where: string): WorkerSignalParentLink 
     !Number.isInteger(stepNumber) ||
     stepNumber < 1
   ) {
-    throw new Error(`${where} must be { checklist: string, stepNumber: >=1 }`);
+    throw new SubtaskRegistryError(`${where} must be { checklist: string, stepNumber: >=1 }`);
   }
   return { checklist, stepNumber };
 }
@@ -91,26 +104,30 @@ function parseParentLink(value: unknown, where: string): WorkerSignalParentLink 
  */
 function parseSubtaskRelPath(value: unknown, where: string): string {
   if (typeof value !== 'string' || !value.startsWith(`${SUBTASKS_DIR}/`)) {
-    throw new Error(`${where} must be a ${SUBTASKS_DIR}/ relative path (got ${String(value)})`);
+    throw new SubtaskRegistryError(
+      `${where} must be a ${SUBTASKS_DIR}/ relative path (got ${String(value)})`,
+    );
   }
   if (path.posix.normalize(value) !== value) {
-    throw new Error(`${where} must be a normalized path (got ${value})`);
+    throw new SubtaskRegistryError(`${where} must be a normalized path (got ${value})`);
   }
   return value;
 }
 
 /** Where a child checklist came from, with its provenance digests. */
 function parseSubtaskSource(value: unknown, where: string): SubtaskSource {
-  if (!isPlainRecord(value)) throw new Error(`${where} must be an object`);
+  if (!isPlainRecord(value)) throw new SubtaskRegistryError(`${where} must be an object`);
   const kind = value.kind;
   if (kind !== 'skill' && kind !== 'template' && kind !== 'inline') {
-    throw new Error(`${where}.kind must be skill, template, or inline (got ${String(kind)})`);
+    throw new SubtaskRegistryError(
+      `${where}.kind must be skill, template, or inline (got ${String(kind)})`,
+    );
   }
   const sha256 = requireString(value.sha256, `${where}.sha256`);
   const renderedSha256 = requireString(value.renderedSha256, `${where}.renderedSha256`);
   const ref = value.ref;
   if (ref !== undefined && typeof ref !== 'string') {
-    throw new Error(`${where}.ref must be a string when present`);
+    throw new SubtaskRegistryError(`${where}.ref must be a string when present`);
   }
   // `inline` carries no ref by contract: the text itself is identified by digest.
   return { kind, sha256, renderedSha256, ...(ref === undefined ? {} : { ref }) };
@@ -124,10 +141,10 @@ function parseSubtaskSource(value: unknown, where: string): SubtaskSource {
  */
 function parseSubtaskIndexUnit(raw: unknown, source: string, position: number): SubtaskIndexUnit {
   const where = `${source} units[${position}]`;
-  if (!isPlainRecord(raw)) throw new Error(`${where} is not an object`);
+  if (!isPlainRecord(raw)) throw new SubtaskRegistryError(`${where} is not an object`);
   const id = raw.id;
   if (typeof id !== 'string' || !SUBTASK_ID_PATTERN.test(id)) {
-    throw new Error(
+    throw new SubtaskRegistryError(
       `${where}.id must be a slug matching ${SUBTASK_ID_PATTERN} (got ${String(id)})`,
     );
   }
@@ -150,10 +167,12 @@ export function parseSubtaskIndex(text: string, source = SUBTASK_INDEX_REL_PATH)
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    throw new Error(`invalid ${source}: ${(err as Error).message}`);
+    throw new SubtaskRegistryError(`invalid ${source}: ${(err as Error).message}`);
   }
   if (!isPlainRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.units)) {
-    throw new Error(`invalid ${source}: expected { "schemaVersion": 1, "units": [] }`);
+    throw new SubtaskRegistryError(
+      `invalid ${source}: expected { "schemaVersion": 1, "units": [] }`,
+    );
   }
   const units = raw.units.map((unit, position) => parseSubtaskIndexUnit(unit, source, position));
   return { schemaVersion: 1, units };
@@ -170,7 +189,16 @@ export async function readSubtaskIndex(
 ): Promise<SubtaskIndex | null> {
   const indexPath = subtaskIndexPathFor(taskDir);
   if (!(await slotFileExists(ctx, indexPath))) return null;
-  return parseSubtaskIndex(await slotReadFile(ctx, indexPath), indexPath);
+  let text: string;
+  try {
+    text = await slotReadFile(ctx, indexPath);
+  } catch (err) {
+    // The file existed a moment ago, so this is a read fault, not absence.
+    // Reported as a registry error so callers treat it like a corrupt registry
+    // rather than "this run has no child units".
+    throw new SubtaskRegistryError(`cannot read ${indexPath}: ${(err as Error).message}`);
+  }
+  return parseSubtaskIndex(text, indexPath);
 }
 
 /** Registered units hanging off one parent checklist basename. */
@@ -244,13 +272,17 @@ async function readChildSignal(
   try {
     return parseSubtaskSignal(JSON.parse(text));
   } catch (err) {
-    // A signal caught mid-write is the one read failure that is genuinely
-    // expected here: `mark` writes atomically but a remote read can still land
-    // on a truncated frame. The next watch event re-reads it; treating it as
-    // "no signal yet" keeps the projection honest instead of failing the whole
-    // progress call for a transient partial read.
+    // Two cases reach here, and the caller cannot tell them apart:
+    //   - transient: a remote read landed on a truncated frame mid-rewrite, which
+    //     the next watch event re-reads successfully;
+    //   - persistent: the file is genuinely corrupt, and no later event fixes it,
+    //     so this warn repeats on every progress read for the rest of the run.
+    // Either way the child reads as "not reported yet" rather than failing the
+    // whole progress call, and the parent's own progress still reaches clients.
+    // A corrupt child signal cannot hide an unfinished child: the terminal
+    // contract check treats an unreadable status as unsettled and refuses.
     console.warn(
-      `[subtasks] ignoring unparseable child signal ${unit.signal}: ${(err as Error).message}`,
+      `[subtasks] ignoring unreadable child signal ${unit.signal}: ${(err as Error).message}`,
     );
     return null;
   }
@@ -372,6 +404,22 @@ export async function listOpenSubtaskUnits(
     if (!isSettledSubtaskStatus(status)) open.push({ unit, status });
   }
   return open;
+}
+
+/**
+ * Worker-facing verdict for a registry the gateway cannot read at terminal time.
+ * `mark sub` is its only writer, so the worker cannot repair it by marking
+ * differently — the message says what is wrong and names the file.
+ */
+export function subtaskRegistryContractMessage(
+  error: SubtaskRegistryError,
+  terminalCommand: string,
+): string {
+  return (
+    `Terminal signal rejected: the child-unit registry ${SUBTASK_INDEX_REL_PATH} cannot be read, ` +
+    `so the gateway cannot tell whether a child checklist is still open. ${error.message}. ` +
+    `Only \`mark sub\` writes this file; restore or remove it, then run ./mark ${terminalCommand} again.`
+  );
 }
 
 /** Worker-facing description of the open children blocking a terminal mark. */

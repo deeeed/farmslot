@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -13,6 +13,8 @@ import * as realConfig from '../core/config.js';
 
 let remoteRepo = '';
 let orchestratorTaskRoot = '';
+/** Set to make the mocked project-config load fail, as an edited project.json would. */
+let projectVarsError: Error | null = null;
 
 mock.module('../core/config.js', {
   namedExports: {
@@ -25,7 +27,10 @@ mock.module('../core/config.js', {
       slotId: 'slot-subtask-metrics',
       projectName: 'farmslot',
     }),
-    loadProjectVars: async () => ({ projectJson: {} }),
+    loadProjectVars: async () => {
+      if (projectVarsError) throw projectVarsError;
+      return { projectJson: {} };
+    },
     getOrchestratorTaskRoot: () => orchestratorTaskRoot,
     resolveProjectTaskDirName: () => '.task',
     resolveTaskRelDir: (taskFile: string, taskRoot: string) => {
@@ -170,4 +175,47 @@ test('collectRunSubtaskMetrics returns null for a run with no child unit', async
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('collectRunSubtaskMetrics propagates a project-config load failure', async () => {
+  const { run, root } = setup({ withIndex: true });
+  projectVarsError = new Error('project.json is not valid JSON');
+  try {
+    // Dispatch already loaded this config to place the task directory, so a
+    // failure here is a real fault. Falling back to DEFAULT_TASK_DIR would
+    // resolve a DIFFERENT directory and report "no child units" for a run that
+    // has two — a silent wrong answer instead of a visible failure.
+    await assert.rejects(
+      () => collectRunSubtaskMetrics(run, 'slot-subtask-metrics'),
+      /project\.json is not valid JSON/,
+    );
+  } finally {
+    projectVarsError = null;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-dispatch reports a lost subtask roll-up at error level, keeping parent metrics', async () => {
+  // A source assertion: this catch lives inside the monitor pipeline step, which
+  // needs the whole run engine (slot claim, tmux, monitor loop) to invoke. The
+  // behaviour it guards is a logging LEVEL and the identifying detail in the
+  // message, both of which are only visible in the source at unit scope. The
+  // recovery itself — a metrics failure must not lose the parent's own metrics —
+  // is what the surrounding assertions on the run record cover.
+  const source = readFileSync(
+    path.join(import.meta.dirname, '..', 'run-engine', 'post-dispatch-steps.ts'),
+    'utf-8',
+  );
+  const block = source.slice(
+    source.indexOf('collectRunSubtaskMetrics(after, current.slotId)'),
+    source.indexOf('subtask metrics unavailable') + 200,
+  );
+  assert.ok(block, 'the subtask metrics catch must exist');
+  assert.match(
+    block,
+    /console\.error\(/,
+    'a lost child roll-up is error level: nothing else in the log explains the gap',
+  );
+  assert.doesNotMatch(block, /console\.warn\(/, 'warn would bury it among routine notices');
+  assert.match(block, /after\.taskFile/, 'the report names the task directory it could not read');
 });
