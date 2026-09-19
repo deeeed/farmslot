@@ -3,6 +3,12 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import {
+  readHideTestsPref,
+  splitDiffFilesByKind,
+  writeHideTestsPref,
+} from '../../utils/diff-test-filter.js';
+import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
 
 // Local types (protocol types not imported in isolated phase)
 type GitChangeStatus = 'M' | 'A' | 'D' | '?' | 'R';
@@ -22,6 +28,7 @@ interface BranchDiffFile {
   deletions: number;
   /** Worktree scope: file also has committed changes vs base. */
   committed?: boolean;
+  kind?: 'code' | 'test';
 }
 
 type FileListViewMode = 'tree' | 'list';
@@ -158,6 +165,7 @@ export class GitChanges extends LitElement {
   @state() private _confirmDiscard = '';
   @state() private _viewMode: FileListViewMode = 'tree';
   @state() private _collapsedTreePaths = new Set<string>();
+  @state() private _hideTests = readHideTestsPref();
 
   /** Per-path working-tree entries — rebuilt on demand, avoids O(rows x changes) filters. */
   private get _wtByPath(): Map<string, GitChange[]> {
@@ -511,9 +519,15 @@ export class GitChanges extends LitElement {
     );
   }
 
+  private _toggleHideTests() {
+    this._hideTests = !this._hideTests;
+    writeHideTestsPref(this._hideTests);
+  }
+
   private _renderCommittedGroup() {
     if (this.committedFiles.length === 0) return nothing;
-    const sorted = [...this.committedFiles].sort((a, b) => a.path.localeCompare(b.path));
+    const split = splitDiffFilesByKind(this.committedFiles, this._hideTests);
+    const sorted = [...split.visible].sort((a, b) => a.path.localeCompare(b.path));
     const open = this._committedOpen;
 
     return html`
@@ -529,12 +543,27 @@ export class GitChanges extends LitElement {
             ? ` vs ${this.branchDiffBase}`
             : ''}</span
         >
-        <span class="group-badge">${this.committedFiles.length}</span>
+        <span class="group-badge">${sorted.length}</span>
+        ${renderDiffKindControls({
+          summary: split.summary,
+          hideTests: this._hideTests,
+          onToggle: () => this._toggleHideTests(),
+        })}
       </div>
       ${open
-        ? this._viewMode === 'tree'
-          ? this._renderTree(buildChangeTree({ committedFiles: sorted }), 'committed', 'committed')
-          : sorted.map((f) => this._renderCommittedFileRow(f))
+        ? sorted.length === 0
+          ? html`<div
+              style="padding: ${spacing.sm} ${spacing.md}; font-size: 11px; color: ${colors.textMuted}"
+            >
+              Only test files changed (hidden)
+            </div>`
+          : this._viewMode === 'tree'
+            ? this._renderTree(
+                buildChangeTree({ committedFiles: sorted }),
+                'committed',
+                'committed',
+              )
+            : sorted.map((f) => this._renderCommittedFileRow(f))
         : nothing}
     `;
   }

@@ -51,6 +51,7 @@ import '../components/progress-tracker/progress-tracker.js';
 import '../components/diff-viewer/diff-review.js';
 import '../components/diff-viewer/code-viewer.js';
 import '../components/workspace/file-tree.js';
+import '../components/workspace/branch-changed-files.js';
 import '../components/workspace/git-changes.js';
 import '../components/workspace/metro-log-viewer.js';
 import '../components/workspace/slot-workspace.js';
@@ -293,6 +294,27 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
 
 const DEV_ROUTE_GROUPS: DevHarnessGroup[] = ['screens', 'components', 'experiments'];
 const VALID_DEV_ROUTES = new Set<DevRoute>(DEV_ROUTES.map(({ route }) => route));
+
+/** Committed files with a test mix so the diff-kind controls have something to show. */
+const HARNESS_COMMITTED_FILES = [
+  { path: 'src/app/session.ts', status: 'M' as const, additions: 12, deletions: 3 },
+  { path: 'src/app/session.test.ts', status: 'A' as const, additions: 40, deletions: 0 },
+  { path: 'src/__tests__/util.ts', status: 'M' as const, additions: 5, deletions: 1 },
+  { path: 'src/util/format.ts', status: 'A' as const, additions: 9, deletions: 0 },
+];
+
+const HARNESS_TEST_DIFF = [
+  'diff --git a/src/components/Button.test.tsx b/src/components/Button.test.tsx',
+  'new file mode 100644',
+  '--- /dev/null',
+  '+++ b/src/components/Button.test.tsx',
+  '@@ -0,0 +1,4 @@',
+  "+import { Button } from './Button';",
+  '+',
+  "+test('renders', () => {",
+  '+});',
+  '',
+].join('\n');
 
 @customElement('dev-harness')
 export class DevHarness extends LitElement {
@@ -1558,7 +1580,7 @@ All checks passed.`;
       <diff-viewer-modal
         .open=${this._diffViewerModalOpen}
         title="Mock package diff"
-        .diffText=${MOCK_UNIFIED_DIFF}
+        .diffText=${`${MOCK_UNIFIED_DIFF.trimEnd()}\n${HARNESS_TEST_DIFF}`}
         @diff-modal-close=${() => {
           this._diffViewerModalOpen = false;
         }}
@@ -1618,6 +1640,8 @@ All checks passed.`;
         >
           <git-changes
             .changes=${mock.changes}
+            .committedFiles=${HARNESS_COMMITTED_FILES}
+            branchDiffBase="main"
             branch=${mock.branch}
             .ahead=${mock.ahead}
             .behind=${mock.behind}
@@ -1630,6 +1654,17 @@ All checks passed.`;
           style="width: 400px; background: ${colors.bgSurface}; border-radius: 8px; overflow: hidden"
         >
           <git-changes .changes=${[]} branch="main" .ahead=${0} .behind=${0}></git-changes>
+        </div>
+        <div
+          style="width: 400px; background: ${colors.bgSurface}; border-radius: 8px; overflow: hidden"
+        >
+          <branch-changed-files
+            .files=${HARNESS_COMMITTED_FILES}
+            base="main"
+            head="feat/harness"
+            .totalAdditions=${66}
+            .totalDeletions=${4}
+          ></branch-changed-files>
         </div>
       </div>
     `;

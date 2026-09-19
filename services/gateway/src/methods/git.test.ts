@@ -121,7 +121,9 @@ test('gitBranchDiff default target diffs committed history only', async () => {
     numstat: '3\t1\ta.ts\n',
   });
   const result = await gitBranchDiff({ slotId: 's', base: 'main' }, deps);
-  assert.deepEqual(result.files, [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }]);
+  assert.deepEqual(result.files, [
+    { path: 'a.ts', status: 'M', additions: 3, deletions: 1, kind: 'code' },
+  ]);
   const diffArgs = argvLog.filter((argv) => argv[1] === 'diff');
   assert.ok(diffArgs.every((argv) => argv.includes('mb123..HEAD')));
   assert.ok(
@@ -130,6 +132,40 @@ test('gitBranchDiff default target diffs committed history only', async () => {
     ),
   );
   assert.ok(!argvLog.some((argv) => argv[1] === 'ls-files'));
+});
+
+test('gitBranchDiff stamps each file as code or test using project diff_view patterns', async () => {
+  const { deps } = branchDiffDeps({
+    nameStatus: 'M\tsrc/a.ts\nA\tsrc/a.test.ts\nA\tsrc/a.check.ts\n',
+    numstat: '3\t1\tsrc/a.ts\n9\t0\tsrc/a.test.ts\n2\t0\tsrc/a.check.ts\n',
+  });
+  const defaults = await gitBranchDiff({ slotId: 's', base: 'main' }, deps);
+  assert.deepEqual(
+    defaults.files.map((file) => [file.path, file.kind]),
+    [
+      ['src/a.ts', 'code'],
+      ['src/a.test.ts', 'test'],
+      ['src/a.check.ts', 'code'],
+    ],
+  );
+
+  const custom = await gitBranchDiff(
+    { slotId: 's', base: 'main' },
+    {
+      ...deps,
+      loadVars: async () =>
+        ({ host: 'localhost', machine: 'local', remoteRepo: '/repo', projectName: 'p' }) as any,
+      loadProjectJson: async (project) => {
+        assert.equal(project, 'p');
+        return { diff_view: { test_patterns: ['*.check.ts'] } };
+      },
+    },
+  );
+  assert.deepEqual(
+    custom.files.map((file) => file.kind),
+    ['code', 'test', 'test'],
+    'project patterns extend the defaults',
+  );
 });
 
 test('gitBranchDiff fetches an exact stacked PR base that is missing locally', async () => {
@@ -197,7 +233,7 @@ test('gitBranchDiff fetches missing commits for an exact review snapshot', async
   assert.equal(result.base, base);
   assert.equal(result.head, head);
   assert.deepEqual(result.files, [
-    { path: 'src/reviewed.ts', status: 'M', additions: 4, deletions: 1 },
+    { path: 'src/reviewed.ts', status: 'M', additions: 4, deletions: 1, kind: 'code' },
   ]);
   assert.deepEqual(
     argvLog.filter((argv) => argv[1] === 'fetch').map((argv) => argv.at(-1)),
@@ -310,7 +346,7 @@ test('real git: exact review diff restores a shallow merge base without changing
   );
 
   assert.deepEqual(result.files, [
-    { path: 'feature-only.txt', status: 'A', additions: 1, deletions: 0 },
+    { path: 'feature-only.txt', status: 'A', additions: 1, deletions: 0, kind: 'code' },
   ]);
   assert.match(fileResult.diff, /^\+feature$/m);
   assert.equal(result.base, base);
@@ -511,8 +547,22 @@ test('gitBranchDiff aligns rename numstat paths with name-status newPath', async
   });
   const result = await gitBranchDiff({ slotId: 's', base: 'main' }, deps);
   assert.deepEqual(result.files, [
-    { path: 'src/renamed.ts', status: 'R', oldPath: 'src/old.ts', additions: 3, deletions: 1 },
-    { path: 'new-name.txt', status: 'R', oldPath: 'old-name.txt', additions: 5, deletions: 2 },
+    {
+      path: 'src/renamed.ts',
+      status: 'R',
+      oldPath: 'src/old.ts',
+      additions: 3,
+      deletions: 1,
+      kind: 'code',
+    },
+    {
+      path: 'new-name.txt',
+      status: 'R',
+      oldPath: 'old-name.txt',
+      additions: 5,
+      deletions: 2,
+      kind: 'code',
+    },
   ]);
   assert.equal(result.totalAdditions, 8);
   assert.equal(result.totalDeletions, 3);

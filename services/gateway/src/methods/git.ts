@@ -1,31 +1,41 @@
 // methods/git.ts — git.status, git.diff, git.log, git.show, git.files, git.stage, git.unstage, git.discard
 
-import type {
-  BranchDiffStatus,
-  CommandOutput,
-  GitBranchDiffParams,
-  GitBranchDiffResult,
-  GitChange,
-  GitChangeStatus,
-  GitDiffParams,
-  GitDiffResult,
-  GitDiscardParams,
-  GitFilesParams,
-  GitFilesResult,
-  GitLogParams,
-  GitLogResult,
-  GitShowParams,
-  GitShowResult,
-  GitStageParams,
-  GitStatusParams,
-  GitStatusResult,
-  GitUnstageParams,
-  OkResult,
+import {
+  type BranchDiffStatus,
+  classifyDiffFile,
+  type CommandOutput,
+  compileTestFileMatcher,
+  type GitBranchDiffParams,
+  type GitBranchDiffResult,
+  type GitChange,
+  type GitChangeStatus,
+  type GitDiffParams,
+  type GitDiffResult,
+  type GitDiscardParams,
+  type GitFilesParams,
+  type GitFilesResult,
+  type GitLogParams,
+  type GitLogResult,
+  type GitShowParams,
+  type GitShowResult,
+  type GitStageParams,
+  type GitStatusParams,
+  type GitStatusResult,
+  type GitUnstageParams,
+  type OkResult,
+  resolveTestFilePatterns,
 } from '@farmslot/protocol';
 
-import { execArgvOnSlot, loadSlotVars } from '../core/index.js';
+import {
+  execArgvOnSlot,
+  getProjectFieldRaw,
+  loadSlotVars,
+  type RawProjectJson,
+} from '../core/index.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { workspaceReviewGit } from '../review-workspaces/git.js';
+import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
+import { getRun } from '../runs/store.js';
 
 async function resolveRepoPath(slotId: string): Promise<string> {
   const pools = await loadPoolConfigs();
@@ -46,6 +56,8 @@ export interface GitExecDeps {
   runCommand?: (args: string[]) => Promise<CommandOutput>;
   resolveRepo?: typeof resolveRepoPath;
   loadVars?: typeof loadSlotVars;
+  /** Project config for diff-view test patterns; null falls back to the defaults. */
+  loadProjectJson?: (project: string) => Promise<RawProjectJson | null>;
   runOnSlot?: typeof execArgvOnSlot;
 }
 
@@ -585,5 +597,40 @@ export async function gitBranchDiff(
     }
   }
 
+  const isTestFile = compileTestFileMatcher(await diffViewTestPatterns(params, deps));
+  for (const file of files) file.kind = classifyDiffFile(file.path, isTestFile);
+
   return { base, head, files, totalAdditions, totalDeletions };
+}
+
+/** Project `diff_view` test globs for this diff's repo, on top of the defaults. */
+async function diffViewTestPatterns(
+  params: Pick<GitBranchDiffParams, 'slotId' | 'runId'>,
+  deps: GitExecDeps,
+): Promise<readonly string[]> {
+  const project = params.runId
+    ? getRun(params.runId)?.project
+    : params.slotId
+      ? (await (deps.loadVars ?? loadSlotVars)(params.slotId)).projectName
+      : undefined;
+  const projectJson = project
+    ? await (deps.loadProjectJson ?? defaultLoadProjectJson)(project)
+    : null;
+  const raw = projectJson ? getProjectFieldRaw(projectJson, 'diff_view') : undefined;
+  const block = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const patterns = Array.isArray(block.test_patterns)
+    ? block.test_patterns.filter((entry): entry is string => typeof entry === 'string')
+    : undefined;
+  return resolveTestFilePatterns({
+    testPatterns: patterns,
+    useDefaultTestPatterns:
+      typeof block.use_default_test_patterns === 'boolean'
+        ? block.use_default_test_patterns
+        : undefined,
+  });
+}
+
+async function defaultLoadProjectJson(project: string): Promise<RawProjectJson | null> {
+  const pv = await loadProjectVarsOrNull(project, 'diff view');
+  return pv?.projectJson ?? null;
 }

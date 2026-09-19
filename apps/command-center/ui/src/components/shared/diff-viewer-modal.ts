@@ -1,16 +1,26 @@
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { classifyDiffFile, type DiffFileKind } from '@farmslot/protocol';
+
 import '../diff-viewer/diff-review.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import {
+  readHideTestsPref,
+  splitDiffFilesByKind,
+  writeHideTestsPref,
+} from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
+
+import { renderDiffKindControls } from './diff-kind-controls.js';
 
 interface DiffFileEntry {
   path: string;
   diff: string;
   additions: number;
   deletions: number;
+  kind: DiffFileKind;
 }
 
 interface DiffTreeFolder {
@@ -46,11 +56,13 @@ function parseUnifiedDiff(diffText: string): DiffFileEntry[] {
       if (line.startsWith('+')) additions += 1;
       else if (line.startsWith('-')) deletions += 1;
     }
+    const path = currentPath || `diff-${files.length + 1}`;
     files.push({
-      path: currentPath || `diff-${files.length + 1}`,
+      path,
       diff: current.join('\n'),
       additions,
       deletions,
+      kind: classifyDiffFile(path),
     });
   };
   for (const line of lines) {
@@ -149,6 +161,7 @@ export class DiffViewerModal extends LitElement {
   @state() private _loading = false;
   @state() private _error = '';
   @state() private _selectedPath = '';
+  @state() private _hideTests = readHideTestsPref();
 
   override updated(changed: Map<string, unknown>): void {
     if (!this.open && (changed.has('artifactUrl') || changed.has('diffText'))) {
@@ -241,9 +254,15 @@ export class DiffViewerModal extends LitElement {
     });
   }
 
+  private _toggleHideTests() {
+    this._hideTests = !this._hideTests;
+    writeHideTestsPref(this._hideTests);
+  }
+
   override render() {
     if (!this.open) return nothing;
-    const files = parseUnifiedDiff(this._loadedText);
+    const split = splitDiffFilesByKind(parseUnifiedDiff(this._loadedText), this._hideTests);
+    const files = split.visible;
     const selected = files.find((file) => file.path === this._selectedPath) ?? files[0];
     const tree = buildDiffTree(files);
     const total = files.reduce(
@@ -420,6 +439,11 @@ export class DiffViewerModal extends LitElement {
           <div class="dvm-header">
             <div class="dvm-title">${this.title}</div>
             <div class="dvm-stat">
+              ${renderDiffKindControls({
+                summary: split.summary,
+                hideTests: this._hideTests,
+                onToggle: () => this._toggleHideTests(),
+              })}
               <span>${files.length} files</span><span class="dvm-add">+${total.additions}</span
               ><span class="dvm-del">-${total.deletions}</span>
             </div>

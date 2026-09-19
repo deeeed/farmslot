@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- `project.json` accepts `diff_view.test_patterns` (extra test-file globs) and `diff_view.use_default_test_patterns` for Command Center diff views.
 - `resolveTaskPaths` accepts a slot `taskFile` that already includes `temp/tasks/` and `TASK.md`, and returns the project `taskDirName` it resolved against.
 
 - Pool files accept `pi_path` and expand `{pi_path}` in `dispatch_cmd` for the PI coding-agent TUI runner.
