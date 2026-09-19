@@ -6,7 +6,6 @@
 import path from 'node:path';
 
 import {
-  DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
   type Run,
   type RunSubtaskMetrics,
@@ -44,11 +43,14 @@ export async function resolveWorkerTaskDirForRun(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<string | null> {
   if (!run.taskFile) return null;
-  const projectVars = await loadProjectVars(run.project).catch(() => null);
-  const taskDirName = projectVars
-    ? resolveProjectTaskDirName(projectVars.projectJson)
-    : DEFAULT_TASK_DIR;
-  const orchestratorRoot = getOrchestratorTaskRoot(run.project, projectVars?.projectJson ?? null);
+  // No catch: dispatch already loaded this project's config to place the task
+  // directory, so a load failure at monitor completion is a real fault (the file
+  // was edited or removed mid-run), not a case to paper over with
+  // DEFAULT_TASK_DIR — that fallback would resolve a DIFFERENT directory and
+  // report "no child units" for a run that has them.
+  const projectVars = await loadProjectVars(run.project);
+  const taskDirName = resolveProjectTaskDirName(projectVars.projectJson);
+  const orchestratorRoot = getOrchestratorTaskRoot(run.project, projectVars.projectJson);
   const taskRelDir = resolveTaskRelDir(run.taskFile, orchestratorRoot);
   if (taskRelDir === null) return null;
   return path.join(vars.remoteRepo, taskDirName, taskRelDir);

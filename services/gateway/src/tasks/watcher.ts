@@ -916,8 +916,14 @@ async function computeAndEmit(
       options.fromSubtask ? path.basename(sw.taskFilePath) : undefined,
     );
   } catch (err) {
-    // File may have been deleted (slot released)
-    console.log(`[task-watcher] error reading ${key}: ${(err as Error).message}`);
+    // The watch survives a failed read: the file may have been deleted (slot
+    // released mid-update), and the next event re-reads it. Reported at error
+    // level with the key and the reason because the alternative reading — a
+    // corrupt child registry or signal — means clients are now showing progress
+    // that has stopped advancing, and nothing else in the log would say so.
+    console.error(
+      `[task-watcher] progress read failed for ${key} (${sw.taskFilePath}): ${(err as Error).message}`,
+    );
   }
 }
 

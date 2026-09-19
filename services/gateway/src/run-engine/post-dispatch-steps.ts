@@ -476,11 +476,14 @@ export async function executeMonitorStep(
     try {
       subtaskMetrics = await collectRunSubtaskMetrics(after, current.slotId);
     } catch (err) {
-      // A corrupt registry must not lose the parent's own metrics, which are the
-      // run's primary cost record. Reported, not hidden: the same read throws to
-      // its caller in task.progress, where the operator sees it.
-      console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — subtask metrics unavailable: ${(err as Error).message}`,
+      // A corrupt registry or an unloadable project config must not lose the
+      // parent's own metrics, which are the run's primary cost record — so this
+      // recovery stays. Error level, not warn: child durations are missing from
+      // the retrospective for this run and nothing downstream will say why. The
+      // same read throws to its caller in task.progress, where the operator sees
+      // it on the next progress request.
+      console.error(
+        `[run-engine] run ${runId.slice(0, 8)} — subtask metrics unavailable for ${after.taskFile ?? 'unknown task dir'}: ${(err as Error).message}`,
       );
     }
     if (

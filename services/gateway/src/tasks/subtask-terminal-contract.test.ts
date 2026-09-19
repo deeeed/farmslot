@@ -45,6 +45,11 @@ const { validateTerminalSignalArtifacts } = await import('./worker-terminal-cont
 
 const CHILD_MARKDOWN = '- [ ] **1. read the failing job output**\n';
 
+/** Overwrite the registry with text that cannot be a registry. */
+function corruptRegistry(dir: string, body: string): void {
+  writeFileSync(path.join(dir, 'subtasks', 'index.json'), body);
+}
+
 function writeTaskDir(childStatus: string | null): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'gw-subtask-contract-'));
   const dir = path.join(root, 'task');
@@ -178,5 +183,36 @@ test('a non-terminal signal is not gated on children at all', async () => {
     assert.equal(result.ok, true);
   } finally {
     rmSync(path.dirname(taskDir), { recursive: true, force: true });
+  }
+});
+
+test('an unreadable registry is an artifact-contract failure, not an unhandled error', async () => {
+  for (const [label, body] of [
+    ['not JSON', 'not json at all\n'],
+    ['wrong shape', '{"schemaVersion":9,"units":[]}\n'],
+    ['a bad unit', '{"schemaVersion":1,"units":[{"id":"BAD ID"}]}\n'],
+  ] as const) {
+    taskDir = writeTaskDir('complete');
+    corruptRegistry(taskDir, body);
+    execCalls = [];
+    try {
+      const result = await validateTerminalSignalArtifacts(
+        'slot-subtask-contract',
+        path.join(taskDir, 'SIGNAL.json'),
+        TERMINAL_SIGNAL,
+        path.join(taskDir, 'CHECKLIST.md'),
+      );
+      assert.equal(result.ok, false, `${label} must be a verdict, not a throw`);
+      assert.equal(result.ok === false && result.kind, 'artifact');
+      const message = result.ok === false ? result.message : '';
+      // Names the file, carries the parse reason, and tells the worker who owns it.
+      assert.match(message, /subtasks\/index\.json/, label);
+      assert.match(message, /Only `mark sub` writes this file/, label);
+      assert.match(message, /run \.\/mark complete again/, label);
+      // The remote checker is never reached: completion cannot be proven.
+      assert.deepEqual(execCalls, [], label);
+    } finally {
+      rmSync(path.dirname(taskDir), { recursive: true, force: true });
+    }
   }
 });

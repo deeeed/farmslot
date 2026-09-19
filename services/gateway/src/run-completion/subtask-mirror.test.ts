@@ -8,6 +8,25 @@ import { isGatewayOwnedArtifactMirrorEntry } from '../core/artifact-copy-policy.
 
 import { mirrorWorkerSubtasks } from './artifact-mirror.js';
 
+/** A slot context whose stat fails the way a broken transport does. */
+function statFailingCtx(code: string | undefined) {
+  return {
+    host: 'remote-host',
+    machine: 'remote-machine',
+    sshTarget: 'user@remote',
+    nodeRequest: async (method: string) => {
+      if (method === 'fs.exists') return { exists: true };
+      if (method === 'fs.list') return { entries: [{ name: 'index.json' }] };
+      if (method === 'fs.stat') {
+        const error = new Error('stat refused') as NodeJS.ErrnoException;
+        if (code) error.code = code;
+        throw error;
+      }
+      throw new Error(`unexpected method ${method}`);
+    },
+  };
+}
+
 const LOCAL = { host: 'localhost', machine: 'local', sshTarget: '' };
 const META = { runId: 'run-1', slotId: 'slot-1' };
 
@@ -96,4 +115,35 @@ test('isGatewayOwnedArtifactMirrorEntry never claims a child unit file', () => {
   // Sanity: the predicate still recognises what it owns.
   assert.equal(isGatewayOwnedArtifactMirrorEntry('session-metrics.json'), true);
   assert.equal(isGatewayOwnedArtifactMirrorEntry('self-review-1.md'), true);
+});
+
+test('mirrorWorkerSubtasks propagates a stat failure that is not a vanished entry', async () => {
+  const { orchestrator } = makeDirs({});
+  try {
+    // A permissions or transport fault must not be reported as a clean mirror:
+    // the orchestrator copy would silently lack the child files.
+    await assert.rejects(
+      () => mirrorWorkerSubtasks(statFailingCtx('EACCES'), '/worker/task', orchestrator, META),
+      /stat refused/,
+    );
+    // An error with no code at all is also not a vanished entry.
+    await assert.rejects(
+      () => mirrorWorkerSubtasks(statFailingCtx(undefined), '/worker/task', orchestrator, META),
+      /stat refused/,
+    );
+  } finally {
+    rmSync(path.dirname(orchestrator), { recursive: true, force: true });
+  }
+});
+
+test('mirrorWorkerSubtasks skips an entry that vanished between listing and stat', async () => {
+  const { orchestrator } = makeDirs({});
+  try {
+    // `mark` writes atomically, so a listing can name a temp file that is gone a
+    // moment later. That one case is an expected recovery, not a failure.
+    await mirrorWorkerSubtasks(statFailingCtx('ENOENT'), '/worker/task', orchestrator, META);
+    assert.deepEqual(readdirSync(path.join(orchestrator, 'subtasks')), []);
+  } finally {
+    rmSync(path.dirname(orchestrator), { recursive: true, force: true });
+  }
 });
