@@ -147,6 +147,14 @@ function criterion(id: string, verdict: string): Record<string, unknown> {
   };
 }
 
+/**
+ * Quiet window longer than the watcher's 1s debounce plus a progress read, so an
+ * emission that was going to happen has happened before a count is asserted.
+ */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+
 /** Wait for an emitted update that satisfies `predicate`, or fail with what arrived. */
 // Generous for the same reason as the child-unit watcher test: a chokidar event
 // plus the watcher's 1s debounce plus a full progress re-read, in a 400-file suite.
@@ -168,12 +176,12 @@ async function waitFor(
   );
 }
 
-test('a ledger already on disk reaches clients when the watch attaches', async () => {
+test('a ledger already on disk reaches clients once, and a later write once more', async () => {
   const root = writeTaskDir();
   // The state a gateway restart finds: verdicts recorded before this watch began.
-  // Locally that arrives through chokidar's initial `add`; the remote path needs
-  // the explicit read the watcher does after registering (node fs.watch reports
-  // changes only), which this local harness cannot exercise.
+  // The directory watch runs with `ignoreInitial: true`, so the only thing that
+  // reports this ledger is the explicit read after arming — and it must report it
+  // exactly once, not once per mechanism.
   writeLedger(taskDirAbs(), [criterion('AC-1', 'proven'), criterion('AC-2', 'untestable')]);
   emitted.length = 0;
   try {
@@ -186,6 +194,46 @@ test('a ledger already on disk reaches clients when the watch attaches', async (
       first.progress.acceptanceStatus?.criteria.map((entry) => entry.verdict),
       ['proven', 'untestable'],
     );
+    await settle();
+    assert.equal(emitted.length, 1, 'the initial read and the watch must not both emit');
+
+    // A later verdict is one more update, and only one.
+    writeLedger(taskDirAbs(), [
+      criterion('AC-1', 'proven'),
+      criterion('AC-2', 'untestable'),
+      criterion('AC-3', 'weak'),
+    ]);
+    await waitFor(
+      'the later verdict',
+      (entry) => entry.progress.acceptanceStatus?.criteria.length === 3,
+    );
+    await settle();
+    assert.equal(emitted.length, 2, 'one write, one update');
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('other files in artifacts/ never drive a progress update', async () => {
+  const root = writeTaskDir();
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    // The directory is the watch subject, so every worker artifact lands in it.
+    // Only the ledger is progress; the rest must not re-read the task dir.
+    const artifacts = path.join(taskDirAbs(), 'artifacts');
+    writeFileSync(path.join(artifacts, 'report.md'), '# Report\n');
+    writeFileSync(path.join(artifacts, 'after.png'), 'png-bytes');
+    writeFileSync(path.join(artifacts, 'recipe.json'), '{}\n');
+    await settle();
+    assert.equal(emitted.length, 0, `worker artifacts emitted: ${emitted.length}`);
+
+    // The ledger in the same directory still does.
+    writeLedger(taskDirAbs(), [criterion('AC-1', 'proven')]);
+    await waitFor('the ledger', (entry) => entry.progress.acceptanceStatus?.criteria.length === 1);
+    await settle();
+    assert.equal(emitted.length, 1);
   } finally {
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
