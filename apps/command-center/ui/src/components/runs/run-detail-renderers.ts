@@ -39,6 +39,7 @@ import {
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
+import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
 import {
   collectRunEvidenceArtifacts,
@@ -64,9 +65,9 @@ export interface RunDetailViewContext {
   run: Run | null;
   prStatus: PRStatus | null;
   siblings: Run[];
-  taskProgress: unknown;
+  taskProgress: TaskProgressStructured | null;
   selectedStep: Run['steps'][number] | null;
-  selectedStepProgress: unknown;
+  selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
   _bootstrapFailed: boolean;
   _connectionStale: boolean;
@@ -962,6 +963,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <run-pipeline
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >
       </run-pipeline>
@@ -970,9 +972,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <step-inspector
               .step=${ctx.selectedStep}
               .run=${ctx.run}
-              .taskProgress=${ctx.selectedStep?.name === 'monitor'
-                ? ctx.taskProgress
-                : ctx.selectedStepProgress}
+              .taskProgress=${stepInspectorTaskProgress({
+                selectedStepName: ctx.selectedStep?.name,
+                run: ctx.run ?? undefined,
+                liveProgress: ctx.taskProgress,
+                selectedStepProgress: ctx.selectedStepProgress,
+              })}
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>

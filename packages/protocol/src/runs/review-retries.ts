@@ -22,10 +22,11 @@ type ReviewRetryFields = Partial<
 >;
 
 export function independentReviewRetryCount(review: ReviewRetryFields): number {
+  const fromAttempts = Math.max(0, (review.attempts?.length ?? 1) - 1);
   if (typeof review.retryCount === 'number' && Number.isFinite(review.retryCount)) {
-    return Math.max(0, Math.round(review.retryCount));
+    return Math.max(0, Math.round(review.retryCount), fromAttempts);
   }
-  return Math.max(0, (review.attempts?.length ?? 1) - 1);
+  return fromAttempts;
 }
 
 /**
@@ -50,6 +51,28 @@ export function independentReviewFixRetriesExhausted(review: ReviewRetryFields):
   return review.maxRetriesExhausted === true;
 }
 
+/** Repair wiped `retryCount: 0` and stamp a missing cap from project config. */
+export function stampIndependentReviewRetryCap<T extends ReviewRetryFields>(
+  review: T,
+  configuredMaxRetries?: number,
+): T {
+  if (review.source === 'self-review') return review;
+  const retryCount = independentReviewRetryCount(review);
+  const maxRetries =
+    typeof review.maxRetries === 'number' && Number.isFinite(review.maxRetries)
+      ? review.maxRetries
+      : typeof configuredMaxRetries === 'number' && Number.isFinite(configuredMaxRetries)
+        ? configuredMaxRetries
+        : undefined;
+  const next = {
+    ...review,
+    retryCount,
+    ...(typeof maxRetries === 'number' ? { maxRetries } : {}),
+  };
+  if (!independentReviewFixRetriesExhausted(next)) return next;
+  return { ...next, maxRetriesExhausted: true, recoveryContinuationPending: false };
+}
+
 export function independentReviewRetryCapReason(review: ReviewRetryFields): string {
   const retryCount = independentReviewRetryCount(review);
   const findings = Math.max(review.unresolvedCount ?? 0, review.issues?.length ?? 0);
@@ -72,25 +95,11 @@ export function latestIndependentReview(
     );
 }
 
-export function independentReviewMatchesPreparedPackage(
-  review: ReviewRetryFields,
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
-): boolean {
-  if (!preparedPackage) return true;
-  const head = preparedPackage.headSha?.trim();
-  const reviewedHead = (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)?.trim();
-  if (!head || !reviewedHead || reviewedHead !== head) return false;
-  // HEAD only. Subject-hash drift must not hide bypass.
-  return true;
-}
-
-/** Latest terminal extra-review that hit its auto-fix cap on this package. */
+/** Latest terminal extra-review that hit its auto-fix cap. Package HEAD drift does not hide this. */
 export function latestExhaustedIndependentReview(
   reviews: readonly ReviewRetryFields[] | undefined,
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): ReviewRetryFields | undefined {
   const latest = latestIndependentReview(reviews);
   if (!latest || !independentReviewFixRetriesExhausted(latest)) return undefined;
-  if (!independentReviewMatchesPreparedPackage(latest, preparedPackage)) return undefined;
   return latest;
 }

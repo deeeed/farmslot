@@ -22,8 +22,10 @@ import {
   activeTaskProgressStepId,
   ciWatchOutputsForRun,
   computeLayout,
+  currentPipelineNodeId,
   effectiveTaskProgressForRun,
   isInlineCiFixActiveFromOutputs,
+  pipelineDetachedProgressVisible,
   type PipelineLayout,
 } from './run-pipeline-model.js';
 import {
@@ -48,6 +50,7 @@ import {
   renderPipelineArrow,
   renderPipelineDecisions,
   renderPipelineDefs,
+  renderPipelineFocus,
   renderPipelineLanes,
   renderPublicationReviewLoops,
   renderSelfReviewLoop,
@@ -58,6 +61,7 @@ import { effectiveStepStatus } from './run-utils.js';
 export class RunPipeline extends LitElement {
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  @property() selectedStepName?: string;
   @state() private monitorExpanded = false;
   @state() private autoExpandDone = false;
   @state() private cancelPending = false;
@@ -170,7 +174,11 @@ export class RunPipeline extends LitElement {
               </div>
             `
           : nothing}
-        ${this.monitorExpanded && this._activeTaskProgress() ? this.renderProgressPanel() : nothing}
+        ${this.monitorExpanded &&
+        this._activeTaskProgress() &&
+        pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
+          ? this.renderProgressPanel()
+          : nothing}
       </div>
     `;
   }
@@ -212,6 +220,11 @@ export class RunPipeline extends LitElement {
       ${renderSelfReviewLoop(nodeMap, (step) => this._vis(step.status))}
       ${renderPublicationReviewLoops(layout.nodes, (step) => this._vis(step.status))}
       ${renderPipelineDecisions(this.run, nodeMap)}
+      ${renderPipelineFocus({
+        nodes: layout.nodes,
+        selectedStepName: this.selectedStepName,
+        currentNodeId: currentPipelineNodeId(this.run),
+      })}
     `;
   }
 
@@ -284,7 +297,12 @@ export class RunPipeline extends LitElement {
     return activeStep ? this._effectiveTaskProgress() : undefined;
   }
 
-  private _activeTaskProgressStepId(): 'monitor' | 'self-review' | 'ci-watch' | null {
+  private _activeTaskProgressStepId():
+    | 'monitor'
+    | 'self-review'
+    | 'ci-watch'
+    | 'human-gate'
+    | null {
     return activeTaskProgressStepId(this.run, this.taskProgress);
   }
 

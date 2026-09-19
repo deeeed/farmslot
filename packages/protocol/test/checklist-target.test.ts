@@ -97,6 +97,10 @@ test('nestedLoopProgressLabel uses active checklist basename', () => {
     'Self-review Progress',
   );
   assert.equal(nestedLoopProgressLabel('ci-watch', CI_FIX_CHECKLIST), 'CI Fix Progress');
+  assert.equal(
+    nestedLoopProgressLabel('human-gate', 'SELF-REVIEW.rev-cursor.md'),
+    'Independent Review Progress',
+  );
 });
 
 test('checklistTargetForAgentRole reads from registry', () => {

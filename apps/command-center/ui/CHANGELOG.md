@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Extra-review checklist progress stays visible on human-gate and package-refresh while the reviewer is working. Waiting on extra-review findings says so instead of "Worker finished", and the pipeline marks the publish-gate as now. Opening a step inspector no longer duplicates the live checklist under the canvas; the inspector keeps the boxes when live progress has not bound yet.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18

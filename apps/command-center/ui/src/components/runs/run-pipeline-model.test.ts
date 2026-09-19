@@ -6,8 +6,13 @@ import type { Run } from '@farmslot/protocol';
 import {
   activeTaskProgressStepId,
   computeLayout,
+  currentPipelineNodeId,
   effectiveTaskProgressForRun,
+  isPublicationReviewProgressActive,
+  pipelineDetachedProgressVisible,
   publicationReviewStepForName,
+  selectedStepShowsLiveTaskProgress,
+  stepInspectorTaskProgress,
 } from './run-pipeline-model.js';
 import { pipelineStepTone } from './run-pipeline-status.js';
 
@@ -221,6 +226,174 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
   assert.equal(packageRefresh.step.outputs?.lastReviewVerdict, 'issues');
   assert.equal(pipelineStepTone(review.step), 'warn');
   assert.equal(pipelineStepTone(packageRefresh.step), 'warn');
+});
+
+test('live extra-review progress shows on human-gate and package-refresh inspectors', () => {
+  const run = makeRun({
+    status: 'human-gating',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.rev-cursor.md',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Running human-gate cursor review (1/1)...',
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'rev-cursor',
+        role: 'self-review',
+        status: 'working',
+        runner: 'cursor',
+      } as never,
+    ],
+  });
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Independent review',
+      totalSteps: 2,
+      phases: [
+        {
+          name: 'Checklist',
+          steps: [
+            { index: 1, name: 'Start' },
+            { index: 2, name: 'Read worker report' },
+          ],
+        },
+      ],
+    },
+    phases: [
+      {
+        name: 'Checklist',
+        steps: [
+          { index: 1, name: 'Start', status: 'done' as const },
+          { index: 2, name: 'Read worker report', status: 'running' as const },
+        ],
+        completedSteps: 1,
+        totalSteps: 2,
+      },
+    ],
+    completedSteps: 1,
+    totalSteps: 2,
+    currentPhase: 'Checklist',
+    currentStep: 'Read worker report',
+  };
+  assert.equal(isPublicationReviewProgressActive(run), true);
+  assert.equal(activeTaskProgressStepId(run, live), 'human-gate');
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'package-refresh'), true);
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'human-gate'), true);
+  assert.equal(
+    stepInspectorTaskProgress({
+      selectedStepName: 'package-refresh',
+      run,
+      liveProgress: live,
+      selectedStepProgress: null,
+    })?.currentStep,
+    'Read worker report',
+  );
+});
+
+test('detached checklist panel hides when the inspector already shows live progress', () => {
+  const run = makeRun({
+    status: 'monitoring',
+    steps: [{ name: 'monitor', status: 'running' }],
+  });
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Worker',
+      totalSteps: 13,
+      phases: [{ name: 'Checklist', steps: [] }],
+    },
+    phases: [],
+    completedSteps: 9,
+    totalSteps: 13,
+    currentPhase: 'Checklist',
+    currentStep: 'Push PR branch',
+  };
+  assert.equal(pipelineDetachedProgressVisible(run, undefined, live), true);
+  assert.equal(pipelineDetachedProgressVisible(run, 'monitor', live), false);
+  assert.equal(pipelineDetachedProgressVisible(run, 'monitor', null), true);
+  assert.equal(pipelineDetachedProgressVisible(run, 'prepare', live), true);
+  assert.equal(
+    stepInspectorTaskProgress({
+      selectedStepName: 'monitor',
+      run,
+      liveProgress: live,
+      selectedStepProgress: null,
+    })?.totalSteps,
+    13,
+  );
+});
+
+test('pipeline self-review is not classified as publication extra-review', () => {
+  const run = makeRun({
+    status: 'self-reviewing',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.md',
+    steps: [
+      { name: 'self-review', status: 'running' },
+      { name: 'human-gate', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'self-review',
+        role: 'self-review',
+        status: 'working',
+        runner: 'claude',
+      } as never,
+    ],
+  });
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Self-review',
+      totalSteps: 1,
+      phases: [{ name: 'Checklist', steps: [{ index: 1, name: 'Start' }] }],
+    },
+    phases: [
+      {
+        name: 'Checklist',
+        steps: [{ index: 1, name: 'Start', status: 'running' as const }],
+        completedSteps: 0,
+        totalSteps: 1,
+      },
+    ],
+    completedSteps: 0,
+    totalSteps: 1,
+    currentPhase: 'Checklist',
+    currentStep: 'Start',
+  };
+  assert.equal(isPublicationReviewProgressActive(run), false);
+  assert.equal(activeTaskProgressStepId(run, live), 'self-review');
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'self-review'), true);
+});
+
+test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
+  const run = makeRun({
+    status: 'blocked',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW-FIX.md',
+    steps: [{ name: 'human-gate', status: 'running', detail: 'Waiting for operator decision' }],
+    decisions: [
+      {
+        id: 'd1',
+        type: 'engine_human_gate',
+        title: 'gate',
+        actions: [{ id: 'continue-review-fix', label: 'Continue Fixing', style: 'primary' }],
+      } as never,
+    ],
+    agentContexts: [
+      {
+        id: 'self-review-fix',
+        role: 'self-review-fix',
+        status: 'working',
+        runner: 'claude',
+      } as never,
+    ],
+  });
+  assert.equal(isPublicationReviewProgressActive(run), false);
+  assert.equal(currentPipelineNodeId(run), 'human-gate');
 });
 
 test('computeLayout keeps package-refresh pending when a review agent is working', () => {

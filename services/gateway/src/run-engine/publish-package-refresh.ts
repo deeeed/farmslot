@@ -253,7 +253,7 @@ export async function refreshPublishPackage(params: {
     prPackage,
     reviewDepth,
   );
-  const exhaustedReview = latestExhaustedIndependentReview(independentReviews, prPackage);
+  const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
   const pendingReview = pendingIndependentReviewContinuation(independentReviews);
   const actions = publicationGateDecisionActions({
     reviewSatisfied,

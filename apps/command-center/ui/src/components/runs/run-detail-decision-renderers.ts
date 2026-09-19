@@ -132,6 +132,17 @@ export interface RunDecisionRenderContext {
   ) => void;
 }
 
+export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions'>): string {
+  const ids = new Set((decision.actions ?? []).map((action) => action.id));
+  if (ids.has('continue-review-fix')) return 'Independent review found issues';
+  if (ids.has('approve-publish-unresolved')) return 'Review retries exhausted';
+  if (ids.has('approve-publish') || ids.has('ready')) {
+    return 'Worker finished — verify before marking ready';
+  }
+  if (ids.has('request-extra-review')) return 'Publication gate — review required';
+  return 'Action required';
+}
+
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   // Show gate section for ANY unresolved decision (not just ones with payload)
   const rawPending = run.decisions.find((d) => !d.resolvedAt);
@@ -154,7 +165,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   const title = isReview
     ? 'Review ready for your decision'
     : isReady
-      ? 'Worker finished — verify before marking ready'
+      ? publicationGateWaitingTitle(pending)
       : isSlotPicker
         ? 'No suitable slot — pick one'
         : isBranchNudge

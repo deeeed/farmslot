@@ -366,6 +366,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
+    // An active fix pass only exists while the latest extra-review has open
+    // findings, so re-arming here is the in-flight loop resuming, not leftover
+    // findings being resent. A run parked at the cap has no active fix
+    // context and skips this branch.
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
     if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
       const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
@@ -769,7 +773,15 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         const restoredStatus = nextStep ? (STEP_TO_STATUS[nextStep.name] ?? 'created') : 'done';
         deps.updateRun(run.id, { status: restoredStatus });
       } else {
-        deps.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+        // Nothing to advance. A worker-signal or engine block already skipped
+        // the remaining steps, and an uncertain prompt delivery holds the slot
+        // for operator reconciliation. Its resolved decisions are history, not
+        // a wait that ended while the process was down; marking the run done
+        // here used to re-enter the engine at the first skipped step.
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — blocked with no running step; keeping blocked`,
+        );
+        continue;
       }
     }
 

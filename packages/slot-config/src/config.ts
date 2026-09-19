@@ -2240,9 +2240,24 @@ export function resolveTaskRelDir(
 
 export interface TaskPaths {
   vars: SlotVars;
+  /** Project task dir name the paths were resolved against (e.g. `temp/tasks`). */
+  taskDirName: string;
   taskDir: string;
   taskMdPath: string;
   signalPath: string;
+}
+
+/** Slot.taskFile should be `fix/foo`, not `temp/tasks/fix/foo/TASK.md`. */
+export function normalizeSlotTaskRel(taskFile: string, taskDirName: string): string {
+  let rel = taskFile.replace(/\\/g, '/').replace(/\/+$/, '');
+  const base = rel.split('/').pop() ?? '';
+  if (/\.(md|json)$/i.test(base)) {
+    rel = rel.slice(0, Math.max(0, rel.length - base.length - 1));
+  }
+  const dir = taskDirName.replace(/\\/g, '/');
+  if (rel === dir) return '';
+  if (rel.startsWith(`${dir}/`)) rel = rel.slice(dir.length + 1);
+  return rel;
 }
 
 export async function resolveTaskPaths(slotId: string, taskFile: string): Promise<TaskPaths> {
@@ -2254,9 +2269,11 @@ export async function resolveTaskPaths(slotId: string, taskFile: string): Promis
   } catch {
     /* use default */
   }
-  const taskDir = path.join(vars.remoteRepo, taskDirName, taskFile);
+  const rel = normalizeSlotTaskRel(taskFile, taskDirName);
+  const taskDir = path.join(vars.remoteRepo, taskDirName, rel);
   return {
     vars,
+    taskDirName,
     taskDir,
     taskMdPath: path.join(taskDir, 'TASK.md'),
     signalPath: path.join(taskDir, 'SIGNAL.json'),

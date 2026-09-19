@@ -131,11 +131,11 @@ export interface PRReviewComment {
 export {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   independentReviewFixRetriesExhausted,
-  independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
   latestIndependentReview,
+  stampIndependentReviewRetryCap,
 } from '../runs/review-retries.js';
 export type {
   CommentsTriageSummary,

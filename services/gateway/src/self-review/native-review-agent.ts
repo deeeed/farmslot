@@ -44,6 +44,7 @@ import {
   persistReviewOutputArtifacts,
   prependReviewerExecutionContract,
   readTerminalReviewSignal,
+  reReviewChecklistPrefix,
   type ReviewAgentResult,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
@@ -194,19 +195,46 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
           feedbackRelPath,
           resultRelPath,
         );
-        if (warm) {
+        if (loopNumber > 1) {
+          const previous = await readPersistedReviewSnapshot(
+            vars,
+            taskDir,
+            loopNumber - 1,
+            artifactScope,
+          );
+          const prefix = reReviewChecklistPrefix({
+            taskDir,
+            loopNumber,
+            artifactScope,
+            priorHeadSha: previous?.snapshot.headSha ?? null,
+            currentHeadSha: snapshot.snapshot.headSha ?? null,
+          });
+          if (prefix) template = `${prefix}${template}`;
+        } else if (warm) {
           const previous = await readPersistedReviewSnapshot(
             vars,
             taskDir,
             warm.reviewLoopNumber ?? 1,
             warm.artifactScope,
           );
-          template =
-            continuationReviewScope({
-              priorHeadSha: previous?.snapshot.headSha ?? null,
-              currentHeadSha: snapshot.snapshot.headSha ?? null,
-              priorArtifactDir: `${taskDir}/${reviewArtifactDir(warm.reviewLoopNumber ?? 1, warm.artifactScope)}`,
-            }) + template;
+          const prefix = reReviewChecklistPrefix({
+            taskDir,
+            loopNumber,
+            artifactScope,
+            priorArtifactScope: warm.artifactScope,
+            priorLoopNumber: warm.reviewLoopNumber ?? 1,
+            priorHeadSha: previous?.snapshot.headSha ?? null,
+            currentHeadSha: snapshot.snapshot.headSha ?? null,
+            resume: true,
+          });
+          if (prefix) template = `${prefix}${template}`;
+          else
+            template =
+              continuationReviewScope({
+                priorHeadSha: previous?.snapshot.headSha ?? null,
+                currentHeadSha: snapshot.snapshot.headSha ?? null,
+                priorArtifactDir: `${taskDir}/${reviewArtifactDir(warm.reviewLoopNumber ?? 1, warm.artifactScope)}`,
+              }) + template;
         }
         admit();
         await writeTextFileOnSlot(

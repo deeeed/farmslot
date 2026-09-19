@@ -6,6 +6,7 @@ import {
   isInteractiveDevRun,
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
+  latestIndependentReview,
   PipelineSteps,
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
@@ -878,11 +879,10 @@ export async function executeHumanGateStep(
           );
         }
       }
-      const resumedInterruptedReview = current.slotId
-        ? await (
-            context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
-          )(runId, current.slotId)
-        : null;
+      // Do not auto-send leftover extra-review findings on human-gate entry.
+      // Restart used to resumeInterruptedPublicationReview here, which re-fed
+      // the same ISSUES into the worker with no pending decision — Command
+      // Center had nothing to click. Continue Fixing stays an operator action.
       // Runs persisted before review counting v2 may re-enter directly at the
       // human gate after restart. Repair before deriving an automatic plan so
       // the legacy double-count does not launch a redundant reviewer.
@@ -912,6 +912,10 @@ export async function executeHumanGateStep(
         : [];
       const reviewsForInitial =
         beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [];
+      const latestExtraReview = latestIndependentReview(reviewsForInitial);
+      const latestHasOpenFindings =
+        latestExtraReview?.verdict === 'issues' &&
+        Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
       const persistedReviewDepth = beforeInitialPlan.engineState?.publishGate?.reviewDepth;
       const replayProjectVars =
         unconsumedReviewDecision && persistedReviewDepth?.requestedBy !== 'dispatch'
@@ -929,31 +933,29 @@ export async function executeHumanGateStep(
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
-      const initialPlan =
-        resumedInterruptedReview?.verdict !== undefined &&
-        resumedInterruptedReview.verdict !== 'pass'
+      const initialPlan = unconsumedReviewDecision
+        ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
+            requestedAt: unconsumedReviewDecision?.resolvedAt,
+            source: 'human-gate',
+          })
+        : latestHasOpenFindings
           ? []
-          : unconsumedReviewDecision
-            ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
-                requestedAt: unconsumedReviewDecision?.resolvedAt,
-                source: 'human-gate',
+          : explicitInitialPlan.length
+            ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
+                requestedAt:
+                  beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
+                source:
+                  beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
+                  'human-gate'
+                    ? 'human-gate'
+                    : 'dispatch',
               })
-            : explicitInitialPlan.length
-              ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
-                  requestedAt:
-                    beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
-                  source:
-                    beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
-                    'human-gate'
-                      ? 'human-gate'
-                      : 'dispatch',
-                })
-              : automaticPublicationReviewPlan(
-                  beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
-                    publicationReviewPolicyForRun(beforeInitialPlan),
-                  reviewsForInitial,
-                  beforeInitialPlan.metrics.runner,
-                );
+            : automaticPublicationReviewPlan(
+                beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+                  publicationReviewPolicyForRun(beforeInitialPlan),
+                reviewsForInitial,
+                beforeInitialPlan.metrics.runner,
+              );
       const recoveredReviewDepth = unconsumedReviewDecision
         ? humanGateReviewDepth(
             replayBaseReviewDepth,
@@ -1018,7 +1020,7 @@ export async function executeHumanGateStep(
           reviewSource,
         );
         await reconcilePublishGateReviewPlanResult(runId, dispatchPlan, reviewPlanResult, context);
-      } else if (recoveredReviewIds.length > 0 || resumedInterruptedReview) {
+      } else if (recoveredReviewIds.length > 0) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
         const prepared = await prepareCompletionPackage(runId, {
@@ -1030,14 +1032,7 @@ export async function executeHumanGateStep(
           stampReviews: false,
           requireArtifactMirror: true,
         });
-        stampFreshReviewsForPreparedPackage(
-          runId,
-          [
-            ...recoveredReviewIds,
-            ...(resumedInterruptedReview ? [resumedInterruptedReview.reviewId] : []),
-          ],
-          prepared.prPackage,
-        );
+        stampFreshReviewsForPreparedPackage(runId, recoveredReviewIds, prepared.prPackage);
       }
     }
     let gateAction = await executeReadyGate(runId);

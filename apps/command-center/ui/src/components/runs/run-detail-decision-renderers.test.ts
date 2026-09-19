@@ -1,7 +1,25 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { decisionActionHelp } from './run-detail-decision-renderers.js';
+import {
+  decisionActionHelp,
+  publicationGateWaitingTitle,
+} from './run-detail-decision-renderers.js';
+
+test('publication gate title names review issues instead of worker finished', () => {
+  assert.equal(
+    publicationGateWaitingTitle({
+      actions: [{ id: 'continue-review-fix', label: 'Continue Fixing', style: 'primary' }],
+    }),
+    'Independent review found issues',
+  );
+  assert.equal(
+    publicationGateWaitingTitle({
+      actions: [{ id: 'approve-publish', label: 'Approve', style: 'primary' }],
+    }),
+    'Worker finished — verify before marking ready',
+  );
+});
 
 test('decisionActionHelp prefers persisted descriptions over fallback copy', () => {
   assert.equal(

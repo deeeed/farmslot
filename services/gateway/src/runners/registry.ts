@@ -885,6 +885,8 @@ export function retainedReviewerDeliveryPlan(
 ): RetainedReviewerDeliveryPlan {
   const resetContext = sessionIntent === 'reset' && loopNumber === 1;
   if (runnerRetainedSessionHandoff(runnerId) === 'argv-relaunch') {
+    // Cursor cannot prove an injected prompt was accepted. Loop 2+/resume still
+    // argv-respawn; the re-review checklist prefix carries prior findings.
     return { kind: 'cold-relaunch', resetContext: false };
   }
   if (!resetContext) return { kind: 'in-place', resetContext: false };

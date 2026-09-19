@@ -4,10 +4,10 @@ import test from 'node:test';
 import type { IndependentReviewAttempt } from '../../src/contracts/runs.js';
 import {
   independentReviewFixRetriesExhausted,
-  independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
+  stampIndependentReviewRetryCap,
 } from '../../src/runs/review-retries.js';
 
 const attempt = (extras: Partial<IndependentReviewAttempt> = {}): IndependentReviewAttempt => ({
@@ -30,6 +30,32 @@ test('retry count prefers the persisted field then falls back to attempts', () =
     3,
   );
   assert.equal(independentReviewRetryCount({}), 0);
+  assert.equal(
+    independentReviewRetryCount({
+      retryCount: 0,
+      attempts: [attempt(), attempt(), attempt(), attempt()],
+    }),
+    3,
+    'a wiped retryCount: 0 must not hide spent attempts',
+  );
+});
+
+test('stamp repairs a wiped cap so a spent extra-review is exhausted', () => {
+  const stamped = stampIndependentReviewRetryCap(
+    {
+      source: 'human-gate',
+      verdict: 'issues',
+      unresolvedCount: 7,
+      retryCount: 0,
+      recoveryContinuationPending: true,
+      attempts: [attempt(), attempt(), attempt(), attempt()],
+    },
+    3,
+  );
+  assert.equal(stamped.retryCount, 3);
+  assert.equal(stamped.maxRetries, 3);
+  assert.equal(stamped.maxRetriesExhausted, true);
+  assert.equal(stamped.recoveryContinuationPending, false);
 });
 
 test('explicit maxRetriesExhausted wins', () => {
@@ -105,30 +131,24 @@ test('only the latest extra-review on the current package can be exhausted', () 
     maxRetries: 3,
     reviewedHeadSha: 'new',
   };
+  assert.equal(latestExhaustedIndependentReview([oldCap, laterIssues]), undefined);
   assert.equal(
-    latestExhaustedIndependentReview([oldCap, laterIssues], { headSha: 'new' }),
-    undefined,
-  );
-  assert.equal(
-    latestExhaustedIndependentReview(
-      [
-        oldCap,
-        {
-          source: 'human-gate',
-          verdict: 'issues',
-          unresolvedCount: 2,
-          retryCount: 3,
-          maxRetries: 3,
-          reviewedHeadSha: 'new',
-        },
-      ],
-      { headSha: 'new' },
-    )?.unresolvedCount,
+    latestExhaustedIndependentReview([
+      oldCap,
+      {
+        source: 'human-gate',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        retryCount: 3,
+        maxRetries: 3,
+        reviewedHeadSha: 'new',
+      },
+    ])?.unresolvedCount,
     2,
   );
 });
 
-test('exhaustion matches the prepared package by HEAD, not subject hash', () => {
+test('exhaustion does not depend on the prepared package HEAD', () => {
   const exhausted = {
     source: 'human-gate' as const,
     verdict: 'issues' as const,
@@ -139,20 +159,10 @@ test('exhaustion matches the prepared package by HEAD, not subject hash', () => 
     reviewedReviewSubjectHash: 'old-subject',
   };
   assert.equal(
-    independentReviewMatchesPreparedPackage(exhausted, {
-      headSha: 'abc',
-      reviewSubjectHash: 'new-subject',
-    }),
-    true,
-  );
-  assert.equal(
-    latestExhaustedIndependentReview([exhausted], {
-      headSha: 'abc',
-      reviewSubjectHash: 'new-subject',
-    })?.unresolvedCount,
+    latestExhaustedIndependentReview([exhausted])?.unresolvedCount,
     2,
+    'HEAD drift must not hide the exhausted extra-review bypass',
   );
-  assert.equal(independentReviewMatchesPreparedPackage(exhausted, { headSha: 'other' }), false);
 });
 
 test('cap copy names the remaining findings and the two unblock paths', () => {

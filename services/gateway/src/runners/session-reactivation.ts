@@ -30,6 +30,7 @@ import {
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
+  type RetainedSessionHandoff,
   runnerContextResetCommand,
   runnerHasDurablePromptHandoff,
   runnerNeedsPostLaunchPrompt,
@@ -75,6 +76,8 @@ export interface RunnerSessionReactivationOptions {
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
   forceBusyPoll?: boolean;
+  /** Override the runner's retained handoff for this delivery (extra-review follow-up). */
+  handoff?: RetainedSessionHandoff;
 }
 
 export type RetainedSessionDeliveryResult =
@@ -847,7 +850,8 @@ export async function deliverPromptToLiveRunner(
   options: LiveRunnerDeliveryOptions,
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
-  if (runnerRetainedSessionHandoff(runner) === 'argv-relaunch') {
+  const handoff = options.handoff ?? runnerRetainedSessionHandoff(runner);
+  if (handoff === 'argv-relaunch') {
     return deliverPromptWithRetainedFallback(options);
   }
 

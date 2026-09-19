@@ -268,6 +268,59 @@ that range only when the delta invalidates a prior assumption, and explain why i
 `;
 }
 
+export function workerFixHandoffScope(params: {
+  taskDir: string;
+  priorLoopNumber: number;
+  artifactScope?: string | null;
+}): string {
+  const priorDir = `${params.taskDir}/${reviewArtifactDir(params.priorLoopNumber, params.artifactScope)}`;
+  return `## Worker fix handoff (required reading)
+
+This is a continuation, not a first-look review. The worker already answered the prior findings.
+
+Before filing any finding, read:
+- \`${params.taskDir}/artifacts/report.md\` — latest \`## Self-Review Fixes\` (fixed, disputed, or left open)
+- \`${params.taskDir}/SELF-REVIEW-FIX.md\` — the issue list sent to the worker
+- \`${priorDir}/review-feedback.md\` — the prior findings
+
+Treat the worker report as first-class:
+- **Fixed:** verify on current HEAD. Re-file only if the defect is still present.
+- **Does not reproduce / wrong:** confirm or refute with evidence. Do not re-file on taste.
+- **Still open / product decision:** do not re-state it as a new finding. Quote the worker rationale and reject it, or drop the issue.
+
+A worker SIGNAL of complete/success can mean "subset fixed + documented refusals." That is not "all findings gone." Repeating the same AC4/AC5/cache finding without engaging the worker write-up is a failed re-review.
+`;
+}
+
+/** Prefix for extra-review loop 2+ and same-runner resume. Loop 1 reset stays cold. */
+export function reReviewChecklistPrefix(params: {
+  taskDir: string;
+  loopNumber: number;
+  artifactScope?: string | null;
+  priorArtifactScope?: string | null;
+  priorLoopNumber?: number;
+  priorHeadSha?: string | null;
+  currentHeadSha?: string | null;
+  resume?: boolean;
+}): string | null {
+  if (params.loopNumber <= 1 && !params.resume) return null;
+  const priorLoopNumber = params.priorLoopNumber ?? Math.max(1, params.loopNumber - 1);
+  const priorScope = params.priorArtifactScope ?? params.artifactScope;
+  const priorArtifactDir = `${params.taskDir}/${reviewArtifactDir(priorLoopNumber, priorScope)}`;
+  return [
+    continuationReviewScope({
+      priorHeadSha: params.priorHeadSha ?? null,
+      currentHeadSha: params.currentHeadSha ?? null,
+      priorArtifactDir,
+    }),
+    workerFixHandoffScope({
+      taskDir: params.taskDir,
+      priorLoopNumber,
+      artifactScope: priorScope,
+    }),
+  ].join('\n');
+}
+
 function structuredReviewResultInstructions(resultRelPath: string): string {
   return `
 
@@ -1017,7 +1070,46 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    if (warmSession) {
+    const priorExtraReview = [...(parentRun?.engineState?.publishGate?.independentReviews ?? [])]
+      .reverse()
+      .find(
+        (review) =>
+          review.source !== 'self-review' &&
+          review.id !== artifactScope &&
+          (review.verdict === 'issues' || review.verdict === 'pass'),
+      );
+    if (loopNumber > 1 || sessionIntent === 'resume') {
+      const priorScope =
+        loopNumber > 1 ? artifactScope : (priorExtraReview?.id ?? warmSession?.artifactScope);
+      const priorLoop =
+        loopNumber > 1
+          ? loopNumber - 1
+          : Math.max(
+              1,
+              priorExtraReview?.attempts?.length ??
+                priorExtraReview?.loopNumber ??
+                warmSession?.lastLoopNumber ??
+                1,
+            );
+      const previous = priorScope
+        ? await readPersistedReviewSnapshot(vars, taskDir, priorLoop, priorScope)
+        : null;
+      const prefix = reReviewChecklistPrefix({
+        taskDir,
+        loopNumber,
+        artifactScope,
+        priorArtifactScope: priorScope,
+        priorLoopNumber: priorLoop,
+        priorHeadSha:
+          previous?.snapshot.headSha ??
+          priorExtraReview?.reviewedHeadSha ??
+          warmSession?.lastReviewedHeadSha ??
+          null,
+        currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
+        resume: sessionIntent === 'resume',
+      });
+      if (prefix) expandedTemplate = `${prefix}\n${expandedTemplate}`;
+    } else if (warmSession) {
       expandedTemplate = `${continuationReviewScope({
         priorHeadSha: warmSession.lastReviewedHeadSha,
         currentHeadSha: reviewSnapshot.snapshot.headSha ?? null,
@@ -1043,7 +1135,6 @@ export async function runReviewAgent(
     // Interactive runners receive a short prompt after the TUI is ready; the
     // detailed instructions live in the reviewer checklist. Exec runners bake a
     // self-contained prompt into their launch command.
-    const parentRun = getRun(_runId);
     // Pre-flight: a claim whose persisted session file is gone (or was never
     // recorded) cannot resume — downgrade to a fresh cold launch up front
     // instead of burning the 120s ready-timeout on a dead `resume`.
@@ -1070,11 +1161,15 @@ export async function runReviewAgent(
     // findings, so its prompt narrows the scope to the worker's fixes since then.
     // The cold-fallback path must NOT use this preamble — a fresh reviewer is not
     // "the same reviewer session" and needs the full review contract.
+    const coldReReviewPrompt =
+      loopNumber > 1
+        ? `Continue this same review. The worker applied fixes since your last findings — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's delta against your previous findings. Do NOT run /review.\n\n${basePrompt}`
+        : basePrompt;
     const warmPrompt = warmSession
       ? continuingPriorGeneration
         ? `Continue your prior review of this same run. Review only changes since your previous reviewed head and confirm prior findings remain resolved. Prior review artifacts are in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}. Complete the checklist's current output contract (feedback + signal) as written.\n\n${basePrompt}`
-        : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
-      : basePrompt;
+        : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
+      : coldReReviewPrompt;
     let taskPrompt = warmPrompt;
 
     // 4. Reuse the live reviewer when possible. The runner capability decides
@@ -1138,7 +1233,11 @@ export async function runReviewAgent(
       return binding ? persistLiveReviewerSession(binding) : false;
     };
 
-    const deliverToLiveReviewer = async (prompt: string, resetContext: boolean): Promise<void> => {
+    const deliverToLiveReviewer = async (
+      prompt: string,
+      resetContext: boolean,
+      inPlace = false,
+    ): Promise<void> => {
       // Native resume or cold replacement can create a new runner process even
       // though the canonical tmux window stays the same. Rebind from that live
       // pane before the next retained handoff; the previous claim is lineage
@@ -1186,6 +1285,7 @@ export async function runReviewAgent(
         vars,
         target: reviewTarget,
         runnerId: runner,
+        ...(inPlace ? { handoff: 'in-place' as const } : {}),
         // Native reset may acknowledge before it exposes the successor session.
         // The fresh prompt hook is authoritative until we bind that successor
         // immediately after acceptance.
@@ -1379,14 +1479,18 @@ export async function runReviewAgent(
         }
       } else {
         try {
-          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext);
+          await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext, true);
         } catch (err) {
-          if (!deliveryPlan.resetContext) throw err;
+          // Deliberate recovery, not a swallow: a failed context reset lands
+          // here too, and the cold launch below replaces the pane's process
+          // with the same checklist, so nothing from the failed path survives.
           console.warn(
-            `[self-review] retained ${runner} reviewer could not reset (${(err as Error).message}) — replacing its process with a cold fresh launch`,
+            `[self-review] retained ${runner} reviewer could not continue in-place (${(err as Error).message}) — replacing its process with a cold launch that still carries the re-review checklist`,
           );
           warmSession = null;
-          taskPrompt = basePrompt;
+          // The fresh process is not "the same reviewer session"; give it the
+          // delta contract instead of the warm identity preamble.
+          taskPrompt = coldReReviewPrompt;
           await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
         }
       }

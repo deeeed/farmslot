@@ -7,6 +7,7 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
   resolveRecoveredFixBaseSha,
+  resolveSelfReviewMaxRetries,
   resolveSelfReviewRunnerModel,
   resumeSelfReviewFixPromptDelivery,
   retryDeferredFixDelivery,
@@ -623,6 +624,7 @@ interface CallLog {
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
   sessionPolicies: Array<string | undefined>;
+  sessionIntents: Array<string | undefined>;
   reviewEfforts: Array<string | null | undefined>;
   progressDetails: string[];
 }
@@ -638,6 +640,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     waitBaselines: [],
     artifactScopes: [],
     sessionPolicies: [],
+    sessionIntents: [],
     reviewEfforts: [],
     progressDetails: [],
   };
@@ -725,11 +728,12 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       _validationDepth,
       artifactScope,
       sessionPolicy,
-      _sessionIntent,
+      sessionIntent,
       effort,
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.sessionPolicies.push(sessionPolicy);
+      calls.sessionIntents.push(sessionIntent);
       calls.reviewEfforts.push(effort);
       calls.reviewAgent += 1;
       const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
@@ -810,6 +814,28 @@ test('runSelfReviewRetryLoop: incomplete re-review surfaces as skipped, not a fa
   assert.equal(result.skipped, true, 'incomplete re-review must not clear unresolved issues');
   assert.equal(result.reason, 'no-feedback-file');
   assert.notEqual(result.verdict, 'pass');
+});
+
+test('resolveSelfReviewMaxRetries keeps extra-review on the project cap', () => {
+  assert.equal(
+    resolveSelfReviewMaxRetries({
+      publicationReview: true,
+      configuredMaxRetries: 3,
+      requestedMaxRetries: 5,
+      priorRetryCount: 6,
+      resume: true,
+    }),
+    3,
+  );
+  assert.equal(
+    resolveSelfReviewMaxRetries({
+      publicationReview: false,
+      configuredMaxRetries: 3,
+      priorRetryCount: 3,
+      resume: true,
+    }),
+    4,
+  );
 });
 
 test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds issues', async () => {
@@ -1341,6 +1367,7 @@ test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch',
     deps: warm.deps,
   });
   assert.deepEqual(warm.calls.sessionPolicies, ['warm-per-reviewer']);
+  assert.deepEqual(warm.calls.sessionIntents, ['resume']);
 
   const dflt = buildDeps({
     reviewVerdicts: ['pass'],

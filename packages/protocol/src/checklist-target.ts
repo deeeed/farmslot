@@ -278,16 +278,17 @@ export function shouldAcceptTaskProgressUpdate(
   return contextId === expectedRole;
 }
 
-export type PipelineProgressStep = 'monitor' | 'self-review' | 'ci-watch' | null;
+export type PipelineProgressStep = 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null;
 
 export function nestedLoopProgressLabel(
   activeStep: PipelineProgressStep,
   activeTaskBasename: string | null | undefined,
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): string {
-  if (activeStep === 'self-review') {
+  if (activeStep === 'self-review' || activeStep === 'human-gate') {
     const role = agentRoleForChecklistBasename(activeTaskBasename ?? '', registry);
     if (role === 'self-review-fix') return 'Self-review Fix Progress';
+    if (activeStep === 'human-gate') return 'Independent Review Progress';
     return 'Self-review Progress';
   }
   if (activeStep === 'ci-watch') return 'CI Fix Progress';

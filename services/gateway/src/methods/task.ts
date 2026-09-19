@@ -18,7 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars, resolveTaskPaths } from '../core/config.js';
+import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
@@ -69,7 +69,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   if (!slot?.taskFile) throw new Error(`No task file for slot ${params.slotId}`);
 
   // Resolve paths using slot.taskFile (relative dir, e.g. "fix/proj-2796-0403-1242")
-  const { vars, taskMdPath } = await resolveTaskPaths(params.slotId, slot.taskFile);
+  const { vars, taskDirName, taskMdPath } = await resolveTaskPaths(params.slotId, slot.taskFile);
 
   // Use activeTaskFile if the run has declared a variant (e.g. SELF-REVIEW.md)
   // activeTaskFile is absolute — extract just the filename and resolve within the task dir
@@ -103,7 +103,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   };
 
   // Parse structure directly from active task file — no schema file needed
-  const flowType = slot.taskFile.split('/')[0] || 'fix-bug';
+  const flowType = normalizeSlotTaskRel(slot.taskFile, taskDirName).split('/')[0] || 'fix-bug';
   const schema = generateTaskSchema(markdown, flowType);
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
