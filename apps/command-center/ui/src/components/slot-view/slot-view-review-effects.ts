@@ -102,6 +102,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     if (!isCurrent()) return;
     view._branchDiffBase = result.base;
     view._branchDiffFiles = result.files;
+    view._branchDiffTestPatterns = result.testFilePatterns ?? null;
     view._branchDiffHead = result.head;
     view._branchDiffTotalAdd = result.totalAdditions;
     view._branchDiffTotalDel = result.totalDeletions;
@@ -114,6 +115,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     console.warn('[slot-view] branch diff files load failed:', message);
     if (!isCurrent()) return;
     view._branchDiffFiles = [];
+    view._branchDiffTestPatterns = null;
     view._branchDiffHead = '';
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
