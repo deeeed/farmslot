@@ -17,6 +17,7 @@
   - `task init` persists the criteria as `task.acceptanceCriteria` in `inputs/handoff.json` (new `--acceptance` flag, repeatable), which is where the positional `AC-<N>` ids come from. `TASK.md` rendering is unchanged.
   - `mark complete` passes `--require-acceptance-status` when the handoff lists criteria: the artifact contract check then fails on a missing ledger, any criterion without a verdict, and `weak` or `missing` unless the flow's terminal contract sets `acceptance.allowWeak`.
   - The package `test` script ends with the acceptance-ledger end-to-end scenario on a real task directory.
+  - Transitional: the `--require-recipe-coverage-if-recipe` rule is unchanged, so farm templates keep writing `artifacts/recipe-coverage.md` until the Phase 4 template pass moves them onto `ac render`.
 - `summarizeAcceptanceStatus` accepts the registered criteria and reports `unrecorded`; `acceptanceCriteriaView` pairs them with their verdicts. Both mirror `@farmslot/protocol`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

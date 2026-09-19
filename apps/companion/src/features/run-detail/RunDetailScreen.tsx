@@ -128,6 +128,7 @@ export default function RunDetailScreen() {
   const [acceptanceCriteria, setAcceptanceCriteria] = useState<AcceptanceCriterionRef[] | null>(
     null,
   );
+  const [acceptanceStatusError, setAcceptanceStatusError] = useState<string | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
@@ -273,6 +274,7 @@ export default function RunDetailScreen() {
         setTaskProgress(result.structured ?? null);
         setAcceptanceStatus(result.acceptanceStatus ?? null);
         setAcceptanceCriteria(result.acceptanceCriteria ?? null);
+        setAcceptanceStatusError(result.acceptanceStatusError ?? null);
         setTaskProgressError(null);
       })
       .catch((err: Error) => {
@@ -288,6 +290,7 @@ export default function RunDetailScreen() {
       setTaskProgress(update.progress.structured ?? null);
       setAcceptanceStatus(update.progress.acceptanceStatus ?? null);
       setAcceptanceCriteria(update.progress.acceptanceCriteria ?? null);
+      setAcceptanceStatusError(update.progress.acceptanceStatusError ?? null);
       setTaskProgressError(null);
     });
     return unsub;
@@ -298,6 +301,7 @@ export default function RunDetailScreen() {
       setTaskProgress(null);
       setAcceptanceStatus(null);
       setAcceptanceCriteria(null);
+      setAcceptanceStatusError(null);
       setTaskProgressError(null);
       return;
     }
@@ -964,10 +968,11 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'timeline' ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
-            {acceptanceStatus || acceptanceCriteria?.length ? (
+            {acceptanceStatus || acceptanceCriteria?.length || acceptanceStatusError ? (
               <TaskAcceptancePanel
                 acceptanceStatus={acceptanceStatus}
                 acceptanceCriteria={acceptanceCriteria}
+                error={acceptanceStatusError}
               />
             ) : null}
             {activeTaskProgress ? (

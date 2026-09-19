@@ -177,6 +177,12 @@ export const acceptancePanelStyles = css`
     text-decoration: underline;
   }
 
+  /* A read failure is louder than any verdict: the record itself is broken. */
+  .ac-error {
+    color: ${unsafeCSS(colors.statusFail)};
+    font-family: ${unsafeCSS(fonts.mono)};
+  }
+
   .ac-note {
     padding-left: 3.2em;
     color: ${unsafeCSS(colors.textSecondary)};
@@ -240,13 +246,19 @@ export function renderAcceptancePanel(
     evidenceHref?: (evidencePath: string) => string;
     /** Registered criteria, so an unjudged one still gets a row. */
     criteria?: ReadonlyArray<AcceptanceCriterionRef>;
+    /** Why the ledger could not be read; shown instead of an empty panel. */
+    error?: string | null;
   } = {},
 ): TemplateResult | typeof nothing {
   const rows = acceptanceCriteriaView(options.criteria ?? ledger.criteria, ledger);
-  if (rows.length === 0) return nothing;
+  if (rows.length === 0 && !options.error) return nothing;
   const view = acceptancePanelPresentation(ledger, options.criteria ?? ledger.criteria);
   return html`
-    <details class="ac-panel" data-testid="acceptance-panel" ?open=${view.hasOpenCriteria}>
+    <details
+      class="ac-panel"
+      data-testid="acceptance-panel"
+      ?open=${view.hasOpenCriteria || Boolean(options.error)}
+    >
       <summary class="ac-summary">
         <span class="ac-caret"></span>
         <span class="ac-label">Acceptance criteria</span>
@@ -254,7 +266,14 @@ export function renderAcceptancePanel(
           >${view.counts}</span
         >
       </summary>
-      <div class="ac-rows">${rows.map((row) => renderRow(row, options.evidenceHref))}</div>
+      <div class="ac-rows">
+        ${options.error
+          ? html`<div class="ac-error" data-testid="acceptance-error">
+              ledger unreadable: ${options.error}
+            </div>`
+          : nothing}
+        ${rows.map((row) => renderRow(row, options.evidenceHref))}
+      </div>
     </details>
   `;
 }

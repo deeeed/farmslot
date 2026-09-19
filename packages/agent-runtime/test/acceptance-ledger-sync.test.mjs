@@ -105,6 +105,21 @@ test('acceptance-ledger.cjs stays aligned with @farmslot/protocol/contracts/acce
     ['AC-1', 'AC-2', 'AC-3'],
   );
   assert.deepEqual(cjs.renderAcceptanceCoverage(LEDGER), protocol.renderAcceptanceCoverage(LEDGER));
+  // Rendering with the registered criteria: an unjudged one is a row and counts
+  // in the total, in both implementations.
+  const partial = { schemaVersion: 1, criteria: [LEDGER.criteria[0]] };
+  const twoCriteria = [
+    { id: 'AC-1', text: LEDGER.criteria[0].text },
+    { id: 'AC-2', text: 'Not judged yet' },
+  ];
+  assert.deepEqual(
+    cjs.renderAcceptanceCoverage(partial, twoCriteria),
+    protocol.renderAcceptanceCoverage(partial, twoCriteria),
+  );
+  assert.match(
+    protocol.renderAcceptanceCoverage(partial, twoCriteria),
+    /Overall recipe coverage: 1\/2 ACs PROVEN \(untestable: none, weak: 0, missing: 0, no verdict: 1\)/,
+  );
   assert.deepEqual(cjs.validateAcceptanceStatusLedger(LEDGER), []);
   for (const value of INVALID) {
     const mirrored = cjs.validateAcceptanceStatusLedger(value);

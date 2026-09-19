@@ -19,7 +19,11 @@ export type AcceptanceProofMode = (typeof ACCEPTANCE_PROOF_MODES)[number];
 /** Ids are positional, so a criterion keeps its id for the life of the task dir. */
 export const ACCEPTANCE_CRITERION_ID_PATTERN = /^AC-[1-9][0-9]*$/;
 
-/** `AC-<N>` for a 0-based position in the handoff criteria array. */
+/**
+ * `AC-<N>` for a criterion's position in the handoff array.
+ *
+ * @param index 0-based position in `inputs/handoff.json` `task.acceptanceCriteria`.
+ */
 export function acceptanceCriterionId(index: number): string {
   return `AC-${index + 1}`;
 }
@@ -156,11 +160,13 @@ export function validateAcceptanceStatusLedger(value: unknown): string[] {
 }
 
 /**
- * Verdict tally over the ledger. `total` counts the criteria in the ledger, so a
- * caller that knows the registered criteria (see {@link acceptanceCriteriaView})
- * must use that count for "how many are there" — pass them as `criteria` to get a
- * summary whose `total` is the registered count and whose `unrecorded` says how
- * many are still waiting for a verdict.
+ * Verdict tally over the ledger.
+ *
+ * Omitting `criteria` counts only the rows already recorded, which understates a
+ * partial ledger: `total` is then "verdicts written", not "criteria the task has".
+ * Pass the registered criteria whenever the caller can read them — every caller
+ * with the task directory can — to get a `total` of registered criteria and an
+ * `unrecorded` count of those still waiting for a verdict.
  */
 export function summarizeAcceptanceStatus(
   ledger: AcceptanceStatusLedger,
@@ -201,9 +207,18 @@ function list(values: string[]): string {
  * ledger. The proof-mode column keeps the lowercase `state` / `visual` / `mixed`
  * vocabulary the evidence rules key off, and the last line is the `Overall recipe
  * coverage:` summary every consumer of the coverage file already looks for.
+ *
+ * Pass `criteria` so the overall line counts registered criteria: without them a
+ * partial ledger reads `1/1 PROVEN` when the task has three criteria. A criterion
+ * with no verdict yet is counted in the total and listed as awaiting one; it is
+ * never given a verdict it does not have.
  */
-export function renderAcceptanceCoverage(ledger: AcceptanceStatusLedger): string {
-  const summary = summarizeAcceptanceStatus(ledger);
+export function renderAcceptanceCoverage(
+  ledger: AcceptanceStatusLedger,
+  criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
+): string {
+  const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const rows = acceptanceCriteriaView(criteria, ledger);
   const untestable = ledger.criteria
     .filter((criterion) => criterion.verdict === 'untestable')
     .map((criterion) => criterion.id);
@@ -213,18 +228,22 @@ export function renderAcceptanceCoverage(ledger: AcceptanceStatusLedger): string
     '| AC | Criterion | Verdict | Proof mode | Recipe nodes | Evidence | Note |',
     '| --- | --- | --- | --- | --- | --- | --- |',
   ];
-  for (const criterion of ledger.criteria) {
+  for (const row of rows) {
+    const status = row.status;
     lines.push(
-      `| ${criterion.id} | ${cell(criterion.text)} | ${criterion.verdict.toUpperCase()} | ` +
-        `${criterion.proofMode ?? '-'} | ${list(criterion.recipeNodes)} | ` +
-        `${list(criterion.evidence)} | ${cell(criterion.note ?? '')} |`,
+      `| ${row.id} | ${cell(row.text)} | ${status ? status.verdict.toUpperCase() : 'NO VERDICT'} | ` +
+        `${status?.proofMode ?? '-'} | ${list(status?.recipeNodes ?? [])} | ` +
+        `${list(status?.evidence ?? [])} | ${cell(status?.note ?? '')} |`,
     );
   }
   lines.push(
     '',
     `Overall recipe coverage: ${summary.proven}/${summary.total} ACs PROVEN ` +
       `(untestable: ${untestable.length > 0 ? untestable.join(', ') : 'none'}, ` +
-      `weak: ${summary.weak}, missing: ${summary.missing})`,
+      `weak: ${summary.weak}, missing: ${summary.missing}` +
+      // Only when some criterion has no verdict: a finished run renders the exact
+      // line the spec pins, and a partial one says why the counts fall short.
+      `${summary.unrecorded > 0 ? `, no verdict: ${summary.unrecorded}` : ''})`,
     '',
   );
   return lines.join('\n');

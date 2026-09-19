@@ -72,6 +72,8 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) acceptanceStatus?: AcceptanceStatusLedger | null;
   /** Registered criteria, so one still awaiting a verdict gets a row of its own. */
   @property({ attribute: false }) acceptanceCriteria?: AcceptanceCriterionRef[] | null;
+  /** Why the ledger could not be read, when it could not. */
+  @property({ attribute: false }) acceptanceStatusError?: string | null;
   /** Turns a task-dir relative evidence path into a link the host can serve. */
   @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
   @property() selectedStepName?: string;
@@ -288,10 +290,13 @@ export class RunPipeline extends LitElement {
    * operator opens run detail to answer.
    */
   private renderAcceptancePanel() {
-    if (!this.acceptanceStatus && !this.acceptanceCriteria?.length) return nothing;
+    if (!this.acceptanceStatus && !this.acceptanceCriteria?.length && !this.acceptanceStatusError) {
+      return nothing;
+    }
     return renderAcceptancePanel(this.acceptanceStatus ?? { schemaVersion: 1, criteria: [] }, {
       ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
       ...(this.acceptanceCriteria?.length ? { criteria: this.acceptanceCriteria } : {}),
+      ...(this.acceptanceStatusError ? { error: this.acceptanceStatusError } : {}),
     });
   }
 

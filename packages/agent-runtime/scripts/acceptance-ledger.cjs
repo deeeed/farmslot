@@ -29,6 +29,10 @@ class AcceptanceRefusal extends Error {
   }
 }
 
+/**
+ * `AC-<N>` for a criterion's position in the handoff array.
+ * @param {number} index 0-based position in inputs/handoff.json task.acceptanceCriteria.
+ */
 function acceptanceCriterionId(index) {
   return `AC-${index + 1}`;
 }
@@ -131,8 +135,9 @@ function list(values) {
   return values.length > 0 ? cell(values.join(', ')) : '-';
 }
 
-function renderAcceptanceCoverage(ledger) {
-  const summary = summarizeAcceptanceStatus(ledger);
+function renderAcceptanceCoverage(ledger, criteria = ledger.criteria) {
+  const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const rows = acceptanceCriteriaView(criteria, ledger);
   const untestable = ledger.criteria
     .filter((criterion) => criterion.verdict === 'untestable')
     .map((criterion) => criterion.id);
@@ -142,18 +147,20 @@ function renderAcceptanceCoverage(ledger) {
     '| AC | Criterion | Verdict | Proof mode | Recipe nodes | Evidence | Note |',
     '| --- | --- | --- | --- | --- | --- | --- |',
   ];
-  for (const criterion of ledger.criteria) {
+  for (const row of rows) {
+    const status = row.status;
     lines.push(
-      `| ${criterion.id} | ${cell(criterion.text)} | ${criterion.verdict.toUpperCase()} | ` +
-        `${criterion.proofMode ?? '-'} | ${list(criterion.recipeNodes)} | ` +
-        `${list(criterion.evidence)} | ${cell(criterion.note ?? '')} |`,
+      `| ${row.id} | ${cell(row.text)} | ${status ? status.verdict.toUpperCase() : 'NO VERDICT'} | ` +
+        `${status?.proofMode ?? '-'} | ${list(status?.recipeNodes ?? [])} | ` +
+        `${list(status?.evidence ?? [])} | ${cell(status?.note ?? '')} |`,
     );
   }
   lines.push(
     '',
     `Overall recipe coverage: ${summary.proven}/${summary.total} ACs PROVEN ` +
       `(untestable: ${untestable.length > 0 ? untestable.join(', ') : 'none'}, ` +
-      `weak: ${summary.weak}, missing: ${summary.missing})`,
+      `weak: ${summary.weak}, missing: ${summary.missing}` +
+      `${summary.unrecorded > 0 ? `, no verdict: ${summary.unrecorded}` : ''})`,
     '',
   );
   return lines.join('\n');

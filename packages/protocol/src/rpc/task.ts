@@ -29,4 +29,10 @@ export interface TaskProgressResult {
    * recorded, so a client can show a criterion as awaiting one instead of hiding it.
    */
   acceptanceCriteria?: import('../contracts/index.js').AcceptanceCriterionRef[];
+  /**
+   * Why the ledger or the criteria list could not be read. Present instead of a
+   * silent absence, so a client shows "unreadable" rather than "no criteria" —
+   * the two mean very different things for a run's proof.
+   */
+  acceptanceStatusError?: string;
 }

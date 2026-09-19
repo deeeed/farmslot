@@ -34,6 +34,8 @@ export abstract class RunDetailState extends LitElement {
   @state() acceptanceStatus: AcceptanceStatusLedger | null = null;
   /** Registered criteria, from the same read: a criterion with no verdict still shows. */
   @state() acceptanceCriteria: AcceptanceCriterionRef[] | null = null;
+  /** Why the ledger could not be read; the panel says so rather than showing nothing. */
+  @state() acceptanceStatusError: string | null = null;
   @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;

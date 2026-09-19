@@ -16,6 +16,7 @@ import {
   type RecipeQualitySignal,
   type RelatedRunSummary,
   type Run,
+  summarizeAcceptanceStatus,
 } from '@farmslot/protocol';
 
 import { refreshRetrospectiveFeedback } from '../intelligence/feedback-candidates.js';
@@ -28,6 +29,7 @@ import { getAllRuns } from '../runs/store.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
+  handoffCriteriaFromText,
   ledgerFromArtifactText,
 } from '../tasks/acceptance-status.js';
 
@@ -628,12 +630,21 @@ async function buildRunSummary(
         await readTextIfExists(path.join(taskDir, 'artifacts', ACCEPTANCE_STATUS_FILENAME)),
       )
     : null;
+  // Counted here, against the criteria the task registered, so a retrospective
+  // reads proven/total without a second trip to the task directory.
+  const acceptanceCriteria = taskDir
+    ? handoffCriteriaFromText(await readTextIfExists(path.join(taskDir, 'inputs', 'handoff.json')))
+        .criteria
+    : [];
+  const acceptanceSummary = acceptanceStatus
+    ? summarizeAcceptanceStatus(acceptanceStatus, acceptanceCriteria)
+    : null;
   const currentRecipeQualityEvaluation = await loadRecipeQualityEvaluation({
     run,
     workerReport: effectiveWorkerReport,
     recipeJson: effectiveRecipeJson,
     recipeCoverage:
-      acceptanceCoverageMarkdown(acceptanceStatus) ??
+      acceptanceCoverageMarkdown(acceptanceStatus, acceptanceCriteria) ??
       (taskDir
         ? await readTextIfExists(path.join(taskDir, 'artifacts', 'recipe-coverage.md'))
         : null),
@@ -767,6 +778,7 @@ async function buildRunSummary(
     steps,
     acceptanceCriteria: run.ticketData?.acceptanceCriteria?.filter(Boolean) ?? [],
     acceptanceStatus,
+    acceptanceSummary,
     ciChecks: buildCiChecks(run),
     selfReview,
     familyScope: familyScope

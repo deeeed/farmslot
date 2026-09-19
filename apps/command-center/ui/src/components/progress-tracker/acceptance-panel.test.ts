@@ -134,6 +134,23 @@ test('with only criteria and no ledger the panel still lists them as unjudged', 
   assert.match(text, /Second/);
 });
 
+test('an unreadable ledger says so instead of rendering nothing', () => {
+  const text = litText(
+    renderAcceptancePanel(ledger([]), {
+      criteria: [{ id: 'AC-1', text: 'First' }],
+      error: 'invalid artifacts/acceptance-status.json: Unexpected token',
+    }),
+  );
+  assert.match(text, /ledger unreadable: invalid artifacts\/acceptance-status\.json/);
+  assert.match(text, /acceptance-error/);
+  // The criteria still list, so the operator sees what was supposed to be judged.
+  assert.match(text, /AC-1/);
+
+  // An error with nothing else known still renders the panel.
+  const bare = litText(renderAcceptancePanel(ledger([]), { error: 'cannot read handoff.json' }));
+  assert.match(bare, /ledger unreadable: cannot read handoff\.json/);
+});
+
 test('evidence shows its basename so a long path cannot break the row', () => {
   assert.equal(
     evidenceLabel('artifacts/recipe-run/screens/after-order-sheet.png'),

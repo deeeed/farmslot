@@ -26,7 +26,7 @@ import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
-import { handoffListsAcceptanceCriteria } from './acceptance-status.js';
+import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import {
   listOpenSubtaskUnits,
   openSubtaskContractMessage,
@@ -134,6 +134,31 @@ export async function validateTerminalSignalArtifacts(
     };
   }
 
+  // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the
+  // same reason as an open child: `mark complete` already requires a verdict per
+  // criterion, and a signal written around the engine must not skip it.
+  //
+  // `complete` only, exactly like the mark engine. A `no-change` signal reports
+  // that there was nothing to do, so criteria it never touched are not evidence
+  // of a skipped verdict, and failing it would strand the run.
+  let requiresAcceptanceLedger = false;
+  if (terminalCommand === 'complete') {
+    try {
+      requiresAcceptanceLedger = await handoffListsAcceptanceCriteria(vars, taskDir);
+    } catch (err) {
+      // Fail closed: a task whose criteria list cannot be read cannot have proven
+      // them, and silently dropping the requirement is how an unproven run ships.
+      if (!(err instanceof AcceptanceReadError)) throw err;
+      return {
+        ok: false,
+        kind: 'artifact',
+        message:
+          `Terminal signal rejected: ${err.message}. The acceptance criteria (ADR-060) come from ` +
+          `that file, so the gateway cannot tell whether every criterion has a verdict. Restore ` +
+          `${err.file} from the orchestrator copy, then run ./mark ${terminalCommand} again.`,
+      };
+    }
+  }
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
   const contractInput = checklistBasename
     ? terminalContractInputForChecklist(checklistBasename)
@@ -157,10 +182,6 @@ export async function validateTerminalSignalArtifacts(
         `Expected checker ${checker} and contract ${contractPath}. Sync/deploy the Farmslot node, then resume the run; the worker cannot repair this.`,
     };
   }
-  // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the
-  // same reason as an open child: `mark complete` already requires a verdict per
-  // criterion, and a signal written around the engine must not skip it.
-  const requiresAcceptanceLedger = await handoffListsAcceptanceCriteria(vars, taskDir);
   const checkerArgs = [
     'node',
     shellQuote(checker),

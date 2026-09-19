@@ -23,10 +23,7 @@ import { type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
-import {
-  readAcceptanceStatusLedgerOrWarn,
-  readHandoffAcceptanceCriteria,
-} from '../tasks/acceptance-status.js';
+import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import {
   attachSubtaskToStep,
@@ -152,14 +149,14 @@ async function attachAcceptanceStatus(
   effectiveMdPath: string,
   result: TaskProgressResult,
 ): Promise<void> {
-  const taskDir = path.dirname(effectiveMdPath);
   // Both halves: the criteria the task registered, and the verdicts recorded so
   // far. A client needs the first to show a criterion still awaiting a verdict —
-  // the ledger holds only what `ac set` wrote.
-  const criteria = await readHandoffAcceptanceCriteria(vars, taskDir);
-  if (criteria.length > 0) result.acceptanceCriteria = criteria;
-  const ledger = await readAcceptanceStatusLedgerOrWarn(vars, taskDir);
-  if (ledger) result.acceptanceStatus = ledger;
+  // the ledger holds only what `ac set` wrote — and the read error when neither
+  // can be read, so the panel says "unreadable" instead of quietly showing nothing.
+  const read = await readAcceptanceStatusForDisplay(vars, path.dirname(effectiveMdPath));
+  if (read.criteria.length > 0) result.acceptanceCriteria = read.criteria;
+  if (read.ledger) result.acceptanceStatus = read.ledger;
+  if (read.error) result.acceptanceStatusError = read.error;
 }
 
 /**

@@ -11,11 +11,15 @@ import type { SlotLocality } from '../core/slot-io.js';
 import {
   ACCEPTANCE_STATUS_FILENAME,
   acceptanceCoverageMarkdown,
+  AcceptanceReadError,
   acceptanceStatusPathFor,
+  handoffCriteriaFromText,
+  handoffListsAcceptanceCriteria,
   ledgerFromArtifactText,
   parseAcceptanceStatusLedger,
+  readAcceptanceStatusForDisplay,
   readAcceptanceStatusLedger,
-  readAcceptanceStatusLedgerOrWarn,
+  readHandoffAcceptanceCriteria,
 } from './acceptance-status.js';
 
 const LOCAL: SlotLocality = {
@@ -48,10 +52,14 @@ const LEDGER: AcceptanceStatusLedger = {
   ],
 };
 
-function taskDirWith(body: string | null): string {
+function taskDirWith(body: string | null, handoff?: string | null): string {
   const taskDir = mkdtempSync(path.join(os.tmpdir(), 'gw-acceptance-'));
   mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
   if (body !== null) writeFileSync(acceptanceStatusPathFor(taskDir), body);
+  if (handoff !== null && handoff !== undefined) {
+    writeFileSync(path.join(taskDir, 'inputs', 'handoff.json'), handoff);
+  }
   return taskDir;
 }
 
@@ -101,10 +109,12 @@ test('a ledger that breaks the contract throws, naming the field', () => {
   );
 });
 
-test('the warn-and-continue readers drop a broken ledger instead of failing progress', async () => {
+test('the display read reports a broken ledger instead of failing progress', async () => {
   const taskDir = taskDirWith('{ not json');
   try {
-    assert.equal(await readAcceptanceStatusLedgerOrWarn(LOCAL, taskDir), null);
+    const read = await readAcceptanceStatusForDisplay(LOCAL, taskDir);
+    assert.equal(read.ledger, null);
+    assert.match(read.error ?? '', /invalid .*acceptance-status\.json/);
   } finally {
     rmSync(taskDir, { recursive: true, force: true });
   }
@@ -125,4 +135,72 @@ test('coverage markdown comes from the ledger, and only when it has criteria', (
   // No ledger and an empty ledger both mean "keep reading recipe-coverage.md".
   assert.equal(acceptanceCoverageMarkdown(null), null);
   assert.equal(acceptanceCoverageMarkdown({ schemaVersion: 1, criteria: [] }), null);
+});
+
+test('the handoff read fails closed for the terminal check and open for display', async () => {
+  const criteria = JSON.stringify({ task: { acceptanceCriteria: ['one', 'two'] } });
+  const good = taskDirWith(null, criteria);
+  try {
+    assert.deepEqual(await readHandoffAcceptanceCriteria(LOCAL, good), [
+      { id: 'AC-1', text: 'one' },
+      { id: 'AC-2', text: 'two' },
+    ]);
+    assert.equal(await handoffListsAcceptanceCriteria(LOCAL, good), true);
+  } finally {
+    rmSync(good, { recursive: true, force: true });
+  }
+
+  // Corrupt handoff: the terminal path must throw rather than report "no criteria",
+  // which would silently drop the ledger requirement from a completion.
+  const corrupt = taskDirWith(null, '{ not json');
+  try {
+    await assert.rejects(
+      () => readHandoffAcceptanceCriteria(LOCAL, corrupt),
+      (err: unknown) =>
+        err instanceof AcceptanceReadError &&
+        /invalid .*handoff\.json/.test((err as Error).message),
+    );
+    await assert.rejects(() => handoffListsAcceptanceCriteria(LOCAL, corrupt));
+    // The display path reports it instead, so a panel can say why it is empty.
+    const read = await readAcceptanceStatusForDisplay(LOCAL, corrupt);
+    assert.deepEqual(read.criteria, []);
+    assert.equal(read.ledger, null);
+    assert.match(read.error ?? '', /invalid .*handoff\.json/);
+  } finally {
+    rmSync(corrupt, { recursive: true, force: true });
+  }
+
+  // A task with no handoff at all has no criteria; that is not an error.
+  const none = taskDirWith(null, null);
+  try {
+    assert.deepEqual(await readHandoffAcceptanceCriteria(LOCAL, none), []);
+    assert.equal((await readAcceptanceStatusForDisplay(LOCAL, none)).error, undefined);
+  } finally {
+    rmSync(none, { recursive: true, force: true });
+  }
+});
+
+test('handoff criteria parsed from text mirror the slot read, errors included', () => {
+  assert.deepEqual(
+    handoffCriteriaFromText(JSON.stringify({ task: { acceptanceCriteria: ['a'] } })),
+    {
+      criteria: [{ id: 'AC-1', text: 'a' }],
+    },
+  );
+  assert.deepEqual(handoffCriteriaFromText(null), { criteria: [] });
+  assert.match(handoffCriteriaFromText('{ not json').error ?? '', /invalid inputs\/handoff\.json/);
+  assert.match(
+    handoffCriteriaFromText(JSON.stringify({ task: { acceptanceCriteria: 'one' } })).error ?? '',
+    /must be an array/,
+  );
+});
+
+test('coverage markdown counts the registered criteria, not the recorded rows', () => {
+  const partial = { schemaVersion: 1 as const, criteria: [LEDGER.criteria[0]] };
+  const rendered = acceptanceCoverageMarkdown(partial, [
+    { id: 'AC-1', text: LEDGER.criteria[0].text },
+    { id: 'AC-2', text: 'Not judged yet' },
+  ]);
+  assert.match(rendered ?? '', /Overall recipe coverage: 1\/2 ACs PROVEN/);
+  assert.match(rendered ?? '', /NO VERDICT/);
 });

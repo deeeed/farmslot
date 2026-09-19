@@ -161,6 +161,7 @@ export class RunDetail extends RunDetailState {
           // so it clears rather than keeping a stale panel.
           this.acceptanceStatus = p.progress.acceptanceStatus ?? null;
           this.acceptanceCriteria = p.progress.acceptanceCriteria ?? null;
+          this.acceptanceStatusError = p.progress.acceptanceStatusError ?? null;
         }
       },
     );
@@ -241,6 +242,7 @@ export class RunDetail extends RunDetailState {
       this.taskProgress = null;
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
+      this.acceptanceStatusError = null;
       this.selectedStepProgress = null;
       this._selectedStepProgressKey = '';
       this.ciStatus = null;
@@ -314,6 +316,7 @@ export class RunDetail extends RunDetailState {
       this.taskProgress = null;
       this.acceptanceStatus = null;
       this.acceptanceCriteria = null;
+      this.acceptanceStatusError = null;
     }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
@@ -925,6 +928,7 @@ export class RunDetail extends RunDetailState {
       if (res.structured) this.taskProgress = res.structured;
       this.acceptanceStatus = res.acceptanceStatus ?? null;
       this.acceptanceCriteria = res.acceptanceCriteria ?? null;
+      this.acceptanceStatusError = res.acceptanceStatusError ?? null;
     } catch (err) {
       if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
@@ -1031,6 +1035,7 @@ export class RunDetail extends RunDetailState {
       taskProgress: this.taskProgress,
       acceptanceStatus: this.acceptanceStatus,
       acceptanceCriteria: this.acceptanceCriteria,
+      acceptanceStatusError: this.acceptanceStatusError,
       acceptanceEvidenceHref: this._acceptanceEvidenceHref,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,

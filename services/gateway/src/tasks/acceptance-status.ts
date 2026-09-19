@@ -60,61 +60,118 @@ export async function readAcceptanceStatusLedger(
 }
 
 /**
- * Same read, but a broken ledger is reported and skipped instead of failing the
- * caller. Progress and gate rendering must still describe the run when one
- * artifact is unreadable; the terminal contract check is what refuses the run.
+ * A handoff or ledger the gateway could not read. Every caller must choose: the
+ * terminal check fails the signal on it (completion cannot be proven when the
+ * criteria list is unreadable), rendering surfaces it to the operator. Nothing
+ * may treat it as "no criteria" — that would silently drop the requirement.
  */
-export async function readAcceptanceStatusLedgerOrWarn(
-  ctx: SlotLocality,
-  taskDir: string,
-): Promise<AcceptanceStatusLedger | null> {
-  try {
-    return await readAcceptanceStatusLedger(ctx, taskDir);
-  } catch (err) {
-    console.warn(
-      `[acceptance] ignoring unreadable ledger in ${taskDir}: ${(err as Error).message}`,
-    );
-    return null;
+export class AcceptanceReadError extends Error {
+  constructor(
+    readonly file: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AcceptanceReadError';
   }
 }
 
+function handoffPathFor(taskDir: string): string {
+  return path.posix.join(taskDir, 'inputs', 'handoff.json');
+}
+
 /**
- * The criteria task init registered, with their positional `AC-<N>` ids. Empty when
- * the task had none, or when the handoff cannot be read — the artifact contract check
- * reports a missing input; this reader must not invent a criterion or a gate.
+ * The criteria task init registered, with their positional `AC-<N>` ids.
+ *
+ * A missing handoff means no criteria, the same way the mark engine's `readJson`
+ * treats ENOENT. Anything else — unreadable file, invalid JSON — throws
+ * {@link AcceptanceReadError}: a task whose criteria cannot be read has not
+ * proven them.
  */
 export async function readHandoffAcceptanceCriteria(
   ctx: SlotLocality,
   taskDir: string,
 ): Promise<AcceptanceCriterionRef[]> {
-  const handoffPath = path.posix.join(taskDir, 'inputs', 'handoff.json');
+  const handoffPath = handoffPathFor(taskDir);
+  let text: string;
   try {
     if (!(await slotFileExists(ctx, handoffPath))) return [];
-    const parsed: unknown = JSON.parse(await slotReadFile(ctx, handoffPath));
-    if (!parsed || typeof parsed !== 'object') return [];
-    const task = (parsed as { task?: unknown }).task;
-    if (!task || typeof task !== 'object') return [];
-    const criteria = (task as { acceptanceCriteria?: unknown }).acceptanceCriteria;
-    if (!Array.isArray(criteria)) return [];
-    return criteria
-      .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
-      .filter((criterion) => criterion.text.trim().length > 0);
+    text = await slotReadFile(ctx, handoffPath);
   } catch (err) {
-    console.warn(`[acceptance] could not read ${handoffPath}: ${(err as Error).message}`);
-    return [];
+    throw new AcceptanceReadError(
+      handoffPath,
+      `cannot read ${handoffPath}: ${(err as Error).message}`,
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new AcceptanceReadError(handoffPath, `invalid ${handoffPath}: ${(err as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    throw new AcceptanceReadError(handoffPath, `invalid ${handoffPath}: expected an object`);
+  }
+  const task = (parsed as { task?: unknown }).task;
+  if (!task || typeof task !== 'object') return [];
+  const criteria = (task as { acceptanceCriteria?: unknown }).acceptanceCriteria;
+  if (criteria === undefined) return [];
+  if (!Array.isArray(criteria)) {
+    throw new AcceptanceReadError(
+      handoffPath,
+      `invalid ${handoffPath}: task.acceptanceCriteria must be an array`,
+    );
+  }
+  return criteria
+    .map((text, index) => ({ id: acceptanceCriterionId(index), text: String(text) }))
+    .filter((criterion) => criterion.text.trim().length > 0);
 }
 
 /**
- * Does this task directory's handoff list acceptance criteria? The gateway asks
- * before enforcing the ledger on a terminal signal, so a run whose task had no
- * criteria is unaffected.
+ * Does this task directory's handoff list acceptance criteria? Throws
+ * {@link AcceptanceReadError} when the handoff cannot be read, so a terminal check
+ * fails closed instead of skipping the ledger requirement.
  */
 export async function handoffListsAcceptanceCriteria(
   ctx: SlotLocality,
   taskDir: string,
 ): Promise<boolean> {
   return (await readHandoffAcceptanceCriteria(ctx, taskDir)).length > 0;
+}
+
+export interface AcceptanceStatusRead {
+  /** Registered criteria; empty when the task has none or when the read failed. */
+  criteria: AcceptanceCriterionRef[];
+  /** Recorded verdicts, or null when none are recorded or the read failed. */
+  ledger: AcceptanceStatusLedger | null;
+  /** Why the ledger or the criteria could not be read; clients show this. */
+  error?: string;
+}
+
+/**
+ * Both halves for a display surface. A read failure is returned, never thrown and
+ * never swallowed: progress and gate rendering must still describe the run, and a
+ * client that shows nothing would hide a broken proof record. The terminal check
+ * uses the throwing readers above instead.
+ */
+export async function readAcceptanceStatusForDisplay(
+  ctx: SlotLocality,
+  taskDir: string,
+): Promise<AcceptanceStatusRead> {
+  let criteria: AcceptanceCriterionRef[] = [];
+  try {
+    criteria = await readHandoffAcceptanceCriteria(ctx, taskDir);
+  } catch (err) {
+    const message = (err as Error).message;
+    console.warn(`[acceptance] ${message}`);
+    return { criteria: [], ledger: null, error: message };
+  }
+  try {
+    return { criteria, ledger: await readAcceptanceStatusLedger(ctx, taskDir) };
+  } catch (err) {
+    const message = (err as Error).message;
+    console.warn(`[acceptance] ${message}`);
+    return { criteria, ledger: null, error: message };
+  }
 }
 
 /** Ledger basename, for the `readTaskArtifactText(taskFile, name)` readers. */
@@ -138,13 +195,52 @@ export function ledgerFromArtifactText(
 }
 
 /**
+ * The registered criteria from handoff text a caller already read on the
+ * orchestrator copy. Unreadable content yields no criteria and an error string,
+ * never a silent empty list, so the caller can say why the count is missing.
+ */
+export function handoffCriteriaFromText(text: string | null | undefined): {
+  criteria: AcceptanceCriterionRef[];
+  error?: string;
+} {
+  if (!text?.trim()) return { criteria: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { criteria: [], error: `invalid inputs/handoff.json: ${(err as Error).message}` };
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return { criteria: [], error: 'invalid inputs/handoff.json: expected an object' };
+  }
+  const task = (parsed as { task?: unknown }).task;
+  if (!task || typeof task !== 'object') return { criteria: [] };
+  const criteria = (task as { acceptanceCriteria?: unknown }).acceptanceCriteria;
+  if (criteria === undefined) return { criteria: [] };
+  if (!Array.isArray(criteria)) {
+    return {
+      criteria: [],
+      error: 'invalid inputs/handoff.json: task.acceptanceCriteria must be an array',
+    };
+  }
+  return {
+    criteria: criteria
+      .map((entry, index) => ({ id: acceptanceCriterionId(index), text: String(entry) }))
+      .filter((criterion) => criterion.text.trim().length > 0),
+  };
+}
+
+/**
  * Coverage markdown for the gate summary and the PR body: the ledger rendered
  * through the protocol renderer, or null when the run has no verdicts, so the
  * caller keeps its existing `recipe-coverage.md` behaviour. Farm templates still
  * write that file until they move onto `ac` (phase 4), so this is a preference,
  * never a replacement.
  */
-export function acceptanceCoverageMarkdown(ledger: AcceptanceStatusLedger | null): string | null {
+export function acceptanceCoverageMarkdown(
+  ledger: AcceptanceStatusLedger | null,
+  criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger?.criteria ?? [],
+): string | null {
   if (!ledger || ledger.criteria.length === 0) return null;
-  return renderAcceptanceCoverage(ledger);
+  return renderAcceptanceCoverage(ledger, criteria.length > 0 ? criteria : ledger.criteria);
 }

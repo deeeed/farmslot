@@ -14,6 +14,7 @@ const {
   ACCEPTANCE_VERDICTS,
   AcceptanceRefusal,
   acceptanceStatusList,
+  handoffAcceptanceCriteria,
   renderAcceptanceCoverage,
   readAcceptanceLedger,
   setAcceptanceVerdict,
@@ -116,7 +117,9 @@ function main(argv) {
         'no acceptance ledger yet — record verdicts with `farmslot-agent ac set <id> <verdict>`',
       );
     }
-    process.stdout.write(renderAcceptanceCoverage(ledger));
+    // The registered criteria, not just the recorded rows: a partial ledger must
+    // not report 1/1 when the task has three criteria.
+    process.stdout.write(renderAcceptanceCoverage(ledger, handoffAcceptanceCriteria(taskDir)));
     return;
   }
   usage(2);

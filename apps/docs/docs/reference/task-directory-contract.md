@@ -149,7 +149,7 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `TASK.md` is never enumerated. A `- [ ]` inside an acceptance criterion cannot shift a step number.
 - A ticked box is not proof. Proof is the recipe run, its evidence, and the artifacts the terminal contract requires.
 - `SIGNAL.json` is written by `mark` only. Hand-written signals are rejected by the monitor.
-- `artifacts/acceptance-status.json` is written by `farmslot-agent ac` only. Every criterion in `inputs/handoff.json` needs a verdict before a terminal success mark, and `weak` or `missing` fails unless the flow's terminal contract sets `acceptance.allowWeak`.
+- `artifacts/acceptance-status.json` is written by `farmslot-agent ac` only. Every criterion in `inputs/handoff.json` needs a verdict before a terminal success mark, and `weak` or `missing` fails unless the flow's terminal contract sets `acceptance.allowWeak`. The gateway creates `artifacts/` on the slot so its watch has a parent directory to observe, and writes nothing into it.
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
 See also: [Agent runtime](agent-runtime.md), [Template variables](template-variables.generated.md), and [Worker artifacts by flow](worker-artifacts-by-flow.md).

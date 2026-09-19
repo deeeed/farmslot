@@ -792,6 +792,8 @@ export interface ReadyGatePayload {
    * gate renders exactly as before.
    */
   acceptanceStatus?: AcceptanceStatusLedger | null;
+  /** Why the ledger could not be read; shown instead of an empty panel. */
+  acceptanceStatusError?: string;
   inputSnapshot?: ReadyGateInputSnapshot;
   prPackage?: ReadyGatePrPackage;
   reviewDepth?: ReviewDepthPolicy;

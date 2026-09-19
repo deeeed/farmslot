@@ -74,6 +74,8 @@ export interface RunDetailViewContext {
   acceptanceStatus: AcceptanceStatusLedger | null;
   /** Registered criteria from the task dir, including any still without a verdict. */
   acceptanceCriteria: AcceptanceCriterionRef[] | null;
+  /** Why the ledger could not be read, when it could not. */
+  acceptanceStatusError: string | null;
   /** Link builder for a task-dir relative evidence path in the ledger panel. */
   acceptanceEvidenceHref: (evidencePath: string) => string;
   selectedStep: Run['steps'][number] | null;
@@ -993,6 +995,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         .taskProgress=${ctx.taskProgress}
         .acceptanceStatus=${ctx.acceptanceStatus}
         .acceptanceCriteria=${ctx.acceptanceCriteria}
+        .acceptanceStatusError=${ctx.acceptanceStatusError}
         .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}

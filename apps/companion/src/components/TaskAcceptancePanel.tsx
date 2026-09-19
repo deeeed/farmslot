@@ -18,15 +18,18 @@ import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 export function TaskAcceptancePanel({
   acceptanceStatus,
   acceptanceCriteria,
+  error,
 }: {
   acceptanceStatus: AcceptanceStatusLedger | null;
   /** Registered criteria, so one awaiting a verdict still gets a row. */
   acceptanceCriteria?: AcceptanceCriterionRef[] | null;
+  /** Why the ledger could not be read; shown instead of an empty panel. */
+  error?: string | null;
 }) {
   const ledger = acceptanceStatus ?? { schemaVersion: 1 as const, criteria: [] };
   const view = acceptanceLedgerView(ledger, acceptanceCriteria ?? ledger.criteria);
-  const [expanded, setExpanded] = React.useState(view.hasOpenCriteria);
-  if (view.rows.length === 0) return null;
+  const [expanded, setExpanded] = React.useState(view.hasOpenCriteria || Boolean(error));
+  if (view.rows.length === 0 && !error) return null;
   return (
     <View style={styles.panel}>
       <Pressable
@@ -41,6 +44,7 @@ export function TaskAcceptancePanel({
         </Text>
         <Text style={styles.counts}>{view.counts}</Text>
       </Pressable>
+      {expanded && error ? <Text style={styles.error}>ledger unreadable: {error}</Text> : null}
       {expanded
         ? view.rows.map(({ criterion, verdict, color, evidence }) => (
             <View key={criterion.id} style={styles.row}>
@@ -124,6 +128,11 @@ const styles = StyleSheet.create({
   text: {
     color: colors.textSecondary,
     fontSize: fonts.sizeXs,
+  },
+  error: {
+    color: colors.statusFail,
+    fontSize: fonts.sizeXs,
+    fontFamily: fonts.mono,
   },
   evidence: {
     color: colors.accent,
