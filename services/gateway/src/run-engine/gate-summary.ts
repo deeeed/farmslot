@@ -89,7 +89,24 @@ function buildChecklist(run: Run): GateSummary['checklist'] {
   if (!timing?.events?.length) return undefined;
   const events = [...timing.events].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
   const perStepMs = deriveChecklistStepDurations(timing);
-  return { events, perStepMs };
+  const subtasks = buildChecklistSubtasks(run);
+  return { events, perStepMs, ...(subtasks ? { subtasks } : {}) };
+}
+
+/**
+ * Per-child-unit step durations (ADR-060), through the same
+ * `deriveChecklistStepDurations` the parent rows use — a child mark carries the
+ * same append-only event shape, so the retrospective reads one derivation for
+ * both levels. A child that registered but never marked a step contributes
+ * nothing rather than an empty row.
+ */
+function buildChecklistSubtasks(run: Run): NonNullable<GateSummary['checklist']>['subtasks'] {
+  const rows = (run.metrics.subtasks ?? []).flatMap((unit) => {
+    const perStepMs = deriveChecklistStepDurations(unit.checklistTiming);
+    if (perStepMs.length === 0) return [];
+    return [{ id: unit.id, parent: unit.parent, perStepMs }];
+  });
+  return rows.length > 0 ? rows : undefined;
 }
 
 function isSelfReviewEntry(review: IndependentReviewStatus): boolean {

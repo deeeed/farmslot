@@ -67,6 +67,7 @@
     "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts",
     "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts",
     "e2e:subtask-mark": "tsx scripts/e2e-subtask-mark.mts",
+    "e2e:subtask-gateway": "tsx scripts/e2e-subtask-gateway.mts",
     "e2e:acceptance-ledger": "tsx scripts/e2e-acceptance-ledger.mts",
     "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs",
     "quality:review-loop": "node scripts/quality/check-review-loop-validation-contract.mjs",

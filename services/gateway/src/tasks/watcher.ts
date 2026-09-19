@@ -7,7 +7,14 @@ import path from 'node:path';
 
 import { type FSWatcher, watch } from 'chokidar';
 
-import type { AgentContext, AgentRole, TaskProgressResult, WorkerSignal } from '@farmslot/protocol';
+import type {
+  AgentContext,
+  AgentRole,
+  SubtaskIndex,
+  SubtaskIndexUnit,
+  TaskProgressResult,
+  WorkerSignal,
+} from '@farmslot/protocol';
 
 import { getAgentContexts, summarizeAgentContexts } from '../agents/contexts.js';
 import {
@@ -16,7 +23,7 @@ import {
 } from '../core/active-run-selection.js';
 import { resolveTaskPaths } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
-import { slotReadFile } from '../core/slot-io.js';
+import { slotFileExists, slotMkdir, slotReadFile } from '../core/slot-io.js';
 import { updateSlotStatus } from '../core/state.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
@@ -28,6 +35,13 @@ import {
   resolveTaskProgressMarkdownPath,
   resolveTaskProgressMarkdownPathForSlot,
 } from './progress-path.js';
+import {
+  parseSubtaskIndex,
+  readSubtaskIndex,
+  subtaskIndexPathFor,
+  subtasksDirFor,
+  subtaskUnitsForParentChecklist,
+} from './subtasks.js';
 import { normalizeWorkerSignal } from './worker-signals.js';
 
 export type TaskProgressHandler = (
@@ -36,6 +50,12 @@ export type TaskProgressHandler = (
   role?: AgentRole,
   contextId?: string,
   runId?: string | null,
+  /**
+   * Set only when a child checklist unit's file drove this update (ADR-060):
+   * the parent checklist basename the unit hangs off, which the acceptance rule
+   * compares against the run's active checklist.
+   */
+  parentChecklist?: string,
 ) => void;
 export type WorkerSignalHandler = (
   slotId: string,
@@ -58,9 +78,24 @@ interface SlotWatch {
   sshTarget: string;
   watcher?: FSWatcher; // chokidar watcher for local (TASK.md)
   signalWatcher?: FSWatcher; // chokidar watcher for local (SIGNAL.json)
-  agentRequestIds?: Array<{ requestId: string; kind: 'task' | 'signal' }>; // fs.watch request IDs for remote task + signal watches
+  agentRequestIds?: WatchedRemoteFile[]; // fs.watch request IDs for remote task, signal, and child-unit watches
   lastCheckboxHash?: string; // debounce: only emit when checkboxes actually change
+  /** `subtasks/index.json` beside this context's checklist — the child registry. */
+  subtaskIndexFilePath: string;
+  subtaskIndexWatcher?: FSWatcher; // chokidar watcher for local (subtasks/index.json)
+  subtaskUnitWatchers?: FSWatcher[]; // chokidar watchers for local child checklists + signals
+  /** Per-key serialization of index-driven child-watch rebinds. */
+  subtaskRebind?: Promise<void>;
 }
+
+/** A remote file this watch asked the node to watch, by request id. */
+interface WatchedRemoteFile {
+  requestId: string;
+  kind: WatchedFileKind;
+  path: string;
+}
+
+type WatchedFileKind = 'task' | 'signal' | 'subtask-index' | 'subtask-checklist' | 'subtask-signal';
 
 interface WatchSlotOptions {
   runId?: string;
@@ -154,8 +189,9 @@ function emit(
   role?: AgentRole,
   contextId?: string,
   runId?: string | null,
+  parentChecklist?: string,
 ): void {
-  for (const h of handlers) h(slotId, progress, role, contextId, runId);
+  for (const h of handlers) h(slotId, progress, role, contextId, runId, parentChecklist);
 }
 
 export function emitWorkerSignal(
@@ -313,6 +349,7 @@ export async function watchSlot(
         slotId,
         taskFilePath: contextTaskPath,
         signalFilePath: contextSignalPath,
+        subtaskIndexFilePath: subtaskIndexPathFor(path.dirname(contextTaskPath)),
         runId,
         role: context?.role,
         contextId: context?.id,
@@ -341,9 +378,23 @@ export async function watchSlot(
         signalWatcher.on('change', () => handleSignalChange(key));
         sw.signalWatcher = signalWatcher;
 
+        // Child registry (ADR-060). chokidar cannot pick up a file whose parent
+        // directory does not exist yet, and `subtasks/` only appears with the
+        // first `mark sub start` — so the directory the contract defines is
+        // created here before the watch attaches. Nothing else is written: the
+        // gateway never authors a child unit.
+        await ensureSubtasksDir(sw, contextTaskPath);
+        const subtaskIndexWatcher = watch(sw.subtaskIndexFilePath, {
+          persistent: false,
+          ignoreInitial: false,
+        });
+        subtaskIndexWatcher.on('add', () => void handleSubtaskIndexChange(key));
+        subtaskIndexWatcher.on('change', () => void handleSubtaskIndexChange(key));
+        sw.subtaskIndexWatcher = subtaskIndexWatcher;
+
         activeWatches.set(key, sw);
         console.log(
-          `[task-watcher] watching local ${key}: ${contextTaskPath} + ${contextSignalPath}`,
+          `[task-watcher] watching local ${key}: ${contextTaskPath} + ${contextSignalPath} + ${sw.subtaskIndexFilePath}`,
         );
       } else {
         // Remote slot — use node fs.watch
@@ -354,30 +405,63 @@ export async function watchSlot(
         }
 
         try {
-          const requestIds: Array<{ requestId: string; kind: 'task' | 'signal' }> = [];
+          const requestIds: WatchedRemoteFile[] = [];
           (await sendNodeRequest(
             node,
             'fs.watch',
             { path: contextTaskPath },
-            { onRequestId: (id) => requestIds.push({ requestId: id, kind: 'task' }) },
+            {
+              onRequestId: (id) =>
+                requestIds.push({ requestId: id, kind: 'task', path: contextTaskPath }),
+            },
           )) as { watching: boolean };
           try {
             (await sendNodeRequest(
               node,
               'fs.watch',
               { path: contextSignalPath },
-              { onRequestId: (id) => requestIds.push({ requestId: id, kind: 'signal' }) },
+              {
+                onRequestId: (id) =>
+                  requestIds.push({ requestId: id, kind: 'signal', path: contextSignalPath }),
+              },
             )) as { watching: boolean };
           } catch (err) {
             console.log(
               `[task-watcher] signal file not yet present for remote ${key}: ${(err as Error).message}`,
             );
           }
+          // The node's fs.watch primitive watches the target's PARENT directory,
+          // so `subtasks/` must exist before the index watch can attach — see
+          // ensureSubtasksDir.
+          await ensureSubtasksDir(sw, contextTaskPath);
+          try {
+            (await sendNodeRequest(
+              node,
+              'fs.watch',
+              { path: sw.subtaskIndexFilePath },
+              {
+                onRequestId: (id) =>
+                  requestIds.push({
+                    requestId: id,
+                    kind: 'subtask-index',
+                    path: sw.subtaskIndexFilePath,
+                  }),
+              },
+            )) as { watching: boolean };
+          } catch (err) {
+            console.log(
+              `[task-watcher] subtask index not watchable for remote ${key}: ${(err as Error).message}`,
+            );
+          }
           sw.agentRequestIds = requestIds;
           activeWatches.set(key, sw);
           console.log(
-            `[task-watcher] watching remote ${key} via node ${slot.machine}: ${contextTaskPath} + ${contextSignalPath}`,
+            `[task-watcher] watching remote ${key} via node ${slot.machine}: ${contextTaskPath} + ${contextSignalPath} + ${sw.subtaskIndexFilePath}`,
           );
+          // The node's watch reports changes only; an index that already exists
+          // (gateway restart, re-watch mid-run) needs one read to wire its child
+          // watches. Local chokidar covers this with its initial `add` event.
+          await handleSubtaskIndexChange(key);
         } catch (err) {
           console.log(
             `[task-watcher] failed to start remote watch for ${key}: ${(err as Error).message}`,
@@ -550,6 +634,10 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   if (sw.signalWatcher) {
     await sw.signalWatcher.close();
   }
+  if (sw.subtaskIndexWatcher) {
+    await sw.subtaskIndexWatcher.close();
+  }
+  await closeSubtaskUnitWatchers(sw);
 
   if (!sw.isLocal && sw.agentRequestIds?.length) {
     const fleet = await loadFleetStatus();
@@ -576,9 +664,11 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   // actually tore down — a successor re-registered mid-close owns the current
   // entry and timer.
   if (activeWatches.get(key) === sw) {
-    const timer = debounceTimers.get(key);
-    if (timer) clearTimeout(timer);
-    debounceTimers.delete(key);
+    for (const timerKey of [key, subtaskDebounceKey(key)]) {
+      const timer = debounceTimers.get(timerKey);
+      if (timer) clearTimeout(timer);
+      debounceTimers.delete(timerKey);
+    }
     activeWatches.delete(key);
   }
 }
@@ -595,23 +685,29 @@ export function handleAgentFsChanged(payload: {
     if (sw.isLocal || sw.machine !== payload.machine) continue;
     const request = sw.agentRequestIds?.find((entry) => entry.requestId === payload.requestId);
     if (!request) continue;
-    if (request.kind === 'task') {
-      if (payload.path !== sw.taskFilePath) {
-        console.warn(
-          `[task-watcher] ignoring task watch path mismatch for ${key}: request=${payload.requestId} path=${payload.path}`,
-        );
-        return;
-      }
-      debouncedUpdate(key, payload.content);
-      return;
-    }
-    if (payload.path !== sw.signalFilePath) {
+    // Every registered request records the path it was opened for, so a node
+    // replaying an event for a different file is rejected rather than routed.
+    if (payload.path !== request.path) {
       console.warn(
-        `[task-watcher] ignoring signal watch path mismatch for ${key}: request=${payload.requestId} path=${payload.path}`,
+        `[task-watcher] ignoring ${request.kind} watch path mismatch for ${key}: request=${payload.requestId} path=${payload.path}`,
       );
       return;
     }
-    void handleSignalChange(key, payload.content);
+    if (request.kind === 'task') {
+      debouncedUpdate(key, payload.content);
+      return;
+    }
+    if (request.kind === 'signal') {
+      void handleSignalChange(key, payload.content);
+      return;
+    }
+    if (request.kind === 'subtask-index') {
+      void handleSubtaskIndexChange(key, payload.content);
+      return;
+    }
+    // A child checklist or child signal changed. Both are progress-only: a child
+    // never drives run lifecycle, so no WORKER_SIGNAL is emitted for it.
+    debouncedSubtaskUpdate(key);
     return;
   }
 
@@ -635,21 +731,65 @@ function debouncedUpdate(key: string, content?: string): void {
   );
 }
 
-async function computeAndEmit(key: string, content?: string): Promise<void> {
+/**
+ * Debounce key for child-unit-driven updates. A child mark and a parent mark can
+ * land together (`sub complete` writes both files), and they need different
+ * handling — the child update skips the parent checkbox-hash guard — so they get
+ * their own timer instead of overwriting each other's.
+ */
+function subtaskDebounceKey(key: string): string {
+  return `${key}#subtask`;
+}
+
+/**
+ * A child unit's checklist or signal changed. Same debounce as a parent change,
+ * but it bypasses the parent checkbox hash (a child mark never changes a parent
+ * box, so the guard would swallow every child update) and tags the broadcast
+ * with the parent checklist so the acceptance rule can place it.
+ */
+function debouncedSubtaskUpdate(key: string): void {
+  const timerKey = subtaskDebounceKey(key);
+  const existing = debounceTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+
+  debounceTimers.set(
+    timerKey,
+    setTimeout(async () => {
+      debounceTimers.delete(timerKey);
+      await computeAndEmit(key, undefined, { fromSubtask: true });
+    }, DEBOUNCE_MS),
+  );
+}
+
+interface ComputeAndEmitOptions {
+  /**
+   * The update originates from a child unit's file: skip the parent
+   * checkbox-hash short-circuit and carry `parentChecklist` on the broadcast.
+   */
+  fromSubtask?: boolean;
+}
+
+async function computeAndEmit(
+  key: string,
+  content?: string,
+  options: ComputeAndEmitOptions = {},
+): Promise<void> {
   const sw = activeWatches.get(key);
   if (!sw) return;
 
   try {
-    // Read fresh content if not provided
-    let markdown = content;
-    if (!markdown) {
-      markdown = await slotReadFile(sw, sw.taskFilePath);
-    }
+    if (!options.fromSubtask) {
+      // Read fresh content if not provided
+      let markdown = content;
+      if (!markdown) {
+        markdown = await slotReadFile(sw, sw.taskFilePath);
+      }
 
-    // Quick hash of checkbox states to avoid redundant broadcasts
-    const checkboxHash = hashCheckboxes(markdown);
-    if (checkboxHash === sw.lastCheckboxHash) return;
-    sw.lastCheckboxHash = checkboxHash;
+      // Quick hash of checkbox states to avoid redundant broadcasts
+      const checkboxHash = hashCheckboxes(markdown);
+      if (checkboxHash === sw.lastCheckboxHash) return;
+      sw.lastCheckboxHash = checkboxHash;
+    }
 
     // Use the existing taskProgress method to get structured progress
     const result = await taskProgress({
@@ -658,7 +798,14 @@ async function computeAndEmit(key: string, content?: string): Promise<void> {
       role: sw.role,
       contextId: sw.contextId,
     });
-    emit(sw.slotId, result, sw.role, sw.contextId, sw.runId);
+    emit(
+      sw.slotId,
+      result,
+      sw.role,
+      sw.contextId,
+      sw.runId,
+      options.fromSubtask ? path.basename(sw.taskFilePath) : undefined,
+    );
   } catch (err) {
     // File may have been deleted (slot released)
     console.log(`[task-watcher] error reading ${key}: ${(err as Error).message}`);
@@ -744,6 +891,192 @@ async function handleSignalChange(key: string, content?: string): Promise<void> 
   } catch (err) {
     console.log(`[task-watcher] error reading signal file for ${key}: ${(err as Error).message}`);
   }
+}
+
+// ─── Child checklist units (ADR-060) ───
+
+/**
+ * Make sure `subtasks/` exists beside a context's checklist before a watch
+ * attaches to the registry inside it.
+ *
+ * Both watch primitives observe a file through its PARENT directory — chokidar
+ * because that is how it survives atomic replacement, the node's `watchFile`
+ * explicitly (it skips the watch and logs when the parent is missing). `mark sub
+ * start` creates `subtasks/` only on the first registration, so without this the
+ * registry of a child registered mid-run would never be seen. The gateway
+ * creates the directory the task-directory contract defines and nothing else: it
+ * never writes an index, a child checklist, or a child signal.
+ */
+async function ensureSubtasksDir(sw: SlotWatch, contextTaskPath: string): Promise<void> {
+  const taskDir = path.dirname(contextTaskPath);
+  // Only when the checklist itself is there: a released slot must not have its
+  // task tree recreated by the observer.
+  if (!(await slotFileExists(sw, contextTaskPath))) return;
+  await slotMkdir(sw, subtasksDirFor(taskDir));
+}
+
+/** Close the local child-file watchers and stop their remote counterparts. */
+async function closeSubtaskUnitWatchers(sw: SlotWatch): Promise<void> {
+  const watchers = sw.subtaskUnitWatchers ?? [];
+  sw.subtaskUnitWatchers = undefined;
+  for (const watcher of watchers) {
+    await watcher.close();
+  }
+
+  const unitRequests = (sw.agentRequestIds ?? []).filter(
+    (entry) => entry.kind === 'subtask-checklist' || entry.kind === 'subtask-signal',
+  );
+  if (unitRequests.length === 0) return;
+  sw.agentRequestIds = (sw.agentRequestIds ?? []).filter(
+    (entry) => entry.kind !== 'subtask-checklist' && entry.kind !== 'subtask-signal',
+  );
+  const fleet = await loadFleetStatus();
+  const slot = fleet.slots.find((candidate) => candidate.slot === sw.slotId);
+  const node = slot ? getNode(slot.machine) : null;
+  if (!node) return;
+  await Promise.all(
+    unitRequests.map(async ({ requestId }) => {
+      try {
+        await sendNodeRequest(node, 'fs.watch.stop', { requestId });
+      } catch (err) {
+        console.warn(
+          `[task-watcher] failed to stop remote subtask watch ${requestId}: ${(err as Error).message}`,
+        );
+      }
+    }),
+  );
+}
+
+/**
+ * The registry changed (or was read for the first time): rewire the child file
+ * watches, then emit one progress update so clients see the new unit without
+ * waiting for its first mark.
+ *
+ * Serialized per watch: `mark sub start` writes the index and the child pair in
+ * quick succession, so a second index event can arrive while the first rebind is
+ * still opening watchers. Without the chain both rebinds would register watchers
+ * and only one set would be tracked for teardown.
+ */
+async function handleSubtaskIndexChange(key: string, content?: string): Promise<void> {
+  const sw = activeWatches.get(key);
+  if (!sw) return;
+  const prior = sw.subtaskRebind;
+  const rebind: Promise<void> = (async () => {
+    if (prior) {
+      try {
+        await prior;
+      } catch {
+        // The prior rebind reports its own failure at its own await site; this
+        // one only needs it settled before it touches the watcher list.
+      }
+    }
+    await rebindSubtaskUnitWatches(key, content);
+  })();
+  sw.subtaskRebind = rebind;
+  try {
+    await rebind;
+  } finally {
+    if (sw.subtaskRebind === rebind) sw.subtaskRebind = undefined;
+  }
+  debouncedSubtaskUpdate(key);
+}
+
+async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<void> {
+  const sw = activeWatches.get(key);
+  if (!sw) return;
+  const taskDir = path.dirname(sw.taskFilePath);
+  const parentChecklist = path.basename(sw.taskFilePath);
+
+  let index: SubtaskIndex | null;
+  try {
+    index = content
+      ? parseSubtaskIndex(content, sw.subtaskIndexFilePath)
+      : await readSubtaskIndex(sw, taskDir);
+  } catch (err) {
+    // `mark` is the registry's only writer, so a file that does not parse is a
+    // real fault, not a shape to tolerate. It is reported at error level and the
+    // child watches are left as they were — a torn-down watch would also hide
+    // the children that were already registered correctly. The projection read
+    // in taskProgress raises the same failure to its RPC caller.
+    console.error(
+      `[task-watcher] cannot read subtask registry for ${key}: ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  await closeSubtaskUnitWatchers(sw);
+  // Each context watches only the children of ITS OWN checklist: a unit parented
+  // on SELF-REVIEW.md belongs to the self-review context's watch, and a unit
+  // whose parent checklist is not this one is not live here.
+  const units = subtaskUnitsForParentChecklist(index, parentChecklist);
+  if (units.length === 0) return;
+
+  if (sw.isLocal) {
+    const watchers: FSWatcher[] = [];
+    for (const filePath of subtaskUnitFilePaths(taskDir, units)) {
+      const watcher = watch(filePath, { persistent: false, ignoreInitial: true });
+      watcher.on('add', () => debouncedSubtaskUpdate(key));
+      watcher.on('change', () => debouncedSubtaskUpdate(key));
+      watchers.push(watcher);
+    }
+    sw.subtaskUnitWatchers = watchers;
+    console.log(
+      `[task-watcher] watching ${units.length} subtask unit(s) for local ${key}: ${units.map((unit) => unit.id).join(', ')}`,
+    );
+    return;
+  }
+
+  const fleet = await loadFleetStatus();
+  const slot = fleet.slots.find((candidate) => candidate.slot === sw.slotId);
+  const node = slot ? getNode(slot.machine) : null;
+  if (!node) {
+    console.log(`[task-watcher] no node for ${sw.machine} — skipping remote subtask watches`);
+    return;
+  }
+  for (const unit of units) {
+    for (const [kind, filePath] of [
+      ['subtask-checklist', path.join(taskDir, unit.checklist)],
+      ['subtask-signal', path.join(taskDir, unit.signal)],
+    ] as const) {
+      try {
+        (await sendNodeRequest(
+          node,
+          'fs.watch',
+          { path: filePath },
+          {
+            onRequestId: (id) => {
+              // Re-read the live entry: a rebind that lost the chain must not
+              // resurrect a torn-down watch's bookkeeping.
+              const live = activeWatches.get(key);
+              if (live !== sw) return;
+              sw.agentRequestIds = [
+                ...(sw.agentRequestIds ?? []),
+                { requestId: id, kind, path: filePath },
+              ];
+            },
+          },
+        )) as { watching: boolean };
+      } catch (err) {
+        console.log(
+          `[task-watcher] subtask file not yet watchable for remote ${key} (${unit.id}): ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+  console.log(
+    `[task-watcher] watching ${units.length} subtask unit(s) for remote ${key}: ${units.map((unit) => unit.id).join(', ')}`,
+  );
+}
+
+/** Absolute child checklist + signal paths for the units of one parent checklist. */
+export function subtaskUnitFilePaths(
+  taskDir: string,
+  units: readonly SubtaskIndexUnit[],
+): string[] {
+  return units.flatMap((unit) => [
+    path.join(taskDir, unit.checklist),
+    path.join(taskDir, unit.signal),
+  ]);
 }
 
 // ─── Scan fleet for working slots and start watching ───

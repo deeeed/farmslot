@@ -26,6 +26,8 @@ import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
+import { listOpenSubtaskUnits, openSubtaskContractMessage } from './subtasks.js';
+
 const require = createRequire(import.meta.url);
 const {
   resolveWorkerTerminalContract,
@@ -97,6 +99,21 @@ export async function validateTerminalSignalArtifacts(
 
   const vars = await loadSlotVars(slotId);
   const taskDir = path.posix.dirname(signalJsonPath);
+
+  // A registered child checklist unit (ADR-060) is part of this signal's proof.
+  // The mark engine already refuses a parent terminal command with an open
+  // child, but a signal written around the engine — by hand, by an older node's
+  // `mark`, or by a runner that edited the file — would otherwise sail through,
+  // so the gateway asserts it too, from the child signals on the slot.
+  const openSubtasks = await listOpenSubtaskUnits(vars, taskDir);
+  if (openSubtasks.length > 0) {
+    return {
+      ok: false,
+      kind: 'artifact',
+      message: openSubtaskContractMessage(openSubtasks, terminalCommand),
+    };
+  }
+
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
   const contractInput = checklistBasename
     ? terminalContractInputForChecklist(checklistBasename)

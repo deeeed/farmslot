@@ -764,7 +764,7 @@ async function main(): Promise<void> {
   });
 
   // Start watching TASK.md + SIGNAL.json for active working slots
-  onTaskProgress((slotId, progress, role, contextId, runId) => {
+  onTaskProgress((slotId, progress, role, contextId, runId, parentChecklist) => {
     // Keep fleet.status taskPhase/taskStepProgress tied to the primary slot worker.
     // Role panes publish their own progress via TASK_PROGRESS_UPDATED.
     const slot = getCachedFleet()?.slots.find((candidate) => candidate.slot === slotId);
@@ -784,7 +784,17 @@ async function main(): Promise<void> {
     broadcast({
       type: 'event',
       event: Events.TASK_PROGRESS_UPDATED,
-      payload: { slotId, runId, role, contextId, progress },
+      // parentChecklist travels only on a child-unit-driven update (ADR-060):
+      // the acceptance rule needs it to tell a live child from one whose parent
+      // checklist is no longer the active one.
+      payload: {
+        slotId,
+        runId,
+        role,
+        contextId,
+        progress,
+        ...(parentChecklist ? { parentChecklist } : {}),
+      },
     });
   });
   onWorkerSignal((slotId, runId, signal, role, contextId) => {

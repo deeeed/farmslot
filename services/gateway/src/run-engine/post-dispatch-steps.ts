@@ -11,6 +11,7 @@ import {
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
   type Run,
+  type RunSubtaskMetrics,
   type SlotReleaseParams,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -40,6 +41,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
+import { collectRunSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
@@ -467,16 +469,36 @@ export async function executeMonitorStep(
     if (!canSettle()) return retiredResult();
     const after = getRun(runId)!;
     const workerSignal = monitorResult?.workerSignal ?? null;
-    if (workerSignal?.disposition || workerSignal?.evidence || workerSignal?.checklistTiming) {
+    // Child checklist units (ADR-060) roll up beside the parent's timing: read
+    // once here, from the registry and child signals on the slot, because the
+    // task directory can be pruned before any later reader wants them.
+    let subtaskMetrics: RunSubtaskMetrics[] | null = null;
+    try {
+      subtaskMetrics = await collectRunSubtaskMetrics(after, current.slotId);
+    } catch (err) {
+      // A corrupt registry must not lose the parent's own metrics, which are the
+      // run's primary cost record. Reported, not hidden: the same read throws to
+      // its caller in task.progress, where the operator sees it.
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — subtask metrics unavailable: ${(err as Error).message}`,
+      );
+    }
+    if (
+      workerSignal?.disposition ||
+      workerSignal?.evidence ||
+      workerSignal?.checklistTiming ||
+      subtaskMetrics
+    ) {
       updateRun(runId, {
         metrics: {
           ...after.metrics,
-          ...(workerSignal.disposition ? { disposition: workerSignal.disposition } : {}),
-          ...(workerSignal.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
+          ...(workerSignal?.disposition ? { disposition: workerSignal.disposition } : {}),
+          ...(workerSignal?.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
           // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
-          ...(workerSignal.checklistTiming
+          ...(workerSignal?.checklistTiming
             ? { checklistTiming: workerSignal.checklistTiming }
             : {}),
+          ...(subtaskMetrics ? { subtasks: subtaskMetrics } : {}),
         },
       });
     }

@@ -1,8 +1,9 @@
-import type {
-  Run,
-  SlotStatus,
-  TaskProgressStructured,
-  TaskProgressUpdatedPayload,
+import {
+  type Run,
+  shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
+  type SlotStatus,
+  type TaskProgressStructured,
+  type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
 type UnknownRecord = Record<string, unknown>;
@@ -125,18 +126,18 @@ export function isSlotWorkerProgressActive(
   return typeof slot.taskStepProgress === 'number' && slot.taskStepProgress > 0;
 }
 
+/**
+ * Slot/run identity check, then the shared protocol rule. The rule replaced a
+ * local `SELF-REVIEW.md` string test that knew only one role checklist and
+ * nothing about child units (ADR-060), so Companion and Command Center now drop
+ * and accept exactly the same updates.
+ */
 export function shouldAcceptTaskProgressUpdate(
   run: Run | null | undefined,
   update: TaskProgressUpdatedPayload,
 ): boolean {
   if (!run?.slotId || update.slotId !== run.slotId || update.runId !== run.id) return false;
-  const activeTaskFile = run.activeTaskFile;
-  if (!activeTaskFile || activeTaskFile === run.taskFile) return true;
-  const activeName = activeTaskFile.split('/').pop();
-  if (activeName === 'SELF-REVIEW.md') {
-    return update.contextId === 'self-review' || update.role === 'self-review';
-  }
-  return true;
+  return shouldAcceptTaskProgressForActiveChecklist(run, update);
 }
 
 export function taskProgressPercent(progress: TaskProgressStructured): number {
