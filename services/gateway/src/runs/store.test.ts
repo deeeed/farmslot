@@ -584,6 +584,23 @@ test('archiveRun accepts a settled blocked run and refuses one with a pending de
   });
   await assert.rejects(archiveRun(waiting.id), /Cannot archive active run/);
   assert.ok(getRun(waiting.id), 'a gate-blocked run stays in the store');
+
+  const uncertain = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-uncertain`,
+  });
+  updateRun(uncertain.id, {
+    status: 'blocked',
+    error: 'prompt delivery uncertain',
+    steps: [
+      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+      { name: 'monitor', status: 'skipped' },
+    ],
+    decisions: [],
+  });
+  await assert.rejects(archiveRun(uncertain.id), /Cannot archive active run/);
+  assert.ok(getRun(uncertain.id), 'a run holding its slot after an uncertain delivery stays');
 });
 
 test('isSyntheticLeak detects completed fixture runs without touching real run shapes', async (t) => {

@@ -16,7 +16,6 @@ import type {
 } from '@farmslot/protocol';
 import {
   Events,
-  isSettledBlockedRun,
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
@@ -59,7 +58,12 @@ import {
   RUN_INVENTORY_COLUMNS,
   type RunInventorySortKey,
 } from './run-list-inventory.js';
-import { filterRunList, runGradeColor, TERMINAL_STATUSES } from './run-list-model.js';
+import {
+  filterRunList,
+  isArchivableRun,
+  runGradeColor,
+  TERMINAL_STATUSES,
+} from './run-list-model.js';
 import {
   FLOW_OPTIONS,
   LANE_OPTIONS,
@@ -424,7 +428,7 @@ export class RunList extends RunListState {
     try {
       for (const id of this.selectedIds) {
         const run = this.runs.find((candidate) => candidate.id === id);
-        if (!run || (!TERMINAL_STATUSES.has(run.status) && !isSettledBlockedRun(run))) continue;
+        if (!run || !isArchivableRun(run)) continue;
         await gateway.request<RunArchiveResult>(Methods.RUN_ARCHIVE, { runId: id });
       }
       this.selectedIds = new Set();
@@ -494,6 +498,7 @@ export class RunList extends RunListState {
     const selectedTerminalCount = selectedRuns.filter((run) =>
       TERMINAL_STATUSES.has(run.status),
     ).length;
+    const selectedArchivableCount = selectedRuns.filter((run) => isArchivableRun(run)).length;
     const compareAllowed =
       selectedRuns.length === 2 && canCompareRuns(selectedRuns[0], selectedRuns[1]);
     const selectedRunId = this.selectedRunId;
@@ -580,6 +585,7 @@ export class RunList extends RunListState {
         ? renderRunListManageBar({
             selectedCount: selCount,
             selectedTerminalCount,
+            selectedArchivableCount,
             compareAllowed,
             actionInProgress: this.actionInProgress,
             selectVisible: () => this.selectVisibleRuns(false),

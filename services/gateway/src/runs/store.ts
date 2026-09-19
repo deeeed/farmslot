@@ -48,6 +48,7 @@ import {
 } from '@farmslot/protocol';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
+import { readSlotField } from '../core/state.js';
 import { farmslotRoot, isValidSafetyTier } from '../fleet/state.js';
 import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
@@ -1469,11 +1470,26 @@ async function archiveRunBody(id: string): Promise<boolean> {
   if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
+  if (run.status === 'blocked' && run.slotId) {
+    // The live store is what keeps the orphan reconciler off a blocked run's
+    // slot. If the slot row still names this run, something (a preserved
+    // runner, an unfinished release) still owns it; evicting the run would let
+    // the reconciler lifecycle-reset the slot around a live worker.
+    const owner = await readSlotField(run.slotId, 'current_run_id');
+    if (owner === id) {
+      throw new Error(
+        `Cannot archive blocked run ${id}: slot ${run.slotId} still lists it as current run (cancel it to release the slot)`,
+      );
+    }
+  }
   assertNativeWorkersReleased(run);
   if (run.backlogReconcilePending) {
     throw new Error(`Cannot archive run ${id} while backlog reconciliation is pending`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
+  // A blocked run is not a terminal outcome, so emitAnalyticsForTerminalRun
+  // returns null for it on purpose: the archived JSON is its record and the
+  // analytics sink only counts done / failed / cancelled runs.
   // Catch-all: write the analytics record before the run is evicted. Await it and DON'T archive
   // if it fails — backfill scans the live store, not the archive, so an evicted run with no sink
   // record would be unrecoverable.

@@ -80,11 +80,21 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
  * Shared by the gateway archive guard and the UI so both agree on eligibility.
  */
 export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
-  return (
-    run.status === 'blocked' &&
-    !run.steps.some((step) => step.status === 'running') &&
-    !run.decisions.some((decision) => !decision.resolvedAt)
-  );
+  if (run.status !== 'blocked') return false;
+  const steps = run.steps ?? [];
+  const decisions = run.decisions ?? [];
+  if (steps.some((step) => step.status === 'running')) return false;
+  if (decisions.some((decision) => !decision.resolvedAt)) return false;
+  // An uncertain prompt delivery blocks the run while deliberately keeping its
+  // slot and runner: the prompt may be executing. That run is held for
+  // operator reconciliation, not settled, so archiving it would orphan a live
+  // worker on a slot the reconciler then republishes.
+  return !steps.some((step) => {
+    const outputs = step.outputs ?? {};
+    return (
+      Boolean(outputs.promptDeliveryUncertain) || Boolean(outputs.nativeWorkerOperationUncertain)
+    );
+  });
 }
 
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';

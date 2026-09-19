@@ -39,4 +39,39 @@ test('isSettledBlockedRun needs blocked status, no running step, no pending deci
     'a running step is a live wait',
   );
   assert.equal(isSettledBlockedRun({ status: 'failed', steps: skipped, decisions: [] }), false);
+  assert.equal(
+    isSettledBlockedRun({
+      status: 'blocked',
+      steps: [
+        { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+        { name: 'monitor', status: 'skipped' },
+      ],
+      decisions: [],
+    }),
+    false,
+    'an uncertain prompt delivery still owns its slot and runner',
+  );
+  assert.equal(
+    isSettledBlockedRun({
+      status: 'blocked',
+      steps: [
+        {
+          name: 'dispatch',
+          status: 'failed',
+          outputs: { nativeWorkerOperationUncertain: 'delivery' },
+        },
+      ],
+      decisions: [],
+    }),
+    false,
+  );
+  assert.equal(
+    isSettledBlockedRun({
+      status: 'blocked',
+      steps: undefined as never,
+      decisions: undefined as never,
+    }),
+    true,
+    'legacy persisted runs may lack the arrays',
+  );
 });

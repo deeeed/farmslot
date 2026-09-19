@@ -1,5 +1,5 @@
 import type { FlowType, Run, RunLane, RunStatus } from '@farmslot/protocol';
-import { resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import { isSettledBlockedRun, resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -8,6 +8,11 @@ import { compareInventoryValues, sortInventoryRows } from '../shared/work-invent
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { dispositionLabel } from './run-utils.js';
+
+/** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
+export function isArchivableRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+  return TERMINAL_STATUSES.has(run.status) || isSettledBlockedRun(run);
+}
 
 export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
 

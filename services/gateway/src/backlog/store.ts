@@ -756,7 +756,20 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   return changed;
 }
 
-function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
+interface ReleaseBacklogRunLinkOptions {
+  /**
+   * The released run ended blocked and was archived as such: keep the item at
+   * `needs-attention` with its observed status instead of requeueing it, so an
+   * operator closing a blocked run does not silently re-dispatch the work.
+   */
+  keepNeedsAttention?: boolean;
+}
+
+function releaseBacklogRunLink(
+  item: BacklogItem,
+  runId: string,
+  options: ReleaseBacklogRunLinkOptions = {},
+): boolean {
   let touched = false;
   if (item.launchPlanState) {
     if (item.launchPlanState.baselineRunId === runId) {
@@ -781,10 +794,11 @@ function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
   }
 
   delete item.runId;
-  delete item.lastObservedRunStatus;
   delete item.lastDispatchError;
   touched = true;
-  if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
+  const holdAsBlocked = options.keepNeedsAttention === true && item.status === 'needs-attention';
+  if (!holdAsBlocked) delete item.lastObservedRunStatus;
+  if (!holdAsBlocked && REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
     item.status = 'ready';
   }
   if (item.launchPlanState) rollUpLaunchPlanStatus(item);
@@ -2573,12 +2587,15 @@ export async function markBacklogRunObserved(run: Run): Promise<void> {
   }
 }
 
-export async function markBacklogRunReleased(runId: string): Promise<string[]> {
+export async function markBacklogRunReleased(
+  runId: string,
+  options: ReleaseBacklogRunLinkOptions = {},
+): Promise<string[]> {
   return withBacklogMutation(async () => {
     let changed = false;
     const graphIds = new Set<string>();
     for (const item of items) {
-      if (!releaseBacklogRunLink(item, runId)) continue;
+      if (!releaseBacklogRunLink(item, runId, options)) continue;
       changed = true;
       if (item.workGraphId) graphIds.add(item.workGraphId);
     }

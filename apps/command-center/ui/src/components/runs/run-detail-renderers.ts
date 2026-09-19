@@ -487,7 +487,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                 ? 'gate-confirming'
                 : ''}"
               style="border-color:${colors.statusFail}; color:${colors.statusFail}; padding:4px 12px; font-size:11px"
-              title="Cancel this recoverable blocked run before deleting it"
+              title="Stop this blocked run and release its slot (overwrites the blocked outcome; use Archive as blocked to keep it)"
               ?disabled=${actionsBlocked}
               @click=${() => ctx._confirmLifecycleAction(r, 'cancel')}
             >
