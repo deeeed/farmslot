@@ -10,7 +10,12 @@ import {
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
-import { renderSubtaskBlock, subtaskBlockStyles, SubtaskOpenState } from './subtask-block.js';
+import {
+  renderSubtaskBlock,
+  subtaskBlockStyles,
+  type SubtaskOpenScope,
+  SubtaskOpenState,
+} from './subtask-block.js';
 
 interface Step {
   text: string;
@@ -33,6 +38,34 @@ const STATUS_ICONS: Record<string, string> = {
   pending: '\u25cb', // circle
   skipped: '\u2013', // en-dash
 };
+
+/**
+ * One step row, plus the child unit block when the step owns one (ADR-060).
+ * Child rows render through the same function with `nested`, which stops at one
+ * level — the projection is recursive, v1 rendering is not.
+ *
+ * Module-level rather than a method so it can be tested without a DOM: the
+ * element itself cannot be instantiated in the node test runner.
+ */
+export function renderTrackerStepRow(
+  step: TaskStepProgress,
+  openScope: SubtaskOpenScope,
+  nested = false,
+): TemplateResult {
+  return html`
+    <div class="s-step ${step.status}">
+      <span class="s-step-icon ${step.status}">${STATUS_ICONS[step.status]}</span>
+      <span class="s-step-name">${step.name}</span>
+    </div>
+    ${step.subtask && !nested
+      ? renderSubtaskBlock(
+          step.subtask,
+          (childStep) => renderTrackerStepRow(childStep, openScope, true),
+          openScope,
+        )
+      : nothing}
+  `;
+}
 
 @customElement('progress-tracker')
 export class ProgressTracker extends LitElement {
@@ -365,25 +398,8 @@ export class ProgressTracker extends LitElement {
     `;
   }
 
-  /**
-   * One step row, plus the child unit block when the step owns one (ADR-060).
-   * Child rows render through the same method with `nested`, which stops at one
-   * level — the projection is recursive, v1 rendering is not.
-   */
-  private _renderStepRow(step: TaskStepProgress, nested = false): TemplateResult {
-    return html`
-      <div class="s-step ${step.status}">
-        <span class="s-step-icon ${step.status}">${STATUS_ICONS[step.status]}</span>
-        <span class="s-step-name">${step.name}</span>
-      </div>
-      ${step.subtask && !nested
-        ? renderSubtaskBlock(
-            step.subtask,
-            (childStep) => this._renderStepRow(childStep, true),
-            this._subtaskOpen.scope(this.runId),
-          )
-        : nothing}
-    `;
+  private _renderStepRow(step: TaskStepProgress): TemplateResult {
+    return renderTrackerStepRow(step, this._subtaskOpen.scope(this.runId));
   }
 
   private _renderPhase(phase: TaskPhaseProgress, currentPhase: string | null) {

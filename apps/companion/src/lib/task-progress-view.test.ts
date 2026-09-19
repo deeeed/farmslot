@@ -7,6 +7,7 @@ import { colors } from '@farmslot/theme';
 import {
   acceptanceLedgerView,
   acceptanceVerdictColor,
+  subtaskBlockKey,
   subtaskProgressView,
   subtaskStatusColor,
   taskStepStatusColor,
@@ -139,4 +140,24 @@ test('verdict colours cover every vocabulary entry and the unknown fallback', ()
   assert.equal(acceptanceVerdictColor('untestable'), colors.statusWarn);
   assert.equal(acceptanceVerdictColor('something-new'), colors.accent);
   assert.equal(acceptanceVerdictColor(null), colors.textMuted);
+});
+
+test('the block key changes with the run so a run change remounts it', () => {
+  assert.equal(subtaskBlockKey('run-a', 'perps-review'), 'run-a:perps-review');
+  assert.notEqual(
+    subtaskBlockKey('run-a', 'perps-review'),
+    subtaskBlockKey('run-b', 'perps-review'),
+    'the same unit id in another run must not reuse the mounted block',
+  );
+  assert.equal(
+    subtaskBlockKey('run-a', 'perps-review'),
+    subtaskBlockKey('run-a', 'perps-review'),
+    'the same run and unit keep one block across re-renders',
+  );
+});
+
+test('a missing run falls back to one shared key', () => {
+  assert.equal(subtaskBlockKey(null, 'ci-parity'), 'no-run:ci-parity');
+  assert.equal(subtaskBlockKey(undefined, 'ci-parity'), 'no-run:ci-parity');
+  assert.equal(subtaskBlockKey('  ', 'ci-parity'), 'no-run:ci-parity');
 });

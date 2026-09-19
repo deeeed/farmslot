@@ -231,3 +231,30 @@ test('a host with no run identity still keeps one scope', () => {
   assert.equal(openBinding(unit(), state.scope(undefined)), false);
   assert.equal(openBinding(unit(), state.scope('')), false, 'blank and absent are the same scope');
 });
+
+test('only the three most recent runs are remembered', () => {
+  const state = new SubtaskOpenState();
+  const unit = () => unitFixture({ id: 'perps-review', status: 'running' });
+  for (const run of ['run-1', 'run-2', 'run-3']) {
+    openBinding(unit(), state.scope(run));
+    state.scope(run).set('perps-review', false);
+  }
+  assert.equal(openBinding(unit(), state.scope('run-1')), false, 'still remembered');
+
+  // run-4 is the fourth distinct run; the least recently scoped one falls off.
+  // Scoping run-1 above made run-2 the oldest.
+  openBinding(unit(), state.scope('run-4'));
+  assert.equal(openBinding(unit(), state.scope('run-2')), true, 'the oldest run was forgotten');
+  assert.equal(openBinding(unit(), state.scope('run-1')), false, 'a recent run is untouched');
+});
+
+test('re-scoping a run keeps it from being pruned', () => {
+  const state = new SubtaskOpenState();
+  const unit = () => unitFixture({ id: 'ci-parity', status: 'running' });
+  state.scope('run-a').set('ci-parity', false);
+  for (const run of ['run-b', 'run-c']) openBinding(unit(), state.scope(run));
+  state.scope('run-a'); // the viewer came back before the fourth run
+  openBinding(unit(), state.scope('run-d'));
+  assert.equal(openBinding(unit(), state.scope('run-a')), false, 'run A survived as recent');
+  assert.equal(openBinding(unit(), state.scope('run-b')), true, 'run B aged out instead');
+});
