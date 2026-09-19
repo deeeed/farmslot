@@ -3,24 +3,13 @@ import { test } from 'node:test';
 
 import type { AcceptanceCriterionStatus, AcceptanceStatusLedger } from '@farmslot/protocol';
 
+import { litText } from '../../testing/lit-text.js';
+
 import {
   acceptancePanelPresentation,
   evidenceLabel,
   renderAcceptancePanel,
 } from './acceptance-panel.js';
-
-// Same flattening as subtask-block.test.ts: interleave a lit TemplateResult's
-// static strings with its resolved dynamic values to assert on rendered text.
-function litText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(litText).join('');
-  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
-    const { strings, values } = value as { strings: string[]; values: unknown[] };
-    return strings.map((s, i) => s + (i < values.length ? litText(values[i]) : '')).join('');
-  }
-  return '';
-}
 
 function criterion(overrides: Partial<AcceptanceCriterionStatus> = {}): AcceptanceCriterionStatus {
   return {

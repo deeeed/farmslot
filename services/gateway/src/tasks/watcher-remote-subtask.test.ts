@@ -245,13 +245,15 @@ test('a remote watch registers the registry and every child file, and unwatch st
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
 
-    // The parent pair plus the registry go up at watch setup. The registry was
-    // already on disk, so the initial read wires the child pair too — a node's
-    // fs.watch reports changes only, so without that read a gateway restart
-    // mid-run would never watch an existing child.
+    // The parent pair, the acceptance ledger (ADR-060 phase 5) and the registry go
+    // up at watch setup. The registry was already on disk, so the initial read
+    // wires the child pair too — a node's fs.watch reports changes only, so
+    // without that read a gateway restart mid-run would never watch an existing
+    // child.
     assert.deepEqual(watchedPathsUnder(dir), [
       'CHECKLIST.md',
       'SIGNAL.json',
+      'artifacts/acceptance-status.json',
       'subtasks/index.json',
       'subtasks/perps-review-SIGNAL.json',
       'subtasks/perps-review.md',
