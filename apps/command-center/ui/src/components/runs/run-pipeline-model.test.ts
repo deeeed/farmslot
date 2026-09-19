@@ -328,6 +328,48 @@ test('detached checklist panel hides when the inspector already shows live progr
   );
 });
 
+test('pipeline self-review is not classified as publication extra-review', () => {
+  const run = makeRun({
+    status: 'self-reviewing',
+    activeTaskFile: 'temp/tasks/foo/SELF-REVIEW.md',
+    steps: [
+      { name: 'self-review', status: 'running' },
+      { name: 'human-gate', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'self-review',
+        role: 'self-review',
+        status: 'working',
+        runner: 'claude',
+      } as never,
+    ],
+  });
+  const live = {
+    schema: {
+      flowType: 'dev',
+      title: 'Self-review',
+      totalSteps: 1,
+      phases: [{ name: 'Checklist', steps: [{ index: 1, name: 'Start' }] }],
+    },
+    phases: [
+      {
+        name: 'Checklist',
+        steps: [{ index: 1, name: 'Start', status: 'running' as const }],
+        completedSteps: 0,
+        totalSteps: 1,
+      },
+    ],
+    completedSteps: 0,
+    totalSteps: 1,
+    currentPhase: 'Checklist',
+    currentStep: 'Start',
+  };
+  assert.equal(isPublicationReviewProgressActive(run), false);
+  assert.equal(activeTaskProgressStepId(run, live), 'self-review');
+  assert.equal(selectedStepShowsLiveTaskProgress(run, 'self-review'), true);
+});
+
 test('waiting publication gate is the current canvas node, not leftover fix progress', () => {
   const run = makeRun({
     status: 'blocked',

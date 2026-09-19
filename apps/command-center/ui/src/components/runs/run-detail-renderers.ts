@@ -65,9 +65,9 @@ export interface RunDetailViewContext {
   run: Run | null;
   prStatus: PRStatus | null;
   siblings: Run[];
-  taskProgress: unknown;
+  taskProgress: TaskProgressStructured | null;
   selectedStep: Run['steps'][number] | null;
-  selectedStepProgress: unknown;
+  selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
   _bootstrapFailed: boolean;
   _connectionStale: boolean;

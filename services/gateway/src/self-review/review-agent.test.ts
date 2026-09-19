@@ -52,15 +52,11 @@ test('retained reviewer delivery uses native reset or a cold process replacement
     resetContext: false,
   });
   assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'resume', 1), {
-    kind: 'in-place',
+    kind: 'cold-relaunch',
     resetContext: false,
   });
   assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'resume', 2), {
-    kind: 'in-place',
-    resetContext: false,
-  });
-  assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'reset', 2), {
-    kind: 'in-place',
+    kind: 'cold-relaunch',
     resetContext: false,
   });
   assert.deepEqual(retainedReviewerDeliveryPlan('cursor', 'reset', 1), {

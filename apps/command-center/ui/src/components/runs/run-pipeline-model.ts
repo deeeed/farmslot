@@ -112,14 +112,13 @@ export function isPublicationReviewProgressActive(run: Run | undefined): boolean
     return false;
   }
   const humanGate = run.steps.find((step) => step.name === 'human-gate');
+  const humanGating = run.status === 'human-gating' || humanGate?.status === 'running';
+  if (!humanGating) return false;
   const reviewerWorking = run.agentContexts?.some(
     (context) =>
       (context.role === 'self-review' || context.role === 'self-review-fix') &&
       (context.status === 'working' || context.status === 'launching'),
   );
-  if (run.status !== 'human-gating' && humanGate?.status !== 'running' && !reviewerWorking) {
-    return false;
-  }
   return isReviewerChecklistFile(reviewerChecklistBasename(run)) || Boolean(reviewerWorking);
 }
 
@@ -133,12 +132,6 @@ export function currentPipelineNodeId(run: Run | undefined): string | null {
     return 'human-gate';
   }
   if (isPublicationReviewProgressActive(run)) {
-    const label = run.agentContexts?.find(
-      (context) =>
-        (context.role === 'self-review' || context.role === 'self-review-fix') &&
-        (context.status === 'working' || context.status === 'launching'),
-    );
-    if (label?.id) return label.id;
     return 'human-gate';
   }
   const running = [...run.steps].reverse().find((step) => step.status === 'running');

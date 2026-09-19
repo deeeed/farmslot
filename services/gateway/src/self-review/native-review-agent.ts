@@ -217,12 +217,24 @@ async function runOwnedNativeReviewAgent(input: NativeReviewInput): Promise<Revi
             warm.reviewLoopNumber ?? 1,
             warm.artifactScope,
           );
-          template =
-            continuationReviewScope({
-              priorHeadSha: previous?.snapshot.headSha ?? null,
-              currentHeadSha: snapshot.snapshot.headSha ?? null,
-              priorArtifactDir: `${taskDir}/${reviewArtifactDir(warm.reviewLoopNumber ?? 1, warm.artifactScope)}`,
-            }) + template;
+          const prefix = reReviewChecklistPrefix({
+            taskDir,
+            loopNumber,
+            artifactScope,
+            priorArtifactScope: warm.artifactScope,
+            priorLoopNumber: warm.reviewLoopNumber ?? 1,
+            priorHeadSha: previous?.snapshot.headSha ?? null,
+            currentHeadSha: snapshot.snapshot.headSha ?? null,
+            resume: true,
+          });
+          if (prefix) template = `${prefix}${template}`;
+          else
+            template =
+              continuationReviewScope({
+                priorHeadSha: previous?.snapshot.headSha ?? null,
+                currentHeadSha: snapshot.snapshot.headSha ?? null,
+                priorArtifactDir: `${taskDir}/${reviewArtifactDir(warm.reviewLoopNumber ?? 1, warm.artifactScope)}`,
+              }) + template;
         }
         admit();
         await writeTextFileOnSlot(
