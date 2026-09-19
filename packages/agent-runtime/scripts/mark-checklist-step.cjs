@@ -17,6 +17,7 @@ const {
   parseChecklist,
   pickSignalPassthrough,
   readJson,
+  signalContentUnchanged,
   writeSignal,
 } = require('./mark-io.cjs');
 const {
@@ -517,16 +518,27 @@ const next = buildSignalUpdate(
   taskPath,
   taskDir,
 );
-// One signal writer for the parent and child paths, so their bytes and mode
-// cannot drift (mark-io.cjs writeSignal).
-writeSignal(signalPath, next);
+// Re-marking a step that is already done changes nothing: the box was checked
+// and its timing event already exists, so the only difference from the stored
+// signal would be a fresh `timestamp`. Compare content, never the command: that
+// keeps `start` (new attemptId), a terminal mark (new status), a resume from
+// `blocked`, and a box checked by hand without an event all writing as before,
+// while a genuinely empty re-mark stays a no-op.
+const alreadyRecorded = !isStartCommand && !terminalCommand && signalContentUnchanged(signal, next);
 
-if (isStartCommand) {
-  console.log('signal started');
-} else if (terminalCommand) {
-  console.log(
-    `signal ${terminalCommand}: status=${next.status} disposition=${next.disposition ?? 'n/a'}`,
-  );
+if (alreadyRecorded) {
+  console.log(`already marked ${target.stepNumber}: ${target.label}`);
 } else {
-  console.log(`marked ${target.stepNumber}: ${target.label}`);
+  // One signal writer for the parent and child paths, so their bytes and mode
+  // cannot drift (mark-io.cjs writeSignal).
+  writeSignal(signalPath, next);
+  if (isStartCommand) {
+    console.log('signal started');
+  } else if (terminalCommand) {
+    console.log(
+      `signal ${terminalCommand}: status=${next.status} disposition=${next.disposition ?? 'n/a'}`,
+    );
+  } else {
+    console.log(`marked ${target.stepNumber}: ${target.label}`);
+  }
 }

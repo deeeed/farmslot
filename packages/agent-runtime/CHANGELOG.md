@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `mark N` on a step whose box and timing event are already recorded is a true no-op: it prints `already marked N` and leaves SIGNAL.json untouched instead of rewriting it with a new timestamp. A resume from `blocked`, a box checked by hand, `start` and every terminal mark still write.
 - `mark sub` registers and drives child checklist units (ADR-060): a parent step delegates to its own checklist and signal under `subtasks/`, written only by `mark`.
   - `sub start <id> --step N --from <path|inline:text>` materializes `subtasks/<id>.md`: frontmatter stripped, `{{VAR}}` rendered from `inputs/handoff.json` plus `--var`, source and rendered digests recorded in `subtasks/index.json`.
   - `sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason … | status` maintain the child pair.
@@ -9,6 +10,7 @@
   - A child `complete` ticks the parent box with a normal parent timing event; a child `blocked` blocks the parent signal with `subtask <id>: <reason>` until the child resumes.
   - A child unit has no flow terminal contract: `--report` is its only artifact rule.
   - `--from template:<id>` is refused: resolving a catalog id needs project template sources the task-dir engine cannot read, so materialize the template first and pass its path.
+  - The package `test` script ends with the `mark sub` end-to-end scenario, so CI runs it on a real task directory rather than unit tests alone.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.0 - 2026-09-18

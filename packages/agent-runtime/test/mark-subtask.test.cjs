@@ -84,8 +84,23 @@ function parentSignal(dir) {
   return readJson(path.join(dir, 'SIGNAL.json'));
 }
 
+/**
+ * ADR-060: a child signal never carries `failed`. Work that cannot finish is
+ * `blocked` with a reason, so the operator uses the existing blocked-run
+ * actions. Enforced on every read below, which is how every child signal write
+ * in this file is observed — a new verb cannot skip the guard.
+ */
+function assertChildStatusAllowed(signal) {
+  assert.ok(
+    ['running', 'blocked', 'complete', 'done'].includes(signal.status),
+    `a child signal status must be running|blocked|complete|done, never failed (got ${signal.status})`,
+  );
+}
+
 function childSignal(dir, id) {
-  return readJson(path.join(dir, 'subtasks', `${id}-SIGNAL.json`));
+  const signal = readJson(path.join(dir, 'subtasks', `${id}-SIGNAL.json`));
+  assertChildStatusAllowed(signal);
+  return signal;
 }
 
 function index(dir) {
@@ -263,9 +278,17 @@ function index(dir) {
   assert.equal(parentEvent.label, '2. Self-review the diff against the review skill');
   assert.equal(parent.step, '2. Self-review the diff against the review skill');
 
-  // A later parent mark of that step is an idempotent no-op.
+  // A later parent mark of that step is a true no-op: exit 0 and the signal file
+  // is byte-identical, timestamp included. Re-marking a finished step is not
+  // progress, so it must not look like a fresh write to anything watching.
+  const signalBeforeReMark = readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8');
   const reMark = mark(dir, '2');
   assert.equal(reMark.status, 0, reMark.stderr);
+  assert.equal(
+    readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'),
+    signalBeforeReMark,
+    're-marking an already-recorded step must not rewrite SIGNAL.json',
+  );
   assert.equal(
     parentSignal(dir).checklistTiming.events.filter((event) => event.stepNumber === 2).length,
     1,
@@ -303,12 +326,7 @@ function index(dir) {
   assert.equal(child.outcome, 'partial');
   assert.equal(child.disposition, 'blocked');
   assert.equal(child.reason, 'skill needs the diff');
-  // ADR-060: a child signal never carries `failed`. Work that cannot finish is
-  // `blocked` with a reason, so the operator uses the blocked-run actions.
-  assert.ok(
-    ['running', 'blocked', 'complete', 'done'].includes(child.status),
-    `a child signal status must never be failed (got ${child.status})`,
-  );
+  assertChildStatusAllowed(child);
   let parent = parentSignal(dir);
   assert.equal(parent.status, 'blocked');
   assert.equal(parent.outcome, 'partial');

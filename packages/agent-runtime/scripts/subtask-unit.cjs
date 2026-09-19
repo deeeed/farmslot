@@ -20,6 +20,7 @@ const {
   parseChecklist,
   pickSignalPassthrough,
   readJson,
+  writeIndex,
   writeSignal,
 } = require('./mark-io.cjs');
 
@@ -96,7 +97,7 @@ function readSubtaskIndex(taskDir) {
 }
 
 function writeSubtaskIndex(taskDir, index) {
-  atomicWrite(subtaskIndexPath(taskDir), `${JSON.stringify(index, null, 2)}\n`);
+  writeIndex(subtaskIndexPath(taskDir), index);
 }
 
 function unitById(index, id) {
@@ -290,14 +291,18 @@ function writeParentSignal(taskDir, unit, { status, stepLabel, reason, event, no
   const events = event
     ? appendTimingEvent(timing.events, event.stepNumber, event.label, now)
     : timing.events;
+  // Key order mirrors the parent mark path's buildSignalUpdate (passthrough,
+  // step, checklistTiming, timestamp, then the status block) so a child-driven
+  // parent mark and a hand-run one produce the same bytes, not just the same
+  // values.
   const next = {
     ...pickSignalPassthrough(signal),
-    status,
-    ...(status === 'blocked' ? { outcome: 'partial', disposition: 'blocked' } : {}),
-    ...(reason ? { reason } : {}),
     step: stepLabel,
     checklistTiming: { schemaVersion: 1, source: timing.source, events },
     timestamp: now,
+    status,
+    ...(status === 'blocked' ? { outcome: 'partial', disposition: 'blocked' } : {}),
+    ...(reason ? { reason } : {}),
   };
   writeSignal(signalPath, next);
   return next;
