@@ -145,7 +145,15 @@ export function renderSlotViewSidebarTask(view: SlotView) {
 
   // Structured progress (phase accordion) when available
   if (view._structuredProgress) {
-    return html`<progress-tracker .structured=${view._structuredProgress}></progress-tracker>`;
+    // The slot follows one run to the next, so child-unit expand state is
+    // scoped by run. Use the linked run, the same identity the progress itself
+    // is fetched and filtered by: a pinned or cached linked run can differ from
+    // the fleet's `currentRunId`, and scoping by the fleet value would file the
+    // viewer's expand state under a run this panel is not showing.
+    return html`<progress-tracker
+      .structured=${view._structuredProgress}
+      .runId=${view._linkedRun?.id}
+    ></progress-tracker>`;
   }
 
   // Fallback to flat step list

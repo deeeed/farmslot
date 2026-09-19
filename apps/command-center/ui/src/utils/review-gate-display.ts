@@ -485,6 +485,20 @@ export interface GateSummaryChecklistRow {
   duration: string;
 }
 
+/** A child checklist unit's own step timings (ADR-060), shown under its parent step. */
+export interface GateSummaryChecklistSubtaskGroup {
+  id: string;
+  /** Source ref basename, or `inline` — the same title the live progress block shows. */
+  title: string;
+  /** Full provenance for the row's tooltip: the unit id and its untruncated ref. */
+  titleTooltip: string;
+  rows: GateSummaryChecklistRow[];
+}
+
+export interface GateSummaryChecklistStepRow extends GateSummaryChecklistRow {
+  subtasks?: GateSummaryChecklistSubtaskGroup[];
+}
+
 /** Compact human duration: 1500 → "1.5s", 65000 → "1.1m". */
 export function formatDurationMs(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—';
@@ -518,7 +532,7 @@ export interface GateSummaryDisplay {
   reWorkCount: number;
   unresolvedTotal: number;
   reWork: { tokens: string; loops: number; nudgeCount: number } | null;
-  checklist: GateSummaryChecklistRow[];
+  checklist: GateSummaryChecklistStepRow[];
   tokens: {
     mainWorker: GateSummaryTokenRow;
     reviews: GateSummaryTokenRow[];
@@ -527,6 +541,48 @@ export interface GateSummaryDisplay {
     grandTotal: string;
     sessionPaths: string[];
   };
+}
+
+/**
+ * Parent step timings with each child unit's own steps nested under the step it
+ * hangs off (ADR-060). A child whose parent step has no recorded duration — the
+ * run stopped before that box was ticked — still gets a row, so its work is not
+ * dropped from the retrospective; the row states the step it belongs to and
+ * carries no parent duration.
+ */
+function checklistRows(summary: GateSummary): GateSummaryChecklistStepRow[] {
+  const checklist = summary.checklist;
+  if (!checklist) return [];
+  const rows: GateSummaryChecklistStepRow[] = checklist.perStepMs.map((step) => ({
+    stepNumber: step.stepNumber,
+    label: step.label,
+    duration: formatDurationMs(step.durationMs),
+  }));
+  for (const unit of checklist.subtasks ?? []) {
+    const ref = unit.source?.ref?.trim();
+    const group: GateSummaryChecklistSubtaskGroup = {
+      id: unit.id,
+      title: ref ? ref.split('/').pop() || ref : 'inline',
+      titleTooltip: ref ? `${unit.id} · ${unit.source?.kind} · ${ref}` : `${unit.id} · inline text`,
+      rows: unit.perStepMs.map((step) => ({
+        stepNumber: step.stepNumber,
+        label: step.label,
+        duration: formatDurationMs(step.durationMs),
+      })),
+    };
+    const parent = rows.find((row) => row.stepNumber === unit.parent.stepNumber);
+    if (parent) {
+      parent.subtasks = [...(parent.subtasks ?? []), group];
+      continue;
+    }
+    rows.push({
+      stepNumber: unit.parent.stepNumber,
+      label: `${unit.parent.checklist} step ${unit.parent.stepNumber}`,
+      duration: formatDurationMs(0),
+      subtasks: [group],
+    });
+  }
+  return rows.sort((a, b) => a.stepNumber - b.stepNumber);
 }
 
 export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
@@ -570,11 +626,7 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
           nudgeCount: t.reWork.nudgeCount ?? 0,
         }
       : null,
-    checklist: (summary.checklist?.perStepMs ?? []).map((s) => ({
-      stepNumber: s.stepNumber,
-      label: s.label,
-      duration: formatDurationMs(s.durationMs),
-    })),
+    checklist: checklistRows(summary),
     tokens: {
       mainWorker: {
         label: 'Worker',

@@ -6,7 +6,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 - Task-progress filtering uses the shared protocol rule instead of a local `SELF-REVIEW.md` string test, so Companion accepts and drops exactly what Command Center does, including child checklist unit updates (ADR-060).
 - Restore Settings when the gateway is unpaired, and put QR pairing first on the connection landing page. Typing a URL or token stays as a manual fallback.
-
+- Worker progress shows a child checklist unit under the step that owns it, with its source, id, status, and step count; tap it to see the child's own steps, and a new run starts from collapsed again.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.6.0 - 2026-09-16

@@ -8,7 +8,10 @@ import {
   taskProgressPercent,
   taskProgressTitle,
 } from '../lib/task-progress';
+import { subtaskBlockKey, taskStepStatusColor } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
+
+import { TaskSubtaskBlock } from './TaskSubtaskBlock';
 
 export function TaskProgressPanel({
   run,
@@ -50,17 +53,30 @@ export function TaskProgressPanel({
             </Text>
           </View>
           {phase.steps.map((step) => (
-            <View key={`${phase.name}-${step.index}`} style={styles.stepRow}>
-              <Text style={[styles.stepIcon, { color: statusColor(step.status) }]}>
-                {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
-              </Text>
-              <Text
-                style={[styles.stepName, step.status === 'done' && styles.stepNameDone]}
-                numberOfLines={1}
-              >
-                {step.name}
-              </Text>
-            </View>
+            <React.Fragment key={`${phase.name}-${step.index}`}>
+              <View style={styles.stepRow}>
+                <Text style={[styles.stepIcon, { color: taskStepStatusColor(step.status) }]}>
+                  {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
+                </Text>
+                <Text
+                  style={[styles.stepName, step.status === 'done' && styles.stepNameDone]}
+                  numberOfLines={1}
+                >
+                  {step.name}
+                </Text>
+              </View>
+              {/* Child units start collapsed here; Command Center opens an
+                  unsettled one instead. A phone shows one panel at a time, so
+                  the parent checklist stays readable until the viewer taps.
+                  Keyed by run as well as unit id so a run change remounts the
+                  block: see `subtaskBlockKey`. */}
+              {step.subtask ? (
+                <TaskSubtaskBlock
+                  key={subtaskBlockKey(run?.id, step.subtask.id)}
+                  subtask={step.subtask}
+                />
+              ) : null}
+            </React.Fragment>
           ))}
         </View>
       ))}
@@ -106,13 +122,6 @@ export function TaskProgressFallbackPanel({
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
-}
-
-function statusColor(status: string): string {
-  if (status === 'done') return colors.statusOk;
-  if (status === 'running') return colors.statusWarn;
-  if (status === 'skipped') return colors.textMuted;
-  return colors.accent;
 }
 
 const styles = StyleSheet.create({
