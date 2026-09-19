@@ -597,3 +597,72 @@ test('buildGateSummary derives per-step checklist durations from persisted timin
   assert.equal(summary.checklist.perStepMs[2].durationMs, 30_000);
   assert.equal(summary.checklist.perStepMs[1].label, 'Implement');
 });
+
+test('buildGateSummary derives per-child-unit step durations beside the parent rows', () => {
+  const run = makeRun({
+    metrics: metrics({
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'CHECKLIST.md',
+        events: [
+          { stepNumber: 1, label: 'Setup', checkedAt: '2026-04-16T00:00:00.000Z' },
+          { stepNumber: 2, label: 'Review skill', checkedAt: '2026-04-16T00:05:00.000Z' },
+        ],
+      },
+      subtasks: [
+        {
+          id: 'perps-review',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+          source: { kind: 'skill', ref: 'skills/review.md', sha256: 'aa', renderedSha256: 'bb' },
+          status: 'complete',
+          durationMs: 120_000,
+          completedSteps: 3,
+          totalSteps: 3,
+          checklistTiming: {
+            schemaVersion: 1,
+            source: 'subtasks/perps-review.md',
+            events: [
+              { stepNumber: 1, label: 'Read the diff', checkedAt: '2026-04-16T00:01:00.000Z' },
+              { stepNumber: 2, label: 'Check patterns', checkedAt: '2026-04-16T00:02:00.000Z' },
+              { stepNumber: 3, label: 'Write findings', checkedAt: '2026-04-16T00:03:00.000Z' },
+            ],
+          },
+        },
+        {
+          // A child that registered but never marked a step contributes no row.
+          id: 'evidence-pack',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 3 },
+          source: { kind: 'inline', sha256: 'cc', renderedSha256: 'dd' },
+          status: 'running',
+          durationMs: null,
+          completedSteps: 0,
+          totalSteps: 2,
+        },
+      ],
+    }),
+  });
+
+  const summary = buildGateSummary(run, 'publication');
+  assert.ok(summary.checklist);
+  assert.equal(summary.checklist.subtasks?.length, 1);
+  const child = summary.checklist.subtasks?.[0];
+  assert.equal(child?.id, 'perps-review');
+  assert.deepEqual(child?.parent, { checklist: 'CHECKLIST.md', stepNumber: 2 });
+  assert.equal(child?.perStepMs.length, 3);
+  // Same derivation as the parent rows: first mark 0, then deltas.
+  assert.equal(child?.perStepMs[0].durationMs, 0);
+  assert.equal(child?.perStepMs[1].durationMs, 60_000);
+  assert.equal(child?.perStepMs[2].label, 'Write findings');
+});
+
+test('buildGateSummary omits the subtasks field when a run registered no child unit', () => {
+  const run = makeRun({
+    metrics: metrics({
+      checklistTiming: {
+        schemaVersion: 1,
+        events: [{ stepNumber: 1, label: 'Setup', checkedAt: '2026-04-16T00:00:00.000Z' }],
+      },
+    }),
+  });
+  assert.equal(buildGateSummary(run, 'publication').checklist?.subtasks, undefined);
+});

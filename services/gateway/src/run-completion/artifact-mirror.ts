@@ -2,7 +2,12 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR, isInternalRunArtifactPath, type Run } from '@farmslot/protocol';
+import {
+  DEFAULT_TASK_DIR,
+  isInternalRunArtifactPath,
+  type Run,
+  SUBTASKS_DIR,
+} from '@farmslot/protocol';
 
 import { removeStaleArtifactDirectory } from '../core/artifact-cleanup.js';
 import {
@@ -26,13 +31,16 @@ import {
   slotCopyFile,
   slotFileExists,
   slotListDir,
+  type SlotLocality,
   slotReadFile,
+  slotStat,
   slotWriteFiles,
 } from '../core/slot-io.js';
 import {
   invalidateArtifactTextCache,
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
+import { WORKER_MIRROR_SUFFIX } from '../tasks/sidecars.js';
 
 import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { readEvidenceManifest } from './publication-artifacts.js';
@@ -295,7 +303,66 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
       label: `${document}.worker`,
     });
   }
+  await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, transferMeta);
   return copied;
+}
+
+/**
+ * Mirror every child checklist unit file (ADR-060) beside the orchestrator copy
+ * as `subtasks/<name>.worker`, the same pattern as `TASK.md.worker`.
+ *
+ * Driven by a directory listing rather than a fixed name list: child ids are
+ * chosen by the worker at registration, so the gateway cannot know the names in
+ * advance. Child files are worker-owned — `isGatewayOwnedArtifactMirrorEntry`
+ * does not claim them — so the `.worker` suffix is what keeps the mirror from
+ * looking like a file the gateway authored.
+ */
+export async function mirrorWorkerSubtasks(
+  vars: SlotLocality,
+  workerTaskDir: string,
+  taskDir: string,
+  transferMeta: { runId: string; slotId: string },
+): Promise<void> {
+  const workerSubtasksDir = path.join(workerTaskDir, SUBTASKS_DIR);
+  if (!(await slotFileExists(vars, workerSubtasksDir))) return;
+  const entries = await slotListDir(vars, workerSubtasksDir);
+  if (entries.length === 0) return;
+  const localSubtasksDir = path.join(taskDir, SUBTASKS_DIR);
+  await mkdir(localSubtasksDir, { recursive: true });
+  for (const entry of entries) {
+    // A leftover mirror copied back by an earlier dispatch is not worker output.
+    if (entry.endsWith(WORKER_MIRROR_SUFFIX)) continue;
+    const workerPath = path.join(workerSubtasksDir, entry);
+
+    // The ONE expected failure between the listing above and this stat is the
+    // entry disappearing: `mark` writes atomically (temp file plus rename), so a
+    // listing can name a temp file that is gone a moment later. Every other stat
+    // failure (permissions, a broken transport to the slot) means the mirror is
+    // incomplete and must not be reported as a clean completion.
+    let info: Awaited<ReturnType<typeof slotStat>>;
+    try {
+      info = await slotStat(vars, workerPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        console.warn(
+          `[run-completion] ${SUBTASKS_DIR}/${entry} disappeared between listing and stat — skipping`,
+        );
+        continue;
+      }
+      throw err;
+    }
+    if (!info.isFile) {
+      // A child unit is a flat pair of files plus the index; a nested directory
+      // is not part of the contract, so it is reported rather than walked.
+      console.warn(`[run-completion] skipping non-file ${SUBTASKS_DIR}/ entry ${entry}`);
+      continue;
+    }
+    await slotCopyFile(vars, workerPath, path.join(localSubtasksDir, `${entry}.worker`), {
+      phase: 'mirror',
+      ...transferMeta,
+      label: `${SUBTASKS_DIR}/${entry}.worker`,
+    });
+  }
 }
 
 export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<void> {
