@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -126,7 +126,7 @@ onTaskProgress((_slotId, progress, _role, _contextId, _runId, parentChecklist) =
   emitted.push({ progress, ...(parentChecklist ? { parentChecklist } : {}) });
 });
 
-function writeTaskDir(): string {
+function writeTaskDir(options: { withSubtasksDir?: boolean } = {}): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'gw-watch-subtask-'));
   repoRoot = root;
   const dir = taskDirAbs();
@@ -137,6 +137,7 @@ function writeTaskDir(): string {
     path.join(dir, 'SIGNAL.json'),
     `${JSON.stringify({ status: 'running', timestamp: new Date().toISOString() })}\n`,
   );
+  if (options.withSubtasksDir) mkdirSync(path.join(dir, 'subtasks'), { recursive: true });
   return root;
 }
 
@@ -171,6 +172,19 @@ function registerChild(dir: string): void {
       ],
     })}\n`,
   );
+}
+
+/**
+ * Register the child once and wait for the watcher to report it.
+ *
+ * One write is enough: the watch subject is the `subtasks/` DIRECTORY, so a file
+ * created after the watch arms is reported on every platform. This used to need a
+ * retry loop because the watch was registered on the not-yet-existing
+ * `index.json` path, which only fsevents replays.
+ */
+async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
+  registerChild(dir);
+  return waitFor(label, (entry) => childProgressOf(entry)?.id === 'perps-review');
 }
 
 /** Wait for an emitted update that satisfies `predicate`, or fail with what arrived. */
@@ -214,11 +228,7 @@ test('the watcher discovers a child unit registered mid-run and emits its marks'
 
     // The registry appears only when the worker runs `mark sub start`: the watch
     // must pick it up without a re-dispatch.
-    registerChild(taskDirAbs());
-    const registered = await waitFor(
-      'the child registration update',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
-    );
+    const registered = await registerChildAndWait(taskDirAbs(), 'the child registration update');
     // A child-driven update carries the parent checklist so the acceptance rule
     // can place it, and it is never a WORKER_SIGNAL — the child does not drive
     // the run's lifecycle.
@@ -278,11 +288,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
   };
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
-    registerChild(taskDirAbs());
-    await waitFor(
-      'the child registration update',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
-    );
+    await registerChildAndWait(taskDirAbs(), 'the child registration update');
 
     // `mark sub` is the registry's only writer, so a file that does not parse is
     // a real fault. The watch must not die, and the operator must be able to see
@@ -311,14 +317,93 @@ test('a corrupt child registry is reported at error level, and the watch survive
     // The watch is still live: repairing the registry resumes child updates
     // without a re-dispatch.
     emitted.length = 0;
-    registerChild(taskDirAbs());
-    const recovered = await waitFor(
+    const recovered = await registerChildAndWait(
+      taskDirAbs(),
       'the update after the registry is repaired',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
     );
     assert.equal(recovered.parentChecklist, 'CHECKLIST.md');
   } finally {
     console.error = realError;
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a child registered after the watch is armed, with subtasks/ empty, is observed', async () => {
+  useIds('arm-then-register');
+  // The regression this guards: the watch used to be registered on the
+  // not-yet-existing `subtasks/index.json` path. fsevents replays that creation,
+  // inotify does not, so this passed on macOS and timed out on the Linux CI
+  // runner. The directory is the watch subject now, so the platform cannot
+  // decide the outcome.
+  const root = writeTaskDir({ withSubtasksDir: true });
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    // Armed, and the directory is real but empty: nothing has been reported yet.
+    assert.deepEqual(emitted, []);
+
+    const observed = await registerChildAndWait(taskDirAbs(), 'the first registration');
+    assert.equal(observed.parentChecklist, 'CHECKLIST.md');
+    assert.equal(childProgressOf(observed)?.id, 'perps-review');
+    assert.equal(childProgressOf(observed)?.progress.totalSteps, 2);
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a child registered when subtasks/ did not exist at arm time is observed', async () => {
+  useIds('arm-without-dir');
+  // `subtasks/` appears only with the first `mark sub start`. The gateway creates
+  // it before attaching (both watch primitives observe a file through its parent),
+  // so a watch armed against a task dir that has never had a child still sees the
+  // first one.
+  const root = writeTaskDir();
+  emitted.length = 0;
+  try {
+    assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), false);
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    // The observer created the contract directory and wrote nothing into it.
+    assert.equal(existsSync(path.join(taskDirAbs(), 'subtasks')), true);
+    assert.deepEqual(readdirSync(path.join(taskDirAbs(), 'subtasks')), []);
+
+    const observed = await registerChildAndWait(taskDirAbs(), 'the first registration');
+    assert.equal(observed.parentChecklist, 'CHECKLIST.md');
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a registry that already exists when the watch arms is picked up with no further write', async () => {
+  useIds('registry-before-arm');
+  // A gateway restart mid-run, or a worker that registered before the watch was
+  // set up: no filesystem event will ever describe it, so setup reads it once.
+  const root = writeTaskDir({ withSubtasksDir: true });
+  registerChild(taskDirAbs());
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const observed = await waitFor(
+      'the setup read of an existing registry',
+      (entry) => childProgressOf(entry)?.id === 'perps-review',
+    );
+    assert.equal(observed.parentChecklist, 'CHECKLIST.md');
+    assert.equal(childProgressOf(observed)?.progress.totalSteps, 2);
+
+    // And the watch is live afterwards: a child mark still arrives.
+    emitted.length = 0;
+    writeFileSync(
+      path.join(taskDirAbs(), 'subtasks', 'perps-review.md'),
+      CHILD_MARKDOWN.replace('- [ ] **1. read the diff**', '- [x] **1. read the diff**'),
+    );
+    const marked = await waitFor(
+      'the child step update after a setup read',
+      (entry) => childProgressOf(entry)?.progress.completedSteps === 1,
+    );
+    assert.equal(marked.parentChecklist, 'CHECKLIST.md');
+  } finally {
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
   }

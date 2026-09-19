@@ -7,13 +7,14 @@ import path from 'node:path';
 
 import { type FSWatcher, watch } from 'chokidar';
 
-import type {
-  AgentContext,
-  AgentRole,
-  SubtaskIndex,
-  SubtaskIndexUnit,
-  TaskProgressResult,
-  WorkerSignal,
+import {
+  type AgentContext,
+  type AgentRole,
+  SUBTASK_INDEX_FILE,
+  type SubtaskIndex,
+  type SubtaskIndexUnit,
+  type TaskProgressResult,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { getAgentContexts, summarizeAgentContexts } from '../agents/contexts.js';
@@ -31,11 +32,12 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
-import { acceptanceStatusPathFor } from './acceptance-status.js';
+import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
 import {
   resolveTaskProgressMarkdownPath,
   resolveTaskProgressMarkdownPathForSlot,
 } from './progress-path.js';
+import { WORKER_MIRROR_SUFFIX } from './sidecars.js';
 import {
   parseSubtaskIndex,
   readSubtaskIndex,
@@ -86,10 +88,16 @@ interface SlotWatch {
   acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
   /** `subtasks/index.json` beside this context's checklist — the child registry. */
   subtaskIndexFilePath: string;
-  subtaskIndexWatcher?: FSWatcher; // chokidar watcher for local (subtasks/index.json)
-  subtaskUnitWatchers?: FSWatcher[]; // chokidar watchers for local child checklists + signals
+  /**
+   * Local only: ONE non-recursive chokidar watch on the `subtasks/` DIRECTORY,
+   * dispatched by basename. A watch registered on a not-yet-existing FILE is
+   * platform-dependent — fsevents surfaces the later creation, inotify does not —
+   * so the directory is the portable subject. It also covers every child file, so
+   * local needs no per-unit watchers.
+   */
+  subtasksDirWatcher?: FSWatcher;
   /** Per-key serialization of index-driven child-watch rebinds. */
-  subtaskRebind?: Promise<void>;
+  subtaskRebind?: Promise<boolean>;
 }
 
 /** A remote file this watch asked the node to watch, by request id. */
@@ -121,6 +129,8 @@ const signalHandlers: WorkerSignalHandler[] = [];
 
 // Debounce interval — don't re-parse on every keystroke
 const DEBOUNCE_MS = 1000;
+/** Bound on waiting for a chokidar watcher's initial scan (see watcherReady). */
+const WATCHER_READY_TIMEOUT_MS = 5000;
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export function watchKey(slotId: string, contextId?: string): string {
@@ -248,6 +258,25 @@ function resolveActiveRunForWatch(
   });
   if (result === SKIP_ACTIVE_RUN_SELECTION) return undefined;
   return result;
+}
+
+/**
+ * Resolve once a chokidar watcher has finished its initial scan and its OS watch
+ * is armed. Bounded: a pathological filesystem must not hold up a dispatch, and a
+ * watcher that never signals still observes later changes — it just cannot
+ * promise it caught one racing the setup.
+ */
+async function watcherReady(watcher: FSWatcher, subject: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[task-watcher] watch on ${subject} did not report ready within 5s`);
+      resolve();
+    }, WATCHER_READY_TIMEOUT_MS);
+    watcher.once('ready', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 // ─── Start watching a slot's TASK.md ───
@@ -389,39 +418,86 @@ export async function watchSlot(
         signalWatcher.on('change', () => handleSignalChange(key));
         sw.signalWatcher = signalWatcher;
 
-        // Acceptance ledger (ADR-060). Same constraint as the child registry: both
-        // watch primitives observe a file through its parent directory, and a task
-        // dir written before `artifacts/` existed (or by a producer that creates it
-        // lazily) would never report a verdict. The directory is part of the task
-        // directory contract; nothing is written into it.
+        // Acceptance ledger (ADR-060 phase 5). The DIRECTORY is the watch subject
+        // for the same reason as `subtasks/` below: the ledger does not exist
+        // until the first `ac set`, and a per-file watch on a missing path works
+        // on macOS but not on Linux. `artifacts/` is part of the task directory
+        // contract, so it is created first and nothing is written into it.
         await ensureArtifactsDir(sw, contextTaskPath);
-        const acceptanceWatcher = watch(sw.acceptanceStatusFilePath, {
+        const artifactsDir = path.dirname(sw.acceptanceStatusFilePath);
+        const acceptanceWatcher = watch(artifactsDir, {
           persistent: false,
-          ignoreInitial: false,
+          ignoreInitial: true,
+          depth: 0,
         });
-        acceptanceWatcher.on('add', () => debouncedAcceptanceUpdate(key));
-        acceptanceWatcher.on('change', () => debouncedAcceptanceUpdate(key));
+        // Everything else in `artifacts/` is worker output this watch does not
+        // report: only the ledger drives a progress update.
+        const onArtifactsEntry = (entryPath: string) => {
+          if (path.basename(entryPath) !== ACCEPTANCE_STATUS_FILENAME) return;
+          debouncedAcceptanceUpdate(key);
+        };
+        acceptanceWatcher.on('add', onArtifactsEntry);
+        acceptanceWatcher.on('change', onArtifactsEntry);
         sw.acceptanceStatusWatcher = acceptanceWatcher;
+        // Same readiness wait as the child directory: until the initial scan
+        // finishes the OS watch is not armed, and a verdict recorded in that gap
+        // would produce no event at all.
+        await watcherReady(acceptanceWatcher, artifactsDir);
 
-        // Child registry (ADR-060). chokidar cannot pick up a file whose parent
-        // directory does not exist yet, and `subtasks/` only appears with the
-        // first `mark sub start` — so the directory the contract defines is
-        // created here before the watch attaches. Nothing else is written: the
-        // gateway never authors a child unit.
+        // Child units (ADR-060). `subtasks/` appears only with the first
+        // `mark sub start`, and both watch primitives observe a file through its
+        // parent directory, so the directory the contract defines is created
+        // first. Nothing is written into it: the gateway never authors a child.
         await ensureSubtasksDir(sw, contextTaskPath);
-        const subtaskIndexWatcher = watch(sw.subtaskIndexFilePath, {
+        const subtasksDir = subtasksDirFor(path.dirname(contextTaskPath));
+        // The DIRECTORY is the watch subject, not the files inside it. Watching a
+        // path that does not exist yet works on macOS (fsevents replays the
+        // creation) and does not on Linux (inotify has nothing to attach to), so
+        // per-file watches here passed locally and timed out in CI. One
+        // non-recursive directory watch reports creation AND modification of
+        // every entry on both, and needs no rebinding when a unit is registered.
+        const subtasksDirWatcher = watch(subtasksDir, {
           persistent: false,
-          ignoreInitial: false,
+          ignoreInitial: true,
+          depth: 0,
         });
-        subtaskIndexWatcher.on('add', () => void handleSubtaskIndexChange(key));
-        subtaskIndexWatcher.on('change', () => void handleSubtaskIndexChange(key));
-        sw.subtaskIndexWatcher = subtaskIndexWatcher;
+        const onSubtasksEntry = (entryPath: string) => {
+          const name = path.basename(entryPath);
+          // Orchestrator mirror output a re-dispatch may have copied in; not
+          // worker progress.
+          if (name.endsWith(WORKER_MIRROR_SUFFIX)) return;
+          if (name === SUBTASK_INDEX_FILE) {
+            void handleSubtaskIndexChange(key);
+            return;
+          }
+          // A child checklist or child signal moved. Progress only: a child never
+          // drives run lifecycle, so no WORKER_SIGNAL is emitted for it.
+          debouncedSubtaskUpdate(key);
+        };
+        subtasksDirWatcher.on('add', onSubtasksEntry);
+        subtasksDirWatcher.on('change', onSubtasksEntry);
+        sw.subtasksDirWatcher = subtasksDirWatcher;
 
         activeWatches.set(key, sw);
+        // Wait for the initial scan to finish before returning. Until chokidar is
+        // ready its OS watch is not armed, and a file created in that gap produces
+        // no event at all — so without this a child registered immediately after
+        // dispatch could go unobserved for the rest of the run.
+        await watcherReady(subtasksDirWatcher, subtasksDir);
         console.log(
           `[task-watcher] watching local ${key}: ${contextTaskPath} + ${contextSignalPath} + ` +
-            `${sw.acceptanceStatusFilePath} + ${sw.subtaskIndexFilePath}`,
+            `${artifactsDir}/ + ${subtasksDir}/`,
         );
+        // Same for a ledger that already exists: `ignoreInitial: true` reports
+        // nothing for it, so a gateway restart mid-run would otherwise show no
+        // verdicts until the next `ac set`.
+        emitExistingAcceptanceLedger(key, sw);
+        // A registry that already exists when the watch arms — a gateway restart
+        // mid-run, or a worker that registered before this point — produced no
+        // event, so it is read once here. `ignoreInitial: true` above means this is
+        // the ONLY path that reports it, and it emits nothing when there is no
+        // registry to report.
+        await handleSubtaskIndexChange(key);
       } else {
         // Remote slot — use node fs.watch
         const node = getNode(slot.machine);
@@ -689,8 +765,8 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   if (sw.acceptanceStatusWatcher) {
     await sw.acceptanceStatusWatcher.close();
   }
-  if (sw.subtaskIndexWatcher) {
-    await sw.subtaskIndexWatcher.close();
+  if (sw.subtasksDirWatcher) {
+    await sw.subtasksDirWatcher.close();
   }
   await closeSubtaskUnitWatchers(sw);
 
@@ -821,10 +897,10 @@ function debouncedSubtaskUpdate(key: string): void {
 }
 
 /**
- * Deliver a ledger that was already on disk when a REMOTE watch attached: the
- * node's fs.watch reports changes only, so a verdict recorded before a gateway
- * restart would otherwise stay invisible until the next one. The local path needs
- * no equivalent — chokidar emits `add` for an existing file.
+ * Deliver a ledger that was already on disk when the watch attached. Neither
+ * primitive reports it: the node's fs.watch reports changes only, and the local
+ * directory watch runs with `ignoreInitial: true`. Without this a verdict recorded
+ * before a gateway restart would stay invisible until the next `ac set`.
  */
 function emitExistingAcceptanceLedger(key: string, sw: SlotWatch): void {
   void (async () => {
@@ -1038,14 +1114,11 @@ async function ensureSubtasksDir(sw: SlotWatch, contextTaskPath: string): Promis
   await slotMkdir(sw, subtasksDirFor(taskDir));
 }
 
-/** Close the local child-file watchers and stop their remote counterparts. */
+/**
+ * Stop the remote per-unit file watches. Local slots have none: their single
+ * `subtasks/` directory watch already covers every child file.
+ */
 async function closeSubtaskUnitWatchers(sw: SlotWatch): Promise<void> {
-  const watchers = sw.subtaskUnitWatchers ?? [];
-  sw.subtaskUnitWatchers = undefined;
-  for (const watcher of watchers) {
-    await watcher.close();
-  }
-
   const unitRequests = (sw.agentRequestIds ?? []).filter(
     (entry) => entry.kind === 'subtask-checklist' || entry.kind === 'subtask-signal',
   );
@@ -1084,7 +1157,7 @@ async function handleSubtaskIndexChange(key: string, content?: string): Promise<
   const sw = activeWatches.get(key);
   if (!sw) return;
   const prior = sw.subtaskRebind;
-  const rebind: Promise<void> = (async () => {
+  const rebind: Promise<boolean> = (async () => {
     if (prior) {
       try {
         await prior;
@@ -1093,20 +1166,25 @@ async function handleSubtaskIndexChange(key: string, content?: string): Promise<
         // one only needs it settled before it touches the watcher list.
       }
     }
-    await rebindSubtaskUnitWatches(key, content);
+    return rebindSubtaskUnitWatches(key, content);
   })();
   sw.subtaskRebind = rebind;
+  let sawRegistry = false;
   try {
-    await rebind;
+    sawRegistry = await rebind;
   } finally {
     if (sw.subtaskRebind === rebind) sw.subtaskRebind = undefined;
   }
-  debouncedSubtaskUpdate(key);
+  // Nothing to report when the task directory has no registry: this function also
+  // runs once at watch setup, where an empty `subtasks/` is the normal case and an
+  // update would be noise on every dispatch.
+  if (sawRegistry) debouncedSubtaskUpdate(key);
 }
 
-async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<void> {
+/** Returns true when a registry was read (whatever it listed for this checklist). */
+async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<boolean> {
   const sw = activeWatches.get(key);
-  if (!sw) return;
+  if (!sw) return false;
   const taskDir = path.dirname(sw.taskFilePath);
   const parentChecklist = path.basename(sw.taskFilePath);
 
@@ -1124,29 +1202,29 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
     console.error(
       `[task-watcher] cannot read subtask registry for ${key}: ${(err as Error).message}`,
     );
-    return;
+    // A registry that exists but cannot be parsed is still a registry: the
+    // progress read must run so the failure reaches clients as a read error
+    // rather than as silence.
+    return true;
   }
+  if (!index) return false;
 
   await closeSubtaskUnitWatchers(sw);
   // Each context watches only the children of ITS OWN checklist: a unit parented
   // on SELF-REVIEW.md belongs to the self-review context's watch, and a unit
   // whose parent checklist is not this one is not live here.
   const units = subtaskUnitsForParentChecklist(index, parentChecklist);
-  if (units.length === 0) return;
+  // A registry with no unit for THIS checklist is still a registry the caller
+  // should report: a sibling context's child may have just been registered.
+  if (units.length === 0) return true;
 
   if (sw.isLocal) {
-    const watchers: FSWatcher[] = [];
-    for (const filePath of subtaskUnitFilePaths(taskDir, units)) {
-      const watcher = watch(filePath, { persistent: false, ignoreInitial: true });
-      watcher.on('add', () => debouncedSubtaskUpdate(key));
-      watcher.on('change', () => debouncedSubtaskUpdate(key));
-      watchers.push(watcher);
-    }
-    sw.subtaskUnitWatchers = watchers;
+    // Nothing to wire: the `subtasks/` directory watch installed at setup already
+    // reports every child checklist and signal, including files created later.
     console.log(
-      `[task-watcher] watching ${units.length} subtask unit(s) for local ${key}: ${units.map((unit) => unit.id).join(', ')}`,
+      `[task-watcher] ${units.length} subtask unit(s) registered for local ${key}: ${units.map((unit) => unit.id).join(', ')}`,
     );
-    return;
+    return true;
   }
 
   const fleet = await loadFleetStatus();
@@ -1154,7 +1232,7 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
   const node = slot ? getNode(slot.machine) : null;
   if (!node) {
     console.log(`[task-watcher] no node for ${sw.machine} — skipping remote subtask watches`);
-    return;
+    return true;
   }
   for (const unit of units) {
     for (const [kind, filePath] of [
@@ -1189,6 +1267,7 @@ async function rebindSubtaskUnitWatches(key: string, content?: string): Promise<
   console.log(
     `[task-watcher] watching ${units.length} subtask unit(s) for remote ${key}: ${units.map((unit) => unit.id).join(', ')}`,
   );
+  return true;
 }
 
 /** Absolute child checklist + signal paths for the units of one parent checklist. */

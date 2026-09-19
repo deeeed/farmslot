@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   enumerateChecklistCheckboxes,
   type Run,
+  type RunMetrics,
   type RunSubtaskMetrics,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
@@ -91,4 +92,26 @@ export async function collectRunSubtaskMetrics(
     });
   }
   return metrics.length > 0 ? metrics : null;
+}
+
+/**
+ * Run metrics with the child roll-up set to a fresh snapshot.
+ *
+ * REPLACES the previous `subtasks` array rather than merging into it. A blocked
+ * child ends the monitor step with the run blocked; the operator's relaunch
+ * replays MONITOR (it is one of the replayable worker-lifecycle steps), so this
+ * runs again after the child resumed and completed. Merging would leave the
+ * blocked row beside the settled one and the retrospective would show a child
+ * that both failed and finished.
+ *
+ * A null snapshot keeps whatever was recorded before: the read failed or the
+ * registry is gone, and the previous terminal state is better evidence than
+ * nothing. That case is reported at error level by the caller.
+ */
+export function withSubtaskMetrics(
+  metrics: RunMetrics,
+  subtasks: RunSubtaskMetrics[] | null,
+): RunMetrics {
+  if (!subtasks) return metrics;
+  return { ...metrics, subtasks };
 }

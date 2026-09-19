@@ -37,6 +37,10 @@ This is the only layout the task writer produces. One flow keeps its own pairing
     …                              flow-specific inputs (planning context, PR comments, inherited context)
   assets/                          ticket attachments
   artifacts/                       worker output: reports, recipes, evidence; sandbox.json readiness record
+  subtasks/                        child checklist units, written only by mark sub
+    index.json                     registry of registered units (id, parent step, paths, source digests)
+    <id>.md                        child checklist, materialized from a skill, template, or inline text
+    <id>-SIGNAL.json               child signal (WorkerSignal + the parent link)
     acceptance-status.json         acceptance-criteria ledger; written only by `farmslot-agent ac`
 ```
 
@@ -54,6 +58,9 @@ One producer writes the shared layer on every surface: `taskInit` / `farmslot-ag
 | `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
 | `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold        |
 | `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                          |
+| `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, progress projection                      |
+| `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection                                |
+| `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, progress projection, terminal contract check     |
 | `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel   |
 | `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                       |
 | `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow) |
@@ -115,7 +122,7 @@ Both surfaces produce the same task directory. Without the control plane (an eng
 
 | Layer                     | Producer                                  | Files                                                                                                                                                                                                                                                                                                                                                                                                           | Surfaces                                                                                                   |
 | ------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Worker outputs            | the agent following `CHECKLIST.md`        | outcome file (`pr-description.md`, `report.md`, `no-change-report.md`), `learnings.md`, `recipe.json`, `recipe-run/`, `recipe-coverage.md`, `recipe-quality.json`, `evidence-manifest.json`, `validation-summary.{json,md}`, before/after media, tool logs (`coverage.log`, `jest.log`, …)                                                                                                                      | both, same names                                                                                           |
+| Worker outputs            | the agent following `CHECKLIST.md`        | outcome file (`pr-description.md`, `report.md`, `no-change-report.md`), `learnings.md`, `recipe.json`, `recipe-run/`, `recipe-coverage.md`, `recipe-quality.json`, `evidence-manifest.json`, `validation-summary.{json,md}`, before/after media, tool logs (`coverage.log`, `jest.log`, …); `subtasks/index.json`, `subtasks/<id>.md`, `subtasks/<id>-SIGNAL.json` through `mark sub`                           | both, same names                                                                                           |
 | Harness readiness records | `mm-harness` during preparation           | `harness-provenance.json`, `sandbox.md`, `doctor-fix.json`, `status.json`, `launch-verify.txt`, `fixtures-set.txt`, `verify.json`; task-local `.mm-harness/` lock                                                                                                                                                                                                                                               | skill today; the farm prepares the same environment in `preflight.sh` without leaving these records (open) |
 | Gateway-owned             | the gateway, on the orchestrator copy     | `diff.txt`, `diff.txt.previous.*`, `diff-stat.json`, `session-metrics.json`, `workflow.mmd`, `pr-package.json`, `pr-package.md`, `publication-gate-<slug>.md` (slug: letters, digits, dashes), and per review round `<n>` (digits): `self-review-<n>/`, `self-review-<n>.json`, `self-review-<n>.md`, `independent-review-<n>/`, `independent-review-<n>.json`, `independent-review-<n>.md`, `review-loop-<n>/` | Farmslot only                                                                                              |
 | Review-loop outputs       | reviewer roles on the slot, change ledger | `review-feedback.<context>.md`, `review-result.<context>.json`, `iteration-diff*.{json,txt}`                                                                                                                                                                                                                                                                                                                    | Farmslot only                                                                                              |
@@ -137,7 +144,11 @@ Kept current with the layout. Each row is something the layout still carries tha
 
 ## What travels to the slot
 
-Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, and `artifacts/`. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`.
+Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list.
+
+The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
+
+`subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written.
 
 ## Project addendum
 
@@ -149,6 +160,7 @@ A project may ship `templates/task-document.md`. The writer renders it with the 
 - `TASK.md` is never enumerated. A `- [ ]` inside an acceptance criterion cannot shift a step number.
 - A ticked box is not proof. Proof is the recipe run, its evidence, and the artifacts the terminal contract requires.
 - `SIGNAL.json` is written by `mark` only. Hand-written signals are rejected by the monitor.
+- `subtasks/` is written by `mark sub` only, and a step may own one child unit for the life of the task directory. A child unit is observed, never spawned: registering one writes files and starts no process. A parent terminal mark is refused while any registered child is unsettled, by `mark` and again by the gateway's terminal check.
 - `artifacts/acceptance-status.json` is written by `farmslot-agent ac` only. Every criterion in `inputs/handoff.json` needs a verdict before a terminal success mark, and `weak` or `missing` fails unless the flow's terminal contract sets `acceptance.allowWeak`. The gateway creates `artifacts/` on the slot so its watch has a parent directory to observe, and writes nothing into it.
 - Lightweight interactive dev keeps its own pairing: `CHECKLIST.md` is the operator-agreed plan and `TASK.md` the context.
 
