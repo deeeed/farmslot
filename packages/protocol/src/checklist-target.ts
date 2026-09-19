@@ -1,11 +1,21 @@
-import type { AgentRole } from './contracts/index.js';
+import type { AgentRole, SubtaskSource } from './contracts/index.js';
 import { WORKER_TERMINAL_CONTRACT_INPUT } from './contracts/worker-terminal.js';
+import type { WorkerSignalParentLink } from './transport/signal.js';
+
+export type { SubtaskSource, SubtaskSourceKind } from './contracts/index.js';
 
 export const CHECKLIST_TARGET_MANIFEST = 'checklist-target.json';
 export const TASK_PROGRESS_MARKDOWN = 'TASK.md';
 export const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';
 export const WORKER_SIGNAL_FILE = 'SIGNAL.json';
 export const ROLE_SIGNAL_SUFFIX = '-SIGNAL.json';
+
+/** Directory holding child checklist units and their signals (ADR-060). */
+export const SUBTASKS_DIR = 'subtasks';
+/** `mark`-maintained registry of child units, the one file the gateway watches to discover them. */
+export const SUBTASK_INDEX_FILE = 'index.json';
+/** A child unit id: a slug, unique for the life of one task directory. */
+export const SUBTASK_ID_PATTERN = /^[a-z0-9-]+$/;
 
 export const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
 export const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
@@ -179,6 +189,35 @@ export function signalFileForChecklist(
   return `${base}${registry.roleSignalSuffix}`;
 }
 
+/**
+ * Task-dir relative paths of a child unit's checklist and signal. The signal
+ * basename comes from {@link signalFileForChecklist}, so a child pair derives
+ * its names exactly as a role pair does; only the `subtasks/` prefix is new.
+ */
+export function subtaskPaths(id: string): ChecklistTarget {
+  return {
+    checklist: `${SUBTASKS_DIR}/${id}.md`,
+    signal: `${SUBTASKS_DIR}/${signalFileForChecklist(`${id}.md`)}`,
+  };
+}
+
+/** One registered child unit. Provenance only — progress lives in the child signal. */
+export interface SubtaskIndexUnit {
+  id: string;
+  parent: WorkerSignalParentLink;
+  /** Task-dir relative child checklist path. */
+  checklist: string;
+  /** Task-dir relative child signal path. */
+  signal: string;
+  source: SubtaskSource;
+  registeredAt: string;
+}
+
+export interface SubtaskIndex {
+  schemaVersion: 1;
+  units: SubtaskIndexUnit[];
+}
+
 export function targetForChecklistBasename(
   checklistBasename: string,
   registry: Pick<
@@ -261,6 +300,19 @@ export interface TaskProgressAcceptanceRun {
 export interface TaskProgressAcceptanceUpdate {
   contextId?: string | null;
   role?: string | null;
+  /** Child units only: the parent checklist basename the unit hangs off. */
+  parentChecklist?: string | null;
+}
+
+/**
+ * Basename of the checklist a progress update must belong to: the active role
+ * checklist when one is live, otherwise the run's own worker file.
+ */
+function activeChecklistBasename(run: TaskProgressAcceptanceRun | null): string | null {
+  const activeTaskFile = run?.activeTaskFile;
+  const effective =
+    !activeTaskFile || activeTaskFile === run?.taskFile ? run?.taskFile : activeTaskFile;
+  return checklistBasenameFromTaskPath(effective);
 }
 
 export function shouldAcceptTaskProgressUpdate(
@@ -268,6 +320,24 @@ export function shouldAcceptTaskProgressUpdate(
   update: TaskProgressAcceptanceUpdate,
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): boolean {
+  // A child unit is not a role switch: its contextId is the child id, so the
+  // role comparison below can never match it. It is live exactly while its
+  // parent checklist is the active one — a child parented on a checklist whose
+  // terminal mark already landed is stale, like every other off-role update.
+  if (update.role === 'subtask') {
+    const parentChecklist = update.parentChecklist ?? null;
+    if (!parentChecklist) return false;
+    const activeName = activeChecklistBasename(run);
+    // No task file at all: nothing to contradict the child's claim.
+    if (!activeName) return true;
+    // Compare the pair, not the filename: the run's task file is `TASK.md`
+    // while the worker checklist a child hangs off is `CHECKLIST.md`, and both
+    // resolve to the same worker signal. A role checklist resolves to its own.
+    return (
+      signalFileForChecklist(parentChecklist, registry) ===
+      signalFileForChecklist(activeName, registry)
+    );
+  }
   const activeTaskFile = run?.activeTaskFile;
   if (!activeTaskFile || activeTaskFile === run?.taskFile) return true;
   const activeName = checklistBasenameFromTaskPath(activeTaskFile);

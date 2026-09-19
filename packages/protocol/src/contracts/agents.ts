@@ -65,6 +65,10 @@ export const AGENT_ROLES = [
   'self-review',
   'self-review-fix',
   'ci-fix',
+  // A child checklist unit under `subtasks/` (ADR-060). Farmslot materializes
+  // its files and reads its signal; it never spawns or owns a session, so it is
+  // not a NestedLoopAgentRole and has no checklist-target entry.
+  'subtask',
 ] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
 export type AgentContextStatus =

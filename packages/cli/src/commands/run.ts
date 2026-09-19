@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
 
 import {
-  AGENT_ROLES,
   type AgentRole,
   assertPRReviewOptions,
   buildRunResolveDecisionParams,
+  DISPATCHABLE_AGENT_ROLES,
   type EventFrame,
   failedRunCancelEffects,
   type HumanGrade,
@@ -457,10 +457,10 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
 export function parseAgentRole(raw: string | undefined): AgentRole | undefined {
   if (raw == null || raw.trim() === '') return undefined;
   const role = raw.trim();
-  if (!(AGENT_ROLES as readonly string[]).includes(role)) {
+  if (!(DISPATCHABLE_AGENT_ROLES as readonly string[]).includes(role)) {
     throw Object.assign(new Error(`Invalid --role '${role}'.`), {
       code: 'RUN_SESSION_INVALID_ROLE',
-      userAction: `Pass one of: ${AGENT_ROLES.join(', ')}.`,
+      userAction: `Pass one of: ${DISPATCHABLE_AGENT_ROLES.join(', ')}.`,
     });
   }
   return role as AgentRole;

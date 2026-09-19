@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `mark sub` registers and drives child checklist units (ADR-060): `sub start <id> --step N --from <path|inline:text>` materializes `subtasks/<id>.md` from a checklist-shaped source (frontmatter stripped, `{{VAR}}` rendered from `inputs/handoff.json` plus `--var`, source and rendered digests recorded in `subtasks/index.json`), then `sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason … | status` maintain the child signal. While a child is unsettled the parent `mark N` for its step is refused and parent `complete` / `no-change` (and the artifact-contract check) fail; a child `complete` ticks the parent box with a normal parent timing event, and a child `blocked` blocks the parent signal with `subtask <id>: <reason>` until the child resumes. A child unit has no flow terminal contract — `--report` is its only artifact rule. `--from template:<id>` is refused: resolving a catalog id needs project template sources the task-dir engine cannot read, so materialize the template first and pass its path.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.0 - 2026-09-18

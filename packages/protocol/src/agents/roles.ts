@@ -2,6 +2,16 @@ import { AGENT_ROLES, type AgentRole, type FlowType } from '../contracts/index.j
 
 export { AGENT_ROLES };
 
+/**
+ * Roles a client may dispatch, attach, or open a session for. A child checklist
+ * unit (`subtask`) is observed through its files and never spawned (ADR-060),
+ * so it is not a session target — clients validate against this list, not the
+ * full role union.
+ */
+export const DISPATCHABLE_AGENT_ROLES = AGENT_ROLES.filter(
+  (role): role is Exclude<AgentRole, 'subtask'> => role !== 'subtask',
+);
+
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   primary: 'Primary',
   dev: 'Dev',
@@ -10,6 +20,7 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   'self-review': 'Self-review',
   'self-review-fix': 'Self-review fix',
   'ci-fix': 'CI fix',
+  subtask: 'Sub-task',
 };
 
 export const AGENT_ROLE_SHORT_LABELS: Record<AgentRole, string> = {
@@ -20,6 +31,7 @@ export const AGENT_ROLE_SHORT_LABELS: Record<AgentRole, string> = {
   'self-review': 'S-REV',
   'self-review-fix': 'S-FIX',
   'ci-fix': 'CI',
+  subtask: 'SUB',
 };
 
 export const AGENT_ROLE_WINDOWS: Record<AgentRole, string | null> = {
@@ -30,6 +42,7 @@ export const AGENT_ROLE_WINDOWS: Record<AgentRole, string | null> = {
   'self-review': 'self-review',
   'self-review-fix': null, // runs in the primary worker's window, not a separate one
   'ci-fix': 'ci-fix',
+  subtask: null, // a child unit is observed, never spawned — it owns no window
 };
 
 /** Stable session anchor used by orchestration flows without a role window. */
@@ -57,6 +70,7 @@ export const AGENT_ROLE_RANKS: Record<AgentRole, number> = {
   'self-review': 10,
   'self-review-fix': 20,
   'ci-fix': 30,
+  subtask: 40,
 };
 
 export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRole {

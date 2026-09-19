@@ -540,6 +540,8 @@ test('parseAgentRole accepts a known role and rejects the rest', () => {
   assert.equal(parseAgentRole(''), undefined);
   assert.equal(parseAgentRole('self-review'), 'self-review');
   assert.throws(() => parseAgentRole('reviewer'), /Invalid --role 'reviewer'/);
+  // A child checklist unit is observed, never spawned: it is not a session role.
+  assert.throws(() => parseAgentRole('subtask'), /Invalid --role 'subtask'/);
 });
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');

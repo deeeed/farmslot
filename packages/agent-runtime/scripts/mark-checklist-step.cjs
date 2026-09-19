@@ -8,11 +8,22 @@ const {
   resolveWorkerTerminalContract,
 } = require('./worker-terminal-contract.cjs');
 const {
-  checklistStepName,
-  enumerateChecklistCheckboxes,
   parseTaskDirMarkArgs,
   terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
+const {
+  atomicWrite,
+  markStepInLines,
+  parseChecklist,
+  pickSignalPassthrough,
+  readJson,
+} = require('./mark-io.cjs');
+const {
+  openSubtaskRefusal,
+  openSubtaskUnits,
+  runSubtaskCommand,
+  subtaskOwningStep,
+} = require('./subtask-unit.cjs');
 
 const START_COMMANDS = new Set(['start']);
 const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
@@ -49,6 +60,8 @@ function printHelp() {
       'Override: farmslot-agent mark <task-dir> --checklist SELF-REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
+      'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
+      '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
       'Terminal:',
       '  ./mark complete [--mark-last] [--no-self-review] [--skip-learnings] [--skip-checklist]',
       '  ./mark no-change --reason "..." [--already-fixed] [--mark-last] [--skip-learnings] [--skip-checklist]',
@@ -86,6 +99,11 @@ function resolveMarkInvocation(rawArgs) {
   const firstPath = path.resolve(first);
   const firstIsDir = fs.existsSync(firstPath) && fs.statSync(firstPath).isDirectory();
   if (firstIsDir) {
+    // Child-unit verbs own their own argument grammar (`sub start <id> …`), so
+    // they are routed before the parent step parser sees a non-step token.
+    if (rawArgs[1] === 'sub') {
+      process.exit(runSubtaskCommand(firstPath, rawArgs.slice(2)));
+    }
     const parsed = parseTaskDirMarkArgs(firstPath, rawArgs.slice(1), {
       isMarkStepToken,
       usage,
@@ -137,16 +155,6 @@ if (terminalCommand === 'no-change' || terminalCommand === 'blocked') {
     console.error(`${terminalCommand} requires --reason`);
     process.exit(1);
   }
-}
-
-const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'attemptId', 'prNumber'];
-
-function pickSignalPassthrough(signal) {
-  const out = {};
-  for (const key of SIGNAL_PASSTHROUGH_KEYS) {
-    if (signal[key] !== undefined) out[key] = signal[key];
-  }
-  return out;
 }
 
 function resolveTerminalPreset(command) {
@@ -403,45 +411,6 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
   return next;
 }
 
-function atomicWrite(file, content, mode) {
-  const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.tmp`);
-  fs.writeFileSync(tmp, content, mode ? { mode } : undefined);
-  fs.renameSync(tmp, file);
-}
-
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return {};
-    throw err;
-  }
-}
-
-// Step enumeration is shared with the gateway parsers (generateTaskSchema in
-// tasks/writer.ts and parseCheckboxStates in methods/task.ts) via the
-// checklist-target enumerator: same skip sections, <details> handling, and
-// checkbox shape. Any divergence makes `mark N` check a different box than
-// the one progress reporting counts as step N (checkbox-formatted Acceptance
-// Criteria used to shift every step by the AC count).
-function parseChecklist(markdown) {
-  const lines = markdown.split(/\n/);
-  const items = enumerateChecklistCheckboxes(markdown).map((item) => ({
-    ...item,
-    label: checklistStepName(item.rawLabel),
-  }));
-  return { lines, items };
-}
-
-function markStepInLines(lines, item) {
-  if (item.checked) return false;
-  const before = lines[item.lineIndex];
-  lines[item.lineIndex] = before.replace(/^(\s*- \[)( |x|X)(\])/, '$1x$3');
-  return lines[item.lineIndex] !== before;
-}
-
 function resolveTarget(taskPath, stepNumber, markLast) {
   const original = fs.readFileSync(taskPath, 'utf8');
   const parsed = parseChecklist(original);
@@ -458,6 +427,9 @@ function resolveTarget(taskPath, stepNumber, markLast) {
   }
   let updated = original;
   if (item) {
+    // Also covers `--mark-last`: the parent must not tick a box whose child is
+    // still open, whichever way the row was chosen.
+    assertStepNotOwnedBySubtask(item.stepNumber);
     const nextLines = [...parsed.lines];
     markStepInLines(nextLines, item);
     updated = nextLines.join('\n');
@@ -469,6 +441,36 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+
+/**
+ * A step owned by a child unit belongs to that child until it is settled
+ * (`complete` or `done` — a `blocked` child keeps ownership). The child's
+ * `complete` ticks the box, so a later `mark N` on it is an idempotent no-op.
+ */
+function assertStepNotOwnedBySubtask(stepNumber) {
+  if (stepNumber == null) return;
+  const owner = subtaskOwningStep(taskDir, path.basename(taskPath), stepNumber);
+  if (!owner) return;
+  const open = openSubtaskUnits(taskDir).find((entry) => entry.unit.id === owner.id);
+  if (!open) return;
+  console.error(
+    `step ${stepNumber} is owned by subtask ${owner.id}; finish it with ./mark sub ${owner.id} complete`,
+  );
+  process.exit(1);
+}
+
+/** Every registered child must be settled before the parent reports success. */
+function assertNoOpenSubtasks(command) {
+  const open = openSubtaskUnits(taskDir);
+  if (open.length === 0) return;
+  console.error(openSubtaskRefusal(open, command));
+  process.exit(1);
+}
+
+// `blocked` stays available while a child is open: the run is blocked either way.
+if (terminalCommand === 'complete' || terminalCommand === 'no-change') {
+  assertNoOpenSubtasks(terminalCommand);
+}
 if (
   terminalCommand &&
   (terminalCommand === 'complete' || terminalCommand === 'no-change') &&
