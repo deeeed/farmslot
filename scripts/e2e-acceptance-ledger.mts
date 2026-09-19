@@ -62,6 +62,45 @@ function readJson(file: string): Record<string, unknown> {
   return JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
 }
 
+/** The `task init` command for a task dir, three acceptance criteria included. */
+function taskInitArgs(dir: string, title: string): string[] {
+  return [
+    agentBin,
+    'task',
+    'init',
+    dir,
+    '--flow',
+    'ci-fix',
+    '--platform',
+    'cli',
+    '--template',
+    'ci-fix/default',
+    '--project-worker',
+    path.join('templates', 'worker'),
+    '--title',
+    title,
+    '--task-text',
+    'Record a verdict for every acceptance criterion through `farmslot-agent ac`.',
+    ...CRITERIA.flatMap((criterion) => ['--acceptance', criterion]),
+    '--surface',
+    'test',
+    '--project',
+    'farmslot',
+    '--var',
+    'PR_NUMBER=1',
+    '--var',
+    'GH_REPO=deeeed/farmslot',
+    '--var',
+    'BRANCH=feat/subtask-observability-phase5',
+    '--var',
+    'CI_ISSUE_TYPE=lint',
+    '--var',
+    'CI_ISSUES=- lint failed on one file',
+    '--var',
+    `REPO=${root}`,
+  ];
+}
+
 function main() {
   if (!existsSync(agentRuntimeDist)) {
     console.log('[e2e] building @farmslot/agent-runtime (task init needs dist/)');
@@ -82,45 +121,7 @@ function main() {
 
   try {
     // 1. A real task directory with three acceptance criteria.
-    ok(
-      'node',
-      [
-        agentBin,
-        'task',
-        'init',
-        taskDir,
-        '--flow',
-        'ci-fix',
-        '--platform',
-        'cli',
-        '--template',
-        'ci-fix/default',
-        '--project-worker',
-        path.join('templates', 'worker'),
-        '--title',
-        'Acceptance ledger E2E',
-        '--task-text',
-        'Record a verdict for every acceptance criterion through `farmslot-agent ac`.',
-        ...CRITERIA.flatMap((criterion) => ['--acceptance', criterion]),
-        '--surface',
-        'test',
-        '--project',
-        'farmslot',
-        '--var',
-        'PR_NUMBER=1',
-        '--var',
-        'GH_REPO=deeeed/farmslot',
-        '--var',
-        'BRANCH=feat/subtask-observability-phase5',
-        '--var',
-        'CI_ISSUE_TYPE=lint',
-        '--var',
-        'CI_ISSUES=- lint failed on one file',
-        '--var',
-        `REPO=${root}`,
-      ],
-      'task init',
-    );
+    ok('node', taskInitArgs(taskDir, 'Acceptance ledger E2E'), 'task init');
     // Ledger enforcement is opt-in per project (`worker_terminal.acceptance`), and
     // this scenario proves the enforcement, so the run's own contract asks for it —
     // the same file a project with that config produces.
@@ -279,7 +280,45 @@ function main() {
       '',
     ].join('\n');
     assert.equal(rendered, expected, 'ac render prints the coverage table');
-    console.log('e2e:acceptance-ledger ok — 3 criteria, every refusal observed on files');
+
+    // 8. Without the project opt-in the same shape completes with a criterion
+    // still unjudged. This is every farm today: tickets carry criteria, no
+    // template writes a ledger, and enforcement must not fail those runs.
+    const optOutDir = path.join(work, 'temp', 'tasks', 'ci-fix', 'acceptance-opt-out');
+    ok('node', taskInitArgs(optOutDir, 'Acceptance ledger opt-out'), 'task init (no opt-in)');
+    const optOutMark = path.join(optOutDir, 'mark');
+    // The contract task init writes carries no `acceptance` block at all.
+    const optOutContract = readJson(
+      path.join(optOutDir, 'inputs', 'worker-terminal-contract.json'),
+    );
+    assert.equal(optOutContract.acceptance, undefined, 'the builtin contract opts into nothing');
+    ok(optOutMark, ['start'], 'mark start (no opt-in)');
+    const optOutSteps = enumerateChecklistCheckboxes(
+      readFileSync(path.join(optOutDir, 'CHECKLIST.md'), 'utf-8'),
+    ).length;
+    for (let step = 1; step < optOutSteps; step += 1) {
+      ok(optOutMark, [String(step)], `mark ${step} (no opt-in)`);
+    }
+    const optOutArtifacts = path.join(optOutDir, 'artifacts');
+    mkdirSync(optOutArtifacts, { recursive: true });
+    writeFileSync(path.join(optOutArtifacts, 'report.md'), '# Report\n\nDone.\n');
+    writeFileSync(path.join(optOutArtifacts, 'learnings.md'), '- Enforcement is opt-in.\n');
+    // One verdict recorded, two criteria still unjudged: the ledger is written and
+    // readable, it simply does not gate this run.
+    ok(
+      'node',
+      [agentBin, 'ac', 'set', 'AC-1', 'proven', '--task-dir', optOutDir, '--proof-mode', 'state'],
+      'ac set AC-1 (no opt-in)',
+    );
+    ok(optOutMark, ['complete', '--mark-last'], 'parent complete without the opt-in');
+    assert.equal(readJson(path.join(optOutDir, 'SIGNAL.json')).status, 'complete');
+    const optOutLedger = readJson(path.join(optOutDir, 'artifacts', 'acceptance-status.json')) as {
+      criteria: Array<Record<string, unknown>>;
+    };
+    assert.equal(optOutLedger.criteria.length, 1, 'the ledger holds only the recorded verdict');
+    console.log(
+      'e2e:acceptance-ledger ok — 3 criteria, every refusal observed on files, and an opt-out run completes unjudged',
+    );
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
