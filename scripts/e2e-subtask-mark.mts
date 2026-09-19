@@ -14,8 +14,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
+// Repo root from this file's location, not cwd: the package `test` script runs
+// it from packages/agent-runtime, and `yarn e2e:subtask-mark` from the root.
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const taskInitCli = path.join(root, 'packages', 'agent-runtime', 'scripts', 'task-init-cli.mjs');
 const agentRuntimeDist = path.join(root, 'packages', 'agent-runtime', 'dist', 'index.js');
 const skillFixture = path.join('scripts', 'fixtures', 'subtask-skill.md');
@@ -55,6 +58,20 @@ function refused(command: string, args: string[], pattern: RegExp, label: string
 
 function readJson(file: string): Record<string, unknown> {
   return JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+}
+
+/**
+ * ADR-060: a child signal never carries `failed`. Work that cannot finish is
+ * `blocked` with a reason. Every child signal read below goes through this, so
+ * no step of the scenario can observe a forbidden status unchecked.
+ */
+function readChildSignal(file: string): Record<string, unknown> {
+  const signal = readJson(file);
+  assert.ok(
+    ['running', 'blocked', 'complete', 'done'].includes(signal.status as string),
+    `a child signal status must be running|blocked|complete|done, never failed (got ${String(signal.status)})`,
+  );
+  return signal;
 }
 
 function checkedSteps(file: string): number {
@@ -170,7 +187,7 @@ function main() {
     // Four raw checkboxes, but only three are steps (the Rules box is in an
     // informational section).
     assert.equal((childMarkdown.match(/^- \[( |x)\]/gm) ?? []).length, 4);
-    const childSignal = readJson(childSignalFile);
+    const childSignal = readChildSignal(childSignalFile);
     assert.equal(childSignal.role, 'subtask');
     assert.equal(childSignal.contextId, 'ci-parity');
     assert.equal(childSignal.attemptId, attemptId, 'the child shares the parent attempt');
@@ -192,7 +209,7 @@ function main() {
       true,
       'child step 1 is the second box (Rules is skipped)',
     );
-    assert.equal((readJson(childSignalFile).checklistTiming as any).events.length, 1);
+    assert.equal((readChildSignal(childSignalFile).checklistTiming as any).events.length, 1);
     assert.equal(readJson(parentSignalFile).status, 'running');
 
     // 6. Child blocked blocks the parent signal with the child reason.
@@ -201,8 +218,8 @@ function main() {
       ['sub', 'ci-parity', 'blocked', '--reason', 'the lint job log is not fetchable'],
       'sub blocked',
     );
-    assert.equal(readJson(childSignalFile).status, 'blocked');
-    assert.equal(readJson(childSignalFile).disposition, 'blocked');
+    assert.equal(readChildSignal(childSignalFile).status, 'blocked');
+    assert.equal(readChildSignal(childSignalFile).disposition, 'blocked');
     let parentSignal = readJson(parentSignalFile);
     assert.equal(parentSignal.status, 'blocked');
     assert.equal(parentSignal.reason, 'subtask ci-parity: the lint job log is not fetchable');
@@ -216,7 +233,7 @@ function main() {
 
     // 7. Resuming the child restores running on both signals.
     ok(mark, ['sub', 'ci-parity', '2'], 'sub 2 after blocked');
-    assert.equal(readJson(childSignalFile).status, 'running');
+    assert.equal(readChildSignal(childSignalFile).status, 'running');
     parentSignal = readJson(parentSignalFile);
     assert.equal(parentSignal.status, 'running');
     assert.equal(parentSignal.reason, undefined, 'the child reason clears on resume');
@@ -238,7 +255,7 @@ function main() {
       ['sub', 'ci-parity', 'complete', '--mark-last', '--report', 'artifacts/ci-parity.md'],
       'sub complete',
     );
-    assert.equal(readJson(childSignalFile).status, 'complete');
+    assert.equal(readChildSignal(childSignalFile).status, 'complete');
     assert.equal(isStepChecked(parentChecklist, OWNING_STEP), true, 'the parent box is ticked');
     parentSignal = readJson(parentSignalFile);
     assert.equal(parentSignal.status, 'running');

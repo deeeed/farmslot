@@ -29,6 +29,36 @@ function writeSignal(signalPath, signal) {
   atomicWrite(signalPath, `${JSON.stringify(signal, null, 2)}\n`, 0o644);
 }
 
+/** Registry JSON with a trailing newline and the same mode as a signal file. */
+function writeIndex(indexPath, index) {
+  atomicWrite(indexPath, `${JSON.stringify(index, null, 2)}\n`, 0o644);
+}
+
+/**
+ * Stable string for "is this the same signal content?" — key order and object
+ * nesting normalized, so two writers that agree on values but not on insertion
+ * order compare equal.
+ */
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** True when two signals differ only by `timestamp` (or not at all). */
+function signalContentUnchanged(stored, candidate) {
+  const withoutTimestamp = (signal) => {
+    const { timestamp: _timestamp, ...rest } = signal;
+    return canonicalJson(rest);
+  };
+  return withoutTimestamp(stored) === withoutTimestamp(candidate);
+}
+
 const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'attemptId', 'prNumber'];
 
 function pickSignalPassthrough(signal) {
@@ -77,6 +107,9 @@ module.exports = {
   atomicWrite,
   readJson,
   writeSignal,
+  writeIndex,
+  canonicalJson,
+  signalContentUnchanged,
   SIGNAL_PASSTHROUGH_KEYS,
   pickSignalPassthrough,
   parseChecklist,
