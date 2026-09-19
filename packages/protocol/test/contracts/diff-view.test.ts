@@ -108,6 +108,11 @@ test('project patterns are capped and double-star runs cannot hang the matcher',
     useDefaultTestPatterns: false,
   });
   assert.equal(resolved.length, 256, 'entries capped');
+  assert.deepEqual(
+    resolveTestFilePatterns({ testPatterns: ['**/app/[id]/**'], useDefaultTestPatterns: false }),
+    [],
+    'a character-class pattern is dropped so the effective list stays honest',
+  );
   assert.equal(
     resolved.some((pattern) => pattern.length > 256),
     false,

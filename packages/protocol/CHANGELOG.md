@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `compileGlob` is the one glob-to-regex compiler for path filters, with `anchored` (git pathspec, root-anchored) and `segment` (gitignore-like) anchoring and a case-sensitivity option; diff-view test patterns use it, a pattern with character-class syntax is now rejected with a warning (and dropped from the effective list) instead of matching the brackets literally, and a double star not followed by a slash and not trailing is a plain star, as git and gitignore read it.
 - Child checklist units (ADR-060): a parent checklist step can own one child checklist plus signal under `subtasks/`.
   - `subtask` joins `AGENT_ROLES`. It is not a nested-loop role and never a session target: clients validate a requested role against the new `DISPATCHABLE_AGENT_ROLES`.
   - `WorkerSignalParentLink` and `SubtaskSignal` describe a child signal and the parent step it hangs off.

@@ -329,7 +329,16 @@ test('a remote watch registers the registry and every child file, and unwatch st
     }
     assert.equal(new Set(stopCalls).size, stopCalls.length, 'no id is stopped twice');
   } finally {
-    await unwatchSlot(SLOT_ID).catch(() => {});
+    // Safety net for the failure path: the success path already awaited an
+    // unwatch above, so this only does work when an assertion threw. A failure
+    // here is reported at error level rather than swallowed — but NOT rethrown,
+    // because a throw from `finally` replaces the assertion error that actually
+    // explains the test, and a leaked watch would then hide its own cause.
+    try {
+      await unwatchSlot(SLOT_ID);
+    } catch (err) {
+      console.error(`[test] teardown unwatch failed for ${SLOT_ID}: ${(err as Error).message}`);
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });

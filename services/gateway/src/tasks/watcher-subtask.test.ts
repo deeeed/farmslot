@@ -141,6 +141,42 @@ function writeTaskDir(options: { withSubtasksDir?: boolean } = {}): string {
   return root;
 }
 
+/** A registry listing two units on this checklist, with both child pairs on disk. */
+function registerTwoChildren(dir: string): void {
+  mkdirSync(path.join(dir, 'subtasks'), { recursive: true });
+  const units = [
+    { id: 'perps-review', stepNumber: 2 },
+    { id: 'evidence-pack', stepNumber: 1 },
+  ];
+  for (const unit of units) {
+    writeFileSync(path.join(dir, 'subtasks', `${unit.id}.md`), CHILD_MARKDOWN);
+    writeFileSync(
+      path.join(dir, 'subtasks', `${unit.id}-SIGNAL.json`),
+      `${JSON.stringify({
+        role: 'subtask',
+        contextId: unit.id,
+        parent: { checklist: 'CHECKLIST.md', stepNumber: unit.stepNumber },
+        status: 'running',
+        timestamp: new Date().toISOString(),
+      })}\n`,
+    );
+  }
+  writeFileSync(
+    path.join(dir, 'subtasks', 'index.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      units: units.map((unit) => ({
+        id: unit.id,
+        parent: { checklist: 'CHECKLIST.md', stepNumber: unit.stepNumber },
+        checklist: `subtasks/${unit.id}.md`,
+        signal: `subtasks/${unit.id}-SIGNAL.json`,
+        source: { kind: 'skill', ref: 'skills/review.md', sha256: 'aa', renderedSha256: 'bb' },
+        registeredAt: new Date().toISOString(),
+      })),
+    })}\n`,
+  );
+}
+
 /** `mark sub start`: the registry, the child checklist, and the child signal. */
 function registerChild(dir: string): void {
   mkdirSync(path.join(dir, 'subtasks'), { recursive: true });
@@ -185,6 +221,17 @@ function registerChild(dir: string): void {
 async function registerChildAndWait(dir: string, label: string): Promise<Emitted> {
   registerChild(dir);
   return waitFor(label, (entry) => childProgressOf(entry)?.id === 'perps-review');
+}
+
+/**
+ * Wait out the watcher's debounce twice over, then report how many updates landed.
+ * Asserting that a SECOND update never arrives needs a quiet window — there is no
+ * event to wait for — so this is bounded and deliberately longer than DEBOUNCE_MS
+ * (1s) rather than a race against it.
+ */
+async function emissionsAfterQuietPeriod(): Promise<number> {
+  await new Promise((resolve) => setTimeout(resolve, 2_500));
+  return emitted.length;
 }
 
 /** Wait for an emitted update that satisfies `predicate`, or fail with what arrived. */
@@ -392,7 +439,22 @@ test('a registry that already exists when the watch arms is picked up with no fu
     assert.equal(observed.parentChecklist, 'CHECKLIST.md');
     assert.equal(childProgressOf(observed)?.progress.totalSteps, 2);
 
-    // And the watch is live afterwards: a child mark still arrives.
+    // EXACTLY one, and it stays one: the update is debounced per watch, so a
+    // registry read must not turn into a stream of broadcasts.
+    //
+    // Note on what this does NOT pin: the setup read and the directory watch are
+    // two paths to the same registry, but both land inside one DEBOUNCE_MS window
+    // and coalesce, so flipping `ignoreInitial` back to false still yields one
+    // update here. `ignoreInitial: true` remains correct (the setup read is the
+    // authoritative one and the scan would be redundant work), but emission count
+    // cannot distinguish it. The per-unit case below is what this count can prove.
+    assert.equal(
+      await emissionsAfterQuietPeriod(),
+      1,
+      'a registry read is one progress update, not a stream',
+    );
+
+    // And the watch is live afterwards: a child mark still arrives, exactly once.
     emitted.length = 0;
     writeFileSync(
       path.join(taskDirAbs(), 'subtasks', 'perps-review.md'),
@@ -403,6 +465,40 @@ test('a registry that already exists when the watch arms is picked up with no fu
       (entry) => childProgressOf(entry)?.progress.completedSteps === 1,
     );
     assert.equal(marked.parentChecklist, 'CHECKLIST.md');
+    assert.equal(
+      await emissionsAfterQuietPeriod(),
+      1,
+      'one child file write is one progress update',
+    );
+  } finally {
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a registry with two units still yields exactly one progress update', async () => {
+  useIds('two-units-one-update');
+  // One update describes the whole projection: both children hang off this
+  // checklist and arrive inside it. Emitting per registered unit would make a
+  // client redraw once per child and would scale with the registry.
+  const root = writeTaskDir({ withSubtasksDir: true });
+  registerTwoChildren(taskDirAbs());
+  emitted.length = 0;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    const observed = await waitFor(
+      'the setup read of a two-unit registry',
+      (entry) => childProgressOf(entry)?.id === 'perps-review',
+    );
+    // Both children are present in that single update, each under its own step.
+    const steps = observed.progress.structured?.phases.flatMap((phase) => phase.steps) ?? [];
+    assert.equal(steps.find((step) => step.index === 2)?.subtask?.id, 'perps-review');
+    assert.equal(steps.find((step) => step.index === 1)?.subtask?.id, 'evidence-pack');
+    assert.equal(
+      await emissionsAfterQuietPeriod(),
+      1,
+      'two registered units are one progress update, not one per unit',
+    );
   } finally {
     await unwatchSlot(SLOT_ID);
     rmSync(root, { recursive: true, force: true });
