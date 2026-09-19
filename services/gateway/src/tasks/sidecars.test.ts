@@ -6,7 +6,11 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { CHECKLIST_TARGET_MANIFEST, INTERACTIVE_CHECKLIST_MARKDOWN } from './checklist-target.js';
-import { CHECKLIST_MARKER_INPUT, copyPreparedTaskRootSidecars } from './sidecars.js';
+import {
+  CHECKLIST_MARKER_INPUT,
+  copyPreparedTaskRootSidecars,
+  TASK_DIR_COPIED_SUBDIRS,
+} from './sidecars.js';
 
 test('copyPreparedTaskRootSidecars copies CHECKLIST.md beside the marker when present', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-sidecars-'));
@@ -97,4 +101,30 @@ test('copyPreparedTaskRootSidecars removes a stale role manifest when the fresh 
 
   assert.deepEqual(copied, [CHECKLIST_MARKER_INPUT]);
   assert.equal(existsSync(path.join(workerTaskAbs, CHECKLIST_TARGET_MANIFEST)), false);
+});
+
+test('TASK_DIR_COPIED_SUBDIRS is the one list dispatch, nudge, and warm handoff share', async () => {
+  // subtasks/ travels as a directory (ADR-060), not through TASK_ROOT_SIDECARS.
+  assert.deepEqual([...TASK_DIR_COPIED_SUBDIRS], ['assets', 'inputs', 'artifacts', 'subtasks']);
+
+  // The three staging paths must read the constant, never their own array: a
+  // fourth hand-maintained list is how the copy drifts.
+  const gatewaySrc = path.resolve(import.meta.dirname, '..');
+  for (const file of [
+    'methods/dispatch/execute.ts',
+    'methods/dispatch/nudge.ts',
+    'methods/dispatch/warm-session-handoff.ts',
+  ]) {
+    const source = await readFile(path.join(gatewaySrc, file), 'utf-8');
+    assert.match(
+      source,
+      /for \(const subdir of TASK_DIR_COPIED_SUBDIRS\)/,
+      `${file} must iterate the shared task-dir copy list`,
+    );
+    assert.doesNotMatch(
+      source,
+      /\['assets', 'inputs', 'artifacts'/,
+      `${file} must not keep its own copy list`,
+    );
+  }
 });

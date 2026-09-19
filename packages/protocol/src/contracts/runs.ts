@@ -2,6 +2,7 @@ import type { ArtifactRef, SelfReviewIssue } from '../recipes/step-io.js';
 import type {
   WorkerSignalChecklistEvent,
   WorkerSignalChecklistTiming,
+  WorkerSignalStatus,
 } from '../transport/signal.js';
 
 import type {
@@ -20,6 +21,7 @@ import type { ResourceType } from './resources.js';
 import type { RunImportProvenance } from './run-bundles.js';
 import type { RuntimeCapabilityProofRequirement } from './runtime-capabilities.js';
 import type { SlotHealth } from './slots.js';
+import type { SubtaskSource } from './task.js';
 import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
 
 // ─── Runs ───
@@ -589,6 +591,16 @@ export interface GateSummary {
   checklist?: {
     events: WorkerSignalChecklistEvent[];
     perStepMs: Array<{ stepNumber: number; label: string; durationMs: number }>;
+    /**
+     * Per-child-unit step timing (ADR-060), derived by the same
+     * `deriveChecklistStepDurations` as the parent rows. Absent when the run
+     * registered no child unit or none of them marked a step.
+     */
+    subtasks?: Array<{
+      id: string;
+      parent: { checklist: string; stepNumber: number };
+      perStepMs: Array<{ stepNumber: number; label: string; durationMs: number }>;
+    }>;
   };
   /** Flow-specific extras (e.g. CI-watch counts for a `ci` gate). */
   custom?: Record<string, unknown>;
@@ -1280,6 +1292,26 @@ export interface RunListSummaryMeta {
   isTruncated: boolean;
 }
 
+/**
+ * One child checklist unit's cost roll-up (ADR-060). Persisted on
+ * {@link RunMetrics} so a pruned task directory still carries the child's step
+ * count and duration. `status` is the child signal's own status — never the
+ * gateway's `stale` projection, which is a live read, not a recorded fact.
+ */
+export interface RunSubtaskMetrics {
+  id: string;
+  /** Parent checklist basename and 1-based step the unit hangs off. */
+  parent: { checklist: string; stepNumber: number };
+  source: SubtaskSource;
+  /** Child signal status at capture time (`running`, `blocked`, `complete`, …). */
+  status: WorkerSignalStatus | null;
+  /** First to last child mark; null when the child never marked a step. */
+  durationMs: number | null;
+  completedSteps: number;
+  totalSteps: number;
+  checklistTiming?: WorkerSignalChecklistTiming;
+}
+
 export interface RunMetrics {
   durationMs?: number;
   nudgeCount: number;
@@ -1304,6 +1336,12 @@ export interface RunMetrics {
   terminalEvidence?: WorkerTerminalEvidence;
   /** Per-step checklist timing from the worker's SIGNAL.json, persisted at finalize so it survives task-dir pruning. */
   checklistTiming?: WorkerSignalChecklistTiming;
+  /**
+   * One entry per registered child checklist unit (ADR-060), read from
+   * `subtasks/index.json` plus each child signal at monitor completion so child
+   * durations survive task-dir pruning the way `checklistTiming` does.
+   */
+  subtasks?: RunSubtaskMetrics[];
   costEstimate?: number;
   // Session-truth fields populated from the worker's transcript via session-usage.sh.
   // Help diagnose cost anomalies (e.g. dispatched sonnet but fast-mode forced opus).

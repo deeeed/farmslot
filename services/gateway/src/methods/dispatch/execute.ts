@@ -106,7 +106,7 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
-import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
+import { copyPreparedTaskRootSidecars, TASK_DIR_COPIED_SUBDIRS } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
@@ -1528,7 +1528,7 @@ export async function dispatchExecute(
   }
 
   // Copy assets/, inputs/, artifacts/ if they exist
-  for (const subdir of ['assets', 'inputs', 'artifacts']) {
+  for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
     const localDir = path.join(taskDir, subdir);
     if (existsSync(localDir)) {
       if (isLocal(vars.host, vars.machine)) {

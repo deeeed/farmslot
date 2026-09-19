@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- `RunMetrics.subtasks` records each child checklist unit's parent step, source, status, step count and duration, and a gate summary's `checklist.subtasks` carries per-child step durations, so child cost survives task-directory pruning (ADR-060).
 - Child checklist units (ADR-060): `subtask` joins `AGENT_ROLES` (not a nested-loop role, and never a session target — clients validate against the new `DISPATCHABLE_AGENT_ROLES`), `SubtaskSignal` / `WorkerSignalParentLink` describe a child signal and the parent step it hangs off, `subtaskPaths` / `SUBTASKS_DIR` / `SUBTASK_INDEX_FILE` / `SUBTASK_ID_PATTERN` / `SubtaskIndex` name the `subtasks/` layout, `isSettledSubtaskStatus` says when a child releases its parent step (`complete` or `done` — a `blocked` child keeps it), `TaskStepProgress.subtask` carries the child projection, and `shouldAcceptTaskProgressUpdate` accepts a child update whose new `parentChecklist` is the run's active checklist pair.
 - Diff views classify changed files as `code` or `test`: `DEFAULT_TEST_FILE_PATTERNS`, `compileTestFileMatcher` (segment / directory / anchored glob rules, project patterns capped), `summarizeDiffKinds`, a `kind` on each `git.branchDiff` file, and `testFilePatterns` on the result.
 - `isSettledBlockedRun` names a blocked run with no running step and no pending decision; the gateway and Command Center use it to offer archiving.

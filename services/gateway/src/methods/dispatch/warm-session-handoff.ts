@@ -42,7 +42,7 @@ import {
 } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
-import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
+import { copyPreparedTaskRootSidecars, TASK_DIR_COPIED_SUBDIRS } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import {
@@ -324,7 +324,7 @@ export async function warmSessionHandoffDispatch(
   })) {
     step('copy', `${sidecar} copied`);
   }
-  for (const subdir of ['assets', 'inputs', 'artifacts']) {
+  for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
     const localDir = path.join(taskDir, subdir);
     if (existsSync(localDir)) {
       if (isLocal(vars.host, vars.machine)) {

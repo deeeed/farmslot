@@ -68,6 +68,15 @@ const WORKER_SIGNAL_STATUS_IS_TERMINAL = {
  * `complete`. Takes a plain string so readers of an untyped SIGNAL.json can ask
  * without first narrowing; an unknown status is not terminal.
  */
+/**
+ * Narrow untyped JSON to the signal status union. Keyed off the exhaustive
+ * terminal map below, so a new member of the union cannot be missed here. Readers
+ * of a file `mark` wrote (child signals, probes) use this instead of casting.
+ */
+export function isWorkerSignalStatus(value: unknown): value is WorkerSignalStatus {
+  return typeof value === 'string' && Object.hasOwn(WORKER_SIGNAL_STATUS_IS_TERMINAL, value);
+}
+
 export function isTerminalWorkerSignalStatus(status: string | null | undefined): boolean {
   return (
     status !== null &&
