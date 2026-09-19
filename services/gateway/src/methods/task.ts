@@ -19,11 +19,18 @@ import {
 
 import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
-import { slotReadFile } from '../core/slot-io.js';
+import { type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
+import {
+  attachSubtaskToStep,
+  buildSubtaskEntry,
+  readSubtaskIndex,
+  readSubtaskUnits,
+  subtaskUnitsForParentChecklist,
+} from '../tasks/subtasks.js';
 import { generateTaskSchema } from '../tasks/writer.js';
 
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
@@ -62,7 +69,10 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       (params.runId ? getRun(params.runId)?.flowType : undefined) ??
       taskFlowTypeFromPath(params.taskFile);
     const schema = generateTaskSchema(markdown, flowType);
-    if (schema.phases.length > 0) result.structured = joinSchemaWithMarkdown(schema, markdown);
+    if (schema.phases.length > 0) {
+      result.structured = joinSchemaWithMarkdown(schema, markdown);
+      await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
+    }
     return result;
   }
 
@@ -107,6 +117,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   const schema = generateTaskSchema(markdown, flowType);
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
+    await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
     // Self-review (and similar) templates' last step is "write SIGNAL.json + /exit".
     // The worker exits before it can mark the box `[x]`, so the markdown stays at
     // N-1/N forever even though the role's signal already declared completion.
@@ -119,6 +130,48 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   }
 
   return result;
+}
+
+/**
+ * Attach the child-unit projection (ADR-060) to the steps that own one. Reads
+ * `subtasks/index.json` beside the effective checklist and, for every unit whose
+ * `parent.checklist` is that checklist's basename, builds the child's own
+ * structured progress with the same schema generator and checkbox join the
+ * parent uses.
+ *
+ * Depth stays 1 in v1: a child's own progress is built from its checklist alone,
+ * so a child of a child is not read. The `subtask` field is recursive in the
+ * contract, so deepening it later needs no new type.
+ *
+ * A missing index means the task directory has no child unit. A present but
+ * invalid index throws — `mark` is its only writer, so a malformed registry is a
+ * real failure the operator must see, not a reason to report a childless run.
+ */
+async function attachSubtaskProgress(
+  vars: SlotLocality,
+  effectiveMdPath: string,
+  flowType: string,
+  structured: TaskProgressStructured,
+): Promise<void> {
+  const taskDir = path.dirname(effectiveMdPath);
+  const parentChecklist = path.basename(effectiveMdPath);
+  const units = subtaskUnitsForParentChecklist(
+    await readSubtaskIndex(vars, taskDir),
+    parentChecklist,
+  );
+  if (units.length === 0) return;
+  const nowMs = Date.now();
+  for (const read of await readSubtaskUnits(vars, taskDir, units)) {
+    const childSchema = generateTaskSchema(read.markdown, flowType);
+    const childProgress = joinSchemaWithMarkdown(childSchema, read.markdown);
+    const entry = buildSubtaskEntry(read.unit, childProgress, read.signal, nowMs);
+    if (!attachSubtaskToStep(structured, read.unit.parent.stepNumber, entry)) {
+      console.warn(
+        `[task-progress] subtask ${read.unit.id} names ${parentChecklist} step ` +
+          `${read.unit.parent.stepNumber}, which this checklist no longer has`,
+      );
+    }
+  }
 }
 
 function resolveExplicitTaskFile(remoteRepo: string, taskFile: string): string {

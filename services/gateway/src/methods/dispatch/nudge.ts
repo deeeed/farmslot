@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { copyFile, cp, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -47,7 +47,7 @@ import {
 } from '../../runners/session-process.js';
 import { runnerSessionContextPatch } from '../../runners/session-record.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
-import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
+import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import { enforceDispatchPressureGate } from './execute.js';
@@ -303,18 +303,14 @@ export async function nudgeDispatch(
   })) {
     step('copy', `${sidecar} copied`);
   }
-  for (const subdir of ['assets', 'inputs', 'artifacts']) {
-    const localDir = path.join(taskDir, subdir);
-    if (existsSync(localDir)) {
-      if (isLocal(vars.host, vars.machine)) {
-        await cp(localDir, path.join(workerTaskAbs, subdir), { recursive: true });
-      } else {
-        await execLocal(
-          `rsync -az ${shellQuote(`${localDir}/`)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/${subdir}/`)}`,
-        );
-      }
-      step('copy', `${subdir}/ copied`);
-    }
+  for (const subdir of await copyTaskDirSubdirectories({
+    taskDir,
+    workerTaskAbs,
+    host: vars.host,
+    machine: vars.machine,
+    sshTarget: vars.sshTarget,
+  })) {
+    step('copy', `${subdir}/ copied`);
   }
 
   // STEP A: resolve the existing worker's role + tmux target. This must NOT mutate any state

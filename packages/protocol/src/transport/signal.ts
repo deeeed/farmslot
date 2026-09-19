@@ -64,6 +64,15 @@ const WORKER_SIGNAL_STATUS_IS_TERMINAL = {
 } satisfies Record<WorkerSignalStatus, boolean>;
 
 /**
+ * Narrow untyped JSON to the signal status union. Keyed off the exhaustive
+ * terminal map above, so a new member of the union cannot be missed here. Readers
+ * of a file `mark` wrote (child signals, probes) use this instead of casting.
+ */
+export function isWorkerSignalStatus(value: unknown): value is WorkerSignalStatus {
+  return typeof value === 'string' && Object.hasOwn(WORKER_SIGNAL_STATUS_IS_TERMINAL, value);
+}
+
+/**
  * A status the worker cannot move past. `done` is an accepted terminal alias of
  * `complete`. Takes a plain string so readers of an untyped SIGNAL.json can ask
  * without first narrowing; an unknown status is not terminal.
