@@ -504,4 +504,47 @@ function check(dir, ...args) {
   assert.equal(existsSync(file), false, 'a refused write leaves no file behind');
 }
 
+// ---------------------------------------------------------------------------
+// 10. The mark engine gates the check on the project's opt-in.
+{
+  const engine = path.join(root, 'scripts', 'mark-checklist-step.cjs');
+  const contract = (acceptance) => ({
+    schemaVersion: 1,
+    flowType: 'dev',
+    requireSignal: true,
+    ...(acceptance ? { acceptance } : {}),
+    commands: {
+      complete: { artifacts: [] },
+      'no-change': { artifacts: [] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    resolvedAt: '2026-09-19T10:00:00.000Z',
+    source: 'project',
+  });
+
+  function completeWith(acceptance) {
+    const dir = makeTask({ contract: contract(acceptance) });
+    writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [x] **1. do the work**\n');
+    const result = spawnSync(process.execPath, [engine, dir, 'complete', '--mark-last'], {
+      encoding: 'utf8',
+    });
+    return { dir, result, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+  }
+
+  // The state every farm is in today: criteria on the ticket, no ledger written,
+  // and no opt-in. `complete` must pass — enforcing here would fail every run.
+  const optedOut = completeWith(undefined);
+  assert.equal(
+    optedOut.result.status,
+    0,
+    `complete must pass without worker_terminal.acceptance.require: ${optedOut.output}`,
+  );
+
+  // With the opt-in the same task is refused until every criterion has a verdict.
+  const optedIn = completeWith({ require: true });
+  assert.notEqual(optedIn.result.status, 0, 'complete must fail with require: true and no ledger');
+  assert.match(optedIn.output, /acceptance-status\.json is missing/);
+}
+
 process.stdout.write('agent-runtime acceptance ledger tests: ok\n');

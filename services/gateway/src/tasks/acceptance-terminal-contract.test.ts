@@ -46,7 +46,7 @@ mock.module('../core/exec.js', {
 
 const { validateTerminalSignalArtifacts } = await import('./worker-terminal-contract.js');
 
-function writeTaskDir(options: { handoff?: string | null } = {}): string {
+function writeTaskDir(options: { handoff?: string | null; require?: boolean } = {}): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'gw-acceptance-contract-'));
   const dir = path.join(root, 'task');
   mkdirSync(path.join(dir, 'inputs'), { recursive: true });
@@ -54,7 +54,14 @@ function writeTaskDir(options: { handoff?: string | null } = {}): string {
   writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [x] **1. record the verdicts**\n');
   writeFileSync(
     path.join(dir, 'inputs', 'worker-terminal-contract.json'),
-    `${JSON.stringify({ schemaVersion: 1, flowType: 'dev', requireSignal: true })}\n`,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      flowType: 'dev',
+      requireSignal: true,
+      // Enforcement is opt-in; these tests are about the gate, so most of them
+      // declare it. The default-off case has its own test below.
+      ...(options.require === false ? {} : { acceptance: { require: true } }),
+    })}\n`,
   );
   const handoff =
     options.handoff === undefined
@@ -80,7 +87,7 @@ async function validate(disposition?: string) {
 }
 
 test('complete requires the acceptance ledger; no-change does not', async () => {
-  const root = writeTaskDir();
+  const root = writeTaskDir({ require: true });
   execCalls = [];
   try {
     const complete = await validate();
@@ -122,7 +129,7 @@ test('a blocked signal is not an artifact-contract subject at all', async () => 
 });
 
 test('a handoff that cannot be read fails a completion closed, naming the file', async () => {
-  const root = writeTaskDir({ handoff: '{ not json' });
+  const root = writeTaskDir({ handoff: '{ not json', require: true });
   execCalls = [];
   try {
     const verdict = await validate();
@@ -138,6 +145,36 @@ test('a handoff that cannot be read fails a completion closed, naming the file',
 
 test('a task with no criteria completes without the acceptance flag', async () => {
   const root = writeTaskDir({ handoff: JSON.stringify({ task: { title: 'no criteria' } }) });
+  execCalls = [];
+  try {
+    const verdict = await validate();
+    assert.equal(verdict.ok, true);
+    assert.doesNotMatch(execCalls[1], /--require-acceptance-status/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('without the project opt-in the ledger never blocks a completion', async () => {
+  // The state every farm is in until its templates write a ledger: a ticket with
+  // acceptance criteria, no ledger on disk, and no `acceptance.require` in the
+  // contract. Completion must pass, and the checker must not be told to demand it.
+  const root = writeTaskDir({ require: false });
+  execCalls = [];
+  try {
+    const verdict = await validate();
+    assert.equal(verdict.ok, true);
+    assert.doesNotMatch(execCalls[1], /--require-acceptance-status/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('without the opt-in an unreadable handoff is not a completion failure either', async () => {
+  // Fail-closed applies to the rule the project asked for; with no opt-in there
+  // is no rule, so a corrupt handoff is the artifact checker's problem, not a
+  // refusal invented here.
+  const root = writeTaskDir({ handoff: '{ not json', require: false });
   execCalls = [];
   try {
     const verdict = await validate();

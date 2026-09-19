@@ -18,6 +18,7 @@
   - `mark complete` passes `--require-acceptance-status` when the handoff lists criteria: the artifact contract check then fails on a missing ledger, any criterion without a verdict, and `weak` or `missing` unless the flow's terminal contract sets `acceptance.allowWeak`.
   - The package `test` script ends with the acceptance-ledger end-to-end scenario on a real task directory.
   - Transitional: the `--require-recipe-coverage-if-recipe` rule is unchanged, so farm templates keep writing `artifacts/recipe-coverage.md` until the Phase 4 template pass moves them onto `ac render`.
+- Ledger enforcement is opt-in: `mark complete` passes `--require-acceptance-status` only when the resolved contract sets `worker_terminal.acceptance.require` and the handoff lists criteria. A project whose templates do not write a ledger yet completes exactly as before.
 - `summarizeAcceptanceStatus` accepts the registered criteria and reports `unrecorded`; `acceptanceCriteriaView` pairs them with their verdicts. Both mirror `@farmslot/protocol`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

@@ -320,9 +320,16 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   }
   const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
-  // A run with acceptance criteria closes on the ledger: every criterion needs a
-  // verdict before `complete` (ADR-060). Runs without criteria are unaffected.
-  if (terminalCommand === 'complete' && handoffAcceptanceCriteria(taskDir).length > 0) {
+  // The ledger blocks `complete` only where the project opted in
+  // (`worker_terminal.acceptance.require`) AND the task registered criteria
+  // (ADR-060). Without the opt-in a template that does not write a ledger yet
+  // still completes; the ledger is watched, projected and preferred for coverage
+  // either way.
+  if (
+    terminalCommand === 'complete' &&
+    contract?.acceptance?.require === true &&
+    handoffAcceptanceCriteria(taskDir).length > 0
+  ) {
     args.push('--require-acceptance-status');
   }
   if (fs.existsSync(contractPath)) {

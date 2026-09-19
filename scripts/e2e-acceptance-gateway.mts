@@ -338,6 +338,9 @@ function writeSourceTaskDir(): void {
         schemaVersion: 1,
         flowType: 'dev',
         requireSignal: true,
+        // What a project declares as `worker_terminal.acceptance.require`:
+        // enforcement is opt-in, and this scenario is about the enforcement.
+        acceptance: { require: true },
         commands: {
           complete: {
             report: 'artifacts/pr-description.md',

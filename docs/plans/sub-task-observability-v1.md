@@ -219,7 +219,7 @@ One JSON ledger, one writer, markdown rendered from it. Parseable, contract-chec
   Verdicts: `proven`, `weak`, `missing`, `untestable`. `proofMode`: `state`, `visual`, `mixed`. `ac` is a separate agent-runtime entry point, not a `mark` verb: the ledger is not a checklist and `mark` stays the one signal writer.
 
 - `farmslot-agent ac render` prints the coverage table that `recipe-coverage.md` holds today, ending with the same `Overall recipe coverage:` line. The PR-body renderer reads the ledger; farm templates stop asking the worker to hand-write `recipe-coverage.md` once the ledger ships.
-- Terminal contract: `complete` requires a verdict for every id; `missing` or `weak` fails `check-task-artifact-contract.mjs` unless the flow's contract waives it.
+- Terminal contract: `complete` requires a verdict for every id; `missing` or `weak` fails `check-task-artifact-contract.mjs` unless the flow's contract waives it. Enforcement is per-project opt-in (`worker_terminal.acceptance.require`, default false) until templates adopt the ledger: without it the ledger is still watched, projected and preferred for coverage, but its absence never blocks completion.
 - Gateway watches the ledger; run detail shows an AC panel (id, verdict, evidence links). Family observability counts `proven / total`.
 
 Alternative considered: keep `recipe-coverage.md` as the source and parse it. Rejected: two formats to keep aligned, prose tables drift, and a parser on worker-written markdown is the class of fragility the checklist contract avoids.

@@ -15,9 +15,12 @@
  */
 
 /**
- * Acceptance-ledger rules for a terminal mark (ADR-060). `allowWeak` lets a flow
- * finish with `weak` or `missing` verdicts; every criterion still needs one.
+ * Acceptance-ledger rules for a terminal mark (ADR-060). `require` is the opt-in
+ * that makes a missing or incomplete ledger block `complete`; it defaults to
+ * false so a project whose templates do not write one yet is unaffected.
+ * `allowWeak` lets a flow finish with `weak` or `missing` verdicts.
  * @typedef {object} WorkerTerminalAcceptanceRules
+ * @property {boolean} [require]
  * @property {boolean} [allowWeak]
  */
 
@@ -235,7 +238,10 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
 
   const acceptance =
     projectConfig?.acceptance && typeof projectConfig.acceptance === 'object'
-      ? { ...(projectConfig.acceptance.allowWeak ? { allowWeak: true } : {}) }
+      ? {
+          ...(projectConfig.acceptance.require ? { require: true } : {}),
+          ...(projectConfig.acceptance.allowWeak ? { allowWeak: true } : {}),
+        }
       : null;
 
   return {

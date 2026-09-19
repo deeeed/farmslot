@@ -121,6 +121,15 @@ function main() {
       ],
       'task init',
     );
+    // Ledger enforcement is opt-in per project (`worker_terminal.acceptance`), and
+    // this scenario proves the enforcement, so the run's own contract asks for it —
+    // the same file a project with that config produces.
+    const contractPath = path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
+    writeFileSync(
+      contractPath,
+      `${JSON.stringify({ ...readJson(contractPath), acceptance: { require: true } }, null, 2)}\n`,
+    );
+
     const handoff = readJson(path.join(taskDir, 'inputs', 'handoff.json'));
     assert.deepEqual(
       (handoff.task as { acceptanceCriteria: string[] }).acceptanceCriteria,
