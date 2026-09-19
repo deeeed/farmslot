@@ -44,6 +44,35 @@ Supported layouts:
 | `project-adopt`  | Recommend the smallest useful Farmslot integration level for the project.                       |
 | `packet`         | Communicate plans, blockers, decisions, and evidence reviews as compact operator packets.       |
 
+## Checklist-shaped skills
+
+A checklist step can hand its work to a skill as a **child unit**: the step registers the
+skill, `mark` materializes its body as `subtasks/<id>.md` beside the task checklist, and the
+worker marks the skill's own rows so progress is visible per row instead of one box open for
+the whole review. Farmslot only materializes and observes files; nothing is spawned.
+
+A skill can be a child unit when its body is enumerable by the same parser the task checklist
+uses:
+
+- `##` sections and `- [ ]` rows, with at least one row. A prose-only skill cannot be a child
+  unit.
+- Name informational sections so the shared skip list drops them: `Rules`, `Description`,
+  `Task`, `Acceptance Criteria`, `Affected Area`, `Screenshots`, `Comments`, `Root Cause`,
+  `Recipe ACs`, `Pre-merge`. Boxes there are never steps.
+- If a row label carries its own number (`**3. …**`), it must match the row's position. The
+  numbering guard refuses a body where they diverge, because `mark` targets positions.
+
+A template step registers the installed skill and finishes it:
+
+```bash
+{{TASK_DIR}}/mark sub start perps-review --step 21 --from .agents/skills/mms-perps-review-pr/skill.md
+{{TASK_DIR}}/mark sub perps-review 1        # …one per row
+{{TASK_DIR}}/mark sub perps-review complete --report artifacts/review.md
+```
+
+The step's own box is ticked by that `complete`, so the template says what to register, and the
+skill owns what to check.
+
 ## Adoption Ladder
 
 1. Skills only: author and review recipes without a runner.
