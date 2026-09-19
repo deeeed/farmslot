@@ -6,6 +6,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   readHideTestsPref,
   splitDiffFilesByKind,
+  subscribeHideTestsPref,
   writeHideTestsPref,
 } from '../../utils/diff-test-filter.js';
 import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
@@ -458,15 +459,23 @@ export class BranchChangedFiles extends LitElement {
     `,
   ];
 
+  private _unsubscribeHideTests: (() => void) | null = null;
+
   connectedCallback() {
     super.connectedCallback();
     this._baseInput = this.base;
     document.addEventListener('click', this._onDocClick);
+    this._hideTests = readHideTestsPref();
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
+      this._hideTests = hide;
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this._onDocClick);
+    this._unsubscribeHideTests?.();
+    this._unsubscribeHideTests = null;
   }
 
   private _onDocClick = (e: MouseEvent) => {
@@ -522,10 +531,13 @@ export class BranchChangedFiles extends LitElement {
   }
 
   updated(changed: Map<string, unknown>) {
-    if (changed.has('files')) {
+    if (changed.has('files') || changed.has('_hideTests')) {
+      const visible = splitDiffFilesByKind(this.files, this._hideTests, {
+        keepPath: this.selectedPath,
+      }).visible;
       // Auto-collapse if >= 30 files
-      if (this.files.length >= 30) {
-        const tree = buildTree(this.files, this.commentCounts);
+      if (visible.length >= 30) {
+        const tree = buildTree(visible, this.commentCounts);
         this._collapsed = new Set(tree.filter((n) => n.type === 'dir').map((n) => n.path));
       } else {
         this._collapsed = new Set();
@@ -649,12 +661,13 @@ export class BranchChangedFiles extends LitElement {
   }
 
   private _toggleHideTests() {
-    this._hideTests = !this._hideTests;
-    writeHideTestsPref(this._hideTests);
+    writeHideTestsPref(!this._hideTests);
   }
 
   render() {
-    const split = splitDiffFilesByKind(this.files, this._hideTests);
+    const split = splitDiffFilesByKind(this.files, this._hideTests, {
+      keepPath: this.selectedPath,
+    });
     const visible = split.visible;
     const tree = buildTree(visible, this.commentCounts);
     const filteredBranches = this._baseInput

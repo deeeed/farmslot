@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { formatTestShare, splitDiffFilesByKind } from './diff-test-filter.js';
+import {
+  formatTestShare,
+  readHideTestsPref,
+  splitDiffFilesByKind,
+  subscribeHideTestsPref,
+  writeHideTestsPref,
+} from './diff-test-filter.js';
 
 const files = [
   { path: 'src/app.ts', additions: 30, deletions: 10 },
@@ -39,4 +45,31 @@ test('formatTestShare names test files and their line share', () => {
     formatTestShare({ codeFiles: 0, testFiles: 1, codeLines: 0, testLines: 0, testShare: null }),
     '1 test file',
   );
+});
+
+test('splitDiffFilesByKind keeps the open file visible and honours a custom matcher', () => {
+  const kept = splitDiffFilesByKind(files, true, { keepPath: 'src/app.test.ts' });
+  assert.deepEqual(
+    kept.visible.map((file) => file.path),
+    ['src/app.ts', 'src/app.test.ts'],
+  );
+  const custom = splitDiffFilesByKind(files, true, { matcher: (path) => path.endsWith('app.ts') });
+  assert.deepEqual(
+    custom.visible.map((file) => file.path),
+    ['src/app.test.ts'],
+    'a stamped kind still wins; unstamped files use the matcher',
+  );
+});
+
+test('hide-tests preference notifies subscribers once per change', () => {
+  const seen: boolean[] = [];
+  const unsubscribe = subscribeHideTestsPref((hide) => seen.push(hide));
+  const initial = readHideTestsPref();
+  writeHideTestsPref(!initial);
+  writeHideTestsPref(!initial);
+  writeHideTestsPref(initial);
+  unsubscribe();
+  writeHideTestsPref(!initial);
+  writeHideTestsPref(initial);
+  assert.deepEqual(seen, [!initial, initial]);
 });

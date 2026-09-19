@@ -25,6 +25,7 @@ test('default test patterns cover common JS, Go, Python, JVM, Swift and snapshot
     'test/helpers.ts',
     'e2e/specs/login.ts',
     'packages/x/tests/unit/a.rb',
+    'src/a_spec.rb',
   ]) {
     assert.equal(isTest(path), true, path);
   }
@@ -35,6 +36,8 @@ test('default test patterns cover common JS, Go, Python, JVM, Swift and snapshot
     'src/latest/index.ts',
     'docs/test-plan.md',
     'src/spectrum.ts',
+    'packages/handoff/src/spec/schemas.ts',
+    'src/specification.ts',
   ]) {
     assert.equal(isTest(path), false, path);
   }
@@ -72,4 +75,48 @@ test('summarizeDiffKinds prefers a stamped kind and reports the test share of ch
   assert.equal(summarizeDiffKinds([]).testShare, null);
   assert.equal(classifyDiffFile('src/a.test.ts'), 'test');
   assert.equal(classifyDiffFile('src/a.ts'), 'code');
+});
+
+test('pattern shapes follow the documented segment, directory, and anchored rules', () => {
+  const match = (pattern: string, path: string) =>
+    compileTestFileMatcher(
+      resolveTestFilePatterns({ testPatterns: [pattern], useDefaultTestPatterns: false }),
+    )(path);
+  // bare name: a segment anywhere, file or directory
+  assert.equal(match('fixtures', 'src/fixtures/a.json'), true);
+  assert.equal(match('fixtures', 'fixtures'), true);
+  assert.equal(match('fixtures', 'src/fixtures.ts'), false);
+  // trailing slash: directory anywhere
+  assert.equal(match('tests/', 'src/a/tests/x.ts'), true);
+  assert.equal(match('tests/', 'tests/x.ts'), true);
+  assert.equal(match('tests/', 'src/tests'), false, 'a file named tests is not the directory');
+  // inner slash: anchored at the root unless it starts with **/
+  assert.equal(match('src/mocks/*.ts', 'src/mocks/a.ts'), true);
+  assert.equal(match('src/mocks/*.ts', 'pkg/src/mocks/a.ts'), false);
+  assert.equal(match('**/mocks/*.ts', 'pkg/src/mocks/a.ts'), true);
+  // ? and backslash paths
+  assert.equal(match('a?.ts', 'src/ab.ts'), true);
+  assert.equal(match('a?.ts', 'src/abc.ts'), false);
+  assert.equal(match('*.test.*', 'src\\a.test.ts'), true);
+  // case-sensitive
+  assert.equal(match('*Test.java', 'src/latest.java'), false);
+});
+
+test('project patterns are capped and repeated **/ runs cannot hang the matcher', () => {
+  const resolved = resolveTestFilePatterns({
+    testPatterns: [...Array.from({ length: 300 }, (_, i) => `p${i}.x`), 'x'.repeat(300)],
+    useDefaultTestPatterns: false,
+  });
+  assert.equal(resolved.length, 256, 'entries capped');
+  assert.equal(
+    resolved.some((pattern) => pattern.length > 256),
+    false,
+    'long entries dropped',
+  );
+
+  const isTest = compileTestFileMatcher(['**/**/**/**/**/**/**/**/a']);
+  const started = Date.now();
+  assert.equal(isTest(`${'x/'.repeat(60)}${'y'.repeat(60)}`), false);
+  assert.ok(Date.now() - started < 100, 'collapsed **/ runs match in linear time');
+  assert.equal(isTest('p/q/a'), true);
 });

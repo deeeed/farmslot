@@ -484,6 +484,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';
       this._diffFiles = result.files;
+      this._diffTestPatterns = result.testFilePatterns ?? null;
       const selected =
         this._selectedFile && result.files.some((file) => file.path === this._selectedFile)
           ? this._selectedFile

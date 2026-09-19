@@ -166,6 +166,41 @@ test('gitBranchDiff stamps each file as code or test using project diff_view pat
     ['code', 'test', 'test'],
     'project patterns extend the defaults',
   );
+  assert.ok(custom.testFilePatterns.includes('*.check.ts'));
+  assert.ok(custom.testFilePatterns.includes('*.test.*'));
+
+  const replaced = await gitBranchDiff(
+    { slotId: 's', base: 'main' },
+    {
+      ...deps,
+      loadVars: async () =>
+        ({ host: 'localhost', machine: 'local', remoteRepo: '/repo', projectName: 'p' }) as any,
+      loadProjectJson: async () => ({
+        diff_view: { test_patterns: ['*.check.ts'], use_default_test_patterns: false },
+      }),
+    },
+  );
+  assert.deepEqual(
+    replaced.files.map((file) => file.kind),
+    ['code', 'code', 'test'],
+  );
+  assert.deepEqual(replaced.testFilePatterns, ['*.check.ts']);
+
+  const malformed = await gitBranchDiff(
+    { slotId: 's', base: 'main' },
+    {
+      ...deps,
+      loadVars: async () =>
+        ({ host: 'localhost', machine: 'local', remoteRepo: '/repo', projectName: 'p' }) as any,
+      loadProjectJson: async () =>
+        ({ diff_view: { test_patterns: 'nope', use_default_test_patterns: 'no' } }) as any,
+    },
+  );
+  assert.deepEqual(
+    malformed.files.map((file) => file.kind),
+    ['code', 'test', 'code'],
+    'a malformed diff_view block falls back to the defaults',
+  );
 });
 
 test('gitBranchDiff fetches an exact stacked PR base that is missing locally', async () => {

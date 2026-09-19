@@ -1,7 +1,11 @@
 import { html, LitElement, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { classifyDiffFile, type DiffFileKind } from '@farmslot/protocol';
+import {
+  compileTestFileMatcher,
+  DEFAULT_TEST_FILE_MATCHER,
+  type TestFileMatcher,
+} from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 
@@ -9,6 +13,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   readHideTestsPref,
   splitDiffFilesByKind,
+  subscribeHideTestsPref,
   writeHideTestsPref,
 } from '../../utils/diff-test-filter.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
@@ -20,7 +25,6 @@ interface DiffFileEntry {
   diff: string;
   additions: number;
   deletions: number;
-  kind: DiffFileKind;
 }
 
 interface DiffTreeFolder {
@@ -56,13 +60,11 @@ function parseUnifiedDiff(diffText: string): DiffFileEntry[] {
       if (line.startsWith('+')) additions += 1;
       else if (line.startsWith('-')) deletions += 1;
     }
-    const path = currentPath || `diff-${files.length + 1}`;
     files.push({
-      path,
+      path: currentPath || `diff-${files.length + 1}`,
       diff: current.join('\n'),
       additions,
       deletions,
-      kind: classifyDiffFile(path),
     });
   };
   for (const line of lines) {
@@ -156,12 +158,46 @@ export class DiffViewerModal extends LitElement {
   @property() title = 'Diff';
   @property() diffText = '';
   @property() artifactUrl = '';
+  /**
+   * Effective test-file globs from the host's `git.branchDiff` result, so the
+   * modal agrees with the changed-files list on what counts as a test. Null
+   * falls back to the built-in defaults.
+   */
+  @property({ attribute: false }) testPatterns: readonly string[] | null = null;
 
   @state() private _loadedText = '';
   @state() private _loading = false;
   @state() private _error = '';
   @state() private _selectedPath = '';
   @state() private _hideTests = readHideTestsPref();
+  private _unsubscribeHideTests: (() => void) | null = null;
+  private _matcherCache: { patterns: readonly string[] | null; matcher: TestFileMatcher } | null =
+    null;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this._hideTests = readHideTestsPref();
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
+      this._hideTests = hide;
+    });
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubscribeHideTests?.();
+    this._unsubscribeHideTests = null;
+  }
+
+  private _testMatcher(): TestFileMatcher {
+    if (!this.testPatterns) return DEFAULT_TEST_FILE_MATCHER;
+    if (this._matcherCache?.patterns !== this.testPatterns) {
+      this._matcherCache = {
+        patterns: this.testPatterns,
+        matcher: compileTestFileMatcher(this.testPatterns),
+      };
+    }
+    return this._matcherCache.matcher;
+  }
 
   override updated(changed: Map<string, unknown>): void {
     if (!this.open && (changed.has('artifactUrl') || changed.has('diffText'))) {
@@ -255,13 +291,16 @@ export class DiffViewerModal extends LitElement {
   }
 
   private _toggleHideTests() {
-    this._hideTests = !this._hideTests;
-    writeHideTestsPref(this._hideTests);
+    writeHideTestsPref(!this._hideTests);
   }
 
   override render() {
     if (!this.open) return nothing;
-    const split = splitDiffFilesByKind(parseUnifiedDiff(this._loadedText), this._hideTests);
+    const parsed = parseUnifiedDiff(this._loadedText);
+    const split = splitDiffFilesByKind(parsed, this._hideTests, {
+      keepPath: this._selectedPath,
+      matcher: this._testMatcher(),
+    });
     const files = split.visible;
     const selected = files.find((file) => file.path === this._selectedPath) ?? files[0];
     const tree = buildDiffTree(files);
@@ -464,7 +503,9 @@ export class DiffViewerModal extends LitElement {
                         .diff=${selected.diff}
                         .filename=${selected.path}
                       ></diff-review>`
-                    : html`<div class="dvm-empty">No diff content available.</div>`}
+                    : parsed.length > 0
+                      ? html`<div class="dvm-empty">Only test files changed (hidden)</div>`
+                      : html`<div class="dvm-empty">No diff content available.</div>`}
             </div>
           </div>
         </div>

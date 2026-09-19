@@ -341,6 +341,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
+      this._diffTestPatterns = result.testFilePatterns ?? null;
       // Auto-select first file with comments, or first file
       const firstCommented = result.files.find((f) => this._commentCountByFile.has(f.path));
       const first = firstCommented ?? result.files[0];
@@ -679,6 +680,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         .open=${this._diffModalOpen}
         .title=${this._diffModalTitle}
         .artifactUrl=${this._diffModalUrl}
+        .testPatterns=${this._diffTestPatterns}
         @diff-modal-close=${() => {
           this._diffModalOpen = false;
         }}

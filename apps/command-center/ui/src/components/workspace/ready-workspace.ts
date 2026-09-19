@@ -131,6 +131,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         title: this._diffModalTitle,
         diffText: this._diffModalText,
         artifactUrl: this._diffModalUrl,
+        testPatterns: this._diffTestPatterns,
         close: () => this._closeDiffModal(),
       },
     });

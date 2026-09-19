@@ -597,10 +597,11 @@ export async function gitBranchDiff(
     }
   }
 
-  const isTestFile = compileTestFileMatcher(await diffViewTestPatterns(params, deps));
+  const testFilePatterns = [...(await diffViewTestPatterns(params, deps))];
+  const isTestFile = compileTestFileMatcher(testFilePatterns);
   for (const file of files) file.kind = classifyDiffFile(file.path, isTestFile);
 
-  return { base, head, files, totalAdditions, totalDeletions };
+  return { base, head, files, totalAdditions, totalDeletions, testFilePatterns };
 }
 
 /** Project `diff_view` test globs for this diff's repo, on top of the defaults. */
@@ -608,11 +609,17 @@ async function diffViewTestPatterns(
   params: Pick<GitBranchDiffParams, 'slotId' | 'runId'>,
   deps: GitExecDeps,
 ): Promise<readonly string[]> {
-  const project = params.runId
-    ? getRun(params.runId)?.project
-    : params.slotId
-      ? (await (deps.loadVars ?? loadSlotVars)(params.slotId)).projectName
-      : undefined;
+  let project: string | undefined;
+  if (params.runId) {
+    project = getRun(params.runId)?.project;
+    if (!project) {
+      console.warn(
+        `[git] branchDiff for run ${params.runId.slice(0, 8)}: run not in store, using default test patterns`,
+      );
+    }
+  } else if (params.slotId) {
+    project = (await (deps.loadVars ?? loadSlotVars)(params.slotId)).projectName;
+  }
   const projectJson = project
     ? await (deps.loadProjectJson ?? defaultLoadProjectJson)(project)
     : null;

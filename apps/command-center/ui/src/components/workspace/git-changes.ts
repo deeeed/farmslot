@@ -6,6 +6,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   readHideTestsPref,
   splitDiffFilesByKind,
+  subscribeHideTestsPref,
   writeHideTestsPref,
 } from '../../utils/diff-test-filter.js';
 import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
@@ -519,14 +520,34 @@ export class GitChanges extends LitElement {
     );
   }
 
-  private _toggleHideTests() {
-    this._hideTests = !this._hideTests;
-    writeHideTestsPref(this._hideTests);
+  private _unsubscribeHideTests: (() => void) | null = null;
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._hideTests = readHideTestsPref();
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
+      this._hideTests = hide;
+    });
   }
 
-  private _renderCommittedGroup() {
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubscribeHideTests?.();
+    this._unsubscribeHideTests = null;
+  }
+
+  private _toggleHideTests() {
+    writeHideTestsPref(!this._hideTests);
+  }
+
+  private _committedSplit() {
+    return splitDiffFilesByKind(this.committedFiles, this._hideTests, {
+      keepPath: this.selectedPath,
+    });
+  }
+
+  private _renderCommittedGroup(split: ReturnType<GitChanges['_committedSplit']>) {
     if (this.committedFiles.length === 0) return nothing;
-    const split = splitDiffFilesByKind(this.committedFiles, this._hideTests);
     const sorted = [...split.visible].sort((a, b) => a.path.localeCompare(b.path));
     const open = this._committedOpen;
 
@@ -801,7 +822,8 @@ export class GitChanges extends LitElement {
     const unstaged = this.changes.filter((c) => !c.staged && c.status !== '?');
     const untracked = this.changes.filter((c) => !c.staged && c.status === '?');
     const uncommitted = this.changes.length;
-    const committed = this.committedFiles.length;
+    const committedSplit = this._committedSplit();
+    const committed = committedSplit.visible.length;
     // Worktree scope already includes uncommitted changes — summing would
     // double-count files that are both committed-ahead and locally modified.
     const total =
@@ -844,7 +866,7 @@ export class GitChanges extends LitElement {
               // (committed + uncommitted) — separate working-tree groups would
               // render the same files twice. Rows carry stage/discard actions
               // for files with local modifications.
-              this._renderCommittedGroup()
+              this._renderCommittedGroup(committedSplit)
             : html`
                 ${this._renderGroup(
                   'Staged Changes',
@@ -867,7 +889,7 @@ export class GitChanges extends LitElement {
                   '_untrackedOpen',
                   'untracked',
                 )}
-                ${this._renderCommittedGroup()}
+                ${this._renderCommittedGroup(committedSplit)}
               `}
       </div>
     `;

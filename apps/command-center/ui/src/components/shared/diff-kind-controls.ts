@@ -22,29 +22,33 @@ export function renderDiffKindControls(args: {
     `tests: ${summary.testFiles} file${summary.testFiles === 1 ? '' : 's'}, ${summary.testLines} lines`;
   return html`
     <span
-      class="diff-kind-ratio"
-      data-testid="diff-kind-ratio"
-      title=${detail}
-      style="font-family:${fonts.mono}; font-size:10px; color:${colors.textMuted}; white-space:nowrap"
-      >${ratio}</span
+      class="diff-kind-controls"
+      style="display:inline-flex; align-items:center; gap:6px"
+      @click=${(event: Event) => event.stopPropagation()}
     >
-    <button
-      class="diff-kind-toggle"
-      data-testid="diff-hide-tests"
-      title=${hideTests
-        ? 'Show test files in this list'
-        : 'Hide test files so the list shows only app code (remembered across views)'}
-      style="font-family:${fonts.mono}; font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid ${hideTests
-        ? colors.accent
-        : colors.textMuted}; background:${hideTests
-        ? `${colors.accent}22`
-        : 'transparent'}; color:${hideTests ? colors.accent : colors.textMuted}; cursor:pointer"
-      @click=${(event: Event) => {
-        event.stopPropagation();
-        onToggle();
-      }}
-    >
-      ${hideTests ? `Show tests (${summary.testFiles})` : 'Hide tests'}
-    </button>
+      <span
+        class="diff-kind-ratio"
+        data-testid="diff-kind-ratio"
+        title=${detail}
+        style="font-family:${fonts.mono}; font-size:10px; color:${colors.textMuted}; white-space:nowrap"
+        >${ratio}</span
+      >
+      <button
+        class="diff-kind-toggle"
+        data-testid="diff-hide-tests"
+        aria-pressed=${hideTests ? 'true' : 'false'}
+        title=${hideTests
+          ? 'Show test files in this list'
+          : 'Hide test files so the list shows only app code (remembered across views)'}
+        style="font-family:${fonts.mono}; font-size:10px; padding:1px 6px; border-radius:3px; border:1px solid ${hideTests
+          ? colors.accent
+          : colors.textMuted}; background:${hideTests
+          ? `${colors.accent}22`
+          : 'transparent'}; color:${hideTests ? colors.accent : colors.textMuted}; cursor:pointer"
+        @click=${() => onToggle()}
+      >
+        ${hideTests ? `Show tests (${summary.testFiles})` : 'Hide tests'}
+      </button>
+    </span>
   `;
 }

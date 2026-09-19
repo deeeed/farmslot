@@ -52,6 +52,8 @@ export abstract class ReviewWorkspaceState extends LitElement {
 
   // Branch diff state
   @state() _diffFiles: GitBranchDiffFile[] = [];
+  /** Effective test-file globs from the last branch diff, handed to the diff modal. */
+  @state() _diffTestPatterns: readonly string[] | null = null;
   @state() _diffLoading = false;
   @state() _diffError = '';
   // Guards _beginRecovery against double-fire from willUpdate + updated.
