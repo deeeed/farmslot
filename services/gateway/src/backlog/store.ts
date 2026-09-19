@@ -758,8 +758,8 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
 
 interface ReleaseBacklogRunLinkOptions {
   /**
-   * The released run ended blocked and was archived as such: keep the item at
-   * `needs-attention` with its observed status instead of requeueing it, so an
+   * The released run ended blocked and was archived as such: leave the item's
+   * status and observed run status alone instead of requeueing it, so an
    * operator closing a blocked run does not silently re-dispatch the work.
    */
   keepNeedsAttention?: boolean;
@@ -796,7 +796,7 @@ function releaseBacklogRunLink(
   delete item.runId;
   delete item.lastDispatchError;
   touched = true;
-  const holdAsBlocked = options.keepNeedsAttention === true && item.status === 'needs-attention';
+  const holdAsBlocked = options.keepNeedsAttention === true;
   if (!holdAsBlocked) delete item.lastObservedRunStatus;
   if (!holdAsBlocked && REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
     item.status = 'ready';

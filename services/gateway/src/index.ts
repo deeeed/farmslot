@@ -332,6 +332,10 @@ async function main(): Promise<void> {
     if (event === Events.RUN_DELETED) {
       const runId = (payload as { runId?: string }).runId;
       if (runId) {
+        // run.archive of a blocked run releases the link itself first, with
+        // keepNeedsAttention, so this unguarded catch-all finds item.runId already
+        // cleared and touches nothing. Keep that ordering if a new RUN_DELETED
+        // emitter appears: emitting before reconciling would requeue the item.
         markBacklogRunReleased(runId)
           .then((graphIds) => {
             for (const graphId of graphIds) {

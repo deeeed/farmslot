@@ -68,6 +68,22 @@ test('isSettledBlockedRun needs blocked status, no running step, no pending deci
   assert.equal(
     isSettledBlockedRun({
       status: 'blocked',
+      steps: [
+        {
+          name: 'dispatch',
+          status: 'done',
+          outputs: { promptDeliveryUncertain: true, acknowledgement: 'task-signal' },
+        },
+        { name: 'monitor', status: 'done' },
+      ],
+      decisions: [],
+    }),
+    true,
+    'a marker left on a step that adoption recovery completed does not hold the run',
+  );
+  assert.equal(
+    isSettledBlockedRun({
+      status: 'blocked',
       steps: undefined as never,
       decisions: undefined as never,
     }),

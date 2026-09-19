@@ -219,8 +219,8 @@ export function renderRunListManageBar(ctx: RunListManageBarContext) {
     <div class="actions-bar manage">
       <span
         >${ctx.selectedCount}
-        selected${ctx.selectedTerminalCount !== ctx.selectedCount
-          ? ` · ${ctx.selectedTerminalCount} terminal`
+        selected${ctx.selectedArchivableCount !== ctx.selectedCount
+          ? ` · ${ctx.selectedArchivableCount} archivable`
           : ''}</span
       >
       <button class="action-secondary" @click=${ctx.selectVisible}>Select visible</button>

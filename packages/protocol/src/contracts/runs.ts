@@ -89,7 +89,10 @@ export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisio
   // slot and runner: the prompt may be executing. That run is held for
   // operator reconciliation, not settled, so archiving it would orphan a live
   // worker on a slot the reconciler then republishes.
+  // The marker lives on the step that failed; adoption recovery flips that
+  // step to done and keeps the marker, so status is part of the test.
   return !steps.some((step) => {
+    if (step.status !== 'failed') return false;
     const outputs = step.outputs ?? {};
     return (
       Boolean(outputs.promptDeliveryUncertain) || Boolean(outputs.nativeWorkerOperationUncertain)
