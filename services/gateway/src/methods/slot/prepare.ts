@@ -594,6 +594,25 @@ async function slotPrepareInner(
       }
     }
     step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+  }
+  // A requested start ref must resolve to structured provenance on every branch
+  // path: a slot already on the work branch, a preserved replay branch, or a
+  // fresh branch. The dispatch refuses a run without it.
+  const resolveRequestedStartRef = async () => {
+    if (!opts?.startRef) return;
+    step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
+    resolvedStartRef = await resolveStartRefInRepo({
+      repo: vars.remoteRepo,
+      requestedRef: opts.startRef.requestedRef,
+      exec: (command) => execOnSlot(vars, command),
+    });
+    step(
+      'start-ref',
+      `Base ref ${resolvedStartRef.requestedRef} resolved to ${resolvedStartRef.resolvedSha}`,
+    );
+  };
+  if (branch && opts?.preserveBranch) {
+    await resolveRequestedStartRef();
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
     if (current === branch && !forceNewBranch) {
@@ -629,6 +648,7 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Already on ${branch}; reset to origin/${branch}`);
+        await resolveRequestedStartRef();
       } else {
         const fetchErr = `${fetchBranchR.stderr}\n${fetchBranchR.stdout}`;
         if (!/couldn't find remote ref|could not find remote ref|no such ref/i.test(fetchErr)) {
@@ -637,6 +657,7 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
+        await resolveRequestedStartRef();
       }
     } else {
       const fetchDefaultR = await execOnSlot(
@@ -647,18 +668,7 @@ async function slotPrepareInner(
         throw new Error(
           `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200)}`,
         );
-      if (opts?.startRef) {
-        step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
-        resolvedStartRef = await resolveStartRefInRepo({
-          repo: vars.remoteRepo,
-          requestedRef: opts.startRef.requestedRef,
-          exec: (command) => execOnSlot(vars, command),
-        });
-        step(
-          'start-ref',
-          `Base ref ${resolvedStartRef.requestedRef} resolved to ${resolvedStartRef.resolvedSha}`,
-        );
-      }
+      await resolveRequestedStartRef();
       const fetchBranchR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
