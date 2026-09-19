@@ -54,8 +54,8 @@ the whole review. Farmslot only materializes and observes files; nothing is spaw
 A skill can be a child unit when its body is enumerable by the same parser the task checklist
 uses:
 
-- `##` sections and `- [ ]` rows, with at least one row. A prose-only skill cannot be a child
-  unit.
+- `##` (or deeper) headings and `- [ ]` rows, with at least one row. A prose-only skill cannot be
+  a child unit.
 - Name informational sections so the shared skip list drops them: `Rules`, `Description`,
   `Task`, `Acceptance Criteria`, `Affected Area`, `Screenshots`, `Comments`, `Root Cause`,
   `Recipe ACs`, `Pre-merge`. Boxes there are never steps.
