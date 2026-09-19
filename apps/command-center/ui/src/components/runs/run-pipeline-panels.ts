@@ -1,9 +1,10 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 
-import type { Run, TaskProgressStructured } from '@farmslot/protocol';
+import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
 import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderSubtaskBlock } from '../progress-tracker/subtask-block.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import { formatDuration } from './run-utils.js';
@@ -94,6 +95,25 @@ export function renderRunPipelineSummary(run: Run) {
   `;
 }
 
+/**
+ * One substep row, plus the child unit block when the step owns one (ADR-060).
+ * `nested` renders the child's own rows and stops there: v1 draws a single
+ * level even though the projection nests recursively.
+ */
+function renderSubstep(step: TaskStepProgress, nested = false): TemplateResult {
+  return html`
+    <div class="substep ${step.status}">
+      <span class="substep-icon">
+        ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'}
+      </span>
+      ${step.name}
+    </div>
+    ${step.subtask && !nested
+      ? renderSubtaskBlock(step.subtask, (childStep) => renderSubstep(childStep, true))
+      : nothing}
+  `;
+}
+
 export function renderPipelineProgressPanel(
   progress: TaskProgressStructured,
   activeStep: 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null,
@@ -127,16 +147,7 @@ export function renderPipelineProgressPanel(
               </span>
               <span class="phase-count">${phase.completedSteps}/${phase.totalSteps}</span>
             </div>
-            ${phase.steps.map(
-              (step) => html`
-                <div class="substep ${step.status}">
-                  <span class="substep-icon">
-                    ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'}
-                  </span>
-                  ${step.name}
-                </div>
-              `,
-            )}
+            ${phase.steps.map((step) => renderSubstep(step))}
           </div>
         `;
       })}

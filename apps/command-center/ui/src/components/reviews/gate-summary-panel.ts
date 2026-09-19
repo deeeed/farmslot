@@ -99,6 +99,17 @@ export class GateSummaryPanel extends LitElement {
       color: ${unsafeCSS(colors.statusOk)};
       font-weight: 600;
     }
+    /* Child checklist unit rows (ADR-060), nested under the step they belong to. */
+    .gs-subtask-title {
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      padding-left: ${unsafeCSS(spacing.lg)};
+    }
+    .gs-subtask-row {
+      padding-left: ${unsafeCSS(spacing.xl)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      border-left: 2px solid ${unsafeCSS(colors.accent)}55;
+    }
     .gs-table {
       width: 100%;
       border-collapse: collapse;
@@ -244,10 +255,26 @@ export class GateSummaryPanel extends LitElement {
           ? html`<details>
               <summary>Checklist timing — ${d.checklist.length} steps</summary>
               ${d.checklist.map(
-                (s) =>
-                  html`<div class="gs-token-row">
+                (s) => html`
+                  <div class="gs-token-row">
                     <span>${s.stepNumber}. ${s.label}</span><span>${s.duration}</span>
-                  </div>`,
+                  </div>
+                  ${(s.subtasks ?? []).map(
+                    (unit) => html`
+                      <div class="gs-subtask-title">
+                        sub ${unit.id} — ${unit.rows.length}
+                        ${unit.rows.length === 1 ? 'step' : 'steps'}
+                      </div>
+                      ${unit.rows.map(
+                        (row) => html`
+                          <div class="gs-token-row gs-subtask-row">
+                            <span>${row.stepNumber}. ${row.label}</span><span>${row.duration}</span>
+                          </div>
+                        `,
+                      )}
+                    `,
+                  )}
+                `,
               )}
             </details>`
           : nothing}

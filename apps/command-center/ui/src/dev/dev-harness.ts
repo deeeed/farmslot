@@ -126,6 +126,7 @@ import {
   mockFileTree,
   mockFleetSlots,
   mockFleetStatus,
+  mockGateSummaryWithSubtasks,
   mockGitChanges,
   mockHealth,
   mockMetroLines,
@@ -137,6 +138,7 @@ import {
   mockSlot,
   mockSlotRunHistory,
   mockStructuredProgress,
+  mockStructuredProgressWithSubtasks,
   mockTaskMarkdown,
   mockViolations,
   mockWorkspaceDiffs,
@@ -1528,6 +1530,7 @@ All checks passed.`;
     const midProgress = mockStructuredProgress(5);
     const lateProgress = mockStructuredProgress(7);
     const doneProgress = mockStructuredProgress(8);
+    const subtaskProgress = mockStructuredProgressWithSubtasks();
     return html`
       <p class="section-label">Flat progress tracker (no schema)</p>
       <progress-tracker .markdown=${md}></progress-tracker>
@@ -1548,6 +1551,11 @@ All checks passed.`;
       <progress-tracker .markdown=${md} .structured=${lateProgress}></progress-tracker>
       <p class="section-label" style="margin-top: 24px">Structured progress — Done (8/8)</p>
       <progress-tracker .markdown=${md} .structured=${doneProgress}></progress-tracker>
+
+      <p class="section-label" style="margin-top: 32px">
+        Structured progress — child checklist units (ADR-060): running, blocked, stale, complete
+      </p>
+      <progress-tracker .markdown=${md} .structured=${subtaskProgress}></progress-tracker>
 
       <p class="section-label" style="margin-top: 32px">Structured progress — Compact variants</p>
       <div style="display: flex; flex-direction: column; gap: 12px">
@@ -2063,7 +2071,9 @@ All checks passed.`;
 
   private renderPipeline() {
     const runs = mockPipelineRuns();
-    const midMonitorProgress = mockStructuredProgress(3);
+    // Run 0 carries child checklist units so the pipeline progress panel and the
+    // step inspector both render the nested block in isolation (ADR-060).
+    const midMonitorProgress = mockStructuredProgressWithSubtasks();
     const labels = [
       'Mid-monitor (fix-bug)',
       'Blocked with decision (fix-bug)',
@@ -2877,6 +2887,7 @@ All checks passed.`;
         'ETH balance with real decimals still shows correctly (e.g. "1.2345")',
         'No regression in other balance display scenarios',
       ],
+      gateSummary: mockGateSummaryWithSubtasks(),
     };
     const mockDecision: RunDecision = {
       id: 'mock-ready-decision-1',
@@ -3017,6 +3028,12 @@ All checks passed.`;
         ],
       },
     };
+    const monitorStep = {
+      name: 'monitor',
+      status: 'running' as const,
+      detail: 'Worker on step 6/8',
+      startedAt: '2026-03-27T12:10:00Z',
+    };
     const failedStep = {
       name: 'prepare',
       status: 'failed' as const,
@@ -3051,6 +3068,16 @@ All checks passed.`;
           Step Inspector — failed prepare
         </h3>
         <step-inspector .step=${failedStep} .run=${mockRun}></step-inspector>
+      </div>
+      <div>
+        <h3 style="color: ${colors.textPrimary}; margin-bottom: 16px">
+          Step Inspector — monitor with child checklist units (ADR-060)
+        </h3>
+        <step-inspector
+          .step=${monitorStep}
+          .run=${mockRun}
+          .taskProgress=${mockStructuredProgressWithSubtasks()}
+        ></step-inspector>
       </div>
     </div>`;
   }

@@ -1,10 +1,11 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
   resolveRunSlotId,
   type RunStep,
+  type TaskStepProgress,
 } from '@farmslot/protocol';
 
 import '../shared/media-lightbox.js';
@@ -12,6 +13,7 @@ import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderSubtaskBlock, subtaskBlockStyles } from '../progress-tracker/subtask-block.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
@@ -40,7 +42,7 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
-  static styles = stepInspectorStyles;
+  static styles = [stepInspectorStyles, subtaskBlockStyles];
 
   private _ciPokeRunId = '';
   private readonly _ciPoke = new CIWatchPokeController((state) => {
@@ -259,6 +261,23 @@ export class StepInspector extends StepInspectorState {
     `;
   }
 
+  /**
+   * One checklist step row, plus the child unit block when the step owns one
+   * (ADR-060). `nested` draws the child's rows and stops: one level in v1.
+   */
+  private _renderTaskProgressStep(step: TaskStepProgress, nested = false): TemplateResult {
+    return html`
+      <div class="task-progress-step ${step.status}">
+        ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'} ${step.name}
+      </div>
+      ${step.subtask && !nested
+        ? renderSubtaskBlock(step.subtask, (childStep) =>
+            this._renderTaskProgressStep(childStep, true),
+          )
+        : nothing}
+    `;
+  }
+
   private _renderTaskProgress() {
     const tp = this.taskProgress;
     if (!tp?.totalSteps) return nothing;
@@ -284,14 +303,7 @@ export class StepInspector extends StepInspectorState {
                 <span>${phase.name}</span>
                 <span>${phase.completedSteps}/${phase.totalSteps}</span>
               </div>
-              ${phase.steps.map(
-                (step) => html`
-                  <div class="task-progress-step ${step.status}">
-                    ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'}
-                    ${step.name}
-                  </div>
-                `,
-              )}
+              ${phase.steps.map((step) => this._renderTaskProgressStep(step))}
             </div>
           `,
         )}

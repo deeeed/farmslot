@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus, ReadyGatePayload } from '@farmslot/protocol';
+import type { GateSummary, IndependentReviewStatus, ReadyGatePayload } from '@farmslot/protocol';
 
 import {
   activePublicationReviewLabel,
@@ -9,6 +9,7 @@ import {
   compactHumanGateLabel,
   fixDeltaAbsenceReason,
   formatTokenCount,
+  gateSummaryDisplay,
   hasMeaningfulReviewFixDelta,
   publishEvidenceDisplayRows,
   readyReviewBlockingDisplayReason,
@@ -439,4 +440,91 @@ test('formatTokenCount renders compact units and safe fallbacks', () => {
   assert.equal(formatTokenCount(999_999), '1000.0k');
   assert.equal(formatTokenCount(1_000_000), '1.00M');
   assert.equal(formatTokenCount(3_722_374), '3.72M');
+});
+
+function gateSummaryWithChecklist(checklist: GateSummary['checklist']): GateSummary {
+  return {
+    kind: 'publication',
+    flowType: 'dev',
+    worker: { model: 'claude-opus-5', turns: 12 },
+    review: {
+      independentReviews: [],
+      requiredReviews: 0,
+      passingReviews: 0,
+      totalUnresolved: 0,
+      summaryText: '',
+    },
+    tokens: {
+      mainWorker: { id: 'worker', model: 'claude-opus-5', total: 100, turns: 12 },
+      reviews: [],
+      byModel: [],
+      familyTotalTokens: 100,
+    },
+    checklist,
+  } as unknown as GateSummary;
+}
+
+test('checklist timing nests a child unit under the step it hangs off', () => {
+  const display = gateSummaryDisplay(
+    gateSummaryWithChecklist({
+      events: [],
+      perStepMs: [
+        { stepNumber: 1, label: 'Reproduce', durationMs: 5000 },
+        { stepNumber: 2, label: 'Review the diff', durationMs: 120000 },
+      ],
+      subtasks: [
+        {
+          id: 'perps-review',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+          perStepMs: [
+            { stepNumber: 1, label: 'Read the diff', durationMs: 30000 },
+            { stepNumber: 2, label: 'Run the recipe', durationMs: 60000 },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(display.checklist.length, 2);
+  assert.equal(display.checklist[0].subtasks, undefined);
+  const parent = display.checklist[1];
+  assert.equal(parent.label, 'Review the diff');
+  assert.equal(parent.duration, '2.0m');
+  assert.equal(parent.subtasks?.length, 1);
+  assert.equal(parent.subtasks?.[0].id, 'perps-review');
+  assert.deepEqual(
+    parent.subtasks?.[0].rows.map((row) => `${row.label} ${row.duration}`),
+    ['Read the diff 30.0s', 'Run the recipe 1.0m'],
+  );
+});
+
+test('a child whose parent step never got ticked still gets a row', () => {
+  const display = gateSummaryDisplay(
+    gateSummaryWithChecklist({
+      events: [],
+      perStepMs: [{ stepNumber: 1, label: 'Reproduce', durationMs: 5000 }],
+      subtasks: [
+        {
+          id: 'ci-triage',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 3 },
+          perStepMs: [{ stepNumber: 1, label: 'Read the failing job', durationMs: 9000 }],
+        },
+      ],
+    }),
+  );
+  assert.equal(display.checklist.length, 2);
+  const orphan = display.checklist[1];
+  assert.equal(orphan.stepNumber, 3);
+  assert.equal(orphan.label, 'CHECKLIST.md step 3');
+  assert.equal(orphan.duration, '\u2014');
+  assert.equal(orphan.subtasks?.[0].id, 'ci-triage');
+});
+
+test('a run with no child units keeps the plain parent rows', () => {
+  const display = gateSummaryDisplay(
+    gateSummaryWithChecklist({
+      events: [],
+      perStepMs: [{ stepNumber: 1, label: 'Reproduce', durationMs: 5000 }],
+    }),
+  );
+  assert.deepEqual(display.checklist, [{ stepNumber: 1, label: 'Reproduce', duration: '5.0s' }]);
 });
