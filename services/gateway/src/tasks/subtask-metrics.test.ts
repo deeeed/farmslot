@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -13,6 +13,8 @@ import * as realConfig from '../core/config.js';
 
 let remoteRepo = '';
 let orchestratorTaskRoot = '';
+/** Set to make the mocked project-config load fail, as an edited project.json would. */
+let projectVarsError: Error | null = null;
 
 mock.module('../core/config.js', {
   namedExports: {
@@ -25,7 +27,10 @@ mock.module('../core/config.js', {
       slotId: 'slot-subtask-metrics',
       projectName: 'farmslot',
     }),
-    loadProjectVars: async () => ({ projectJson: {} }),
+    loadProjectVars: async () => {
+      if (projectVarsError) throw projectVarsError;
+      return { projectJson: {} };
+    },
     getOrchestratorTaskRoot: () => orchestratorTaskRoot,
     resolveProjectTaskDirName: () => '.task',
     resolveTaskRelDir: (taskFile: string, taskRoot: string) => {
@@ -37,7 +42,8 @@ mock.module('../core/config.js', {
   },
 });
 
-const { collectRunSubtaskMetrics, subtaskDurationMs } = await import('./subtask-metrics.js');
+const { collectRunSubtaskMetrics, subtaskDurationMs, withSubtaskMetrics } =
+  await import('./subtask-metrics.js');
 
 const CHILD_MARKDOWN = [
   '- [x] **1. read the failing job output**',
@@ -170,4 +176,122 @@ test('collectRunSubtaskMetrics returns null for a run with no child unit', async
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('collectRunSubtaskMetrics propagates a project-config load failure', async () => {
+  const { run, root } = setup({ withIndex: true });
+  projectVarsError = new Error('project.json is not valid JSON');
+  try {
+    // Dispatch already loaded this config to place the task directory, so a
+    // failure here is a real fault. Falling back to DEFAULT_TASK_DIR would
+    // resolve a DIFFERENT directory and report "no child units" for a run that
+    // has two — a silent wrong answer instead of a visible failure.
+    await assert.rejects(
+      () => collectRunSubtaskMetrics(run, 'slot-subtask-metrics'),
+      /project\.json is not valid JSON/,
+    );
+  } finally {
+    projectVarsError = null;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('post-dispatch reports a lost subtask roll-up at error level, keeping parent metrics', async () => {
+  // A source assertion: this catch lives inside the monitor pipeline step, which
+  // needs the whole run engine (slot claim, tmux, monitor loop) to invoke. The
+  // behaviour it guards is a logging LEVEL and the identifying detail in the
+  // message, both of which are only visible in the source at unit scope. The
+  // recovery itself — a metrics failure must not lose the parent's own metrics —
+  // is what the surrounding assertions on the run record cover.
+  const source = readFileSync(
+    path.join(import.meta.dirname, '..', 'run-engine', 'post-dispatch-steps.ts'),
+    'utf-8',
+  );
+  const block = source.slice(
+    source.indexOf('collectRunSubtaskMetrics(after, current.slotId)'),
+    source.indexOf('subtask metrics unavailable') + 200,
+  );
+  assert.ok(block, 'the subtask metrics catch must exist');
+  assert.match(
+    block,
+    /console\.error\(/,
+    'a lost child roll-up is error level: nothing else in the log explains the gap',
+  );
+  assert.doesNotMatch(block, /console\.warn\(/, 'warn would bury it among routine notices');
+  assert.match(block, /after\.taskFile/, 'the report names the task directory it could not read');
+});
+
+/** Rewrite the child signal in place, as `mark sub` does on resume and completion. */
+function setChildSignal(status: string, events: number): void {
+  const workerTaskDir = path.join(remoteRepo, '.task', 'dev', 'demo');
+  writeFileSync(
+    path.join(workerTaskDir, 'subtasks', 'ci-parity-SIGNAL.json'),
+    `${JSON.stringify({
+      role: 'subtask',
+      contextId: 'ci-parity',
+      parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+      status,
+      checklistTiming: {
+        schemaVersion: 1,
+        events: Array.from({ length: events }, (_, index) => ({
+          stepNumber: index + 1,
+          label: `${index + 1}. step`,
+          checkedAt: `2026-09-19T10:0${index}:00Z`,
+        })),
+      },
+      timestamp: '2026-09-19T10:05:00Z',
+    })}\n`,
+  );
+}
+
+test('a second monitor completion re-reads the slot and reports the settled child', async () => {
+  // The real path: the child blocks, the parent signal blocks, the run blocks and
+  // the monitor step ends — taking a "blocked" snapshot. The operator relaunches,
+  // MONITOR replays (it is a replayable worker-lifecycle step), the child resumes
+  // and completes, and this runs again.
+  const { run, root } = setup({ withIndex: true, status: 'blocked' });
+  try {
+    setChildSignal('blocked', 1);
+    const first = await collectRunSubtaskMetrics(run, 'slot-subtask-metrics');
+    assert.equal(first?.[0].status, 'blocked');
+    assert.equal(first?.[0].checklistTiming?.events.length, 1);
+
+    // `mark sub <id> 2` then `sub complete` rewrite the child signal.
+    setChildSignal('complete', 3);
+    const second = await collectRunSubtaskMetrics(run, 'slot-subtask-metrics');
+    assert.equal(second?.length, 1, 'the child is reported once, not once per monitor pass');
+    assert.equal(second?.[0].status, 'complete');
+    assert.equal(second?.[0].checklistTiming?.events.length, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('withSubtaskMetrics replaces the previous roll-up instead of merging it', () => {
+  const blockedRow = {
+    id: 'ci-parity',
+    parent: { checklist: 'CHECKLIST.md', stepNumber: 2 },
+    source: { kind: 'skill' as const, sha256: 'aa', renderedSha256: 'bb' },
+    status: 'blocked' as const,
+    durationMs: 0,
+    completedSteps: 1,
+    totalSteps: 3,
+  };
+  const settledRow = { ...blockedRow, status: 'complete' as const, completedSteps: 3 };
+  const before = { nudgeCount: 1, model: null, runner: null, subtasks: [blockedRow] };
+
+  const after = withSubtaskMetrics(before, [settledRow]);
+  // Exactly one row, the settled one: a merge would leave the child looking both
+  // blocked and finished in the retrospective.
+  assert.deepEqual(after.subtasks, [settledRow]);
+  // Everything else on the metrics object survives.
+  assert.equal(after.nudgeCount, 1);
+
+  // A failed re-read keeps the previous terminal state rather than wiping it.
+  assert.deepEqual(withSubtaskMetrics(before, null).subtasks, [blockedRow]);
+  // And a run that never had children stays without the field.
+  assert.equal(
+    withSubtaskMetrics({ nudgeCount: 0, model: null, runner: null }, null).subtasks,
+    undefined,
+  );
 });

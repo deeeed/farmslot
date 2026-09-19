@@ -6,9 +6,9 @@
 import path from 'node:path';
 
 import {
-  DEFAULT_TASK_DIR,
   enumerateChecklistCheckboxes,
   type Run,
+  type RunMetrics,
   type RunSubtaskMetrics,
   type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
@@ -44,11 +44,14 @@ export async function resolveWorkerTaskDirForRun(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<string | null> {
   if (!run.taskFile) return null;
-  const projectVars = await loadProjectVars(run.project).catch(() => null);
-  const taskDirName = projectVars
-    ? resolveProjectTaskDirName(projectVars.projectJson)
-    : DEFAULT_TASK_DIR;
-  const orchestratorRoot = getOrchestratorTaskRoot(run.project, projectVars?.projectJson ?? null);
+  // No catch: dispatch already loaded this project's config to place the task
+  // directory, so a load failure at monitor completion is a real fault (the file
+  // was edited or removed mid-run), not a case to paper over with
+  // DEFAULT_TASK_DIR — that fallback would resolve a DIFFERENT directory and
+  // report "no child units" for a run that has them.
+  const projectVars = await loadProjectVars(run.project);
+  const taskDirName = resolveProjectTaskDirName(projectVars.projectJson);
+  const orchestratorRoot = getOrchestratorTaskRoot(run.project, projectVars.projectJson);
   const taskRelDir = resolveTaskRelDir(run.taskFile, orchestratorRoot);
   if (taskRelDir === null) return null;
   return path.join(vars.remoteRepo, taskDirName, taskRelDir);
@@ -89,4 +92,26 @@ export async function collectRunSubtaskMetrics(
     });
   }
   return metrics.length > 0 ? metrics : null;
+}
+
+/**
+ * Run metrics with the child roll-up set to a fresh snapshot.
+ *
+ * REPLACES the previous `subtasks` array rather than merging into it. A blocked
+ * child ends the monitor step with the run blocked; the operator's relaunch
+ * replays MONITOR (it is one of the replayable worker-lifecycle steps), so this
+ * runs again after the child resumed and completed. Merging would leave the
+ * blocked row beside the settled one and the retrospective would show a child
+ * that both failed and finished.
+ *
+ * A null snapshot keeps whatever was recorded before: the read failed or the
+ * registry is gone, and the previous terminal state is better evidence than
+ * nothing. That case is reported at error level by the caller.
+ */
+export function withSubtaskMetrics(
+  metrics: RunMetrics,
+  subtasks: RunSubtaskMetrics[] | null,
+): RunMetrics {
+  if (!subtasks) return metrics;
+  return { ...metrics, subtasks };
 }
