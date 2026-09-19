@@ -518,9 +518,11 @@ export async function watchSlot(
           console.log(
             `[task-watcher] watching remote ${key} via node ${slot.machine}: ${contextTaskPath} + ${contextSignalPath} + ${sw.subtaskIndexFilePath}`,
           );
-          // The node's watch reports changes only; an index that already exists
+          // The node's watch reports changes only, so an index that already exists
           // (gateway restart, re-watch mid-run) needs one read to wire its child
-          // watches. Local chokidar covers this with its initial `add` event.
+          // watches. The local path does the same thing for the same reason: its
+          // directory watch is `ignoreInitial: true`, so the setup read below is
+          // the only thing that reports a pre-existing registry.
           await handleSubtaskIndexChange(key);
         } catch (err) {
           console.log(
