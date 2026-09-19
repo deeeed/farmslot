@@ -106,12 +106,14 @@ The child shares the parent's `attemptId` at registration so every signal of one
 All verbs live in the agent-runtime mark engine (`scripts/mark-checklist-step.cjs`) with the shared logic in `@farmslot/protocol/checklist-target` and its CJS mirror, so the gateway parser and the harness enumerate the same rows.
 
 ```
-./mark sub start <id> --step N --from <path|template:<id>> [--var k=v ...]
+./mark sub start <id> --step N --from <path|inline:<text>> [--var k=v ...]
 ./mark sub <id> <n>
 ./mark sub <id> complete [--report <artifact>] [--mark-last]
 ./mark sub <id> blocked --reason "..."
 ./mark sub <id> status            # prints the child projection as JSON
 ```
+
+`template:<id>` catalog resolution is refused in v1 (recorded in the agent-runtime changelog); register skills by installed path.
 
 Rules enforced by `mark`:
 
