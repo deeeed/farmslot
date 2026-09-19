@@ -94,7 +94,7 @@ export function publicationGateDecisionActions(opts: {
   independentReviews?: IndependentReviewStatus[];
   preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null;
 }): DecisionAction[] {
-  const exhausted = latestExhaustedIndependentReview(opts.independentReviews, opts.preparedPackage);
+  const exhausted = latestExhaustedIndependentReview(opts.independentReviews);
   const continueFix =
     opts.pendingReviewContinuation &&
     !independentReviewFixRetriesExhausted(opts.pendingReviewContinuation)
@@ -157,11 +157,10 @@ export function publicationGateDecisionActions(opts: {
 
 export function assertUnresolvedPublishOverrideAvailable(
   reviews: readonly IndependentReviewStatus[],
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): void {
-  if (!latestExhaustedIndependentReview(reviews, preparedPackage)) {
+  if (!latestExhaustedIndependentReview(reviews)) {
     throw new Error(
-      'Bypass publish is only available after the latest independent review stops at its fix-attempt cap on the approved package',
+      'Bypass publish is only available after the latest independent review stops at its fix-attempt cap',
     );
   }
 }

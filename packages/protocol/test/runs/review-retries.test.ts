@@ -4,7 +4,6 @@ import test from 'node:test';
 import type { IndependentReviewAttempt } from '../../src/contracts/runs.js';
 import {
   independentReviewFixRetriesExhausted,
-  independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
@@ -132,30 +131,24 @@ test('only the latest extra-review on the current package can be exhausted', () 
     maxRetries: 3,
     reviewedHeadSha: 'new',
   };
+  assert.equal(latestExhaustedIndependentReview([oldCap, laterIssues]), undefined);
   assert.equal(
-    latestExhaustedIndependentReview([oldCap, laterIssues], { headSha: 'new' }),
-    undefined,
-  );
-  assert.equal(
-    latestExhaustedIndependentReview(
-      [
-        oldCap,
-        {
-          source: 'human-gate',
-          verdict: 'issues',
-          unresolvedCount: 2,
-          retryCount: 3,
-          maxRetries: 3,
-          reviewedHeadSha: 'new',
-        },
-      ],
-      { headSha: 'new' },
-    )?.unresolvedCount,
+    latestExhaustedIndependentReview([
+      oldCap,
+      {
+        source: 'human-gate',
+        verdict: 'issues',
+        unresolvedCount: 2,
+        retryCount: 3,
+        maxRetries: 3,
+        reviewedHeadSha: 'new',
+      },
+    ])?.unresolvedCount,
     2,
   );
 });
 
-test('exhaustion matches the prepared package by HEAD, not subject hash', () => {
+test('exhaustion does not depend on the prepared package HEAD', () => {
   const exhausted = {
     source: 'human-gate' as const,
     verdict: 'issues' as const,
@@ -166,22 +159,7 @@ test('exhaustion matches the prepared package by HEAD, not subject hash', () => 
     reviewedReviewSubjectHash: 'old-subject',
   };
   assert.equal(
-    independentReviewMatchesPreparedPackage(exhausted, {
-      headSha: 'abc',
-      reviewSubjectHash: 'new-subject',
-    }),
-    true,
-  );
-  assert.equal(
-    latestExhaustedIndependentReview([exhausted], {
-      headSha: 'abc',
-      reviewSubjectHash: 'new-subject',
-    })?.unresolvedCount,
-    2,
-  );
-  assert.equal(independentReviewMatchesPreparedPackage(exhausted, { headSha: 'other' }), false);
-  assert.equal(
-    latestExhaustedIndependentReview([exhausted], { headSha: 'other' })?.unresolvedCount,
+    latestExhaustedIndependentReview([exhausted])?.unresolvedCount,
     2,
     'HEAD drift must not hide the exhausted extra-review bypass',
   );

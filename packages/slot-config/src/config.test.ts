@@ -36,6 +36,7 @@ test('normalizeSlotTaskRel strips nested task-dir and TASK.md suffixes', () => {
     normalizeSlotTaskRel('.task/feat/tat-3215-0622-110508/TASK.md', '.task'),
     'feat/tat-3215-0622-110508',
   );
+  assert.equal(normalizeSlotTaskRel('temp/tasks/TASK.md', 'temp/tasks'), '');
 });
 
 test('prepare core and capability providers validate while legacy profiles remain valid', () => {

@@ -1161,13 +1161,15 @@ export async function runReviewAgent(
     // findings, so its prompt narrows the scope to the worker's fixes since then.
     // The cold-fallback path must NOT use this preamble — a fresh reviewer is not
     // "the same reviewer session" and needs the full review contract.
+    const coldReReviewPrompt =
+      loopNumber > 1
+        ? `Continue this same review. The worker applied fixes since your last findings — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's delta against your previous findings. Do NOT run /review.\n\n${basePrompt}`
+        : basePrompt;
     const warmPrompt = warmSession
       ? continuingPriorGeneration
         ? `Continue your prior review of this same run. Review only changes since your previous reviewed head and confirm prior findings remain resolved. Prior review artifacts are in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}. Complete the checklist's current output contract (feedback + signal) as written.\n\n${basePrompt}`
         : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
-      : loopNumber > 1
-        ? `Continue this same review. The worker applied fixes since your last findings — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's delta against your previous findings. Do NOT run /review.\n\n${basePrompt}`
-        : basePrompt;
+      : coldReReviewPrompt;
     let taskPrompt = warmPrompt;
 
     // 4. Reuse the live reviewer when possible. The runner capability decides
@@ -1479,10 +1481,16 @@ export async function runReviewAgent(
         try {
           await deliverToLiveReviewer(taskPrompt, deliveryPlan.resetContext, true);
         } catch (err) {
+          // Deliberate recovery, not a swallow: a failed context reset lands
+          // here too, and the cold launch below replaces the pane's process
+          // with the same checklist, so nothing from the failed path survives.
           console.warn(
             `[self-review] retained ${runner} reviewer could not continue in-place (${(err as Error).message}) — replacing its process with a cold launch that still carries the re-review checklist`,
           );
           warmSession = null;
+          // The fresh process is not "the same reviewer session"; give it the
+          // delta contract instead of the warm identity preamble.
+          taskPrompt = coldReReviewPrompt;
           await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
         }
       }

@@ -757,7 +757,11 @@ export async function executeReadyGate(runId: string): Promise<string> {
     typeof pv?.projectJson?.self_review?.max_retries === 'number'
       ? pv.projectJson.self_review.max_retries
       : undefined;
-  const storedReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  // Re-read: `current` predates a chain of awaits and the launch-rejection
+  // reconcile just above, which may have cleared `reviewLaunchRejection`.
+  // Spreading the stale snapshot would write that rejection back.
+  const runForRetryCap = getRun(runId)!;
+  const storedReviews = runForRetryCap.engineState?.publishGate?.independentReviews ?? [];
   const independentReviews = storedReviews.map((review) =>
     stampIndependentReviewRetryCap(review, configuredMaxRetries),
   );
@@ -772,15 +776,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
   ) {
     updateRun(runId, {
       engineState: {
-        ...current.engineState,
+        ...runForRetryCap.engineState,
         publishGate: {
-          ...current.engineState?.publishGate,
+          ...runForRetryCap.engineState?.publishGate,
           independentReviews,
         },
       },
     });
   }
-  const exhaustedReview = latestExhaustedIndependentReview(independentReviews, preparedPackage);
+  const exhaustedReview = latestExhaustedIndependentReview(independentReviews);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage
@@ -1108,7 +1112,6 @@ export async function executeReadyGate(runId: string): Promise<string> {
       if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
         assertUnresolvedPublishOverrideAvailable(
           getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
-          approvedPackage,
         );
       } else {
         assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);

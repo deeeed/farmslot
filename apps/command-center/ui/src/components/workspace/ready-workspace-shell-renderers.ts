@@ -4,7 +4,6 @@ import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   type ArtifactRef,
   type GitBranchDiffFile,
-  independentReviewRetryCapReason,
   latestExhaustedIndependentReview,
   type ReadyGatePayload,
   type RunDecision,
@@ -44,16 +43,12 @@ export function renderReadyTopBar(input: {
     (action) => action.id === 'request-extra-review',
   );
   const exhaustedReview = latestExhaustedIndependentReview(input.payload.independentReviews);
-  const bypassAction =
-    input.decision?.actions?.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION) ??
-    (exhaustedReview && !canApprove
-      ? {
-          id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
-          label: 'Bypass Review (dangerous)',
-          style: 'danger' as const,
-          description: independentReviewRetryCapReason(exhaustedReview),
-        }
-      : undefined);
+  // Only actions the decision itself carries. The gateway refuses any other id
+  // before the cap check runs, and package refresh restamps the bypass action
+  // from the same exhaustion rule, so a synthesized button would only fail.
+  const bypassAction = input.decision?.actions?.find(
+    (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
+  );
   const reviewBlockingReason =
     packageGate && !canApprove ? readyReviewBlockingReason(input.payload) : '';
   const approveLabel = hasApprovePublish

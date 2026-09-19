@@ -95,22 +95,9 @@ export function latestIndependentReview(
     );
 }
 
-export function independentReviewMatchesPreparedPackage(
-  review: ReviewRetryFields,
-  preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
-): boolean {
-  if (!preparedPackage) return true;
-  const head = preparedPackage.headSha?.trim();
-  const reviewedHead = (review.reviewedHeadSha ?? review.reviewSnapshot?.headSha)?.trim();
-  if (!head || !reviewedHead || reviewedHead !== head) return false;
-  // HEAD only. Subject-hash drift must not hide bypass.
-  return true;
-}
-
-/** Latest terminal extra-review that hit its auto-fix cap. HEAD drift does not hide this. */
+/** Latest terminal extra-review that hit its auto-fix cap. Package HEAD drift does not hide this. */
 export function latestExhaustedIndependentReview(
   reviews: readonly ReviewRetryFields[] | undefined,
-  _preparedPackage?: { headSha?: string | null; reviewSubjectHash?: string | null } | null,
 ): ReviewRetryFields | undefined {
   const latest = latestIndependentReview(reviews);
   if (!latest || !independentReviewFixRetriesExhausted(latest)) return undefined;

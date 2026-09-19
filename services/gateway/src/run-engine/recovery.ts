@@ -8,7 +8,6 @@ import {
   FLOW_STEPS,
   type FlowType,
   isGateParkInFlightOrFreed,
-  latestIndependentReview,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -367,19 +366,12 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
+    // An active fix pass only exists while the latest extra-review has open
+    // findings, so re-arming here is the in-flight loop resuming, not leftover
+    // findings being resent. The project retry cap bounds what it can do next;
+    // a run parked at the cap has no active fix context and skips this branch.
     const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
-    const latestExtraReview = latestIndependentReview(
-      run.engineState?.publishGate?.independentReviews ?? [],
-    );
-    const latestHasOpenFindings =
-      latestExtraReview?.verdict === 'issues' &&
-      Math.max(latestExtraReview.unresolvedCount ?? 0, latestExtraReview.issues?.length ?? 0) > 0;
-    if (
-      run.slotId &&
-      isPublicationReviewRecoveryHeld(run) &&
-      recoveredFixPlan.length > 0 &&
-      !latestHasOpenFindings
-    ) {
+    if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
       const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
       const recoveredRun =
         pendingReviewPlan.length > 0
@@ -694,17 +686,6 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         );
         continue;
       }
-      // A worker-signal or engine block is terminal: the transition stamped
-      // `completedAt` and skipped the remaining steps. Its resolved decisions
-      // are history (an earlier handoff the worker answered with `blocked`),
-      // not a wait that ended while the process was down. Advancing here
-      // restarted self-review on a run whose worker had already said blocked.
-      if (run.completedAt) {
-        console.log(
-          `[run-engine] run ${run.id.slice(0, 8)} — blocked terminal state (completed ${run.completedAt}); keeping blocked`,
-        );
-        continue;
-      }
       const runningStepName = run.steps.find((s) => s.status === 'running')?.name;
       const latestResolvedGateDecision = [...run.decisions]
         .reverse()
@@ -792,7 +773,15 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         const restoredStatus = nextStep ? (STEP_TO_STATUS[nextStep.name] ?? 'created') : 'done';
         deps.updateRun(run.id, { status: restoredStatus });
       } else {
-        deps.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+        // Nothing to advance. A worker-signal or engine block already skipped
+        // the remaining steps, and an uncertain prompt delivery holds the slot
+        // for operator reconciliation. Its resolved decisions are history, not
+        // a wait that ended while the process was down; marking the run done
+        // here used to re-enter the engine at the first skipped step.
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — blocked with no running step; keeping blocked`,
+        );
+        continue;
       }
     }
 

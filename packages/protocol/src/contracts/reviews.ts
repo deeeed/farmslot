@@ -131,7 +131,6 @@ export interface PRReviewComment {
 export {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   independentReviewFixRetriesExhausted,
-  independentReviewMatchesPreparedPackage,
   independentReviewRetryCapReason,
   independentReviewRetryCount,
   latestExhaustedIndependentReview,
