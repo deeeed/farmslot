@@ -35,7 +35,7 @@ import {
 import { loadPoolConfigs } from '../fleet/state.js';
 import { workspaceReviewGit } from '../review-workspaces/git.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
-import { getRun } from '../runs/store.js';
+import { getRunWithArchived } from '../runs/store.js';
 
 async function resolveRepoPath(slotId: string): Promise<string> {
   const pools = await loadPoolConfigs();
@@ -609,16 +609,18 @@ async function diffViewTestPatterns(
   params: Pick<GitBranchDiffParams, 'slotId' | 'runId'>,
   deps: GitExecDeps,
 ): Promise<readonly string[]> {
+  // A review workspace resolves its run with the archive included (see
+  // workspaceReviewGit), so the patterns must too; runId and slotId are
+  // mutually exclusive on that path.
   let project: string | undefined;
   if (params.runId) {
-    project = getRun(params.runId)?.project;
+    project = (await getRunWithArchived(params.runId))?.project;
     if (!project) {
       console.warn(
-        `[git] branchDiff for run ${params.runId.slice(0, 8)}: run not in store, ${params.slotId ? 'falling back to the slot project' : 'using default test patterns'}`,
+        `[git] branchDiff for run ${params.runId.slice(0, 8)}: run not found, using default test patterns`,
       );
     }
-  }
-  if (!project && params.slotId) {
+  } else if (params.slotId) {
     project = (await (deps.loadVars ?? loadSlotVars)(params.slotId)).projectName;
   }
   const projectJson = project
