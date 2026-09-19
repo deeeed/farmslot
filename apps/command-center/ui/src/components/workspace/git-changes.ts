@@ -826,8 +826,11 @@ export class GitChanges extends LitElement {
     const committed = committedSplit.visible.length;
     // Worktree scope already includes uncommitted changes — summing would
     // double-count files that are both committed-ahead and locally modified.
+    // The scope test looks at the full list: hiding tests must not flip it.
     const total =
-      this.committedScope === 'worktree' && committed > 0 ? committed : uncommitted + committed;
+      this.committedScope === 'worktree' && this.committedFiles.length > 0
+        ? committed
+        : uncommitted + committed;
 
     return html`
       <div class="header">

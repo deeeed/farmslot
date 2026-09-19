@@ -11,7 +11,9 @@ export type DiffFileKind = 'code' | 'test';
  * `*` and `?` stay inside one path segment. A pattern without a slash names
  * a path segment anywhere: `fixtures` matches `src/fixtures/a.json` and a
  * file named `fixtures`; `*.snap` matches any `.snap` file. A trailing slash
- * names a directory anywhere: `tests/` matches `src/a/tests/x.ts`. A pattern
+ * names a directory anywhere: `tests/` matches `src/a/tests/x.ts`. Because a
+ * bare name is a segment rule, a bare filename glob also covers anything below
+ * a directory of that name (`*.snap` would match `x.snap/readme.md`). A pattern
  * with an inner slash is anchored at the repo root unless it starts with a
  * double star and a slash. Matching is case-sensitive so `*Test.java` does
  * not catch `latest.java`.
@@ -60,13 +62,34 @@ export interface DiffViewTestPatternConfig {
 /** Caps on project-supplied patterns, matching the gateway's source-diff filter. */
 export const TEST_FILE_PATTERN_ENTRY_LIMIT = 256;
 export const TEST_FILE_PATTERN_CHAR_LIMIT = 256;
+/**
+ * Most double-star runs one pattern may keep. Each run compiles to an
+ * optional `.*` group, and a non-matching path backtracks across all of them
+ * (interleaved `**` and `*` segments are exponential). Two runs cover every
+ * real layout (`**` / dir / `**`); patterns with more are dropped.
+ */
+export const TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT = 2;
+
+function doubleStarRuns(pattern: string): number {
+  return (
+    pattern
+      .replace(/\\/g, '/')
+      .replace(/(?:\*\*\/)+/g, '**/')
+      .match(/\*\*/g) ?? []
+  ).length;
+}
 
 export function resolveTestFilePatterns(
   config?: DiffViewTestPatternConfig | null,
 ): readonly string[] {
   const custom = (config?.testPatterns ?? [])
     .map((pattern) => pattern.trim())
-    .filter((pattern) => pattern.length > 0 && pattern.length <= TEST_FILE_PATTERN_CHAR_LIMIT)
+    .filter(
+      (pattern) =>
+        pattern.length > 0 &&
+        pattern.length <= TEST_FILE_PATTERN_CHAR_LIMIT &&
+        doubleStarRuns(pattern) <= TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT,
+    )
     .slice(0, TEST_FILE_PATTERN_ENTRY_LIMIT);
   const useDefaults = config?.useDefaultTestPatterns !== false;
   return [...(useDefaults ? DEFAULT_TEST_FILE_PATTERNS : []), ...custom];
@@ -125,7 +148,10 @@ export type TestFileMatcher = (path: string) => boolean;
 export function compileTestFileMatcher(
   patterns: readonly string[] = DEFAULT_TEST_FILE_PATTERNS,
 ): TestFileMatcher {
-  const regexes = patterns.map(globToRegExp);
+  // Defensive for callers that bypass resolveTestFilePatterns.
+  const regexes = patterns
+    .filter((pattern) => doubleStarRuns(pattern) <= TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT)
+    .map(globToRegExp);
   return (path) => {
     const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
     return regexes.some((regex) => regex.test(normalized));

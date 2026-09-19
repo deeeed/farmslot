@@ -57,7 +57,7 @@ test('splitDiffFilesByKind keeps the open file visible and honours a custom matc
   assert.deepEqual(
     custom.visible.map((file) => file.path),
     ['src/app.test.ts'],
-    'a stamped kind still wins; unstamped files use the matcher',
+    'unstamped files use the custom matcher; src/other.ts keeps its stamped kind',
   );
 });
 

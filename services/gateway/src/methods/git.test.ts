@@ -166,8 +166,8 @@ test('gitBranchDiff stamps each file as code or test using project diff_view pat
     ['code', 'test', 'test'],
     'project patterns extend the defaults',
   );
-  assert.ok(custom.testFilePatterns.includes('*.check.ts'));
-  assert.ok(custom.testFilePatterns.includes('*.test.*'));
+  assert.ok(custom.testFilePatterns?.includes('*.check.ts'));
+  assert.ok(custom.testFilePatterns?.includes('*.test.*'));
 
   const replaced = await gitBranchDiff(
     { slotId: 's', base: 'main' },

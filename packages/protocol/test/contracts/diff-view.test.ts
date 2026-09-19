@@ -102,7 +102,7 @@ test('pattern shapes follow the documented segment, directory, and anchored rule
   assert.equal(match('*Test.java', 'src/latest.java'), false);
 });
 
-test('project patterns are capped and repeated **/ runs cannot hang the matcher', () => {
+test('project patterns are capped and double-star runs cannot hang the matcher', () => {
   const resolved = resolveTestFilePatterns({
     testPatterns: [...Array.from({ length: 300 }, (_, i) => `p${i}.x`), 'x'.repeat(300)],
     useDefaultTestPatterns: false,
@@ -114,9 +114,22 @@ test('project patterns are capped and repeated **/ runs cannot hang the matcher'
     'long entries dropped',
   );
 
-  const isTest = compileTestFileMatcher(['**/**/**/**/**/**/**/**/a']);
+  const adjacent = compileTestFileMatcher(['**/**/**/**/**/**/**/**/a']);
+  assert.equal(adjacent('p/q/a'), true, 'adjacent runs collapse to one');
+
+  const interleaved = '**/*/**/*/**/*/**/*/**/*/**/*/**/*/**/*.spec.ts';
+  assert.deepEqual(
+    resolveTestFilePatterns({ testPatterns: [interleaved], useDefaultTestPatterns: false }),
+    [],
+    'a pattern with more than two double-star runs is dropped',
+  );
   const started = Date.now();
-  assert.equal(isTest(`${'x/'.repeat(60)}${'y'.repeat(60)}`), false);
-  assert.ok(Date.now() - started < 100, 'collapsed **/ runs match in linear time');
-  assert.equal(isTest('p/q/a'), true);
+  assert.equal(compileTestFileMatcher([interleaved])(`${'x/'.repeat(60)}${'y'.repeat(60)}`), false);
+  assert.ok(Date.now() - started < 100, 'the compiler drops it too');
+
+  const twoRuns = compileTestFileMatcher(['**/pkg/**/*.spec.ts']);
+  const startedTwo = Date.now();
+  assert.equal(twoRuns(`${'x/'.repeat(60)}${'y'.repeat(60)}`), false);
+  assert.ok(Date.now() - startedTwo < 100, 'two runs stay fast');
+  assert.equal(twoRuns('a/pkg/b/c.spec.ts'), true);
 });

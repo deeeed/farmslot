@@ -297,10 +297,10 @@ export class DiffViewerModal extends LitElement {
   override render() {
     if (!this.open) return nothing;
     const parsed = parseUnifiedDiff(this._loadedText);
-    const split = splitDiffFilesByKind(parsed, this._hideTests, {
-      keepPath: this._selectedPath,
-      matcher: this._testMatcher(),
-    });
+    // No keepPath here: the modal auto-selects its first file, so pinning it
+    // would make a test-only diff impossible to hide. The pane simply follows
+    // the first visible file.
+    const split = splitDiffFilesByKind(parsed, this._hideTests, { matcher: this._testMatcher() });
     const files = split.visible;
     const selected = files.find((file) => file.path === this._selectedPath) ?? files[0];
     const tree = buildDiffTree(files);

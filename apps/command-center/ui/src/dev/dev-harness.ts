@@ -337,6 +337,7 @@ export class DevHarness extends LitElement {
   @state() private _feedFps = 15;
   @state() private _feedRunning = false;
   @state() private _diffViewerModalOpen = true;
+  @state() private _diffViewerModalTestOnly = false;
   @state() private _slotSelectorSelection = ['runner-local-mobile-2'];
   @state() private _slotChoiceSelection = ['runner-local-mobile-2'];
   @state() private _pickerRunner = 'codex';
@@ -1577,12 +1578,25 @@ All checks passed.`;
       >
         Open diff modal (+120 -30 5 files)
       </button>
+      <button
+        data-testid="harness-open-test-only-diff"
+        style="margin-left:8px; font-family:${fonts.mono}; font-size:12px; padding:8px 12px; border-radius:6px; border:1px solid ${colors.accent}; background:${colors.accent}22; color:${colors.accent}; cursor:pointer;"
+        @click=${() => {
+          this._diffViewerModalTestOnly = true;
+          this._diffViewerModalOpen = true;
+        }}
+      >
+        Open test-only diff modal
+      </button>
       <diff-viewer-modal
         .open=${this._diffViewerModalOpen}
         title="Mock package diff"
-        .diffText=${`${MOCK_UNIFIED_DIFF.trimEnd()}\n${HARNESS_TEST_DIFF}`}
+        .diffText=${this._diffViewerModalTestOnly
+          ? HARNESS_TEST_DIFF
+          : `${MOCK_UNIFIED_DIFF.trimEnd()}\n${HARNESS_TEST_DIFF}`}
         @diff-modal-close=${() => {
           this._diffViewerModalOpen = false;
+          this._diffViewerModalTestOnly = false;
         }}
       ></diff-viewer-modal>
     `;
