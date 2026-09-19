@@ -756,7 +756,20 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   return changed;
 }
 
-function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
+interface ReleaseBacklogRunLinkOptions {
+  /**
+   * The released run ended blocked and was archived as such: leave the item's
+   * status and observed run status alone instead of requeueing it, so an
+   * operator closing a blocked run does not silently re-dispatch the work.
+   */
+  keepNeedsAttention?: boolean;
+}
+
+function releaseBacklogRunLink(
+  item: BacklogItem,
+  runId: string,
+  options: ReleaseBacklogRunLinkOptions = {},
+): boolean {
   let touched = false;
   if (item.launchPlanState) {
     if (item.launchPlanState.baselineRunId === runId) {
@@ -781,11 +794,17 @@ function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
   }
 
   delete item.runId;
-  delete item.lastObservedRunStatus;
   delete item.lastDispatchError;
   touched = true;
-  if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
-    item.status = 'ready';
+  const holdAsBlocked = options.keepNeedsAttention === true;
+  if (holdAsBlocked) {
+    // The run's blocked observation normally parked the item already; if that
+    // broadcast was lost, park it now rather than leave a runId-less item at
+    // running/queued where nothing would ever repair it.
+    if (!TERMINAL_STATUSES.has(item.status)) item.status = 'needs-attention';
+  } else {
+    delete item.lastObservedRunStatus;
+    if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) item.status = 'ready';
   }
   if (item.launchPlanState) rollUpLaunchPlanStatus(item);
   item.updatedAt = new Date().toISOString();
@@ -2573,12 +2592,15 @@ export async function markBacklogRunObserved(run: Run): Promise<void> {
   }
 }
 
-export async function markBacklogRunReleased(runId: string): Promise<string[]> {
+export async function markBacklogRunReleased(
+  runId: string,
+  options: ReleaseBacklogRunLinkOptions = {},
+): Promise<string[]> {
   return withBacklogMutation(async () => {
     let changed = false;
     const graphIds = new Set<string>();
     for (const item of items) {
-      if (!releaseBacklogRunLink(item, runId)) continue;
+      if (!releaseBacklogRunLink(item, runId, options)) continue;
       changed = true;
       if (item.workGraphId) graphIds.add(item.workGraphId);
     }

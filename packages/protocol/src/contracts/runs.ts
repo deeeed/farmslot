@@ -72,6 +72,36 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
   return isTerminalRunStatus(status) || status === 'blocked';
 }
 
+/**
+ * A blocked run the engine has nothing left to advance: no step is running, no
+ * decision is pending, and no failed step still carries an uncertain-delivery
+ * marker (that run keeps its slot and runner for operator reconciliation). A
+ * worker `blocked` signal or an engine block leaves this shape. The operator
+ * may retry it via step replay, or archive it while keeping the blocked
+ * outcome in history.
+ * Shared by the gateway archive guard and the UI so both agree on eligibility.
+ */
+export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+  if (run.status !== 'blocked') return false;
+  const steps = run.steps ?? [];
+  const decisions = run.decisions ?? [];
+  if (steps.some((step) => step.status === 'running')) return false;
+  if (decisions.some((decision) => !decision.resolvedAt)) return false;
+  // An uncertain prompt delivery blocks the run while deliberately keeping its
+  // slot and runner: the prompt may be executing. That run is held for
+  // operator reconciliation, not settled, so archiving it would orphan a live
+  // worker on a slot the reconciler then republishes.
+  // The marker lives on the step that failed; adoption recovery flips that
+  // step to done and keeps the marker, so status is part of the test.
+  return !steps.some((step) => {
+    if (step.status !== 'failed') return false;
+    const outputs = step.outputs ?? {};
+    return (
+      Boolean(outputs.promptDeliveryUncertain) || Boolean(outputs.nativeWorkerOperationUncertain)
+    );
+  });
+}
+
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface RunStep {

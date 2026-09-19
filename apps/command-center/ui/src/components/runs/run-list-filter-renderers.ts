@@ -202,6 +202,8 @@ export function renderRunListStatusFilter<Status extends string>(
 export interface RunListManageBarContext {
   selectedCount: number;
   selectedTerminalCount: number;
+  /** Terminal or settled-blocked selections — what Archive can act on. */
+  selectedArchivableCount: number;
   compareAllowed: boolean;
   actionInProgress: boolean;
   selectVisible: () => void;
@@ -217,8 +219,8 @@ export function renderRunListManageBar(ctx: RunListManageBarContext) {
     <div class="actions-bar manage">
       <span
         >${ctx.selectedCount}
-        selected${ctx.selectedTerminalCount !== ctx.selectedCount
-          ? ` · ${ctx.selectedTerminalCount} terminal`
+        selected${ctx.selectedArchivableCount !== ctx.selectedCount
+          ? ` · ${ctx.selectedArchivableCount} archivable`
           : ''}</span
       >
       <button class="action-secondary" @click=${ctx.selectVisible}>Select visible</button>
@@ -248,7 +250,7 @@ export function renderRunListManageBar(ctx: RunListManageBarContext) {
         : nothing}
       <button
         class="action-btn cleanup"
-        ?disabled=${ctx.actionInProgress || ctx.selectedTerminalCount === 0}
+        ?disabled=${ctx.actionInProgress || ctx.selectedArchivableCount === 0}
         @click=${ctx.archiveSelected}
       >
         Archive

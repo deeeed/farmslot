@@ -38,8 +38,11 @@ import { schedulerTick } from '../../work-graph/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
-async function reconcileDeletedRun(runId: string): Promise<void> {
-  const graphIds = await markBacklogRunReleased(runId);
+async function reconcileDeletedRun(
+  runId: string,
+  options: { keepNeedsAttention?: boolean } = {},
+): Promise<void> {
+  const graphIds = await markBacklogRunReleased(runId, options);
   for (const graphId of graphIds) await schedulerTick({ graphId });
 }
 
@@ -88,9 +91,11 @@ export async function runDelete(params: RunDeleteParams, emit: Emit): Promise<Ru
 }
 
 export async function runArchive(params: RunArchiveParams, emit: Emit): Promise<RunArchiveResult> {
+  const archivedAsBlocked = getRun(params.runId)?.status === 'blocked';
   const ok = await storeArchiveRun(params.runId);
   if (!ok) throw new Error(`Run not found: ${params.runId}`);
-  await reconcileDeletedRun(params.runId);
+  // Archiving a blocked run closes it; it must not requeue the backlog item.
+  await reconcileDeletedRun(params.runId, { keepNeedsAttention: archivedAsBlocked });
   emit(Events.RUN_DELETED, { runId: params.runId });
   return { ok: true };
 }

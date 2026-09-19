@@ -5,7 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
-import { filterRunList, runGradeColor } from './run-list-model.js';
+import { filterRunList, isArchivableRun, runGradeColor } from './run-list-model.js';
 
 function run(id: string, overrides: Partial<Run> = {}): Run {
   return {
@@ -271,4 +271,32 @@ test('filterRunList applies exact tag filters and includes tags in text search',
     filter({ runs: [demo, other], searchQuery: 'launch' }).map((item) => item.id),
     ['demo'],
   );
+});
+
+test('isArchivableRun accepts terminal runs and settled blocked runs only', () => {
+  const settledBlocked = {
+    status: 'blocked' as const,
+    steps: [{ name: 'monitor', status: 'done' as const }],
+    decisions: [],
+  };
+  assert.equal(isArchivableRun(settledBlocked), true);
+  assert.equal(isArchivableRun({ ...settledBlocked, status: 'done' }), true);
+  assert.equal(
+    isArchivableRun({
+      ...settledBlocked,
+      decisions: [
+        {
+          id: 'd',
+          type: 'engine_human_gate',
+          title: 't',
+          description: 'd',
+          actions: [],
+          createdAt: '2026-09-19T00:00:00.000Z',
+        },
+      ],
+    }),
+    false,
+    'a gate-blocked run is a live wait',
+  );
+  assert.equal(isArchivableRun({ ...settledBlocked, status: 'monitoring' }), false);
 });

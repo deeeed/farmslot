@@ -515,6 +515,94 @@ test('archiveRun stamps archivedAt before moving terminal runs out of active tim
   assert.match(archived.archivedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test('archiveRun accepts a settled blocked run and refuses one with a pending decision', async (t) => {
+  const settled = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-settled`,
+  });
+  updateRun(settled.id, {
+    status: 'blocked',
+    completedAt: new Date().toISOString(),
+    error: 'Cannot reproduce',
+    steps: [
+      { name: 'monitor', status: 'done' },
+      { name: 'self-review', status: 'skipped' },
+    ],
+    decisions: [
+      {
+        id: 'handoff-1',
+        type: 'monitor_interactive_handoff',
+        title: 'interactive handoff',
+        description: 'interactive handoff',
+        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
+        createdAt: new Date().toISOString(),
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'signal-written',
+      },
+    ],
+  });
+  const archivedPath = path.join(
+    os.tmpdir(),
+    `farmslot-test-runs-${process.pid}`,
+    'archive',
+    `${settled.id}.json`,
+  );
+  t.after(() =>
+    unlink(archivedPath).catch(() => {
+      // Best-effort test cleanup; absence means archiveRun already failed loudly above.
+    }),
+  );
+
+  assert.equal(await archiveRun(settled.id), true);
+  assert.equal(getRun(settled.id), undefined);
+  const archived = JSON.parse(await readFile(archivedPath, 'utf-8')) as {
+    status?: string;
+    archivedAt?: string;
+  };
+  assert.equal(archived.status, 'blocked', 'archiving keeps the blocked outcome');
+  assert.match(archived.archivedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
+
+  const waiting = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-waiting`,
+  });
+  updateRun(waiting.id, {
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [
+      {
+        id: 'gate-1',
+        type: 'engine_human_gate',
+        title: 'Review publish package',
+        description: 'Review publish package',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  await assert.rejects(archiveRun(waiting.id), /Cannot archive active run/);
+  assert.ok(getRun(waiting.id), 'a gate-blocked run stays in the store');
+
+  const uncertain = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-uncertain`,
+  });
+  updateRun(uncertain.id, {
+    status: 'blocked',
+    error: 'prompt delivery uncertain',
+    steps: [
+      { name: 'dispatch', status: 'failed', outputs: { promptDeliveryUncertain: true } },
+      { name: 'monitor', status: 'skipped' },
+    ],
+    decisions: [],
+  });
+  await assert.rejects(archiveRun(uncertain.id), /Cannot archive active run/);
+  assert.ok(getRun(uncertain.id), 'a run holding its slot after an uncertain delivery stays');
+});
+
 test('isSyntheticLeak detects completed fixture runs without touching real run shapes', async (t) => {
   const synthetic = createRun({
     flowType: 'review-pr',
