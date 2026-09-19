@@ -144,7 +144,7 @@ Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, 
 
 The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
 
-`subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written. `artifacts/` is created the same way and for the same reason, so the acceptance-ledger watch has a parent directory to observe on a task dir that has not written one yet; the gateway writes nothing into it either.
+`subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written. `artifacts/` is created the same way and for the same reason, so the acceptance-ledger watch has a directory to observe on a task dir that has not written one yet; the gateway writes nothing into it either.
 
 ## Project addendum
 
