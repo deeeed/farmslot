@@ -2,13 +2,16 @@
 // splits between code and tests. Shared by the gateway (which stamps each
 // branch-diff file) and Command Center (which hides tests and shows the ratio).
 
+import { compileGlob, globDoubleStarRuns } from './glob.js';
+
 export type DiffFileKind = 'code' | 'test';
 
 /**
  * Default test-file globs, matched against the repo-relative path.
  *
- * Pattern rules (a subset of gitignore): a double star spans directories,
- * `*` and `?` stay inside one path segment. A pattern without a slash names
+ * Pattern rules (a subset of gitignore): a double star followed by a slash
+ * spans any depth of directories, a trailing one everything below, and any
+ * other double star is a plain star; `*` and `?` stay inside one segment. A pattern without a slash names
  * a path segment anywhere: `fixtures` matches `src/fixtures/a.json` and a
  * file named `fixtures`; `*.snap` matches any `.snap` file. A trailing slash
  * names a directory anywhere: `tests/` matches `src/a/tests/x.ts`. Because a
@@ -23,10 +26,9 @@ export type DiffFileKind = 'code' | 'test';
  * `*_spec.rb` cover spec test files by name. Projects extend or replace these
  * defaults through `project.json` `diff_view`.
  *
- * This compiler is separate from the gateway's `source-diff-filter`, which
- * also emits git pathspecs, applies allow/block semantics, and is
- * case-insensitive; this one must run in the browser and only answers
- * "is this a test file".
+ * Compiled by the shared `compileGlob` in segment anchoring, case-sensitive.
+ * The gateway's `source-diff-filter` uses the same compiler in anchored,
+ * case-insensitive mode to mirror git pathspecs.
  */
 export const DEFAULT_TEST_FILE_PATTERNS: readonly string[] = [
   '*.test.*',
@@ -73,15 +75,6 @@ export const TEST_FILE_PATTERN_CHAR_LIMIT = 256;
  */
 export const TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT = 4;
 
-function doubleStarRuns(pattern: string): number {
-  return (
-    pattern
-      .replace(/\\/g, '/')
-      .replace(/(?:\*\*\/)+/g, '**/')
-      .match(/\*\*/g) ?? []
-  ).length;
-}
-
 export function resolveTestFilePatterns(
   config?: DiffViewTestPatternConfig | null,
 ): readonly string[] {
@@ -95,10 +88,16 @@ export function resolveTestFilePatterns(
         );
         return false;
       }
-      if (doubleStarRuns(pattern) > TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT) {
+      if (globDoubleStarRuns(pattern) > TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT) {
         console.warn(
           `[diff-view] dropping test pattern with more than ${TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT} double-star runs: ${pattern}`,
         );
+        return false;
+      }
+      const compiled = compileGlob(pattern, { anchoring: 'segment', caseSensitive: true });
+      if (compiled.invalid) {
+        // Dropped here so the effective list handed to clients is honest.
+        console.warn(`[diff-view] dropping test pattern "${compiled.pattern}": ${compiled.reason}`);
         return false;
       }
       return true;
@@ -108,63 +107,22 @@ export function resolveTestFilePatterns(
   return [...(useDefaults ? DEFAULT_TEST_FILE_PATTERNS : []), ...custom];
 }
 
-function globToRegExp(pattern: string): RegExp {
-  let glob = pattern
-    .replace(/\\/g, '/')
-    .replace(/^\.\//, '')
-    .replace(/^\/+/, '')
-    // Runs of `**/` mean the same as one; compiling each into its own optional
-    // group makes a non-match backtrack exponentially.
-    .replace(/(?:\*\*\/)+/g, '**/');
-  const directoryOnly = glob.endsWith('/');
-  if (directoryOnly) glob = glob.replace(/\/+$/, '');
-  // No inner slash: the pattern names a single path segment anywhere.
-  const segmentAnywhere = !glob.includes('/');
-  let out = '';
-  for (let i = 0; i < glob.length; i++) {
-    const ch = glob[i];
-    if (ch === '*' && glob[i + 1] === '*') {
-      const atSegmentStart = i === 0 || glob[i - 1] === '/';
-      if (atSegmentStart && glob[i + 2] === '/') {
-        // `**/` — zero or more whole directories.
-        out += '(?:.*/)?';
-        i += 2;
-      } else {
-        out += '.*';
-        i += 1;
-      }
-    } else if (ch === '*') {
-      out += '[^/]*';
-    } else if (ch === '?') {
-      out += '[^/]';
-    } else if ('.+^${}()|[]'.includes(ch)) {
-      out += `\\${ch}`;
-    } else {
-      out += ch;
-    }
-  }
-  const prefix = segmentAnywhere ? '(?:.*/)?' : '';
-  // A segment pattern also matches everything below a directory of that
-  // name; a directory-only pattern matches only what lies below it.
-  const suffix = segmentAnywhere
-    ? directoryOnly
-      ? '/.*'
-      : '(?:/.*)?'
-    : directoryOnly
-      ? '/.*'
-      : '';
-  return new RegExp(`^${prefix}${out}${suffix}$`);
-}
-
 export type TestFileMatcher = (path: string) => boolean;
 
 export function compileTestFileMatcher(
   patterns: readonly string[] = DEFAULT_TEST_FILE_PATTERNS,
 ): TestFileMatcher {
   // Defensive for callers that bypass resolveTestFilePatterns.
-  const regexes = patterns
-    .filter((pattern) => doubleStarRuns(pattern) <= TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT)
-    .map(globToRegExp);
+  const regexes: RegExp[] = [];
+  for (const pattern of patterns) {
+    if (globDoubleStarRuns(pattern) > TEST_FILE_PATTERN_DOUBLE_STAR_LIMIT) continue;
+    const compiled = compileGlob(pattern, { anchoring: 'segment', caseSensitive: true });
+    if (compiled.invalid) {
+      console.warn(`[diff-view] dropping test pattern "${compiled.pattern}": ${compiled.reason}`);
+      continue;
+    }
+    regexes.push(compiled.regex);
+  }
   return (path) => {
     const normalized = path.replace(/\\/g, '/').replace(/^\.\//, '');
     return regexes.some((regex) => regex.test(normalized));

@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import { compileGlob as compileSharedGlob } from '@farmslot/protocol';
+
 import { harnessRoot } from '../projects/harness-root.js';
 
 const DEFAULT_ALLOW_EXTENSIONS = [
@@ -186,9 +188,10 @@ export function readSourceDiffFilterConfig(raw: unknown): SourceDiffFilterConfig
   };
 }
 
-// Supports the simple project-config glob subset used for diff filtering: *, **, and ?.
-// Character classes/extglobs are intentionally not implemented; use explicit
-// allowlist/blocklist entries when a path needs that precision.
+// Git `:(glob)` semantics: root-anchored and case-insensitive. Character
+// classes are rejected by the shared compiler because git would honour them
+// while the JS matcher would not; the pattern then matches nothing here and is
+// kept out of the emitted pathspecs.
 interface CompiledGlob {
   regex: RegExp;
   invalid: boolean;
@@ -196,48 +199,13 @@ interface CompiledGlob {
 }
 
 function compileGlob(pattern: string): CompiledGlob {
-  const normalized = pattern.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (/[\[\]]/.test(normalized)) {
+  const compiled = compileSharedGlob(pattern, { anchoring: 'anchored', caseSensitive: false });
+  if (compiled.invalid) {
     console.warn(
-      `[source-diff-filter] glob pattern "${normalized}" contains unsupported character-class syntax; pattern will not match`,
+      `[source-diff-filter] glob pattern "${compiled.pattern}" rejected: ${compiled.reason}; pattern will not match`,
     );
-    return { regex: new RegExp('(?!)'), invalid: true, pattern: normalized };
   }
-  let source = '^';
-  for (let i = 0; i < normalized.length; i += 1) {
-    const char = normalized[i];
-    const next = normalized[i + 1];
-    if (char === '*' && next === '*') {
-      // `**/X` matches X at any depth, including root: emit (?:.*/)?
-      // so `**/*.ts` matches both `foo.ts` and `dir/foo.ts`. Git's
-      // :(glob)**/X pathspec already includes root files, so the JS
-      // matcher must agree to keep parseGitNumstat from filtering them
-      // back out and producing spurious no-source-diff results.
-      if (normalized[i + 2] === '/') {
-        source += '(?:.*/)?';
-        i += 2;
-      } else {
-        source += '.*';
-        i += 1;
-      }
-    } else if (char === '*') {
-      source += '[^/]*';
-    } else if (char === '?') {
-      source += '[^/]';
-    } else {
-      source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-    }
-  }
-  source += '$';
-  try {
-    return { regex: new RegExp(source, 'i'), invalid: false, pattern: normalized };
-  } catch (err) {
-    console.warn(
-      `[source-diff-filter] invalid glob pattern "${normalized}": ${(err as Error).message.slice(0, 200)}`,
-    );
-    // Deliberately match nothing when a configured glob cannot compile.
-    return { regex: new RegExp('(?!)'), invalid: true, pattern: normalized };
-  }
+  return { regex: compiled.regex, invalid: compiled.invalid, pattern: compiled.pattern };
 }
 
 function normalizeDiffPathForSourceCheck(filePath: string): string {
