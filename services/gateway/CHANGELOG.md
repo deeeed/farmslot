@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- `git.branchDiff` stamps each file with `kind: code | test` from the built-in test patterns plus the project's `diff_view` overrides, and returns the effective `testFilePatterns`.
 - `run.archive` accepts a settled blocked run (nothing running, no pending decision) so the operator can close it while keeping the blocked outcome; the linked backlog item stays at needs-attention instead of requeueing, a run whose slot still lists it (uncertain prompt delivery) is refused, and cancel remains the way to stop a live one.
 - Gateway restart re-opens the publication gate instead of silently re-sending leftover extra-review findings to the worker, and leaves a blocked run with nothing left to advance (worker signaled `blocked`, uncertain prompt delivery) in that state instead of restarting it at self-review. `task.progress` derives the flow type from the project's task dir. Extra-review auto-fix cannot raise past project `self_review.max_retries`. Re-review after a worker fix (loop 2+) is incremental and must read the worker's Self-Review Fixes report; Cursor still argv-respawns because pane send cannot prove acceptance.
 - Active-development baseline; add user-facing changes here before release or package publication.

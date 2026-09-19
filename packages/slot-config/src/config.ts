@@ -248,6 +248,13 @@ export interface RawProjectJson {
     }
   >;
   defaults?: Record<string, { runner: string; model: string; effort?: string }>;
+  /** Command Center diff views: which changed files count as tests. */
+  diff_view?: {
+    /** Extra test-file globs (gitignore-style; no slash = basename anywhere). */
+    test_patterns?: string[];
+    /** Set false to drop the built-in defaults and use only `test_patterns`. */
+    use_default_test_patterns?: boolean;
+  };
   diff_analysis?: {
     source_filter?: {
       use_defaults?: boolean;

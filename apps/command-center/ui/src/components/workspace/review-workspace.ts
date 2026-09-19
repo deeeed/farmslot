@@ -341,6 +341,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
+      this._diffTestPatterns = result.testFilePatterns ?? null;
       // Auto-select first file with comments, or first file
       const firstCommented = result.files.find((f) => this._commentCountByFile.has(f.path));
       const first = firstCommented ?? result.files[0];
@@ -352,6 +353,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         // Saved evidence is independent of the Git source. Keep it readable when the source is unavailable.
         this._diffError = err instanceof Error ? err.message : String(err);
         this._diffFiles = [];
+        this._diffTestPatterns = null;
         this._fileDiff = '';
         this._recoveryPhase = 'live';
       } else {
@@ -679,6 +681,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         .open=${this._diffModalOpen}
         .title=${this._diffModalTitle}
         .artifactUrl=${this._diffModalUrl}
+        .testPatterns=${this._diffTestPatterns}
         @diff-modal-close=${() => {
           this._diffModalOpen = false;
         }}

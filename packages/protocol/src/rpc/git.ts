@@ -183,4 +183,9 @@ export interface GitBranchDiffResult {
   /** Line totals exclude untracked files (worktree target lists them with 0/0). */
   totalAdditions: number;
   totalDeletions: number;
+  /**
+   * Effective test-file globs used to stamp `files[].kind` (defaults plus the
+   * project's `diff_view`). Additive: omitted by older gateways.
+   */
+  testFilePatterns?: string[];
 }

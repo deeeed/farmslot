@@ -126,6 +126,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
 
   // Diff state
   @state() _diffFiles: GitBranchDiffFile[] = [];
+  /** Effective test-file globs from the last branch diff, handed to the diff modal. */
+  @state() _diffTestPatterns: readonly string[] | null = null;
   @state() _diffLoading = false;
   @state() _selectedFile = '';
   @state() _fileDiff = '';

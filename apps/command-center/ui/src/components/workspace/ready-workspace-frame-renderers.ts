@@ -53,6 +53,7 @@ export interface ReadyWorkspaceFrameInput {
     title: string;
     diffText: string;
     artifactUrl: string;
+    testPatterns: readonly string[] | null;
     close: () => void;
   };
 }
@@ -116,6 +117,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
       .title=${input.diffModal.title}
       .diffText=${input.diffModal.diffText}
       .artifactUrl=${input.diffModal.artifactUrl}
+      .testPatterns=${input.diffModal.testPatterns}
       @diff-modal-close=${input.diffModal.close}
     ></diff-viewer-modal>
     ${input.renderInputArtifactViewer()} ${input.renderReviewRequestModal()}

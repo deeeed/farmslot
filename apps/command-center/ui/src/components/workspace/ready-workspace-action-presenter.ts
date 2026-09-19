@@ -484,6 +484,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';
       this._diffFiles = result.files;
+      this._diffTestPatterns = result.testFilePatterns ?? null;
       const selected =
         this._selectedFile && result.files.some((file) => file.path === this._selectedFile)
           ? this._selectedFile
@@ -494,6 +495,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       console.error('[ready-workspace] branch diff failed:', err);
       if (this._payload?.prPackage) {
         this._diffFiles = [];
+        this._diffTestPatterns = null;
         this._selectedFile = '';
         this._fileDiff = '';
         this._diffError =

@@ -1,3 +1,4 @@
+import type { DiffFileKind } from './diff-view.js';
 export interface FileEntry {
   name: string;
   type: 'file' | 'directory';
@@ -38,6 +39,8 @@ export interface GitBranchDiffFile {
    * listed file is committed by definition.
    */
   committed?: boolean;
+  /** Test-file classification from the project's `diff_view` patterns (defaults apply). */
+  kind?: DiffFileKind;
 }
 
 // ─── Diagnostics ───

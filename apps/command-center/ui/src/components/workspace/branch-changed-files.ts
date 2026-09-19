@@ -3,6 +3,13 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import {
+  readHideTestsPref,
+  splitDiffFilesByKind,
+  subscribeHideTestsPref,
+  writeHideTestsPref,
+} from '../../utils/diff-test-filter.js';
+import { renderDiffKindControls } from '../shared/diff-kind-controls.js';
 import { realPath } from '../slot-view/slot-view-model.js';
 
 type BranchDiffStatus = 'M' | 'A' | 'D' | 'R';
@@ -16,6 +23,8 @@ export interface BranchDiffFile {
   deletions: number;
   /** Worktree scope: file also has committed changes vs base. */
   committed?: boolean;
+  /** Gateway classification; files without it fall back to the default test patterns. */
+  kind?: 'code' | 'test';
 }
 
 /** Working-tree entry used to derive per-file state chips (staged/unstaged/untracked). */
@@ -143,6 +152,7 @@ export class BranchChangedFiles extends LitElement {
   @state() private _baseInput = '';
   @state() private _viewMode: FileListViewMode = 'tree';
   @state() private _showDropdown = false;
+  @state() private _hideTests = readHideTestsPref();
 
   /** Per-path working-tree entries — rebuilt on demand, avoids O(rows x changes) filters. */
   private get _changesByPath(): Map<string, WorktreeChangeEntry[]> {
@@ -449,15 +459,23 @@ export class BranchChangedFiles extends LitElement {
     `,
   ];
 
+  private _unsubscribeHideTests: (() => void) | null = null;
+
   connectedCallback() {
     super.connectedCallback();
     this._baseInput = this.base;
     document.addEventListener('click', this._onDocClick);
+    this._hideTests = readHideTestsPref();
+    this._unsubscribeHideTests = subscribeHideTestsPref((hide) => {
+      this._hideTests = hide;
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this._onDocClick);
+    this._unsubscribeHideTests?.();
+    this._unsubscribeHideTests = null;
   }
 
   private _onDocClick = (e: MouseEvent) => {
@@ -513,10 +531,13 @@ export class BranchChangedFiles extends LitElement {
   }
 
   updated(changed: Map<string, unknown>) {
-    if (changed.has('files')) {
+    if (changed.has('files') || changed.has('_hideTests')) {
+      const visible = splitDiffFilesByKind(this.files, this._hideTests, {
+        keepPath: this.selectedPath,
+      }).visible;
       // Auto-collapse if >= 30 files
-      if (this.files.length >= 30) {
-        const tree = buildTree(this.files, this.commentCounts);
+      if (visible.length >= 30) {
+        const tree = buildTree(visible, this.commentCounts);
         this._collapsed = new Set(tree.filter((n) => n.type === 'dir').map((n) => n.path));
       } else {
         this._collapsed = new Set();
@@ -639,8 +660,16 @@ export class BranchChangedFiles extends LitElement {
     `;
   }
 
+  private _toggleHideTests() {
+    writeHideTestsPref(!this._hideTests);
+  }
+
   render() {
-    const tree = buildTree(this.files, this.commentCounts);
+    const split = splitDiffFilesByKind(this.files, this._hideTests, {
+      keepPath: this.selectedPath,
+    });
+    const visible = split.visible;
+    const tree = buildTree(visible, this.commentCounts);
     const filteredBranches = this._baseInput
       ? this.branches.filter((b) => b.toLowerCase().includes(this._baseInput.toLowerCase()))
       : this.branches;
@@ -700,20 +729,31 @@ export class BranchChangedFiles extends LitElement {
               </button>`,
           )}
         </span>
+        ${renderDiffKindControls({
+          summary: split.summary,
+          hideTests: this._hideTests,
+          onToggle: () => this._toggleHideTests(),
+        })}
         <span class="summary">
-          ${this.files.length} file${this.files.length !== 1 ? 's' : ''}
-          <span class="add-stat">+${this.totalAdditions}</span>
-          <span class="del-stat">-${this.totalDeletions}</span>
+          ${visible.length} file${visible.length !== 1 ? 's' : ''}
+          <span class="add-stat"
+            >+${this._hideTests ? split.visibleAdditions : this.totalAdditions}</span
+          >
+          <span class="del-stat"
+            >-${this._hideTests ? split.visibleDeletions : this.totalDeletions}</span
+          >
         </span>
       </div>
       <div class="tree">
         ${this.files.length === 0
           ? html`<div class="empty-state">No changes vs ${this.base}</div>`
-          : this._viewMode === 'tree'
-            ? tree.map((n) => this._renderNode(n, 0))
-            : [...this.files]
-                .sort((a, b) => a.path.localeCompare(b.path))
-                .map((file) => this._renderListFile(file))}
+          : visible.length === 0
+            ? html`<div class="empty-state">Only test files changed (hidden)</div>`
+            : this._viewMode === 'tree'
+              ? tree.map((n) => this._renderNode(n, 0))
+              : [...visible]
+                  .sort((a, b) => a.path.localeCompare(b.path))
+                  .map((file) => this._renderListFile(file))}
       </div>
     `;
   }
