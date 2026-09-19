@@ -9,7 +9,7 @@
 
 ## Context
 
-A run is observed through one checklist and one signal: `CHECKLIST.md` and `SIGNAL.json`, written only by `mark`. Role switches (self-review, self-review-fix, ci-fix) pair a second checklist with its own signal, but that pairing is gateway-driven and the role set is closed. Inside a checklist, one step is one box.
+A run is observed through one checklist and one signal: `CHECKLIST.md` and `SIGNAL.json`, written only by `mark`. Role switches (self-review, self-review-fix, ci-fix) pair an additional checklist with its own signal, but that pairing is gateway-driven and the role set is closed. Inside a checklist, one step is one box.
 
 Some steps are not one unit of work. A dev checklist step says "self-review the diff against the team review skill"; a static review template has two boxes and hides the whole review inside the first. The skill invoked by such a step is itself a checklist (sections and `- [ ]` rows) with its own provenance, yet nothing observes it: the parent box stays open for the whole duration, Command Center shows no progress, the harness `status --watch` shows nothing, and no per-step timing survives for the family retrospective.
 
@@ -21,7 +21,9 @@ Nesting boxes inside the parent checklist is not an option. `mark N` targets a p
 
 ### A child unit is a separate checklist with its own signal
 
-A parent step may own one child unit. A child unit is a checklist file and a signal file under `subtasks/` in the task directory, with the same shape as the parent pair. The child signal is a `WorkerSignal` extended with a parent link: the parent checklist basename and the parent step number. `mark` is the only writer of child signals, as it is for the parent signal.
+A parent step may own one child unit. A child unit is a checklist file and a signal file under `subtasks/` in the task directory, with the same shape as the parent pair. The child signal is a `WorkerSignal` with `role: subtask` and one added top-level field, `parent`, holding the parent checklist basename and the parent step number. `mark` is the only writer of child signals, as it is for the parent signal.
+
+Child units are not role switches. They do not write `checklist-target.json`, do not change the run's active task file, and are not driven by the gateway role-switch mechanism. A child has no terminal contract of its own; the parent's contract still governs the parent's completion.
 
 The child checklist is materialized from a source: a skill body, a catalog template, or inline text. Materialization records the source id and digest the way `executionTemplate` records the parent checklist. A skill whose body is already checklist-shaped needs no change to become a child unit.
 
@@ -35,7 +37,7 @@ Liveness of a child is derived from its signal and mark timestamps only. A child
 
 ### The parent step is owned by its child while the child runs
 
-When a child unit is registered on a parent step, `mark <step>` on that step is refused with a pointer to the child until the child reaches a terminal status. A child `complete` ticks the parent box; a later `mark <step>` on the same step is an idempotent no-op. A child `blocked` propagates to the parent signal as `blocked` with the child reason. This keeps one writer per box and removes the ambiguity of a worker marking a step whose work is running elsewhere.
+When a child unit is registered on a parent step, `mark <step>` on that step is refused with a pointer to the child until the child reaches a terminal status. A child `complete` ticks the parent box; a later `mark <step>` on the same step is an idempotent no-op. A child `blocked` propagates to the parent signal as `blocked` with the child reason, so the run blocks the way a parent `blocked` does today; resuming the child restores `running` on both. This keeps one writer per box and removes the ambiguity of a worker marking a step whose work is running elsewhere.
 
 ### Progress projection is recursive
 

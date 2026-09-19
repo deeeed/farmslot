@@ -31,7 +31,9 @@ Ship order: child units first (Phases 1 to 4), AC ledger second (Phase 5). Each 
     acceptance-status.json              Phase 5: AC ledger, written by `farmslot-agent ac` only
 ```
 
-`<id>` is a slug (`[a-z0-9-]+`), unique per task directory. `<id>-SIGNAL.json` follows the existing `signalFileForChecklist` derivation, so no new naming rule is introduced.
+`<id>` is a slug (`[a-z0-9-]+`), unique per task directory. The signal basename derivation matches `signalFileForChecklist` (strip `.md`, append `-SIGNAL.json`); the `subtasks/` prefix is new and needs a child-path helper in `@farmslot/protocol` (`subtaskPaths(id)` returning both relative paths).
+
+Child units are not role switches. They never write `checklist-target.json`, never change the run's active task file, and are not driven by the gateway role-switch mechanism. A child may hang off `CHECKLIST.md` or off a role checklist such as `SELF-REVIEW.md`; either way the parent link names the file.
 
 ### `subtasks/index.json`
 
@@ -60,17 +62,44 @@ Ship order: child units first (Phases 1 to 4), AC ledger second (Phase 5). Each 
 
 ### Child signal
 
-`WorkerSignal` plus:
+The on-disk file is a `WorkerSignal` with one added top-level field, `parent`:
 
 ```ts
 interface WorkerSignalParentLink {
-  checklist: string; // parent checklist basename
+  checklist: string; // parent checklist basename, e.g. "CHECKLIST.md"
   stepNumber: number; // 1-based parent step
-  attemptId?: string; // parent attemptId at registration
+}
+
+interface SubtaskSignal extends WorkerSignal {
+  role: 'subtask';
+  contextId: string; // the child id
+  parent: WorkerSignalParentLink;
 }
 ```
 
-`role` is `subtask`; `contextId` is the child id. `checklistTiming.source` is the child checklist path. Everything else (status, outcome, reason, timestamps) is unchanged so the existing normalizer, probe, and staleness code apply.
+`sub start` writes this initial payload:
+
+```json
+{
+  "role": "subtask",
+  "contextId": "perps-review",
+  "attemptId": "<parent attemptId at registration>",
+  "parent": { "checklist": "CHECKLIST.md", "stepNumber": 21 },
+  "status": "running",
+  "checklistTiming": { "schemaVersion": 1, "source": "subtasks/perps-review.md", "events": [] },
+  "timestamp": "2026-09-19T10:00:00Z"
+}
+```
+
+Everything else (status, outcome, reason, step, timestamps) keeps parent semantics so the existing normalizer and probe apply. `stale` never appears in the file; it is a gateway projection (see Gateway).
+
+### Protocol type changes
+
+- `AGENT_ROLES` gains `'subtask'`. `NestedLoopAgentRole` is an `Extract` over the union and does not change, so `CHECKLIST_TARGET_BY_AGENT_ROLE`, `checklistTargetForAgentRole`, and `agentRoleForChecklistBasename` have no `subtask` entry by design. Audit `nestedLoopProgressLabel`, the Command Center and Companion role label maps, and `AgentContext` role consumers for exhaustive switches.
+- `WorkerSignal` gains optional `parent?: WorkerSignalParentLink`; `SubtaskSignal` narrows it.
+- `TaskProgressStructured` / `TaskStepProgress` gain the child projection (see Gateway).
+- `SubtaskIndex`, `SubtaskIndexUnit`, `SUBTASKS_DIR`, `subtaskPaths(id)`.
+- `TaskProgressAcceptanceUpdate` gains `parentChecklist?: string | null` (see Gateway, Accept).
 
 ## Worker verbs
 
@@ -86,17 +115,26 @@ All verbs live in the agent-runtime mark engine (`scripts/mark-checklist-step.cj
 
 Rules enforced by `mark`:
 
-| Situation                                                | Behaviour                                                                                                     |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `sub start` on a step already owning a running child     | refuse: `step N already owned by subtask <id>`                                                                |
-| `sub start` on a checked step                            | refuse                                                                                                        |
-| `mark N` while a child owns step N and is not terminal   | refuse with pointer: `step N is owned by subtask <id>; finish it with ./mark sub <id> complete`               |
-| child `complete`                                         | writes child terminal signal, ticks parent box N, appends parent `checklistTiming` event labelled from step N |
-| `mark N` after child completed                           | no-op, exit 0 (box already checked)                                                                           |
-| child `blocked`                                          | child signal `blocked`; parent signal `blocked` with `reason: "subtask <id>: <reason>"`                       |
-| parent terminal (`complete --mark-last`) with open child | refuse: every child must be terminal                                                                          |
-| `--from` source has no enumerable checkbox               | refuse: a child unit must have at least one step                                                              |
-| `--from` source fails `checklistNumberingMismatches`     | refuse, print mismatches                                                                                      |
+| Situation                                                  | Behaviour                                                                                                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub start` on a step that already has a child, any status | refuse: `step N already owned by subtask <id>`; one child per step for the life of the task directory                                                 |
+| `sub start` on a checked step                              | refuse                                                                                                                                                |
+| `--from` source has no enumerable checkbox                 | refuse: a child unit must have at least one step                                                                                                      |
+| `--from` source fails `checklistNumberingMismatches`       | refuse, print mismatches                                                                                                                              |
+| `mark N` while a child owns step N and is not terminal     | refuse with pointer: `step N is owned by subtask <id>; finish it with ./mark sub <id> complete`                                                       |
+| `sub <id> <n>`                                             | ticks child box n, appends a child `checklistTiming` event, child status `running` (also after `blocked`, see recovery)                               |
+| `sub <id> complete`                                        | asserts child boxes (see `--mark-last`), asserts `--report` if given, writes child terminal signal, ticks parent box N, appends a parent timing event |
+| `sub <id> complete --mark-last`                            | parent semantics: every child box must be `[x]` except at most the last, which it ticks                                                               |
+| `sub <id> complete` without `--mark-last`                  | every child box must already be `[x]`                                                                                                                 |
+| `mark N` after child completed                             | no-op, exit 0 (box already checked)                                                                                                                   |
+| `sub <id> blocked`                                         | child signal `blocked`; parent signal `blocked` with `reason: "subtask <id>: <reason>"` and `step` = parent step N label                              |
+| parent terminal (`complete --mark-last`) with open child   | refuse: every child must be terminal                                                                                                                  |
+
+**Parent timing event on child completion.** The appended parent event is `{ stepNumber: N, label: checklistStepName(parentRow.rawLabel), checkedAt }`, identical to a normal parent mark, so `deriveChecklistStepDurations` needs no change.
+
+**Child terminal contract.** Child units have no terminal contract. `sub complete` never consults `terminalContractInputForChecklist`, `inputs/worker-terminal-contract.json`, or `inferFlowType`, and never runs `check-task-artifact-contract.mjs`. Its only artifact rule is `--report <path>`: when given, the file must exist and be non-empty. The parent's terminal contract still governs the parent's own `complete`, which is where a report such as `artifacts/review.md` is required by the flow.
+
+**Recovery after `blocked`.** A child `blocked` makes the run `blocked` through the parent signal, exactly as a parent `mark blocked` does today; the operator uses the existing blocked-run actions (fix feedback, relaunch). When work resumes, the next `sub <id> <n>` or `sub <id> complete` flips the child back to `running`/terminal and rewrites the parent signal to `running` with the parent step, mirroring how a parent `mark N` after `blocked` already writes `running`. There is no replacement child: one id per step.
 
 The refusals are the answer to "auto-tick could confuse the agent": the agent cannot mark the parent while the child runs, and the template text says the step is done by finishing the child. A second `mark N` costs nothing.
 
@@ -111,17 +149,16 @@ Materialization reuses the execution-template renderer: placeholders (`{{TASK_DI
   subtask?: {
     id: string;
     status: WorkerSignalStatus | 'stale';
-    source: { kind: 'skill' | 'template' | 'inline'; ref?: string; sha256: string };
+    source: { kind: 'skill' | 'template' | 'inline'; ref?: string; sha256: string; renderedSha256: string };
     progress: TaskProgressStructured; // recursive
     lastEventAt: string | null;
   };
   ```
 
-  `taskProgress` builds it from the child checklist and signal through the same parser as the parent. Depth is capped at 1 in v1 by the mark engine, not the schema.
+  `taskProgress` builds the child schema with `generateTaskSchema(childMarkdown, run.flowType)`; the flow type only labels the schema, enumeration is flow-independent. `'stale'` is projected when the child file says `running` and no mark event landed within the run's existing worker idle threshold (no separate child threshold). Depth is capped at 1 in v1 by the mark engine, not the schema.
 
-- **Accept.** `shouldAcceptTaskProgressUpdate` treats `role: 'subtask'` updates as belonging to the active parent checklist; a child of a role checklist (`SELF-REVIEW.md`) is accepted while that role is active.
-- **Staleness.** A running child with no mark event for the run's configured idle window projects `stale`. No process or pane inspection.
-- **Copy and mirror.** `subtasks/` joins the dispatch copy list, the re-sync list, and the completion mirror (`subtasks/*.worker` beside the orchestrator copy). `isGatewayOwnedArtifactMirrorEntry` is unchanged: child files are worker-owned.
+- **Accept.** `shouldAcceptTaskProgressUpdate` today accepts a nested-loop update only when `contextId` equals the role derived from the active task file, so a child update (`contextId: 'perps-review'`) during `SELF-REVIEW.md` would be dropped. New rule, in the same protocol module with tests: an update with `role: 'subtask'` is accepted when `update.parentChecklist` equals the active task file basename (or the worker file when no role checklist is active). Command Center and Companion mirrors of this function follow.
+- **Copy and mirror.** Dispatch, re-sync, and warm handoff copy `subtasks/` as a directory beside `inputs/` and `artifacts/`, not through `TASK_ROOT_SIDECARS`. At completion, each file under `subtasks/` is mirrored back beside the orchestrator copy as `subtasks/<name>.worker`, following the `TASK.md.worker` / `CHECKLIST.md.worker` pattern in `run-completion/artifact-mirror.ts`. `isGatewayOwnedArtifactMirrorEntry` is unchanged: child files are worker-owned.
 - **Terminal contract.** `mark complete --mark-last` on the parent requires every registered child terminal; the artifact contract check reports open children as a failure.
 - **Metrics.** `deriveChecklistStepDurations` runs per child; `session-metrics.json` gains `subtasks[]` with per-unit duration and step count. Nothing else in the cost lane changes.
 
@@ -142,9 +179,9 @@ The skill library needs no change. A skill whose body is not checklist-shaped ca
 
 ## Phase 5: acceptance-criteria ledger
 
-Recommended model: one JSON ledger, one writer, markdown rendered from it. It is the simplest that is parseable, contract-checkable, and keeps the "only `X` writes `Y`" rule the signal already follows.
+One JSON ledger, one writer, markdown rendered from it. Parseable, contract-checkable, and it keeps the "only `X` writes `Y`" rule the signal already follows. Like `SIGNAL.json`, the ledger is a framework-written artifact invoked by the worker, not direct worker output.
 
-- Task init emits `inputs/acceptance-criteria.json`: `[{ id: "AC-1", text }]` from the `acceptanceCriteria` it already renders into `TASK.md`. Ids are positional and stable for the task directory.
+- No new inputs file (direction of backlog item MANUAL-000092: no third AC surface). Task init already holds the criteria as an array; it records that array in `inputs/handoff.json` under `task.acceptanceCriteria`. Ids are `AC-<N>`, N the 1-based position in that array; task init is the sole id producer. `TASK.md` keeps rendering the same list as prose for the worker to read.
 - `farmslot-agent ac set <id> <verdict> [--evidence path ...] [--recipe-node id ...] [--note "..."]` writes `artifacts/acceptance-status.json`:
 
   ```json
@@ -165,25 +202,25 @@ Recommended model: one JSON ledger, one writer, markdown rendered from it. It is
   }
   ```
 
-  Verdicts: `proven`, `weak`, `missing`, `untestable`. `proofMode`: `state`, `visual`, `mixed`.
+  Verdicts: `proven`, `weak`, `missing`, `untestable`. `proofMode`: `state`, `visual`, `mixed`. `ac` is a separate agent-runtime entry point, not a `mark` verb: the ledger is not a checklist and `mark` stays the one signal writer.
 
 - `farmslot-agent ac render` prints the coverage table that `recipe-coverage.md` holds today, ending with the same `Overall recipe coverage:` line. The PR-body renderer reads the ledger; farm templates stop asking the worker to hand-write `recipe-coverage.md` once the ledger ships.
-- Terminal contract: `complete` requires a verdict for every id in `inputs/acceptance-criteria.json`; `missing` or `weak` fails `check-task-artifact-contract.mjs` unless the flow's contract waives it.
+- Terminal contract: `complete` requires a verdict for every id; `missing` or `weak` fails `check-task-artifact-contract.mjs` unless the flow's contract waives it.
 - Gateway watches the ledger; run detail shows an AC panel (id, verdict, evidence links). Family observability counts `proven / total`.
 
 Alternative considered: keep `recipe-coverage.md` as the source and parse it. Rejected: two formats to keep aligned, prose tables drift, and a parser on worker-written markdown is the class of fragility the checklist contract avoids.
 
 ## Layering
 
-| Layer                       | Adds                                                                                                                                                       |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@farmslot/protocol`        | `WorkerSignalParentLink`, `role: 'subtask'`, `TaskStepProgress.subtask`, `SubtaskIndex`, `AcceptanceStatusLedger`, `SUBTASKS_DIR`, child path derivation   |
-| `@farmslot/agent-runtime`   | `mark sub` verbs + CJS mirror, source materializer (reuses execution-template render + digest), `ac` verbs, contract-check extensions, `task init` AC file |
-| `services/gateway`          | watcher, projection, acceptance rule, copy/mirror lists, terminal check, metrics                                                                           |
-| Command Center + Companion  | nested progress block, AC panel                                                                                                                            |
-| `@farmslot/skills` guidance | "checklist-shaped skill" authoring rule                                                                                                                    |
-| mm-harness (separate repo)  | `status --watch` rendering through the shared projection; template edits in the farm repo                                                                  |
-| Farm packs                  | which skill each step registers; no logic                                                                                                                  |
+| Layer                       | Adds                                                                                                                                                                                                     |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@farmslot/protocol`        | `'subtask'` in `AGENT_ROLES`, `WorkerSignalParentLink`, `SubtaskSignal`, `TaskStepProgress.subtask`, `SubtaskIndex`, `SUBTASKS_DIR`, `subtaskPaths`, acceptance-rule extension, `AcceptanceStatusLedger` |
+| `@farmslot/agent-runtime`   | `mark sub` verbs + CJS mirror, source materializer (reuses execution-template render + digest), `ac` entry point, contract-check extensions, handoff AC array                                            |
+| `services/gateway`          | watcher, projection, acceptance rule, directory copy + per-file mirror, terminal check, metrics                                                                                                          |
+| Command Center + Companion  | nested progress block, AC panel, acceptance-rule mirrors                                                                                                                                                 |
+| `@farmslot/skills` guidance | "checklist-shaped skill" authoring rule                                                                                                                                                                  |
+| mm-harness (separate repo)  | `status --watch` rendering through the shared projection; template edits in the farm repo                                                                                                                |
+| Farm packs                  | which skill each step registers; no logic                                                                                                                                                                |
 
 Farmslot owns abstractions and the producer; the harness wraps; packs hold values.
 
@@ -191,30 +228,29 @@ Farmslot owns abstractions and the producer; the harness wraps; packs hold value
 
 Each phase is one PR. Unit tests are regression guards; proof is the live scenario named per phase, run through the production gateway on the operator checkout, with the recipe extended for every review-round change.
 
-| Phase | Scope                                                                                       | Proof                                                                                                                                                                                                              |
-| ----- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | protocol types; mark `sub` verbs + CJS mirror; materializer; refusal table                  | scripted-runner scenario: register child from a checklist-shaped fixture skill, mark child steps, `mark N` refused mid-child, child `complete` ticks parent, parent `complete --mark-last` refused with open child |
-| 2     | gateway watch + projection + copy/mirror + terminal check                                   | `cdp.mjs gateway task.progress` shows `subtask` under the step on a live slot; `*.worker` mirror contains `subtasks/`; stale projection after idle window                                                          |
-| 3     | Command Center + Companion rendering; harness `status --watch`                              | CDP screenshots mid-child and after completion; harness watch output on the same run                                                                                                                               |
-| 4     | farm template edits (`dev.md` 21, `review-pr.static-perps.md` 1); skills authoring guidance | one real dev run and one static review run on a slot with the child visible end to end; family retrospective shows child durations                                                                                 |
-| 5     | AC ledger: task init file, `ac` verbs, renderer, contract check, gateway panel              | dev run where every AC gets a verdict, one deliberately `missing` blocks `complete`, panel renders verdicts and evidence links                                                                                     |
+| Phase | Scope                                                                                       | Proof                                                                                                                                                                                                                                                                                     |
+| ----- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | protocol types; mark `sub` verbs + CJS mirror; materializer; refusal table                  | scripted-runner scenario: register child from a checklist-shaped fixture skill, mark child steps, `mark N` refused mid-child, child `complete` ticks parent with the parent timing event, `blocked` then resume flips both signals, parent `complete --mark-last` refused with open child |
+| 2     | gateway watch + projection + acceptance rule + copy/mirror + terminal check                 | `cdp.mjs gateway task.progress` shows `subtask` under the step on a live slot, including during an active `SELF-REVIEW.md`; `subtasks/<name>.worker` files exist after completion; stale projection after the idle window                                                                 |
+| 3     | Command Center + Companion rendering; harness `status --watch`                              | CDP screenshots mid-child and after completion; harness watch output on the same run                                                                                                                                                                                                      |
+| 4     | farm template edits (`dev.md` 21, `review-pr.static-perps.md` 1); skills authoring guidance | one real dev run and one static review run on a slot with the child visible end to end; family retrospective shows child durations                                                                                                                                                        |
+| 5     | AC ledger: handoff AC array, `ac` entry point, renderer, contract check, gateway panel      | dev run where every AC gets a verdict, one deliberately `missing` blocks `complete`, panel renders verdicts and evidence links                                                                                                                                                            |
 
 Node rollout: Phases 1 and 2 change the mark engine and the node fs.watch contract; deploy both node instances and the harness before Phase 4 templates reference `mark sub`.
 
 ## Acceptance criteria
 
 - A step can register one child unit from a skill file, a catalog template id, or inline text; the child checklist enumerates through the same parser as the parent, with provenance digests.
-- `mark` refuses parent marks on a step owned by a running child, ticks the parent on child completion, and treats a later parent mark of that step as a no-op.
-- Child `blocked` surfaces as parent `blocked` with the child reason; parent terminal marks refuse while any child is open.
-- Gateway `task.progress` returns a recursive child projection with status, source, counts, current step, and last event time, for local and remote slots.
+- `mark` refuses parent marks on a step owned by a running child, ticks the parent on child completion with a normal parent timing event, and treats a later parent mark of that step as a no-op.
+- Child `complete` has no flow terminal contract; `--report` is its only artifact rule.
+- Child `blocked` surfaces as parent `blocked` with the child reason; resuming the child restores `running` on both; parent terminal marks refuse while any child is open.
+- Gateway `task.progress` returns a recursive child projection with status (including projected `stale`), source digests, counts, current step, and last event time, for local and remote slots, and accepts child updates during role checklists.
 - Command Center, Companion, and harness `status --watch` render the child under its step from the one projection.
-- `subtasks/` travels to the slot on dispatch and re-sync and mirrors back on completion.
+- `subtasks/` travels to the slot on dispatch and re-sync as a directory and mirrors back per file as `.worker` on completion.
 - Per-child step durations appear in session metrics and family observability.
 - Farmslot spawns nothing: no tmux, process, or session code is added by this work.
-- Acceptance criteria get ids at task init, verdicts through `farmslot-agent ac`, a rendered coverage table, a terminal-contract check, and a run-detail panel.
+- Acceptance criteria get `AC-<N>` ids from the handoff array, verdicts through `farmslot-agent ac`, a rendered coverage table, a terminal-contract check, and a run-detail panel.
 
 ## Open questions
 
-- Should a child unit be allowed on a role checklist (`SELF-REVIEW.md`) in v1, or only on `CHECKLIST.md`? Default: allowed, same rules, since the reviewer role is the first place a team skill runs.
-- Idle window for `stale`: reuse the run's existing worker idle threshold or a separate child threshold? Default: reuse.
-- `ac` verbs as part of `mark` (`./mark ac ...`) or a separate `farmslot-agent ac` entry point? Default: separate, since the ledger is not a checklist and `mark` should stay the one signal writer.
+- Should Phase 4 also move the `SELF-REVIEW.md` role template's domain-pattern step onto a child unit, or keep that for a later template pass? Default: later pass, after one real run proves the mechanism on `CHECKLIST.md`.
