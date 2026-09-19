@@ -39,6 +39,12 @@ export class ProgressTracker extends LitElement {
   @property() markdown = '';
   @property({ type: Boolean }) compact = false;
   @property({ type: Object }) structured?: TaskProgressStructured;
+  /**
+   * Run (or other task identity) the progress belongs to. Only child-unit
+   * expand state uses it: this element outlives the run it shows on surfaces
+   * like the slot view, and a unit id repeats across runs.
+   */
+  @property() runId?: string;
 
   @state() private _expandedPhases: Set<string> = new Set();
   private _prevCurrentPhase: string | null = null;
@@ -47,7 +53,8 @@ export class ProgressTracker extends LitElement {
    * operator is watching work in flight here and the child's steps are the
    * detail they came for. Companion starts every child collapsed instead: a
    * phone has no room to spare. Either way the default applies once per unit
-   * id — after that this map holds the viewer's own choice.
+   * id per run — after that this map holds the viewer's own choice, and a new
+   * run starts from the default again.
    */
   private readonly _subtaskOpen = new SubtaskOpenState();
 
@@ -373,7 +380,7 @@ export class ProgressTracker extends LitElement {
         ? renderSubtaskBlock(
             step.subtask,
             (childStep) => this._renderStepRow(childStep, true),
-            this._subtaskOpen,
+            this._subtaskOpen.scope(this.runId),
           )
         : nothing}
     `;

@@ -67,8 +67,17 @@ export function TaskProgressPanel({
               </View>
               {/* Child units start collapsed here; Command Center opens an
                   unsettled one instead. A phone shows one panel at a time, so
-                  the parent checklist stays readable until the viewer taps. */}
-              {step.subtask ? <TaskSubtaskBlock subtask={step.subtask} /> : null}
+                  the parent checklist stays readable until the viewer taps.
+                  Keyed by run as well as unit id: the block holds the viewer's
+                  expand state in component state, and a unit id repeats across
+                  runs, so a run change must remount it rather than carry the
+                  previous run's state over. */}
+              {step.subtask ? (
+                <TaskSubtaskBlock
+                  key={`${run?.id ?? 'none'}:${step.subtask.id}`}
+                  subtask={step.subtask}
+                />
+              ) : null}
             </React.Fragment>
           ))}
         </View>

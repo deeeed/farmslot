@@ -51,7 +51,8 @@ export class StepInspector extends StepInspectorState {
   /**
    * Command Center opens an unsettled child on first sight (the operator is
    * here to watch work in flight); the viewer's own expand/collapse wins from
-   * then on, so live progress updates cannot fight them.
+   * then on, so live progress updates cannot fight them. Scoped by run: this
+   * inspector is reused as run detail swaps runs, and a unit id repeats.
    */
   private readonly _subtaskOpen = new SubtaskOpenState();
 
@@ -285,7 +286,7 @@ export class StepInspector extends StepInspectorState {
         ? renderSubtaskBlock(
             step.subtask,
             (childStep) => this._renderTaskProgressStep(childStep, true),
-            this._subtaskOpen,
+            this._subtaskOpen.scope(this.run?.id),
           )
         : nothing}
     `;

@@ -67,7 +67,9 @@ export class RunPipeline extends LitElement {
   /**
    * Command Center opens an unsettled child on first sight (this panel exists
    * to watch work in flight); after that the viewer's own expand/collapse wins,
-   * so a progress update cannot reopen what they closed.
+   * so a progress update cannot reopen what they closed. Scoped by run: this
+   * element is reused when run detail swaps the run, and `runChanged` resets
+   * only the state it knows about.
    */
   private readonly subtaskOpen = new SubtaskOpenState();
   @state() private autoExpandDone = false;
@@ -275,7 +277,7 @@ export class RunPipeline extends LitElement {
       () => {
         this.monitorExpanded = false;
       },
-      this.subtaskOpen,
+      this.subtaskOpen.scope(this.run?.id),
       this.run.activeTaskFile?.split('/').pop(),
     );
   }

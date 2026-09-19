@@ -145,7 +145,12 @@ export function renderSlotViewSidebarTask(view: SlotView) {
 
   // Structured progress (phase accordion) when available
   if (view._structuredProgress) {
-    return html`<progress-tracker .structured=${view._structuredProgress}></progress-tracker>`;
+    // The slot follows one run to the next; pass the run so child-unit expand
+    // state does not survive into the slot's next run.
+    return html`<progress-tracker
+      .structured=${view._structuredProgress}
+      .runId=${slot.currentRunId ?? undefined}
+    ></progress-tracker>`;
   }
 
   // Fallback to flat step list

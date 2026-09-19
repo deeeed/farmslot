@@ -5,7 +5,12 @@ import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/
 
 import { litBinding, litText } from '../../testing/lit-text.js';
 
-import { renderSubtaskBlock, SubtaskOpenState, subtaskPresentation } from './subtask-block.js';
+import {
+  renderSubtaskBlock,
+  type SubtaskOpenScope,
+  SubtaskOpenState,
+  subtaskPresentation,
+} from './subtask-block.js';
 
 function childProgress(completed: number, total: number): TaskProgressStructured {
   const steps = Array.from({ length: total }, (_, index) => ({
@@ -84,7 +89,7 @@ test('the block renders the child steps through the host row renderer', () => {
     renderSubtaskBlock(
       unitFixture(),
       (step) => `[row:${step.name}:${step.status}]`,
-      new SubtaskOpenState(),
+      new SubtaskOpenState().scope('run-a'),
     ),
   );
   assert.match(rendered, /perps-review/);
@@ -94,9 +99,9 @@ test('the block renders the child steps through the host row renderer', () => {
 });
 
 /** The `?open` value the block binds on `<details>` for this render. */
-function openBinding(unit: TaskStepSubtaskProgress, state: SubtaskOpenState): boolean {
+function openBinding(unit: TaskStepSubtaskProgress, scope: SubtaskOpenScope): boolean {
   return litBinding(
-    renderSubtaskBlock(unit, (step) => step.name, state),
+    renderSubtaskBlock(unit, (step) => step.name, scope),
     '?open=',
   ) as boolean;
 }
@@ -104,10 +109,10 @@ function openBinding(unit: TaskStepSubtaskProgress, state: SubtaskOpenState): bo
 /** The `@toggle` listener the block wires, so a test can fire the real event. */
 function toggleListener(
   unit: TaskStepSubtaskProgress,
-  state: SubtaskOpenState,
+  scope: SubtaskOpenScope,
 ): (event: Event) => void {
   return litBinding(
-    renderSubtaskBlock(unit, (step) => step.name, state),
+    renderSubtaskBlock(unit, (step) => step.name, scope),
     '@toggle=',
   ) as (event: Event) => void;
 }
@@ -118,7 +123,7 @@ function fireToggle(listener: (event: Event) => void, open: boolean): void {
 }
 
 test('the block binds the open state it is given, not the status default', () => {
-  const state = new SubtaskOpenState();
+  const state = new SubtaskOpenState().scope('run-a');
   const unit = unitFixture({ status: 'running' });
   state.set(unit.id, false);
   assert.equal(
@@ -137,7 +142,7 @@ test('the block binds the open state it is given, not the status default', () =>
 });
 
 test('an active unit opens by default and stays closed once the viewer closes it', () => {
-  const state = new SubtaskOpenState();
+  const state = new SubtaskOpenState().scope('run-a');
   assert.equal(
     openBinding(unitFixture({ status: 'running' }), state),
     true,
@@ -153,7 +158,7 @@ test('an active unit opens by default and stays closed once the viewer closes it
 });
 
 test('a settled unit starts closed and stays open once the viewer opens it', () => {
-  const state = new SubtaskOpenState();
+  const state = new SubtaskOpenState().scope('run-a');
   assert.equal(
     openBinding(unitFixture({ status: 'complete' }), state),
     false,
@@ -170,7 +175,7 @@ test('a settled unit starts closed and stays open once the viewer opens it', () 
 });
 
 test("a unit that settles while open keeps the viewer's state, not the new default", () => {
-  const state = new SubtaskOpenState();
+  const state = new SubtaskOpenState().scope('run-a');
   openBinding(unitFixture({ status: 'running' }), state);
   fireToggle(toggleListener(unitFixture({ status: 'running' }), state), false);
 
@@ -183,7 +188,7 @@ test("a unit that settles while open keeps the viewer's state, not the new defau
 });
 
 test('each unit id remembers its own state', () => {
-  const state = new SubtaskOpenState();
+  const state = new SubtaskOpenState().scope('run-a');
   const first = unitFixture({ id: 'perps-review', status: 'running' });
   const second = unitFixture({ id: 'ci-triage', status: 'running' });
   openBinding(first, state);
@@ -191,4 +196,38 @@ test('each unit id remembers its own state', () => {
   fireToggle(toggleListener(first, state), false);
   assert.equal(openBinding(first, state), false);
   assert.equal(openBinding(second, state), true, 'the other unit is untouched');
+});
+
+test('the same unit id under a different run starts from the default again', () => {
+  const state = new SubtaskOpenState();
+  const runA = state.scope('run-a');
+  const runB = state.scope('run-b');
+  const unit = () => unitFixture({ id: 'perps-review', status: 'running' });
+
+  openBinding(unit(), runA);
+  fireToggle(toggleListener(unit(), runA), false);
+  assert.equal(openBinding(unit(), runA), false, 'run A keeps what the viewer chose');
+
+  assert.equal(
+    openBinding(unit(), runB),
+    true,
+    'a different run must not inherit run A collapse for the same unit id',
+  );
+  assert.equal(openBinding(unit(), runA), false, "run B's default left run A untouched");
+});
+
+test('a settled unit opened in one run does not open in the next', () => {
+  const state = new SubtaskOpenState();
+  const settled = () => unitFixture({ id: 'ci-parity', status: 'complete' });
+  fireToggle(toggleListener(settled(), state.scope('run-a')), true);
+  assert.equal(openBinding(settled(), state.scope('run-a')), true);
+  assert.equal(openBinding(settled(), state.scope('run-b')), false, 'run B falls back to settled');
+});
+
+test('a host with no run identity still keeps one scope', () => {
+  const state = new SubtaskOpenState();
+  const unit = () => unitFixture({ status: 'running' });
+  fireToggle(toggleListener(unit(), state.scope(undefined)), false);
+  assert.equal(openBinding(unit(), state.scope(undefined)), false);
+  assert.equal(openBinding(unit(), state.scope('')), false, 'blank and absent are the same scope');
 });

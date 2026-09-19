@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
 
-import { litText } from '../../testing/lit-text.js';
+import { litBinding, litText } from '../../testing/lit-text.js';
 import { SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 
 import { renderPipelineProgressPanel } from './run-pipeline-panels.js';
@@ -56,12 +56,13 @@ function parentProgress(subtask: TaskStepSubtaskProgress): TaskProgressStructure
 }
 
 test('the progress panel nests a child unit under its parent step', () => {
+  const state = new SubtaskOpenState();
   const rendered = litText(
     renderPipelineProgressPanel(
       parentProgress(childUnit('perps-review', 'Read the diff')),
       'monitor',
       () => {},
-      new SubtaskOpenState(),
+      state.scope('run-a'),
       'CHECKLIST.md',
     ),
   );
@@ -71,12 +72,13 @@ test('the progress panel nests a child unit under its parent step', () => {
 });
 
 test('child steps do not inflate the parent counts', () => {
+  const state = new SubtaskOpenState();
   const rendered = litText(
     renderPipelineProgressPanel(
       parentProgress(childUnit('perps-review', 'Read the diff')),
       'monitor',
       () => {},
-      new SubtaskOpenState(),
+      state.scope('run-a'),
       'CHECKLIST.md',
     ),
   );
@@ -86,6 +88,7 @@ test('child steps do not inflate the parent counts', () => {
 });
 
 test('rendering stops one level down', () => {
+  const state = new SubtaskOpenState();
   const unit = childUnit('perps-review', 'Read the diff');
   unit.progress.phases[0].steps[0].subtask = childUnit('nested-unit', 'Nested step');
   const rendered = litText(
@@ -93,11 +96,40 @@ test('rendering stops one level down', () => {
       parentProgress(unit),
       'monitor',
       () => {},
-      new SubtaskOpenState(),
+      state.scope('run-a'),
       'CHECKLIST.md',
     ),
   );
   assert.match(rendered, /perps-review/);
   assert.equal(rendered.includes('nested-unit'), false);
   assert.equal(rendered.includes('Nested step'), false);
+});
+
+/** The `?open` the panel binds for the one child unit in this progress. */
+function panelOpenState(
+  progress: ReturnType<typeof parentProgress>,
+  state: SubtaskOpenState,
+  runId: string,
+): boolean {
+  return litBinding(
+    renderPipelineProgressPanel(progress, 'monitor', () => {}, state.scope(runId), 'CHECKLIST.md'),
+    '?open=',
+  ) as boolean;
+}
+
+test('the panel reopens a unit by default when the run changes', () => {
+  // One long-lived run-pipeline element rendering run A, then run B: run detail
+  // swaps the run in place, so the element and its state survive the change.
+  const state = new SubtaskOpenState();
+  const progress = () => parentProgress(childUnit('perps-review', 'Read the diff'));
+
+  assert.equal(panelOpenState(progress(), state, 'run-a'), true, 'an active unit opens');
+  state.scope('run-a').set('perps-review', false);
+  assert.equal(panelOpenState(progress(), state, 'run-a'), false, 'the viewer collapsed it');
+
+  assert.equal(
+    panelOpenState(progress(), state, 'run-b'),
+    true,
+    'run B must not inherit run A collapse',
+  );
 });

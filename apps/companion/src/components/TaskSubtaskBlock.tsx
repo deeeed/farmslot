@@ -29,6 +29,10 @@ function stepIconStyle(status: string): { color: string } {
  * operator is usually checking state, not reading every child step. Either way
  * the default applies once and the viewer's own choice wins afterwards.
  *
+ * The expand state lives in this component's own state, so the panel keys the
+ * block by run and unit id: a run change remounts it and the next run starts
+ * from the default, the way Command Center's run-scoped map behaves.
+ *
  * One level only: child steps render as plain rows and never draw another block,
  * even though the projection nests recursively.
  */
