@@ -8,7 +8,7 @@ import {
   taskProgressPercent,
   taskProgressTitle,
 } from '../lib/task-progress';
-import { taskStepStatusColor } from '../lib/task-progress-view';
+import { subtaskBlockKey, taskStepStatusColor } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
 import { TaskSubtaskBlock } from './TaskSubtaskBlock';
@@ -68,13 +68,11 @@ export function TaskProgressPanel({
               {/* Child units start collapsed here; Command Center opens an
                   unsettled one instead. A phone shows one panel at a time, so
                   the parent checklist stays readable until the viewer taps.
-                  Keyed by run as well as unit id: the block holds the viewer's
-                  expand state in component state, and a unit id repeats across
-                  runs, so a run change must remount it rather than carry the
-                  previous run's state over. */}
+                  Keyed by run as well as unit id so a run change remounts the
+                  block: see `subtaskBlockKey`. */}
               {step.subtask ? (
                 <TaskSubtaskBlock
-                  key={`${run?.id ?? 'none'}:${step.subtask.id}`}
+                  key={subtaskBlockKey(run?.id, step.subtask.id)}
                   subtask={step.subtask}
                 />
               ) : null}

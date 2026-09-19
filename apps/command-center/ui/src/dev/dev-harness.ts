@@ -1555,7 +1555,12 @@ All checks passed.`;
       <p class="section-label" style="margin-top: 32px">
         Structured progress — child checklist units (ADR-060): running, blocked, stale, complete
       </p>
-      <progress-tracker .markdown=${md} .structured=${subtaskProgress}></progress-tracker>
+      <!-- A run id, as production passes: child-unit expand state is scoped by run. -->
+      <progress-tracker
+        .markdown=${md}
+        .structured=${subtaskProgress}
+        runId="dev-run-subtasks"
+      ></progress-tracker>
 
       <p class="section-label" style="margin-top: 32px">Structured progress — Compact variants</p>
       <div style="display: flex; flex-direction: column; gap: 12px">

@@ -60,3 +60,17 @@ export function subtaskProgressView(subtask: TaskStepSubtaskProgress): SubtaskPr
     settled: isSettledSubtaskStatus(subtask.status),
   };
 }
+
+/**
+ * React key for a child unit block. The block keeps the viewer's expand state
+ * in component state, so a run change must remount it rather than carry the
+ * previous run's state over — the same rule Command Center applies with its
+ * run-scoped map.
+ *
+ * `no-run` is a fallback, not a normal case: every screen that renders
+ * structured progress (run detail, slot workspace, decision workspace) has a
+ * run in hand, and a child unit only exists inside a run's task directory.
+ */
+export function subtaskBlockKey(runId: string | null | undefined, unitId: string): string {
+  return `${runId?.trim() || 'no-run'}:${unitId}`;
+}

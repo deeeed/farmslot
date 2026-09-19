@@ -4,7 +4,12 @@ import test from 'node:test';
 import type { TaskStepSubtaskProgress } from '@farmslot/protocol';
 import { colors } from '@farmslot/theme';
 
-import { subtaskProgressView, subtaskStatusColor, taskStepStatusColor } from './task-progress-view';
+import {
+  subtaskBlockKey,
+  subtaskProgressView,
+  subtaskStatusColor,
+  taskStepStatusColor,
+} from './task-progress-view';
 
 function unit(overrides: Partial<TaskStepSubtaskProgress> = {}): TaskStepSubtaskProgress {
   return {
@@ -65,4 +70,24 @@ test('step colours match the parent checklist rows', () => {
   assert.equal(taskStepStatusColor('running'), colors.statusWarn);
   assert.equal(taskStepStatusColor('skipped'), colors.textMuted);
   assert.equal(taskStepStatusColor('pending'), colors.accent);
+});
+
+test('the block key changes with the run so a run change remounts it', () => {
+  assert.equal(subtaskBlockKey('run-a', 'perps-review'), 'run-a:perps-review');
+  assert.notEqual(
+    subtaskBlockKey('run-a', 'perps-review'),
+    subtaskBlockKey('run-b', 'perps-review'),
+    'the same unit id in another run must not reuse the mounted block',
+  );
+  assert.equal(
+    subtaskBlockKey('run-a', 'perps-review'),
+    subtaskBlockKey('run-a', 'perps-review'),
+    'the same run and unit keep one block across re-renders',
+  );
+});
+
+test('a missing run falls back to one shared key', () => {
+  assert.equal(subtaskBlockKey(null, 'ci-parity'), 'no-run:ci-parity');
+  assert.equal(subtaskBlockKey(undefined, 'ci-parity'), 'no-run:ci-parity');
+  assert.equal(subtaskBlockKey('  ', 'ci-parity'), 'no-run:ci-parity');
 });

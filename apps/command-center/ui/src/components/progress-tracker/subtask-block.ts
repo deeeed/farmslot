@@ -84,16 +84,24 @@ export interface SubtaskOpenScope {
  * run's expand state.
  */
 export class SubtaskOpenState {
+  /** Runs kept before the oldest is forgotten. Enough to step back through a family. */
+  private static readonly MAX_RUNS = 3;
+
   private readonly open = new Map<string, boolean>();
   private readonly scopes = new Map<string, SubtaskOpenScope>();
+  /** Most recently scoped run last; bounds what a long-lived host accumulates. */
+  private readonly recentRuns: string[] = [];
 
   /**
    * The scope for a run. Hosts call this every render with their current run
    * id; a run change hands back a scope whose units start from the default
-   * again, while re-renders inside one run keep what the viewer chose.
+   * again, while re-renders inside one run keep what the viewer chose. Only the
+   * last {@link MAX_RUNS} runs are remembered — an older run's entries are
+   * dropped, so returning to it starts from the default.
    */
   scope(runId: string | null | undefined): SubtaskOpenScope {
     const run = runId?.trim() || 'no-run';
+    this.touch(run);
     const existing = this.scopes.get(run);
     if (existing) return existing;
     const scope: SubtaskOpenScope = {
@@ -111,6 +119,22 @@ export class SubtaskOpenState {
     };
     this.scopes.set(run, scope);
     return scope;
+  }
+
+  /** Mark a run as the most recent, forgetting whatever falls off the end. */
+  private touch(run: string): void {
+    const at = this.recentRuns.indexOf(run);
+    if (at >= 0) this.recentRuns.splice(at, 1);
+    this.recentRuns.push(run);
+    while (this.recentRuns.length > SubtaskOpenState.MAX_RUNS) {
+      const dropped = this.recentRuns.shift();
+      if (dropped === undefined) break;
+      this.scopes.delete(dropped);
+      const prefix = `${dropped}:`;
+      for (const key of [...this.open.keys()]) {
+        if (key.startsWith(prefix)) this.open.delete(key);
+      }
+    }
   }
 }
 
