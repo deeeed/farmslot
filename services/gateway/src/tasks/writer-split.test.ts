@@ -205,10 +205,18 @@ test('split layout writes CHECKLIST.md verbatim and TASK.md as the task document
   // No domain on this run: the key must still be present (closeout requires a string).
   assert.equal(handoff.domain, '');
   assert.equal(typeof handoff.startedAt, 'string');
+  // The criteria travel normalized, in the order TASK.md renders them: position N
+  // is the acceptance ledger's `AC-N` (ADR-060), so a pasted checkbox marker must
+  // not survive into an id's text.
   assert.deepEqual(handoff.task, {
     title: 'Saving a note drops the last character',
     sourceKind: 'text',
     ticket: run.ticketOrPr,
+    acceptanceCriteria: [
+      'Tapping Save persists the full text',
+      'No error toast appears',
+      'Undo restores the note\nwithin one tap\nand keeps focus',
+    ],
   });
   assert.equal(handoff.taskDocument, 'TASK.md');
   assert.match(String(handoff.report), /^artifacts\//);

@@ -23,9 +23,11 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
+import { slotFileExists, type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
+import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import {
   listOpenSubtaskUnits,
   openSubtaskContractMessage,
@@ -93,6 +95,31 @@ export function terminalContractFailureKind(
     : 'infrastructure';
 }
 
+/**
+ * Did the project opt into ledger enforcement for this run? Reads the run's own
+ * resolved contract on the slot. An unreadable contract answers false: the
+ * checker's own `--contract` read is what reports a broken contract file, and
+ * this predicate must not invent a gate the project never asked for.
+ */
+async function acceptanceRequiredByContract(
+  vars: SlotLocality,
+  contractPath: string,
+): Promise<boolean> {
+  try {
+    if (!(await slotFileExists(vars, contractPath))) return false;
+    const parsed: unknown = JSON.parse(await slotReadFile(vars, contractPath));
+    if (!parsed || typeof parsed !== 'object') return false;
+    const acceptance = (parsed as { acceptance?: unknown }).acceptance;
+    if (!acceptance || typeof acceptance !== 'object') return false;
+    return (acceptance as { require?: unknown }).require === true;
+  } catch (err) {
+    console.warn(
+      `[worker-terminal] could not read ${contractPath} for the acceptance rule: ${(err as Error).message}`,
+    );
+    return false;
+  }
+}
+
 export async function validateTerminalSignalArtifacts(
   slotId: string,
   signalJsonPath: string,
@@ -138,6 +165,33 @@ export async function validateTerminalSignalArtifacts(
     ? terminalContractInputForChecklist(checklistBasename)
     : WORKER_TERMINAL_CONTRACT_INPUT;
   const contractPath = `${taskDir}/${contractInput}`;
+  // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the
+  // same reason as an open child: `mark complete` already requires a verdict per
+  // criterion, and a signal written around the engine must not skip it.
+  //
+  // Three conditions, all of them the mark engine's: `complete` only (a
+  // `no-change` signal reports there was nothing to do), the project opted in
+  // through `worker_terminal.acceptance.require`, and the task registered
+  // criteria. Without the opt-in a template that writes no ledger still completes.
+  let requiresAcceptanceLedger = false;
+  if (terminalCommand === 'complete' && (await acceptanceRequiredByContract(vars, contractPath))) {
+    try {
+      requiresAcceptanceLedger = await handoffListsAcceptanceCriteria(vars, taskDir);
+    } catch (err) {
+      // Fail closed: a task whose criteria list cannot be read cannot have proven
+      // them, and silently dropping the requirement is how an unproven run ships.
+      if (!(err instanceof AcceptanceReadError)) throw err;
+      return {
+        ok: false,
+        kind: 'artifact',
+        message:
+          `Terminal signal rejected: ${err.message}. The acceptance criteria (ADR-060) come from ` +
+          `that file, so the gateway cannot tell whether every criterion has a verdict. Restore ` +
+          `${err.file} from the orchestrator copy, then run ./mark ${terminalCommand} again.`,
+      };
+    }
+  }
+
   const agentRoot = isLocal(vars.host, vars.machine)
     ? farmslotRoot
     : resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
@@ -164,6 +218,7 @@ export async function validateTerminalSignalArtifacts(
     shellQuote(contractPath),
     '--terminal',
     terminalCommand,
+    ...(requiresAcceptanceLedger ? ['--require-acceptance-status'] : []),
     ...artifactContractWaiverArgs(signal),
   ];
   const result = await execOnSlot(vars, checkerArgs.join(' '), {

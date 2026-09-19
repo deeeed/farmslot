@@ -5,6 +5,8 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  type AcceptanceCriterionRef,
+  type AcceptanceStatusLedger,
   Events,
   isSlotFreedByPark,
   isTerminalRunStatus,
@@ -22,6 +24,7 @@ import {
 } from '@farmslot/protocol';
 
 import { RunPipelineFull } from '../../components/RunPipeline';
+import { TaskAcceptancePanel } from '../../components/TaskAcceptancePanel';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { useRunResourcePosture } from '../../hooks/useRunResourcePosture';
 import {
@@ -120,6 +123,12 @@ export default function RunDetailScreen() {
   const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
+  // The acceptance ledger (ADR-060) rides the same progress read and broadcast.
+  const [acceptanceStatus, setAcceptanceStatus] = useState<AcceptanceStatusLedger | null>(null);
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState<AcceptanceCriterionRef[] | null>(
+    null,
+  );
+  const [acceptanceStatusError, setAcceptanceStatusError] = useState<string | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
@@ -263,6 +272,9 @@ export default function RunDetailScreen() {
       .request<TaskProgressResult>(Methods.TASK_PROGRESS, { slotId: run.slotId, runId: run.id })
       .then((result) => {
         setTaskProgress(result.structured ?? null);
+        setAcceptanceStatus(result.acceptanceStatus ?? null);
+        setAcceptanceCriteria(result.acceptanceCriteria ?? null);
+        setAcceptanceStatusError(result.acceptanceStatusError ?? null);
         setTaskProgressError(null);
       })
       .catch((err: Error) => {
@@ -276,6 +288,9 @@ export default function RunDetailScreen() {
       const update = payload as TaskProgressUpdatedPayload;
       if (!shouldAcceptTaskProgressUpdate(run, update)) return;
       setTaskProgress(update.progress.structured ?? null);
+      setAcceptanceStatus(update.progress.acceptanceStatus ?? null);
+      setAcceptanceCriteria(update.progress.acceptanceCriteria ?? null);
+      setAcceptanceStatusError(update.progress.acceptanceStatusError ?? null);
       setTaskProgressError(null);
     });
     return unsub;
@@ -284,6 +299,9 @@ export default function RunDetailScreen() {
   useEffect(() => {
     if (!isTimelineTab || !isWorkerProgressActive(run)) {
       setTaskProgress(null);
+      setAcceptanceStatus(null);
+      setAcceptanceCriteria(null);
+      setAcceptanceStatusError(null);
       setTaskProgressError(null);
       return;
     }
@@ -950,6 +968,13 @@ export default function RunDetailScreen() {
         {reviewPackageActiveTab === 'timeline' ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
+            {acceptanceStatus || acceptanceCriteria?.length || acceptanceStatusError ? (
+              <TaskAcceptancePanel
+                acceptanceStatus={acceptanceStatus}
+                acceptanceCriteria={acceptanceCriteria}
+                error={acceptanceStatusError}
+              />
+            ) : null}
             {activeTaskProgress ? (
               <TaskProgressPanel
                 run={run}

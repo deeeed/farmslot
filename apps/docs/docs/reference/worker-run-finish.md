@@ -130,6 +130,14 @@ Once a valid terminal signal exists, Farmslot runs advance (self-review, publica
 
 Most farms need nothing beyond [Worker artifacts by flow](worker-artifacts-by-flow.md). Projects that want explicit per-flow lists can add `worker_terminal` in `project.json`; the gateway then writes `inputs/worker-terminal-contract.json` for each run and `./mark` reads it. See [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md).
 
+`worker_terminal.acceptance` turns on the acceptance-criteria ledger (ADR-060):
+
+```json
+{ "worker_terminal": { "acceptance": { "require": true, "allowWeak": false } } }
+```
+
+`require` defaults to false. Until a project's templates record verdicts with `farmslot-agent ac`, a missing ledger never blocks `mark complete`; the ledger is still watched, shown in run detail and preferred for coverage when one exists. With `require: true`, `complete` needs a verdict for every criterion in `inputs/handoff.json`, and `weak` or `missing` fails unless `allowWeak` is set.
+
 ```text
 Skill/template checklist  →  worker writes artifacts  →  ./mark validates  →  SIGNAL.json
                                       ↑                           ↑

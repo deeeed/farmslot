@@ -25,7 +25,12 @@ assert.ok(packageJson.exports['./scripts/checklist-target.cjs']);
 // The mark engine's shared IO and the child-unit engine are published entry
 // points: a consumer (harness, gateway) must be able to require them, and the
 // declared subpath must resolve to a file that actually loads.
-for (const subpath of ['./scripts/mark-io.cjs', './scripts/subtask-unit.cjs']) {
+for (const subpath of [
+  './scripts/mark-io.cjs',
+  './scripts/subtask-unit.cjs',
+  './scripts/acceptance-ledger.cjs',
+  './scripts/acceptance-cli.cjs',
+]) {
   assert.ok(packageJson.exports[subpath], `missing package export ${subpath}`);
   const target = path.join(packageRoot, packageJson.exports[subpath]);
   assert.ok(fs.existsSync(target), `package export ${subpath} points at a missing file`);
@@ -55,6 +60,11 @@ assert.ok(packageJson.exports['./scripts/task-init-cli.mjs']);
 result = spawnSync(process.execPath, [cli, 'task', 'init', '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
 assert.match(result.stdout, /task init <task-dir>/);
+
+// `ac` is reachable through the published bin, the way a worker invokes it.
+result = spawnSync(process.execPath, [cli, 'ac', '--help'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+assert.match(result.stdout, /ac set <AC-N>/);
 
 const templateRoot = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-template-'));
 mkdirSync(path.join(templateRoot, 'dev'));

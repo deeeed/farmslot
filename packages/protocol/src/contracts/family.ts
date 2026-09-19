@@ -1,3 +1,4 @@
+import type { AcceptanceStatusLedger, AcceptanceStatusSummary } from './acceptance.js';
 import type { EvalExperimentProjection } from './evals.js';
 import type { RecipeQualityArtifact, RecipeQualitySignal } from './recipes.js';
 import type {
@@ -86,6 +87,17 @@ export interface FamilyObservabilityRunSummary {
   learnings: FamilyLearningEntry[];
   steps: FamilyObservabilityStep[];
   acceptanceCriteria: string[];
+  /**
+   * The run's acceptance ledger (ADR-060), when it wrote one. Retrospective and
+   * comparison views read `proven / total` from it with
+   * `summarizeAcceptanceStatus`, so criteria coverage is a count rather than prose.
+   */
+  acceptanceStatus?: AcceptanceStatusLedger | null;
+  /**
+   * Verdict tally for this run, already counted against the criteria the task
+   * registered, so a consumer needs no second read of the task directory.
+   */
+  acceptanceSummary?: AcceptanceStatusSummary | null;
   ciChecks: Array<{ name: string; status: string; conclusion: string | null }>;
   selfReview: {
     verdict: string | null;

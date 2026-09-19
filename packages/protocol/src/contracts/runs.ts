@@ -5,6 +5,7 @@ import type {
   WorkerSignalStatus,
 } from '../transport/signal.js';
 
+import type { AcceptanceStatusLedger } from './acceptance.js';
 import type {
   AgentContext,
   AgentContextTarget,
@@ -785,6 +786,14 @@ export interface ReadyGatePayload {
   workerLearnings?: string;
   ciChecks?: Array<{ name: string; status: string; conclusion: string | null }>;
   acceptanceCriteria?: string[];
+  /**
+   * Verdict per criterion (ADR-060) as `artifacts/acceptance-status.json` held it
+   * when the gate opened. Absent when the run wrote no ledger, so a pre-ledger
+   * gate renders exactly as before.
+   */
+  acceptanceStatus?: AcceptanceStatusLedger | null;
+  /** Why the ledger could not be read; shown instead of an empty panel. */
+  acceptanceStatusError?: string;
   inputSnapshot?: ReadyGateInputSnapshot;
   prPackage?: ReadyGatePrPackage;
   reviewDepth?: ReviewDepthPolicy;

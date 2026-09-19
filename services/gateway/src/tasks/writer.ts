@@ -1336,6 +1336,8 @@ export async function writeTaskFile(
     domain: effectiveDomain ?? undefined,
     title: ticket.title,
     sourceKind: handoffSourceKind,
+    // Ids for the acceptance ledger (ADR-060) are positional in this array.
+    acceptanceCriteria: ticket.acceptanceCriteria,
     ticket: ticketRef,
     sourceRef: ticketUrl || vars.PR_URL || undefined,
     terminalContract,

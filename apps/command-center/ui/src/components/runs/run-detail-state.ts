@@ -2,6 +2,8 @@ import { LitElement } from 'lit';
 import { property, state } from 'lit/decorators.js';
 
 import type {
+  AcceptanceCriterionRef,
+  AcceptanceStatusLedger,
   CiCheckUpdatedPayload,
   PRStatus,
   RecipeRunArtifactGroup,
@@ -28,6 +30,12 @@ export abstract class RunDetailState extends LitElement {
   @state() prStatus: PRStatus | null = null;
   @state() siblings: Run[] = [];
   @state() taskProgress: TaskProgressStructured | null = null;
+  /** The run's acceptance ledger (ADR-060), from the same progress read. */
+  @state() acceptanceStatus: AcceptanceStatusLedger | null = null;
+  /** Registered criteria, from the same read: a criterion with no verdict still shows. */
+  @state() acceptanceCriteria: AcceptanceCriterionRef[] | null = null;
+  /** Why the ledger could not be read; the panel says so rather than showing nothing. */
+  @state() acceptanceStatusError: string | null = null;
   @state() ciStatus: CiCheckUpdatedPayload | null = null;
   @state() liveTimeoutPrStatus: PRStatus | null = null;
   @state() liveTimeoutPrStatusRefreshing = false;

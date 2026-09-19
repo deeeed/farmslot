@@ -157,6 +157,11 @@ export class RunDetail extends RunDetailState {
           shouldAcceptTaskProgressUpdate(this.run, p)
         ) {
           this.taskProgress = p.progress.structured;
+          // The ledger rides the same broadcast; absent means the run has none,
+          // so it clears rather than keeping a stale panel.
+          this.acceptanceStatus = p.progress.acceptanceStatus ?? null;
+          this.acceptanceCriteria = p.progress.acceptanceCriteria ?? null;
+          this.acceptanceStatusError = p.progress.acceptanceStatusError ?? null;
         }
       },
     );
@@ -235,6 +240,9 @@ export class RunDetail extends RunDetailState {
       this._siblingsRequestSeq++;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
+      this.acceptanceStatus = null;
+      this.acceptanceCriteria = null;
+      this.acceptanceStatusError = null;
       this.selectedStepProgress = null;
       this._selectedStepProgressKey = '';
       this.ciStatus = null;
@@ -306,6 +314,9 @@ export class RunDetail extends RunDetailState {
       this._taskProgressRequestSeq++;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
+      this.acceptanceStatus = null;
+      this.acceptanceCriteria = null;
+      this.acceptanceStatusError = null;
     }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
@@ -915,6 +926,9 @@ export class RunDetail extends RunDetailState {
       });
       if (!requestStillCurrent()) return;
       if (res.structured) this.taskProgress = res.structured;
+      this.acceptanceStatus = res.acceptanceStatus ?? null;
+      this.acceptanceCriteria = res.acceptanceCriteria ?? null;
+      this.acceptanceStatusError = res.acceptanceStatusError ?? null;
     } catch (err) {
       if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
@@ -950,6 +964,14 @@ export class RunDetail extends RunDetailState {
 
   private _artifactUrl = (artifact: FamilyObservabilityArtifact): string => {
     return runArtifactUrl(artifact.runId, artifact);
+  };
+
+  /**
+   * Evidence link for the acceptance panel. The ledger records task-dir relative
+   * paths, which is exactly what the run-artifact endpoint serves.
+   */
+  private _acceptanceEvidenceHref = (evidencePath: string): string => {
+    return runArtifactUrl(this.runId, { path: evidencePath });
   };
 
   private _updateEvidenceArtifactHash(item: LightboxItem | null): void {
@@ -1011,6 +1033,10 @@ export class RunDetail extends RunDetailState {
       prStatus: this.prStatus,
       siblings: this.siblings,
       taskProgress: this.taskProgress,
+      acceptanceStatus: this.acceptanceStatus,
+      acceptanceCriteria: this.acceptanceCriteria,
+      acceptanceStatusError: this.acceptanceStatusError,
+      acceptanceEvidenceHref: this._acceptanceEvidenceHref,
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,
       _hydrating: this._hydrating,

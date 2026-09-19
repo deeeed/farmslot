@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
 const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
+const { acceptanceContractIssues } = require('./acceptance-ledger.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
 
@@ -103,7 +104,7 @@ for (let i = 0; i < rawArgs.length; i += 1) {
 
 if (!taskDir) {
   console.error(
-    'usage: check-task-artifact-contract.mjs <task-dir> [--contract path] [--terminal complete|no-change|blocked] [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe] [--require-learnings] [--skip-learnings]',
+    'usage: check-task-artifact-contract.mjs <task-dir> [--contract path] [--terminal complete|no-change|blocked] [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe] [--require-acceptance-status] [--require-learnings] [--skip-learnings]',
   );
   process.exit(2);
 }
@@ -682,6 +683,17 @@ if (fileExists(SUBTASK_INDEX_REL)) {
       `${unit.checklist}: subtask ${unit.id} is not settled (status ${status ?? 'no signal'}) — ` +
         `finish it with ./mark sub ${unit.id} complete`,
     );
+  }
+}
+
+// The acceptance ledger is the run's proof record (ADR-060): every criterion task
+// init registered in inputs/handoff.json needs a verdict, and `weak` / `missing`
+// fails unless the flow's terminal contract waives it.
+if (flags.has('--require-acceptance-status')) {
+  for (const issue of acceptanceContractIssues(taskDir, {
+    allowWeak: terminalContract?.acceptance?.allowWeak === true,
+  })) {
+    issues.push(issue);
   }
 }
 

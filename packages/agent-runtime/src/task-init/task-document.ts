@@ -62,11 +62,12 @@ const TASK_BLOCK_KEYS: ReadonlyArray<{ key: string; required?: boolean; label?: 
 
 /**
  * Acceptance criteria arrive as plain strings, but ticket adapters keep the
- * author's list markers. Normalize to one bullet per criterion so TASK.md never
- * carries a live `- [ ]` box that could be mistaken for a step.
+ * author's list markers. Strip them and drop empty entries, so one input entry
+ * is one criterion — the position that gives it its `AC-<N>` ledger id (ADR-060)
+ * and its bullet in TASK.md. Continuation lines stay with their criterion.
  */
-export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
-  const normalized = items
+export function normalizeAcceptanceCriteria(items: ReadonlyArray<string>): string[] {
+  return items
     .map((item) =>
       item
         .split('\n')
@@ -77,11 +78,22 @@ export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
             .replace(/^\[(?: |x|X)\]\s*/, '')
             .trim(),
         )
-        .filter(Boolean),
+        .filter(Boolean)
+        .join('\n'),
     )
-    .filter((lines) => lines.length > 0)
-    // Continuation lines stay with their criterion, indented so they never start a list item.
-    .map(([first, ...rest]) => [`- ${first}`, ...rest.map((line) => `  ${line}`)].join('\n'));
+    .filter(Boolean);
+}
+
+/**
+ * The acceptance criteria as TASK.md renders them: one bullet per criterion, so
+ * the document never carries a live `- [ ]` box that could be mistaken for a step.
+ */
+export function renderAcceptanceCriteria(items: ReadonlyArray<string>): string {
+  const normalized = normalizeAcceptanceCriteria(items).map((criterion) => {
+    const [first, ...rest] = criterion.split('\n');
+    // Continuation lines are indented so they never start a list item.
+    return [`- ${first}`, ...rest.map((line) => `  ${line}`)].join('\n');
+  });
   return normalized.length > 0 ? normalized.join('\n') : '_Not specified_';
 }
 
@@ -207,7 +219,18 @@ export interface HandoffMetadata {
   domain: string;
   flow: string;
   startedAt: string;
-  task: { title: string; sourceKind: HandoffSourceKind; ticket?: string; sourceRef?: string };
+  task: {
+    title: string;
+    sourceKind: HandoffSourceKind;
+    ticket?: string;
+    sourceRef?: string;
+    /**
+     * Normalized acceptance criteria, in the order TASK.md renders them. Position
+     * N (1-based) is the `AC-<N>` id of the acceptance ledger (ADR-060); task init
+     * is the only id producer. Absent when the task has no criteria.
+     */
+    acceptanceCriteria?: string[];
+  };
   taskDocument: 'TASK.md';
   report: string;
   learnings: string;
@@ -227,6 +250,8 @@ export function buildHandoffMetadata(input: {
   sourceKind: HandoffSourceKind;
   ticket?: string;
   sourceRef?: string;
+  /** Raw criteria as the caller received them; normalized here, ids are positional. */
+  acceptanceCriteria?: ReadonlyArray<string>;
   terminalContract: Pick<WorkerTerminalContractDocument, 'commands'>;
   startedAt?: string;
   executionTemplate?: HandoffExecutionTemplate;
@@ -235,6 +260,7 @@ export function buildHandoffMetadata(input: {
   const complete = input.terminalContract.commands.complete;
   const ticket = input.ticket?.trim();
   const sourceRef = input.sourceRef?.trim();
+  const acceptanceCriteria = normalizeAcceptanceCriteria(input.acceptanceCriteria ?? []);
   return {
     schemaVersion: 1,
     attemptId: input.attemptId,
@@ -249,6 +275,7 @@ export function buildHandoffMetadata(input: {
       sourceKind: input.sourceKind,
       ...(ticket ? { ticket } : {}),
       ...(sourceRef ? { sourceRef } : {}),
+      ...(acceptanceCriteria.length > 0 ? { acceptanceCriteria } : {}),
     },
     taskDocument: 'TASK.md',
     report: complete?.report ?? 'artifacts/report.md',

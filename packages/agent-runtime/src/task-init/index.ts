@@ -166,6 +166,7 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
     sourceKind: spec.task.sourceKind,
     ticket: spec.task.ticket,
     sourceRef: spec.task.sourceRef,
+    acceptanceCriteria: spec.task.acceptanceCriteria,
     terminalContract,
     startedAt: spec.handoff.startedAt,
     executionTemplate,

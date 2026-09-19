@@ -5,6 +5,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 ## Unreleased
 
 - Task directory contract documents `subtasks/`: the child checklist unit layout, its producers and consumers, that it travels to the slot as a directory and mirrors back per file, and that the `*.worker` mirror never travels outbound (ADR-060).
+- Task directory reference: the acceptance-criteria ledger (`artifacts/acceptance-status.json`), its one writer (`farmslot-agent ac`), its consumers, and the `task.acceptanceCriteria` handoff field.
+
 - Gateway API reference reports protocol `0.29.0`.
 
 - Task directory and agent-runtime references: templates carry no run mode; `--run-mode` is optional and only matches project default rules.

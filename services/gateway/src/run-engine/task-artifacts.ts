@@ -39,6 +39,24 @@ export async function readTaskArtifactText(
   }
 }
 
+/** Same read, for `inputs/` — the task record rather than worker output. */
+export async function readTaskInputText(
+  taskFile: string | null | undefined,
+  filename: string,
+): Promise<string | undefined> {
+  if (!taskFile) return undefined;
+  const inputPath = path.join(path.dirname(taskFile), 'inputs', filename);
+  if (!existsSync(inputPath)) return undefined;
+  try {
+    return await readFile(inputPath, 'utf-8');
+  } catch (err) {
+    console.warn(
+      `[run-engine] failed to read task input ${inputPath}: ${(err as Error).message.slice(0, 200)}`,
+    );
+    return undefined;
+  }
+}
+
 export async function getDiffStat(run: Run, options: { fresh?: boolean } = {}): Promise<DiffStat> {
   const snapshot = await captureRunDiffArtifacts(run, {
     forceRecapture: options.fresh,

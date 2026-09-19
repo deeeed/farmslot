@@ -15,8 +15,19 @@
  */
 
 /**
+ * Acceptance-ledger rules for a terminal mark (ADR-060). `require` is the opt-in
+ * that makes a missing or incomplete ledger block `complete`; it defaults to
+ * false so a project whose templates do not write one yet is unaffected.
+ * `allowWeak` lets a flow finish with `weak` or `missing` verdicts.
+ * @typedef {object} WorkerTerminalAcceptanceRules
+ * @property {boolean} [require]
+ * @property {boolean} [allowWeak]
+ */
+
+/**
  * @typedef {object} WorkerTerminalProjectConfig
  * @property {boolean} [requireSignal]
+ * @property {WorkerTerminalAcceptanceRules} [acceptance]
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [complete]
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [no-change]
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [blocked]
@@ -30,6 +41,7 @@
  * @property {string} flowType
  * @property {string} [mode]
  * @property {boolean} requireSignal
+ * @property {WorkerTerminalAcceptanceRules} [acceptance]
  * @property {Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>} commands
  * @property {WorkerTerminalWhenPresentRule[]} whenPresent
  * @property {string} resolvedAt
@@ -224,11 +236,20 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
       }))
     : DEFAULT_WHEN_PRESENT.map((rule) => ({ ...rule, alsoRequire: [...rule.alsoRequire] }));
 
+  const acceptance =
+    projectConfig?.acceptance && typeof projectConfig.acceptance === 'object'
+      ? {
+          ...(projectConfig.acceptance.require ? { require: true } : {}),
+          ...(projectConfig.acceptance.allowWeak ? { allowWeak: true } : {}),
+        }
+      : null;
+
   return {
     schemaVersion: 1,
     flowType: flowKey,
     ...(mode ? { mode } : {}),
     requireSignal,
+    ...(acceptance && Object.keys(acceptance).length > 0 ? { acceptance } : {}),
     commands,
     whenPresent,
     resolvedAt: now,

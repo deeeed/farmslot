@@ -43,6 +43,11 @@ import {
   captureCurrentReviewSnapshot,
   unavailableReviewSnapshot,
 } from '../self-review/snapshots.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceCoverageMarkdown,
+  ledgerFromArtifactText,
+} from '../tasks/acceptance-status.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { refreshArtifactMirror } from './artifact-mirror.js';
@@ -490,9 +495,22 @@ function defaultPublicationTarget(run: Run): PublicationTarget {
 async function readValidationSummary(
   run: Run,
 ): Promise<{ path: string | null; text: string | null; hash: string | null }> {
-  const candidates = ['validation-summary.md', 'validation.md', 'recipe-coverage.md', 'report.md'];
+  // The acceptance ledger takes the place `recipe-coverage.md` holds: it says the
+  // same thing with structure behind it (ADR-060 phase 5). Everything else in the
+  // order is unchanged, and a run without a ledger reads exactly as before.
+  const candidates = [
+    'validation-summary.md',
+    'validation.md',
+    ACCEPTANCE_STATUS_FILENAME,
+    'recipe-coverage.md',
+    'report.md',
+  ];
   for (const name of candidates) {
-    const text = await readTaskArtifactText(run, name);
+    const raw = await readTaskArtifactText(run, name);
+    const text =
+      name === ACCEPTANCE_STATUS_FILENAME
+        ? acceptanceCoverageMarkdown(ledgerFromArtifactText(raw))
+        : raw;
     if (text?.trim()) return { path: `artifacts/${name}`, text, hash: sha256Text(text) };
   }
   return { path: null, text: null, hash: null };

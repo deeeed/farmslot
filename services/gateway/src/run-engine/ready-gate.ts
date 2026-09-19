@@ -56,6 +56,12 @@ import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/reg
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceCoverageMarkdown,
+  handoffCriteriaFromText,
+  ledgerFromArtifactText,
+} from '../tasks/acceptance-status.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -112,9 +118,17 @@ import {
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
-import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
+import {
+  getDiffStat,
+  readTaskArtifactText,
+  readTaskInputText,
+  readWorkerReport,
+} from './task-artifacts.js';
 
 const S = PipelineSteps;
+
+/** Task-dir relative ledger path, for the operator-facing read failure message. */
+const ACCEPTANCE_STATUS_ARTIFACT_REL = `artifacts/${ACCEPTANCE_STATUS_FILENAME}`;
 
 const activePublicationReviewContinuations = new Map<
   string,
@@ -874,7 +888,27 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ];
 
   const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
-  const recipeCoverage = await readTaskArtifactText(current.taskFile, 'recipe-coverage.md');
+  // Coverage for the quality derivation: the acceptance ledger when the run kept
+  // one (structure, not a hand-written table), else the worker's
+  // recipe-coverage.md exactly as before (ADR-060 phase 5).
+  const acceptanceLedgerText = await readTaskArtifactText(
+    current.taskFile,
+    ACCEPTANCE_STATUS_FILENAME,
+  );
+  const acceptanceStatus = ledgerFromArtifactText(acceptanceLedgerText);
+  const acceptanceHandoff = handoffCriteriaFromText(
+    await readTaskInputText(current.taskFile, 'handoff.json'),
+  );
+  // A ledger on disk that will not parse is a failure the gate must show, not an
+  // empty panel: the run recorded verdicts the gateway cannot read.
+  const acceptanceStatusError =
+    acceptanceHandoff.error ??
+    (acceptanceLedgerText?.trim() && !acceptanceStatus
+      ? `invalid ${ACCEPTANCE_STATUS_ARTIFACT_REL}`
+      : undefined);
+  const recipeCoverage =
+    acceptanceCoverageMarkdown(acceptanceStatus, acceptanceHandoff.criteria) ??
+    (await readTaskArtifactText(current.taskFile, 'recipe-coverage.md'));
 
   // Scan artifact manifest
   let artifactManifest: EvidenceManifestEntry[] | undefined;
@@ -1010,6 +1044,8 @@ export async function executeReadyGate(runId: string): Promise<string> {
       reviewLaunchRejection,
       ciChecks,
       acceptanceCriteria,
+      acceptanceStatus,
+      ...(acceptanceStatusError ? { acceptanceStatusError } : {}),
       inputSnapshot,
       ...(preparedPackage
         ? {
