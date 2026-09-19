@@ -28,6 +28,7 @@ import {
   type FlowType,
   isReviewScope,
   isReviewValidationDepth,
+  isSettledBlockedRun,
   isTerminalRunStatus,
   isValidDomainName,
   nativeWorkerBindingIsHeld,
@@ -1462,7 +1463,10 @@ export async function archiveRun(id: string): Promise<boolean> {
 async function archiveRunBody(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
-  if (ACTIVE_STATUSES.has(run.status)) {
+  // A settled blocked run counts as active for recovery and the inventory, but
+  // nothing can advance it; archiving is the operator's way to close it while
+  // keeping the blocked outcome (unlike cancel, which overwrites it).
+  if (ACTIVE_STATUSES.has(run.status) && !isSettledBlockedRun(run)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
   assertNativeWorkersReleased(run);

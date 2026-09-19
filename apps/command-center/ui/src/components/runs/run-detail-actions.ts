@@ -16,6 +16,7 @@ import {
   failedRunCancelEffects,
   Methods,
   NATIVE_WORKER_RESUME_ACTION,
+  type RunArchiveResult,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -41,9 +42,11 @@ export interface RunLifecycleActionContext extends ConfirmTimerContext {
   navigateToRuns: () => void;
 }
 
+export type RunLifecycleAction = 'cancel' | 'delete' | 'archive';
+
 export async function confirmRunLifecycleAction(
   run: Run,
-  action: 'cancel' | 'delete',
+  action: RunLifecycleAction,
   context: RunLifecycleActionContext,
 ): Promise<void> {
   if (context.actionsBlocked()) return;
@@ -61,6 +64,13 @@ export async function confirmRunLifecycleAction(
       runId: run.id,
       reason: 'Cancelled by operator from run details.',
     });
+    return;
+  }
+  if (action === 'archive') {
+    // Keeps the blocked outcome in history; the gateway refuses anything that
+    // is not a settled blocked run or a terminal run.
+    await gateway.request<RunArchiveResult>(Methods.RUN_ARCHIVE, { runId: run.id });
+    context.navigateToRuns();
     return;
   }
   await gateway.request(Methods.RUN_DELETE, { runId: run.id });

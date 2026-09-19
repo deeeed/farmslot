@@ -11,6 +11,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   canActivateRunOnSlot,
+  isSettledBlockedRun,
   isSlotFreedByPark,
   modeForFlow,
   modelsMatch,
@@ -30,6 +31,7 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
+import type { RunLifecycleAction } from './run-detail-actions.js';
 import {
   canLaunchComparisonSibling,
   canReplayRunSteps,
@@ -84,7 +86,7 @@ export interface RunDetailViewContext {
   _retryReviewPublication: (run: Run) => Promise<void>;
   _rescueLinkage: (runId: string) => void | Promise<void>;
   _confirmForceComplete: (run: Run) => void;
-  _confirmLifecycleAction: (run: Run, action: 'cancel' | 'delete') => void | Promise<void>;
+  _confirmLifecycleAction: (run: Run, action: RunLifecycleAction) => void | Promise<void>;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   /** Blocked review-pr run whose review is stale: start a continuity round on the current head. */
   _rereviewLatestHead: (run: Run) => void | Promise<void>;
@@ -491,6 +493,24 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             >
               ${ctx._pendingConfirm === `cancel:${r.id}` ? 'Confirm cancel?' : 'Cancel run'}
             </button>
+            ${isSettledBlockedRun(r)
+              ? html`
+                  <button
+                    class="gate-action-btn ${ctx._pendingConfirm === `archive:${r.id}`
+                      ? 'gate-confirming'
+                      : ''}"
+                    data-testid="run-archive-blocked"
+                    style="border-color:${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px"
+                    title="Nothing is left to advance. Keep the blocked outcome in history and remove the run from the active list (replay a step instead to retry)"
+                    ?disabled=${actionsBlocked}
+                    @click=${() => ctx._confirmLifecycleAction(r, 'archive')}
+                  >
+                    ${ctx._pendingConfirm === `archive:${r.id}`
+                      ? 'Confirm archive?'
+                      : 'Archive as blocked'}
+                  </button>
+                `
+              : nothing}
           `
         : isTerminal
           ? html`

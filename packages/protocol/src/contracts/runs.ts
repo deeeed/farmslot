@@ -72,6 +72,21 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
   return isTerminalRunStatus(status) || status === 'blocked';
 }
 
+/**
+ * A blocked run the engine has nothing left to advance: no step is running and
+ * no decision is pending. A worker `blocked` signal, an engine block, or an
+ * uncertain prompt delivery leaves this shape. The operator may retry it via
+ * step replay, or archive it while keeping the blocked outcome in history.
+ * Shared by the gateway archive guard and the UI so both agree on eligibility.
+ */
+export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {
+  return (
+    run.status === 'blocked' &&
+    !run.steps.some((step) => step.status === 'running') &&
+    !run.decisions.some((decision) => !decision.resolvedAt)
+  );
+}
+
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface RunStep {

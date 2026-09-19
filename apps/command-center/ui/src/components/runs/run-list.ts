@@ -16,6 +16,7 @@ import type {
 } from '@farmslot/protocol';
 import {
   Events,
+  isSettledBlockedRun,
   Methods,
   normalizeRunTags,
   resolveRunSlotId,
@@ -423,7 +424,7 @@ export class RunList extends RunListState {
     try {
       for (const id of this.selectedIds) {
         const run = this.runs.find((candidate) => candidate.id === id);
-        if (!run || !TERMINAL_STATUSES.has(run.status)) continue;
+        if (!run || (!TERMINAL_STATUSES.has(run.status) && !isSettledBlockedRun(run))) continue;
         await gateway.request<RunArchiveResult>(Methods.RUN_ARCHIVE, { runId: id });
       }
       this.selectedIds = new Set();
