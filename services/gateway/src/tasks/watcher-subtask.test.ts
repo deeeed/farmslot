@@ -173,6 +173,27 @@ function registerChild(dir: string): void {
   );
 }
 
+/**
+ * Register the child, then keep rewriting the registry until the watcher reports
+ * it. chokidar arms its directory watch asynchronously, so a file created in the
+ * gap between `watch()` returning and the watch being armed produces no event —
+ * under suite load that gap is wide enough to swallow the first write. Each retry
+ * is a real content change (a fresh `registeredAt`), so a live watcher observes
+ * it and a broken one never does: the assertion keeps its force.
+ */
+async function registerChildUntilObserved(dir: string, label: string): Promise<Emitted> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    registerChild(dir);
+    try {
+      return await waitFor(label, (entry) => childProgressOf(entry)?.id === 'perps-review', 8_000);
+    } catch (err) {
+      lastError = err as Error;
+    }
+  }
+  throw lastError ?? new Error(`never observed ${label}`);
+}
+
 /** Wait for an emitted update that satisfies `predicate`, or fail with what arrived. */
 // Generous: each hop is a chokidar event plus the watcher's 1s debounce plus a
 // full progress re-read, and the suite runs this file alongside 400 others.
@@ -214,10 +235,9 @@ test('the watcher discovers a child unit registered mid-run and emits its marks'
 
     // The registry appears only when the worker runs `mark sub start`: the watch
     // must pick it up without a re-dispatch.
-    registerChild(taskDirAbs());
-    const registered = await waitFor(
+    const registered = await registerChildUntilObserved(
+      taskDirAbs(),
       'the child registration update',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
     );
     // A child-driven update carries the parent checklist so the acceptance rule
     // can place it, and it is never a WORKER_SIGNAL — the child does not drive
@@ -278,11 +298,7 @@ test('a corrupt child registry is reported at error level, and the watch survive
   };
   try {
     await watchSlot(SLOT_ID, { runId: RUN_ID });
-    registerChild(taskDirAbs());
-    await waitFor(
-      'the child registration update',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
-    );
+    await registerChildUntilObserved(taskDirAbs(), 'the child registration update');
 
     // `mark sub` is the registry's only writer, so a file that does not parse is
     // a real fault. The watch must not die, and the operator must be able to see
@@ -311,10 +327,9 @@ test('a corrupt child registry is reported at error level, and the watch survive
     // The watch is still live: repairing the registry resumes child updates
     // without a re-dispatch.
     emitted.length = 0;
-    registerChild(taskDirAbs());
-    const recovered = await waitFor(
+    const recovered = await registerChildUntilObserved(
+      taskDirAbs(),
       'the update after the registry is repaired',
-      (entry) => childProgressOf(entry)?.id === 'perps-review',
     );
     assert.equal(recovered.parentChecklist, 'CHECKLIST.md');
   } finally {
