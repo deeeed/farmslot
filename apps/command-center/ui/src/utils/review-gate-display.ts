@@ -488,6 +488,10 @@ export interface GateSummaryChecklistRow {
 /** A child checklist unit's own step timings (ADR-060), shown under its parent step. */
 export interface GateSummaryChecklistSubtaskGroup {
   id: string;
+  /** Source ref basename, or `inline` — the same title the live progress block shows. */
+  title: string;
+  /** Full provenance for the row's tooltip: the unit id and its untruncated ref. */
+  titleTooltip: string;
   rows: GateSummaryChecklistRow[];
 }
 
@@ -555,8 +559,11 @@ function checklistRows(summary: GateSummary): GateSummaryChecklistStepRow[] {
     duration: formatDurationMs(step.durationMs),
   }));
   for (const unit of checklist.subtasks ?? []) {
+    const ref = unit.source?.ref?.trim();
     const group: GateSummaryChecklistSubtaskGroup = {
       id: unit.id,
+      title: ref ? ref.split('/').pop() || ref : 'inline',
+      titleTooltip: ref ? `${unit.id} · ${unit.source?.kind} · ${ref}` : `${unit.id} · inline text`,
       rows: unit.perStepMs.map((step) => ({
         stepNumber: step.stepNumber,
         label: step.label,

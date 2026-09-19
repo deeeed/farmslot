@@ -10,7 +10,7 @@ import {
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
-import { renderSubtaskBlock, subtaskBlockStyles } from './subtask-block.js';
+import { renderSubtaskBlock, subtaskBlockStyles, SubtaskOpenState } from './subtask-block.js';
 
 interface Step {
   text: string;
@@ -42,6 +42,14 @@ export class ProgressTracker extends LitElement {
 
   @state() private _expandedPhases: Set<string> = new Set();
   private _prevCurrentPhase: string | null = null;
+  /**
+   * Command Center opens an unsettled child on first sight, because the
+   * operator is watching work in flight here and the child's steps are the
+   * detail they came for. Companion starts every child collapsed instead: a
+   * phone has no room to spare. Either way the default applies once per unit
+   * id — after that this map holds the viewer's own choice.
+   */
+  private readonly _subtaskOpen = new SubtaskOpenState();
 
   static styles = [
     css`
@@ -362,7 +370,11 @@ export class ProgressTracker extends LitElement {
         <span class="s-step-name">${step.name}</span>
       </div>
       ${step.subtask && !nested
-        ? renderSubtaskBlock(step.subtask, (childStep) => this._renderStepRow(childStep, true))
+        ? renderSubtaskBlock(
+            step.subtask,
+            (childStep) => this._renderStepRow(childStep, true),
+            this._subtaskOpen,
+          )
         : nothing}
     `;
   }

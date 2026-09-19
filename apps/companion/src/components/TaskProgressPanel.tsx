@@ -65,6 +65,9 @@ export function TaskProgressPanel({
                   {step.name}
                 </Text>
               </View>
+              {/* Child units start collapsed here; Command Center opens an
+                  unsettled one instead. A phone shows one panel at a time, so
+                  the parent checklist stays readable until the viewer taps. */}
               {step.subtask ? <TaskSubtaskBlock subtask={step.subtask} /> : null}
             </React.Fragment>
           ))}

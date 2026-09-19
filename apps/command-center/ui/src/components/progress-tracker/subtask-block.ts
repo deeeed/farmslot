@@ -61,6 +61,33 @@ export function subtaskPresentation(subtask: TaskStepSubtaskProgress): SubtaskPr
 }
 
 /**
+ * Per-host memory of which child units the viewer has opened.
+ *
+ * The status-derived default (open while the unit is not settled) applies only
+ * the first time a unit id is seen. After that the viewer's own expand/collapse
+ * wins, so live progress updates — which re-render the whole block on every
+ * signal change — cannot snap an open unit shut or re-open one the viewer
+ * closed. A host keeps one instance for its lifetime.
+ */
+export class SubtaskOpenState {
+  private readonly open = new Map<string, boolean>();
+
+  /** Open state to bind for this unit, seeding the default on first sight. */
+  openFor(subtask: TaskStepSubtaskProgress): boolean {
+    const remembered = this.open.get(subtask.id);
+    if (remembered !== undefined) return remembered;
+    const initial = !isSettledSubtaskStatus(subtask.status);
+    this.open.set(subtask.id, initial);
+    return initial;
+  }
+
+  /** Record the viewer's choice, from the `<details>` `toggle` event. */
+  set(id: string, open: boolean): void {
+    this.open.set(id, open);
+  }
+}
+
+/**
  * Block styles, scoped with an `st-` prefix so a host's own `.step` / `.phase`
  * rules cannot collide. Add to a component's `static styles` array.
  */
@@ -198,10 +225,14 @@ export const subtaskBlockStyles = css`
  * @param renderChildStep the host's own step-row renderer, used so the child
  * rows look like the surface they appear on. It is called for child steps only
  * and must not itself render a nested block.
+ * @param openState the host's memory of what the viewer expanded. Progress
+ * updates re-render this block on every signal change, so the open state must
+ * come from there and not from the unit's status, which would fight the viewer.
  */
 export function renderSubtaskBlock(
   subtask: TaskStepSubtaskProgress,
   renderChildStep: (step: TaskStepProgress) => unknown,
+  openState: SubtaskOpenState,
 ): TemplateResult {
   const view = subtaskPresentation(subtask);
   return html`
@@ -210,7 +241,9 @@ export function renderSubtaskBlock(
       data-testid="subtask-unit"
       data-subtask-id=${subtask.id}
       data-subtask-status=${subtask.status}
-      ?open=${!view.settled}
+      ?open=${openState.openFor(subtask)}
+      @toggle=${(event: Event) =>
+        openState.set(subtask.id, (event.target as HTMLDetailsElement).open)}
     >
       <summary class="st-summary">
         <span class="st-caret"></span>

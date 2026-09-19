@@ -261,8 +261,8 @@ export class GateSummaryPanel extends LitElement {
                   </div>
                   ${(s.subtasks ?? []).map(
                     (unit) => html`
-                      <div class="gs-subtask-title">
-                        sub ${unit.id} — ${unit.rows.length}
+                      <div class="gs-subtask-title" title=${unit.titleTooltip}>
+                        sub ${unit.title} — ${unit.rows.length}
                         ${unit.rows.length === 1 ? 'step' : 'steps'}
                       </div>
                       ${unit.rows.map(

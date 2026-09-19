@@ -13,7 +13,11 @@ import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { renderSubtaskBlock, subtaskBlockStyles } from '../progress-tracker/subtask-block.js';
+import {
+  renderSubtaskBlock,
+  subtaskBlockStyles,
+  SubtaskOpenState,
+} from '../progress-tracker/subtask-block.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
@@ -43,6 +47,13 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
   static styles = [stepInspectorStyles, subtaskBlockStyles];
+
+  /**
+   * Command Center opens an unsettled child on first sight (the operator is
+   * here to watch work in flight); the viewer's own expand/collapse wins from
+   * then on, so live progress updates cannot fight them.
+   */
+  private readonly _subtaskOpen = new SubtaskOpenState();
 
   private _ciPokeRunId = '';
   private readonly _ciPoke = new CIWatchPokeController((state) => {
@@ -271,8 +282,10 @@ export class StepInspector extends StepInspectorState {
         ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'} ${step.name}
       </div>
       ${step.subtask && !nested
-        ? renderSubtaskBlock(step.subtask, (childStep) =>
-            this._renderTaskProgressStep(childStep, true),
+        ? renderSubtaskBlock(
+            step.subtask,
+            (childStep) => this._renderTaskProgressStep(childStep, true),
+            this._subtaskOpen,
           )
         : nothing}
     `;

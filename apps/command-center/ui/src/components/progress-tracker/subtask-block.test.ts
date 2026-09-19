@@ -3,20 +3,9 @@ import { test } from 'node:test';
 
 import type { TaskProgressStructured, TaskStepSubtaskProgress } from '@farmslot/protocol';
 
-import { renderSubtaskBlock, subtaskPresentation } from './subtask-block.js';
+import { litBinding, litText } from '../../testing/lit-text.js';
 
-// Flatten a lit TemplateResult (and nested results/arrays) into rendered text by
-// interleaving the static `strings` with the resolved dynamic `values`.
-function litText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(litText).join('');
-  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
-    const { strings, values } = value as { strings: string[]; values: unknown[] };
-    return strings.map((s, i) => s + (i < values.length ? litText(values[i]) : '')).join('');
-  }
-  return '';
-}
+import { renderSubtaskBlock, SubtaskOpenState, subtaskPresentation } from './subtask-block.js';
 
 function childProgress(completed: number, total: number): TaskProgressStructured {
   const steps = Array.from({ length: total }, (_, index) => ({
@@ -44,7 +33,7 @@ function childProgress(completed: number, total: number): TaskProgressStructured
   };
 }
 
-function unit(overrides: Partial<TaskStepSubtaskProgress> = {}): TaskStepSubtaskProgress {
+function unitFixture(overrides: Partial<TaskStepSubtaskProgress> = {}): TaskStepSubtaskProgress {
   return {
     id: 'perps-review',
     status: 'running',
@@ -61,7 +50,7 @@ function unit(overrides: Partial<TaskStepSubtaskProgress> = {}): TaskStepSubtask
 }
 
 test('presentation titles a unit by its source ref basename', () => {
-  const view = subtaskPresentation(unit());
+  const view = subtaskPresentation(unitFixture());
   assert.equal(view.title, 'skill.md');
   assert.equal(view.titleTooltip, 'skill · .agents/skills/mms-perps-review-pr/skill.md');
   assert.equal(view.counts, '2/5');
@@ -71,31 +60,135 @@ test('presentation titles a unit by its source ref basename', () => {
 
 test('an inline unit has no ref to show', () => {
   const view = subtaskPresentation(
-    unit({ source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' } }),
+    unitFixture({ source: { kind: 'inline', sha256: 'a', renderedSha256: 'b' } }),
   );
   assert.equal(view.title, 'inline');
   assert.equal(view.titleTooltip, 'inline text');
 });
 
 test('a stale unit explains itself with the last child mark', () => {
-  const view = subtaskPresentation(unit({ status: 'stale' }));
+  const view = subtaskPresentation(unitFixture({ status: 'stale' }));
   assert.equal(view.statusLabel, 'stale');
   assert.match(view.statusTooltip, /No child mark since 2026-09-19T10:58:00Z/);
   assert.equal(view.settled, false);
 });
 
 test('blocked keeps step ownership, complete settles it', () => {
-  assert.equal(subtaskPresentation(unit({ status: 'blocked' })).settled, false);
-  assert.equal(subtaskPresentation(unit({ status: 'complete' })).settled, true);
-  assert.equal(subtaskPresentation(unit({ status: 'done' })).settled, true);
+  assert.equal(subtaskPresentation(unitFixture({ status: 'blocked' })).settled, false);
+  assert.equal(subtaskPresentation(unitFixture({ status: 'complete' })).settled, true);
+  assert.equal(subtaskPresentation(unitFixture({ status: 'done' })).settled, true);
 });
 
 test('the block renders the child steps through the host row renderer', () => {
   const rendered = litText(
-    renderSubtaskBlock(unit(), (step) => `[row:${step.name}:${step.status}]`),
+    renderSubtaskBlock(
+      unitFixture(),
+      (step) => `[row:${step.name}:${step.status}]`,
+      new SubtaskOpenState(),
+    ),
   );
   assert.match(rendered, /perps-review/);
   assert.match(rendered, /running/);
   assert.match(rendered, /\[row:Child step 1:done\]/);
   assert.match(rendered, /\[row:Child step 5:pending\]/);
+});
+
+/** The `?open` value the block binds on `<details>` for this render. */
+function openBinding(unit: TaskStepSubtaskProgress, state: SubtaskOpenState): boolean {
+  return litBinding(
+    renderSubtaskBlock(unit, (step) => step.name, state),
+    '?open=',
+  ) as boolean;
+}
+
+/** The `@toggle` listener the block wires, so a test can fire the real event. */
+function toggleListener(
+  unit: TaskStepSubtaskProgress,
+  state: SubtaskOpenState,
+): (event: Event) => void {
+  return litBinding(
+    renderSubtaskBlock(unit, (step) => step.name, state),
+    '@toggle=',
+  ) as (event: Event) => void;
+}
+
+/** A `toggle` event as `<details>` fires it, carrying the new open state. */
+function fireToggle(listener: (event: Event) => void, open: boolean): void {
+  listener({ target: { open } } as unknown as Event);
+}
+
+test('the block binds the open state it is given, not the status default', () => {
+  const state = new SubtaskOpenState();
+  const unit = unitFixture({ status: 'running' });
+  state.set(unit.id, false);
+  assert.equal(
+    openBinding(unit, state),
+    false,
+    'a running unit the viewer closed must render closed',
+  );
+
+  const settled = unitFixture({ id: 'settled-unit', status: 'complete' });
+  state.set(settled.id, true);
+  assert.equal(
+    openBinding(settled, state),
+    true,
+    'a settled unit the viewer opened must render open',
+  );
+});
+
+test('an active unit opens by default and stays closed once the viewer closes it', () => {
+  const state = new SubtaskOpenState();
+  assert.equal(
+    openBinding(unitFixture({ status: 'running' }), state),
+    true,
+    'an active unit opens on first sight',
+  );
+
+  fireToggle(toggleListener(unitFixture({ status: 'running' }), state), false);
+
+  // A live progress update hands the block a brand new projection object; the
+  // viewer's collapse must survive it.
+  const updated = unitFixture({ status: 'running', progress: childProgress(3, 5) });
+  assert.equal(openBinding(updated, state), false, 'the viewer kept it closed');
+});
+
+test('a settled unit starts closed and stays open once the viewer opens it', () => {
+  const state = new SubtaskOpenState();
+  assert.equal(
+    openBinding(unitFixture({ status: 'complete' }), state),
+    false,
+    'a settled unit starts collapsed',
+  );
+
+  fireToggle(toggleListener(unitFixture({ status: 'complete' }), state), true);
+
+  assert.equal(
+    openBinding(unitFixture({ status: 'complete' }), state),
+    true,
+    'the viewer kept it open across a re-render',
+  );
+});
+
+test("a unit that settles while open keeps the viewer's state, not the new default", () => {
+  const state = new SubtaskOpenState();
+  openBinding(unitFixture({ status: 'running' }), state);
+  fireToggle(toggleListener(unitFixture({ status: 'running' }), state), false);
+
+  // running → complete would default to closed anyway; the point is the default
+  // is never re-applied, so the map is the only source of truth after first sight.
+  assert.equal(openBinding(unitFixture({ status: 'complete' }), state), false);
+
+  fireToggle(toggleListener(unitFixture({ status: 'complete' }), state), true);
+  assert.equal(openBinding(unitFixture({ status: 'complete' }), state), true);
+});
+
+test('each unit id remembers its own state', () => {
+  const state = new SubtaskOpenState();
+  const first = unitFixture({ id: 'perps-review', status: 'running' });
+  const second = unitFixture({ id: 'ci-triage', status: 'running' });
+  openBinding(first, state);
+  openBinding(second, state);
+  fireToggle(toggleListener(first, state), false);
+  assert.equal(openBinding(first, state), false);
+  assert.equal(openBinding(second, state), true, 'the other unit is untouched');
 });

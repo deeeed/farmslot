@@ -4,7 +4,7 @@ import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/pr
 import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { renderSubtaskBlock } from '../progress-tracker/subtask-block.js';
+import { renderSubtaskBlock, type SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
 import { formatDuration } from './run-utils.js';
@@ -98,9 +98,14 @@ export function renderRunPipelineSummary(run: Run) {
 /**
  * One substep row, plus the child unit block when the step owns one (ADR-060).
  * `nested` renders the child's own rows and stops there: v1 draws a single
- * level even though the projection nests recursively.
+ * level even though the projection nests recursively. `openState` belongs to
+ * the host element so the viewer's expand/collapse survives progress updates.
  */
-function renderSubstep(step: TaskStepProgress, nested = false): TemplateResult {
+function renderSubstep(
+  step: TaskStepProgress,
+  openState: SubtaskOpenState,
+  nested = false,
+): TemplateResult {
   return html`
     <div class="substep ${step.status}">
       <span class="substep-icon">
@@ -109,7 +114,11 @@ function renderSubstep(step: TaskStepProgress, nested = false): TemplateResult {
       ${step.name}
     </div>
     ${step.subtask && !nested
-      ? renderSubtaskBlock(step.subtask, (childStep) => renderSubstep(childStep, true))
+      ? renderSubtaskBlock(
+          step.subtask,
+          (childStep) => renderSubstep(childStep, openState, true),
+          openState,
+        )
       : nothing}
   `;
 }
@@ -118,6 +127,7 @@ export function renderPipelineProgressPanel(
   progress: TaskProgressStructured,
   activeStep: 'monitor' | 'self-review' | 'ci-watch' | 'human-gate' | null,
   close: () => void,
+  openState: SubtaskOpenState,
   activeTaskBasename?: string | null,
 ) {
   const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
@@ -147,7 +157,7 @@ export function renderPipelineProgressPanel(
               </span>
               <span class="phase-count">${phase.completedSteps}/${phase.totalSteps}</span>
             </div>
-            ${phase.steps.map((step) => renderSubstep(step))}
+            ${phase.steps.map((step) => renderSubstep(step, openState))}
           </div>
         `;
       })}
