@@ -126,6 +126,7 @@ import {
   mockFileTree,
   mockFleetSlots,
   mockFleetStatus,
+  mockGateSummaryWithSubtasks,
   mockGitChanges,
   mockHealth,
   mockMetroLines,
@@ -2886,6 +2887,7 @@ All checks passed.`;
         'ETH balance with real decimals still shows correctly (e.g. "1.2345")',
         'No regression in other balance display scenarios',
       ],
+      gateSummary: mockGateSummaryWithSubtasks(),
     };
     const mockDecision: RunDecision = {
       id: 'mock-ready-decision-1',

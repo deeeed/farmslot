@@ -9,6 +9,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Run detail offers **Archive as blocked** on a blocked run with nothing left to advance (worker signaled blocked, uncertain prompt delivery). It keeps the outcome in history and leaves the active list; step replay stays the retry path. Bulk archive in the run list accepts the same runs.
 - Extra-review checklist progress stays visible on human-gate and package-refresh while the reviewer is working. Waiting on extra-review findings says so instead of "Worker finished", and the pipeline marks the publish-gate as now. Opening a step inspector no longer duplicates the live checklist under the canvas; the inspector keeps the boxes when live progress has not bound yet.
 - A checklist step that owns a child unit shows it nested under the step: source, status (running, blocked, stale, complete), its own step count, current step, and its steps on expand. Progress tracker, run-detail pipeline panel and step inspector all render it, and the parent's own counts are unchanged.
+- Checklist timing in the gate summary (retrospective and publication gate) lists each child unit's own steps under the step it hangs off; a child whose parent step never got ticked still gets a row.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18

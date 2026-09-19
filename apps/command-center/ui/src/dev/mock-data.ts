@@ -4,6 +4,7 @@ import type {
   FamilyReport,
   FleetStatus,
   FleetSummary,
+  GateSummary,
   MonitorViolation,
   PendingDecision,
   PRStatus,
@@ -706,6 +707,83 @@ export function mockStructuredProgressWithSubtasks(): TaskProgressStructured {
     ),
   );
   return progress;
+}
+
+/**
+ * A gate summary whose checklist timing carries child units (ADR-060): one that
+ * hangs off a ticked parent step, and one whose parent step never got ticked.
+ */
+export function mockGateSummaryWithSubtasks(): GateSummary {
+  return {
+    kind: 'publication',
+    flowType: 'fix-bug',
+    gatePolicy: {
+      owner: 'human',
+      dispatchMode: 'autonomous',
+      publishAuthority: 'human',
+      reason: 'v1 autonomous fix-bug runs still require human publication approval',
+    },
+    headline: 'Worker finished, two reviews passed, one child unit still open.',
+    worker: { model: 'claude-opus-5', turns: 34, outcome: 'success' },
+    review: {
+      independentReviews: [],
+      requiredReviews: 1,
+      passingReviews: 1,
+      totalUnresolved: 0,
+      summaryText: '1/1 passing',
+      didAnyReviewTriggerReWork: false,
+    },
+    tokens: {
+      mainWorker: {
+        model: 'claude-opus-5',
+        input: 250000,
+        output: 42000,
+        cacheRead: 120000,
+        cacheCreation: 0,
+        total: 412000,
+        turns: 34,
+      },
+      reviews: [],
+      byModel: [
+        {
+          model: 'claude-opus-5',
+          input: 250000,
+          output: 42000,
+          cacheRead: 120000,
+          cacheCreation: 0,
+          total: 412000,
+          turns: 34,
+        },
+      ],
+      familyTotalTokens: 412000,
+      perTurnDetailsAvailable: false,
+    },
+    checklist: {
+      events: [],
+      perStepMs: [
+        { stepNumber: 1, label: 'Reproduce the bug', durationMs: 240000 },
+        { stepNumber: 2, label: 'Implement the fix', durationMs: 900000 },
+        { stepNumber: 3, label: 'Review the diff', durationMs: 1500000 },
+      ],
+      subtasks: [
+        {
+          id: 'perps-review',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 3 },
+          perStepMs: [
+            { stepNumber: 1, label: 'Read the diff end to end', durationMs: 300000 },
+            { stepNumber: 2, label: 'Check the state derivation', durationMs: 420000 },
+            { stepNumber: 3, label: 'Run the recipe', durationMs: 660000 },
+          ],
+        },
+        {
+          id: 'ci-triage',
+          parent: { checklist: 'CHECKLIST.md', stepNumber: 5 },
+          perStepMs: [{ stepNumber: 1, label: 'Read the failing job', durationMs: 90000 }],
+        },
+      ],
+    },
+    capturedAt: '2026-09-19T11:30:00Z',
+  };
 }
 
 export interface MockFileEntry {
