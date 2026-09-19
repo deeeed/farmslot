@@ -41,7 +41,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
-import { collectRunSubtaskMetrics } from '../tasks/subtask-metrics.js';
+import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
@@ -493,16 +493,18 @@ export async function executeMonitorStep(
       subtaskMetrics
     ) {
       updateRun(runId, {
-        metrics: {
-          ...after.metrics,
-          ...(workerSignal?.disposition ? { disposition: workerSignal.disposition } : {}),
-          ...(workerSignal?.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
-          // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
-          ...(workerSignal?.checklistTiming
-            ? { checklistTiming: workerSignal.checklistTiming }
-            : {}),
-          ...(subtaskMetrics ? { subtasks: subtaskMetrics } : {}),
-        },
+        metrics: withSubtaskMetrics(
+          {
+            ...after.metrics,
+            ...(workerSignal?.disposition ? { disposition: workerSignal.disposition } : {}),
+            ...(workerSignal?.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
+            // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
+            ...(workerSignal?.checklistTiming
+              ? { checklistTiming: workerSignal.checklistTiming }
+              : {}),
+          },
+          subtaskMetrics,
+        ),
       });
     }
     const cliCommand = `farmslot slot check ${current.slotId}`;
