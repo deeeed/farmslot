@@ -167,7 +167,8 @@ function main() {
     const childMarkdown = readFileSync(childChecklist, 'utf-8');
     assert.ok(!childMarkdown.startsWith('---'), 'the skill frontmatter is stripped');
     assert.ok(childMarkdown.includes(taskDir), '{{TASK_DIR}} is rendered in the child checklist');
-    // The `## Rules` box is informational: three steps, not four.
+    // Four raw checkboxes, but only three are steps (the Rules box is in an
+    // informational section).
     assert.equal((childMarkdown.match(/^- \[( |x)\]/gm) ?? []).length, 4);
     const childSignal = readJson(childSignalFile);
     assert.equal(childSignal.role, 'subtask');
@@ -248,10 +249,14 @@ function main() {
     const owningEvent = parentEvents.find((event) => event.stepNumber === OWNING_STEP);
     assert.ok(owningEvent, 'child completion appends the parent timing event');
     assert.match(owningEvent.label, /^5\. /, 'the parent event carries the parent step name');
-    // A later parent mark of that step is an idempotent no-op.
+    // A later parent mark of that step is an idempotent no-op. Re-read the
+    // signal: asserting against the array captured above would pass even if the
+    // second mark appended a duplicate event.
     ok(mark, [String(OWNING_STEP)], `mark ${OWNING_STEP} after the child completed`);
+    const eventsAfterReMark = ((readJson(parentSignalFile).checklistTiming as any).events ??
+      []) as Array<{ stepNumber: number }>;
     assert.equal(
-      parentEvents.filter((event) => event.stepNumber === OWNING_STEP).length,
+      eventsAfterReMark.filter((event) => event.stepNumber === OWNING_STEP).length,
       1,
       'the parent event is not duplicated',
     );

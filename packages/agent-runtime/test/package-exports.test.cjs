@@ -22,6 +22,24 @@ for (const entry of ['native/client.js', 'native/host.js', 'native/supervisor.js
 }
 assert.ok(packageJson.exports['./scripts/mark-checklist-step.cjs']);
 assert.ok(packageJson.exports['./scripts/checklist-target.cjs']);
+// The mark engine's shared IO and the child-unit engine are published entry
+// points: a consumer (harness, gateway) must be able to require them, and the
+// declared subpath must resolve to a file that actually loads.
+for (const subpath of ['./scripts/mark-io.cjs', './scripts/subtask-unit.cjs']) {
+  assert.ok(packageJson.exports[subpath], `missing package export ${subpath}`);
+  const target = path.join(packageRoot, packageJson.exports[subpath]);
+  assert.ok(fs.existsSync(target), `package export ${subpath} points at a missing file`);
+  assert.doesNotThrow(() => require(target), `package export ${subpath} must load`);
+}
+assert.ok(
+  typeof require(path.join(packageRoot, 'scripts', 'subtask-unit.cjs')).runSubtaskCommand ===
+    'function',
+  'subtask-unit.cjs must export runSubtaskCommand',
+);
+assert.ok(
+  typeof require(path.join(packageRoot, 'scripts', 'mark-io.cjs')).writeSignal === 'function',
+  'mark-io.cjs must export writeSignal',
+);
 assert.ok(packageJson.exports['./scripts/worker-terminal-contract.cjs']);
 assert.ok(packageJson.exports['./scripts/check-task-artifact-contract.mjs']);
 assert.ok(packageJson.exports['./scripts/execution-template-cli.mjs']);

@@ -303,6 +303,12 @@ function index(dir) {
   assert.equal(child.outcome, 'partial');
   assert.equal(child.disposition, 'blocked');
   assert.equal(child.reason, 'skill needs the diff');
+  // ADR-060: a child signal never carries `failed`. Work that cannot finish is
+  // `blocked` with a reason, so the operator uses the blocked-run actions.
+  assert.ok(
+    ['running', 'blocked', 'complete', 'done'].includes(child.status),
+    `a child signal status must never be failed (got ${child.status})`,
+  );
   let parent = parentSignal(dir);
   assert.equal(parent.status, 'blocked');
   assert.equal(parent.outcome, 'partial');

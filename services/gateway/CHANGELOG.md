@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- A chat-suggested action can no longer target the `subtask` role: a child checklist unit is observed, never spawned, so role normalization accepts only dispatchable session roles.
 - Slot prepare resolves a requested start ref on every branch path and lands the branch on that resolved commit, so the run's provenance describes the tree it executes on. A QA run's start ref is the frozen PR head the gateway derives from the PR: a dispatch to a slot already on the PR branch used to fail with `startRef prepare completed without structured resolved provenance`, and a cold slot was refused by the dev/fix-bug replay policy; that local-only policy now applies to dev/fix-bug on every path and never to qa. A prepare replay re-resolves against the commit the run already recorded, so a branch or tag start ref cannot move the recorded base.
 - `git.branchDiff` test-pattern lookup is exported and covered for live, archived and unknown review runs.
 - `git.branchDiff` stamps each file with `kind: code | test` from the built-in test patterns plus the project's `diff_view` overrides, and returns the effective `testFilePatterns`.

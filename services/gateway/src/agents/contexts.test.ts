@@ -85,7 +85,12 @@ test('primaryRoleForFlow maps review and bugfix worker flows to role labels', ()
 });
 
 test('non-primary roles with dedicated windows have a tmux window mapping', () => {
-  const ROLES_WITHOUT_OWN_WINDOW: Set<string> = new Set(['self-review-fix']);
+  const ROLES_WITHOUT_OWN_WINDOW: Set<string> = new Set([
+    'self-review-fix',
+    // A child checklist unit is observed, never spawned; it owns no window
+    // (mirrors AGENT_ROLE_WINDOWS in @farmslot/protocol agents/roles.ts).
+    'subtask',
+  ]);
   for (const role of AGENT_ROLES) {
     if (role === 'primary' || ROLES_WITHOUT_OWN_WINDOW.has(role)) continue;
     assert.equal(typeof agentRoleWindow(role), 'string', `${role} must define a window`);
@@ -96,6 +101,11 @@ test('non-primary roles with dedicated windows have a tmux window mapping', () =
     'self-review-fix runs in the primary worker window',
   );
   assert.equal(agentRoleWindow('primary'), null, 'primary is not a disposable role window');
+  assert.equal(
+    agentRoleWindow('subtask'),
+    null,
+    'a child checklist unit is observed through its files, never given a window',
+  );
   assert.equal(agentDispatchWindow('primary'), 'worker', 'primary dispatch has a canonical target');
 });
 

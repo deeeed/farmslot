@@ -17,6 +17,7 @@ const {
   parseChecklist,
   pickSignalPassthrough,
   readJson,
+  writeSignal,
 } = require('./mark-io.cjs');
 const {
   openSubtaskRefusal,
@@ -516,7 +517,9 @@ const next = buildSignalUpdate(
   taskPath,
   taskDir,
 );
-atomicWrite(signalPath, `${JSON.stringify(next, null, 2)}\n`, 0o644);
+// One signal writer for the parent and child paths, so their bytes and mode
+// cannot drift (mark-io.cjs writeSignal).
+writeSignal(signalPath, next);
 
 if (isStartCommand) {
   console.log('signal started');
