@@ -66,3 +66,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [057](057-structured-runner-transports.md)               | Structured runner transports                                            | Accepted |
 | [058](058-static-review-and-farm-owned-qa.md)            | Static review and farm-owned QA                                         | Accepted |
 | [059](059-pi-tui-model-agnostic-runner.md)               | PI TUI as a model-agnostic Farmslot worker                              | Accepted |
+| [060](060-sub-task-observability.md)                     | Sub-task observability through child checklist units                    | Proposed |
