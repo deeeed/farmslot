@@ -37,7 +37,7 @@ Liveness of a child is derived from its signal and mark timestamps only. A child
 
 ### The parent step is owned by its child while the child runs
 
-When a child unit is registered on a parent step, `mark <step>` on that step is refused with a pointer to the child until the child is settled (`complete` or `failed`); a `blocked` child keeps ownership of the step. A child `complete` ticks the parent box; a later `mark <step>` on the same step is an idempotent no-op. A child `blocked` propagates to the parent signal as `blocked` with the child reason, so the run blocks the way a parent `blocked` does today; resuming the child restores `running` on both. This keeps one writer per box and removes the ambiguity of a worker marking a step whose work is running elsewhere.
+When a child unit is registered on a parent step, `mark <step>` on that step is refused with a pointer to the child until the child is settled (`complete`, or its alias `done`, per the protocol helper); a `blocked` child keeps ownership of the step. A child `complete` ticks the parent box; a later `mark <step>` on the same step is an idempotent no-op. A child `blocked` propagates to the parent signal as `blocked` with the child reason, so the run blocks the way a parent `blocked` does today; resuming the child restores `running` on both. This keeps one writer per box and removes the ambiguity of a worker marking a step whose work is running elsewhere.
 
 ### Progress projection is recursive
 

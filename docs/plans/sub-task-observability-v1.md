@@ -99,7 +99,7 @@ The child shares the parent's `attemptId` at registration so every signal of one
 - `WorkerSignal` gains optional `parent?: WorkerSignalParentLink`; `SubtaskSignal` narrows it.
 - `TaskProgressStructured` / `TaskStepProgress` gain the child projection (see Gateway).
 - `SubtaskIndex`, `SubtaskIndexUnit`, `SUBTASKS_DIR`, `subtaskPaths(id)`, `isSettledSubtaskStatus(status)`.
-- `TaskProgressAcceptanceUpdate` gains `parentChecklist?: string | null` (see Gateway, Accept).
+- `TaskProgressAcceptanceUpdate` and `TaskProgressUpdatedPayload` gain `parentChecklist` (see Gateway, Accept).
 
 ## Worker verbs
 
@@ -130,7 +130,7 @@ Rules enforced by `mark`:
 | `sub <id> blocked`                                         | child signal `blocked`; parent signal `blocked` with `reason: "subtask <id>: <reason>"` and `step` = parent step N label                              |
 | parent terminal (`complete --mark-last`) with open child   | refuse: every child must be settled                                                                                                                   |
 
-**Settled versus open.** A child is settled when its status is `complete`, `done`, or `failed`; it is open while `running` or `blocked`. `blocked` counts as terminal for `isTerminalWorkerSignalStatus`, so the run stops, but it keeps step ownership: the parent cannot mark past a child that has not finished. `mark` and the gateway use one protocol helper, `isSettledSubtaskStatus`, for every ownership and parent-terminal check, never the bare terminal predicate.
+**Settled versus open.** A child is settled when its status is `complete` or `done`; it is open while `running` or `blocked`. There is no `sub failed` verb: a child that cannot finish reports `blocked` with a reason. `blocked` counts as terminal for `isTerminalWorkerSignalStatus`, so the run stops, but it keeps step ownership: the parent cannot mark past a child that has not finished. `mark` and the gateway use one protocol helper, `isSettledSubtaskStatus`, for every ownership and parent-terminal check, never the bare terminal predicate.
 
 **Parent timing event on child completion.** The appended parent event is `{ stepNumber: N, label: checklistStepName(parentRow.rawLabel), checkedAt }`, identical to a normal parent mark, so `deriveChecklistStepDurations` needs no change.
 
@@ -159,7 +159,17 @@ Materialization reuses the execution-template renderer: placeholders (`{{TASK_DI
 
   `taskProgress` builds the child schema with `generateTaskSchema(childMarkdown, run.flowType)`; the flow type only labels the schema, enumeration is flow-independent. `'stale'` is projected when the child file says `running` and no mark event landed within the run's existing worker idle threshold (no separate child threshold). Depth is capped at 1 in v1 by the mark engine, not the schema.
 
-- **Accept.** `shouldAcceptTaskProgressUpdate` today accepts a nested-loop update only when `contextId` equals the role derived from the active task file, so a child update (`contextId: 'perps-review'`) during `SELF-REVIEW.md` would be dropped. New rule, in the same protocol module with tests: an update with `role: 'subtask'` is accepted when `update.parentChecklist` equals the active task file basename (or the worker file when no role checklist is active). The Command Center wrapper in `run-detail-model.ts` and the Companion equivalent widen their update payload type to carry `parentChecklist` and pass it through.
+- **Accept.** `shouldAcceptTaskProgressUpdate` today accepts a nested-loop update only when `contextId` equals the role derived from the active task file, so a child update (`contextId: 'perps-review'`, `role: 'subtask'`) would be dropped whenever a role checklist is active. New rule, in the same protocol module with tests: a `subtask` update is accepted when `update.parentChecklist` equals the active task file basename (the worker file when no role checklist is active). A child parented on a checklist that is no longer active is not live: its parent step was settled when that checklist reached its terminal mark, so its updates are dropped like any other off-role update. Test matrix:
+
+  | child parent     | active task file | accept |
+  | ---------------- | ---------------- | ------ |
+  | `CHECKLIST.md`   | worker file      | yes    |
+  | `SELF-REVIEW.md` | `SELF-REVIEW.md` | yes    |
+  | `CHECKLIST.md`   | `SELF-REVIEW.md` | no     |
+  | `SELF-REVIEW.md` | worker file      | no     |
+
+  `TaskProgressUpdatedPayload` in `transport/events.ts` gains `parentChecklist?: string` so the gateway broadcast carries it. The Command Center wrapper in `run-detail-model.ts` widens its `Pick` to include it. Companion replaces its own `SELF-REVIEW.md` string filter in `lib/task-progress.ts` with the protocol helper.
+
 - **Copy and mirror.** Dispatch, re-sync, and warm handoff copy `subtasks/` as a directory beside `inputs/` and `artifacts/`, not through `TASK_ROOT_SIDECARS`. At completion, each file under `subtasks/` (checklists, signals, and the index) is mirrored back beside the orchestrator copy as `subtasks/<name>.worker` from a directory listing rather than a fixed name list, following the `TASK.md.worker` / `CHECKLIST.md.worker` pattern in `run-completion/artifact-mirror.ts`. `isGatewayOwnedArtifactMirrorEntry` is unchanged: child files are worker-owned.
 - **Terminal contract.** `mark complete --mark-last` on the parent requires every registered child settled; the artifact contract check reports open children as a failure.
 - **Metrics.** `deriveChecklistStepDurations` runs per child; `session-metrics.json` gains `subtasks[]` with per-unit duration and step count. Nothing else in the cost lane changes.
@@ -233,7 +243,7 @@ Each phase is one PR. Unit tests are regression guards; proof is the live scenar
 | Phase | Scope                                                                                                                                                      | Proof                                                                                                                                                                                                                                                                                     |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | protocol types; mark `sub` verbs + CJS mirror; materializer; refusal table                                                                                 | scripted-runner scenario: register child from a checklist-shaped fixture skill, mark child steps, `mark N` refused mid-child, child `complete` ticks parent with the parent timing event, `blocked` then resume flips both signals, parent `complete --mark-last` refused with open child |
-| 2     | gateway watch + projection + acceptance rule + copy/mirror + terminal check; task-directory contract rows for `subtasks/` (layout, travel, mirror, layers) | `cdp.mjs gateway task.progress` shows `subtask` under the step on a live slot, including during an active `SELF-REVIEW.md`; `subtasks/<name>.worker` files exist after completion; stale projection after the idle window                                                                 |
+| 2     | gateway watch + projection + acceptance rule + copy/mirror + terminal check; task-directory contract rows for `subtasks/` (layout, travel, mirror, layers) | `cdp.mjs gateway task.progress` shows `subtask` under the step on a live slot, including a child registered on `SELF-REVIEW.md` during an active self-review round; `subtasks/<name>.worker` files exist after completion; stale projection after the idle window                         |
 | 3     | Command Center + Companion rendering; harness `status --watch`                                                                                             | CDP screenshots mid-child and after completion; harness watch output on the same run                                                                                                                                                                                                      |
 | 4     | farm template edits (`dev.md` 21, `review-pr.static-perps.md` 1); skills authoring guidance                                                                | one real dev run and one static review run on a slot with the child visible end to end; family retrospective shows child durations                                                                                                                                                        |
 | 5     | AC ledger: handoff AC array, `ac` entry point, renderer, contract check, gateway panel                                                                     | dev run where every AC gets a verdict, one deliberately `missing` blocks `complete`, panel renders verdicts and evidence links                                                                                                                                                            |
@@ -246,7 +256,7 @@ Node rollout: Phases 1 and 2 change the mark engine and the node fs.watch contra
 - `mark` refuses parent marks on a step owned by a running child, ticks the parent on child completion with a normal parent timing event, and treats a later parent mark of that step as a no-op.
 - Child `complete` has no flow terminal contract; `--report` is its only artifact rule.
 - Child `blocked` surfaces as parent `blocked` with the child reason; resuming the child restores `running` on both; parent terminal marks refuse while any child is open.
-- Gateway `task.progress` returns a recursive child projection with status (including projected `stale`), source digests, counts, current step, and last event time, for local and remote slots, and accepts child updates during role checklists.
+- Gateway `task.progress` returns a recursive child projection with status (including projected `stale`), source digests, counts, current step, and last event time, for local and remote slots, and accepts child updates whose parent checklist is the active task file.
 - Command Center, Companion, and harness `status --watch` render the child under its step from the one projection.
 - `subtasks/` travels to the slot on dispatch and re-sync as a directory and mirrors back per file as `.worker` on completion.
 - Per-child step durations appear in session metrics and family observability.
