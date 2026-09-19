@@ -23,6 +23,10 @@ import { type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
+import {
+  readAcceptanceStatusLedgerOrWarn,
+  readHandoffAcceptanceCriteria,
+} from '../tasks/acceptance-status.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import {
   attachSubtaskToStep,
@@ -73,6 +77,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       result.structured = joinSchemaWithMarkdown(schema, markdown);
       await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
     }
+    await attachAcceptanceStatus(vars, effectiveMdPath, result);
     return result;
   }
 
@@ -128,8 +133,33 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       reconcileFinalStepFromSignal(result.structured);
     }
   }
+  await attachAcceptanceStatus(vars, effectiveMdPath, result);
 
   return result;
+}
+
+/**
+ * Attach the acceptance ledger (ADR-060) to a progress result. The ledger belongs
+ * to the task directory, not to a step or a role, so every context that reads a
+ * checklist in that directory reports the same verdicts — including a role
+ * checklist, whose reviewer is looking at the same criteria.
+ *
+ * An unreadable ledger is warned about and dropped: progress must still describe
+ * the run, and the terminal contract check is what refuses to close on it.
+ */
+async function attachAcceptanceStatus(
+  vars: SlotLocality,
+  effectiveMdPath: string,
+  result: TaskProgressResult,
+): Promise<void> {
+  const taskDir = path.dirname(effectiveMdPath);
+  // Both halves: the criteria the task registered, and the verdicts recorded so
+  // far. A client needs the first to show a criterion still awaiting a verdict —
+  // the ledger holds only what `ac set` wrote.
+  const criteria = await readHandoffAcceptanceCriteria(vars, taskDir);
+  if (criteria.length > 0) result.acceptanceCriteria = criteria;
+  const ledger = await readAcceptanceStatusLedgerOrWarn(vars, taskDir);
+  if (ledger) result.acceptanceStatus = ledger;
 }
 
 /**

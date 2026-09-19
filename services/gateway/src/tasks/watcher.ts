@@ -31,6 +31,7 @@ import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
 import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
+import { acceptanceStatusPathFor } from './acceptance-status.js';
 import {
   resolveTaskProgressMarkdownPath,
   resolveTaskProgressMarkdownPathForSlot,
@@ -80,6 +81,9 @@ interface SlotWatch {
   signalWatcher?: FSWatcher; // chokidar watcher for local (SIGNAL.json)
   agentRequestIds?: WatchedRemoteFile[]; // fs.watch request IDs for remote task, signal, and child-unit watches
   lastCheckboxHash?: string; // debounce: only emit when checkboxes actually change
+  /** `artifacts/acceptance-status.json` beside this context's checklist — the AC ledger. */
+  acceptanceStatusFilePath: string;
+  acceptanceStatusWatcher?: FSWatcher; // chokidar watcher for local (acceptance-status.json)
   /** `subtasks/index.json` beside this context's checklist — the child registry. */
   subtaskIndexFilePath: string;
   subtaskIndexWatcher?: FSWatcher; // chokidar watcher for local (subtasks/index.json)
@@ -95,7 +99,13 @@ interface WatchedRemoteFile {
   path: string;
 }
 
-type WatchedFileKind = 'task' | 'signal' | 'subtask-index' | 'subtask-checklist' | 'subtask-signal';
+type WatchedFileKind =
+  | 'task'
+  | 'signal'
+  | 'acceptance-status'
+  | 'subtask-index'
+  | 'subtask-checklist'
+  | 'subtask-signal';
 
 interface WatchSlotOptions {
   runId?: string;
@@ -349,6 +359,7 @@ export async function watchSlot(
         slotId,
         taskFilePath: contextTaskPath,
         signalFilePath: contextSignalPath,
+        acceptanceStatusFilePath: acceptanceStatusPathFor(path.dirname(contextTaskPath)),
         subtaskIndexFilePath: subtaskIndexPathFor(path.dirname(contextTaskPath)),
         runId,
         role: context?.role,
@@ -378,6 +389,20 @@ export async function watchSlot(
         signalWatcher.on('change', () => handleSignalChange(key));
         sw.signalWatcher = signalWatcher;
 
+        // Acceptance ledger (ADR-060). Same constraint as the child registry: both
+        // watch primitives observe a file through its parent directory, and a task
+        // dir written before `artifacts/` existed (or by a producer that creates it
+        // lazily) would never report a verdict. The directory is part of the task
+        // directory contract; nothing is written into it.
+        await ensureArtifactsDir(sw, contextTaskPath);
+        const acceptanceWatcher = watch(sw.acceptanceStatusFilePath, {
+          persistent: false,
+          ignoreInitial: false,
+        });
+        acceptanceWatcher.on('add', () => debouncedAcceptanceUpdate(key));
+        acceptanceWatcher.on('change', () => debouncedAcceptanceUpdate(key));
+        sw.acceptanceStatusWatcher = acceptanceWatcher;
+
         // Child registry (ADR-060). chokidar cannot pick up a file whose parent
         // directory does not exist yet, and `subtasks/` only appears with the
         // first `mark sub start` — so the directory the contract defines is
@@ -394,7 +419,8 @@ export async function watchSlot(
 
         activeWatches.set(key, sw);
         console.log(
-          `[task-watcher] watching local ${key}: ${contextTaskPath} + ${contextSignalPath} + ${sw.subtaskIndexFilePath}`,
+          `[task-watcher] watching local ${key}: ${contextTaskPath} + ${contextSignalPath} + ` +
+            `${sw.acceptanceStatusFilePath} + ${sw.subtaskIndexFilePath}`,
         );
       } else {
         // Remote slot — use node fs.watch
@@ -430,6 +456,26 @@ export async function watchSlot(
               `[task-watcher] signal file not yet present for remote ${key}: ${(err as Error).message}`,
             );
           }
+          await ensureArtifactsDir(sw, contextTaskPath);
+          try {
+            (await sendNodeRequest(
+              node,
+              'fs.watch',
+              { path: sw.acceptanceStatusFilePath },
+              {
+                onRequestId: (id) =>
+                  requestIds.push({
+                    requestId: id,
+                    kind: 'acceptance-status',
+                    path: sw.acceptanceStatusFilePath,
+                  }),
+              },
+            )) as { watching: boolean };
+          } catch (err) {
+            console.log(
+              `[task-watcher] acceptance ledger not watchable for remote ${key}: ${(err as Error).message}`,
+            );
+          }
           // The node's fs.watch primitive watches the target's PARENT directory,
           // so `subtasks/` must exist before the index watch can attach — see
           // ensureSubtasksDir.
@@ -456,8 +502,14 @@ export async function watchSlot(
           sw.agentRequestIds = requestIds;
           activeWatches.set(key, sw);
           console.log(
-            `[task-watcher] watching remote ${key} via node ${slot.machine}: ${contextTaskPath} + ${contextSignalPath} + ${sw.subtaskIndexFilePath}`,
+            `[task-watcher] watching remote ${key} via node ${slot.machine}: ${contextTaskPath} + ` +
+              `${contextSignalPath} + ${sw.acceptanceStatusFilePath} + ${sw.subtaskIndexFilePath}`,
           );
+          // The node's watch reports changes only; a ledger that already exists
+          // (gateway restart, re-watch mid-run) needs one read to reach clients.
+          // Local chokidar covers this with its initial `add` event, the same
+          // split the child registry above makes.
+          emitExistingAcceptanceLedger(key, sw);
           // The node's watch reports changes only; an index that already exists
           // (gateway restart, re-watch mid-run) needs one read to wire its child
           // watches. Local chokidar covers this with its initial `add` event.
@@ -634,6 +686,9 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   if (sw.signalWatcher) {
     await sw.signalWatcher.close();
   }
+  if (sw.acceptanceStatusWatcher) {
+    await sw.acceptanceStatusWatcher.close();
+  }
   if (sw.subtaskIndexWatcher) {
     await sw.subtaskIndexWatcher.close();
   }
@@ -664,7 +719,7 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   // actually tore down — a successor re-registered mid-close owns the current
   // entry and timer.
   if (activeWatches.get(key) === sw) {
-    for (const timerKey of [key, subtaskDebounceKey(key)]) {
+    for (const timerKey of [key, subtaskDebounceKey(key), acceptanceDebounceKey(key)]) {
       const timer = debounceTimers.get(timerKey);
       if (timer) clearTimeout(timer);
       debounceTimers.delete(timerKey);
@@ -699,6 +754,10 @@ export function handleAgentFsChanged(payload: {
     }
     if (request.kind === 'signal') {
       void handleSignalChange(key, payload.content);
+      return;
+    }
+    if (request.kind === 'acceptance-status') {
+      debouncedAcceptanceUpdate(key);
       return;
     }
     if (request.kind === 'subtask-index') {
@@ -761,12 +820,62 @@ function debouncedSubtaskUpdate(key: string): void {
   );
 }
 
+/**
+ * Deliver a ledger that was already on disk when a REMOTE watch attached: the
+ * node's fs.watch reports changes only, so a verdict recorded before a gateway
+ * restart would otherwise stay invisible until the next one. The local path needs
+ * no equivalent — chokidar emits `add` for an existing file.
+ */
+function emitExistingAcceptanceLedger(key: string, sw: SlotWatch): void {
+  void (async () => {
+    try {
+      if (!(await slotFileExists(sw, sw.acceptanceStatusFilePath))) return;
+    } catch (err) {
+      console.warn(
+        `[task-watcher] acceptance ledger probe failed for ${key}: ${(err as Error).message}`,
+      );
+      return;
+    }
+    debouncedAcceptanceUpdate(key);
+  })();
+}
+
+/**
+ * Debounce key for ledger-driven updates. A verdict and a parent mark can land in
+ * the same second (a worker records the last verdict, then marks the step), and
+ * they need different handling, so they get their own timer.
+ */
+function acceptanceDebounceKey(key: string): string {
+  return `${key}#acceptance`;
+}
+
+/**
+ * The acceptance ledger changed. Like a child update it bypasses the parent
+ * checkbox hash — recording a verdict ticks no box — but it is a parent-level
+ * update about the whole task directory, so it carries no `parentChecklist` tag.
+ */
+function debouncedAcceptanceUpdate(key: string): void {
+  const timerKey = acceptanceDebounceKey(key);
+  const existing = debounceTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+
+  debounceTimers.set(
+    timerKey,
+    setTimeout(async () => {
+      debounceTimers.delete(timerKey);
+      await computeAndEmit(key, undefined, { fromAcceptance: true });
+    }, DEBOUNCE_MS),
+  );
+}
+
 interface ComputeAndEmitOptions {
   /**
    * The update originates from a child unit's file: skip the parent
    * checkbox-hash short-circuit and carry `parentChecklist` on the broadcast.
    */
   fromSubtask?: boolean;
+  /** The update originates from the acceptance ledger: skip the hash, no tag. */
+  fromAcceptance?: boolean;
 }
 
 async function computeAndEmit(
@@ -778,7 +887,7 @@ async function computeAndEmit(
   if (!sw) return;
 
   try {
-    if (!options.fromSubtask) {
+    if (!options.fromSubtask && !options.fromAcceptance) {
       // Read fresh content if not provided
       let markdown = content;
       if (!markdown) {
@@ -907,6 +1016,14 @@ async function handleSignalChange(key: string, content?: string): Promise<void> 
  * creates the directory the task-directory contract defines and nothing else: it
  * never writes an index, a child checklist, or a child signal.
  */
+/** `artifacts/` beside the checklist, so the ledger watch has a parent to observe. */
+async function ensureArtifactsDir(sw: SlotWatch, contextTaskPath: string): Promise<void> {
+  // Only when the checklist itself is there: a released slot must not have its
+  // task tree recreated by the observer.
+  if (!(await slotFileExists(sw, contextTaskPath))) return;
+  await slotMkdir(sw, path.dirname(sw.acceptanceStatusFilePath));
+}
+
 async function ensureSubtasksDir(sw: SlotWatch, contextTaskPath: string): Promise<void> {
   const taskDir = path.dirname(contextTaskPath);
   // Only when the checklist itself is there: a released slot must not have its

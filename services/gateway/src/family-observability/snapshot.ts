@@ -25,6 +25,11 @@ import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceCoverageMarkdown,
+  ledgerFromArtifactText,
+} from '../tasks/acceptance-status.js';
 
 import { dedupeArtifacts, inferInputPurpose, inferPurpose, stepArtifacts } from './artifacts.js';
 import {
@@ -615,13 +620,23 @@ async function buildRunSummary(
   const artifacts = dedupeArtifacts([...ownArtifacts.artifacts, ...recoveredArtifactsForRun]);
   const learnings = await buildRunLearnings(run);
   const selfReview = buildSelfReview(run);
+  // Coverage for this run's quality signal comes from the acceptance ledger when
+  // it kept one, else recipe-coverage.md as before (ADR-060 phase 5). The ledger
+  // itself travels on the summary so retrospectives can count proven / total.
+  const acceptanceStatus = taskDir
+    ? ledgerFromArtifactText(
+        await readTextIfExists(path.join(taskDir, 'artifacts', ACCEPTANCE_STATUS_FILENAME)),
+      )
+    : null;
   const currentRecipeQualityEvaluation = await loadRecipeQualityEvaluation({
     run,
     workerReport: effectiveWorkerReport,
     recipeJson: effectiveRecipeJson,
-    recipeCoverage: taskDir
-      ? await readTextIfExists(path.join(taskDir, 'artifacts', 'recipe-coverage.md'))
-      : null,
+    recipeCoverage:
+      acceptanceCoverageMarkdown(acceptanceStatus) ??
+      (taskDir
+        ? await readTextIfExists(path.join(taskDir, 'artifacts', 'recipe-coverage.md'))
+        : null),
   });
   const recipeQualityEvaluation =
     !recipeJson && resolvedRecovery
@@ -751,6 +766,7 @@ async function buildRunSummary(
     learnings,
     steps,
     acceptanceCriteria: run.ticketData?.acceptanceCriteria?.filter(Boolean) ?? [],
+    acceptanceStatus,
     ciChecks: buildCiChecks(run),
     selfReview,
     familyScope: familyScope

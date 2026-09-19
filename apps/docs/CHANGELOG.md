@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Task directory reference: the acceptance-criteria ledger (`artifacts/acceptance-status.json`), its one writer (`farmslot-agent ac`), its consumers, and the `task.acceptanceCriteria` handoff field.
+
 - Gateway API reference reports protocol `0.29.0`.
 
 - Task directory and agent-runtime references: templates carry no run mode; `--run-mode` is optional and only matches project default rules.

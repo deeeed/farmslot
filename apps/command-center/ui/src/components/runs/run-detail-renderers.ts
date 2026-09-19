@@ -1,6 +1,8 @@
 import { html, nothing } from 'lit';
 
 import type {
+  AcceptanceCriterionRef,
+  AcceptanceStatusLedger,
   CiCheckUpdatedPayload,
   DevInteractiveCompletionAction,
   FamilyObservabilityArtifact,
@@ -68,6 +70,12 @@ export interface RunDetailViewContext {
   prStatus: PRStatus | null;
   siblings: Run[];
   taskProgress: TaskProgressStructured | null;
+  /** The run's acceptance ledger (ADR-060), rendered beside the pipeline progress. */
+  acceptanceStatus: AcceptanceStatusLedger | null;
+  /** Registered criteria from the task dir, including any still without a verdict. */
+  acceptanceCriteria: AcceptanceCriterionRef[] | null;
+  /** Link builder for a task-dir relative evidence path in the ledger panel. */
+  acceptanceEvidenceHref: (evidencePath: string) => string;
   selectedStep: Run['steps'][number] | null;
   selectedStepProgress: TaskProgressStructured | null;
   _hydrating: boolean;
@@ -983,6 +991,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <run-pipeline
         .run=${r}
         .taskProgress=${ctx.taskProgress}
+        .acceptanceStatus=${ctx.acceptanceStatus}
+        .acceptanceCriteria=${ctx.acceptanceCriteria}
+        .acceptanceEvidenceHref=${ctx.acceptanceEvidenceHref}
         .selectedStepName=${ctx.selectedStep?.name}
         @step-select=${(e: CustomEvent) => ctx.onStepSelect(e.detail.step)}
       >

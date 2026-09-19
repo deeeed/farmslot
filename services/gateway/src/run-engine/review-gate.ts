@@ -36,6 +36,11 @@ import {
   uploadArtifacts,
 } from '../run-completion/orchestrator.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceCoverageMarkdown,
+  ledgerFromArtifactText,
+} from '../tasks/acceptance-status.js';
 
 import { findLatestResolvedDecision } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun, readReviewInputSnapshot } from './diff-artifacts.js';
@@ -45,7 +50,6 @@ import { isOwnPrApprovalError } from './gate-policy.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
 import { readTaskArtifactText } from './task-artifacts.js';
-
 type BroadcastFn = (event: string, payload: unknown) => void;
 
 let broadcastFn: BroadcastFn = () => {};
@@ -202,7 +206,13 @@ export async function executeReviewGate(runId: string): Promise<void> {
   }
 
   const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
-  const recipeCoverage = await readTaskArtifactText(current.taskFile, 'recipe-coverage.md');
+  // Ledger first, recipe-coverage.md unchanged when the run kept none (ADR-060).
+  const recipeCoverage =
+    acceptanceCoverageMarkdown(
+      ledgerFromArtifactText(
+        await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
+      ),
+    ) ?? (await readTaskArtifactText(current.taskFile, 'recipe-coverage.md'));
   const workerReport = await readTaskArtifactText(current.taskFile, 'report.md');
   const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
 

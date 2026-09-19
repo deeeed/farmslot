@@ -26,6 +26,7 @@ import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
+import { handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import { listOpenSubtaskUnits, openSubtaskContractMessage } from './subtasks.js';
 
 const require = createRequire(import.meta.url);
@@ -137,6 +138,10 @@ export async function validateTerminalSignalArtifacts(
         `Expected checker ${checker} and contract ${contractPath}. Sync/deploy the Farmslot node, then resume the run; the worker cannot repair this.`,
     };
   }
+  // The acceptance ledger (ADR-060 phase 5) is part of this signal's proof for the
+  // same reason as an open child: `mark complete` already requires a verdict per
+  // criterion, and a signal written around the engine must not skip it.
+  const requiresAcceptanceLedger = await handoffListsAcceptanceCriteria(vars, taskDir);
   const checkerArgs = [
     'node',
     shellQuote(checker),
@@ -145,6 +150,7 @@ export async function validateTerminalSignalArtifacts(
     shellQuote(contractPath),
     '--terminal',
     terminalCommand,
+    ...(requiresAcceptanceLedger ? ['--require-acceptance-status'] : []),
     ...artifactContractWaiverArgs(signal),
   ];
   const result = await execOnSlot(vars, checkerArgs.join(' '), {

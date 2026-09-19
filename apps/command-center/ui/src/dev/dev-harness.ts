@@ -121,6 +121,9 @@ import { colors, fonts, spacing } from '../styles/theme-tokens.js';
 import type { EffortLevel } from '../utils/runner-options.js';
 
 import {
+  mockAcceptanceCriteria,
+  mockAcceptanceStatus,
+  mockAcceptanceStatusComplete,
   mockDecisions,
   mockFamilyObservabilitySnapshot,
   mockFileTree,
@@ -2097,6 +2100,13 @@ All checks passed.`;
             <run-pipeline
               .run=${run}
               .taskProgress=${i === 0 ? midMonitorProgress : undefined}
+              .acceptanceStatus=${i === 0
+                ? mockAcceptanceStatus()
+                : i === 1
+                  ? mockAcceptanceStatusComplete()
+                  : undefined}
+              .acceptanceCriteria=${i === 0 ? mockAcceptanceCriteria() : undefined}
+              .acceptanceEvidenceHref=${(evidencePath: string) => `#artifact/${evidencePath}`}
             ></run-pipeline>
           </div>
         `,

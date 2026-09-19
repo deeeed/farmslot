@@ -86,15 +86,35 @@ function validateAcceptanceStatusLedger(value) {
   return issues;
 }
 
-function summarizeAcceptanceStatus(ledger) {
+function acceptanceCriteriaView(criteria, ledger) {
+  const byId = new Map((ledger?.criteria ?? []).map((entry) => [entry.id, entry]));
+  const rows = criteria.map((criterion) => ({
+    ...criterion,
+    status: byId.get(criterion.id) ?? null,
+  }));
+  for (const entry of ledger?.criteria ?? []) {
+    if (!criteria.some((criterion) => criterion.id === entry.id)) {
+      rows.push({ id: entry.id, text: entry.text, status: entry });
+    }
+  }
+  return rows;
+}
+
+function summarizeAcceptanceStatus(ledger, criteria) {
+  const total = criteria
+    ? Math.max(criteria.length, ledger.criteria.length)
+    : ledger.criteria.length;
   const summary = {
     proven: 0,
     weak: 0,
     missing: 0,
     untestable: 0,
-    total: ledger.criteria.length,
+    unrecorded: 0,
+    total,
   };
   for (const criterion of ledger.criteria) summary[criterion.verdict] += 1;
+  summary.unrecorded =
+    total - (summary.proven + summary.weak + summary.missing + summary.untestable);
   return summary;
 }
 
@@ -326,6 +346,7 @@ function acceptanceContractIssues(taskDir, options = {}) {
 
 module.exports = {
   ACCEPTANCE_CRITERION_ID_PATTERN,
+  acceptanceCriteriaView,
   ACCEPTANCE_PROOF_MODES,
   ACCEPTANCE_STATUS_ARTIFACT,
   ACCEPTANCE_VERDICTS,

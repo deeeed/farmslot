@@ -2,6 +2,8 @@ import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
+  AcceptanceCriterionRef,
+  AcceptanceStatusLedger,
   Run,
   RunCancelResult,
   RunStep,
@@ -11,6 +13,10 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import {
+  acceptancePanelStyles,
+  renderAcceptancePanel,
+} from '../progress-tracker/acceptance-panel.js';
 import { subtaskBlockStyles } from '../progress-tracker/subtask-block.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
@@ -62,6 +68,12 @@ import { effectiveStepStatus } from './run-utils.js';
 export class RunPipeline extends LitElement {
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
+  /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
+  @property({ attribute: false }) acceptanceStatus?: AcceptanceStatusLedger | null;
+  /** Registered criteria, so one still awaiting a verdict gets a row of its own. */
+  @property({ attribute: false }) acceptanceCriteria?: AcceptanceCriterionRef[] | null;
+  /** Turns a task-dir relative evidence path into a link the host can serve. */
+  @property({ attribute: false }) acceptanceEvidenceHref?: (evidencePath: string) => string;
   @property() selectedStepName?: string;
   @state() private monitorExpanded = false;
   @state() private autoExpandDone = false;
@@ -71,7 +83,7 @@ export class RunPipeline extends LitElement {
   private _unsubTransfer: (() => void) | null = null;
   private _releaseTransfer: (() => void) | null = null;
 
-  static styles = [runPipelineStyles, subtaskBlockStyles];
+  static styles = [runPipelineStyles, subtaskBlockStyles, acceptancePanelStyles];
 
   willUpdate(changed: PropertyValues) {
     if (changed.has('run')) {
@@ -180,6 +192,7 @@ export class RunPipeline extends LitElement {
         pipelineDetachedProgressVisible(this.run, this.selectedStepName, this._activeTaskProgress())
           ? this.renderProgressPanel()
           : nothing}
+        ${this.renderAcceptancePanel()}
       </div>
     `;
   }
@@ -258,6 +271,20 @@ export class RunPipeline extends LitElement {
 
   private renderRunSummary() {
     return renderRunPipelineSummary(this.run);
+  }
+
+  /**
+   * The acceptance ledger sits beside the progress panel, not under a step: it is
+   * the run's proof record for the whole task directory. Always visible when the
+   * run has one, because whether the criteria are proven is the question the
+   * operator opens run detail to answer.
+   */
+  private renderAcceptancePanel() {
+    if (!this.acceptanceStatus && !this.acceptanceCriteria?.length) return nothing;
+    return renderAcceptancePanel(this.acceptanceStatus ?? { schemaVersion: 1, criteria: [] }, {
+      ...(this.acceptanceEvidenceHref ? { evidenceHref: this.acceptanceEvidenceHref } : {}),
+      ...(this.acceptanceCriteria?.length ? { criteria: this.acceptanceCriteria } : {}),
+    });
   }
 
   private renderProgressPanel() {

@@ -78,6 +78,32 @@ test('acceptance-ledger.cjs stays aligned with @farmslot/protocol/contracts/acce
     cjs.summarizeAcceptanceStatus(LEDGER),
     protocol.summarizeAcceptanceStatus(LEDGER),
   );
+  // With the registered criteria, the summary counts what has no verdict yet.
+  const registered = [
+    { id: 'AC-1', text: LEDGER.criteria[0].text },
+    { id: 'AC-2', text: LEDGER.criteria[1].text },
+    { id: 'AC-3', text: LEDGER.criteria[2].text },
+    { id: 'AC-4', text: 'Not judged yet' },
+  ];
+  assert.deepEqual(
+    cjs.summarizeAcceptanceStatus(LEDGER, registered),
+    protocol.summarizeAcceptanceStatus(LEDGER, registered),
+  );
+  assert.equal(protocol.summarizeAcceptanceStatus(LEDGER, registered).unrecorded, 1);
+  assert.equal(protocol.summarizeAcceptanceStatus(LEDGER, registered).total, 4);
+  assert.deepEqual(
+    cjs.acceptanceCriteriaView(registered, LEDGER),
+    protocol.acceptanceCriteriaView(registered, LEDGER),
+  );
+  assert.deepEqual(
+    protocol.acceptanceCriteriaView(registered, LEDGER).map((row) => row.status?.verdict ?? null),
+    ['proven', 'weak', 'untestable', null],
+  );
+  // A ledger entry the handoff no longer lists is still surfaced.
+  assert.deepEqual(
+    protocol.acceptanceCriteriaView([registered[0]], LEDGER).map((row) => row.id),
+    ['AC-1', 'AC-2', 'AC-3'],
+  );
   assert.deepEqual(cjs.renderAcceptanceCoverage(LEDGER), protocol.renderAcceptanceCoverage(LEDGER));
   assert.deepEqual(cjs.validateAcceptanceStatusLedger(LEDGER), []);
   for (const value of INVALID) {

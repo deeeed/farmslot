@@ -44,11 +44,53 @@ export interface AcceptanceStatusLedger {
   criteria: AcceptanceCriterionStatus[];
 }
 
+/**
+ * One criterion as task init registered it: the id and the text, with no verdict.
+ * Clients pair this with the ledger so a criterion the worker has not judged yet is
+ * visible as awaiting a verdict rather than missing from the panel — the ledger
+ * holds only what `ac set` recorded, and nothing may invent a verdict for the rest.
+ */
+export interface AcceptanceCriterionRef {
+  id: string;
+  text: string;
+}
+
+/** A criterion paired with its verdict, or null when none is recorded yet. */
+export interface AcceptanceCriterionView extends AcceptanceCriterionRef {
+  status: AcceptanceCriterionStatus | null;
+}
+
+/**
+ * Every registered criterion in id order, each with its recorded verdict or null.
+ * `criteria` is the authority for how many criteria the run has; `ledger` only ever
+ * holds the ones already judged.
+ */
+export function acceptanceCriteriaView(
+  criteria: ReadonlyArray<AcceptanceCriterionRef>,
+  ledger: AcceptanceStatusLedger | null,
+): AcceptanceCriterionView[] {
+  const byId = new Map((ledger?.criteria ?? []).map((entry) => [entry.id, entry]));
+  const rows = criteria.map((criterion) => ({
+    ...criterion,
+    status: byId.get(criterion.id) ?? null,
+  }));
+  // A ledger entry for an id the handoff does not list is still shown: hiding it
+  // would hide a contract violation the terminal check refuses on.
+  for (const entry of ledger?.criteria ?? []) {
+    if (!criteria.some((criterion) => criterion.id === entry.id)) {
+      rows.push({ id: entry.id, text: entry.text, status: entry });
+    }
+  }
+  return rows;
+}
+
 export interface AcceptanceStatusSummary {
   proven: number;
   weak: number;
   missing: number;
   untestable: number;
+  /** Registered criteria with no verdict recorded yet; 0 unless `criteria` was given. */
+  unrecorded: number;
   total: number;
 }
 
@@ -113,15 +155,31 @@ export function validateAcceptanceStatusLedger(value: unknown): string[] {
   return issues;
 }
 
-export function summarizeAcceptanceStatus(ledger: AcceptanceStatusLedger): AcceptanceStatusSummary {
+/**
+ * Verdict tally over the ledger. `total` counts the criteria in the ledger, so a
+ * caller that knows the registered criteria (see {@link acceptanceCriteriaView})
+ * must use that count for "how many are there" — pass them as `criteria` to get a
+ * summary whose `total` is the registered count and whose `unrecorded` says how
+ * many are still waiting for a verdict.
+ */
+export function summarizeAcceptanceStatus(
+  ledger: AcceptanceStatusLedger,
+  criteria?: ReadonlyArray<AcceptanceCriterionRef>,
+): AcceptanceStatusSummary {
+  const total = criteria
+    ? Math.max(criteria.length, ledger.criteria.length)
+    : ledger.criteria.length;
   const summary: AcceptanceStatusSummary = {
     proven: 0,
     weak: 0,
     missing: 0,
     untestable: 0,
-    total: ledger.criteria.length,
+    unrecorded: 0,
+    total,
   };
   for (const criterion of ledger.criteria) summary[criterion.verdict] += 1;
+  summary.unrecorded =
+    total - (summary.proven + summary.weak + summary.missing + summary.untestable);
   return summary;
 }
 

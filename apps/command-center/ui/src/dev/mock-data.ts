@@ -1,4 +1,6 @@
 import type {
+  AcceptanceCriterionRef,
+  AcceptanceStatusLedger,
   FamilyArtifactFootprint,
   FamilyObservabilitySnapshot,
   FamilyReport,
@@ -609,6 +611,80 @@ function mockChildProgress(
     totalSteps: steps.length,
     currentPhase: title,
     currentStep,
+  };
+}
+
+/**
+ * An acceptance ledger mid-run (ADR-060 phase 5): one criterion proven with
+ * evidence, one still weak, one recorded untestable with the reason. The shape
+ * `farmslot-agent ac` writes, so the panel renders from real structure.
+ */
+export function mockAcceptanceStatus(): AcceptanceStatusLedger {
+  return {
+    schemaVersion: 1,
+    criteria: [
+      {
+        id: 'AC-1',
+        text: 'Unlocking the keychain twice in a row does not prompt twice.',
+        verdict: 'proven',
+        proofMode: 'visual',
+        evidence: ['artifacts/after-unlock.png', 'artifacts/after.mp4'],
+        recipeNodes: ['assert-single-prompt'],
+        updatedAt: '2026-09-19T11:04:00.000Z',
+      },
+      {
+        id: 'AC-2',
+        text: 'A cancelled unlock leaves the vault locked.',
+        verdict: 'weak',
+        proofMode: 'state',
+        evidence: [],
+        recipeNodes: [],
+        note: 'Unit test only; the cancel path is not wired into the recipe yet.',
+        updatedAt: '2026-09-19T11:06:00.000Z',
+      },
+      {
+        id: 'AC-3',
+        text: 'The biometric fallback matches platform guidance.',
+        verdict: 'untestable',
+        evidence: [],
+        recipeNodes: [],
+        note: 'No simulator path reaches the biometric prompt.',
+        updatedAt: '2026-09-19T11:07:00.000Z',
+      },
+    ],
+  };
+}
+
+/**
+ * The criteria the task registered, as the gateway reports them from
+ * `inputs/handoff.json`: four, one of which the ledger has not judged yet.
+ */
+export function mockAcceptanceCriteria(): AcceptanceCriterionRef[] {
+  return [
+    ...mockAcceptanceStatus().criteria.map((criterion) => ({
+      id: criterion.id,
+      text: criterion.text,
+    })),
+    { id: 'AC-4', text: 'The unlock prompt honours the reduced-motion setting.' },
+  ];
+}
+
+/** Every criterion proven: the settled ledger a finished run shows. */
+export function mockAcceptanceStatusComplete(): AcceptanceStatusLedger {
+  const ledger = mockAcceptanceStatus();
+  return {
+    schemaVersion: 1,
+    criteria: ledger.criteria.map((criterion) =>
+      criterion.verdict === 'weak'
+        ? {
+            ...criterion,
+            verdict: 'proven' as const,
+            evidence: ['artifacts/after-cancel.png'],
+            recipeNodes: ['assert-vault-locked'],
+            note: undefined,
+          }
+        : criterion,
+    ),
   };
 }
 

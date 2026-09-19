@@ -56,6 +56,11 @@ import { defaultAlternateReviewRunner, runnerDefaultModel } from '../runners/reg
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 import { isTerminalReviewArtifactError } from '../self-review/terminal-result.js';
+import {
+  ACCEPTANCE_STATUS_FILENAME,
+  acceptanceCoverageMarkdown,
+  ledgerFromArtifactText,
+} from '../tasks/acceptance-status.js';
 
 import {
   applyBranchFreshnessToReadyGatePayload,
@@ -874,7 +879,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ];
 
   const recipeJson = await readTaskArtifactText(current.taskFile, 'recipe.json');
-  const recipeCoverage = await readTaskArtifactText(current.taskFile, 'recipe-coverage.md');
+  // Coverage for the quality derivation: the acceptance ledger when the run kept
+  // one (structure, not a hand-written table), else the worker's
+  // recipe-coverage.md exactly as before (ADR-060 phase 5).
+  const acceptanceStatus = ledgerFromArtifactText(
+    await readTaskArtifactText(current.taskFile, ACCEPTANCE_STATUS_FILENAME),
+  );
+  const recipeCoverage =
+    acceptanceCoverageMarkdown(acceptanceStatus) ??
+    (await readTaskArtifactText(current.taskFile, 'recipe-coverage.md'));
 
   // Scan artifact manifest
   let artifactManifest: EvidenceManifestEntry[] | undefined;
@@ -1010,6 +1023,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       reviewLaunchRejection,
       ciChecks,
       acceptanceCriteria,
+      acceptanceStatus,
       inputSnapshot,
       ...(preparedPackage
         ? {

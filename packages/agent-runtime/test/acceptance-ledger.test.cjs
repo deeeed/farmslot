@@ -280,8 +280,19 @@ function refused(result, pattern, label) {
     weak: 1,
     missing: 0,
     untestable: 1,
+    unrecorded: 0,
     total: 3,
   });
+  // Given the registered criteria, an unjudged one is counted rather than ignored.
+  assert.deepEqual(
+    summarizeAcceptanceStatus(ledger, [
+      { id: 'AC-1', text: CRITERIA[0] },
+      { id: 'AC-2', text: CRITERIA[1] },
+      { id: 'AC-3', text: CRITERIA[2] },
+      { id: 'AC-4', text: 'Not judged yet' },
+    ]),
+    { proven: 1, weak: 1, missing: 0, untestable: 1, unrecorded: 1, total: 4 },
+  );
   const rendered = ac(dir, 'render');
   assert.equal(rendered.status, 0, rendered.stderr);
   assert.equal(rendered.stdout, renderAcceptanceCoverage(ledger));
