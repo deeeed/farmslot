@@ -398,6 +398,17 @@ function parseFlags(rest, allowed, label) {
   return flags;
 }
 
+/**
+ * Register one child unit on a parent step.
+ *
+ * Ownership is per task directory, not per attempt: registration is refused
+ * whenever the step already has a unit, whatever that unit's status, and ids are
+ * unique across the directory ("one id per step for the life of the task
+ * directory"). A fresh `mark start` therefore leaves existing children owning
+ * their steps by design — an attempt that must redo child work gets a fresh task
+ * directory, which is how a relaunch already works. Without that rule a retry
+ * could reopen a step whose box a settled child had already ticked.
+ */
 function subStart(taskDir, rest) {
   const id = rest[0];
   if (!id || id.startsWith('-')) throw usageRefusal('sub start requires <id>');
