@@ -613,7 +613,8 @@ async function slotPrepareInner(
   };
   // A start ref means two different things. For dev/fix-bug it is an
   // artifact-only replay base: the work branch must be local-only, and the
-  // policy below refuses a remote-published branch on every path. For qa it is
+  // policy below refuses a remote-published branch on every non-replay path (a
+  // prepare replay continues the branch it already gated). For qa it is
   // the frozen validation head the gateway derived from the PR: the slot lands
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
@@ -952,6 +953,7 @@ async function slotPrepareInner(
               `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
             );
             step('branch', `Switched to existing local ${branch}`);
+            await resetBranchToStartRef();
           }
         } else {
           await execOnSlot(
