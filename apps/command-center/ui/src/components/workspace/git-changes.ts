@@ -1,6 +1,8 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { classifyDiffFile } from '@farmslot/protocol';
+
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
@@ -565,11 +567,6 @@ export class GitChanges extends LitElement {
             : ''}</span
         >
         <span class="group-badge">${sorted.length}</span>
-        ${renderDiffKindControls({
-          summary: split.summary,
-          hideTests: this._hideTests,
-          onToggle: () => this._toggleHideTests(),
-        })}
       </div>
       ${open
         ? sorted.length === 0
@@ -817,11 +814,27 @@ export class GitChanges extends LitElement {
     `;
   }
 
+  /** Working-tree rows have no stamped kind or line counts; classify by path. */
+  private _showsWorkingTreeChange(change: GitChange): boolean {
+    if (!this._hideTests || change.path === this.selectedPath) return true;
+    return classifyDiffFile(change.path) !== 'test';
+  }
+
+  /** Code/test summary over every listed file, each path counted once. */
+  private _kindSummary() {
+    const seen = new Set(this.committedFiles.map((file) => file.path));
+    const workingTreeOnly = this.changes
+      .filter((change) => !seen.has(change.path) && seen.add(change.path))
+      .map((change) => ({ path: change.path, additions: 0, deletions: 0 }));
+    return splitDiffFilesByKind([...this.committedFiles, ...workingTreeOnly], false).summary;
+  }
+
   render() {
-    const staged = this.changes.filter((c) => c.staged);
-    const unstaged = this.changes.filter((c) => !c.staged && c.status !== '?');
-    const untracked = this.changes.filter((c) => !c.staged && c.status === '?');
-    const uncommitted = this.changes.length;
+    const changes = this.changes.filter((change) => this._showsWorkingTreeChange(change));
+    const staged = changes.filter((c) => c.staged);
+    const unstaged = changes.filter((c) => !c.staged && c.status !== '?');
+    const untracked = changes.filter((c) => !c.staged && c.status === '?');
+    const uncommitted = changes.length;
     const committedSplit = this._committedSplit();
     const committed = committedSplit.visible.length;
     // Worktree scope already includes uncommitted changes — summing would
@@ -852,6 +865,11 @@ export class GitChanges extends LitElement {
               </button>`,
           )}
         </span>
+        ${renderDiffKindControls({
+          summary: this._kindSummary(),
+          hideTests: this._hideTests,
+          onToggle: () => this._toggleHideTests(),
+        })}
         <span class="file-count">${total} change${total !== 1 ? 's' : ''}</span>
       </div>
       <div class="file-list">

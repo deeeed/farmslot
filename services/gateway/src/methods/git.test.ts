@@ -6,7 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { gitBranchDiff, gitDiff, gitExec, gitStatus } from './git.js';
+import { archiveRun, createRun, updateRun } from '../runs/store.js';
+
+import { diffViewTestPatterns, gitBranchDiff, gitDiff, gitExec, gitStatus } from './git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -201,6 +203,32 @@ test('gitBranchDiff stamps each file as code or test using project diff_view pat
     ['code', 'test', 'code'],
     'a malformed diff_view block falls back to the defaults',
   );
+});
+
+test('diffViewTestPatterns resolves a review run by id, archived or not', async () => {
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'diff-view-project',
+    ticketOrPr: `PROJ-${Date.now()}-diff-view`,
+  });
+  const loadProjectJson = async (project: string) => {
+    assert.equal(project, 'diff-view-project');
+    return { diff_view: { test_patterns: ['*.check.ts'] } };
+  };
+  const live = await diffViewTestPatterns({ slotId: '', runId: run.id }, { loadProjectJson });
+  assert.ok(live.includes('*.check.ts'), 'live run: project patterns applied');
+
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(run.id), true);
+  const archived = await diffViewTestPatterns({ slotId: '', runId: run.id }, { loadProjectJson });
+  assert.ok(archived.includes('*.check.ts'), 'archived run: project patterns still applied');
+
+  const missing = await diffViewTestPatterns(
+    { slotId: '', runId: '00000000-0000-4000-8000-000000000000' },
+    { loadProjectJson },
+  );
+  assert.equal(missing.includes('*.check.ts'), false, 'unknown run: defaults only');
+  assert.ok(missing.includes('*.test.*'));
 });
 
 test('gitBranchDiff fetches an exact stacked PR base that is missing locally', async () => {
