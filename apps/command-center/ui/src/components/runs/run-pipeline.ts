@@ -11,6 +11,7 @@ import type {
 import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { subtaskBlockStyles } from '../progress-tracker/subtask-block.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {
   primaryTransferForRun,
@@ -70,7 +71,7 @@ export class RunPipeline extends LitElement {
   private _unsubTransfer: (() => void) | null = null;
   private _releaseTransfer: (() => void) | null = null;
 
-  static styles = runPipelineStyles;
+  static styles = [runPipelineStyles, subtaskBlockStyles];
 
   willUpdate(changed: PropertyValues) {
     if (changed.has('run')) {

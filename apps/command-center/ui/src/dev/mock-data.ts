@@ -13,6 +13,7 @@ import type {
   SlotStatus,
   TaskProgressStructured,
   TaskSchema,
+  TaskStepSubtaskProgress,
 } from '@farmslot/protocol';
 
 export interface RecipeProvenanceScenario {
@@ -572,6 +573,139 @@ export function mockStructuredProgress(completedCount: number): TaskProgressStru
     currentPhase,
     currentStep,
   };
+}
+
+/**
+ * A child checklist unit's own progress (ADR-060): one phase, `completed` boxes
+ * ticked, and the next box running unless the unit is settled or blocked.
+ */
+function mockChildProgress(
+  title: string,
+  stepNames: readonly string[],
+  completed: number,
+  runningNext: boolean,
+): TaskProgressStructured {
+  const steps = stepNames.map((name, index) => {
+    const oneBased = index + 1;
+    const status =
+      oneBased <= completed
+        ? ('done' as const)
+        : oneBased === completed + 1 && runningNext
+          ? ('running' as const)
+          : ('pending' as const);
+    return { index: oneBased, name, status };
+  });
+  const currentStep = steps.find((step) => step.status === 'running')?.name ?? null;
+  return {
+    schema: {
+      flowType: 'subtask',
+      title,
+      totalSteps: steps.length,
+      phases: [{ name: title, steps: steps.map(({ index, name }) => ({ index, name })) }],
+    },
+    phases: [{ name: title, steps, completedSteps: completed, totalSteps: steps.length }],
+    completedSteps: completed,
+    totalSteps: steps.length,
+    currentPhase: title,
+    currentStep,
+  };
+}
+
+function mockSubtaskUnit(
+  id: string,
+  status: TaskStepSubtaskProgress['status'],
+  source: { kind: 'skill' | 'template' | 'inline'; ref?: string },
+  progress: TaskProgressStructured,
+  lastEventAt: string | null,
+): TaskStepSubtaskProgress {
+  const ref = source.ref;
+  return {
+    id,
+    status,
+    source: {
+      kind: source.kind,
+      ...(ref ? { ref } : {}),
+      sha256: `${id}-source-sha256`,
+      renderedSha256: `${id}-rendered-sha256`,
+    },
+    progress,
+    lastEventAt,
+  };
+}
+
+/**
+ * Mid-run parent progress whose steps own child units in every state a client
+ * has to draw: running mid-progress, blocked, complete, and the gateway's
+ * `stale` projection. Parent counts stay parent-only — attaching a child never
+ * changes `completedSteps` / `totalSteps`.
+ */
+export function mockStructuredProgressWithSubtasks(): TaskProgressStructured {
+  const progress = mockStructuredProgress(5);
+  const attach = (stepIndex: number, unit: TaskStepSubtaskProgress) => {
+    for (const phase of progress.phases) {
+      for (const step of phase.steps) {
+        if (step.index === stepIndex) step.subtask = unit;
+      }
+    }
+  };
+
+  attach(
+    5,
+    mockSubtaskUnit(
+      'keychain-tests',
+      'complete',
+      { kind: 'skill', ref: '.agents/skills/mms-unit-tests/skill.md' },
+      mockChildProgress(
+        'Unit tests',
+        ['Cover concurrent unlock', 'Cover cancelled unlock', 'Run the suite'],
+        3,
+        false,
+      ),
+      '2026-09-19T10:42:00Z',
+    ),
+  );
+  attach(
+    6,
+    mockSubtaskUnit(
+      'perps-review',
+      'running',
+      { kind: 'skill', ref: '.agents/skills/mms-perps-review-pr/skill.md' },
+      mockChildProgress(
+        'Perps review',
+        [
+          'Read the diff end to end',
+          'Check the state derivation',
+          'Check the order-sheet render path',
+          'Run the recipe',
+          'Write artifacts/review.md',
+        ],
+        2,
+        true,
+      ),
+      '2026-09-19T10:58:00Z',
+    ),
+  );
+  attach(
+    7,
+    mockSubtaskUnit(
+      'pr-body',
+      'blocked',
+      { kind: 'template', ref: 'template:pr-body' },
+      mockChildProgress('PR body', ['Draft the summary', 'Attach the evidence'], 1, false),
+      '2026-09-19T11:02:00Z',
+    ),
+  );
+  attach(
+    8,
+    mockSubtaskUnit(
+      'ci-triage',
+      'stale',
+      { kind: 'inline' },
+      mockChildProgress('CI triage', ['Read the failing job', 'Reproduce locally'], 0, true),
+      '2026-09-19T09:15:00Z',
+    ),
+  );
+  return progress;
 }
 
 export interface MockFileEntry {

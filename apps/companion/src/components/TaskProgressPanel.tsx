@@ -8,7 +8,10 @@ import {
   taskProgressPercent,
   taskProgressTitle,
 } from '../lib/task-progress';
+import { taskStepStatusColor } from '../lib/task-progress-view';
 import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
+
+import { TaskSubtaskBlock } from './TaskSubtaskBlock';
 
 export function TaskProgressPanel({
   run,
@@ -50,17 +53,20 @@ export function TaskProgressPanel({
             </Text>
           </View>
           {phase.steps.map((step) => (
-            <View key={`${phase.name}-${step.index}`} style={styles.stepRow}>
-              <Text style={[styles.stepIcon, { color: statusColor(step.status) }]}>
-                {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
-              </Text>
-              <Text
-                style={[styles.stepName, step.status === 'done' && styles.stepNameDone]}
-                numberOfLines={1}
-              >
-                {step.name}
-              </Text>
-            </View>
+            <React.Fragment key={`${phase.name}-${step.index}`}>
+              <View style={styles.stepRow}>
+                <Text style={[styles.stepIcon, { color: taskStepStatusColor(step.status) }]}>
+                  {step.status === 'done' ? '✓' : step.status === 'running' ? '▶' : '○'}
+                </Text>
+                <Text
+                  style={[styles.stepName, step.status === 'done' && styles.stepNameDone]}
+                  numberOfLines={1}
+                >
+                  {step.name}
+                </Text>
+              </View>
+              {step.subtask ? <TaskSubtaskBlock subtask={step.subtask} /> : null}
+            </React.Fragment>
           ))}
         </View>
       ))}
@@ -106,13 +112,6 @@ export function TaskProgressFallbackPanel({
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
-}
-
-function statusColor(status: string): string {
-  if (status === 'done') return colors.statusOk;
-  if (status === 'running') return colors.statusWarn;
-  if (status === 'skipped') return colors.textMuted;
-  return colors.accent;
 }
 
 const styles = StyleSheet.create({
