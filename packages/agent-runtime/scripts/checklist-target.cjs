@@ -9,6 +9,11 @@ const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';
 const WORKER_SIGNAL_FILE = 'SIGNAL.json';
 const ROLE_SIGNAL_SUFFIX = '-SIGNAL.json';
 
+// Child checklist units (ADR-060): one directory, one index, slug ids.
+const SUBTASKS_DIR = 'subtasks';
+const SUBTASK_INDEX_FILE = 'index.json';
+const SUBTASK_ID_PATTERN = /^[a-z0-9-]+$/;
+
 const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
 const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
 const CI_FIX_CHECKLIST = 'CI-FIX.md';
@@ -81,6 +86,20 @@ function enumerateChecklistCheckboxes(markdown) {
   }
   return items;
 }
+// Mirror of @farmslot/protocol/checklist-target checklistNumberingMismatches:
+// a label carrying explicit numbering must match its enumerated position, or an
+// inserted row silently shifts every later step onto the wrong box.
+function checklistNumberingMismatches(markdown) {
+  const mismatches = [];
+  for (const item of enumerateChecklistCheckboxes(markdown)) {
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+[a-z]?)[.)]/i);
+    if (labeled && labeled[1] !== String(item.stepNumber)) {
+      mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
+    }
+  }
+  return mismatches;
+}
+
 const WORKER_TERMINAL_CONTRACT_INPUT = path.join('inputs', 'worker-terminal-contract.json');
 
 // checklistStepName — mirror of the protocol rule for the name a step is shown
@@ -99,6 +118,37 @@ function signalFileForChecklist(checklistBasename) {
   }
   const base = checklistBasename.replace(/\.md$/i, '');
   return `${base}${ROLE_SIGNAL_SUFFIX}`;
+}
+
+// Mirror of @farmslot/protocol/transport/signal isSettledSubtaskStatus. NOT the
+// terminal predicate: a `blocked` child keeps ownership of its parent step.
+const WORKER_SIGNAL_STATUS_IS_SETTLED = {
+  running: false,
+  blocked: false,
+  complete: true,
+  failed: false,
+  done: true,
+};
+
+function isSettledSubtaskStatus(status) {
+  return (
+    status !== null &&
+    status !== undefined &&
+    Object.hasOwn(WORKER_SIGNAL_STATUS_IS_SETTLED, status) &&
+    WORKER_SIGNAL_STATUS_IS_SETTLED[status]
+  );
+}
+
+/**
+ * Task-dir relative paths of a child unit pair. Mirror of the protocol
+ * `subtaskPaths`: the signal basename comes from signalFileForChecklist, only
+ * the `subtasks/` prefix is new.
+ */
+function subtaskPaths(id) {
+  return {
+    checklist: `${SUBTASKS_DIR}/${id}.md`,
+    signal: `${SUBTASKS_DIR}/${signalFileForChecklist(`${id}.md`)}`,
+  };
 }
 
 function taskDirRelPath(taskDir, basename) {
@@ -276,7 +326,13 @@ function resolveChecklistPaths(taskDir) {
 module.exports = {
   CHECKLIST_SKIP_SECTIONS,
   checklistStepName,
+  checklistNumberingMismatches,
   enumerateChecklistCheckboxes,
+  SUBTASKS_DIR,
+  SUBTASK_INDEX_FILE,
+  SUBTASK_ID_PATTERN,
+  isSettledSubtaskStatus,
+  subtaskPaths,
   CHECKLIST_TARGET_MANIFEST,
   TASK_PROGRESS_MARKDOWN,
   INTERACTIVE_CHECKLIST_MARKDOWN,

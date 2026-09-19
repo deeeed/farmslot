@@ -1,9 +1,9 @@
 // chat/chat-action-normalization.ts — Normalize model-suggested actions into server-owned payloads.
 
 import {
-  AGENT_ROLES,
   type AgentRole,
   type ChatSuggestedAction,
+  DISPATCHABLE_AGENT_ROLES,
   FLOW_STEPS,
   type FlowType,
   type RunCreateParams,
@@ -93,7 +93,10 @@ export function normalizeFlowType(value: unknown): FlowType | null {
 }
 
 export function normalizeAgentRole(value: unknown): AgentRole | undefined {
-  return typeof value === 'string' && (AGENT_ROLES as readonly string[]).includes(value)
+  // A chat action can only target a session role; `subtask` names a child
+  // checklist unit Farmslot never spawns, so it is not accepted here.
+  return typeof value === 'string' &&
+    (DISPATCHABLE_AGENT_ROLES as readonly string[]).includes(value)
     ? (value as AgentRole)
     : undefined;
 }

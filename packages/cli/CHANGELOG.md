@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- `--role subtask` is rejected: a child checklist unit is observed through its files, never given a session, so `run session` validates against the dispatchable roles instead of the full role list.
+
 - `farmslot run gate --action` documents `approve-publish-unresolved`.
 
 - `farmslot execution-template` no longer shows a run-mode column or accepts `--run-mode` on `new`; `--run-mode` elsewhere is optional and matches project default rules.

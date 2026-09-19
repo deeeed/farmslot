@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
+const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
 
@@ -670,6 +671,17 @@ if (!isSelfReviewTerminal) {
       issues.push(
         'recipe-coverage.md declares visual/mixed proof but evidence-manifest has no media references',
       );
+  }
+}
+
+// A registered child unit is part of the parent's proof: the parent cannot
+// report success while a child checklist is still running or blocked.
+if (fileExists(SUBTASK_INDEX_REL)) {
+  for (const { unit, status } of openSubtaskUnits(taskDir)) {
+    issues.push(
+      `${unit.checklist}: subtask ${unit.id} is not settled (status ${status ?? 'no signal'}) — ` +
+        `finish it with ./mark sub ${unit.id} complete`,
+    );
   }
 }
 

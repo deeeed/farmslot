@@ -266,6 +266,8 @@ export interface TaskProgressUpdatedPayload {
   runId: string | null;
   role?: AgentRole;
   contextId?: string;
+  /** Child units only (`role: 'subtask'`): the parent checklist basename the unit hangs off. */
+  parentChecklist?: string;
   progress: TaskProgressResult;
 }
 

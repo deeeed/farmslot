@@ -4,6 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Child checklist units (ADR-060): a parent checklist step can own one child checklist plus signal under `subtasks/`.
+  - `subtask` joins `AGENT_ROLES`. It is not a nested-loop role and never a session target: clients validate a requested role against the new `DISPATCHABLE_AGENT_ROLES`.
+  - `WorkerSignalParentLink` and `SubtaskSignal` describe a child signal and the parent step it hangs off.
+  - `subtaskPaths`, `SUBTASKS_DIR`, `SUBTASK_INDEX_FILE`, `SUBTASK_ID_PATTERN` and `SubtaskIndex` name the `subtasks/` layout.
+  - `isSettledSubtaskStatus` says when a child releases its parent step (`complete` or `done`; a `blocked` child keeps it).
+  - `TaskStepProgress.subtask` carries the child projection, and `shouldAcceptTaskProgressUpdate` accepts a child update whose new `parentChecklist` matches the run's active checklist pair.
 - Diff views classify changed files as `code` or `test`: `DEFAULT_TEST_FILE_PATTERNS`, `compileTestFileMatcher` (segment / directory / anchored glob rules, project patterns capped), `summarizeDiffKinds`, a `kind` on each `git.branchDiff` file, and `testFilePatterns` on the result.
 - `isSettledBlockedRun` names a blocked run with no running step and no pending decision; the gateway and Command Center use it to offer archiving.
 - Independent-review `retryCount` is the max of the persisted field and spent attempts so a wiped `0` cannot hide a spent loop. Exhaustion (and the dangerous bypass) stays visible when the package HEAD has moved since the last extra-review; `latestExhaustedIndependentReview` no longer takes a prepared-package argument. Pipeline progress labels include independent-review (`human-gate`) while an extra-review checklist is running.

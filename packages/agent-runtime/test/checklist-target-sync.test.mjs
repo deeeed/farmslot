@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
+// isSettledSubtaskStatus lives beside isTerminalWorkerSignalStatus in
+// transport/signal.ts; the CJS mirror carries it because `mark` needs it.
+import { isSettledSubtaskStatus } from '@farmslot/protocol';
 import * as protocol from '@farmslot/protocol/checklist-target';
 
 const require = createRequire(import.meta.url);
@@ -22,6 +25,9 @@ const SYNC_KEYS = [
   'CI_FIX_CHECKLIST_TARGET',
   'CHECKLIST_TARGET_BY_AGENT_ROLE',
   'DEFAULT_CHECKLIST_TARGET_REGISTRY',
+  'SUBTASKS_DIR',
+  'SUBTASK_INDEX_FILE',
+  'SUBTASK_ID_PATTERN',
 ];
 
 test('checklist-target.cjs stays aligned with @farmslot/protocol/checklist-target', () => {
@@ -124,4 +130,32 @@ test('checklist-target.cjs helpers match protocol registry semantics', () => {
     cjs.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
     protocol.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
   );
+});
+
+test('checklist-target.cjs subtask helpers match protocol behavior', () => {
+  for (const id of ['perps-review', 'ship-check', 'a']) {
+    assert.deepEqual(cjs.subtaskPaths(id), protocol.subtaskPaths(id), id);
+  }
+  for (const status of ['running', 'blocked', 'complete', 'failed', 'done', 'nonsense', null]) {
+    assert.equal(
+      cjs.isSettledSubtaskStatus(status),
+      isSettledSubtaskStatus(status),
+      `isSettledSubtaskStatus(${status}) drifted from protocol`,
+    );
+  }
+});
+
+test('checklist-target.cjs checklistNumberingMismatches matches protocol behavior', () => {
+  for (const markdown of [
+    ENUMERATION_FIXTURE,
+    ['- [ ] **1. one**', '- [ ] **1a. inserted**', '- [ ] **2. now third**'].join('\n'),
+    ['- [ ] **1. one**', '- [ ] unnumbered', '- [ ] **3. third**'].join('\n'),
+    '- [ ] 2) parenthesised label at position one',
+  ]) {
+    assert.deepEqual(
+      cjs.checklistNumberingMismatches(markdown),
+      protocol.checklistNumberingMismatches(markdown),
+      'numbering mismatch detection drifted from protocol',
+    );
+  }
 });

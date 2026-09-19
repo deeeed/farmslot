@@ -16,9 +16,14 @@ import {
   SELF_REVIEW_FIX_CHECKLIST,
   shouldAcceptTaskProgressUpdate,
   signalFileForChecklist,
+  SUBTASK_ID_PATTERN,
+  SUBTASK_INDEX_FILE,
+  subtaskPaths,
+  SUBTASKS_DIR,
   targetForChecklistBasename,
   terminalContractInputForChecklist,
 } from '../src/checklist-target.js';
+import { isSettledSubtaskStatus, isTerminalWorkerSignalStatus } from '../src/transport/signal.js';
 
 test('targetForChecklistBasename maps role checklists to sibling signal files', () => {
   assert.deepEqual(targetForChecklistBasename(SELF_REVIEW_CHECKLIST), SELF_REVIEW_CHECKLIST_TARGET);
@@ -150,4 +155,66 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **3. Matches its position**',
   ].join('\n');
   assert.deepEqual(checklistNumberingMismatches(aligned), []);
+});
+
+test('subtaskPaths derives the child pair under subtasks/', () => {
+  assert.equal(SUBTASKS_DIR, 'subtasks');
+  assert.equal(SUBTASK_INDEX_FILE, 'index.json');
+  assert.deepEqual(subtaskPaths('perps-review'), {
+    checklist: 'subtasks/perps-review.md',
+    signal: 'subtasks/perps-review-SIGNAL.json',
+  });
+});
+
+test('SUBTASK_ID_PATTERN accepts slugs only', () => {
+  for (const id of ['perps-review', 'a', 'step-21-review', '2fa-check']) {
+    assert.ok(SUBTASK_ID_PATTERN.test(id), id);
+  }
+  for (const id of ['Perps', 'perps review', 'perps_review', '../escape', '']) {
+    assert.ok(!SUBTASK_ID_PATTERN.test(id), id);
+  }
+});
+
+test('isSettledSubtaskStatus is not the terminal predicate', () => {
+  assert.equal(isSettledSubtaskStatus('complete'), true);
+  assert.equal(isSettledSubtaskStatus('done'), true);
+  assert.equal(isSettledSubtaskStatus('running'), false);
+  // A blocked child stops the run yet keeps ownership of its parent step.
+  assert.equal(isSettledSubtaskStatus('blocked'), false);
+  assert.equal(isTerminalWorkerSignalStatus('blocked'), true);
+  assert.equal(isSettledSubtaskStatus('failed'), false);
+  assert.equal(isSettledSubtaskStatus('nonsense'), false);
+  assert.equal(isSettledSubtaskStatus(null), false);
+  assert.equal(isSettledSubtaskStatus(undefined), false);
+});
+
+test('shouldAcceptTaskProgressUpdate accepts a child only while its parent checklist is active', () => {
+  const workerRun = { taskFile: 'temp/tasks/dev/demo/TASK.md', activeTaskFile: null };
+  const selfReviewRun = {
+    taskFile: 'temp/tasks/dev/demo/TASK.md',
+    activeTaskFile: `temp/tasks/dev/demo/${SELF_REVIEW_CHECKLIST}`,
+  };
+  const child = (parentChecklist: string) => ({
+    role: 'subtask' as const,
+    contextId: 'perps-review',
+    parentChecklist,
+  });
+
+  // child parent CHECKLIST.md, active worker file → accept
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child('CHECKLIST.md')), true);
+  // child parent SELF-REVIEW.md, active SELF-REVIEW.md → accept
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child(SELF_REVIEW_CHECKLIST)), true);
+  // child parent CHECKLIST.md, active SELF-REVIEW.md → reject
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, child('CHECKLIST.md')), false);
+  // child parent SELF-REVIEW.md, active worker file → reject
+  assert.equal(shouldAcceptTaskProgressUpdate(workerRun, child(SELF_REVIEW_CHECKLIST)), false);
+
+  // A child update with no parent link is never live.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(workerRun, { role: 'subtask', contextId: 'perps-review' }),
+    false,
+  );
+  // Every other role keeps today's behaviour.
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, { contextId: 'self-review' }), true);
+  assert.equal(shouldAcceptTaskProgressUpdate(selfReviewRun, { contextId: 'worker' }), false);
 });

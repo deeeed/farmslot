@@ -7,6 +7,18 @@ import type {
   WorkerTerminalEvidence,
 } from '../contracts/index.js';
 
+/**
+ * Where a child checklist unit hangs off its parent (ADR-060). The checklist is
+ * a task-dir basename (`CHECKLIST.md`, `SELF-REVIEW.md`), never a path, so the
+ * link survives the task directory travelling to a slot.
+ */
+export interface WorkerSignalParentLink {
+  /** Parent checklist basename, e.g. `CHECKLIST.md`. */
+  checklist: string;
+  /** 1-based parent step number that owns this child. */
+  stepNumber: number;
+}
+
 export interface WorkerSignal {
   role?: AgentRole;
   contextId?: string;
@@ -23,7 +35,20 @@ export interface WorkerSignal {
   prNumber?: number; // if worker created a PR
   /** The worker completed a trivial update-branch task that does not need self-review. */
   needsSelfReview?: boolean;
+  /** Set only on a child unit signal under `subtasks/`; names the owning step. */
+  parent?: WorkerSignalParentLink;
   timestamp: string;
+}
+
+/**
+ * A child checklist unit's signal file. Same shape as the parent signal — the
+ * existing normalizer and probe apply unchanged — plus the parent link, with
+ * `contextId` holding the child id so signals of one attempt tell apart.
+ */
+export interface SubtaskSignal extends WorkerSignal {
+  role: 'subtask';
+  contextId: string;
+  parent: WorkerSignalParentLink;
 }
 
 export type WorkerSignalStatus = WorkerSignal['status'];
@@ -49,6 +74,35 @@ export function isTerminalWorkerSignalStatus(status: string | null | undefined):
     status !== undefined &&
     Object.hasOwn(WORKER_SIGNAL_STATUS_IS_TERMINAL, status) &&
     WORKER_SIGNAL_STATUS_IS_TERMINAL[status as WorkerSignalStatus]
+  );
+}
+
+// One entry per status, so adding a member to the union fails to compile here
+// until someone decides whether a child unit with that status still owns its
+// parent step.
+const WORKER_SIGNAL_STATUS_IS_SETTLED = {
+  running: false,
+  // A blocked child KEEPS ownership of its parent step: the run is blocked, the
+  // work is not finished, and the parent must not mark past it.
+  blocked: false,
+  complete: true,
+  failed: false,
+  done: true,
+} satisfies Record<WorkerSignalStatus, boolean>;
+
+/**
+ * A child checklist unit that has finished: `complete`, or its alias `done`.
+ * Every ownership and parent-terminal check uses this, never
+ * {@link isTerminalWorkerSignalStatus} — `blocked` is terminal for the run but
+ * not settled for the step. Takes a plain string so a reader of an untyped
+ * child signal can ask without narrowing; an unknown status is not settled.
+ */
+export function isSettledSubtaskStatus(status: string | null | undefined): boolean {
+  return (
+    status !== null &&
+    status !== undefined &&
+    Object.hasOwn(WORKER_SIGNAL_STATUS_IS_SETTLED, status) &&
+    WORKER_SIGNAL_STATUS_IS_SETTLED[status as WorkerSignalStatus]
   );
 }
 
