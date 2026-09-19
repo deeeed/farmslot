@@ -186,6 +186,42 @@ function handoffAcceptanceCriteria(taskDir) {
     .filter((criterion) => criterion.text.trim().length > 0);
 }
 
+/**
+ * Same read, for the path that enforces the ledger. A missing handoff means no
+ * criteria, as ENOENT does everywhere; anything else — unreadable file, invalid
+ * JSON, a non-array `acceptanceCriteria` — refuses, because a task whose criteria
+ * cannot be read has not proven them. The permissive reader above still serves
+ * `ac list` / `ac render`, where a broken handoff is the CLI's own refusal.
+ *
+ * The gateway's terminal check applies the identical rule from the slot, so a
+ * signal written around this engine cannot pass what `mark` refuses.
+ */
+function requireHandoffAcceptanceCriteria(taskDir) {
+  const file = path.join(taskDir, HANDOFF_INPUT);
+  let handoff;
+  try {
+    handoff = readJson(file);
+  } catch (err) {
+    throw new AcceptanceRefusal(handoffReadRefusal(`invalid ${HANDOFF_INPUT}: ${err.message}`));
+  }
+  const task = isRecord(handoff.task) ? handoff.task : {};
+  if (task.acceptanceCriteria !== undefined && !Array.isArray(task.acceptanceCriteria)) {
+    throw new AcceptanceRefusal(
+      handoffReadRefusal(`invalid ${HANDOFF_INPUT}: task.acceptanceCriteria must be an array`),
+    );
+  }
+  return handoffAcceptanceCriteria(taskDir);
+}
+
+/** One message shape for a handoff the acceptance rule cannot read. */
+function handoffReadRefusal(detail) {
+  return (
+    `cannot complete: ${detail}. The acceptance criteria (ADR-060) come from that file, so ` +
+    `nothing can tell whether every criterion has a verdict. Restore ${HANDOFF_INPUT} from the ` +
+    `orchestrator copy, then run ./mark complete again.`
+  );
+}
+
 /** The stored ledger, or null when the run has not written one yet. */
 function readAcceptanceLedger(taskDir) {
   const file = ledgerPath(taskDir);
@@ -362,6 +398,7 @@ module.exports = {
   acceptanceCriterionId,
   acceptanceStatusList,
   handoffAcceptanceCriteria,
+  requireHandoffAcceptanceCriteria,
   readAcceptanceLedger,
   renderAcceptanceCoverage,
   setAcceptanceVerdict,

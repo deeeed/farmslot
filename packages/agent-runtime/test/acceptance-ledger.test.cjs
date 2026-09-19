@@ -547,4 +547,52 @@ function check(dir, ...args) {
   assert.match(optedIn.output, /acceptance-status\.json is missing/);
 }
 
+// ---------------------------------------------------------------------------
+// 11. Under the opt-in, a handoff the engine cannot read refuses `complete`.
+{
+  const engine = path.join(root, 'scripts', 'mark-checklist-step.cjs');
+  const optInContract = {
+    schemaVersion: 1,
+    flowType: 'dev',
+    requireSignal: true,
+    acceptance: { require: true },
+    commands: {
+      complete: { artifacts: [] },
+      'no-change': { artifacts: [] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    resolvedAt: '2026-09-19T10:00:00.000Z',
+    source: 'project',
+  };
+
+  function completeWithHandoff(body) {
+    const dir = makeTask({ contract: optInContract });
+    writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [x] **1. do the work**\n');
+    writeFileSync(path.join(dir, 'inputs', 'handoff.json'), body);
+    const result = spawnSync(process.execPath, [engine, dir, 'complete', '--mark-last'], {
+      encoding: 'utf8',
+    });
+    return { result, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+  }
+
+  // Invalid JSON: refused, naming the file, the same shape the gateway uses.
+  const corrupt = completeWithHandoff('{ not json');
+  assert.notEqual(corrupt.result.status, 0, 'a corrupt handoff must refuse complete');
+  assert.match(corrupt.output, /cannot complete: invalid inputs\/handoff\.json/);
+  assert.match(corrupt.output, /acceptance criteria \(ADR-060\)/);
+
+  // A non-array `acceptanceCriteria` is the quiet version of the same problem:
+  // the permissive reader turned it into "no criteria" and dropped the rule.
+  const notAnArray = completeWithHandoff(
+    `${JSON.stringify({ task: { acceptanceCriteria: 'one, two' } })}\n`,
+  );
+  assert.notEqual(notAnArray.result.status, 0, 'a non-array criteria list must refuse complete');
+  assert.match(notAnArray.output, /task\.acceptanceCriteria must be an array/);
+
+  // A handoff with no criteria key at all is not an error: nothing to enforce.
+  const none = completeWithHandoff(`${JSON.stringify({ task: { title: 'no criteria' } })}\n`);
+  assert.equal(none.result.status, 0, `a task with no criteria completes: ${none.output}`);
+}
+
 process.stdout.write('agent-runtime acceptance ledger tests: ok\n');

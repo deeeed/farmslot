@@ -20,7 +20,7 @@ const {
   signalContentUnchanged,
   writeSignal,
 } = require('./mark-io.cjs');
-const { handoffAcceptanceCriteria } = require('./acceptance-ledger.cjs');
+const { AcceptanceRefusal, requireHandoffAcceptanceCriteria } = require('./acceptance-ledger.cjs');
 const {
   openSubtaskRefusal,
   openSubtaskUnits,
@@ -325,12 +325,19 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   // (ADR-060). Without the opt-in a template that does not write a ledger yet
   // still completes; the ledger is watched, projected and preferred for coverage
   // either way.
-  if (
-    terminalCommand === 'complete' &&
-    contract?.acceptance?.require === true &&
-    handoffAcceptanceCriteria(taskDir).length > 0
-  ) {
-    args.push('--require-acceptance-status');
+  if (terminalCommand === 'complete' && contract?.acceptance?.require === true) {
+    let criteria;
+    try {
+      criteria = requireHandoffAcceptanceCriteria(taskDir);
+    } catch (err) {
+      // Fail closed, the same way the gateway's backup check does: a handoff the
+      // engine cannot read hides whether the criteria were judged, and dropping
+      // the rule the project asked for is how an unproven run closes.
+      if (!(err instanceof AcceptanceRefusal)) throw err;
+      console.error(err.message);
+      process.exit(1);
+    }
+    if (criteria.length > 0) args.push('--require-acceptance-status');
   }
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
