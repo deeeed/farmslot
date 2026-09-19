@@ -73,10 +73,12 @@ export function canActivateRunOnSlot(status: RunStatus): boolean {
 }
 
 /**
- * A blocked run the engine has nothing left to advance: no step is running and
- * no decision is pending. A worker `blocked` signal, an engine block, or an
- * uncertain prompt delivery leaves this shape. The operator may retry it via
- * step replay, or archive it while keeping the blocked outcome in history.
+ * A blocked run the engine has nothing left to advance: no step is running, no
+ * decision is pending, and no failed step still carries an uncertain-delivery
+ * marker (that run keeps its slot and runner for operator reconciliation). A
+ * worker `blocked` signal or an engine block leaves this shape. The operator
+ * may retry it via step replay, or archive it while keeping the blocked
+ * outcome in history.
  * Shared by the gateway archive guard and the UI so both agree on eligibility.
  */
 export function isSettledBlockedRun(run: Pick<Run, 'status' | 'steps' | 'decisions'>): boolean {

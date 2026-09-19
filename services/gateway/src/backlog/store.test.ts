@@ -2003,6 +2003,25 @@ test('archiving a blocked run keeps its backlog item at needs-attention', async 
   assert.equal(item?.status, 'needs-attention', 'closing a blocked run must not requeue it');
   assert.equal(item?.runId, undefined);
   assert.equal(item?.lastObservedRunStatus, 'blocked', 'the blocked provenance stays');
+
+  const late = await backlog.createBacklogItem(
+    {
+      project: 'farmslot-farm',
+      title: 'Blocked before its observation landed',
+      sourceKind: 'manual',
+      flowType: 'fix-bug',
+      status: 'ready',
+    },
+    { kind: 'system' },
+  );
+  backlog.mutateBacklogItemForTests(late.item.id, (item) => {
+    item.status = 'running';
+    item.runId = 'archived-blocked-run-2';
+  });
+  await backlog.markBacklogRunReleased('archived-blocked-run-2', { keepNeedsAttention: true });
+  const lateItem = backlog.listBacklogItems().items.find((item) => item.id === late.item.id);
+  assert.equal(lateItem?.status, 'needs-attention', 'a still-running item is parked, not requeued');
+  assert.equal(lateItem?.runId, undefined);
 });
 
 test('mark ready clears stale run linkage for failed backlog items', async () => {

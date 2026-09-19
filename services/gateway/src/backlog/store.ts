@@ -797,9 +797,14 @@ function releaseBacklogRunLink(
   delete item.lastDispatchError;
   touched = true;
   const holdAsBlocked = options.keepNeedsAttention === true;
-  if (!holdAsBlocked) delete item.lastObservedRunStatus;
-  if (!holdAsBlocked && REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
-    item.status = 'ready';
+  if (holdAsBlocked) {
+    // The run's blocked observation normally parked the item already; if that
+    // broadcast was lost, park it now rather than leave a runId-less item at
+    // running/queued where nothing would ever repair it.
+    if (!TERMINAL_STATUSES.has(item.status)) item.status = 'needs-attention';
+  } else {
+    delete item.lastObservedRunStatus;
+    if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) item.status = 'ready';
   }
   if (item.launchPlanState) rollUpLaunchPlanStatus(item);
   item.updatedAt = new Date().toISOString();
