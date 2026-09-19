@@ -81,6 +81,7 @@ export abstract class SlotViewState extends LitElement {
 
   // --- Branch diff state ---
   @state() _branchDiffFiles: GitBranchDiffFile[] = [];
+  @state() _branchDiffTestPatterns: readonly string[] | null = null;
   @state() _branchDiffBase = 'main';
   @state() _branchDiffHead = '';
   @state() _branchDiffTotalAdd = 0;

@@ -21,6 +21,7 @@ export function prepareSlotViewSlotChange(view: SlotView): void {
   view._pinnedEntries = [];
   view._branchDiffBase = 'main';
   view._branchDiffFiles = [];
+  view._branchDiffTestPatterns = null;
   view._branchDiffHead = '';
   view._branchDiffTotalAdd = 0;
   view._branchDiffTotalDel = 0;

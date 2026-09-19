@@ -605,7 +605,7 @@ export async function gitBranchDiff(
 }
 
 /** Project `diff_view` test globs for this diff's repo, on top of the defaults. */
-async function diffViewTestPatterns(
+export async function diffViewTestPatterns(
   params: Pick<GitBranchDiffParams, 'slotId' | 'runId'>,
   deps: GitExecDeps,
 ): Promise<readonly string[]> {
