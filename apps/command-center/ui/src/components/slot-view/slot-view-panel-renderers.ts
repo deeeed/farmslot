@@ -108,6 +108,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
   return html`<git-changes
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
+    .testPatterns=${view._branchDiffTestPatterns}
     .committedError=${view._branchDiffError}
     .committedScope=${'head'}
     .branch=${git.branch}

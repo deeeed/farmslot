@@ -205,7 +205,7 @@ test('gitBranchDiff stamps each file as code or test using project diff_view pat
   );
 });
 
-test('diffViewTestPatterns resolves a review run by id, archived or not', async () => {
+test('diffViewTestPatterns resolves a review run by id, archived or not', async (t) => {
   const run = createRun({
     flowType: 'review-pr',
     project: 'diff-view-project',
@@ -220,6 +220,11 @@ test('diffViewTestPatterns resolves a review run by id, archived or not', async 
 
   updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
   assert.equal(await archiveRun(run.id), true);
+  t.after(() =>
+    rm(path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive', `${run.id}.json`), {
+      force: true,
+    }),
+  );
   const archived = await diffViewTestPatterns({ slotId: '', runId: run.id }, { loadProjectJson });
   assert.ok(archived.includes('*.check.ts'), 'archived run: project patterns still applied');
 

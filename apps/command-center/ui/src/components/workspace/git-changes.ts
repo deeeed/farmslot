@@ -1,7 +1,12 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { classifyDiffFile } from '@farmslot/protocol';
+import {
+  classifyDiffFile,
+  compileTestFileMatcher,
+  DEFAULT_TEST_FILE_MATCHER,
+  type TestFileMatcher,
+} from '@farmslot/protocol';
 
 import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -161,6 +166,25 @@ export class GitChanges extends LitElement {
   @property() committedScope: 'head' | 'worktree' = 'head';
 
   @property() selectedPath = '';
+  /**
+   * Effective test-file globs from the host's `git.branchDiff` result, so
+   * working-tree rows (which carry no stamped kind) classify the same way as
+   * the committed rows. Null falls back to the built-in defaults.
+   */
+  @property({ attribute: false }) testPatterns: readonly string[] | null = null;
+  private _matcherCache: { patterns: readonly string[] | null; matcher: TestFileMatcher } | null =
+    null;
+
+  private _testMatcher(): TestFileMatcher {
+    if (!this.testPatterns) return DEFAULT_TEST_FILE_MATCHER;
+    if (this._matcherCache?.patterns !== this.testPatterns) {
+      this._matcherCache = {
+        patterns: this.testPatterns,
+        matcher: compileTestFileMatcher(this.testPatterns),
+      };
+    }
+    return this._matcherCache.matcher;
+  }
   @state() private _stagedOpen = true;
   @state() private _changesOpen = true;
   @state() private _untrackedOpen = true;
@@ -545,6 +569,7 @@ export class GitChanges extends LitElement {
   private _committedSplit() {
     return splitDiffFilesByKind(this.committedFiles, this._hideTests, {
       keepPath: this.selectedPath,
+      matcher: this._testMatcher(),
     });
   }
 
@@ -817,16 +842,21 @@ export class GitChanges extends LitElement {
   /** Working-tree rows have no stamped kind or line counts; classify by path. */
   private _showsWorkingTreeChange(change: GitChange): boolean {
     if (!this._hideTests || change.path === this.selectedPath) return true;
-    return classifyDiffFile(change.path) !== 'test';
+    return classifyDiffFile(change.path, this._testMatcher()) !== 'test';
   }
 
   /** Code/test summary over every listed file, each path counted once. */
   private _kindSummary() {
     const seen = new Set(this.committedFiles.map((file) => file.path));
-    const workingTreeOnly = this.changes
-      .filter((change) => !seen.has(change.path) && seen.add(change.path))
-      .map((change) => ({ path: change.path, additions: 0, deletions: 0 }));
-    return splitDiffFilesByKind([...this.committedFiles, ...workingTreeOnly], false).summary;
+    const workingTreeOnly: Array<{ path: string; additions: number; deletions: number }> = [];
+    for (const change of this.changes) {
+      if (seen.has(change.path)) continue;
+      seen.add(change.path);
+      workingTreeOnly.push({ path: change.path, additions: 0, deletions: 0 });
+    }
+    return splitDiffFilesByKind([...this.committedFiles, ...workingTreeOnly], false, {
+      matcher: this._testMatcher(),
+    }).summary;
   }
 
   render() {
@@ -879,7 +909,9 @@ export class GitChanges extends LitElement {
                 ${this.committedError
                   ? html`Branch diff unavailable — retrying with status poll.<br />${this
                         .committedError}`
-                  : 'No changes'}
+                  : this.changes.length > 0 || this.committedFiles.length > 0
+                    ? 'Only test files changed (hidden)'
+                    : 'No changes'}
               </div>
             </div>`
           : this.committedScope === 'worktree' && committed > 0

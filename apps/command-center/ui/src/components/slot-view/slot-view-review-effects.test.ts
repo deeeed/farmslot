@@ -33,6 +33,7 @@ interface FakeView {
   _branchDiffBase: string;
   _branchDiffHead: string;
   _branchDiffFiles: unknown[];
+  _branchDiffTestPatterns: readonly string[] | null;
   _branchDiffTotalAdd: number;
   _branchDiffTotalDel: number;
   _branchDiffLoading: boolean;
@@ -55,6 +56,7 @@ function makeView(): FakeView {
     _branchDiffBase: 'main',
     _branchDiffHead: '',
     _branchDiffFiles: [],
+    _branchDiffTestPatterns: null,
     _branchDiffTotalAdd: 0,
     _branchDiffTotalDel: 0,
     _branchDiffLoading: false,
