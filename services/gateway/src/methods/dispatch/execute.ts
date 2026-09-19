@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { copyFile, cp, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -106,7 +106,7 @@ import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.j
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
-import { copyPreparedTaskRootSidecars, TASK_DIR_COPIED_SUBDIRS } from '../../tasks/sidecars.js';
+import { copyPreparedTaskRootSidecars, copyTaskDirSubdirectories } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
@@ -1528,16 +1528,14 @@ export async function dispatchExecute(
   }
 
   // Copy assets/, inputs/, artifacts/ if they exist
-  for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
-    const localDir = path.join(taskDir, subdir);
-    if (existsSync(localDir)) {
-      if (isLocal(vars.host, vars.machine)) {
-        await cp(localDir, path.join(workerTaskAbs, subdir), { recursive: true });
-      } else {
-        await execLocal(`rsync -az '${localDir}/' '${vars.sshTarget}:${workerTaskAbs}/${subdir}/'`);
-      }
-      step('copy', `${subdir}/ copied`);
-    }
+  for (const subdir of await copyTaskDirSubdirectories({
+    taskDir,
+    workerTaskAbs,
+    host: vars.host,
+    machine: vars.machine,
+    sshTarget: vars.sshTarget,
+  })) {
+    step('copy', `${subdir}/ copied`);
   }
 
   // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the

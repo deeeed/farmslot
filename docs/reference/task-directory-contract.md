@@ -139,6 +139,8 @@ Kept current with the layout. Each row is something the layout still carries tha
 
 Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list.
 
+The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
+
 `subtasks/` is also the one directory the gateway creates on the slot without writing anything into it: both file-watch primitives observe a file through its parent directory, and the directory otherwise appears only with the first `mark sub start`, so the task watcher would never see a child registered mid-run. The registry, the child checklists, and the child signals stay `mark`-written.
 
 ## Project addendum

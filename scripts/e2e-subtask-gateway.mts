@@ -13,14 +13,15 @@
  *     child is open, naming the unit;
  *   - `refreshArtifactMirror` must leave `subtasks/<name>.worker` beside the
  *     orchestrator copy;
- *   - `collectRunSubtaskMetrics` must return one entry per registered child.
+ *   - `collectRunSubtaskMetrics` must return one entry per registered child;
+ *   - a re-stage of the mirrored task directory must NOT send `*.worker` back.
  *
  * Worker and gateway hand off through ack files so the phases are observed
  * deterministically instead of by sleeping.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { Run, TaskStepSubtaskProgress } from '@farmslot/protocol';
@@ -28,6 +29,7 @@ import type { Run, TaskStepSubtaskProgress } from '@farmslot/protocol';
 import { dispatchExecute } from '../services/gateway/src/methods/dispatch/execute.js';
 import { taskProgress } from '../services/gateway/src/methods/task.js';
 import { refreshArtifactMirror } from '../services/gateway/src/run-completion/artifact-mirror.js';
+import { copyTaskDirSubdirectories } from '../services/gateway/src/tasks/sidecars.js';
 import { collectRunSubtaskMetrics } from '../services/gateway/src/tasks/subtask-metrics.js';
 import { unwatchSlot } from '../services/gateway/src/tasks/watcher.js';
 import { validateTerminalSignalArtifacts } from '../services/gateway/src/tasks/worker-terminal-contract.js';
@@ -509,8 +511,48 @@ async function main(): Promise<void> {
     );
     console.log('[e2e] mirror: subtasks/*.worker written beside the orchestrator copy');
 
+    // ── 6. re-staging the mirrored task dir must not send the mirror back ──
+    // The orchestrator copy now holds real `.worker` files, written from this slot
+    // a moment ago, and nothing else: the mirror is the only thing that ever puts
+    // a `subtasks/` entry on the orchestrator side. Staging it again is what a
+    // re-dispatch, nudge, or warm handoff does — every one of those five files
+    // would have landed on the worker before the filter.
+    const mirrored = readdirSync(mirrorDir).sort();
+    assert.equal(
+      mirrored.filter((name) => name.endsWith('.worker')).length,
+      5,
+      `the orchestrator side must hold the mirror: ${mirrored.join(', ')}`,
+    );
+    // One prepared (non-mirror) child file, standing in for a task directory that
+    // arrives with a child unit already materialized — proof the filter is
+    // selective rather than skipping the directory wholesale.
+    writeFileSync(path.join(mirrorDir, 'prepared.md'), '- [ ] **1. prepared child step**\n');
+
+    const reStageDir = path.join(root, 'temp', `subtask-restage-${stamp}`);
+    mkdirSync(reStageDir, { recursive: true });
+    try {
+      const staged = await copyTaskDirSubdirectories({
+        taskDir: sourceTaskDir,
+        workerTaskAbs: reStageDir,
+        host: 'localhost',
+        machine: 'local',
+      });
+      assert.ok(staged.includes('subtasks'), 'subtasks/ travels with the other task-dir copies');
+      const reStaged = readdirSync(path.join(reStageDir, 'subtasks')).sort();
+      assert.deepEqual(
+        reStaged,
+        ['prepared.md'],
+        `only non-mirror files may travel; got ${reStaged.join(', ') || '(nothing)'}`,
+      );
+      console.log(
+        `[e2e] re-stage: ${mirrored.length} mirror file(s) skipped, ${reStaged.length} prepared file(s) sent`,
+      );
+    } finally {
+      rmSync(reStageDir, { recursive: true, force: true });
+    }
+
     console.log(
-      'e2e:subtask-gateway ok — projection, terminal check, mirror and metrics on a live dispatch',
+      'e2e:subtask-gateway ok — projection, terminal check, mirror, metrics and one-way copy on a live dispatch',
     );
   } finally {
     // dispatchExecute armed the real task watcher on this slot — including the

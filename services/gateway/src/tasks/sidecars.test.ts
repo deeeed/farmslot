@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,7 +9,10 @@ import { CHECKLIST_TARGET_MANIFEST, INTERACTIVE_CHECKLIST_MARKDOWN } from './che
 import {
   CHECKLIST_MARKER_INPUT,
   copyPreparedTaskRootSidecars,
+  copyTaskDirSubdirectories,
+  isWorkerMirrorEntry,
   TASK_DIR_COPIED_SUBDIRS,
+  WORKER_MIRROR_SUFFIX,
 } from './sidecars.js';
 
 test('copyPreparedTaskRootSidecars copies CHECKLIST.md beside the marker when present', async () => {
@@ -118,8 +121,8 @@ test('TASK_DIR_COPIED_SUBDIRS is the one list dispatch, nudge, and warm handoff 
     const source = await readFile(path.join(gatewaySrc, file), 'utf-8');
     assert.match(
       source,
-      /for \(const subdir of TASK_DIR_COPIED_SUBDIRS\)/,
-      `${file} must iterate the shared task-dir copy list`,
+      /for \(const subdir of await copyTaskDirSubdirectories\(\{/,
+      `${file} must stage subdirectories through the shared copy helper`,
     );
     assert.doesNotMatch(
       source,
@@ -127,4 +130,58 @@ test('TASK_DIR_COPIED_SUBDIRS is the one list dispatch, nudge, and warm handoff 
       `${file} must not keep its own copy list`,
     );
   }
+});
+
+test('isWorkerMirrorEntry recognises orchestrator mirror output only', () => {
+  assert.equal(isWorkerMirrorEntry(`index.json${WORKER_MIRROR_SUFFIX}`), true);
+  assert.equal(isWorkerMirrorEntry('subtasks/perps-review.md.worker'), true);
+  assert.equal(isWorkerMirrorEntry('index.json'), false);
+  assert.equal(isWorkerMirrorEntry('perps-review-SIGNAL.json'), false);
+  // Not a suffix match on the whole path: only the file's own name decides.
+  assert.equal(isWorkerMirrorEntry('a.worker/index.json'), false);
+});
+
+test('copyTaskDirSubdirectories stages the shared list and never sends mirror output', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-subdir-copy-'));
+  const taskDir = path.join(root, 'task');
+  const workerTaskAbs = path.join(root, 'worker');
+  await mkdir(path.join(taskDir, 'subtasks'), { recursive: true });
+  await mkdir(path.join(taskDir, 'inputs'), { recursive: true });
+  await mkdir(workerTaskAbs, { recursive: true });
+
+  // What `mark sub` wrote, beside what the gateway mirrored back from a previous
+  // completion of the same task directory.
+  await writeFile(path.join(taskDir, 'subtasks', 'index.json'), '{"schemaVersion":1,"units":[]}\n');
+  await writeFile(path.join(taskDir, 'subtasks', 'perps-review.md'), '- [x] **1. review**\n');
+  await writeFile(
+    path.join(taskDir, 'subtasks', 'perps-review-SIGNAL.json'),
+    '{"status":"complete"}\n',
+  );
+  await writeFile(path.join(taskDir, 'subtasks', 'index.json.worker'), 'stale mirror\n');
+  await writeFile(path.join(taskDir, 'subtasks', 'perps-review.md.worker'), 'stale mirror\n');
+  await writeFile(path.join(taskDir, 'inputs', 'handoff.json'), '{}\n');
+  await writeFile(path.join(taskDir, 'inputs', 'handoff.json.worker'), 'stale mirror\n');
+
+  const copied = await copyTaskDirSubdirectories({
+    taskDir,
+    workerTaskAbs,
+    host: 'localhost',
+    machine: 'local',
+  });
+  // Reported in list order, and only the directories that exist.
+  assert.deepEqual(copied, ['inputs', 'subtasks']);
+
+  assert.deepEqual((await readdir(path.join(workerTaskAbs, 'subtasks'))).sort(), [
+    'index.json',
+    'perps-review-SIGNAL.json',
+    'perps-review.md',
+  ]);
+  assert.deepEqual(await readdir(path.join(workerTaskAbs, 'inputs')), ['handoff.json']);
+  // The worker's own files still arrive byte for byte.
+  assert.equal(
+    await readFile(path.join(workerTaskAbs, 'subtasks', 'perps-review.md'), 'utf-8'),
+    '- [x] **1. review**\n',
+  );
+  // assets/ and artifacts/ were absent at the source, so nothing was created.
+  assert.equal(existsSync(path.join(workerTaskAbs, 'artifacts')), false);
 });

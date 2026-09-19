@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, rm } from 'node:fs/promises';
+import { chmod, copyFile, cp, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -28,6 +28,72 @@ export const TASK_ROOT_SIDECARS = [
  * (ADR-060) was the copy a fourth hand-maintained array would have missed.
  */
 export const TASK_DIR_COPIED_SUBDIRS = ['assets', 'inputs', 'artifacts', SUBTASKS_DIR] as const;
+
+/**
+ * Suffix of the orchestrator-side worker mirror (`CHECKLIST.md.worker`,
+ * `subtasks/<id>.md.worker`). Mirror output is written BY the gateway FROM the
+ * slot at completion, so it must never travel back the other way: a re-dispatch,
+ * nudge, or warm handoff of a task dir that already completed once would
+ * otherwise litter the worker's directory with stale copies of its own files.
+ */
+export const WORKER_MIRROR_SUFFIX = '.worker';
+
+/** True for a mirror artifact the slot must never receive. */
+export function isWorkerMirrorEntry(name: string): boolean {
+  return path.basename(name).endsWith(WORKER_MIRROR_SUFFIX);
+}
+
+export interface CopyTaskDirSubdirectoriesParams {
+  taskDir: string;
+  workerTaskAbs: string;
+  host: string;
+  machine: string;
+  sshTarget?: string;
+}
+
+/**
+ * Stage `TASK_DIR_COPIED_SUBDIRS` on the worker, skipping the orchestrator's own
+ * `*.worker` mirror output. One implementation for dispatch, tmux nudge, and
+ * warm-session handoff: the copy used to be written out three times, which is how
+ * `subtasks/` came to be missing from all three.
+ *
+ * Returns the subdirectory names actually copied, in list order, so each caller
+ * can report its own progress steps.
+ */
+export async function copyTaskDirSubdirectories(
+  params: CopyTaskDirSubdirectoriesParams,
+): Promise<string[]> {
+  const local = isLocal(params.host, params.machine);
+  const copied: string[] = [];
+
+  for (const subdir of TASK_DIR_COPIED_SUBDIRS) {
+    const source = path.join(params.taskDir, subdir);
+    if (!existsSync(source)) continue;
+    const dest = path.join(params.workerTaskAbs, subdir);
+
+    if (local) {
+      await cp(source, dest, {
+        recursive: true,
+        // Called for the root and every entry; a rejected path is not descended.
+        filter: (entry) => !isWorkerMirrorEntry(entry),
+      });
+    } else {
+      if (!params.sshTarget) throw new Error(`missing ssh target for ${subdir}/ copy`);
+      const result = await execLocal(
+        `rsync -az --exclude=${shellQuote(`*${WORKER_MIRROR_SUFFIX}`)} ` +
+          `${shellQuote(`${source}/`)} ${shellQuote(`${params.sshTarget}:${dest}/`)}`,
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `rsync ${subdir}/ to ${params.sshTarget}:${dest} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`,
+        );
+      }
+    }
+    copied.push(subdir);
+  }
+
+  return copied;
+}
 
 export interface CopyPreparedTaskRootSidecarsParams {
   taskDir: string;
