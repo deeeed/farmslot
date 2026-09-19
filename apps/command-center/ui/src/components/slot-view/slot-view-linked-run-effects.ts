@@ -96,6 +96,7 @@ export function applySlotViewLinkedRun(
     view._branchDiffGeneration += 1;
     view._liveDiffContents = new Map();
     view._branchDiffFiles = [];
+    view._branchDiffTestPatterns = null;
     view._branchDiffBase = nextSnapshotBase || 'main';
     view._branchDiffHead = nextSnapshotHead;
     view._branchDiffTotalAdd = 0;

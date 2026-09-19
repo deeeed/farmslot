@@ -120,13 +120,15 @@ test('current branch-diff completion writes files and clears the error', async (
   pending.shift()?.resolve({
     base: 'main',
     head: 'feat/x',
-    files: [{ path: 'a.ts', status: 'M', additions: 1, deletions: 0 }],
+    files: [{ path: 'a.ts', status: 'M', additions: 1, deletions: 0, kind: 'code' }],
     totalAdditions: 1,
     totalDeletions: 0,
+    testFilePatterns: ['*.test.*', '*.check.ts'],
   });
   await inFlight;
   assert.equal(view._branchDiffError, null);
   assert.equal(view._branchDiffFiles.length, 1);
+  assert.deepEqual(view._branchDiffTestPatterns, ['*.test.*', '*.check.ts']);
   assert.equal(view._branchDiffLoading, false);
 });
 
