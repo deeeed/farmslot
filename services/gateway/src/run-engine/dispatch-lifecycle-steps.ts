@@ -337,7 +337,16 @@ export async function executePrepareStep(
       {
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ? { preserveBranch: true } : {}),
-        ...(current.startRef ? { startRef: { requestedRef: current.startRef.requestedRef } } : {}),
+        // A replay re-resolves against the commit the run already recorded: a
+        // branch or tag name would otherwise move the recorded base under the
+        // preserved branch's commits.
+        ...(current.startRef
+          ? {
+              startRef: {
+                requestedRef: current.startRef.resolvedSha ?? current.startRef.requestedRef,
+              },
+            }
+          : {}),
       },
     );
     selectedPrepareProfile = prepareResult.profile;

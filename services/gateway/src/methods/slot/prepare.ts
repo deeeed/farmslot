@@ -611,14 +611,23 @@ async function slotPrepareInner(
       `Base ref ${resolvedStartRef.requestedRef} resolved to ${resolvedStartRef.resolvedSha}`,
     );
   };
-  // On a branch the slot already has, the provenance must describe the tree the
-  // run executes on: reset to the resolved ref, never to whatever origin or the
-  // local branch drifted to. The fresh-branch path bases its branch there too.
-  const resetCurrentBranchToStartRef = async () => {
+  // A start ref means two different things. For dev/fix-bug it is an
+  // artifact-only replay base: the work branch must be local-only, and the
+  // policy below refuses a remote-published branch on every path. For qa it is
+  // the frozen validation head the gateway derived from the PR: the slot lands
+  // on that exact commit, on the PR branch, and nothing is pushed.
+  const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
+  // Whatever path put the slot on the branch, the provenance must describe the
+  // tree the run executes on: with a start ref the branch is reset to the
+  // resolved commit, never left at whatever origin or the local branch holds.
+  const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
+    // The same index refresh every other reset --hard in this file runs first,
+    // so a stale index.lock cannot fail it (the flag sweep runs as its own
+    // command on the paths that need it: it ends with exit).
     const resetR = await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd`,
+      `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(resolvedStartRef.resolvedSha)} && git clean -fd; }`,
     );
     if (resetR.exitCode !== 0) {
       throw new Error(
@@ -630,13 +639,10 @@ async function slotPrepareInner(
     ).stdout.trim();
     if (dirty) {
       throw new Error(
-        `Working tree still dirty on ${vars.slotId} after reset to start ref ${resolvedStartRef.resolvedSha}. Refusing to prepare stale/dirty slot. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status`,
+        `Working tree still dirty on ${vars.slotId} after reset to start ref ${resolvedStartRef.resolvedSha}. Refusing to prepare stale/dirty slot. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
       );
     }
-    step(
-      'branch',
-      `Already on ${branch}; reset to requested start ref ${resolvedStartRef.resolvedSha}`,
-    );
+    step('branch', `${branch} reset to requested start ref ${resolvedStartRef.resolvedSha}`);
   };
   if (branch && opts?.preserveBranch) {
     await resolveRequestedStartRef();
@@ -676,7 +682,14 @@ async function slotPrepareInner(
         }
         step('branch', `Already on ${branch}; reset to origin/${branch}`);
         await resolveRequestedStartRef();
-        await resetCurrentBranchToStartRef();
+        if (startRefPolicyApplies) {
+          assertStartRefWorkBranchIsLocalOnly({
+            branch,
+            remoteExists: true,
+            startRef: resolvedStartRef,
+          });
+        }
+        await resetBranchToStartRef();
       } else {
         const fetchErr = `${fetchBranchR.stderr}\n${fetchBranchR.stdout}`;
         if (!/couldn't find remote ref|could not find remote ref|no such ref/i.test(fetchErr)) {
@@ -686,7 +699,25 @@ async function slotPrepareInner(
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
         await resolveRequestedStartRef();
-        await resetCurrentBranchToStartRef();
+        if (startRefPolicyApplies) {
+          assertStartRefWorkBranchIsLocalOnly({
+            branch,
+            remoteExists: false,
+            startRef: resolvedStartRef,
+          });
+        }
+        if (resolvedStartRef) {
+          const refreshLocalBranchR = await execOnSlot(
+            vars,
+            `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
+          );
+          if (refreshLocalBranchR.exitCode !== 0) {
+            throw new Error(
+              `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshLocalBranchR.stderr.slice(-200) || refreshLocalBranchR.stdout.slice(-200)}`,
+            );
+          }
+        }
+        await resetBranchToStartRef();
       }
     } else {
       const fetchDefaultR = await execOnSlot(
@@ -832,7 +863,9 @@ async function slotPrepareInner(
       const newBranchBaseLabel = resolvedStartRef
         ? resolvedStartRef.resolvedSha
         : `origin/${defaultBranch}`;
-      assertStartRefWorkBranchIsLocalOnly({ branch, remoteExists, startRef: resolvedStartRef });
+      if (startRefPolicyApplies) {
+        assertStartRefWorkBranchIsLocalOnly({ branch, remoteExists, startRef: resolvedStartRef });
+      }
 
       if (forceNewBranch && remoteExists) {
         // New work flow (fix-bug/dev): delete stale remote branch and recreate from defaultBranch
@@ -874,6 +907,7 @@ async function slotPrepareInner(
               `Branch checkout failed: ${coR.stderr.slice(-200) || coR.stdout.slice(-200)}`,
             );
           step('branch', `Switched to ${branch} (reset to origin/${branch})`);
+          await resetBranchToStartRef();
         } else {
           const coR = await execOnSlot(
             vars,
@@ -884,6 +918,7 @@ async function slotPrepareInner(
               `Branch create failed: ${coR.stderr.slice(-200) || coR.stdout.slice(-200)}`,
             );
           step('branch', `Created ${branch} tracking origin/${branch}`);
+          await resetBranchToStartRef();
         }
       } else {
         const localExists =
