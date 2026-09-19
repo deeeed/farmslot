@@ -93,6 +93,12 @@ export function resolveTestFilePatterns(
         );
         return false;
       }
+      const compiled = compileGlob(pattern, { anchoring: 'segment', caseSensitive: true });
+      if (compiled.invalid) {
+        // Dropped here so the effective list handed to clients is honest.
+        console.warn(`[diff-view] dropping test pattern "${compiled.pattern}": ${compiled.reason}`);
+        return false;
+      }
       return true;
     })
     .slice(0, TEST_FILE_PATTERN_ENTRY_LIMIT);

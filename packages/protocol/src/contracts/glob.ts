@@ -33,7 +33,9 @@ export interface CompiledGlob {
   reason?: string;
 }
 
-const MATCH_NOTHING = /(?!)/;
+// A fresh instance per rejection: callers may read `lastIndex`, and a shared
+// regex would then leak state between them.
+const matchNothing = (): RegExp => new RegExp('(?!)');
 
 /** Forward slashes, no leading `./`, and each run of double-star segments collapsed to one. */
 export function normalizeGlobPattern(pattern: string): string {
@@ -41,9 +43,11 @@ export function normalizeGlobPattern(pattern: string): string {
     pattern
       .replace(/\\/g, '/')
       .replace(/^\.\//, '')
-      // Runs of `**/` mean the same as one; compiling each into its own optional
-      // group makes a non-match backtrack exponentially.
-      .replace(/(?:\*\*\/)+/g, '**/')
+      // Runs of double-star segments at a boundary mean the same as one;
+      // compiling each into its own optional group makes a non-match backtrack
+      // exponentially. Off a boundary the stars are plain `*`s (see compile),
+      // so a run there is left alone and the pattern reaches git unchanged.
+      .replace(/(^|\/)(?:\*\*\/)+/g, '$1**/')
   );
 }
 
@@ -54,11 +58,14 @@ export function globDoubleStarRuns(pattern: string): number {
 
 export function compileGlob(pattern: string, options: GlobCompileOptions): CompiledGlob {
   let glob = normalizeGlobPattern(pattern);
+  // Anchored mode keeps a leading slash: git rejects `/src/**` as a pathspec
+  // and the JS matcher agrees by matching nothing, so the operator sees the
+  // mistake instead of a silently different filter.
   if (options.anchoring === 'segment') glob = glob.replace(/^\/+/, '');
   if (/[[\]]/.test(glob)) {
     return {
       pattern: glob,
-      regex: MATCH_NOTHING,
+      regex: matchNothing(),
       invalid: true,
       reason: 'contains unsupported character-class syntax; list the paths explicitly instead',
     };
@@ -77,8 +84,14 @@ export function compileGlob(pattern: string, options: GlobCompileOptions): Compi
         // matches both `foo.ts` and `dir/foo.ts` (git's `:(glob)**/X` agrees).
         body += '(?:.*/)?';
         i += 2;
-      } else {
+      } else if (atSegmentStart && i + 2 >= glob.length) {
+        // Trailing `/**` — everything below.
         body += '.*';
+        i += 1;
+      } else {
+        // Off a segment boundary a double star is two plain stars, as in git
+        // and gitignore: it never crosses a slash.
+        body += '[^/]*';
         i += 1;
       }
     } else if (ch === '*') {
@@ -104,7 +117,7 @@ export function compileGlob(pattern: string, options: GlobCompileOptions): Compi
   } catch (err) {
     return {
       pattern: glob,
-      regex: MATCH_NOTHING,
+      regex: matchNothing(),
       invalid: true,
       reason: (err as Error).message.slice(0, 200),
     };

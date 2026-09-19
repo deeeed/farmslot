@@ -312,6 +312,16 @@ test('source diff filter never emits block-only git pathspecs when capped', () =
   }
 });
 
+test('boundary double-star runs collapse before the pathspec leaves the process', () => {
+  const filter = buildSourceDiffFilter({
+    useDefaults: false,
+    allowlist: { patterns: ['**/**/*.ts', 'x**/**/y'] },
+  });
+  const pathspecs = sourceCodeGitPathspecs(filter);
+  assert.ok(pathspecs.includes(':(icase,glob)**/*.ts'), 'a boundary run collapses to one');
+  assert.ok(pathspecs.includes(':(icase,glob)x**/**/y'), 'an off-boundary run is left for git');
+});
+
 test('source diff filter warns when project glob uses unsupported character-class syntax', () => {
   const warnings: string[] = [];
   const warn = console.warn;

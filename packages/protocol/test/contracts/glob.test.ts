@@ -43,6 +43,11 @@ test('segment globs follow the gitignore-like rules', () => {
 
 test('normalization collapses double-star runs and rejects character classes in both modes', () => {
   assert.equal(normalizeGlobPattern('.\\a\\**/**/**/b'), 'a/**/b');
+  assert.equal(
+    normalizeGlobPattern('x**/**/y'),
+    'x**/**/y',
+    'off-boundary runs reach git unchanged',
+  );
   assert.equal(globDoubleStarRuns('**/**/a/**/b'), 2);
   for (const options of [anchored, segment]) {
     const bad = compileGlob('src/[ab].ts', options);
@@ -53,10 +58,19 @@ test('normalization collapses double-star runs and rejects character classes in 
     assert.equal(compileGlob('a?.ts', options).regex.test('abc.ts'), false);
     assert.equal(compileGlob('a.ts', options).regex.test('aXts'), false, 'dots are literal');
     assert.equal(
-      compileGlob('a**/b', options).regex.test('ab'),
-      false,
-      'double star is special only at a segment boundary',
+      compileGlob('a**/b', options).regex.test('ax/b'),
+      true,
+      'off a boundary a double star is two plain stars',
     );
-    assert.equal(compileGlob('a**/b', options).regex.test('ax/y/b'), true);
+    assert.equal(
+      compileGlob('a**/b', options).regex.test('ax/y/b'),
+      false,
+      'and never crosses a slash',
+    );
+    assert.equal(
+      compileGlob('src/**', options).regex.test('src/a/b.ts'),
+      true,
+      'trailing /** is everything below',
+    );
   }
 });
