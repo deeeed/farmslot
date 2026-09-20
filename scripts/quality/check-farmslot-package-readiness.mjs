@@ -146,8 +146,22 @@ const packages = [
     dir: 'packages/capabilities',
     publicDoc: 'https://farmslot.io/docs/reference/capabilities',
     // Ships TypeScript source (no build, no dist): consumers run it through tsx.
-    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/fs-watch.ts'],
-    packRequiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/fs-watch.ts'],
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'src/fs-watch.ts',
+      'src/screen-frame.ts',
+      'src/screen-h264.ts',
+    ],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'src/fs-watch.ts',
+      'src/screen-frame.ts',
+      'src/screen-h264.ts',
+    ],
   },
   {
     name: '@farmslot/handoff',
@@ -364,10 +378,16 @@ function checkNpmScopeConfig() {
 }
 
 function buildPackage(pkgSpec) {
-  // A package that ships source (capabilities) declares no build script; there
-  // is nothing to build and no dist to check, so the step passes through.
+  // A package that ships source (capabilities: main and exports point at src/)
+  // has nothing to build. A package whose entry points live in dist/ must build,
+  // so a dropped build script on such a package fails here instead of shipping
+  // a stale or missing dist.
   const manifest = readJson(path.join(pkgSpec.dir, 'package.json'));
-  if (!manifest.scripts?.build) return true;
+  const shipsFromDist =
+    (typeof manifest.main === 'string' && manifest.main.startsWith('dist/')) ||
+    JSON.stringify(manifest.exports ?? {}).includes('"./dist/') ||
+    JSON.stringify(manifest.exports ?? {}).includes('"dist/');
+  if (!shipsFromDist && !manifest.scripts?.build) return true;
   const result = spawnSync('yarn', ['workspace', pkgSpec.name, 'build'], {
     cwd: process.cwd(),
     encoding: 'utf8',

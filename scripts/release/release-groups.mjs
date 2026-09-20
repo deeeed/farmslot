@@ -10,15 +10,17 @@ const packagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
  * the manifests rather than hand-listed: the list used to omit packages that
  * were published (handoff) or bumped but never published (capabilities 0.1.1).
  */
-export function publishableWorkspaces() {
+export function publishableWorkspaces(root = packagesDir) {
   const manifests = [];
-  for (const dir of readdirSync(packagesDir, { withFileTypes: true })) {
+  for (const dir of readdirSync(root, { withFileTypes: true })) {
     if (!dir.isDirectory()) continue;
-    const manifestPath = path.join(packagesDir, dir.name, 'package.json');
+    const manifestPath = path.join(root, dir.name, 'package.json');
     let pkg;
     try {
       pkg = JSON.parse(readFileSync(manifestPath, 'utf8'));
     } catch (error) {
+      // A directory without a manifest is not a package (fixtures, scratch); any other
+      // read or parse failure is reported, never skipped.
       if (error && error.code === 'ENOENT') continue;
       throw error;
     }
