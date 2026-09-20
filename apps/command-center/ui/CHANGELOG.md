@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.0 - 2026-09-20
+
 - Run detail shows an acceptance-criteria panel (ADR-060): a row per criterion with its verdict, proof mode, evidence links (through the run-artifact endpoint) and note, counted as `proven/total` against the criteria the task registered. A criterion the worker has not judged yet reads `no verdict` rather than being hidden, and the panel opens while any criterion is unproven.
 - The acceptance panel shows `ledger unreadable: <reason>` when the gateway could not read the ledger or the criteria list, instead of rendering nothing.
 - Task-progress updates from a child checklist unit are accepted while their parent checklist is the active one, through the shared protocol rule (ADR-060). No child rendering yet.
@@ -12,7 +16,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Extra-review checklist progress stays visible on human-gate and package-refresh while the reviewer is working. Waiting on extra-review findings says so instead of "Worker finished", and the pipeline marks the publish-gate as now. Opening a step inspector no longer duplicates the live checklist under the canvas; the inspector keeps the boxes when live progress has not bound yet.
 - A checklist step that owns a child unit shows it nested under the step: source, status (running, blocked, stale, complete), its own step count, current step, and its steps on expand. Progress tracker, run-detail pipeline panel and step inspector all render it, the parent's own counts are unchanged, and expanding or collapsing a unit sticks while progress keeps updating but starts fresh when the view moves to another run (the last three runs are remembered).
 - Checklist timing in the gate summary (retrospective and publication gate) lists each child unit's own steps under the step it hangs off, titled by its source; a child whose parent step never got ticked still gets a row.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18
 

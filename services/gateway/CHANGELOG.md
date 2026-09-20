@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.0 - 2026-09-20
+
 - `diff_analysis.source_filter` globs compile through the shared protocol `compileGlob` (anchored, case-insensitive); matching is unchanged for every default and documented pattern, and a double star not followed by a slash and not trailing is now a plain star, which is how git reads the emitted pathspec (`a**b` no longer crosses a slash).
 - A chat-suggested action can no longer target the `subtask` role: a child checklist unit is observed, never spawned, so role normalization accepts only dispatchable session roles.
 - Child checklist units (ADR-060) are observed end to end: the task watcher follows the `subtasks/` directory beside each checklist (local) or each child file through the node (remote) and picks up a registry that already exists when it arms, `task.progress` returns the child under the step that owns it (steps completed, current step, source digests, last mark time, and a projected `stale` after 15 idle minutes), `subtasks/` travels to the slot with `assets/`, `inputs/` and `artifacts/` through one shared list and mirrors back per file as `subtasks/<name>.worker`, a terminal signal with an unsettled child is refused as an artifact-contract failure naming the unit, and each child's step count, duration and source land on `run.metrics.subtasks` and in the gate summary's per-step timing.
@@ -16,7 +20,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - `git.branchDiff` stamps each file with `kind: code | test` from the built-in test patterns plus the project's `diff_view` overrides, and returns the effective `testFilePatterns`.
 - `run.archive` accepts a settled blocked run (nothing running, no pending decision) so the operator can close it while keeping the blocked outcome; the linked backlog item stays at needs-attention instead of requeueing, a run whose slot still lists it (uncertain prompt delivery) is refused, and cancel remains the way to stop a live one.
 - Gateway restart re-opens the publication gate instead of silently re-sending leftover extra-review findings to the worker, and leaves a blocked run with nothing left to advance (worker signaled `blocked`, uncertain prompt delivery) in that state instead of restarting it at self-review. `task.progress` derives the flow type from the project's task dir. Extra-review auto-fix cannot raise past project `self_review.max_retries`. Re-review after a worker fix (loop 2+) is incremental and must read the worker's Self-Review Fixes report; Cursor still argv-respawns because pane send cannot prove acceptance.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.14.0 - 2026-09-18
 

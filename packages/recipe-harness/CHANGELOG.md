@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.18.0 - 2026-09-20
+
+- Published against `@farmslot/protocol` 0.30.0 so one protocol copy serves every dependent (child checklist units and the acceptance ledger arrive through that pin).
+
 ## 0.17.0 - 2026-09-18
 
 - Publish against `@farmslot/protocol` 0.29.0 so downstream installs resolve one protocol version.

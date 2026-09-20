@@ -4,8 +4,11 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-- README documents the checklist-shaped skill rule: a skill invoked as a child checklist unit (ADR-060) needs `##` sections and `- [ ]` rows the shared parser can enumerate, informational sections named so the skip list drops them, and numbered labels matching their positions. A prose-only skill cannot be a child unit.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.5.0 - 2026-09-20
+
+- README documents the checklist-shaped skill rule: a skill invoked as a child checklist unit (ADR-060) needs `##` sections and `- [ ]` rows the shared parser can enumerate, informational sections named so the skip list drops them, and numbered labels matching their positions. A prose-only skill cannot be a child unit.
 
 ## 0.4.0 - 2026-09-17
 
