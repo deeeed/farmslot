@@ -92,7 +92,9 @@ export function activeTaskProgressStepId(
 }
 
 export function isWorkerProgressActive(run: Run | null | undefined): boolean {
-  if (!run?.slotId) return false;
+  // A slot-free static review workspace (ADR-058) runs its reviewer in the
+  // workspace, so the run itself — not a slot — is what says progress is live.
+  if (!run || (!run.slotId && !run.reviewWorkspace)) return false;
   if (
     run.status === 'monitoring' ||
     run.status === 'paused' ||
@@ -127,6 +129,20 @@ export function isSlotWorkerProgressActive(
 }
 
 /**
+ * Does this update belong to the run on screen? A static review workspace run
+ * (ADR-058) has no slot, and its progress publishes under an empty slot id, so
+ * the comparison is on the pair rather than on a slot id only a slot run has.
+ * Same rule as Command Center's `taskProgressUpdateTargetsRun`.
+ */
+export function taskProgressUpdateTargetsRun(
+  run: Pick<Run, 'id' | 'slotId'> | null | undefined,
+  update: Pick<TaskProgressUpdatedPayload, 'slotId' | 'runId'>,
+): boolean {
+  if (!run) return false;
+  return (run.slotId ?? '') === update.slotId && update.runId === run.id;
+}
+
+/**
  * Slot/run identity check, then the shared protocol rule. The rule replaced a
  * local `SELF-REVIEW.md` string test that knew only one role checklist and
  * nothing about child units (ADR-060), so Companion and Command Center now drop
@@ -136,8 +152,8 @@ export function shouldAcceptTaskProgressUpdate(
   run: Run | null | undefined,
   update: TaskProgressUpdatedPayload,
 ): boolean {
-  if (!run?.slotId || update.slotId !== run.slotId || update.runId !== run.id) return false;
-  return shouldAcceptTaskProgressForActiveChecklist(run, update);
+  if (!taskProgressUpdateTargetsRun(run, update)) return false;
+  return shouldAcceptTaskProgressForActiveChecklist(run ?? null, update);
 }
 
 export function taskProgressPercent(progress: TaskProgressStructured): number {

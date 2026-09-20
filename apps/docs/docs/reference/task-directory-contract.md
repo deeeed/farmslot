@@ -37,11 +37,11 @@ This is the only layout the task writer produces. One flow keeps its own pairing
     …                              flow-specific inputs (planning context, PR comments, inherited context)
   assets/                          ticket attachments
   artifacts/                       worker output: reports, recipes, evidence; sandbox.json readiness record
+    acceptance-status.json         acceptance-criteria ledger; written only by `farmslot-agent ac`
   subtasks/                        child checklist units, written only by mark sub
     index.json                     registry of registered units (id, parent step, paths, source digests)
     <id>.md                        child checklist, materialized from a skill, template, or inline text
     <id>-SIGNAL.json               child signal (WorkerSignal + the parent link)
-    acceptance-status.json         acceptance-criteria ledger; written only by `farmslot-agent ac`
 ```
 
 ## Producers and consumers
@@ -144,7 +144,9 @@ Kept current with the layout. Each row is something the layout still carries tha
 
 ## What travels to the slot
 
-Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list. Slot-free review workspaces keep their own view mirror and do not yet copy `subtasks/`.
+Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list.
+
+A slot-free static review workspace (ADR-058) mirrors the same directory into its operator-visible `view/`, under the worker's own names rather than `*.worker`, so `subtasks/index.json`'s own relative paths still resolve there after the workspace is cleaned up.
 
 The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
 

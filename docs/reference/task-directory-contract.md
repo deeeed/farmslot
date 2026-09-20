@@ -140,7 +140,7 @@ Kept current with the layout. Each row is something the layout still carries tha
 
 ## What travels to the slot
 
-Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list. Slot-free review workspaces keep their own view mirror and do not yet copy `subtasks/` (pending `feat/subtask-review-workspace-parity`).
+Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list.
 
 A slot-free static review workspace (ADR-058) mirrors the same directory into its operator-visible `view/`, under the worker's own names rather than `*.worker`, so `subtasks/index.json`'s own relative paths still resolve there after the workspace is cleaned up.
 

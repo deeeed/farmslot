@@ -10,6 +10,7 @@ import {
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressUpdateTargetsRun,
 } from './task-progress';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -107,6 +108,54 @@ test('accepts only progress updates for the matching run and active context', ()
     }),
     false,
   );
+});
+
+test('a progress update targets the run it names, slot run or review workspace', () => {
+  const slotRun = makeRun();
+  // A static review workspace run (ADR-058) has no slot; its progress publishes
+  // with an empty slot id, which used to fail against a null slotId.
+  const workspaceRun = makeRun({
+    id: 'run-workspace',
+    slotId: null,
+    flowType: 'review-pr',
+    reviewWorkspace: {
+      workspaceId: 'workspace-1',
+      machine: 'macwork',
+      executionNodeId: 'local',
+      checkoutPath: '/repo',
+      taskPath: '/repo/task',
+      artifactPath: '/repo/task/artifacts',
+    },
+  } as Partial<Run>);
+  const workspaceUpdate = { slotId: '', runId: 'run-workspace' };
+
+  assert.equal(taskProgressUpdateTargetsRun(slotRun, { slotId: 'slot-1', runId: 'run-1' }), true);
+  assert.equal(taskProgressUpdateTargetsRun(slotRun, { slotId: 'slot-2', runId: 'run-1' }), false);
+  assert.equal(taskProgressUpdateTargetsRun(workspaceRun, workspaceUpdate), true);
+  assert.equal(taskProgressUpdateTargetsRun(slotRun, workspaceUpdate), false);
+  assert.equal(taskProgressUpdateTargetsRun(null, workspaceUpdate), false);
+
+  // The whole rule, protocol checklist check included.
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(workspaceRun, {
+      ...workspaceUpdate,
+      role: 'review',
+      contextId: 'review',
+      progress: { slotId: '', markdown: '' },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(slotRun, {
+      ...workspaceUpdate,
+      role: 'review',
+      contextId: 'review',
+      progress: { slotId: '', markdown: '' },
+    }),
+    false,
+  );
+  // A workspace run is live for progress even though it has no slot.
+  assert.equal(isWorkerProgressActive(workspaceRun), true);
 });
 
 test('builds CI fix progress from ci-watch outputs', () => {
