@@ -68,3 +68,28 @@ test('existing notifications and clipboard permissions require the app main fram
   }
   assert.equal(allowsPermission(window, contents, 'media', details, origin), false);
 });
+
+test('preload navigation changes only a Command Center fragment', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { runInNewContext } = await import('node:vm');
+  const listeners = new Map();
+  const location = { pathname: '/cc/', hash: '#fleet' };
+  runInNewContext(readFileSync(new URL('../src/preload.cjs', import.meta.url), 'utf8'), {
+    location,
+    require: (name) => {
+      assert.equal(name, 'electron');
+      return {
+        contextBridge: { exposeInMainWorld() {} },
+        ipcRenderer: { on: (channel, callback) => listeners.set(channel, callback) },
+      };
+    },
+  });
+  const navigate = listeners.get('desktop:navigate');
+  navigate({}, '#runs?run=example');
+  assert.equal(location.hash, '#runs?run=example');
+  navigate({}, 'https://another.example');
+  assert.equal(location.hash, '#runs?run=example');
+  location.pathname = '/settings';
+  navigate({}, '#slot/runner-1');
+  assert.equal(location.hash, '#runs?run=example');
+});

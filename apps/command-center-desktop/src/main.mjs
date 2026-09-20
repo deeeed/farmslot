@@ -120,7 +120,20 @@ function saveWindowBounds() {
 async function showWindow(route) {
   if (!window || window.isDestroyed()) await createWindow();
   if (window.isMinimized()) window.restore();
-  if (route && connection) await window.loadURL(`${server.origin}/cc/${route}`);
+  if (route && connection) {
+    const current = window.webContents.getURL();
+    if (
+      isAppPage(current, server.origin) &&
+      new URL(current).pathname === '/cc/' &&
+      !window.webContents.isLoadingMainFrame()
+    ) {
+      // loadURL waits for a full document load, which a fragment change may
+      // never produce. The preload receives this even before the UI boots.
+      window.webContents.send('desktop:navigate', route);
+    } else {
+      await window.loadURL(`${server.origin}/cc/${route}`);
+    }
+  }
   window.show();
   window.focus();
 }
