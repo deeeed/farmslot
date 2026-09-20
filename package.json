@@ -68,6 +68,7 @@
     "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts",
     "e2e:subtask-mark": "tsx scripts/e2e-subtask-mark.mts",
     "e2e:subtask-gateway": "tsx scripts/e2e-subtask-gateway.mts",
+    "e2e:subtask-workspace": "tsx scripts/e2e-subtask-workspace.mts",
     "e2e:acceptance-ledger": "tsx scripts/e2e-acceptance-ledger.mts",
     "e2e:acceptance-gateway": "tsx scripts/e2e-acceptance-gateway.mts",
     "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs",

@@ -37,6 +37,7 @@ import {
   shouldAcceptTaskProgressUpdate,
   shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
+  taskProgressUpdateTargetsRun,
   TRIMMED_RUN_FETCH_RETRY_MS,
 } from './run-detail-model.js';
 
@@ -683,4 +684,30 @@ test('the acceptance wrapper carries parentChecklist so a child unit update is p
     shouldAcceptTaskProgressUpdate(workerRun, { role: 'subtask', contextId: 'perps-review' }),
     false,
   );
+});
+
+test('a progress update targets the run it names, slot run or review workspace', () => {
+  const slotRun = { id: 'run-slot', slotId: 'macwork-ff-1' };
+  const workspaceRun = { id: 'run-workspace', slotId: null };
+
+  assert.equal(
+    taskProgressUpdateTargetsRun(slotRun, { slotId: 'macwork-ff-1', runId: 'run-slot' }),
+    true,
+  );
+  assert.equal(
+    taskProgressUpdateTargetsRun(slotRun, { slotId: 'macwork-ff-2', runId: 'run-slot' }),
+    false,
+    'another slot’s update is not this run’s',
+  );
+  // A static review workspace run has no slot; its progress publishes with an
+  // empty slot id, which used to fail the comparison against a null slot.
+  assert.equal(
+    taskProgressUpdateTargetsRun(workspaceRun, { slotId: '', runId: 'run-workspace' }),
+    true,
+  );
+  assert.equal(
+    taskProgressUpdateTargetsRun(workspaceRun, { slotId: '', runId: 'another-run' }),
+    false,
+  );
+  assert.equal(taskProgressUpdateTargetsRun(null, { slotId: '', runId: 'run-workspace' }), false);
 });

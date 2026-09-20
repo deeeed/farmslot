@@ -21,7 +21,7 @@ import { selectAgentContext } from '../agents/contexts.js';
 import { loadSlotVars, normalizeSlotTaskRel, resolveTaskPaths } from '../core/config.js';
 import { type SlotLocality, slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { readReviewWorkspaceChecklist } from '../review-workspaces/task.js';
+import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
@@ -37,15 +37,24 @@ import { generateTaskSchema } from '../tasks/writer.js';
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
   if (!params.slotId && params.runId) {
     if (params.taskFile) throw new Error('Workspace progress uses the run’s recorded task');
-    const markdown = await readReviewWorkspaceChecklist(params.runId);
-    const schema = generateTaskSchema(markdown, 'review-pr');
-    return {
+    // A slot-free review workspace (ADR-058) reads through its own confined task
+    // directory, but everything beside the checklist is the same contract a slot
+    // run has: child checklist units under `subtasks/` and the acceptance ledger
+    // (ADR-060). Same read layers, same projection, so a static review reports a
+    // child under its parent step exactly as a slot worker does.
+    const source = await readReviewWorkspaceProgress(params.runId);
+    const schema = generateTaskSchema(source.markdown, 'review-pr');
+    const structured = joinSchemaWithMarkdown(schema, source.markdown);
+    const result: TaskProgressResult = {
       slotId: '',
       contextId: 'review',
       role: 'review',
-      markdown,
-      structured: joinSchemaWithMarkdown(schema, markdown),
+      markdown: source.markdown,
+      structured,
     };
+    await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+    await attachAcceptanceStatus(source.io, source.checklistPath, result);
+    return result;
   }
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === params.slotId);

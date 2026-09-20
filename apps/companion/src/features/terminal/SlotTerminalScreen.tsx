@@ -79,6 +79,7 @@ import {
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import type { TerminalControlKey } from '../../lib/terminal-controls';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
@@ -588,12 +589,10 @@ export default function TerminalScreen() {
   ]);
 
   const fetchTaskProgress = useCallback(() => {
-    if (!client || !targetRun?.slotId) return Promise.resolve();
+    const params = taskProgressRequestForRun(targetRun);
+    if (!client || !params) return Promise.resolve();
     return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: targetRun.slotId,
-        runId: targetRun.id,
-      })
+      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
         setTaskProgress(result.structured ?? null);
         setTaskProgressError(null);
@@ -601,7 +600,7 @@ export default function TerminalScreen() {
       .catch((error: Error) => {
         setTaskProgressError(`Task progress unavailable: ${error.message}`);
       });
-  }, [client, targetRun?.id, targetRun?.slotId]);
+  }, [client, targetRun?.id, targetRun?.slotId, targetRun?.reviewWorkspace?.workspaceId]);
 
   useEffect(() => {
     if (!client || !targetRun) return;

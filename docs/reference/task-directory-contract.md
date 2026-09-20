@@ -44,22 +44,22 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 One producer writes the shared layer on every surface: `taskInit` / `farmslot-agent task init` in `@farmslot/agent-runtime`. The gateway composes the same pieces (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps; mm-harness wraps the CLI with MetaMask defaults; the recipe-cook skill calls mm-harness.
 
-| File                                   | Producer                                                | Consumer                                                               |
-| -------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                |
-| `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress               |
-| `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                 |
-| `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                 |
-| `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                |
-| `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
-| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold        |
-| `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                          |
-| `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, progress projection                      |
-| `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection                                |
-| `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, progress projection, terminal contract check     |
-| `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel   |
-| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                       |
-| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow) |
+| File                                   | Producer                                                | Consumer                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                                                              |
+| `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress                                                             |
+| `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                                                               |
+| `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                                                               |
+| `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                                                              |
+| `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run`                                               |
+| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold                                                      |
+| `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                                                                        |
+| `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, review-workspace progress publisher, progress projection, view mirror                  |
+| `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection, view mirror                                                                 |
+| `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, review-workspace progress publisher, progress projection, terminal contract check, view mirror |
+| `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel                                                 |
+| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                                                                     |
+| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow)                                               |
 
 ## Provenance
 
@@ -140,7 +140,9 @@ Kept current with the layout. Each row is something the layout still carries tha
 
 ## What travels to the slot
 
-Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list. Slot-free review workspaces keep their own view mirror and do not yet copy `subtasks/` (pending `feat/subtask-review-workspace-parity`).
+Dispatch copies `TASK.md`, then the task-root sidecars (`mark`, `CHECKLIST.md`, and `checklist-target.json` when present), then `assets/`, `inputs/`, `artifacts/`, and `subtasks/` as directories. Re-sync and warm-session handoff use the same list. At completion the gateway mirrors `artifacts/`, `TASK.md`, and `CHECKLIST.md` back beside the orchestrator copy as `*.worker`, and every file under `subtasks/` as `subtasks/<name>.worker` from a directory listing — child ids are chosen at registration, so there is no fixed name list.
+
+A slot-free static review workspace (ADR-058) mirrors the same directory into its operator-visible `view/`, under the worker's own names rather than `*.worker`, so `subtasks/index.json`'s own relative paths still resolve there after the workspace is cleaned up.
 
 The mirror travels one way. `*.worker` files are orchestrator-owned output written **from** the slot, so the outbound copy skips them: re-dispatching, nudging, or warm-handing off a task directory that already completed once must not put stale copies of the worker's own files back beside the live ones.
 

@@ -138,6 +138,20 @@ export function hasActiveInlineCiFix(run: Pick<Run, 'steps'>): boolean {
   );
 }
 
+/**
+ * Does this progress update belong to the run on screen? A static review
+ * workspace run (ADR-058) has no slot, and its progress publishes under an empty
+ * slot id, so the comparison is on the pair rather than on a slot id that only a
+ * slot run has.
+ */
+export function taskProgressUpdateTargetsRun(
+  run: Pick<Run, 'id' | 'slotId'> | null,
+  update: Pick<TaskProgressUpdatedPayload, 'slotId' | 'runId'>,
+): boolean {
+  if (!run) return false;
+  return (run.slotId ?? '') === update.slotId && update.runId === run.id;
+}
+
 export function shouldAcceptTaskProgressUpdate(
   run: Pick<Run, 'activeTaskFile' | 'taskFile'> | null,
   // `parentChecklist` travels on child-unit updates (ADR-060); the protocol rule

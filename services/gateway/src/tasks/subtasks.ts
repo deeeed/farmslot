@@ -422,6 +422,33 @@ export function subtaskRegistryContractMessage(
   );
 }
 
+/**
+ * Refuse a terminal mark while a registered child is unsettled, as one verdict.
+ *
+ * Both callers need exactly this: the slot terminal check turns it into an
+ * artifact verdict for the worker, and the review-workspace completion read
+ * rejects the signal with it. Neither may decide on its own what an unreadable
+ * registry means, so the registry error is converted here — completion cannot be
+ * PROVEN — and every other failure (transport, permissions on the task dir)
+ * still propagates to the caller.
+ *
+ * Returns null when the task directory has no open child.
+ */
+export async function subtaskTerminalRefusal(
+  ctx: SlotLocality,
+  taskDir: string,
+  terminalCommand: string,
+): Promise<string | null> {
+  let open: OpenSubtaskUnit[];
+  try {
+    open = await listOpenSubtaskUnits(ctx, taskDir);
+  } catch (err) {
+    if (!(err instanceof SubtaskRegistryError)) throw err;
+    return subtaskRegistryContractMessage(err, terminalCommand);
+  }
+  return open.length > 0 ? openSubtaskContractMessage(open, terminalCommand) : null;
+}
+
 /** Worker-facing description of the open children blocking a terminal mark. */
 export function openSubtaskContractMessage(
   open: readonly OpenSubtaskUnit[],

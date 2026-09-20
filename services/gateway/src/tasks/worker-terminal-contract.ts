@@ -28,12 +28,7 @@ import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
-import {
-  listOpenSubtaskUnits,
-  openSubtaskContractMessage,
-  subtaskRegistryContractMessage,
-  SubtaskRegistryError,
-} from './subtasks.js';
+import { subtaskTerminalRefusal } from './subtasks.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -136,29 +131,10 @@ export async function validateTerminalSignalArtifacts(
   // The mark engine already refuses a parent terminal command with an open
   // child, but a signal written around the engine — by hand, by an older node's
   // `mark`, or by a runner that edited the file — would otherwise sail through,
-  // so the gateway asserts it too, from the child signals on the slot.
-  let openSubtasks: Awaited<ReturnType<typeof listOpenSubtaskUnits>>;
-  try {
-    openSubtasks = await listOpenSubtaskUnits(vars, taskDir);
-  } catch (err) {
-    // A registry the gateway cannot read is an artifact verdict, not a crash: it
-    // means completion cannot be PROVEN, which is exactly what this function
-    // reports. Only the registry's own failure is converted; anything else
-    // (transport, permissions on the task dir) still propagates to the caller.
-    if (!(err instanceof SubtaskRegistryError)) throw err;
-    return {
-      ok: false,
-      kind: 'artifact',
-      message: subtaskRegistryContractMessage(err, terminalCommand),
-    };
-  }
-  if (openSubtasks.length > 0) {
-    return {
-      ok: false,
-      kind: 'artifact',
-      message: openSubtaskContractMessage(openSubtasks, terminalCommand),
-    };
-  }
+  // so the gateway asserts it too, from the child signals on the slot. The
+  // review-workspace completion read calls the same refusal on its own task dir.
+  const openChild = await subtaskTerminalRefusal(vars, taskDir, terminalCommand);
+  if (openChild) return { ok: false, kind: 'artifact', message: openChild };
 
   const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
   const contractInput = checklistBasename

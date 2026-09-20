@@ -45,6 +45,7 @@ import {
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import {
   selectReadyWorkspaceDecision,
@@ -423,12 +424,10 @@ export function useFamilyWorkspaceController() {
   }, [refreshSelectedFullRun, selectedRun?.runId]);
 
   const fetchTaskProgress = useCallback(() => {
-    if (!client || !selectedFullRun?.slotId) return Promise.resolve();
+    const params = taskProgressRequestForRun(selectedFullRun);
+    if (!client || !params) return Promise.resolve();
     return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: selectedFullRun.slotId,
-        runId: selectedFullRun.id,
-      })
+      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
         setTaskProgress(result.structured ?? null);
         setTaskProgressError(null);
@@ -436,7 +435,12 @@ export function useFamilyWorkspaceController() {
       .catch((err: Error) => {
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
-  }, [client, selectedFullRun?.id, selectedFullRun?.slotId]);
+  }, [
+    client,
+    selectedFullRun?.id,
+    selectedFullRun?.slotId,
+    selectedFullRun?.reviewWorkspace?.workspaceId,
+  ]);
 
   useEffect(() => {
     if (!client || !selectedFullRun) return;

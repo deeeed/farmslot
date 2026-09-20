@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - No behaviour change: the child-unit module's doc comment now cites the task directory contract, because the ADR-060 implementation plan it referenced was deleted when that ADR was accepted.
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Child checklist units and the acceptance ledger (ADR-060) now reach a slot-free static review workspace (ADR-058) the same way they reach a slot run: `task.progress` returns the child under the step that owns it and the ledger beside it, the monitor step publishes progress as a child marks (tagged with its parent checklist when no parent box moved) and refreshes the operator-visible view with the worker's `CHECKLIST.md`, its `subtasks/` files under their own names and the ledger, a completion signal written around the mark engine is refused while a child is unsettled, and each child's step count, duration and source land on `run.metrics.subtasks`.
 
 ## 0.15.0 - 2026-09-20
 

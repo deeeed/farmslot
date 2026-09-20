@@ -80,6 +80,7 @@ import {
   shouldAcceptTaskProgressUpdate,
   shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
+  taskProgressUpdateTargetsRun,
 } from './run-detail-model.js';
 import {
   canResolveWithPostureChoice,
@@ -152,8 +153,7 @@ export class RunDetail extends RunDetailState {
       (p) => {
         if (
           p.progress?.structured &&
-          this.run?.slotId === p.slotId &&
-          p.runId === this.runId &&
+          taskProgressUpdateTargetsRun(this.run ?? null, p) &&
           shouldAcceptTaskProgressUpdate(this.run, p)
         ) {
           this.taskProgress = p.progress.structured;

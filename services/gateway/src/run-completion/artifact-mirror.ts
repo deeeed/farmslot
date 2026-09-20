@@ -303,32 +303,52 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
       label: `${document}.worker`,
     });
   }
-  await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, transferMeta);
+  await mirrorWorkerSubtasks(vars, workerTaskDir, taskDir, { transfer: transferMeta });
   return copied;
 }
 
+export interface MirrorWorkerSubtasksOptions {
+  /** Transfer telemetry for the chunked path. A review workspace has no slot. */
+  transfer?: { runId?: string; slotId?: string };
+  /**
+   * Destination basename for one worker file. Defaults to `<entry>.worker`, the
+   * orchestrator-copy convention: those files sit beside the gateway's own
+   * `CHECKLIST.md`, so the suffix is what says which side wrote them. A mirror
+   * whose whole directory is the worker's copy — the review-workspace view —
+   * passes identity instead, so `subtasks/index.json`'s own
+   * `subtasks/<id>.md` paths still resolve inside it.
+   */
+  destinationName?: (entry: string) => string;
+}
+
 /**
- * Mirror every child checklist unit file (ADR-060) beside the orchestrator copy
- * as `subtasks/<name>.worker`, the same pattern as `TASK.md.worker`.
+ * Mirror every child checklist unit file (ADR-060) into a target task directory,
+ * by default as `subtasks/<name>.worker`, the same pattern as `TASK.md.worker`.
  *
  * Driven by a directory listing rather than a fixed name list: child ids are
  * chosen by the worker at registration, so the gateway cannot know the names in
  * advance. Child files are worker-owned — `isGatewayOwnedArtifactMirrorEntry`
- * does not claim them — so the `.worker` suffix is what keeps the mirror from
+ * does not claim them — so the destination naming is what keeps the mirror from
  * looking like a file the gateway authored.
+ *
+ * Returns how many files were copied.
  */
 export async function mirrorWorkerSubtasks(
   vars: SlotLocality,
   workerTaskDir: string,
   taskDir: string,
-  transferMeta: { runId: string; slotId: string },
-): Promise<void> {
+  options: MirrorWorkerSubtasksOptions = {},
+): Promise<number> {
+  const transferMeta = options.transfer ?? {};
+  const destinationName =
+    options.destinationName ?? ((entry: string) => `${entry}${WORKER_MIRROR_SUFFIX}`);
   const workerSubtasksDir = path.join(workerTaskDir, SUBTASKS_DIR);
-  if (!(await slotFileExists(vars, workerSubtasksDir))) return;
+  if (!(await slotFileExists(vars, workerSubtasksDir))) return 0;
   const entries = await slotListDir(vars, workerSubtasksDir);
-  if (entries.length === 0) return;
+  if (entries.length === 0) return 0;
   const localSubtasksDir = path.join(taskDir, SUBTASKS_DIR);
   await mkdir(localSubtasksDir, { recursive: true });
+  let copied = 0;
   for (const entry of entries) {
     // A leftover mirror copied back by an earlier dispatch is not worker output.
     if (entry.endsWith(WORKER_MIRROR_SUFFIX)) continue;
@@ -357,12 +377,15 @@ export async function mirrorWorkerSubtasks(
       console.warn(`[run-completion] skipping non-file ${SUBTASKS_DIR}/ entry ${entry}`);
       continue;
     }
-    await slotCopyFile(vars, workerPath, path.join(localSubtasksDir, `${entry}.worker`), {
+    const destination = destinationName(entry);
+    await slotCopyFile(vars, workerPath, path.join(localSubtasksDir, destination), {
       phase: 'mirror',
       ...transferMeta,
-      label: `${SUBTASKS_DIR}/${entry}.worker`,
+      label: `${SUBTASKS_DIR}/${destination}`,
     });
+    copied += 1;
   }
+  return copied;
 }
 
 export async function pruneRecipeRunHistory(localArtifactsDir: string): Promise<void> {
