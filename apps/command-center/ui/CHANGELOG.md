@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Restore diff and source editor styles inside review gates in packaged desktop and production web builds, where bundled CSS filenames no longer identify their libraries.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.16.0 - 2026-09-20

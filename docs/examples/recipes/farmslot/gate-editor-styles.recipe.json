@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Packaged gate diff styles",
+  "description": "Set FARMSLOT_REVIEW_RUN_ID and FARMSLOT_CDP_PORT for an authenticated production test client showing a real review gate. Reads the frozen file diff through git.diff and checks split/unified rendering without resolving or publishing the review.",
+  "workflow": {
+    "entry": "gate-diff",
+    "nodes": {
+      "gate-diff": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/verify-gate-editor-styles.mts",
+        "timeout_ms": 60000,
+        "intent": "The gate displays the gateway's real diff and both split panes share a row, with the modified code visible to the right. Unified mode retains code lines.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
