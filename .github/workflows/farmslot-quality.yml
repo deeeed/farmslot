@@ -214,6 +214,9 @@ jobs:
       - name: Runner observability installer tests
         run: node --test scripts/install-runner-observability.test.mjs
 
+      - name: Node deploy rendering tests
+        run: node --test scripts/deploy-node.test.mjs
+
       - name: LOC history drift advisory
         run: yarn quality:loc:advisory
 
