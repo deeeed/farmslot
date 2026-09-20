@@ -33,6 +33,7 @@ import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
 import { ACCEPTANCE_STATUS_FILENAME, acceptanceStatusPathFor } from './acceptance-status.js';
+import { hashChecklistCheckboxes } from './checklist-hash.js';
 import {
   resolveTaskProgressMarkdownPath,
   resolveTaskProgressMarkdownPathForSlot,
@@ -972,7 +973,7 @@ async function computeAndEmit(
       }
 
       // Quick hash of checkbox states to avoid redundant broadcasts
-      const checkboxHash = hashCheckboxes(markdown);
+      const checkboxHash = hashChecklistCheckboxes(markdown);
       if (checkboxHash === sw.lastCheckboxHash) return;
       sw.lastCheckboxHash = checkboxHash;
     }
@@ -1002,17 +1003,6 @@ async function computeAndEmit(
       `[task-watcher] progress read failed for ${key} (${sw.taskFilePath}): ${(err as Error).message}`,
     );
   }
-}
-
-function hashCheckboxes(markdown: string): string {
-  // Fast: just concat checkbox states as a string
-  let hash = '';
-  for (const line of markdown.split('\n')) {
-    const t = line.trim();
-    if (t.startsWith('- [x]') || t.startsWith('- [X]')) hash += '1';
-    else if (t.startsWith('- [ ]')) hash += '0';
-  }
-  return hash;
 }
 
 // ─── Handle SIGNAL.json changes ───

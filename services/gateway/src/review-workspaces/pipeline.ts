@@ -107,26 +107,43 @@ export function ownsWorkspaceGeneration(runId: string, generation: number): bool
 }
 
 /**
- * The run's child-unit roll-up (ADR-060) for `run.metrics.subtasks`, or null when
- * it cannot be read.
+ * Persist a settled static review: its typed result and the child-unit roll-up
+ * (ADR-060) on `run.metrics.subtasks`.
  *
- * A corrupt registry must not lose the review's own metrics, which are the run's
- * primary cost record. Error level, not warn: child durations are missing from
- * the retrospective for this run and nothing downstream would say why. The same
- * read throws to its caller in `task.progress`, where the operator sees it on the
- * next progress request.
+ * ONE recording path for both worker transports. The tmux and native monitor
+ * branches read completion differently — a tmux pane is polled for its signal, a
+ * native session for its command receipt — but what they record is identical, and
+ * a second copy is how one transport quietly stops recording child metrics.
+ *
+ * A roll-up that cannot be read must not lose the review's own metrics, which are
+ * the run's primary cost record, so it is reported and dropped. Error level, not
+ * warn: child durations are then missing from the retrospective for this run and
+ * nothing downstream would say why. The same read throws to its caller in
+ * `task.progress`, where the operator sees it on the next progress request.
  */
-async function reviewWorkspaceSubtaskMetrics(runId: string) {
+export async function recordWorkspaceReviewCompletion(
+  runId: string,
+  generation: number,
+  reviewResult: NonNullable<Run['reviewResult']>,
+  deps: { collectSubtasks?: typeof collectReviewWorkspaceSubtaskMetrics } = {},
+): Promise<Run> {
+  const collectSubtasks = deps.collectSubtasks ?? collectReviewWorkspaceSubtaskMetrics;
+  let subtasks: Awaited<ReturnType<typeof collectReviewWorkspaceSubtaskMetrics>> = null;
   try {
-    return await collectReviewWorkspaceSubtaskMetrics(runId);
+    subtasks = await collectSubtasks(runId);
   } catch (error) {
     console.error(
       `[review-workspace] subtask metrics unavailable for ${runId.slice(0, 8)}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return null;
   }
+  const updated = updateRun(runId, {
+    reviewResult,
+    metrics: withSubtaskMetrics(currentWorkspaceRun(runId, generation).metrics, subtasks),
+  });
+  await persistRunNow(updated, 'workspace review result');
+  return updated;
 }
 
 async function admittedRun(runId: string, generation: number) {
@@ -429,16 +446,7 @@ export async function executeReviewWorkspaceStep(
                 completion.signal.reason ?? 'Review did not complete',
                 'review-incomplete',
               );
-            await persistRunNow(
-              updateRun(runId, {
-                reviewResult: completion.result,
-                metrics: withSubtaskMetrics(
-                  currentWorkspaceRun(runId, generation).metrics,
-                  await reviewWorkspaceSubtaskMetrics(runId),
-                ),
-              }),
-              'workspace review result',
-            );
+            await recordWorkspaceReviewCompletion(runId, generation, completion.result);
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
             return {
               outputs: {
@@ -483,16 +491,7 @@ export async function executeReviewWorkspaceStep(
               'review-incomplete',
             );
           }
-          await persistRunNow(
-            updateRun(runId, {
-              reviewResult: completion.result,
-              metrics: withSubtaskMetrics(
-                currentWorkspaceRun(runId, generation).metrics,
-                await reviewWorkspaceSubtaskMetrics(runId),
-              ),
-            }),
-            'workspace review result',
-          );
+          await recordWorkspaceReviewCompletion(runId, generation, completion.result);
           emit(Events.RUN_UPDATED, { run: getRun(runId) });
           return {
             outputs: {

@@ -13,6 +13,7 @@
 import { Events, type TaskProgressResult, type TaskStepProgress } from '@farmslot/protocol';
 
 import { taskProgress } from '../methods/task.js';
+import { hashChecklistCheckboxes } from '../tasks/checklist-hash.js';
 
 import { refreshReviewWorkspaceView } from './task.js';
 
@@ -28,17 +29,6 @@ const PARENT_CHECKLIST = 'CHECKLIST.md';
  * and the ledger, so it runs at half that rate.
  */
 export const WORKSPACE_PROGRESS_INTERVAL_MS = 2000;
-
-/** Checkbox states of the parent checklist, as the watcher's own hash does it. */
-function parentSignature(markdown: string): string {
-  let hash = '';
-  for (const line of markdown.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]')) hash += '1';
-    else if (trimmed.startsWith('- [ ]')) hash += '0';
-  }
-  return hash;
-}
 
 function structuredSteps(progress: TaskProgressResult): TaskStepProgress[] {
   return (progress.structured?.phases ?? []).flatMap((phase) => phase.steps);
@@ -142,7 +132,7 @@ export function createReviewWorkspaceProgressPublisher(
       }
       if (options.isCurrent?.() === false) return null;
 
-      const parent = parentSignature(progress.markdown);
+      const parent = hashChecklistCheckboxes(progress.markdown);
       const children = childSignature(progress);
       const ledger = ledgerSignature(progress);
       if (parent === lastParent && children === lastChildren && ledger === lastLedger) return null;

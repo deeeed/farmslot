@@ -97,6 +97,36 @@ test('mirrorWorkerSubtasks does not re-mirror its own output or walk nested dirs
   }
 });
 
+test('the review-workspace view options mirror child files under the worker names', async () => {
+  const { worker, orchestrator } = makeDirs({
+    'subtasks/index.json': '{"schemaVersion":1,"units":[]}\n',
+    'subtasks/perps-review.md': '- [x] **1. read the diff**\n',
+    'subtasks/perps-review-SIGNAL.json': '{"status":"complete"}\n',
+    // A leftover orchestrator-side mirror must not travel into the view.
+    'subtasks/index.json.worker': '{"schemaVersion":1}\n',
+  });
+  try {
+    // The options the review-workspace view passes (ADR-058): the whole
+    // destination is the worker's copy, so `subtasks/index.json`'s own
+    // `subtasks/<id>.md` paths must resolve inside it.
+    const copied = await mirrorWorkerSubtasks(LOCAL, worker, orchestrator, {
+      destinationName: (entry: string) => entry,
+    });
+    assert.equal(copied, 3, 'registry, child checklist and child signal; the mirror is skipped');
+    assert.deepEqual(readdirSync(path.join(orchestrator, 'subtasks')).sort(), [
+      'index.json',
+      'perps-review-SIGNAL.json',
+      'perps-review.md',
+    ]);
+    assert.equal(
+      readFileSync(path.join(orchestrator, 'subtasks/perps-review.md'), 'utf-8'),
+      '- [x] **1. read the diff**\n',
+    );
+  } finally {
+    rmSync(path.dirname(worker), { recursive: true, force: true });
+  }
+});
+
 test('isGatewayOwnedArtifactMirrorEntry never claims a child unit file', () => {
   for (const name of [
     'subtasks',

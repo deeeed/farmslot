@@ -44,22 +44,22 @@ This is the only layout the task writer produces. One flow keeps its own pairing
 
 One producer writes the shared layer on every surface: `taskInit` / `farmslot-agent task init` in `@farmslot/agent-runtime`. The gateway composes the same pieces (`renderTemplatePlaceholders`, `buildTaskDocument`, `writeTaskDir`) around its control-plane steps; mm-harness wraps the CLI with MetaMask defaults; the recipe-cook skill calls mm-harness.
 
-| File                                   | Producer                                                | Consumer                                                               |
-| -------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                |
-| `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress               |
-| `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                 |
-| `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                 |
-| `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                |
-| `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run` |
-| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold        |
-| `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                          |
-| `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, progress projection                      |
-| `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection                                |
-| `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, progress projection, terminal contract check     |
-| `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel   |
-| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                       |
-| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow) |
+| File                                   | Producer                                                | Consumer                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `TASK.md`                              | task init; worker may append notes                      | worker, family follow-ups, review brief                                                                              |
+| `CHECKLIST.md`                         | task init                                               | worker, `mark`, progress parser, Command Center progress                                                             |
+| `mark`                                 | task init; command is a project value (`vars.mark_cmd`) | worker                                                                                                               |
+| `checklist-target.json`                | role switch only                                        | `mark`, progress path resolution (default when absent)                                                               |
+| `SIGNAL.json`                          | `mark` only                                             | run monitor, publication gate, closeout                                                                              |
+| `inputs/handoff.json`                  | task init                                               | `handoff closeout`, learning packages, replay and eval, `farmslot run`                                               |
+| `inputs/worker-terminal-contract.json` | task init from `project.json` `worker_terminal`         | `mark` terminal commands, artifact contract check, monitor hold                                                      |
+| `inputs/bug-input.json`                | task init from the fetched ticket                       | `farmslot run`, review inputs                                                                                        |
+| `subtasks/index.json`                  | `mark sub` only                                         | worker, gateway task watcher, review-workspace progress publisher, progress projection, view mirror                  |
+| `subtasks/<id>.md`                     | `mark sub start` (materialized from the named source)   | worker, `mark sub`, progress projection, view mirror                                                                 |
+| `subtasks/<id>-SIGNAL.json`            | `mark sub` only                                         | gateway task watcher, review-workspace progress publisher, progress projection, terminal contract check, view mirror |
+| `artifacts/acceptance-status.json`     | `farmslot-agent ac` only                                | terminal contract check, PR body / gate summary, run detail AC panel                                                 |
+| `artifacts/sandbox.json`               | harness preparation (`mm-harness prepare`)              | worker, evidence package, Command Center (later)                                                                     |
+| `artifacts/*`                          | worker                                                  | publication gate, review, retrospective (see worker artifacts by flow)                                               |
 
 ## Provenance
 
