@@ -1,3 +1,5 @@
+import { getDesktopConnection, isDesktopClient } from './desktop-connection.js';
+
 export interface BrowserLocationLike {
   host: string;
   protocol: string;
@@ -158,8 +160,20 @@ export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
   return parsed.toString().replace(/\/$/, '');
 }
 
+export function readGatewayAuth(): { token?: string; password?: string } {
+  if (isDesktopClient()) {
+    const connection = getDesktopConnection();
+    return { token: connection?.token, password: connection?.password };
+  }
+  if (typeof localStorage === 'undefined') return {};
+  return {
+    token: localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) ?? undefined,
+    password: localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) ?? undefined,
+  };
+}
+
 export function persistGatewayAuthForHttp(auth: { token?: string; password?: string }): void {
-  if (typeof localStorage === 'undefined') return;
+  if (isDesktopClient() || typeof localStorage === 'undefined') return;
 
   const token = auth.token?.trim();
   const password = auth.password?.trim();
@@ -175,7 +189,7 @@ export function persistGatewayAuthForHttp(auth: { token?: string; password?: str
 }
 
 export function replaceStoredGatewayAuthForHttp(auth: { token?: string; password?: string }): void {
-  if (typeof localStorage === 'undefined') return;
+  if (isDesktopClient() || typeof localStorage === 'undefined') return;
 
   localStorage.removeItem(GATEWAY_TOKEN_STORAGE_KEY);
   localStorage.removeItem(GATEWAY_PASSWORD_STORAGE_KEY);

@@ -45,6 +45,8 @@ export default [
       '**/coverage/**',
       '**/probes/**',
       'apps/command-center/ui/dist/**',
+      'apps/command-center-desktop/ui-dist/**',
+      'apps/command-center-desktop/release/**',
       'apps/docs/build/**',
       'apps/docs/.docusaurus/**',
       'apps/companion/.expo/**',

@@ -10,6 +10,11 @@ import type {
 import { Methods, workspaceAccessFromAuth } from '@farmslot/protocol';
 
 import {
+  getDesktopConnection,
+  isDesktopClient,
+  saveDesktopCredentials,
+} from './desktop-connection.js';
+import {
   createIdleRequestTimeout,
   type GatewayRequestOptions,
   normalizeGatewayRequestOptions,
@@ -17,13 +22,12 @@ import {
 import {
   filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
-  GATEWAY_PASSWORD_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
-  GATEWAY_TOKEN_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
   parseHostedGatewayConnection,
   persistGatewayAuthForHttp,
+  readGatewayAuth,
   replaceStoredGatewayAuthForHttp,
   resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrls,
@@ -108,18 +112,16 @@ const HTTP_PASSWORD_COOKIE = 'farmslot_gateway_password';
 const HTTP_AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
+  if (isDesktopClient()) {
+    const connection = getDesktopConnection();
+    if (!connection) throw new Error('Desktop connection has not been initialized.');
+    return { urls: [connection.url], auth: readGatewayAuth(), source: 'configured' };
+  }
   const env = (import.meta as ImportMetaWithEnv).env;
+  const storedAuth = readGatewayAuth();
   const hosted = parseHostedGatewayConnection(location.hash);
-  const token =
-    env.VITE_FARMSLOT_GATEWAY_TOKEN ??
-    hosted.token ??
-    localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) ??
-    undefined;
-  const password =
-    env.VITE_FARMSLOT_GATEWAY_PASSWORD ??
-    hosted.password ??
-    localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) ??
-    undefined;
+  const token = env.VITE_FARMSLOT_GATEWAY_TOKEN ?? hosted.token ?? storedAuth.token;
+  const password = env.VITE_FARMSLOT_GATEWAY_PASSWORD ?? hosted.password ?? storedAuth.password;
   const storedCandidates = localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY);
   const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
   const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);
@@ -147,6 +149,7 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
 }
 
 function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: string): void {
+  if (isDesktopClient()) return;
   const token = auth.token?.trim();
   const password = auth.password?.trim();
   const secure = location.protocol === 'https:' ? '; Secure' : '';
@@ -266,7 +269,8 @@ export class GatewayClient {
     return 'none';
   }
 
-  setAuthCredentials(auth: GatewayAuthCredentials): void {
+  async setAuthCredentials(auth: GatewayAuthCredentials): Promise<void> {
+    await saveDesktopCredentials(auth);
     this.auth = auth;
     syncBrowserHttpAuthCookie(auth, this.url);
     this.authBlocked = false;
@@ -405,6 +409,16 @@ export class GatewayClient {
     this.lastAuthError = null;
     this.authBlocked = false;
     this.setState('connected');
+  }
+
+  reconnect(): void {
+    if (this.disposed || this.authBlocked) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.backoff = 1000;
+    this.rejectAllPending('Gateway reconnecting');
+    this.teardownSocket();
+    this.setState('disconnected');
+    this.connect();
   }
 
   disconnect(): void {
@@ -554,7 +568,7 @@ export class GatewayClient {
   }
 
   private persistConnection(): void {
-    if (this.source === 'implicit') {
+    if (isDesktopClient() || this.source === 'implicit') {
       return;
     }
     localStorage.setItem(GATEWAY_URL_STORAGE_KEY, this.url);

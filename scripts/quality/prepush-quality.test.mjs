@@ -52,6 +52,7 @@ test('selection is deterministic and order-independent for the same change set',
   assert.deepEqual(first.matched, [
     'repo',
     'command_center',
+    'desktop',
     'companion',
     'docs',
     'cli',

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Electron desktop client",
+  "description": "Drive an isolated Electron app through real CDP input against a running production gateway. Requires a dedicated validation profile, gateway, project and slot; never use the operator's gateway.",
+  "workflow": {
+    "entry": "desktop-client",
+    "nodes": {
+      "desktop-client": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-electron-client.mts temp/electron-client-live",
+        "timeout_ms": 240000,
+        "intent": "Reject an invalid credential, save a valid connection, display its fleet, create and delete a backlog item through Electron with gateway-side assertions, load source and an authenticated image, start a bundled Monaco worker, resize the terminal and execute keystrokes with a file receipt, check synthetic H.264 rendering compatibility, then reconnect using the saved credential. Synthetic video does not prove live device transport.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -4,8 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
 - Run detail accepts live task-progress updates for a static review workspace run, which has no slot, so its checklist, child units and acceptance panel refresh as the reviewer works instead of only on the periodic fetch.
+- Share the Command Center UI with the macOS desktop app, using its saved gateway and encrypted credentials while preserving browser connections.
 
 ## 0.15.0 - 2026-09-20
 
