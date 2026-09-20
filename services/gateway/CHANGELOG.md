@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- No behaviour change: the child-unit module's doc comment now cites the task directory contract, because the ADR-060 implementation plan it referenced was deleted when that ADR was accepted.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.0 - 2026-09-20
