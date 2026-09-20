@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Main-process navigation changes only the current document's fragment.
+ipcRenderer.on('desktop:navigate', (_event, route) => {
+  if (typeof route === 'string' && route.startsWith('#') && location.pathname === '/cc/') {
+    location.hash = route;
+  }
+});
+
 contextBridge.exposeInMainWorld('farmslotDesktop', {
   loadConnection: () => ipcRenderer.invoke('desktop:load-connection'),
   saveConnection: (connection) => ipcRenderer.invoke('desktop:save-connection', connection),

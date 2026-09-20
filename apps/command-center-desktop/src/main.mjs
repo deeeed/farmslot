@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -18,7 +19,9 @@ import {
 } from 'electron';
 
 import { createConnectionStore } from './connection.mjs';
+import { deepLinkFromRoute, routeFromDeepLink } from './deep-links.mjs';
 import {
+  attentionBadge,
   attentionLabel,
   createPreferencesStore,
   DEFAULT_SHORTCUT,
@@ -56,6 +59,52 @@ let shortcutError = '';
 let tray;
 let attention = { connected: false, ready: false, decisions: 0 };
 let boundsTimer;
+let desktopReady = false;
+let pendingRoute = null;
+let openingDeepLink = false;
+
+function receiveDeepLink(value) {
+  if (quitting) return;
+  const route = routeFromDeepLink(value);
+  if (!route) {
+    console.warn('Ignored unsupported Farmslot link.');
+    return;
+  }
+  pendingRoute = route;
+  flushDeepLink().catch((error) => reportError('Could not open Farmslot link', error));
+}
+
+async function flushDeepLink() {
+  if (!desktopReady || openingDeepLink || quitting) return;
+  openingDeepLink = true;
+  try {
+    while (pendingRoute && !quitting) {
+      const route = pendingRoute;
+      await showWindow(connection ? route : undefined);
+      // Connection Settings consumes the pending route after login. Do not
+      // reload that form when another link arrives while the user is typing.
+      if (!connection) break;
+      if (pendingRoute === route) pendingRoute = null;
+    }
+  } finally {
+    openingDeepLink = false;
+  }
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  receiveDeepLink(url);
+});
+
+function currentDeepLink(url = window?.webContents.getURL()) {
+  if (!url || !isAppPage(url, server.origin) || new URL(url).pathname !== '/cc/') return null;
+  return deepLinkFromRoute(new URL(url).hash);
+}
+
+function updateCopyLink(url) {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('copy-desktop-link');
+  if (item) item.enabled = Boolean(currentDeepLink(url));
+}
 
 function savePreferences(change) {
   const next = { ...preferences, ...change };
@@ -71,7 +120,20 @@ function saveWindowBounds() {
 async function showWindow(route) {
   if (!window || window.isDestroyed()) await createWindow();
   if (window.isMinimized()) window.restore();
-  if (route && connection) await window.loadURL(`${server.origin}/cc/${route}`);
+  if (route && connection) {
+    const current = window.webContents.getURL();
+    if (
+      isAppPage(current, server.origin) &&
+      new URL(current).pathname === '/cc/' &&
+      !window.webContents.isLoadingMainFrame()
+    ) {
+      // loadURL waits for a full document load, which a fragment change may
+      // never produce. The preload receives this even before the UI boots.
+      window.webContents.send('desktop:navigate', route);
+    } else {
+      await window.loadURL(`${server.origin}/cc/${route}`);
+    }
+  }
   window.show();
   window.focus();
 }
@@ -103,14 +165,11 @@ function setShortcut(value, persist = true) {
 }
 
 function updateTray() {
+  app.dock?.setBadge(attentionBadge(attention));
   if (!tray) return;
   const label = attentionLabel(attention);
   tray.setToolTip(`Farmslot: ${label}`);
-  tray.setTitle(
-    attention.connected && attention.ready && attention.decisions > 0
-      ? String(attention.decisions)
-      : '',
-  );
+  tray.setTitle(attentionBadge(attention));
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label, enabled: false },
@@ -160,6 +219,10 @@ async function loadPage(path) {
 }
 
 async function openLink(url) {
+  if (routeFromDeepLink(url)) {
+    receiveDeepLink(url);
+    return;
+  }
   switch (linkAction(url, server.origin, connection)) {
     case 'internal':
       await window.loadURL(url);
@@ -233,9 +296,12 @@ async function createWindow() {
       }, 300);
     });
   const rememberRoute = (url) => {
+    updateCopyLink(url);
     if (!isAppPage(url, server.origin) || new URL(url).pathname !== '/cc/') return;
     try {
-      savePreferences({ route: savedRoute(new URL(url).hash) });
+      const route = savedRoute(new URL(url).hash);
+      savePreferences({ route });
+      if (pendingRoute === route) pendingRoute = null;
     } catch (error) {
       reportError('Could not save last view', error);
     }
@@ -258,14 +324,22 @@ async function createWindow() {
     window = null;
   });
   window.once('ready-to-show', () => window?.show());
-  await window.loadURL(`${server.origin}${connection ? '/cc/' + preferences.route : '/settings'}`);
+  await window.loadURL(
+    `${server.origin}${connection ? '/cc/' + (pendingRoute ?? preferences.route) : '/settings'}`,
+  );
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  for (const value of process.argv.filter((arg) => /^farmslot:/i.test(arg))) receiveDeepLink(value);
+  app.on('second-instance', (_event, argv) => {
     if (quitting) return;
+    const link = argv.find((arg) => /^farmslot:/i.test(arg));
+    if (link) {
+      receiveDeepLink(link);
+      return;
+    }
     if (window) {
       if (window.isMinimized()) window.restore();
       window.show();
@@ -276,6 +350,17 @@ if (!app.requestSingleInstanceLock()) {
   app
     .whenReady()
     .then(async () => {
+      // Isolated validation profiles must not replace the installed URL handler.
+      if (
+        app.isPackaged &&
+        !process.env.FARMSLOT_DESKTOP_USER_DATA &&
+        !app.setAsDefaultProtocolClient('farmslot')
+      ) {
+        reportError(
+          'Could not register Farmslot links',
+          new Error('Install Farmslot in Applications and reopen it to enable farmslot:// links.'),
+        );
+      }
       // Remove cached credential-bearing URLs from earlier builds before loading the UI.
       await session.defaultSession.clearCache();
       // Keep preferences persistent, but never write credential-bearing resource URLs to HTTP cache.
@@ -315,7 +400,11 @@ if (!app.requestSingleInstanceLock()) {
       });
       ipcMain.handle('desktop:load-preferences', (event) => {
         assertTrustedSender(event, window, server.origin);
-        return { shortcut: preferences.shortcut, shortcutError, route: preferences.route };
+        return {
+          shortcut: preferences.shortcut,
+          shortcutError,
+          route: pendingRoute ?? preferences.route,
+        };
       });
       ipcMain.handle('desktop:save-shortcut', (event, value) => {
         assertTrustedSender(event, window, server.origin);
@@ -362,6 +451,18 @@ if (!app.requestSingleInstanceLock()) {
                   );
                 },
               },
+              {
+                id: 'copy-desktop-link',
+                label: 'Copy Link to Current View',
+                enabled: false,
+                click: () => {
+                  const link = currentDeepLink();
+                  if (link)
+                    clipboard
+                      .writeText(link)
+                      .catch((error) => reportError('Could not copy link', error));
+                },
+              },
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -395,6 +496,8 @@ if (!app.requestSingleInstanceLock()) {
         }
       });
       await createWindow();
+      desktopReady = true;
+      await flushDeepLink();
       app.on('activate', () => {
         if (quitting) return;
         if (!window) createWindow().catch((error) => reportError('Could not open Farmslot', error));
@@ -418,6 +521,7 @@ app.on('before-quit', (event) => {
   } catch (error) {
     reportError('Could not save window position', error);
   }
+  app.dock?.setBadge('');
   globalShortcut.unregisterAll();
   tray?.destroy();
   tray = null;

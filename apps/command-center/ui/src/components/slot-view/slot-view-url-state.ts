@@ -25,7 +25,8 @@ export interface SlotViewUrlState {
 }
 
 export function isSlotViewHashForSlot(slotId: string, hash: string = location.hash): boolean {
-  return hashRoute(hash) === `slot/${slotId}`;
+  const route = hashRoute(hash);
+  return route === `slot/${slotId}` || route === `slot/${slotId}/workspace`;
 }
 
 export function slotViewHash(state: SlotViewUrlState): string {

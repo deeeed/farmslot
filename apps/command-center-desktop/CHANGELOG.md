@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show pending decisions in the Dock badge and open `farmslot://` links to runs, gates and slots, with a native menu action to copy the current view link.
+
 ## 0.2.0 - 2026-09-20
 
 - Run Command Center as a macOS app with the shared web UI and an unsigned local installer.

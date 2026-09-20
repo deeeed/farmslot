@@ -95,3 +95,7 @@ export function attentionLabel(value) {
     ? 'No pending decisions'
     : `${value.decisions} pending decision${value.decisions === 1 ? '' : 's'}`;
 }
+
+export function attentionBadge(value) {
+  return value.connected && value.ready && value.decisions > 0 ? String(value.decisions) : '';
+}

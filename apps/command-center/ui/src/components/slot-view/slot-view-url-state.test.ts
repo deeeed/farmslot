@@ -52,4 +52,6 @@ test('slot view hash writer centralizes active view state', () => {
   );
   assert.equal(isSlotViewHashForSlot('demo', '#slot/demo?file=a'), true);
   assert.equal(isSlotViewHashForSlot('other', '#slot/demo?file=a'), false);
+  assert.equal(isSlotViewHashForSlot('demo', '#slot/demo/workspace?file=a'), true);
+  assert.equal(isSlotViewHashForSlot('demo', '#runs?run=example'), false);
 });

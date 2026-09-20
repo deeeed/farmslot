@@ -72,6 +72,8 @@ export function restoreSlotViewHistoryFromUrl(view: SlotView): void {
 
 /** Update URL hash with current local slot-view state (replaceState to avoid history spam) */
 export function syncSlotViewUrlState(view: SlotView, contextId?: string): void {
+  // Late file/run reads from a departing slot must not overwrite the next view.
+  if (!view.isConnected || !isSlotViewHashForSlot(view.slotId)) return;
   const fileForUrl = view._activeFile;
   const resourceForUrl = view._activeResourceId || requestedResourceFromHash();
   const runForUrl = view._linkedRun?.id ?? requestedRunFromHash() ?? undefined;
