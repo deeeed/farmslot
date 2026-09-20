@@ -116,12 +116,13 @@ async function verifyBadge() {
   const { decisions } = JSON.parse(cdp('gateway', 'decision.list', '{}'));
   // Run hydration can remove already-resolved inbox entries. Match the same
   // gateway-derived count the UI displays, including a legitimately empty inbox.
-  const count = value('document.querySelector("farm-app").decisionCount');
+  let count = 0;
+  await waitFor(async () => {
+    count = value('document.querySelector("farm-app").decisionCount');
+    return (await native('return e.app.dock.getBadge();')) === (count ? String(count) : '');
+  });
   assert(Number.isSafeInteger(count) && count >= 0);
   assert(count <= decisions.length, 'Displayed decisions must come from the gateway inbox');
-  await waitFor(
-    async () => (await native('return e.app.dock.getBadge();')) === (count ? String(count) : ''),
-  );
   return count;
 }
 const checks: string[] = [];
