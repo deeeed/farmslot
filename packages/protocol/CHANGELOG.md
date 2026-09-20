@@ -4,14 +4,18 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.30.0 - 2026-09-20
+
 - `compileGlob` is the one glob-to-regex compiler for path filters, with `anchored` (git pathspec, root-anchored) and `segment` (gitignore-like) anchoring and a case-sensitivity option; diff-view test patterns use it, a pattern with character-class syntax is now rejected with a warning (and dropped from the effective list) instead of matching the brackets literally, and a double star not followed by a slash and not trailing is a plain star, as git and gitignore read it.
 - Child checklist units (ADR-060): a parent checklist step can own one child checklist plus signal under `subtasks/`.
-  - `subtask` joins `AGENT_ROLES`. It is not a nested-loop role and never a session target: clients validate a requested role against the new `DISPATCHABLE_AGENT_ROLES`.
-  - `WorkerSignalParentLink` and `SubtaskSignal` describe a child signal and the parent step it hangs off.
-  - `subtaskPaths`, `SUBTASKS_DIR`, `SUBTASK_INDEX_FILE`, `SUBTASK_ID_PATTERN` and `SubtaskIndex` name the `subtasks/` layout.
-  - `isSettledSubtaskStatus` says when a child releases its parent step (`complete` or `done`; a `blocked` child keeps it), and `isWorkerSignalStatus` narrows an untyped signal status without a cast.
-  - `TaskStepProgress.subtask` carries the child projection, and `shouldAcceptTaskProgressUpdate` accepts a child update whose new `parentChecklist` matches the run's active checklist pair.
-  - `RunMetrics.subtasks` records each unit's parent step, source, status, step count and duration, and a gate summary's `checklist.subtasks` carries per-child step durations plus the unit's source, so child cost survives task-directory pruning and a retrospective names the skill or template, not only the id.
+- `subtask` joins `AGENT_ROLES`. It is not a nested-loop role and never a session target: clients validate a requested role against the new `DISPATCHABLE_AGENT_ROLES`.
+- `WorkerSignalParentLink` and `SubtaskSignal` describe a child signal and the parent step it hangs off.
+- `subtaskPaths`, `SUBTASKS_DIR`, `SUBTASK_INDEX_FILE`, `SUBTASK_ID_PATTERN` and `SubtaskIndex` name the `subtasks/` layout.
+- `isSettledSubtaskStatus` says when a child releases its parent step (`complete` or `done`; a `blocked` child keeps it), and `isWorkerSignalStatus` narrows an untyped signal status without a cast.
+- `TaskStepProgress.subtask` carries the child projection, and `shouldAcceptTaskProgressUpdate` accepts a child update whose new `parentChecklist` matches the run's active checklist pair.
+- `RunMetrics.subtasks` records each unit's parent step, source, status, step count and duration, and a gate summary's `checklist.subtasks` carries per-child step durations plus the unit's source, so child cost survives task-directory pruning and a retrospective names the skill or template, not only the id.
 - Acceptance-criteria ledger (ADR-060): `AcceptanceStatusLedger` / `AcceptanceCriterionStatus` describe `artifacts/acceptance-status.json`, with `ACCEPTANCE_STATUS_ARTIFACT`, the `proven | weak | missing | untestable` and `state | visual | mixed` vocabularies, positional `AC-<N>` ids (`acceptanceCriterionId`), `validateAcceptanceStatusLedger`, `summarizeAcceptanceStatus` and `renderAcceptanceCoverage` (the coverage table workers hand-write today). `WorkerTerminalContractDocument.acceptance.allowWeak` lets a flow waive weak verdicts.
 - Acceptance ledger surfaces: `TaskProgressResult.acceptanceStatus` and `acceptanceCriteria` carry the run's verdicts and its registered criteria on the progress read and broadcast, `ReadyGatePayload.acceptanceStatus` and `FamilyObservabilityRunSummary.acceptanceStatus` carry the ledger to the gate and the retrospective, and `acceptanceCriteriaView` pairs registered criteria with their verdicts (null while unjudged). `summarizeAcceptanceStatus` takes the registered criteria and reports `unrecorded`, so a count reads against how many criteria the run has rather than how many were judged.
 - `WorkerTerminalAcceptanceRules.require` opts a project into ledger enforcement; it defaults to false so a template that writes no ledger is unaffected.
@@ -20,7 +24,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 - `isSettledBlockedRun` names a blocked run with no running step and no pending decision; the gateway and Command Center use it to offer archiving.
 - Independent-review `retryCount` is the max of the persisted field and spent attempts so a wiped `0` cannot hide a spent loop. Exhaustion (and the dangerous bypass) stays visible when the package HEAD has moved since the last extra-review; `latestExhaustedIndependentReview` no longer takes a prepared-package argument. Pipeline progress labels include independent-review (`human-gate`) while an extra-review checklist is running.
 - Doc comments: `checklistStepName` names `mark` among its consumers, and a checklist event `label` is documented as the step name. No code change.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.29.0 - 2026-09-18
 
