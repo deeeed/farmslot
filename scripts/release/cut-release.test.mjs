@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,7 @@ import {
   protocolVersionFromSource,
   resolveProtocolPackageVersion,
 } from './cut-release.mjs';
-import { resolveReleaseGroup } from './release-groups.mjs';
+import { publishableWorkspaces, resolveReleaseGroup } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -96,14 +97,55 @@ test('protocol release version is idempotent and never moves behind the runtime 
   assert.throws(() => protocolVersionFromSource('export const OTHER = 1;'), /Failed to find/);
 });
 
-test('npm release group preserves package dependency order', () => {
-  assert.deepEqual(resolveReleaseGroup('npm').workspaces, [
+test('npm release group is every non-private package, dependency-first', () => {
+  const workspaces = resolveReleaseGroup('npm').workspaces;
+  for (const dir of [
     'packages/protocol',
     'packages/agent-runtime',
+    'packages/capabilities',
     'packages/recipe-harness',
     'packages/expo-recipe',
+    'packages/handoff',
     'packages/skills',
-  ]);
+  ]) {
+    assert.ok(workspaces.includes(dir), `${dir} is publishable and must be in the npm group`);
+  }
+  assert.ok(!workspaces.includes('packages/cli'), 'private packages never enter the npm group');
+  const at = (dir) => workspaces.indexOf(dir);
+  for (const dir of workspaces) {
+    const pkg = JSON.parse(readFileSync(path.join(repoRoot, dir, 'package.json'), 'utf8'));
+    for (const dep of Object.keys({
+      ...(pkg.dependencies ?? {}),
+      ...(pkg.peerDependencies ?? {}),
+    })) {
+      if (!dep.startsWith('@farmslot/')) continue;
+      const depDir = workspaces.find(
+        (candidate) =>
+          JSON.parse(readFileSync(path.join(repoRoot, candidate, 'package.json'), 'utf8')).name ===
+          dep,
+      );
+      if (depDir) assert.ok(at(depDir) < at(dir), `${depDir} precedes its dependent ${dir}`);
+    }
+  }
+});
+
+test('publishableWorkspaces refuses a dependency cycle', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-groups-cycle-'));
+  for (const [name, dep] of [
+    ['a', '@farmslot/b'],
+    ['b', '@farmslot/a'],
+  ]) {
+    mkdirSync(path.join(dir, name));
+    writeFileSync(
+      path.join(dir, name, 'package.json'),
+      JSON.stringify({
+        name: `@farmslot/${name}`,
+        version: '0.0.0',
+        dependencies: { [dep]: 'workspace:*' },
+      }),
+    );
+  }
+  assert.throws(() => publishableWorkspaces(dir), /dependency cycle through @farmslot\/(a|b)/);
 });
 
 test('cut-release rejects proposal workspaces outside release group', () => {

@@ -142,6 +142,28 @@ const packages = [
       "const m = await import('./packages/skills/dist/index.js'); if (!m.FARMSLOT_SKILL_NAMES?.includes('recipe-cook')) throw new Error('missing recipe-cook export');",
   },
   {
+    name: '@farmslot/capabilities',
+    dir: 'packages/capabilities',
+    publicDoc: 'https://farmslot.io/docs/reference/capabilities',
+    // Ships TypeScript source (no build, no dist): consumers run it through tsx.
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'src/fs-watch.ts',
+      'src/screen-frame.ts',
+      'src/screen-h264.ts',
+    ],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'src/fs-watch.ts',
+      'src/screen-frame.ts',
+      'src/screen-h264.ts',
+    ],
+  },
+  {
     name: '@farmslot/handoff',
     dir: 'packages/handoff',
     publicDoc: 'https://farmslot.io/docs/guides/learning-package',
@@ -356,6 +378,16 @@ function checkNpmScopeConfig() {
 }
 
 function buildPackage(pkgSpec) {
+  // A package that ships source (capabilities: main and exports point at src/)
+  // has nothing to build. A package whose entry points live in dist/ must build,
+  // so a dropped build script on such a package fails here instead of shipping
+  // a stale or missing dist.
+  const manifest = readJson(path.join(pkgSpec.dir, 'package.json'));
+  const shipsFromDist =
+    (typeof manifest.main === 'string' && manifest.main.startsWith('dist/')) ||
+    JSON.stringify(manifest.exports ?? {}).includes('"./dist/') ||
+    JSON.stringify(manifest.exports ?? {}).includes('"dist/');
+  if (!shipsFromDist && !manifest.scripts?.build) return true;
   const result = spawnSync('yarn', ['workspace', pkgSpec.name, 'build'], {
     cwd: process.cwd(),
     encoding: 'utf8',
