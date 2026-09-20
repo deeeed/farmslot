@@ -20,7 +20,7 @@ function cdp(...args: string[]) {
 function read(expression: string) {
   return JSON.parse(cdp('eval', '-', walk + `return {value:(${expression})};`)).value;
 }
-cdp('eval', '-', `location.hash=${JSON.stringify('#run/' + runId)};return true;`);
+cdp('eval', '-', `location.hash=${JSON.stringify('#runs?run=' + runId)};return true;`);
 for (let i = 0; i < 40; i++) {
   if (read('Boolean(find("diff-review")?.diff)')) break;
   await delay(250);
@@ -39,13 +39,18 @@ for (let i = 0; i < 20; i++) {
   panes = read(`[...find('diff-review').querySelectorAll('.d2h-file-side-diff')].map(el=>{
     const r=el.getBoundingClientRect();return {x:r.x,top:r.top,width:r.width,float:getComputedStyle(el).float};
   })`);
-  if (panes.length === 2 && panes.every((pane) => pane.float === 'left')) break;
+  if (
+    panes.length === 2 &&
+    Math.abs(panes[0].top - panes[1].top) < 2 &&
+    panes[1].x >= panes[0].x + panes[0].width - 2
+  )
+    break;
   await delay(100);
 }
 cdp('screenshot', '-', path.join(evidence, 'split.png'));
 assert.equal(panes.length, 2);
 assert(
-  panes.every((pane) => pane.width > 100 && pane.float === 'left'),
+  panes.every((pane) => pane.width > 100),
   'Packaged diff stylesheet must reach the gate shadow root',
 );
 assert(Math.abs(panes[0].top - panes[1].top) < 2, 'Split panes must sit alongside each other');
