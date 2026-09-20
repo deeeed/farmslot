@@ -1,11 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export function validateConnection(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Connection must be an object.');
   }
-  if (Object.keys(value).some((key) => !['url', 'token', 'password'].includes(key))) {
+  if (Object.keys(value).some((key) => !['url', 'token', 'password', 'rememberMe'].includes(key))) {
     throw new Error('Unknown connection field.');
   }
   if (typeof value.url !== 'string' || value.url.length > 2048) {
@@ -21,7 +21,10 @@ export function validateConnection(value) {
   ) {
     throw new Error('Use ws:// or wss:// without credentials, query parameters, or a fragment.');
   }
-  const connection = { url: url.href };
+  if (value.rememberMe !== undefined && typeof value.rememberMe !== 'boolean') {
+    throw new Error('Remember me must be a boolean.');
+  }
+  const connection = { url: url.href, rememberMe: value.rememberMe !== false };
   for (const key of ['token', 'password']) {
     if (value[key] !== undefined) {
       if (typeof value[key] !== 'string' || value[key].length > 16384) {
@@ -52,12 +55,18 @@ export function createConnectionStore(directory, encryption) {
     },
     async save(value) {
       const connection = validateConnection(value);
+      if (!connection.rememberMe) {
+        await rm(path, { force: true });
+        await rm(`${path}.tmp`, { force: true });
+        return connection;
+      }
       if (!encryption.isEncryptionAvailable())
         throw new Error('macOS credential encryption is unavailable.');
       const data = encryption.encryptString(JSON.stringify(connection));
       await mkdir(directory, { recursive: true, mode: 0o700 });
       await writeFile(`${path}.tmp`, data, { mode: 0o600 });
       await rename(`${path}.tmp`, path);
+      return connection;
     },
   };
 }

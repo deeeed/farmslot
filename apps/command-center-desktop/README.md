@@ -36,6 +36,12 @@ yarn workspace @farmslot/command-center-desktop package:mac:signed
 
 The command rejects missing or incomplete notarization credentials before building. It also accepts electron-builder's `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` or `APPLE_KEYCHAIN_PROFILE` credentials. After packaging, it verifies the app signature, stapled notarization ticket, and Gatekeeper assessment. These checks cover the app inside the DMG/ZIP; the DMG itself is not signed. All checks must succeed before distributing the result. No automatic updater is included.
 
+## Daily use
+
+Remember me is enabled by default in connection settings and desktop login. Saved credentials use macOS Keychain encryption. Turning it off deletes the saved record; the current connection lasts until you quit, including window close/reopen.
+
+The menu bar shows connection status and pending decisions. Closing the window hides it and keeps status updates running. Use the menu bar or Dock to reopen it. Command+Shift+Space shows or hides Farmslot; change or disable this shortcut in Connection Settings. Conflicting shortcuts report an error and keep the previous shortcut. The last view and window bounds survive quit and app replacement.
+
 ## Validation
 
 ```sh
@@ -47,7 +53,7 @@ FARMSLOT_DESKTOP_USER_DATA=/tmp/farmslot-desktop-validation \
 
 `FARMSLOT_DESKTOP_USER_DATA` isolates settings and Chromium storage. `FARMSLOT_DESKTOP_CDP_PORT` explicitly enables a localhost debugging endpoint for the existing Command Center CDP tools. Normal launches have no debugger endpoint.
 
-The main process serves bundled assets on a loopback port under `/cc/`. First launch allocates the port and saves it in `ui-port.json` within userData. Later launches reuse it so UI preferences survive a full quit. If another process occupies that port, launch fails with an error; close that process before reopening Farmslot. It accepts only its own Host header and confines requests to bundled files. The renderer has no Node integration, runs sandboxed with context isolation, and receives only connection settings and a resume notification through the preload bridge. IPC accepts requests only from the app's main frame. Notifications and clipboard permissions are restricted to the trusted app main frame. The persistent renderer session disables HTTP caching so authenticated resource URLs never enter Chromium's disk cache; UI preferences remain persistent. Startup also clears HTTP cache left by earlier development builds. The app does not proxy gateway requests or alter gateway authentication or TLS checks.
+The main process serves bundled assets on a loopback port under `/cc/`. First launch allocates the port and saves it in `ui-port.json` within userData. Later launches reuse it so UI preferences survive a full quit. If another process occupies that port, launch fails with an error; close that process before reopening Farmslot. It accepts only its own Host header and confines requests to bundled files. The renderer has no Node integration, runs sandboxed with context isolation, and receives connection settings, shortcut preferences, a resume notification, and a narrowly validated menu-bar status API through the preload bridge. IPC accepts requests only from the app's main frame. Notifications and clipboard permissions are restricted to the trusted app main frame. The persistent renderer session disables HTTP caching so authenticated resource URLs never enter Chromium's disk cache; UI preferences remain persistent. Startup also clears HTTP cache left by earlier development builds. The app does not proxy gateway requests or alter gateway authentication or TLS checks.
 
 ### Reproduce the live recipe
 

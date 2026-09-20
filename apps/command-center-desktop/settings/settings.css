@@ -67,3 +67,12 @@ a {
 [hidden] {
   display: none;
 }
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.checkbox input {
+  width: auto;
+}

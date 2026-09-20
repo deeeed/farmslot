@@ -32,12 +32,32 @@
         </select>
         <label for="secret" id="secret-label">Token</label>
         <input id="secret" name="secret" type="password" autocomplete="off" spellcheck="false" />
+        <label class="checkbox"
+          ><input id="remember-me" type="checkbox" checked /> Remember me</label
+        >
         <p class="hint">
-          Credentials are encrypted using your macOS Keychain. Use wss:// for remote gateways.
+          Remembered credentials are encrypted using macOS Keychain. Uncheck to keep them only until
+          you quit. Use wss:// for remote gateways.
         </p>
         <p id="error" role="alert"></p>
         <button type="submit">Save and connect</button>
         <a id="cancel" href="/cc/" hidden>Cancel</a>
+      </form>
+      <form id="desktop-form">
+        <h2>Desktop</h2>
+        <label for="shortcut">Show or hide Farmslot</label>
+        <input
+          id="shortcut"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="CommandOrControl+Shift+Space"
+        />
+        <p class="hint">
+          Use a shortcut such as CommandOrControl+Shift+Space. Leave blank to disable.
+        </p>
+        <p id="shortcut-status" role="status"></p>
+        <button type="submit">Save shortcut</button>
       </form>
     </main>
     <script type="module" src="/settings.js"></script>

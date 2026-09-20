@@ -125,7 +125,7 @@ test('desktop credential replacement awaits secure persistence and preserves aut
   assert.equal(readGatewayAuth().token, 'old-token');
   finishSave();
   await saving;
-  assert.deepEqual(saved, { url: connection.url, password: 'new-password' });
+  assert.deepEqual(saved, { url: connection.url, password: 'new-password', rememberMe: true });
   assert.equal(readGatewayAuth().token, undefined);
   assert.equal(readGatewayAuth().password, 'new-password');
   assert.equal(store.has(GATEWAY_PASSWORD_STORAGE_KEY), false);
@@ -168,4 +168,19 @@ test('desktop startup rejects missing settings and Keychain errors without brows
   };
   await assert.rejects(initializeDesktopConnection(), /Keychain unavailable/);
   assert.equal(getDesktopConnection(), null);
+});
+
+test('desktop credential replacement preserves session-only preference', async (t) => {
+  const connection = { url: 'ws://localhost:7777/ws', token: 'old', rememberMe: false };
+  const bridge = bridgeFor(connection);
+  mockEnvironment(t, bridge);
+  let saved: DesktopConnection | undefined;
+  bridge.saveConnection = async (value) => {
+    saved = value;
+  };
+  await initializeDesktopConnection();
+  await saveDesktopCredentials({ token: 'new' });
+  assert.equal(saved?.rememberMe, false);
+  await saveDesktopCredentials({ token: 'remembered' }, true);
+  assert.equal(saved?.rememberMe, true);
 });

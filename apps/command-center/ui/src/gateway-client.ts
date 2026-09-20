@@ -269,8 +269,8 @@ export class GatewayClient {
     return 'none';
   }
 
-  async setAuthCredentials(auth: GatewayAuthCredentials): Promise<void> {
-    await saveDesktopCredentials(auth);
+  async setAuthCredentials(auth: GatewayAuthCredentials, rememberMe?: boolean): Promise<void> {
+    await saveDesktopCredentials(auth, rememberMe);
     this.auth = auth;
     syncBrowserHttpAuthCookie(auth, this.url);
     this.authBlocked = false;

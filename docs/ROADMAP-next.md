@@ -65,9 +65,11 @@ Keep one UI source in `apps/command-center/ui/`; the `apps/command-center-deskto
 
 Keep the renderer sandboxed with isolated, narrowly scoped IPC. Preserve gateway authentication, credential protection, origin checks, and TLS validation. Each implementation slice follows the repository's normal validation and review requirements.
 
+Accepted follow-up: menu-bar pending-decision and connection status, a configurable global show/hide shortcut, saved window bounds and last view, and Remember me enabled by default. Remembered credentials stay encrypted across quit and app replacement; opting out is session-only. Validate credential persistence, shortcuts, attention state and window restoration through direct app checks.
+
 The [desktop workspace](../apps/command-center-desktop/README.md) documents build, installation, and isolated validation setup. The [live recipe](examples/recipes/farmslot/electron-client.recipe.json) verifies real gateway actions, terminals, source viewing, and authenticated images. Synthetic H.264 checks renderer compatibility; actual device transport and OS sleep/resume remain manual validation limits.
 
-The scope is an installable macOS client for the existing Command Center. Performance benchmarks, optimization targets, automatic updates, bundled gateway provisioning, multiple windows, a menu-bar agent, and a separate SwiftUI UI are outside this delivery.
+The scope is an installable macOS client for the existing Command Center. Performance benchmarks, optimization targets, automatic updates, bundled gateway provisioning, multiple windows, and a separate SwiftUI UI are outside this delivery.
 
 ## Structured runner transports
 
