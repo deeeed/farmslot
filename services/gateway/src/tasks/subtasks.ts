@@ -1,4 +1,4 @@
-// Child checklist units (ADR-060 / docs/plans/sub-task-observability-v1.md) as
+// Child checklist units (ADR-060; docs/reference/task-directory-contract.md) as
 // the gateway sees them: files under `subtasks/` beside a task directory's
 // parent checklist, written only by `mark`. The gateway observes them — it never
 // registers, spawns, or completes one.

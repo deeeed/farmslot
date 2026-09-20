@@ -1,11 +1,11 @@
 # ADR-060: Sub-task observability through child checklist units
 
-**Status:** Proposed
-**Date:** 2026-09-19
+**Status:** Accepted
+**Date:** 2026-09-19 (accepted 2026-09-20)
 **Owner:** Farmslot maintainers
 **Scope:** [Task directory contract](../reference/task-directory-contract.md), [ROADMAP-next](../ROADMAP-next.md) captured lane "Worker phase decomposition and sub-agent cost roll-up"
 **Related:** [ADR-032](032-runner-observability-via-hooks.md), [ADR-045](045-worker-terminal-contract.md), [ADR-049](049-agent-execution-template-selection.md), [ADR-058](058-static-review-and-farm-owned-qa.md)
-**Implementation spec:** [plans/sub-task-observability-v1.md](../plans/sub-task-observability-v1.md)
+**Implementation:** shipped in PRs #681 (protocol types, `mark sub` verbs, materializer), #682 (gateway watch, projection, copy/mirror, terminal check), #683 (Command Center and Companion rendering), #684 (checklist-shaped skill authoring rule), #685 (acceptance-criteria ledger), released in #687 (`@farmslot/protocol` 0.30.0, `@farmslot/agent-runtime` 0.13.0, gateway 0.15.0, ui 0.15.0, skills 0.5.0) with `mm-harness` 0.61.0 rendering child units in `status --watch`, and the MetaMask farm templates now registering the review skill as a child unit. Two deviations from the original design: `--from template:<id>` catalog resolution is refused, because resolving a catalog id needs project template sources a task-dir-local engine cannot read (register skills by installed path); and acceptance-ledger enforcement is a per-project opt-in (`worker_terminal.acceptance`) rather than always-on, so the ledger is informational until a project asks for the gate. The durable contract lives in the [task directory contract](../reference/task-directory-contract.md) and [agent runtime reference](../reference/agent-runtime.md); the phased implementation plan was deleted on closeout per [docs governance](../DOCS-GOVERNANCE.md).
 
 ## Context
 
