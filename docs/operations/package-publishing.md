@@ -12,6 +12,8 @@ ready for review, but the packages remain private until final publish approval. 
 | `@farmslot/recipe-harness` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-harness>  |
 | `@farmslot/expo-recipe`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
 | `@farmslot/skills`         | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
+| `@farmslot/capabilities`   | Machine-local capability primitives shared by node and gateway.     | `packages/capabilities/README.md`                       |
+| `@farmslot/handoff`        | Task handoff records, closeout and learning packages.               | <https://farmslot.io/docs/guides/learning-package>      |
 
 ## Token
 
@@ -65,9 +67,13 @@ Publish Recipe Protocol packages in dependency order:
 
 1. `@farmslot/protocol`
 2. `@farmslot/agent-runtime`
-3. `@farmslot/recipe-harness`
-4. `@farmslot/expo-recipe`
-5. `@farmslot/skills`
+3. `@farmslot/capabilities`
+4. `@farmslot/recipe-harness`
+5. `@farmslot/expo-recipe`
+6. `@farmslot/handoff`
+7. `@farmslot/skills`
+
+The `npm` release group derives this set from every non-private package under `packages/`, dependency-first; a new public package joins it by not being `private`.
 
 ## Publish command
 

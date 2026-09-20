@@ -96,14 +96,24 @@ test('protocol release version is idempotent and never moves behind the runtime 
   assert.throws(() => protocolVersionFromSource('export const OTHER = 1;'), /Failed to find/);
 });
 
-test('npm release group preserves package dependency order', () => {
-  assert.deepEqual(resolveReleaseGroup('npm').workspaces, [
+test('npm release group is every non-private package, dependency-first', () => {
+  const workspaces = resolveReleaseGroup('npm').workspaces;
+  for (const dir of [
     'packages/protocol',
     'packages/agent-runtime',
+    'packages/capabilities',
     'packages/recipe-harness',
     'packages/expo-recipe',
+    'packages/handoff',
     'packages/skills',
-  ]);
+  ]) {
+    assert.ok(workspaces.includes(dir), `${dir} is publishable and must be in the npm group`);
+  }
+  assert.ok(!workspaces.includes('packages/cli'), 'private packages never enter the npm group');
+  const at = (dir) => workspaces.indexOf(dir);
+  for (const dependent of workspaces.filter((dir) => dir !== 'packages/protocol')) {
+    assert.ok(at('packages/protocol') < at(dependent), `protocol precedes ${dependent}`);
+  }
 });
 
 test('cut-release rejects proposal workspaces outside release group', () => {

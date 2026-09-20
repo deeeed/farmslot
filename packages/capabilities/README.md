@@ -3,6 +3,8 @@
 Machine-local capability primitives shared by the **node** (`services/node`) and the
 **gateway** (`services/gateway`).
 
+Reference: <https://farmslot.io/docs/reference/capabilities>.
+
 The node owns machine-local capabilities; the gateway keeps a degraded **local fallback**
 for a machine that has no connected node. To provide that fallback without duplicating
 logic, the primitive lives here once and both services import it — node as primary owner,

@@ -142,6 +142,14 @@ const packages = [
       "const m = await import('./packages/skills/dist/index.js'); if (!m.FARMSLOT_SKILL_NAMES?.includes('recipe-cook')) throw new Error('missing recipe-cook export');",
   },
   {
+    name: '@farmslot/capabilities',
+    dir: 'packages/capabilities',
+    publicDoc: 'https://farmslot.io/docs/reference/capabilities',
+    // Ships TypeScript source (no build, no dist): consumers run it through tsx.
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/fs-watch.ts'],
+    packRequiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/fs-watch.ts'],
+  },
+  {
     name: '@farmslot/handoff',
     dir: 'packages/handoff',
     publicDoc: 'https://farmslot.io/docs/guides/learning-package',
@@ -356,6 +364,10 @@ function checkNpmScopeConfig() {
 }
 
 function buildPackage(pkgSpec) {
+  // A package that ships source (capabilities) declares no build script; there
+  // is nothing to build and no dist to check, so the step passes through.
+  const manifest = readJson(path.join(pkgSpec.dir, 'package.json'));
+  if (!manifest.scripts?.build) return true;
   const result = spawnSync('yarn', ['workspace', pkgSpec.name, 'build'], {
     cwd: process.cwd(),
     encoding: 'utf8',

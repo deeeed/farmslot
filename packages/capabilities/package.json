@@ -1,7 +1,8 @@
 {
   "name": "@farmslot/capabilities",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Machine-local capability primitives (fs-watch, screen capture) shared by the node (primary owner) and the gateway (local fallback when no node) — ADR-046.",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "exports": {
@@ -9,6 +10,15 @@
     "./fs-watch": "./src/fs-watch.ts",
     "./screen-frame": "./src/screen-frame.ts",
     "./screen-h264": "./src/screen-h264.ts"
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "src/**/*.ts",
+    "!src/**/*.test.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
@@ -22,5 +32,14 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deeeed/farmslot.git",
+    "directory": "packages/capabilities"
+  },
+  "bugs": {
+    "url": "https://github.com/deeeed/farmslot/issues"
+  },
+  "homepage": "https://farmslot.io/docs/reference/capabilities"
 }
