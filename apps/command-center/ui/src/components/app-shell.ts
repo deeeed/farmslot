@@ -233,10 +233,8 @@ export class FarmApp extends LitElement {
   @state() private _sidebarResizing = false;
   @state() private devHarnessLoaded = false;
   @state() private devCaptureMode = false;
-  @state() private authMode: 'token' | 'password' = readGatewayAuth().password
-    ? 'password'
-    : 'token';
-  @state() private authSecret = readGatewayAuth().token ?? readGatewayAuth().password ?? '';
+  @state() private authMode: 'token' | 'password' = 'token';
+  @state() private authSecret = '';
   @state() private authSaving = false;
   @state() private authSaveError = '';
   @state() private pairingOpen = false;
@@ -275,6 +273,13 @@ export class FarmApp extends LitElement {
   private unsubTmuxWorkerUpdated?: () => void;
   private unsubConnForUpdate?: () => void;
   private updatePollTimer?: ReturnType<typeof setInterval>;
+
+  constructor() {
+    super();
+    const auth = readGatewayAuth();
+    this.authMode = auth.password ? 'password' : 'token';
+    this.authSecret = auth.token ?? auth.password ?? '';
+  }
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {

@@ -262,6 +262,9 @@ jobs:
     if: needs.changes.outputs.desktop == 'true'
     runs-on: macos-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -284,9 +287,10 @@ jobs:
         run: yarn workspace @farmslot/command-center-desktop package:mac
 
       - name: Upload unsigned installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: farmslot-macos-arm64
+          retention-days: 7
           path: |
             apps/command-center-desktop/release/*.dmg
             apps/command-center-desktop/release/*.zip
