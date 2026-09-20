@@ -43,7 +43,15 @@
     "dmg": {
       "sign": false
     },
-    "artifactName": "Farmslot-${version}-${arch}.${ext}"
+    "artifactName": "Farmslot-${version}-${arch}.${ext}",
+    "protocols": [
+      {
+        "name": "Farmslot links",
+        "schemes": [
+          "farmslot"
+        ]
+      }
+    ]
   },
   "engines": {
     "node": ">=22.12.0"

@@ -63,6 +63,8 @@ Deliver a macOS Electron app alongside the browser Command Center, using one sha
 
 Support authenticated local and remote gateways, protected saved credentials, reconnect after sleep or gateway restart, and clear connection errors. Desktop integration includes standard menus, clipboard, external links, a menu-bar indicator for pending decisions and connection status, a configurable global show/hide shortcut, and restoration of the last view and window bounds. Remember me defaults on in desktop login and connection settings; credentials use macOS-backed encryption across quit and app replacement. Turning it off removes saved credentials and retains them only for the current app session. The renderer remains sandboxed with isolated, narrowly scoped IPC; gateway authentication, origin checks, and TLS validation remain enforced.
 
+Show pending decisions in the macOS Dock badge, clearing stale counts when disconnected. Support `farmslot://` links to runs, their current gates, and slots using the app's configured gateway. Links only navigate, carry no credentials, and wait for connection setup when needed. Provide a native menu action to copy a link to the current supported view.
+
 Prove terminal input/resize, source/diff viewing, live device streams, authenticated artifacts, and operator actions through real gateway flows in both web and desktop clients.
 
 Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).

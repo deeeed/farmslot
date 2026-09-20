@@ -42,6 +42,24 @@ Remember me is enabled by default in connection settings and desktop login. Save
 
 The menu bar shows connection status and pending decisions. Closing the window hides it and keeps status updates running. Use the menu bar or Dock to reopen it. Command+Shift+Space shows or hides Farmslot; change or disable this shortcut in Connection Settings. Conflicting shortcuts report an error and keep the previous shortcut. The last view and window bounds survive quit and app replacement.
 
+## Dock badge and links
+
+The Dock badge shows the same pending-decision count as the menu bar. It clears while disconnected or loading, and when no decisions remain.
+
+Open a run, its current gate, or a slot with a `farmslot://` link:
+
+| Link                                                          | Destination                                   |
+| ------------------------------------------------------------- | --------------------------------------------- |
+| `farmslot://run/<run-id>`                                     | Run drawer with its current gate and progress |
+| `farmslot://gate/<run-id>`                                    | The same run's current gate                   |
+| `farmslot://slot/<slot-id>`                                   | Slot view                                     |
+| `farmslot://slot/<slot-id>?runId=<run-id>`                    | Slot view in a run's context                  |
+| `farmslot://fleet`, `farmslot://runs`, `farmslot://decisions` | Main views                                    |
+
+Use **Farmslot → Copy Link to Current View** for supported views. Links target the app's configured gateway; they do not contain credentials, change gateways, or perform actions. On first use, connection setup opens and retains the link until you connect. Opening a link restores a hidden or minimized window. Selected source files and other temporary view filters are not included in copied links.
+
+Packaged normal launches register the URL scheme with macOS. Isolated profiles using `FARMSLOT_DESKTOP_USER_DATA` skip changing the default handler; tests can target their bundle explicitly with `open -a <test-app> <link>`.
+
 ## Validation
 
 ```sh

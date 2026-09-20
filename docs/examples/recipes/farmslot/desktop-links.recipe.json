@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "macOS Dock badge and deep links",
+  "description": "Start a packaged test app with profile temp/desktop-links/profile, CDP9497 and main inspector9498. Set gateway credentials and real FARMSLOT_TEST_RUN_ID/FARMSLOT_TEST_SLOT_ID values. The gateway must have pending decisions. Uses real login, macOS URL delivery, gateway reads and native Dock/menu APIs; never resolves decisions or changes task state.",
+  "workflow": {
+    "entry": "desktop-links",
+    "nodes": {
+      "desktop-links": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-desktop-links.mts",
+        "timeout_ms": 180000,
+        "intent": "Links survive connection setup, open real run and slot views, restore hidden/minimized windows and work on cold launch. The native Dock badge matches gateway pending decisions, clears when disconnected, and the native menu copies only an entity link.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
