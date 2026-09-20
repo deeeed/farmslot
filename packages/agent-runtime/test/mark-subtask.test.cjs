@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `mark sub` — child checklist units (ADR-060). Every row of the refusal table
-// in docs/plans/sub-task-observability-v1.md is asserted here, plus the parent
+// in the ADR-060 refusal table is asserted here, plus the parent
 // signal effects: a child owns its parent step until it is settled, its
 // completion ticks the parent box with a normal parent timing event, and a
 // blocked child blocks the parent signal with the child reason.
