@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Review workspace progress parity",
+  "description": "Set FARMSLOT_REVIEW_RUN_ID to a real static review with a registered child checklist. Read run.get and task.progress through the gateway and verify desktop and Companion agree on which run accepts that progress.",
+  "workflow": {
+    "entry": "progress",
+    "nodes": {
+      "progress": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/verify-workspace-progress.mts",
+        "timeout_ms": 60000,
+        "intent": "The real workspace projects child progress. Both clients accept its identity and reject another run or a run with neither a slot nor workspace.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
