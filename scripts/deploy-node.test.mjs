@@ -143,7 +143,7 @@ elif command.startswith('test -d '): sys.exit(1)
 // requires ../../scripts/review-filesystem.cjs, so a dist-only copy crashes every
 // deployed node at boot with MODULE_NOT_FOUND. The stub captures rsync argv
 // instead of exiting 0 silently, which is the only way to see what a deploy ships.
-test("deploy-node syncs each bundled package's scripts/ and bin/ beside dist/", () => {
+test("deploy-node syncs a bundled package's scripts/ and bin/ beside dist/ and skips packages without them", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-rsync-'));
   try {
     const write = (relative, content, executable = false) => {
