@@ -516,13 +516,20 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   # packages (e.g. @farmslot/protocol) ship both — sync whichever exist.
   [[ -d "$PKG_SRC/src" ]] && rsync -a --delete "$PKG_SRC/src/" "${RSYNC_PREFIX}$PKG_DEST/src/"
   [[ -d "$PKG_SRC/dist" ]] && rsync -a --delete "$PKG_SRC/dist/" "${RSYNC_PREFIX}$PKG_DEST/dist/"
+  # Ship what the package publishes beside dist/: agent-runtime's dist imports
+  # its CJS helpers (dist/native/review-sandbox.js requires
+  # ../../scripts/review-filesystem.cjs), so a dist-only copy crashes the node at
+  # boot with MODULE_NOT_FOUND.
+  [[ -d "$PKG_SRC/scripts" ]] && rsync -a --delete "$PKG_SRC/scripts/" "${RSYNC_PREFIX}$PKG_DEST/scripts/"
+  [[ -d "$PKG_SRC/bin" ]] && rsync -a --delete "$PKG_SRC/bin/" "${RSYNC_PREFIX}$PKG_DEST/bin/"
   rsync -a "$PKG_SRC/package.json" "${RSYNC_PREFIX}$PKG_DEST/package.json"
   echo "  → $pkg_name"
 done <<< "$FARMSLOT_DEPS"
 
 # Task files rendered for remote slots call helper scripts under
 # ~/farmslot-node/packages/agent-runtime/scripts/*. Keep that package tree in
-# the remote agent dir even though the node service itself does not import it.
+# the remote agent dir for those task files; the node service imports its own
+# copy under node_modules/@farmslot/agent-runtime (synced above).
 echo "[deploy] syncing agent-runtime task helpers..."
 run "mkdir -p $REMOTE_DIR/packages/agent-runtime"
 rsync -a --delete \
