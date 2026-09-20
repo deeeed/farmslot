@@ -148,15 +148,19 @@ export function taskProgressRequestForRun(
 /**
  * Does this update belong to the run on screen? A static review workspace run
  * (ADR-058) has no slot, and its progress publishes under an empty slot id, so
- * the comparison is on the pair rather than on a slot id only a slot run has.
- * Same rule as Command Center's `taskProgressUpdateTargetsRun`.
+ * the comparison is on the pair rather than on a slot id only a slot run has. A
+ * run with neither a slot nor a workspace has no progress surface at all, so
+ * nothing is accepted for it — the same answer {@link taskProgressRequestForRun}
+ * gives the hydrate. Command Center applies the same pair rule.
  */
 export function taskProgressUpdateTargetsRun(
-  run: Pick<Run, 'id' | 'slotId'> | null | undefined,
+  run: (Pick<Run, 'id' | 'slotId'> & Pick<Partial<Run>, 'reviewWorkspace'>) | null | undefined,
   update: Pick<TaskProgressUpdatedPayload, 'slotId' | 'runId'>,
 ): boolean {
-  if (!run) return false;
-  return (run.slotId ?? '') === update.slotId && update.runId === run.id;
+  // The identity a fetch for this run would use IS the identity its updates
+  // carry, so the two rules are one expression rather than two that can drift.
+  const target = taskProgressRequestForRun(run);
+  return target !== null && target.slotId === update.slotId && target.runId === update.runId;
 }
 
 /**

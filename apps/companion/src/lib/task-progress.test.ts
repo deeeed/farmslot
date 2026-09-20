@@ -115,25 +115,40 @@ test('the progress fetch params follow the same rule as the accept rule', () => 
   // Hydrate and live filtering must agree: a surface that fetches for a run it
   // would drop updates for — or drops the fetch for a run it accepts updates
   // from, which is what left a quiet review workspace blank — is a drift bug.
-  assert.deepEqual(taskProgressRequestForRun(makeRun()), { slotId: 'slot-1', runId: 'run-1' });
-  assert.deepEqual(
-    taskProgressRequestForRun({
-      id: 'run-workspace',
-      slotId: null,
-      reviewWorkspace: {
-        workspaceId: 'workspace-1',
-        machine: 'macwork',
-        executionNodeId: 'local',
-        checkoutPath: '/repo',
-        taskPath: '/repo/task',
-        artifactPath: '/repo/task/artifacts',
-      },
-    } as unknown as Run),
-    { slotId: '', runId: 'run-workspace' },
-    'a workspace run fetches under an empty slot id, as the method expects',
-  );
-  // Neither a slot nor a workspace: nothing to read.
-  assert.equal(taskProgressRequestForRun(makeRun({ slotId: null })), null);
+  // So every fixture is put through BOTH rules here, not just described as agreeing.
+  const workspaceRun = {
+    id: 'run-workspace',
+    slotId: null,
+    reviewWorkspace: {
+      workspaceId: 'workspace-1',
+      machine: 'macwork',
+      executionNodeId: 'local',
+      checkoutPath: '/repo',
+      taskPath: '/repo/task',
+      artifactPath: '/repo/task/artifacts',
+    },
+  } as unknown as Run;
+
+  for (const [label, run, expected] of [
+    ['a slot run', makeRun(), { slotId: 'slot-1', runId: 'run-1' }],
+    // A workspace run fetches under the empty slot id the method expects for it.
+    ['a review workspace run', workspaceRun, { slotId: '', runId: 'run-workspace' }],
+  ] as const) {
+    const params = taskProgressRequestForRun(run);
+    assert.deepEqual(params, expected, `${label} fetches with ${JSON.stringify(expected)}`);
+    // The params it fetched with are the params it must accept an update from.
+    assert.equal(
+      taskProgressUpdateTargetsRun(run, params!),
+      true,
+      `${label} must accept the update its own fetch params describe`,
+    );
+  }
+
+  // Neither a slot nor a workspace: nothing to read, and nothing accepted for it
+  // either — including the empty-slot-id update shape a workspace run publishes.
+  const slotless = makeRun({ slotId: null });
+  assert.equal(taskProgressRequestForRun(slotless), null);
+  assert.equal(taskProgressUpdateTargetsRun(slotless, { slotId: '', runId: slotless.id }), false);
   assert.equal(taskProgressRequestForRun(null), null);
   assert.equal(taskProgressRequestForRun(undefined), null);
 });
