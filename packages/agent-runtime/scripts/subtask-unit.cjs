@@ -24,7 +24,8 @@ const {
   writeSignal,
 } = require('./mark-io.cjs');
 
-// Child checklist units (ADR-060 / plans/sub-task-observability-v1.md).
+// Child checklist units (ADR-060; contract in docs/reference/agent-runtime.md
+// and docs/reference/task-directory-contract.md).
 //
 // `mark` is the only writer of `subtasks/`: it materializes a child checklist
 // from a source, registers it in `subtasks/index.json`, and maintains the child

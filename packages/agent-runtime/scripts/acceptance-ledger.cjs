@@ -3,7 +3,8 @@ const path = require('node:path');
 
 const { atomicWrite, readJson } = require('./mark-io.cjs');
 
-// Acceptance-criteria ledger (ADR-060 / plans/sub-task-observability-v1.md).
+// Acceptance-criteria ledger (ADR-060; contract in docs/reference/agent-runtime.md
+// and docs/reference/task-directory-contract.md).
 //
 // `farmslot-agent ac` is the only writer of artifacts/acceptance-status.json, the
 // way `mark` is the only writer of SIGNAL.json. The ids come from task init, which

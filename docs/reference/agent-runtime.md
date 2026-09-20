@@ -39,7 +39,59 @@ farmslot-agent mark <task-md> <signal-json> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
+farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
+farmslot-agent ac render
 ```
+
+## Child checklist units
+
+A checklist step can delegate its work to a child unit: a checklist plus signal
+under `subtasks/`, written only by `mark sub` (ADR-060). Farmslot materializes
+files and reads signals; it never spawns the child, so who executes the rows —
+the same session, a runner sub-agent, a harness script — is outside the contract.
+
+```bash
+./mark sub start <id> --step N --from <path|inline:<text>> [--var KEY=VALUE ...]
+./mark sub <id> <n>
+./mark sub <id> complete [--report <artifact>] [--mark-last]
+./mark sub <id> blocked --reason "..."
+./mark sub <id> status                      # the child projection as JSON
+```
+
+`--from` takes a path to a checklist-shaped file (a skill body is the usual one;
+see the authoring rule in `@farmslot/skills`) or `inline:<text>`. The source is
+rendered with the task's variables, its digest is recorded before rendering and
+the written child's after, and a source with no enumerable row, or with numbered
+labels that disagree with their positions, is refused. `template:<id>` catalog
+resolution is refused: resolving a catalog id needs the project's template
+sources, which a task-dir-local engine cannot read, so materialize the template
+first and pass its path.
+
+Ownership rules, all enforced by `mark`:
+
+- A step owns one child for the life of the task directory. Registering on a step
+  that already has one, or on a checked box, is refused.
+- While the child is unsettled, `mark N` for that step is refused with a pointer
+  to the child. Settled means `complete` or `done`; a `blocked` child is terminal
+  for the run yet keeps its step, so the parent still cannot mark past it.
+- `sub <id> complete` ticks the parent box and appends the parent timing event a
+  normal parent mark would, then a later `mark N` on that step is a no-op.
+- `sub <id> blocked` writes the child signal and the parent signal as `blocked`
+  with `subtask <id>: <reason>`; the next child step or completion restores
+  `running` on both.
+- A child has no flow terminal contract: `--report <artifact>` is its only
+  artifact rule, and the parent's contract still governs the parent's own
+  terminal mark, which is refused while any child is unsettled.
+
+## Acceptance-criteria ledger
+
+`farmslot-agent ac` is the only writer of `artifacts/acceptance-status.json`. It
+records one verdict per criterion (`proven`, `weak`, `missing`, `untestable`)
+with evidence paths and recipe nodes, and `ac render` prints the coverage table
+the PR body reads. Enforcement is a per-project opt-in through
+`worker_terminal.acceptance`; see the [Task directory
+contract](task-directory-contract.md) for that rule and the file's place in the
+layout.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 

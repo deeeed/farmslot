@@ -19,6 +19,19 @@ This summary is reconstructed from:
 
 ## Shipped History Summary
 
+### Sub-task observability through child checklist units
+
+The accepted [ADR-060](adr/060-sub-task-observability.md) rollout completed on 2026-09-20. A checklist step can hand its work to a child unit — a checklist plus signal under `subtasks/` — so a step that runs a whole review reports progress per row instead of keeping one box open for its duration. Farmslot materializes the files and reads the signals; it spawns nothing.
+
+- PR #681 shipped the protocol contract, the `mark sub` verbs, and the source materializer with provenance digests.
+- PR #682 shipped the gateway watch, the recursive progress projection, dispatch copy and worker mirror, and the terminal check that refuses a parent completion while a child is unsettled.
+- PR #683 shipped nested rendering in Command Center and Companion; `mm-harness` 0.61.0 renders the same projection in `status --watch`.
+- PR #684 recorded the checklist-shaped skill authoring rule in `@farmslot/skills`.
+- PR #685 shipped the acceptance-criteria ledger (`farmslot-agent ac`), its coverage renderer, and the run-detail panel.
+- PR #687 released the set: `@farmslot/protocol` 0.30.0, `@farmslot/agent-runtime` 0.13.0, gateway 0.15.0, ui 0.15.0, recipe-harness 0.18.0, expo-recipe 0.11.0, skills 0.5.0.
+
+Three MetaMask farm templates now register the shared review skill as a child unit instead of carrying a copy of the review policy. Two design points changed during implementation: registering a child from a catalog template id is refused, because catalog resolution needs project template sources a task-dir-local engine cannot read, so skills register by installed path; and acceptance-ledger enforcement is a per-project opt-in rather than always-on. Per-sub-agent token and cost attribution was never in scope here and stays in the per-model capture lane. The durable contract lives in the [task directory contract](reference/task-directory-contract.md) and the [agent runtime reference](reference/agent-runtime.md).
+
 ### Native structured runner transports
 
 The approved [ADR-057](adr/057-structured-runner-transports.md) rollout completed on 2026-09-14. Existing tmux workflows remain available alongside opt-in native sessions.
