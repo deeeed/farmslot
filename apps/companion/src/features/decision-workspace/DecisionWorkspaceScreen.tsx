@@ -71,6 +71,7 @@ import {
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import {
@@ -474,12 +475,10 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
   }, [client, refreshDecision, refreshRecipeRuns, refreshSourceRun, sourceRunId]);
 
   const fetchTaskProgress = useCallback(() => {
-    if (!client || !sourceRun?.slotId) return Promise.resolve();
+    const params = taskProgressRequestForRun(sourceRun);
+    if (!client || !params) return Promise.resolve();
     return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, {
-        slotId: sourceRun.slotId,
-        runId: sourceRun.id,
-      })
+      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
         setTaskProgress(result.structured ?? null);
         setTaskProgressError(null);
@@ -487,7 +486,7 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
       .catch((err: Error) => {
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
-  }, [client, sourceRun?.id, sourceRun?.slotId]);
+  }, [client, sourceRun?.id, sourceRun?.slotId, sourceRun?.reviewWorkspace?.workspaceId]);
 
   useEffect(() => {
     if (!client || !sourceRun) return;

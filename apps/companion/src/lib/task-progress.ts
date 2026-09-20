@@ -129,6 +129,23 @@ export function isSlotWorkerProgressActive(
 }
 
 /**
+ * Params for a run's `task.progress` fetch, or null when there is nothing to
+ * read: neither a slot nor a review workspace.
+ *
+ * The fetch rule has to match the acceptance rule below, or a surface hydrates
+ * from an event it would have dropped — or, as happened here, drops the hydrate
+ * for a slot-free static review workspace (ADR-058) and stays blank until the
+ * next published change. A workspace run has no slot and its progress publishes
+ * under an empty slot id, which is exactly what the method expects for it.
+ */
+export function taskProgressRequestForRun(
+  run: (Pick<Run, 'id' | 'slotId'> & Pick<Partial<Run>, 'reviewWorkspace'>) | null | undefined,
+): { slotId: string; runId: string } | null {
+  if (!run || (!run.slotId && !run.reviewWorkspace)) return null;
+  return { slotId: run.slotId ?? '', runId: run.id };
+}
+
+/**
  * Does this update belong to the run on screen? A static review workspace run
  * (ADR-058) has no slot, and its progress publishes under an empty slot id, so
  * the comparison is on the pair rather than on a slot id only a slot run has.

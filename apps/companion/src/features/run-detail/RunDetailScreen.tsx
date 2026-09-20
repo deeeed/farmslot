@@ -49,6 +49,7 @@ import {
   fallbackTaskProgressSummary,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import { buildFailedStepDiagnosticDraft } from '../../lib/workspace-copilot';
@@ -267,9 +268,10 @@ export default function RunDetailScreen() {
   }, [client, loadRecipeRuns, loadRun, resolvedRunId, upsertRun]);
 
   const fetchTaskProgress = useCallback(() => {
-    if (!client || !run?.slotId) return Promise.resolve();
+    const params = taskProgressRequestForRun(run);
+    if (!client || !params) return Promise.resolve();
     return client
-      .request<TaskProgressResult>(Methods.TASK_PROGRESS, { slotId: run.slotId, runId: run.id })
+      .request<TaskProgressResult>(Methods.TASK_PROGRESS, params)
       .then((result) => {
         setTaskProgress(result.structured ?? null);
         setAcceptanceStatus(result.acceptanceStatus ?? null);
@@ -280,7 +282,7 @@ export default function RunDetailScreen() {
       .catch((err: Error) => {
         setTaskProgressError(`Task progress unavailable: ${err.message}`);
       });
-  }, [client, run?.id, run?.slotId]);
+  }, [client, run?.id, run?.slotId, run?.reviewWorkspace?.workspaceId]);
 
   useEffect(() => {
     if (!isTimelineTab || !client || !run) return;

@@ -10,6 +10,7 @@ import {
   isSlotWorkerProgressActive,
   isWorkerProgressActive,
   shouldAcceptTaskProgressUpdate,
+  taskProgressRequestForRun,
   taskProgressUpdateTargetsRun,
 } from './task-progress';
 
@@ -108,6 +109,33 @@ test('accepts only progress updates for the matching run and active context', ()
     }),
     false,
   );
+});
+
+test('the progress fetch params follow the same rule as the accept rule', () => {
+  // Hydrate and live filtering must agree: a surface that fetches for a run it
+  // would drop updates for — or drops the fetch for a run it accepts updates
+  // from, which is what left a quiet review workspace blank — is a drift bug.
+  assert.deepEqual(taskProgressRequestForRun(makeRun()), { slotId: 'slot-1', runId: 'run-1' });
+  assert.deepEqual(
+    taskProgressRequestForRun({
+      id: 'run-workspace',
+      slotId: null,
+      reviewWorkspace: {
+        workspaceId: 'workspace-1',
+        machine: 'macwork',
+        executionNodeId: 'local',
+        checkoutPath: '/repo',
+        taskPath: '/repo/task',
+        artifactPath: '/repo/task/artifacts',
+      },
+    } as unknown as Run),
+    { slotId: '', runId: 'run-workspace' },
+    'a workspace run fetches under an empty slot id, as the method expects',
+  );
+  // Neither a slot nor a workspace: nothing to read.
+  assert.equal(taskProgressRequestForRun(makeRun({ slotId: null })), null);
+  assert.equal(taskProgressRequestForRun(null), null);
+  assert.equal(taskProgressRequestForRun(undefined), null);
 });
 
 test('a progress update targets the run it names, slot run or review workspace', () => {
