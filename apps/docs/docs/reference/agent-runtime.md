@@ -50,6 +50,8 @@ farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
 farmslot-agent execution-template <list|materialize|lint|new> [options]
+farmslot-agent ac set AC-1 proven --evidence artifacts/after.png --recipe-node assert-order-sheet
+farmslot-agent ac render
 ```
 
 `mark` takes a **task directory**, not individual file paths — its first argument must be an existing directory or the command exits with the usage error. In task-dir mode it marks `CHECKLIST.md` (or `TASK.md` when there is no `CHECKLIST.md`) and writes `SIGNAL.json`, unless a `checklist-target.json` written by a role switch points elsewhere. `--checklist` selects another checklist explicitly; the signal filename is then derived from it (other checklists get a role-scoped signal).
@@ -70,6 +72,63 @@ farmslot-agent recipe-quality build \
 ```
 
 The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten. Use `--input -` to read compact JSON from stdin. CLI flags override file-provided scalar and array fields; `trainingFields` merge field-by-field so flags can refine proof metadata without dropping project or flow metadata.
+
+## Child checklist units
+
+A checklist step can delegate its work to a child unit: a checklist plus signal
+under `subtasks/`, written only by `mark sub`. Farmslot materializes the files and
+reads the signals; it never spawns the child, so who executes the rows — the same
+session, a runner sub-agent, a harness script — is outside the contract. See
+[ADR-060](https://github.com/deeeed/farmslot/blob/main/docs/adr/060-sub-task-observability.md)
+for the decision and [Task directory contract](task-directory-contract.md) for the
+files.
+
+```bash
+./mark sub start <id> --step N --from <path|inline:<text>> [--var KEY=VALUE ...]
+./mark sub <id> <n>
+./mark sub <id> complete [--report <artifact>] [--mark-last]
+./mark sub <id> blocked --reason "..."
+./mark sub <id> status                      # the child projection as JSON
+```
+
+`--from` takes a path to a checklist-shaped file (a skill body is the usual one)
+or `inline:<text>`. The source is rendered with the task's variables, its digest
+is recorded before rendering and the written child's after, and a source with no
+enumerable row, or with numbered labels that disagree with their positions, is
+refused. `template:<id>` catalog resolution is refused: resolving a catalog id
+needs the project's template sources, which a task-dir-local engine cannot read,
+so materialize the template first and pass its path.
+
+Ownership rules, all enforced by `mark`:
+
+- A step owns one child for the life of the task directory. Registering on a step
+  that already has one, or on a checked box, is refused.
+- While the child is unsettled, `mark N` for that step is refused with a pointer
+  to the child. Settled means `complete` or `done`; a `blocked` child is terminal
+  for the run yet keeps its step, so the parent still cannot mark past it.
+- `sub <id> complete` ticks the parent box and appends the parent timing event a
+  normal parent mark would, then a later `mark N` on that step is a no-op.
+- `sub <id> blocked` writes the child signal and the parent signal as `blocked`
+  with `subtask <id>: <reason>`; the next child step or completion restores
+  `running` on both.
+- A child has no flow terminal contract: `--report <artifact>` is its only
+  artifact rule, and the parent's contract still governs the parent's own terminal
+  mark, which is refused while any child is unsettled.
+
+A child progress update is live only while its parent checklist is the active one,
+and a `running` child with no recent mark projects as `stale` — a projection only,
+never a status in the file. Child units are projected and mirrored for slot runs;
+slot-free static review workspaces do not do so yet.
+
+## Acceptance-criteria ledger
+
+`farmslot-agent ac` is the only writer of `artifacts/acceptance-status.json`. It
+records one verdict per criterion (`proven`, `weak`, `missing`, `untestable`) with
+evidence paths and recipe nodes, and `ac render` prints the coverage table the PR
+body reads. Enforcement is a per-project opt-in through
+`worker_terminal.acceptance`: with it, every criterion needs a verdict before a
+terminal success mark and `weak` or `missing` fails unless the contract also sets
+`acceptance.allowWeak`. Without it the ledger is informational.
 
 ## Compatibility
 

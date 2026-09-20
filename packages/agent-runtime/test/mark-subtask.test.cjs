@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// `mark sub` — child checklist units (ADR-060). Every row of the refusal table
-// in the ADR-060 refusal table is asserted here, plus the parent
-// signal effects: a child owns its parent step until it is settled, its
-// completion ticks the parent box with a normal parent timing event, and a
-// blocked child blocks the parent signal with the child reason.
+// `mark sub` — child checklist units (ADR-060). Every refusal listed under
+// "Child checklist units" in docs/reference/agent-runtime.md is asserted here,
+// plus the parent signal effects: a child owns its parent step until it is
+// settled, its completion ticks the parent box with a normal parent timing
+// event, and a blocked child blocks the parent signal with the child reason.
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');

@@ -40,7 +40,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [056](../adr/056-runner-session-archive.md)                | Runner session archive at recycle  | Accepted   | In progress    | Opaque jsonl snapshot for Claude/Codex/Grok; History fallback                |
 | [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
 | [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Accepted   | Implemented    | None tracked                                                                 |
-| [060](../adr/060-sub-task-observability.md)                | Sub-task observability             | Accepted   | Partial        | Slot-free review workspaces do not project/mirror child units; cost roll-up  |
+| [060](../adr/060-sub-task-observability.md)                | Sub-task observability             | Accepted   | Partial        | Slot-free static review workspaces do not project or mirror child units      |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
