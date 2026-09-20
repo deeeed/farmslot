@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Node registration handshake",
+  "description": "Boot a real isolated gateway with an offline-seeded credential store and drive the node daemon's own transport helper over a plain websocket. Proves a refused node.connect surfaces its gateway code and message instead of hanging on an open socket, a non-node credential is refused at auth.connect, and a correctly owned node is listed by nodes.list at the gateway protocol version only after its registration ACK, then unlisted when its socket closes.",
+  "workflow": {
+    "entry": "handshake",
+    "nodes": {
+      "handshake": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-node-registration-handshake.mts direct",
+        "timeout_ms": 120000,
+        "intent": "Registration refusal (AUTH_FORBIDDEN native-owner mismatch) is observable on the daemon side and the machine stays out of nodes.list; a person credential presented as clientKind node is refused with a node-subject action; the owned node's node.connect ACK precedes its nodes.list entry with versionMatch true, and closing the socket removes it.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -42,6 +42,7 @@ command=' '.join(sys.argv[2:])
 body=sys.stdin.read()
 if body.startswith('<?xml'): Path(os.environ['RENDER_ROOT'],'service.plist').write_text(body)
 elif body.startswith('[Unit]'): Path(os.environ['RENDER_ROOT'],'service.unit').write_text(body)
+elif command.endswith('/package.json'): Path(os.environ['RENDER_ROOT'],'standalone-package.json').write_text(body)
 if command=='uname -s': print(os.environ['RENDER_OS'])
 elif command=='echo $HOME': print('/home/node-validation')
 elif command=='id -u': print('501')
@@ -119,6 +120,19 @@ elif command.startswith('test -d '): sys.exit(1)
           assert.equal(unit.includes('FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=fixture-owner'), native);
         }
         assert.equal(new Set(servicePath.split(':')).size, servicePath.split(':').length);
+        // The bundled capture-helper floor. A deployed lockfile keeps whatever
+        // satisfied the previous range (0.2.1 was observed pinned on a live node
+        // while the operator binary was 0.2.6), and 0.2.1 rejects the node's
+        // `+match <app>\t<window>` probe as a structured error, so screen probes
+        // never start. Only a raised range makes a repeated install upgrade.
+        const standalone = JSON.parse(
+          fs.readFileSync(path.join(root, 'standalone-package.json'), 'utf8'),
+        );
+        assert.equal(
+          standalone.dependencies['@siteed/capture-helper'],
+          platform === 'Darwin' ? '^0.2.6' : undefined,
+          'macOS nodes bundle capture-helper at the supported floor; Linux nodes bundle none',
+        );
         if (native) {
           assert.deepEqual(args.slice(0, 2), [
             platform === 'Darwin' ? '/bin/zsh' : '/bin/bash',

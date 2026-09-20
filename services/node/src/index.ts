@@ -4,8 +4,6 @@ import WebSocket from 'ws';
 
 import {
   type Frame,
-  type GatewayAuthConnectResult,
-  Methods,
   PROTOCOL_VERSION,
   type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
@@ -57,7 +55,13 @@ import {
 } from './commands/system-metrics.js';
 import * as tmux from './commands/tmux.js';
 import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
-import { isDeterministicAuthRejection, resolveGatewayCredential } from './gateway-credential.js';
+import { resolveGatewayCredential } from './gateway-credential.js';
+import {
+  authenticateNode,
+  describeHandshakeFailure,
+  isDeterministicHandshakeRejection,
+  registerNode,
+} from './gateway-handshake.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
@@ -75,18 +79,19 @@ function connect(): void {
   if (disposed) return;
 
   console.log(`Connecting to gateway at ${GATEWAY_URL} as "${MACHINE_NAME}"...`);
-  ws = new WebSocket(GATEWAY_URL);
+  const socket = new WebSocket(GATEWAY_URL);
+  ws = socket;
 
-  ws.on('open', () => {
-    console.log('Connected to gateway');
+  socket.on('open', () => {
+    console.log('Transport open; authenticating and registering with gateway');
     // Backoff is NOT reset here: a socket that opens and is then rejected by
-    // auth would otherwise retry at the floor forever (observed post-ADR-051
-    // as a 500ms spin). It resets in authenticateThenRegister once auth
-    // actually succeeds.
-    authenticateThenRegister();
+    // auth or registration would otherwise retry at the floor forever
+    // (observed post-ADR-051 as a 500ms spin). It resets in handshake() once
+    // the gateway has ACKed node.connect.
+    void handshake(socket);
   });
 
-  ws.on('message', async (raw: Buffer) => {
+  socket.on('message', async (raw: Buffer) => {
     try {
       const frame: Frame = JSON.parse(raw.toString());
       if (frame.type === 'req') {
@@ -97,7 +102,13 @@ function connect(): void {
     }
   });
 
-  ws.on('close', () => {
+  socket.on('close', () => {
+    if (ws !== socket) {
+      // A superseded socket closing late must not tear down the subscriptions
+      // the current socket owns, nor schedule a second reconnect chain.
+      console.log('Superseded gateway socket closed');
+      return;
+    }
     console.log('Disconnected from gateway');
     fsWatchStopAll();
     stopMetricsSubscription();
@@ -108,7 +119,7 @@ function connect(): void {
     scheduleReconnect();
   });
 
-  ws.on('error', (err) => {
+  socket.on('error', (err) => {
     console.error('WebSocket error:', err.message);
   });
 }
@@ -120,68 +131,53 @@ function scheduleReconnect(): void {
   backoff = Math.min(backoff * 2, MAX_BACKOFF);
 }
 
-function sendGatewayRequest<T>(method: string, params: unknown): Promise<T> {
-  const socket = ws;
-  if (!socket || socket.readyState !== WebSocket.OPEN)
-    throw new Error('Gateway WebSocket is not open');
-  const id = `${method}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const frame: RequestFrame = { type: 'req', id, method, params };
-  return new Promise<T>((resolve, reject) => {
-    const onMessage = (raw: Buffer) => {
-      const parsed = JSON.parse(raw.toString()) as Frame;
-      if (parsed.type !== 'res' || parsed.id !== id) return;
-      socket.off('message', onMessage);
-      if (parsed.ok) {
-        resolve(parsed.payload as T);
-      } else {
-        reject(new Error(parsed.error?.message ?? 'Gateway request failed'));
-      }
-    };
-    socket.on('message', onMessage);
-    socket.send(JSON.stringify(frame));
-  });
-}
-
-async function authenticateThenRegister(): Promise<void> {
+/**
+ * auth.connect, then node.connect, on the socket this attempt owns. The node
+ * is "connected" only once the gateway ACKs node.connect: auth alone does not
+ * list the machine, and a registration refusal (native-owner mismatch,
+ * machine assigned to another principal) used to sit silently on an open
+ * socket forever. Every failure closes THIS socket and reports the gateway's
+ * code and message; a socket that was superseded while awaiting never touches
+ * the newer one.
+ */
+async function handshake(socket: WebSocket): Promise<void> {
+  let step = 'authentication';
   try {
     // Re-read on every connection attempt so issued/rotated node credentials take
     // effect on reconnect without restarting the daemon.
-    const gatewayCredential = resolveGatewayCredential();
-    await sendGatewayRequest<GatewayAuthConnectResult>(Methods.AUTH_CONNECT, {
-      clientKind: 'node',
-      clientName: MACHINE_NAME,
-      protocolVersion: PROTOCOL_VERSION,
-      ...(gatewayCredential?.token ? { token: gatewayCredential.token } : {}),
-      ...(gatewayCredential?.password ? { password: gatewayCredential.password } : {}),
+    const credential = resolveGatewayCredential();
+    await authenticateNode(socket, { machine: MACHINE_NAME, credential });
+    step = 'registration';
+    const capabilities = await collectCaptureCapabilities();
+    await registerNode(socket, {
+      machine: MACHINE_NAME,
+      pid: process.pid,
+      capabilities,
+      nativeSessions: nativeSessions.declaration,
     });
-    // Auth accepted — this connection is healthy, so future transport drops
+    if (ws !== socket) {
+      // Superseded while awaiting: the newer socket runs its own handshake and
+      // owns backoff state. Release this one without disturbing it.
+      socket.close();
+      return;
+    }
+    // Registered — this connection is healthy, so future transport drops
     // start their retry climb from the floor again, and a later auth
     // regression earns a fresh hint.
     backoff = 500;
     lastAuthHint = null;
-    const connectFrame: RequestFrame = {
-      type: 'req',
-      id: 'connect-0',
-      method: 'node.connect',
-      params: {
-        machine: MACHINE_NAME,
-        pid: process.pid,
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: await collectCaptureCapabilities(),
-        nativeSessions: nativeSessions.declaration,
-      },
-    };
-    ws?.send(JSON.stringify(connectFrame));
+    console.log(`Registered with gateway as "${MACHINE_NAME}" (protocol ${PROTOCOL_VERSION})`);
   } catch (err) {
-    const message = (err as Error).message;
-    console.error(`Gateway authentication failed: ${message}`);
-    if (isDeterministicAuthRejection(message)) {
+    const failure = describeHandshakeFailure(err);
+    console.error(`Gateway ${step} failed [${failure.code}]: ${failure.message}`);
+    if (failure.userAction) console.error(`Next: ${failure.userAction}`);
+    if (ws === socket && isDeterministicHandshakeRejection(err)) {
       // Retrying faster cannot fix these — go straight to the ceiling. The
       // credential-issue hint applies ONLY to the node-subject rejection;
-      // generic auth failures (bad token, rate limit) get no misleading
-      // advice, and each distinct cause prints its hint once per process.
+      // other refusals (bad token, rate limit, owner mismatch) already carry
+      // the gateway's own message, and each hint prints once per process.
       backoff = MAX_BACKOFF;
-      if (/node-subject principal/i.test(message) && lastAuthHint !== 'node-subject') {
+      if (/node-subject principal/i.test(failure.message) && lastAuthHint !== 'node-subject') {
         lastAuthHint = 'node-subject';
         console.error(
           `This gateway requires a node-subject credential for "${MACHINE_NAME}". ` +
@@ -190,7 +186,9 @@ async function authenticateThenRegister(): Promise<void> {
         );
       }
     }
-    ws?.close();
+    // Close only the socket this attempt owns; its close handler decides
+    // whether a reconnect is due.
+    socket.close();
   }
 }
 

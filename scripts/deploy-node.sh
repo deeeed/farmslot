@@ -452,6 +452,9 @@ for proj_dir in "$REPO_ROOT"/projects/*/; do
 done
 
 # --- Install deps (before protocol rsync — yarn wipes unmanaged packages) ---
+# Bundled capture-helper floor: a deployed lockfile kept 0.2.1, which rejects the
+# node's `+match <app>\t<window>` probe; 0.2.6 is the known-compatible release.
+# Raising the range is what makes a repeated install upgrade an old lock.
 echo "[deploy] writing standalone package.json..."
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
   run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
@@ -463,7 +466,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   "dependencies": {
     "ws": "^8.18.0",
     "tsx": "^4.19.0",
-    "@siteed/capture-helper": "^0.2.1",
+    "@siteed/capture-helper": "^0.2.6",
     "@noble/hashes": "1.4.0"
   }
 }
