@@ -65,7 +65,7 @@ import {
   COMMAND_CENTER_RELEASE_NOTES,
   isVersionNewer,
 } from '../build-info.js';
-import { isDesktopClient } from '../desktop-connection.js';
+import { getDesktopConnection, isDesktopClient } from '../desktop-connection.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway, gatewayStatusMessage } from '../gateway-client.js';
 import {
@@ -236,6 +236,7 @@ export class FarmApp extends LitElement {
   @state() private authMode: 'token' | 'password' = 'token';
   @state() private authSecret = '';
   @state() private authSaving = false;
+  @state() private authRememberMe = getDesktopConnection()?.rememberMe !== false;
   @state() private authSaveError = '';
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
@@ -873,6 +874,7 @@ export class FarmApp extends LitElement {
     try {
       await gateway.setAuthCredentials(
         this.authMode === 'token' ? { token: secret } : { password: secret },
+        isDesktopClient() ? this.authRememberMe : undefined,
       );
       gateway.connect();
     } catch (error) {
@@ -1460,7 +1462,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         <div class="auth-copy">
           Enter your gateway token or password to open your Farmslot workspace.
           ${isDesktopClient()
-            ? 'The secret is encrypted using macOS Keychain.'
+            ? 'Remembered credentials are encrypted using macOS Keychain.'
             : 'The secret is stored in this browser profile.'}
         </div>
         ${authError
@@ -1493,6 +1495,19 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             this.authSecret = (event.target as HTMLInputElement).value;
           }}
         />
+        ${isDesktopClient()
+          ? html`<label class="auth-remember">
+                <input
+                  type="checkbox"
+                  .checked=${this.authRememberMe}
+                  @change=${(event: Event) => {
+                    this.authRememberMe = (event.target as HTMLInputElement).checked;
+                  }}
+                />
+                Remember me
+              </label>
+              <div class="auth-copy">Uncheck to keep credentials only until you quit.</div>`
+          : nothing}
         <button
           class="auth-submit"
           type="submit"

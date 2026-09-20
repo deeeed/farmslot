@@ -10,6 +10,7 @@ test('connection validation rejects credential URLs and ambiguous authentication
   assert.deepEqual(validateConnection({ url: 'wss://farm.example/ws', token: 'secret' }), {
     url: 'wss://farm.example/ws',
     token: 'secret',
+    rememberMe: true,
   });
   for (const value of [
     null,
@@ -21,6 +22,7 @@ test('connection validation rejects credential URLs and ambiguous authentication
     { url: 'ws://farm.example', token: 42 },
     { url: 'ws://farm.example', token: 'a', password: 'b' },
     { url: 'ws://farm.example', extra: true },
+    { url: 'ws://farm.example', rememberMe: 'yes' },
   ]) {
     assert.throws(() => validateConnection(value));
   }
@@ -29,7 +31,7 @@ test('connection validation rejects credential URLs and ambiguous authentication
 test('storage requires encryption, round trips credentials, and restricts the saved file', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'farmslot-connection-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const connection = { url: 'ws://127.0.0.1:7777/ws', password: 'sample-secret' };
+  const connection = { url: 'ws://127.0.0.1:7777/ws', password: 'sample-secret', rememberMe: true };
   // This unit test checks the storage boundary. Live Electron validation covers safeStorage itself.
   const encoded = Buffer.from('encrypted-test-value');
   const store = createConnectionStore(directory, {
@@ -54,4 +56,16 @@ test('storage requires encryption, round trips credentials, and restricts the sa
   await assert.rejects(unavailable.load(), /encryption is unavailable/);
   await writeFile(path, 'corrupted');
   await assert.rejects(store.load());
+});
+
+test('session-only login removes saved credentials without requiring encryption', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'farmslot-session-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'connection.encrypted'), 'previous encrypted login');
+  await writeFile(join(directory, 'connection.encrypted.tmp'), 'previous pending login');
+  const store = createConnectionStore(directory, { isEncryptionAvailable: () => false });
+  const connection = { url: 'ws://localhost:7777/ws', token: 'session-secret', rememberMe: false };
+  assert.deepEqual(await store.save(connection), connection);
+  assert.equal(await store.load(), null);
+  await assert.rejects(readFile(join(directory, 'connection.encrypted.tmp')), { code: 'ENOENT' });
 });

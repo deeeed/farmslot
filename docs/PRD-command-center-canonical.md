@@ -61,11 +61,11 @@ Provide the source/field binding editor, dry-run match preview, activation/backf
 
 Deliver a macOS Electron app alongside the browser Command Center, using one shared Lit UI and the existing gateway protocol. Bundle the production UI so the installed app needs neither Vite nor a source checkout. The gateway remains an independent service: closing, crashing, or updating the client must not stop farm work.
 
-Support authenticated local and remote gateways, protected saved credentials, reconnect after sleep or gateway restart, and clear connection errors. Keep desktop integration limited to standard menus, shortcuts, clipboard, external links, and window lifecycle. The renderer remains sandboxed with isolated, narrowly scoped IPC; gateway authentication, origin checks, and TLS validation remain enforced.
+Support authenticated local and remote gateways, protected saved credentials, reconnect after sleep or gateway restart, and clear connection errors. Desktop integration includes standard menus, clipboard, external links, a menu-bar indicator for pending decisions and connection status, a configurable global show/hide shortcut, and restoration of the last view and window bounds. Remember me defaults on in desktop login and connection settings; credentials use macOS-backed encryption across quit and app replacement. Turning it off removes saved credentials and retains them only for the current app session. The renderer remains sandboxed with isolated, narrowly scoped IPC; gateway authentication, origin checks, and TLS validation remain enforced.
 
 Prove terminal input/resize, source/diff viewing, live device streams, authenticated artifacts, and operator actions through real gateway flows in both web and desktop clients.
 
-Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, a menu-bar agent, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).
+Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).
 
 ## Boundaries
 

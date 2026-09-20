@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "macOS remembered login and desktop preferences",
+  "description": "Start a packaged test app with profile temp/desktop-preferences/profile, CDP 9493 and main inspector 9494. Set FARMSLOT_GATEWAY_TOKEN for an existing gateway. Uses real input, native window lifecycle, encrypted file checks and a replacement app copy. Does not alter gateway state or the operator profile.",
+  "workflow": {
+    "entry": "preferences",
+    "nodes": {
+      "preferences": {
+        "action": "command",
+        "cmd": "yarn exec tsx scripts/e2e-desktop-preferences.mts",
+        "timeout_ms": 180000,
+        "intent": "Remembered credentials survive app replacement with route, bounds and shortcut. Session-only credentials survive reload but not quit. Shared desktop login uses the same Remember me preference.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

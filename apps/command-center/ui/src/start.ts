@@ -4,11 +4,13 @@
 import './components/app-shell.js';
 
 import { requestPermission } from './utils/notifications.js';
+import { initializeDesktopAttention } from './desktop-attention.js';
 import { gateway } from './gateway-client.js';
 import { initState } from './state.js';
 
 // Wire up state management to gateway events
 initState();
+initializeDesktopAttention();
 
 // Tear down principal-owned views on authentication changes. Pending reads may
 // settle after disconnect, but their old components cannot render into the new workspace.
