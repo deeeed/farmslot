@@ -688,7 +688,18 @@ test('the acceptance wrapper carries parentChecklist so a child unit update is p
 
 test('a progress update targets the run it names, slot run or review workspace', () => {
   const slotRun = { id: 'run-slot', slotId: 'macwork-ff-1' };
-  const workspaceRun = { id: 'run-workspace', slotId: null };
+  const workspaceRun = {
+    id: 'run-workspace',
+    slotId: null,
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'macwork',
+      executionNodeId: 'local',
+      checkoutPath: '/review/source',
+      taskPath: '/review/task',
+      artifactPath: '/review/task/artifacts',
+    },
+  };
 
   assert.equal(
     taskProgressUpdateTargetsRun(slotRun, { slotId: 'macwork-ff-1', runId: 'run-slot' }),
@@ -708,6 +719,14 @@ test('a progress update targets the run it names, slot run or review workspace',
   assert.equal(
     taskProgressUpdateTargetsRun(workspaceRun, { slotId: '', runId: 'another-run' }),
     false,
+  );
+  assert.equal(
+    taskProgressUpdateTargetsRun(
+      { id: 'run-unplaced', slotId: null },
+      { slotId: '', runId: 'run-unplaced' },
+    ),
+    false,
+    'a run with neither a slot nor a review workspace has no progress source',
   );
   assert.equal(taskProgressUpdateTargetsRun(null, { slotId: '', runId: 'run-workspace' }), false);
 });

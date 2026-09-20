@@ -145,10 +145,10 @@ export function hasActiveInlineCiFix(run: Pick<Run, 'steps'>): boolean {
  * slot run has.
  */
 export function taskProgressUpdateTargetsRun(
-  run: Pick<Run, 'id' | 'slotId'> | null,
+  run: Pick<Run, 'id' | 'slotId' | 'reviewWorkspace'> | null,
   update: Pick<TaskProgressUpdatedPayload, 'slotId' | 'runId'>,
 ): boolean {
-  if (!run) return false;
+  if (!run || (!run.slotId && !run.reviewWorkspace)) return false;
   return (run.slotId ?? '') === update.slotId && update.runId === run.id;
 }
 
