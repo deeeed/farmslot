@@ -4,13 +4,13 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- Task progress now reaches a static review workspace run, which has no slot: run detail, the family workspace and the decision workspace fetch it on open and accept its published updates, both keyed on the run with the empty slot id such a run publishes under, so its checklist, child units and acceptance panel fill in immediately and refresh as the reviewer works instead of staying blank. The terminal screen shares the same helper for consistency; its route stays slot-gated.
-- Run detail shows the acceptance-criteria ledger (ADR-060), compact and read-only: proven count in the header, a row per criterion with verdict, proof mode, evidence basenames and note, and `no verdict` for one not judged yet.
-- The acceptance panel shows `ledger unreadable: <reason>` when the gateway could not read the ledger, instead of rendering nothing.
-- Task-progress filtering uses the shared protocol rule instead of a local `SELF-REVIEW.md` string test, so Companion accepts and drops exactly what Command Center does, including child checklist unit updates (ADR-060).
-- Restore Settings when the gateway is unpaired, and put QR pairing first on the connection landing page. Typing a URL or token stays as a manual fallback.
-- Worker progress shows a child checklist unit under the step that owns it, with its source, id, status, and step count; tap it to see the child's own steps, and a new run starts from collapsed again.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.0 - 2026-09-20
+
+- Static review runs show live task progress, with expandable child checklists under their parent steps.
+- Run detail shows acceptance criteria, verdicts and evidence, including criteria awaiting a verdict and unreadable-ledger errors.
+- Unpaired gateways keep Settings accessible, with QR pairing first and manual URL/token entry available.
 
 ## 0.6.0 - 2026-09-16
 
