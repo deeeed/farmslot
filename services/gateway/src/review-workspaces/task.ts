@@ -14,11 +14,13 @@ import {
 } from '@farmslot/agent-runtime';
 import { durableWrite } from '@farmslot/agent-runtime/native/storage';
 import {
+  ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
   isTerminalRunStatus,
   type ReviewWorkspaceSubject,
   type Run,
   type RunReviewResult,
+  type RunSubtaskMetrics,
   type WorkerSignal,
   type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
@@ -27,6 +29,7 @@ import { farmslotRoot, loadProjectVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import {
   slotCopyDir,
+  slotCopyFile,
   slotFileExists,
   type SlotLocality,
   slotMkdir,
@@ -37,6 +40,7 @@ import {
 import { shellQuote } from '../core/tmux.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
+import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import { reviewRecommendationFromMarkdown } from '../run-engine/review-artifacts.js';
 import { requestNativeNode } from '../runners/native/node.js';
@@ -45,6 +49,8 @@ import { getRun, runsDirectory } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 import { parseStructuredReviewFeedback } from '../self-review/feedback.js';
 import { readConfiguredExecutionTemplateSnapshot } from '../tasks/execution-template-catalog.js';
+import { collectSubtaskMetricsFromTaskDir } from '../tasks/subtask-metrics.js';
+import { subtaskTerminalRefusal } from '../tasks/subtasks.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../tasks/worker-signals.js';
 import {
   readWorkerTerminalProjectConfig,
@@ -54,6 +60,8 @@ import {
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
 const RESULT = 'artifacts/review-result.json';
+/** The gateway's own filesystem, for the operator-visible copy of a review task. */
+const ORCHESTRATOR: SlotLocality = { host: 'localhost', machine: 'local', sshTarget: '' };
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 type Dependencies = {
@@ -368,9 +376,8 @@ export async function materializeReviewWorkspaceTask(
         path.join(bundleDir, 'inputs/prior-review.json'),
         `${JSON.stringify(run.repeatReviewContext, null, 2)}\n`,
       );
-    const local = { host: 'localhost', machine: 'local', sshTarget: '' };
     await slotWriteFiles(
-      local,
+      ORCHESTRATOR,
       bundleDir,
       [...guidance, ...(await runtimeFiles())].map((file) => ({
         path: file.relativePath,
@@ -441,17 +448,14 @@ async function materializeReviewViewer(
   bundleDir: string,
   deps: Dependencies,
 ): Promise<string> {
-  const viewer = path.join(deps.snapshotRoot(), run.id, 'view');
+  const viewer = viewDirFor(run.id, deps);
   await mkdir(viewer, { recursive: true });
   for (const file of ['TASK.md', 'CHECKLIST.md']) {
     await writeFile(path.join(viewer, file), await readFile(path.join(bundleDir, file)));
   }
-  await slotCopyDir(
-    { host: 'localhost', machine: 'local', sshTarget: '' },
-    path.join(bundleDir, 'inputs'),
-    path.join(viewer, 'inputs'),
-    { excludeTopLevel: ['runtime'] },
-  );
+  await slotCopyDir(ORCHESTRATOR, path.join(bundleDir, 'inputs'), path.join(viewer, 'inputs'), {
+    excludeTopLevel: ['runtime'],
+  });
   return path.join(viewer, 'TASK.md');
 }
 
@@ -489,8 +493,9 @@ export async function readReviewWorkspaceCompletion(
   )
     throw new Error('Static review signal does not belong to its accepted worker attempt');
   if (signal.status === 'blocked') {
-    const viewer = path.join(deps.snapshotRoot(), run.id, 'view');
+    const viewer = viewDirFor(run.id, deps);
     await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(viewer, 'artifacts'));
+    await mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
     await writeFile(
       path.join(viewer, 'CHECKLIST.md'),
       await confinedRead(io, taskDir, 'CHECKLIST.md'),
@@ -505,6 +510,12 @@ export async function readReviewWorkspaceCompletion(
     signal.disposition !== 'fixed'
   )
     throw new Error(`Static review did not complete: ${signal.reason ?? signal.status}`);
+  // A registered child checklist unit (ADR-060) is part of this signal's proof.
+  // `mark` already refuses the parent terminal command while a child is open, so
+  // a signal that arrives here with one was written around the engine. Same
+  // refusal the slot terminal check applies, on this task's own directory.
+  const openChild = await subtaskTerminalRefusal(io, taskDir, 'complete');
+  if (openChild) throw new Error(openChild);
   const raw = await confinedRead(io, taskDir, RESULT);
   const artifact = JSON.parse(raw) as Record<string, unknown>;
   const feedback = parseStructuredReviewFeedback(raw, RESULT);
@@ -566,7 +577,7 @@ export async function readReviewWorkspaceCompletion(
   if (!isDeepStrictEqual(comments.comments, lineComments))
     throw new Error('Static review line comments disagree with its authoritative findings');
   const mirror = await mkdtemp(path.join(os.tmpdir(), 'workspace-review-completion-'));
-  const viewer = path.join(deps.snapshotRoot(), run.id, 'view');
+  const viewer = viewDirFor(run.id, deps);
   try {
     await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(mirror, 'artifacts'));
     await mkdir(path.join(mirror, 'inputs'));
@@ -584,13 +595,10 @@ export async function readReviewWorkspaceCompletion(
       ],
       { maxBuffer: 256 * 1024, timeout: 30_000 },
     );
-    await slotCopyDir(
-      { host: 'localhost', machine: 'local', sshTarget: '' },
-      path.join(mirror, 'artifacts'),
-      path.join(viewer, 'artifacts'),
-    );
+    await slotCopyDir(ORCHESTRATOR, path.join(mirror, 'artifacts'), path.join(viewer, 'artifacts'));
     await writeFile(path.join(viewer, 'CHECKLIST.md'), checklist);
     await writeFile(path.join(viewer, 'SIGNAL.json'), signalText);
+    await mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
   } finally {
     await rm(mirror, { recursive: true, force: true });
   }
@@ -631,11 +639,121 @@ function assertCompletionIdentity(runId: string, snapshot: Snapshot, deps: Depen
     throw new Error('Static review identity changed during completion');
 }
 
-/** Read progress from the same confined, owned task as completion validation. */
-export async function readReviewWorkspaceChecklist(runId: string): Promise<string> {
-  const run = ownedRun(runId, defaults);
-  const io = await locality(run, defaults);
-  if (run.reviewWorkspace!.cleanedAt)
-    return readFile(path.join(defaults.snapshotRoot(), run.id, 'view/CHECKLIST.md'), 'utf8');
-  return confinedRead(io, run.reviewWorkspace!.taskPath, 'CHECKLIST.md');
+/** The operator-visible copy of a review task directory. */
+function viewDirFor(runId: string, deps: Dependencies): string {
+  return path.join(deps.snapshotRoot(), runId, 'view');
+}
+
+/**
+ * The view is the worker's own directory, copied: its `CHECKLIST.md` and
+ * `artifacts/` already carry the worker's names, so child unit files keep theirs
+ * instead of the orchestrator copy's `.worker` suffix. That is what lets
+ * `subtasks/index.json`'s `subtasks/<id>.md` paths resolve inside the view, so
+ * the progress projection reads the same files after cleanup that it read live.
+ */
+const VIEW_SUBTASK_MIRROR = { destinationName: (entry: string) => entry } as const;
+
+export interface ReviewWorkspaceProgressSource {
+  /** Where the files live: the execution node, or the gateway for a cleaned-up view. */
+  io: SlotLocality;
+  /** Directory holding `CHECKLIST.md`, `artifacts/` and `subtasks/`. */
+  taskDir: string;
+  /** Absolute path of the parent checklist inside {@link taskDir}. */
+  checklistPath: string;
+}
+
+/**
+ * Where to read this run's checklist and everything ADR-060 puts beside it.
+ *
+ * While the workspace exists that is the confined, owned task directory on its
+ * execution node — the same one completion validation reads. After cleanup the
+ * worker directory is gone and the view is the record: it holds the worker's
+ * final checklist, its mirrored child units and its artifacts, so the same read
+ * layers work against it unchanged.
+ */
+async function progressLocation(
+  run: Run,
+  deps: Dependencies,
+): Promise<ReviewWorkspaceProgressSource> {
+  if (run.reviewWorkspace!.cleanedAt) {
+    const viewer = viewDirFor(run.id, deps);
+    return { io: ORCHESTRATOR, taskDir: viewer, checklistPath: path.join(viewer, 'CHECKLIST.md') };
+  }
+  const taskDir = run.reviewWorkspace!.taskPath;
+  return {
+    io: await locality(run, deps),
+    taskDir,
+    checklistPath: path.posix.join(taskDir, 'CHECKLIST.md'),
+  };
+}
+
+/**
+ * Read progress from the same confined, owned task as completion validation.
+ *
+ * Returns the location as well as the markdown so the caller can project the
+ * child checklist units and the acceptance ledger beside it through the shared
+ * read layers, instead of the checklist text alone.
+ */
+export async function readReviewWorkspaceProgress(
+  runId: string,
+  deps: Dependencies = defaults,
+): Promise<ReviewWorkspaceProgressSource & { markdown: string }> {
+  const run = ownedRun(runId, deps);
+  const location = await progressLocation(run, deps);
+  if (run.reviewWorkspace!.cleanedAt) {
+    return { ...location, markdown: await readFile(location.checklistPath, 'utf8') };
+  }
+  return {
+    ...location,
+    markdown: await confinedRead(location.io, location.taskDir, 'CHECKLIST.md'),
+  };
+}
+
+/**
+ * Refresh the operator view from the live worker task directory: the parent
+ * checklist, every child checklist unit (ADR-060) and the acceptance ledger.
+ *
+ * Completion already snapshots the whole task directory into the view, but a run
+ * only reaches that once. Until then — and for a run that is cancelled or times
+ * out before it — the view held the pristine bundle and no `subtasks/` at all, so
+ * a child unit was invisible in the mirror the operator reads. This keeps the
+ * three files a child lifecycle touches current while the reviewer works.
+ *
+ * Returns how many child files it copied.
+ */
+export async function refreshReviewWorkspaceView(
+  runId: string,
+  deps: Dependencies = defaults,
+): Promise<number> {
+  const run = ownedRun(runId, deps);
+  if (run.reviewWorkspace!.cleanedAt) return 0;
+  const io = await locality(run, deps);
+  const taskDir = run.reviewWorkspace!.taskPath;
+  const viewer = viewDirFor(run.id, deps);
+  await mkdir(viewer, { recursive: true });
+  await writeFile(
+    path.join(viewer, 'CHECKLIST.md'),
+    await confinedRead(io, taskDir, 'CHECKLIST.md'),
+  );
+  const ledger = path.posix.join(taskDir, ACCEPTANCE_STATUS_ARTIFACT);
+  if (await slotFileExists(io, ledger)) {
+    await mkdir(path.join(viewer, 'artifacts'), { recursive: true });
+    await slotCopyFile(io, ledger, path.join(viewer, ACCEPTANCE_STATUS_ARTIFACT));
+  }
+  return mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
+}
+
+/**
+ * The run's child-unit cost roll-up (ADR-060), read where its files are — the
+ * live workspace task directory, or the view once the workspace is gone. Same
+ * collector as a slot run's, so a static review's children land on
+ * `run.metrics.subtasks` in the same shape the retrospective already reads.
+ */
+export async function collectReviewWorkspaceSubtaskMetrics(
+  runId: string,
+  deps: Dependencies = defaults,
+): Promise<RunSubtaskMetrics[] | null> {
+  const run = ownedRun(runId, deps);
+  const location = await progressLocation(run, deps);
+  return collectSubtaskMetricsFromTaskDir(location.io, location.taskDir);
 }

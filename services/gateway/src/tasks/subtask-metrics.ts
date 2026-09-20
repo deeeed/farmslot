@@ -20,6 +20,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import type { SlotLocality } from '../core/slot-io.js';
 
 import { readSubtaskIndex, readSubtaskUnits } from './subtasks.js';
 
@@ -73,11 +74,24 @@ export async function collectRunSubtaskMetrics(
   const vars = await loadSlotVars(slotId);
   const workerTaskDir = await resolveWorkerTaskDirForRun(run, vars);
   if (!workerTaskDir) return null;
-  const index = await readSubtaskIndex(vars, workerTaskDir);
+  return collectSubtaskMetricsFromTaskDir(vars, workerTaskDir);
+}
+
+/**
+ * The same roll-up for a task directory the caller already resolved, through the
+ * same read layer. A slot run reaches it through the slot's worker task dir; a
+ * slot-free review workspace (ADR-058) through its own task path, or through the
+ * view once the workspace is cleaned up and the view holds the mirrored files.
+ */
+export async function collectSubtaskMetricsFromTaskDir(
+  ctx: SlotLocality,
+  taskDir: string,
+): Promise<RunSubtaskMetrics[] | null> {
+  const index = await readSubtaskIndex(ctx, taskDir);
   if (!index || index.units.length === 0) return null;
 
   const metrics: RunSubtaskMetrics[] = [];
-  for (const read of await readSubtaskUnits(vars, workerTaskDir, index.units)) {
+  for (const read of await readSubtaskUnits(ctx, taskDir, index.units)) {
     const items = enumerateChecklistCheckboxes(read.markdown);
     const timing = read.signal?.checklistTiming;
     metrics.push({

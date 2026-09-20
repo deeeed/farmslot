@@ -29,12 +29,18 @@ import {
   reviewTmuxOperation,
 } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
 
 import { assertReviewWorkspaceAdmitted, inspectReviewWorkspaceTarget } from './admission.js';
 import { compatibleWorkspaceReviewer, configureWorkspaceContinuity } from './continuity.js';
 import { holdWorkspaceReview, waitingAtReviewGate } from './gate.js';
+import { createReviewWorkspaceProgressPublisher } from './progress.js';
 import { ensureReviewWorkspaceSupport } from './support.js';
-import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
+import {
+  collectReviewWorkspaceSubtaskMetrics,
+  materializeReviewWorkspaceTask,
+  readReviewWorkspaceCompletion,
+} from './task.js';
 import {
   allocateReviewWorkspace,
   cancelReviewWorkspaceAllocation,
@@ -66,7 +72,11 @@ async function waitForWorkspaceOperation<T>(
   }
 }
 
-export function currentWorkspaceRun(runId: string, generation: number, allowTerminal = false): Run {
+function workspaceGenerationOwner(
+  runId: string,
+  generation: number,
+  allowTerminal: boolean,
+): Run | null {
   const run = getRun(runId);
   if (
     !run ||
@@ -76,9 +86,47 @@ export function currentWorkspaceRun(runId: string, generation: number, allowTerm
     (run.engineState?.generation ?? 0) !== generation ||
     (!allowTerminal && ['paused', 'blocked', 'done', 'cancelled', 'failed'].includes(run.status))
   ) {
-    throw new Error('Review workspace execution no longer owns this run generation');
+    return null;
   }
   return run;
+}
+
+export function currentWorkspaceRun(runId: string, generation: number, allowTerminal = false): Run {
+  const run = workspaceGenerationOwner(runId, generation, allowTerminal);
+  if (!run) throw new Error('Review workspace execution no longer owns this run generation');
+  return run;
+}
+
+/**
+ * The same ownership test as {@link currentWorkspaceRun}, as a predicate. Used by
+ * observability that must fall silent when its generation is superseded instead
+ * of failing the step that replaced it.
+ */
+export function ownsWorkspaceGeneration(runId: string, generation: number): boolean {
+  return workspaceGenerationOwner(runId, generation, false) !== null;
+}
+
+/**
+ * The run's child-unit roll-up (ADR-060) for `run.metrics.subtasks`, or null when
+ * it cannot be read.
+ *
+ * A corrupt registry must not lose the review's own metrics, which are the run's
+ * primary cost record. Error level, not warn: child durations are missing from
+ * the retrospective for this run and nothing downstream would say why. The same
+ * read throws to its caller in `task.progress`, where the operator sees it on the
+ * next progress request.
+ */
+async function reviewWorkspaceSubtaskMetrics(runId: string) {
+  try {
+    return await collectReviewWorkspaceSubtaskMetrics(runId);
+  } catch (error) {
+    console.error(
+      `[review-workspace] subtask metrics unavailable for ${runId.slice(0, 8)}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
 }
 
 async function admittedRun(runId: string, generation: number) {
@@ -360,7 +408,17 @@ export async function executeReviewWorkspaceStep(
         run.steps.find((entry) => entry.name === PipelineSteps.MONITOR)?.startedAt ??
         new Date().toISOString();
       const deadline = Date.parse(started) + config.totalTimeoutMs;
+      // Live checklist, child-unit (ADR-060) and acceptance-ledger progress for a
+      // run that has no slot, and with it the view refresh that keeps the
+      // operator-visible mirror current. The publisher throttles its own reads and
+      // falls silent once this generation stops owning the run, so the loop
+      // exiting is its whole teardown.
+      const progress = createReviewWorkspaceProgressPublisher(runId, emit, {
+        isCurrent: () => ownsWorkspaceGeneration(runId, generation),
+      });
       while (Date.now() < deadline) {
+        check();
+        await progress.publish();
         check();
         if (run.transport === 'tmux') {
           const completion = await readReviewWorkspaceCompletion(runId);
@@ -372,7 +430,13 @@ export async function executeReviewWorkspaceStep(
                 'review-incomplete',
               );
             await persistRunNow(
-              updateRun(runId, { reviewResult: completion.result }),
+              updateRun(runId, {
+                reviewResult: completion.result,
+                metrics: withSubtaskMetrics(
+                  currentWorkspaceRun(runId, generation).metrics,
+                  await reviewWorkspaceSubtaskMetrics(runId),
+                ),
+              }),
               'workspace review result',
             );
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
@@ -420,7 +484,13 @@ export async function executeReviewWorkspaceStep(
             );
           }
           await persistRunNow(
-            updateRun(runId, { reviewResult: completion.result }),
+            updateRun(runId, {
+              reviewResult: completion.result,
+              metrics: withSubtaskMetrics(
+                currentWorkspaceRun(runId, generation).metrics,
+                await reviewWorkspaceSubtaskMetrics(runId),
+              ),
+            }),
             'workspace review result',
           );
           emit(Events.RUN_UPDATED, { run: getRun(runId) });

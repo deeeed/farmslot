@@ -28,7 +28,7 @@ function statFailingCtx(code: string | undefined) {
 }
 
 const LOCAL = { host: 'localhost', machine: 'local', sshTarget: '' };
-const META = { runId: 'run-1', slotId: 'slot-1' };
+const META = { transfer: { runId: 'run-1', slotId: 'slot-1' } };
 
 function makeDirs(workerFiles: Record<string, string>): { worker: string; orchestrator: string } {
   const root = mkdtempSync(path.join(tmpdir(), 'gw-subtask-mirror-'));
