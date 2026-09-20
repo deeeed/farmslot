@@ -1,8 +1,8 @@
+import { getDesktopConnection } from '../desktop-connection.js';
 import {
-  GATEWAY_PASSWORD_STORAGE_KEY,
-  GATEWAY_TOKEN_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
+  readGatewayAuth,
 } from '../gateway-url.js';
 
 export interface GatewayOriginLocation {
@@ -18,6 +18,8 @@ export interface GatewayHttpLocation {
 }
 
 export function gatewayHttpOrigin(locationLike = currentLocation()): string {
+  const desktop = getDesktopConnection();
+  if (desktop) return gatewayWebSocketToHttpOrigin(desktop.url);
   const stored =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_URL_STORAGE_KEY) : null;
   if (stored) {
@@ -39,10 +41,7 @@ export function gatewayHttpOrigin(locationLike = currentLocation()): string {
 export function gatewayApiUrl(path: string): string {
   const gatewayOrigin = gatewayHttpOrigin();
   const absolute = absoluteGatewayUrl(path, gatewayOrigin);
-  const credential =
-    typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) : null;
-  const fallbackPassword =
-    typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) : null;
+  const { token: credential, password: fallbackPassword } = readGatewayAuth();
   const hasQueryCredential =
     absolute.searchParams.has('token') || absolute.searchParams.has('password');
   if (absolute.origin === gatewayOrigin && !hasQueryCredential) {
@@ -115,13 +114,10 @@ export function gatewayHttpFetch(
   const absolute = absoluteGatewayUrl(pathOrUrl, gatewayOrigin);
   const url = sameOriginGatewayHttpUrl(absolute.toString(), locationLike, gatewayOrigin);
   const headers = new Headers(init?.headers);
-  if (
-    absolute.origin === gatewayOrigin &&
-    !headers.has('Authorization') &&
-    typeof localStorage !== 'undefined'
-  ) {
-    const token = localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY)?.trim();
-    const password = localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY)?.trim();
+  if (absolute.origin === gatewayOrigin && !headers.has('Authorization')) {
+    const auth = readGatewayAuth();
+    const token = auth.token?.trim();
+    const password = auth.password?.trim();
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     } else if (password) {

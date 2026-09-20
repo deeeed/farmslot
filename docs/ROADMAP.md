@@ -72,6 +72,8 @@ The approved native structured transport rollout is complete through PR #635 on 
 
 13. **Add generic trigger rules for review intake.** Discover matching PRs through reusable team profiles across configured repositories and GitHub Projects, including PRs by other authors, then notify, enroll monitors or create held/automatic review work under explicit policy. See [the trigger-rule contract](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned) and near-term roadmap item 20.
 
+14. **Add a macOS Electron Command Center client** alongside the web app, sharing the UI and independent gateway. Package the existing UI as an installable macOS app and verify everyday operator workflows. See the [product contract](PRD-command-center-canonical.md#8-electron-desktop-client) and [near-term delivery stages](ROADMAP-next.md#electron-desktop-client), item 23.
+
 See [ROADMAP-next.md](ROADMAP-next.md) for the canonical near-term execution surface.
 
 ## Supporting Deep Dives

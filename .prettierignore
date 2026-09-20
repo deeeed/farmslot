@@ -7,6 +7,8 @@ dist/
 coverage/
 **/coverage/
 apps/command-center/ui/dist/
+apps/command-center-desktop/ui-dist/
+apps/command-center-desktop/release/
 apps/companion/.expo/
 apps/companion/android/
 apps/companion/ios/

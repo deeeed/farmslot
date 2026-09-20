@@ -1,0 +1,51 @@
+{
+  "name": "@farmslot/command-center-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Farmslot Command Center for macOS",
+  "author": "Arthur Breton",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "build": "FARMSLOT_CC_BASE=/cc/ yarn workspace @farmslot/command-center-ui build --outDir ../../command-center-desktop/ui-dist",
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs",
+    "package:mac": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --config.mac.identity=null",
+    "package:mac:signed": "node scripts/notarization.mjs preflight && yarn build && electron-builder --mac --arm64 -c.mac.notarize=true -c.forceCodeSigning=true && node scripts/notarization.mjs verify"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.farmslot.command-center",
+    "productName": "Farmslot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**",
+      "settings/**",
+      "ui-dist/**",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "13.0.0",
+      "icon": "build/icon.png"
+    },
+    "dmg": {
+      "sign": false
+    },
+    "artifactName": "Farmslot-${version}-${arch}.${ext}"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

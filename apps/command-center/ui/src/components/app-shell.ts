@@ -65,6 +65,7 @@ import {
   COMMAND_CENTER_RELEASE_NOTES,
   isVersionNewer,
 } from '../build-info.js';
+import { isDesktopClient } from '../desktop-connection.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway, gatewayStatusMessage } from '../gateway-client.js';
 import {
@@ -72,6 +73,7 @@ import {
   GATEWAY_SOURCE_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
   normalizeGatewayWebSocketUrl,
+  readGatewayAuth,
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
 import {
@@ -231,15 +233,12 @@ export class FarmApp extends LitElement {
   @state() private _sidebarResizing = false;
   @state() private devHarnessLoaded = false;
   @state() private devCaptureMode = false;
-  @state() private authMode: 'token' | 'password' = localStorage.getItem(
-    'farmslot.gateway.password',
-  )
+  @state() private authMode: 'token' | 'password' = readGatewayAuth().password
     ? 'password'
     : 'token';
-  @state() private authSecret =
-    localStorage.getItem('farmslot.gateway.token') ??
-    localStorage.getItem('farmslot.gateway.password') ??
-    '';
+  @state() private authSecret = readGatewayAuth().token ?? readGatewayAuth().password ?? '';
+  @state() private authSaving = false;
+  @state() private authSaveError = '';
   @state() private pairingOpen = false;
   @state() private pairingBusy = false;
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
@@ -812,6 +811,7 @@ export class FarmApp extends LitElement {
   }
 
   private defaultRouteForEmptyHash(): Route {
+    if (isDesktopClient()) return 'fleet';
     const env = (import.meta as ImportMetaWithEnv).env;
     const source = resolveGatewayConnectionSource(
       env.VITE_FARMSLOT_GATEWAY_URL,
@@ -859,14 +859,22 @@ export class FarmApp extends LitElement {
     this.globalFilters = s.globalFilters;
   }
 
-  private submitGatewayAuth(event: Event) {
+  private async submitGatewayAuth(event: Event): Promise<void> {
     event.preventDefault();
     const secret = this.authSecret.trim();
-    if (!secret) return;
-    gateway.setAuthCredentials(
-      this.authMode === 'token' ? { token: secret } : { password: secret },
-    );
-    gateway.connect();
+    if (!secret || this.authSaving) return;
+    this.authSaving = true;
+    this.authSaveError = '';
+    try {
+      await gateway.setAuthCredentials(
+        this.authMode === 'token' ? { token: secret } : { password: secret },
+      );
+      gateway.connect();
+    } catch (error) {
+      this.authSaveError = error instanceof Error ? error.message : 'Unable to save credentials.';
+    } finally {
+      this.authSaving = false;
+    }
   }
 
   private openPairingPanel() {
@@ -1372,6 +1380,7 @@ export class FarmApp extends LitElement {
   }
 
   private renderOnboardingScreen() {
+    if (isDesktopClient()) return html`<a href="/settings">Open connection settings</a>`;
     return html`
       <section class="onboarding-shell">
         <div class="onboarding-hero">
@@ -1431,7 +1440,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   }
 
   private renderAuthScreen() {
-    const authError = gateway.authError;
+    const authError = this.authSaveError || gateway.authError?.message;
     return html`
       ${renderAppShellAuthStyles(this.connection === 'connected')}
       <form
@@ -1444,11 +1453,13 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             : 'Gateway authentication required'}
         </div>
         <div class="auth-copy">
-          Enter your gateway token or password to open your Farmslot workspace. The secret is stored
-          in this browser profile.
+          Enter your gateway token or password to open your Farmslot workspace.
+          ${isDesktopClient()
+            ? 'The secret is encrypted using macOS Keychain.'
+            : 'The secret is stored in this browser profile.'}
         </div>
         ${authError
-          ? html`<div class="auth-error">${authError.message}</div>`
+          ? html`<div class="auth-error">${authError}</div>`
           : this.connection === 'auth_required'
             ? html`<div class="auth-error">Gateway rejected unauthenticated access.</div>`
             : nothing}
@@ -1477,7 +1488,11 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             this.authSecret = (event.target as HTMLInputElement).value;
           }}
         />
-        <button class="auth-submit" type="submit" ?disabled=${!this.authSecret.trim()}>
+        <button
+          class="auth-submit"
+          type="submit"
+          ?disabled=${!this.authSecret.trim() || this.authSaving}
+        >
           Connect
         </button>
       </form>

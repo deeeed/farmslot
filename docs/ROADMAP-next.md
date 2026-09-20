@@ -1,7 +1,7 @@
 # Farmslot Near-Term Roadmap
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-09-17, PI TUI runner spike captured
+**Last updated:** 2026-09-20, Electron desktop client captured
 **Stale by:** 2026-10-14
 
 This is the canonical near-term execution roadmap for Farmslot after the dispatch comparison, bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev work, shared dispatch queue/eval caps, worker-template selection, backlog intake, and dev publication gating. Use it with [ROADMAP.md](ROADMAP.md), [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), and the canonical chunk PRDs.
@@ -47,8 +47,27 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 21. **PI TUI runner spike (proven 2026-09-17, [ADR-059](adr/059-pi-tui-model-agnostic-runner.md)).** `pi` is a TUI-first worker. Default model is Grok 4.6 via official xAI OAuth. Farmslot-owned PI extension writes `hooks.jsonl` (prompt-accepted digest, turn complete) with no pane scrape. Live `prompt-accepted`, `hook-smoke`, and `pi-interactive-prompt` passed; `run.create --runner pi --model grok-4.6` launched on a farmslot-farm slot. OpenCode TUI+ACP remains the fallback harness. Native PI RPC/ACP and eval-package bake-off are follow-on. Implementation contract: `.backlog/specs/farmslot-farm/2026-09-17-pi-tui-runner-spike.md` and [plans/pi-tui-runner-spike.md](plans/pi-tui-runner-spike.md).
 22. **Cut GitHub GraphQL spend on the PR dashboard (ADR-028 follow-up, PR #668).** Meter caller-attributed GraphQL cost, keep review verdicts / requests / reason chips, and stop burning the 5,000-point hour on unchanged polls.
+23. **Electron desktop client (local implementation).** Deliver a macOS app alongside the web Command Center from the same Lit UI, connecting to an independently managed local or remote gateway. Deliver a packaged app, verify existing operator workflows, and provide a macOS installer. Scope: [Command Center PRD](PRD-command-center-canonical.md#8-electron-desktop-client). Completion checks: [Electron desktop client](#electron-desktop-client). The local app and unsigned installer are implemented and validated; signed/notarized distribution remains pending.
 
 **Shipped current-state note:** Mobile Tmux Worker Control is not a remaining protocol lane. [ADR-033](adr/033-mobile-tmux-worker-control.md) is implemented through M8: gateway/node inventory, worker-ref terminal control, hook/status enrichment, node-level branch/activity summaries, Companion worker list/terminal, shortcut keys, foreground voice nudges, authenticated node redeploy hardening, live tmux parser validation, Android real-device smoke, iOS simulator launch smoke, optional per-node `tmux_workers` include/exclude policy, and the follow-up xterm/PTY streaming + keyboard/drag polish are complete. Remaining mobile work belongs under the stabilization pass unless it explicitly targets deferred scope such as background wake-word, auto-send without tap, or remote node provisioning.
+
+## Electron desktop client
+
+**Status:** Local macOS app and unsigned installer validated, 2026-09-20. Owner: Command Center. Product contract: [Electron desktop client](PRD-command-center-canonical.md#8-electron-desktop-client). Signed/notarized distribution requires Developer ID credentials.
+
+Keep one UI source in `apps/command-center/ui/`; the `apps/command-center-desktop/` workspace owns Electron main/preload and packaging. Both clients use the existing gateway. Initial delivery assumes an installed gateway and one app window.
+
+| Stage                  | Deliverable                                                                                                                                                                      | Completion check                                                                                                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. macOS app shell     | Bundle the shared production UI in Electron. Wire asset/Monaco worker paths, authenticated local/remote gateway connections, and saved connection settings.                      | The app launches without Vite or a source checkout, connects to a gateway, and opens fleet/run views and source files. The web app still works.                                                            |
+| 2. Everyday use        | Support standard macOS menus/shortcuts, clipboard, external links, and close/reopen behavior. Verify existing terminals, source/diffs, streams, artifacts, and operator actions. | Live recipes and CDP prove real gateway actions and rendering in desktop and web. Sleep/wake and gateway restart reconnect; quitting the app leaves gateway work running. This is the daily-use milestone. |
+| 3. Installable release | Package the app for supported macOS/CPU targets, with signing/notarization and installation instructions.                                                                        | A downloaded build installs and launches on a supported Mac without a checkout; saved connection settings survive an app replacement.                                                                      |
+
+Keep the renderer sandboxed with isolated, narrowly scoped IPC. Preserve gateway authentication, credential protection, origin checks, and TLS validation. Each implementation slice follows the repository's normal validation and review requirements.
+
+The [desktop workspace](../apps/command-center-desktop/README.md) documents build, installation, and isolated validation setup. The [live recipe](examples/recipes/farmslot/electron-client.recipe.json) verifies real gateway actions, terminals, source viewing, and authenticated images. Synthetic H.264 checks renderer compatibility; actual device transport and OS sleep/resume remain manual validation limits.
+
+The scope is an installable macOS client for the existing Command Center. Performance benchmarks, optimization targets, automatic updates, bundled gateway provisioning, multiple windows, a menu-bar agent, and a separate SwiftUI UI are outside this delivery.
 
 ## Structured runner transports
 

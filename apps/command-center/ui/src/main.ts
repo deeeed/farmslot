@@ -1,33 +1,18 @@
-// Farmslot Command Center — UI entry point
+// Initialize the desktop connection before importing any gateway consumers.
+import { initializeDesktopConnection, isDesktopClient } from './desktop-connection.js';
 
-// Register components (side-effect imports)
-import './components/app-shell.js';
+async function start(): Promise<void> {
+  await initializeDesktopConnection();
+  await import('./start.js');
+}
 
-import { requestPermission } from './utils/notifications.js';
-import { gateway } from './gateway-client.js';
-import { initState } from './state.js';
-
-// Wire up state management to gateway events
-initState();
-
-// Tear down principal-owned views on authentication changes. Pending reads may
-// settle after disconnect, but their old components cannot render into the new workspace.
-let workspaceIdentity = '';
-gateway.onConnectionChange(() => {
-  const identity = JSON.stringify([
-    gateway.gatewayUrl,
-    gateway.authenticatedPrincipalId,
-    gateway.workspaceAccess,
-  ]);
-  if (identity === workspaceIdentity) return;
-  workspaceIdentity = identity;
-  if (gateway.workspaceAccess === 'native') history.replaceState(null, '', '#native');
-  const current = document.querySelector('farm-app');
-  current?.replaceWith(document.createElement('farm-app'));
+void start().catch((error: unknown) => {
+  const message = document.createElement('p');
+  message.textContent = `Unable to open Command Center: ${error instanceof Error ? error.message : String(error)}`;
+  document.body.replaceChildren(message);
+  if (!isDesktopClient()) return;
+  const settings = document.createElement('a');
+  settings.href = '/settings';
+  settings.textContent = 'Open connection settings';
+  document.body.append(settings);
 });
-
-// Request browser notification permission (non-blocking)
-requestPermission();
-
-// Connect to the gateway
-gateway.connect();

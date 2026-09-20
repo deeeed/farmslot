@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Farmslot connection</title>
+    <link rel="stylesheet" href="/settings.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Connect to Farmslot</h1>
+      <p>
+        Use your existing local or remote gateway. The gateway keeps running when you close this
+        app.
+      </p>
+      <form id="connection-form">
+        <label for="gateway-url">Gateway URL</label>
+        <input
+          id="gateway-url"
+          name="url"
+          type="url"
+          value="ws://127.0.0.1:7777/ws"
+          required
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <label for="auth-mode">Authentication</label>
+        <select id="auth-mode" name="auth">
+          <option value="token">Token</option>
+          <option value="password">Password</option>
+          <option value="none">None</option>
+        </select>
+        <label for="secret" id="secret-label">Token</label>
+        <input id="secret" name="secret" type="password" autocomplete="off" spellcheck="false" />
+        <p class="hint">
+          Credentials are encrypted using your macOS Keychain. Use wss:// for remote gateways.
+        </p>
+        <p id="error" role="alert"></p>
+        <button type="submit">Save and connect</button>
+        <a id="cancel" href="/cc/" hidden>Cancel</a>
+      </form>
+    </main>
+    <script type="module" src="/settings.js"></script>
+  </body>
+</html>

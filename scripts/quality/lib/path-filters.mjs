@@ -18,6 +18,15 @@ export const PATH_FILTERS = {
     'services/gateway/**',
     'services/node/**',
   ],
+  desktop: [
+    '.github/workflows/farmslot-quality.yml',
+    'package.json',
+    'yarn.lock',
+    'apps/command-center-desktop/**',
+    'apps/command-center/ui/**',
+    'packages/protocol/**',
+    'packages/theme/**',
+  ],
   companion: [
     '.github/workflows/farmslot-quality.yml',
     'package.json',
@@ -122,6 +131,10 @@ export const TARGET_STEPS = {
   command_center: [
     ['recipe-harness build', ['yarn', 'workspace', '@farmslot/recipe-harness', 'build']],
     ['command-center quality', ['yarn', '--cwd', 'apps/command-center', 'quality']],
+  ],
+  desktop: [
+    ['desktop tests', ['yarn', 'workspace', '@farmslot/command-center-desktop', 'test']],
+    ['desktop UI build', ['yarn', 'workspace', '@farmslot/command-center-desktop', 'build']],
   ],
   companion: [['companion quality', ['yarn', '--cwd', 'apps/companion', 'quality']]],
   docs: [

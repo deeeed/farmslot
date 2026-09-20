@@ -55,6 +55,18 @@ Reuse the existing Continue/Fresh and static/full-live review controls. Show the
 
 Provide the source/field binding editor, dry-run match preview, activation/backfill controls and review queue for [declarative trigger rules](PRD-automation-intelligence-canonical.md#7-declarative-trigger-rules-and-review-intake-planned). Show held review intake separately from automatically admitted work, with rule/fact provenance and missing-project or permission explanations. Provide reusable team profiles across GitHub Projects and repositories, with team filters, configurable review policies and authorized notification audiences. Show GitHub review/CI facts separately from Project workflow fields and inferred owner suggestions. Allow each review rule to select one slot or a list of allowed slots, plus runner/model/effort choices through an execution profile. Preview compatible combinations and show requested versus actual assignments, capacity waits and configuration conflicts.
 
+### 8. Electron desktop client
+
+**Status:** Local macOS implementation and unsigned installer validated. Signed/notarized distribution remains pending.
+
+Deliver a macOS Electron app alongside the browser Command Center, using one shared Lit UI and the existing gateway protocol. Bundle the production UI so the installed app needs neither Vite nor a source checkout. The gateway remains an independent service: closing, crashing, or updating the client must not stop farm work.
+
+Support authenticated local and remote gateways, protected saved credentials, reconnect after sleep or gateway restart, and clear connection errors. Keep desktop integration limited to standard menus, shortcuts, clipboard, external links, and window lifecycle. The renderer remains sandboxed with isolated, narrowly scoped IPC; gateway authentication, origin checks, and TLS validation remain enforced.
+
+Prove terminal input/resize, source/diff viewing, live device streams, authenticated artifacts, and operator actions through real gateway flows in both web and desktop clients.
+
+Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, a menu-bar agent, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).
+
 ## Boundaries
 
 - This document is the canonical command-center contract.
