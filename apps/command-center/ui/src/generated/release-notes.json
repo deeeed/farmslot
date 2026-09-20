@@ -1,11 +1,8 @@
 {
-  "version": "0.15.0",
+  "version": "0.16.0",
   "date": "2026-09-20",
   "items": [
-    "Run detail shows an acceptance-criteria panel (ADR-060): a row per criterion with its verdict, proof mode, evidence links (through the run-artifact endpoint) and note, counted as `proven/total` against the criteria the task registered. A criterion the worker has not judged yet reads `no verdict` rather than being hidden, and the panel opens while any criterion is unproven",
-    "The acceptance panel shows `ledger unreadable: <reason>` when the gateway could not read the ledger or the criteria list, instead of rendering nothing",
-    "Task-progress updates from a child checklist unit are accepted while their parent checklist is the active one, through the shared protocol rule (ADR-060). No child rendering yet",
-    "Run detail offers **Archive as blocked** on a blocked run with nothing left to advance (worker signaled blocked, uncertain prompt delivery). It keeps the outcome in history and leaves the active list; step replay stays the retry path. Bulk archive in the run list accepts the same runs",
-    "Extra-review checklist progress stays visible on human-gate and package-refresh while the reviewer is working. Waiting on extra-review findings says so instead of \"Worker finished\", and the pipeline marks the publish-gate as now. Opening a step inspector no longer duplicates the live checklist under the canvas; the inspector keeps the boxes when live progress has not bound yet"
+    "The macOS client remembers your login and shows pending decisions in the menu bar.",
+    "Static review checklists and acceptance results update as work progresses."
   ]
 }

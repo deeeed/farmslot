@@ -2,6 +2,8 @@
 
 ## Unreleased
 
-- Add menu-bar pending decisions and connection status, a configurable global shortcut, remembered window position and last view, and an explicit Remember me option with encrypted or session-only credentials.
+## 0.2.0 - 2026-09-20
 
-- Add a macOS Command Center app with the shared web UI, encrypted gateway settings, native menus, and installable packages.
+- Run Command Center as a macOS app with the shared web UI and an unsigned local installer.
+- Remember your gateway login using macOS Keychain encryption, or keep credentials only until quit by turning Remember me off.
+- See pending decisions and connection status in the menu bar, configure a global show/hide shortcut, and restore the last view and window position after quit or app replacement.

@@ -4,9 +4,12 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Desktop login includes Remember me and sends live pending-decision status to the macOS menu bar. Browser login is unchanged.
-- Run detail accepts live task-progress updates for a static review workspace run, which has no slot, so its checklist, child units and acceptance panel refresh as the reviewer works instead of only on the periodic fetch. Runs without a slot or review workspace ignore progress updates, matching Companion.
-- Share the Command Center UI with the macOS desktop app, using its saved gateway and encrypted credentials while preserving browser connections.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.16.0 - 2026-09-20
+
+- Use Command Center on macOS with Remember me, encrypted credentials and menu-bar attention, alongside the existing web client.
+- Static review workspaces receive live checklist, child-unit and acceptance updates; progress is matched to its owning run consistently across desktop and Companion.
 
 ## 0.15.0 - 2026-09-20
 

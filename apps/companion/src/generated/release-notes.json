@@ -1,11 +1,9 @@
 {
-  "version": "0.6.0",
-  "date": "2026-09-16",
+  "version": "0.7.0",
+  "date": "2026-09-20",
   "items": [
-    "Review and farm QA are separate. Request each from the configured workspace, filter runs by QA, and retry publication from the run.",
-    "The PR list follows the gateway refresh. A GitHub read failure is the list error, and Refresh asks the gateway to re-read GitHub.",
-    "Continue Co-Pilot and worker conversations natively with streamed history, tools, approvals, and turn controls. Focused drafts survive reconnect.",
-    "Choose a native runner configuration, resume a saved conversation, and expand why a node is unavailable.",
-    "PR monitors, review and QA requests, rule attention, device push enrollment, and publication policy stay on the gateway across reconnects."
+    "Follow static reviews and expand their child checklists.",
+    "See acceptance verdicts, missing proof and evidence links in run detail.",
+    "Open Settings before pairing and connect with a QR code."
   ]
 }
