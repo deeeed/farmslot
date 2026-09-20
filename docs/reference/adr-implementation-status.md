@@ -303,23 +303,26 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 
 ## ADR-060 — Sub-Task Observability Through Child Checklist Units (Accepted)
 
-**Implementation: Shipped (PRs #681–#685, released in #687); live end-to-end proof and cost roll-up remain**
+**Implementation: Shipped for slot runs and the worker contract (PRs #681–#685, released in #687); slot-free review workspaces, and cost roll-up, remain**
 
-| ADR requirement                                          | Status        | Evidence / gap                                                                                      |
-| -------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------- |
-| Child unit is a checklist plus signal under `subtasks/`  | Shipped       | protocol child-unit contract, `mark sub` verbs and materializer in `@farmslot/agent-runtime` (#681) |
-| Parent step owned by its child until settled             | Shipped       | `isSettledSubtaskStatus` drives every refusal in `mark` and the gateway terminal check (#681, #682) |
-| Recursive progress projection, watched and broadcast     | Shipped       | gateway `subtasks/index.json` watch and `TaskStepProgress.subtask` projection (#682)                |
-| Clients render the child under its parent step           | Shipped       | Command Center and Companion (#683); `mm-harness` 0.61.0 `status --watch`                           |
-| Farmslot spawns nothing                                  | Shipped       | registration writes files only; no tmux, process, or session code was added                         |
-| Acceptance criteria as a verdict ledger                  | Shipped       | `farmslot-agent ac` writes `artifacts/acceptance-status.json`; run-detail AC panel (#685)           |
-| Enforcement of the ledger at terminal marks              | Opt-in        | deviation: gated on project `worker_terminal.acceptance`, informational otherwise                   |
-| Child source from a catalog template id                  | Not supported | deviation: `--from template:<id>` refused; register skills by installed path                        |
-| Farm templates register the review skill as a child unit | Shipped       | three MetaMask farm templates; authoring rule in `@farmslot/skills` (#684)                          |
-| Per-child durations in family observability              | Shipped       | child mark events feed the existing per-phase breakdown                                             |
-| Token/cost attribution per sub-agent                     | Not started   | stays in the per-model capture lane by ADR decision, not a gap in this ADR                          |
+| ADR requirement                                          | Status         | Evidence / gap                                                                                                                                                                                                      |
+| -------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Child unit is a checklist plus signal under `subtasks/`  | Shipped        | protocol child-unit contract, `mark sub` verbs and materializer in `@farmslot/agent-runtime` (#681)                                                                                                                 |
+| Parent step owned by its child until settled             | Shipped        | `isSettledSubtaskStatus` drives every refusal in `mark` and the gateway terminal check (#681, #682)                                                                                                                 |
+| Recursive progress projection, watched and broadcast     | Slot runs only | gateway `subtasks/index.json` watch and `TaskStepProgress.subtask` projection (#682); Phase 2 covered slot runs, so the slot-free static review path does not project (see below)                                   |
+| Clients render the child under its parent step           | Shipped        | Command Center and Companion (#683); `mm-harness` 0.61.0 `status --watch`                                                                                                                                           |
+| Farmslot spawns nothing                                  | Shipped        | registration writes files only; no tmux, process, or session code was added                                                                                                                                         |
+| Acceptance criteria as a verdict ledger                  | Shipped        | `farmslot-agent ac` writes `artifacts/acceptance-status.json`; run-detail AC panel (#685)                                                                                                                           |
+| Enforcement of the ledger at terminal marks              | Opt-in         | deviation: gated on project `worker_terminal.acceptance`, informational otherwise                                                                                                                                   |
+| Child source from a catalog template id                  | Not supported  | deviation: `--from template:<id>` refused; register skills by installed path                                                                                                                                        |
+| Farm templates register the review skill as a child unit | Shipped        | three MetaMask farm templates; authoring rule in `@farmslot/skills` (#684)                                                                                                                                          |
+| Per-child durations in family observability              | Shipped        | child mark events feed the existing per-phase breakdown                                                                                                                                                             |
+| Token/cost attribution per sub-agent                     | Not started    | stays in the per-model capture lane by ADR decision, not a gap in this ADR                                                                                                                                          |
+| Child units in slot-free static review workspaces        | Pending        | the ADR-058 path (`services/gateway/src/review-workspaces`, the workspace branch of `task.progress`, its view mirror and `run.metrics.subtasks`) ignores `subtasks/`; branch `feat/subtask-review-workspace-parity` |
 
-**Follow-up:** one real dev run and one static review run on a slot with the child visible end to end (the Phase 4 live proof); per-sub-agent cost roll-up when the per-model capture lane lands.
+**Live proof (2026-09-20, run `e5f3ba88`, static perps review of `metamask-mobile#36415`):** the worker contract is proven end to end — the reviewer registered `perps-review` from the installed skill through `mark sub`, marked all 22 rows, completed with its report, and that completion ticked parent box 1. The same run exposed the gap above: it ran in a slot-free review workspace, where the gateway neither projects, mirrors, nor records child units, because Phase 2 implemented the slot path only.
+
+**Follow-up:** review-workspace parity for the projection, the view mirror and `run.metrics.subtasks` on branch `feat/subtask-review-workspace-parity`; one real dev run with the child visible end to end; per-sub-agent cost roll-up when the per-model capture lane lands. The ADR decision stands as Accepted — this is an implementation gap on one dispatch path, not a change of decision.
 
 ---
 
