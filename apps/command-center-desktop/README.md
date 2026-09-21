@@ -38,9 +38,9 @@ The command rejects missing or incomplete notarization credentials before buildi
 
 ## Development app
 
-Farmslot keeps its purple icon and bundled UI. Farmslot Dev has a red icon background,
+Farmslot keeps its purple icon and bundled UI. Farmslot Dev has a red icon background in both the Dock and menu bar,
 a distinct bundle ID, and separate credentials and preferences in
-`~/Library/Application Support/Farmslot Dev`. Both can stay installed and pinned in the Dock.
+`~/Library/Application Support/Farmslot Dev`. Both can stay installed and pinned in the Dock. Their menu-bar icons retain their profile colors, so running both is easy to distinguish.
 
 ```sh
 yarn workspace @farmslot/command-center-desktop package:mac:dev

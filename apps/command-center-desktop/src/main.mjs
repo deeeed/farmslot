@@ -252,13 +252,16 @@ function updateTray() {
 }
 
 function createTray() {
-  const pixels = Buffer.alloc(16 * 16 * 4);
-  for (let y = 2; y < 14; y++)
-    for (let x = 4; x < 13; x++) {
-      if (x < 7 || y < 5 || (y >= 7 && y < 10 && x < 11)) pixels[(y * 16 + x) * 4 + 3] = 255;
-    }
-  const icon = nativeImage.createFromBitmap(pixels, { width: 16, height: 16 });
-  icon.setTemplateImage(true);
+  const source = nativeImage.createFromPath(join(root, 'build', profile.icon));
+  const icon = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2]) {
+    icon.addRepresentation({
+      scaleFactor,
+      buffer: source.resize({ width: 18 * scaleFactor, height: 18 * scaleFactor }).toPNG(),
+    });
+  }
+  // Template images lose their profile color when macOS renders the menu bar.
+  icon.setTemplateImage(false);
   tray = new Tray(icon);
   updateTray();
 }
