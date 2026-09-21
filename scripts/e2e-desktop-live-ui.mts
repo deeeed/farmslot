@@ -9,6 +9,8 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
 
+import { confirmDesktopQuit } from './lib/desktop-quit.mjs';
+
 const root = process.cwd();
 const evidence = path.resolve('temp/desktop-live-ui');
 await mkdir(evidence, { recursive: true });
@@ -130,7 +132,8 @@ async function launch(appPath = app, userData = profile) {
 }
 async function quit() {
   const stopped = once(appProcess, 'exit');
-  await native('setTimeout(()=>e.app.quit(),100);return true;');
+  const quittingPid = await native('setTimeout(()=>e.app.quit(),100);return process.pid;');
+  confirmDesktopQuit(quittingPid);
   await stopped;
   appProcess = null;
 }

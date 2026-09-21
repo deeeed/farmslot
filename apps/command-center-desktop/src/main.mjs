@@ -67,6 +67,7 @@ let server;
 let store;
 let connection = null;
 let quitting = false;
+let quitConfirmation = null;
 let preferencesStore;
 let preferences = {
   shortcut: DEFAULT_SHORTCUT,
@@ -627,26 +628,56 @@ if (!app.requestSingleInstanceLock()) {
     });
 }
 
-// macOS keeps the app running after the window closes. Cmd+Q stops only this client.
+// Closing a window keeps the client available in the Dock. An intentional quit
+// must be confirmed before tearing down its window, tray or saved connection.
 app.on('window-all-closed', () => {});
 app.on('before-quit', (event) => {
-  if (!server || quitting) return;
+  // Startup failure and the redundant second process must still be able to exit.
+  if (!server) return;
   event.preventDefault();
-  quitting = true;
-  try {
-    saveWindowBounds();
-  } catch (error) {
-    reportError('Could not save window position', error);
+  if (quitting || quitConfirmation) return;
+  const parent = window && !window.isDestroyed() ? window : null;
+  if (parent) {
+    if (parent.isMinimized()) parent.restore();
+    parent.show();
+    parent.focus();
   }
-  app.dock?.setBadge('');
-  globalShortcut.unregisterAll();
-  tray?.destroy();
-  tray = null;
-  server
-    .close()
-    .then(() => app.quit())
+  const options = {
+    type: 'question',
+    title: `Quit ${profile.name}?`,
+    message: `Quit ${profile.name}?`,
+    detail: 'Gateway work will keep running. You can reopen this app from the Dock.',
+    buttons: ['Cancel', 'Quit'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  quitConfirmation = (
+    parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)
+  )
+    .then(async ({ response }) => {
+      if (response !== 1) return;
+      quitting = true;
+      try {
+        saveWindowBounds();
+      } catch (error) {
+        reportError('Could not save window position', error);
+      }
+      app.dock?.setBadge('');
+      globalShortcut.unregisterAll();
+      tray?.destroy();
+      tray = null;
+      await server.close();
+      // Re-entering app.quit() from a cancelled native quit can close every
+      // window without exiting Electron. Confirmation and cleanup are complete;
+      // exit once so no background instance can block a subsequent Dock launch.
+      app.exit(0);
+    })
     .catch((error) => {
-      reportError('Could not stop the desktop asset server', error);
-      app.exit(1);
+      reportError(quitting ? 'Could not stop Farmslot' : 'Could not confirm quit', error);
+      if (quitting) app.exit(1);
+    })
+    .finally(() => {
+      quitConfirmation = null;
     });
 });

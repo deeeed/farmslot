@@ -9,6 +9,8 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
 
+import { confirmDesktopQuit } from './lib/desktop-quit.mjs';
+
 const root = process.cwd();
 const evidence = path.resolve('temp/desktop-links');
 const profile = path.join(evidence, 'profile');
@@ -81,7 +83,8 @@ async function waitFor(check: () => boolean | Promise<boolean>) {
   throw new Error('Desktop condition timed out');
 }
 async function quit() {
-  await native('setTimeout(()=>e.app.quit(),100);return true;');
+  const quittingPid = await native('setTimeout(()=>e.app.quit(),100);return process.pid;');
+  confirmDesktopQuit(quittingPid);
   await waitFor(async () => {
     try {
       await fetch(`http://127.0.0.1:${port}/json/list`);
