@@ -477,9 +477,7 @@ async function readOwnedReviewWorkspaceSignal(runId: string, deps: Dependencies 
       ? context?.promptDeliveryStartedAt
       : context?.nativeSession?.acceptedAt) ||
     !signal.attemptId ||
-    (context?.signalAttemptId &&
-      context.signalAttemptId !== signal.attemptId &&
-      signal.status !== 'running') ||
+    (context?.signalAttemptId && context.signalAttemptId !== signal.attemptId) ||
     (signal.role && signal.role !== 'review') ||
     (signal.contextId && signal.contextId !== 'review') ||
     parseStrictIsoMs(signal.timestamp) === null ||
