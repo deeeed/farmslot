@@ -142,27 +142,19 @@ export function publicationGateDecisionActions(opts: {
       label: 'Request Independent Review (runner diversity)',
       style: 'secondary' as const,
     },
-    ...(!opts.reviewSatisfied && exhausted
+    ...(!opts.reviewSatisfied
       ? [
           {
             id: APPROVE_PUBLISH_UNRESOLVED_ACTION,
             label: 'Bypass Review (dangerous)',
             style: 'danger' as const,
-            description: independentReviewRetryCapReason(exhausted),
+            description: exhausted
+              ? independentReviewRetryCapReason(exhausted)
+              : 'Publish this package despite missing, failed, or stale reviews. Package and source freshness checks still apply.',
           },
         ]
       : []),
   ];
-}
-
-export function assertUnresolvedPublishOverrideAvailable(
-  reviews: readonly IndependentReviewStatus[],
-): void {
-  if (!latestExhaustedIndependentReview(reviews)) {
-    throw new Error(
-      'Bypass publish is only available after the latest independent review stops at its fix-attempt cap',
-    );
-  }
 }
 
 export function independentReviewNeedsContinuation(

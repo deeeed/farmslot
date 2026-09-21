@@ -619,3 +619,15 @@ export function shouldFetchTrimmedRun(params: {
   }
   return !params.directRun || params.directRun.updatedAt < params.sharedRun.updatedAt;
 }
+
+/** A failed bulk run list does not invalidate a direct snapshot from this connection. */
+export function runBootstrapBlocksActions(
+  bootstrapFailed: boolean,
+  runId: string,
+  verified: { runId: string; connectionEpoch: number } | null,
+  connectionEpoch: number,
+): boolean {
+  return (
+    bootstrapFailed && (verified?.runId !== runId || verified.connectionEpoch !== connectionEpoch)
+  );
+}

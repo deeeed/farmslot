@@ -41,8 +41,10 @@ import {
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
+import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
 import { getDiffStat } from './task-artifacts.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -233,7 +235,10 @@ export async function refreshPublishPackage(params: {
     .map((entry) => (entry.payload as ReadyGatePayload | undefined)?.prPackage)
     .filter((entry): entry is ReadyGatePrPackage => Boolean(entry));
   const independentReviews = restampReviewsForRefreshedPackage(
-    refreshedRun.engineState?.publishGate?.independentReviews ?? [],
+    await refreshReviewDiffIdentities(
+      refreshedRun,
+      refreshedRun.engineState?.publishGate?.independentReviews ?? [],
+    ),
     [oldPayload.prPackage, ...historicalReadyGatePackages],
     prPackage,
   );

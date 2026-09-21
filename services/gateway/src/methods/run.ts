@@ -92,7 +92,6 @@ import {
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
-  assertUnresolvedPublishOverrideAvailable,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
@@ -1326,11 +1325,7 @@ async function assertReadyPublishResolveIsFresh(
       currentPackage,
       reviewDepth,
     );
-  } else if (params.actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
-    assertUnresolvedPublishOverrideAvailable(
-      run.engineState?.publishGate?.independentReviews ?? [],
-    );
-  } else {
+  } else if (params.actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
     assertPublicationReviewPolicySatisfied(run, currentPackage);
   }
   await verifyReadyGateSelectedEvidenceFiles(

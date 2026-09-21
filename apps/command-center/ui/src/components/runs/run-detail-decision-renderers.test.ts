@@ -9,6 +9,12 @@ import {
 test('publication gate title names review issues instead of worker finished', () => {
   assert.equal(
     publicationGateWaitingTitle({
+      actions: [{ id: 'approve-publish-unresolved', label: 'Bypass', style: 'danger' }],
+    }),
+    'Publication gate: review blocked',
+  );
+  assert.equal(
+    publicationGateWaitingTitle({
       actions: [{ id: 'continue-review-fix', label: 'Continue Fixing', style: 'primary' }],
     }),
     'Independent review found issues',

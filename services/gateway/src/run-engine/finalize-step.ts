@@ -35,7 +35,6 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import {
   APPROVE_PUBLISH_UNRESOLVED_ACTION,
   assertPublicationReviewPolicySatisfied,
-  assertUnresolvedPublishOverrideAvailable,
   CLOSE_AS_SHIPPED_ACTION,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
@@ -294,11 +293,7 @@ export async function executeFinalizeStep(
     if (!preparedPackage) throw new Error('Approved PR package snapshot missing');
     verifyReadyGatePackageHash(preparedPackage);
     validatePackageApprovalSelection(preparedPackage, gateDecision);
-    if (resolvedAction === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
-      assertUnresolvedPublishOverrideAvailable(
-        current.engineState?.publishGate?.independentReviews ?? [],
-      );
-    } else {
+    if (resolvedAction !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
       assertPublicationReviewPolicySatisfied(current, preparedPackage);
     }
     const approvedHash = current.engineState?.publishGate?.approvedPackageHash;

@@ -44,8 +44,7 @@ export function renderReadyTopBar(input: {
   );
   const exhaustedReview = latestExhaustedIndependentReview(input.payload.independentReviews);
   // Only actions the decision itself carries. The gateway refuses any other id
-  // before the cap check runs, and package refresh restamps the bypass action
-  // from the same exhaustion rule, so a synthesized button would only fail.
+  // and still verifies the selected package and current source before publishing.
   const bypassAction = input.decision?.actions?.find(
     (action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION,
   );
