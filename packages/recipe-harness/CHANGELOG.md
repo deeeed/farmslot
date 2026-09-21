@@ -4,7 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+## 0.18.1 - 2026-09-21
+
+- Retain typed, redacted invocation parameters with the recipe digest and execution summary; canonical artifact validation now reads those inputs for parameterized runs and rejects mismatches or redacted credentials.
+
 
 ## 0.18.0 - 2026-09-20
 

@@ -252,3 +252,17 @@ Do not publish unless protocol, docs, exports, and tests agree.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Retained execution parameters
+
+Runs include `recipe-invocation.json`, indexed in the artifact manifest and bound
+to the recipe digest and summary. `validate --artifact-dir` uses these recorded
+parameters automatically; it never substitutes a later caller's inputs. Existing
+non-parameterized packages remain valid. Older parameterized runs without saved
+inputs still require their original parameters through the validation API.
+
+Credential-bearing fields are redacted. Public `api_key_index`/`apiKeyIndex`
+values are retained only when declared as integers and supplied as nonnegative
+safe integers. Packages with redacted inputs fail parameter validation explicitly;
+use fixture references rather than credentials in recipe parameters. The evidence
+digest detects accidental mismatch, not malicious forgery of an entire package.

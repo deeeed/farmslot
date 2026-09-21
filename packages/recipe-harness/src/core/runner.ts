@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  digestRecipeDocument,
   getRecipeActionManifestActionNames,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
@@ -28,6 +29,7 @@ import { executeRecipe } from './execution.js';
 import { RecipeExecutionError, recipeFailureCause } from './failure.js';
 import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
 import { buildHudNode } from './hud.js';
+import { createRecipeInvocation } from './invocation.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   loadRecipeLibraries,
@@ -320,6 +322,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     let outputs: ReadonlyMap<string, unknown> = new Map();
     const recipePath = await artifactWriter.copyRecipe(recipe);
+    const invocation = createRecipeInvocation(recipe, params, startedAt.toISOString());
+    await artifactWriter.writeInvocation(invocation);
     for (const dependency of dependencyResolution.recipes.values()) {
       await artifactWriter.copyResolvedRecipe(dependency.provenance.digest!, dependency.document);
     }
@@ -472,6 +476,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       unknown: trace.filter((entry) => !entry.ok && entry.cause_class === 'unknown').length,
     };
     const summary: SummaryDocument = {
+      invocationDigest: digestRecipeDocument(invocation),
       status,
       total: trace.length,
       passed: trace.filter((entry) => entry.ok).length,

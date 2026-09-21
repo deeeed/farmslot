@@ -4,6 +4,7 @@ import {
   resolvedRecipeArtifactPath,
 } from '@farmslot/protocol';
 
+import type { RecipeInvocationDocument } from '../core/invocation.js';
 import { writeFileWithinRoot } from '../core/path.js';
 import type {
   ArtifactWriter,
@@ -57,6 +58,16 @@ export class JsonArtifactWriter implements ArtifactWriter {
       category: 'system',
     });
     return resolutionPath;
+  }
+
+  async writeInvocation(invocation: RecipeInvocationDocument): Promise<void> {
+    await writeJsonWithinRoot(this.#artifactsDir, 'recipe-invocation.json', invocation);
+    this.register({
+      path: 'recipe-invocation.json',
+      type: 'json',
+      label: 'Executed recipe parameters',
+      category: 'system',
+    });
   }
 
   register(entry: RecipeArtifactManifestEntry): void {

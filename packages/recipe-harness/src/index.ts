@@ -35,6 +35,7 @@ export {
   validateRecipeDependencyParams,
 } from './core/compose.js';
 export { RecipeExecutionError } from './core/failure.js';
+export { redactRecipeParams } from './core/invocation.js';
 export type { RecipeLibraryResolution, ResolvedLibraryRecipe } from './core/library.js';
 export {
   applyTaskLocalInvocationTrust,

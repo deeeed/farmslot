@@ -20,6 +20,7 @@ import {
   rootResolutionRef,
   validateRecipeDependencyParams,
 } from '../core/compose.js';
+import { recordedRecipeParams } from '../core/invocation.js';
 import { loadRecipeLibraries } from '../core/library.js';
 import { readFileWithinRoot } from '../core/path.js';
 import { RecipeResolutionError } from '../core/resolution-error.js';
@@ -172,11 +173,6 @@ export async function validateRecipeCliInput({
 }: RecipeValidationInputOptions): Promise<RecipeValidationResult> {
   const recipe = await readRecipeCliJsonFile(recipePath, baseDir);
   const results: RecipeValidationResult[] = [];
-  const effectiveParams = isRecord(recipe)
-    ? applyRecipeParamDefaults(params, recipe.paramsSchema)
-    : params;
-  if (isRecord(recipe)) results.push(validateRecipeParams(effectiveParams, recipe.paramsSchema));
-
   const artifactRoot = artifactDir ? resolveRecipeCliPath(artifactDir, baseDir) : undefined;
   const artifactPaths = artifactRoot ? await listRelativeRecipeCliFiles(artifactRoot) : undefined;
   const recipeResolution = artifactRoot
@@ -188,6 +184,38 @@ export async function validateRecipeCliInput({
   const summary = artifactRoot
     ? await readOptionalRecipeCliJsonFileWithinRoot(artifactRoot, 'summary.json')
     : undefined;
+  const invocation = artifactRoot
+    ? await readOptionalRecipeCliJsonFileWithinRoot(artifactRoot, 'recipe-invocation.json')
+    : undefined;
+  let effectiveParams = isRecord(recipe)
+    ? applyRecipeParamDefaults(params, recipe.paramsSchema)
+    : params;
+  if (invocation !== undefined || (isRecord(summary) && summary.invocationDigest !== undefined)) {
+    try {
+      const recorded = recordedRecipeParams(recipe, invocation, summary);
+      if (
+        Object.keys(params).length &&
+        digestRecipeDocument(effectiveParams) !== digestRecipeDocument(recorded)
+      ) {
+        throw new Error('Supplied parameters differ from the recorded execution inputs.');
+      }
+      effectiveParams = recorded;
+    } catch (error) {
+      results.push({
+        status: 'invalid',
+        findings: [
+          {
+            severity: 'error',
+            code: 'recipe.invalid_invocation',
+            path: 'recipe-invocation.json',
+            message: error instanceof Error ? error.message : 'Invalid recorded invocation.',
+          },
+        ],
+        summary: { errors: 1, warnings: 0 },
+      });
+    }
+  }
+  if (isRecord(recipe)) results.push(validateRecipeParams(effectiveParams, recipe.paramsSchema));
   const resolvedRecipes: Record<string, unknown> = {};
   if (artifactRoot && isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
     for (const dependency of recipeResolution.dependencies) {
@@ -288,6 +316,30 @@ export async function validateRecipeCliInput({
   }
 
   if (artifactDir) {
+    if (
+      (invocation !== undefined || (isRecord(summary) && summary.invocationDigest !== undefined)) &&
+      !(
+        isRecord(manifest) &&
+        Array.isArray(manifest.artifacts) &&
+        manifest.artifacts.some(
+          (entry) =>
+            isRecord(entry) && entry.path === 'recipe-invocation.json' && entry.type === 'json',
+        )
+      )
+    ) {
+      results.push({
+        status: 'invalid',
+        findings: [
+          {
+            severity: 'error',
+            code: 'recipe.unindexed_invocation',
+            path: 'artifact-manifest.json',
+            message: 'The artifact manifest must index recipe-invocation.json as a JSON artifact.',
+          },
+        ],
+        summary: { errors: 1, warnings: 0 },
+      });
+    }
     results.push(
       validateRecipeArtifactPackage({
         recipe,

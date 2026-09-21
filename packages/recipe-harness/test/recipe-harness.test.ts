@@ -584,6 +584,147 @@ test('retains resolved parameterized intents in a valid real-run package', async
   }
 });
 
+test('validates executed parameters without overriding or rewriting the recipe', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = recipeDocument(
+      {
+        inspect: {
+          action: 'command',
+          cmd: 'pwd',
+          intent: 'Inspect {{params.market}}.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+      {
+        paramsSchema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            market: { type: 'string' },
+            api_key_index: { type: 'integer' },
+            network: { type: 'string', default: 'testnet' },
+          },
+          required: ['market', 'api_key_index'],
+        },
+      },
+    );
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    const result = await createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    }).run({
+      recipeDocument: recipe,
+      artifactsDir,
+      projectRoot: tempRoot,
+      params: { market: 'BTC', api_key_index: 8 },
+    });
+    const invocationPath = path.join(artifactsDir, 'recipe-invocation.json');
+    const invocation = (await readJsonFile(invocationPath)) as {
+      params: Record<string, unknown>;
+      recipeDigest: string;
+    };
+    assert.deepEqual(invocation.params, { market: 'BTC', api_key_index: 8, network: 'testnet' });
+    assert.deepEqual(await readJsonFile(result.recipePath), recipe);
+    assert.equal(
+      (await validateRecipeCliInput({ recipePath: result.recipePath, artifactDir: artifactsDir }))
+        .status,
+      'valid',
+    );
+    await runRecipeHarnessCli([
+      'validate',
+      result.recipePath,
+      '--artifact-dir',
+      artifactsDir,
+      '--json',
+    ]);
+    const override = await validateRecipeCliInput({
+      recipePath: result.recipePath,
+      artifactDir: artifactsDir,
+      params: { market: 'ETH', api_key_index: 8 },
+    });
+    assert.equal(override.status, 'invalid');
+    assert.ok(override.findings.some((finding) => finding.code === 'recipe.invalid_invocation'));
+    const manifestPath = path.join(artifactsDir, 'artifact-manifest.json');
+    const manifest = (await readJsonFile(manifestPath)) as { artifacts: Array<{ path: string }> };
+    await writeJsonFile(manifestPath, {
+      ...manifest,
+      artifacts: manifest.artifacts.filter((entry) => entry.path !== 'recipe-invocation.json'),
+    });
+    const unindexed = await validateRecipeCliInput({
+      recipePath: result.recipePath,
+      artifactDir: artifactsDir,
+    });
+    assert.equal(unindexed.status, 'invalid');
+    assert.ok(unindexed.findings.some((finding) => finding.code === 'recipe.unindexed_invocation'));
+    await writeJsonFile(manifestPath, manifest);
+    invocation.params.market = 'ETH';
+    await writeJsonFile(invocationPath, invocation);
+    assert.equal(
+      (await validateRecipeCliInput({ recipePath: result.recipePath, artifactDir: artifactsDir }))
+        .status,
+      'invalid',
+    );
+    await rm(invocationPath);
+    assert.equal(
+      (await validateRecipeCliInput({ recipePath: result.recipePath, artifactDir: artifactsDir }))
+        .status,
+      'invalid',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('retains no credential values and refuses redacted execution inputs', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = recipeDocument(
+      { done: { action: 'end', status: 'pass' } },
+      {
+        paramsSchema: {
+          type: 'object',
+          properties: { api_key: { type: 'string' } },
+          required: ['api_key'],
+          additionalProperties: false,
+        },
+      },
+    );
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    const result = await createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    }).run({
+      recipeDocument: recipe,
+      artifactsDir,
+      projectRoot: tempRoot,
+      params: { api_key: 'fixture-secret-must-not-persist' },
+    });
+    for (const file of await listRelativeFiles(artifactsDir)) {
+      assert.equal(
+        (await readFile(path.join(artifactsDir, file), 'utf8')).includes(
+          'fixture-secret-must-not-persist',
+        ),
+        false,
+      );
+    }
+    const validated = await validateRecipeCliInput({
+      recipePath: result.recipePath,
+      artifactDir: artifactsDir,
+    });
+    assert.equal(validated.status, 'invalid');
+    assert.ok(
+      validated.findings.some(
+        (finding) =>
+          finding.code === 'recipe.invalid_invocation' && finding.message.includes('redacted'),
+      ),
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('project read and artifact export actions reject symlink escapes', async () => {
   const tempRoot = await createTempRoot();
   const outsideRoot = await createTempRoot();
@@ -2636,26 +2777,46 @@ test('validates composed artifact packages from their retained dependency graph'
       path.join(libraryRoot, 'recipes/team/nested.recipe.json'),
       recipeDocument(
         { done: { action: 'end', status: 'pass' } },
-        { description: 'Provides a retained nested dependency.' },
+        {
+          description: 'Provides a retained nested dependency.',
+          paramsSchema: {
+            type: 'object',
+            properties: { market: { type: 'string' } },
+            required: ['market'],
+            additionalProperties: false,
+          },
+        },
       ),
     );
     await writeJsonFile(
       recipePath,
-      recipeDocument({
-        nested: {
-          action: 'call',
-          ref: 'team.nested',
-          intent: 'Run the retained dependency.',
-          next: 'done',
+      recipeDocument(
+        {
+          nested: {
+            action: 'call',
+            ref: 'team.nested',
+            params: { market: '{{params.market}}' },
+            intent: 'Run the retained dependency.',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
-        done: { action: 'end', status: 'pass' },
-      }),
+        {
+          paramsSchema: {
+            type: 'object',
+            properties: { market: { type: 'string' } },
+            required: ['market'],
+            additionalProperties: false,
+          },
+        },
+      ),
     );
     await writeJsonFile(manifestPath, coreActionManifest);
 
     await runRecipeHarnessCli([
       'run',
       recipePath,
+      'market=BTC',
       '--artifacts-dir',
       artifactsDir,
       '--action-manifest',

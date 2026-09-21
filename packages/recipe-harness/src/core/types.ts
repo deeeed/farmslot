@@ -291,6 +291,8 @@ export interface TraceWriter {
 }
 
 export interface SummaryDocument {
+  /** Digest of the retained, redacted execution inputs when recorded. */
+  invocationDigest?: string;
   status: RecipeRunStatus;
   total: number;
   passed: number;
