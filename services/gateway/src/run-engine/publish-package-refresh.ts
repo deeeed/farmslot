@@ -41,9 +41,9 @@ import {
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
-import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+import { refreshReviewDiffIdentities } from './review-diff-refresh.js';
 import { getDiffStat } from './task-artifacts.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
