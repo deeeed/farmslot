@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the gateway.update RPC for safe source checkout updates.
+
 - Task directory contract page: a slot-free static review workspace mirrors `subtasks/` into its operator-visible view under the worker's own names, the review-workspace progress publisher and that view mirror are listed as consumers of the child-unit files, and the layout tree shows `acceptance-status.json` under `artifacts/`, where it is written.
 - The agent-runtime and task-directory-contract reference pages document child checklist units as a worker surface, not just files: the `mark sub` verbs, the `--from` sources and the refused `template:<id>`, the ownership, settled and blocked rules, the acceptance-criteria ledger with `farmslot-agent ac`, and the live/stale projection. Child units are projected and mirrored for slot runs.
 - Reference page for `@farmslot/capabilities` (node/gateway shared primitives), linked from the package README and the npm manifest.
