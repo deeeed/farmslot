@@ -75,7 +75,13 @@ export async function gatewayUpdate(params: GatewayUpdateParams): Promise<Checko
   const previous = await readCheckoutUpdate();
   if (previous?.phase === 'running') return previous;
   const path = await recordPath();
-  await mkdir(`${path}.lock`);
+  try {
+    await mkdir(`${path}.lock`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+      throw new Error('Another checkout update is starting. Check again shortly.');
+    throw error;
+  }
   const operation: CheckoutUpdateOperation = {
     id: crypto.randomUUID(),
     phase: 'running',

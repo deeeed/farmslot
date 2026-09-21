@@ -22,6 +22,8 @@ export class UpdateBanner extends LitElement {
   @state() private confirming = false;
   @state() private submitting = false;
   @state() private error = '';
+  private requestedTarget = '';
+  private priorOperationId?: string;
   private pollTimer?: ReturnType<typeof setInterval>;
 
   disconnectedCallback() {
@@ -30,7 +32,13 @@ export class UpdateBanner extends LitElement {
   }
 
   protected updated() {
-    if (this.status?.operation && this.status.operation.phase !== 'error' && this.error) {
+    if (
+      this.status?.operation &&
+      this.requestedTarget &&
+      this.status.operation.targetSha.startsWith(this.requestedTarget) &&
+      this.status.operation.id !== this.priorOperationId &&
+      this.error
+    ) {
       // The start reply may be lost during a watcher restart. Persisted gateway
       // progress is authoritative once the client reconnects.
       this.error = '';
@@ -53,6 +61,8 @@ export class UpdateBanner extends LitElement {
     const s = this.status;
     if (!s?.remoteSha || !s.canUpdate || this.submitting) return;
     this.submitting = true;
+    this.requestedTarget = s.remoteSha;
+    this.priorOperationId = s.operation?.id;
     this.error = '';
     try {
       const operation = await gateway.request<CheckoutUpdateOperation>(Methods.GATEWAY_UPDATE, {

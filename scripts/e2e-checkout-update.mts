@@ -238,9 +238,31 @@ try {
   await wait(() => String(bannerText()).includes('Checkout updated'), 'success message');
   cdp('screenshot', '-', path.join(evidence, 'updated.png'));
   record('Real update button fast-forwards the gateway checkout and reports completion');
-  const second = await publish('second update\n');
+  await publish('second update\n');
   click('.refresh');
   await wait(() => String(bannerText()).includes('1 commit behind'), 'next update');
+  const lock = path.join(checkout, '.git/farmslot-checkout-update.json.lock');
+  await mkdir(lock);
+  click('.update');
+  click('.update');
+  await wait(
+    () => String(bannerText()).includes('Another checkout update is starting'),
+    'start failure remains visible',
+  );
+  await delay(2500);
+  assert(String(bannerText()).includes('Another checkout update is starting'));
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), target);
+  await rm(lock, { recursive: true });
+  click('.dismiss');
+  cdp('eval', '-', 'location.reload(); return true;');
+  await wait(() => value('document.querySelector("farm-app")?.hydrated === true'), 'client reload');
+  // Dismissal is persisted; a fresh target makes the banner visible again.
+  await publish('second update revised\n');
+  const retryTarget = git(publisher, 'rev-parse', 'HEAD');
+  status(true);
+  cdp('eval', '-', 'location.reload(); return true;');
+  await wait(() => String(bannerText()).includes('2 commits behind'), 'revised update');
+  record('A rejected start stays visible instead of being cleared by an earlier completed update');
   await writeFile(path.join(checkout, 'README.md'), 'local work\n');
   click('.update');
   click('.update');
@@ -252,10 +274,10 @@ try {
   record('Local edits produce a visible error and survive unchanged');
   await writeFile(path.join(checkout, 'README.md'), 'first update\n');
   git(checkout, 'fetch', 'origin', 'main');
-  git(checkout, 'merge', '--ff-only', second);
+  git(checkout, 'merge', '--ff-only', retryTarget);
   click('.refresh');
   await wait(
-    () => status().localSha === second.slice(0, status().localSha.length),
+    () => status().localSha === retryTarget.slice(0, status().localSha.length),
     'manual pull freshness',
   );
   assert.equal(status().updateAvailable, false);
