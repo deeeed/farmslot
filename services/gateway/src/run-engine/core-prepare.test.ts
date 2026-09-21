@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFile, spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -45,6 +45,9 @@ test('Farmslot state-only backend prepare executes core phases without visual or
   const slotId = `core-prepare-${process.pid}`;
   const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
   t.after(async () => {
+    const session = spawnSync('tmux', ['has-session', '-t', `=${slotId}`], { encoding: 'utf8' });
+    if (session.status === 0) await execFileAsync('tmux', ['kill-session', '-t', `=${slotId}`]);
+    else assert.equal(session.status, 1, session.stderr); // No session when prepare failed before launch.
     await rm(poolPath, { force: true });
     await rm(fixtureRoot, { recursive: true, force: true });
   });
@@ -132,4 +135,82 @@ test('Farmslot state-only backend prepare executes core phases without visual or
   assert.match(eventText, /prepare profile 'core' — phases: git, fixtures, deps/);
   assert.match(eventText, /preflight skipped \(profile core\)/);
   assert.match(eventText, /health check skipped \(profile core\)/);
+
+  const replayParams = { slotId, branch: 'early-failure-work', prepareProfile: 'core' };
+  await t.test('unknown state and failed persistence block branch creation', async () => {
+    await assert.rejects(
+      slotPrepare(replayParams, () => {}, undefined, { preserveBranch: true }),
+      /Replay cannot preserve/,
+    );
+    await assert.rejects(
+      slotPrepare(replayParams, () => {}, undefined, {
+        preserveBranch: true,
+        allowMissingReplayBranch: true,
+        beforeBranchSetup: async () => {
+          throw new Error('intent persistence failed');
+        },
+      }),
+      /intent persistence failed/,
+    );
+    await assert.rejects(
+      execFileAsync('git', [
+        '-C',
+        slotRepo,
+        'show-ref',
+        '--verify',
+        'refs/heads/early-failure-work',
+      ]),
+    );
+  });
+
+  await t.test('a known early failure creates the branch after recording intent', async () => {
+    let branchSetupRecorded = false;
+    await slotPrepare(replayParams, () => {}, undefined, {
+      preserveBranch: true,
+      allowMissingReplayBranch: true,
+      beforeBranchSetup: async () => {
+        await assert.rejects(
+          execFileAsync('git', [
+            '-C',
+            slotRepo,
+            'show-ref',
+            '--verify',
+            'refs/heads/early-failure-work',
+          ]),
+        );
+        branchSetupRecorded = true;
+      },
+    });
+    assert.equal(branchSetupRecorded, true);
+  });
+
+  await t.test('replay preserves committed and uncommitted work', async () => {
+    await writeFile(path.join(slotRepo, 'README.md'), 'committed work\n');
+    await execFileAsync('git', ['-C', slotRepo, 'add', 'README.md']);
+    await execFileAsync('git', [
+      '-C',
+      slotRepo,
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '-m',
+      'work',
+    ]);
+    await writeFile(path.join(slotRepo, 'README.md'), 'uncommitted work\n');
+    const head = (await execFileAsync('git', ['-C', slotRepo, 'rev-parse', 'HEAD'])).stdout;
+    await slotPrepare(replayParams, () => {}, undefined, { preserveBranch: true });
+    assert.equal(await readFile(path.join(slotRepo, 'README.md'), 'utf8'), 'uncommitted work\n');
+    assert.equal((await execFileAsync('git', ['-C', slotRepo, 'rev-parse', 'HEAD'])).stdout, head);
+  });
+
+  await t.test('a lost previously established branch fails closed', async () => {
+    await execFileAsync('git', ['-C', slotRepo, 'checkout', '-b', 'saved-work']);
+    await execFileAsync('git', ['-C', slotRepo, 'branch', '-D', 'early-failure-work']);
+    await assert.rejects(
+      slotPrepare(replayParams, () => {}, undefined, { preserveBranch: true }),
+      /Replay cannot preserve/,
+    );
+  });
 });

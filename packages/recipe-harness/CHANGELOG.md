@@ -8,7 +8,6 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Retain typed, redacted invocation parameters with the recipe digest and execution summary; canonical artifact validation now reads those inputs for parameterized runs and rejects mismatches or redacted credentials.
 
-
 ## 0.18.0 - 2026-09-20
 
 - Published against `@farmslot/protocol` 0.30.0 so one protocol copy serves every dependent (child checklist units and the acceptance ledger arrive through that pin).

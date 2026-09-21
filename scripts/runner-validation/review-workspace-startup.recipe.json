@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Real terminal review startup and child monitoring",
+  "description": "Set FARMSLOT_GATEWAY and FARMSLOT_REVIEW_PROOF_RUN_ID to a live local static review. Optional FARMSLOT_REVIEW_EXPECT_BINARY, FARMSLOT_REVIEW_EXPECT_CHILD_STEPS and FARMSLOT_REVIEW_FAILED_RUN_ID pin the machine executable, checklist size and a previous failed-start attempt. Requires the real worker to mark startup and register its child; this recipe creates no task signals.",
+  "workflow": {
+    "entry": "live-startup",
+    "nodes": {
+      "live-startup": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/review-workspace-startup.mjs",
+        "intent": "Read the production run and child progress through gateway RPC, verify its task-owned startup signal and machine executable, and reject an unacknowledged worker.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

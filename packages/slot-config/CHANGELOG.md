@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Share machine pool lookup with standalone review launchers so they can honor configured runner executables.
+
 - `project.json` accepts `diff_view.test_patterns` (extra test-file globs) and `diff_view.use_default_test_patterns` for Command Center diff views.
 - `resolveTaskPaths` accepts a slot `taskFile` that already includes `temp/tasks/` and `TASK.md`, and returns the project `taskDirName` it resolved against.
 

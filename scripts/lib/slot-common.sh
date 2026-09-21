@@ -49,7 +49,7 @@ resolve_slot() {
   POOL_FILE=""
 
   if ! SLOT_RESULT=$("$FARMSLOT_CLI" internal resolve-slot "$slot_id" --raw); then
-    echo -e "${RED}FAIL: slot '${slot_id}' not found in any pool JSON under ${POOL_DIR}/${NC}" >&2
+    echo -e "${RED}FAIL: could not resolve slot '${slot_id}' from ${POOL_DIR}/; see CLI error above${NC}" >&2
     SLOT_RESULT=""
     return 1
   fi
@@ -67,7 +67,7 @@ resolve_slot_by_repo() {
   POOL_FILE=""
 
   if ! SLOT_RESULT=$("$FARMSLOT_CLI" internal resolve-slot --by-repo "$target_dir" --raw); then
-    echo -e "${RED}FAIL: no slot found with repo '${target_dir}' in ${POOL_DIR}/${NC}" >&2
+    echo -e "${RED}FAIL: could not resolve slot for repo '${target_dir}' from ${POOL_DIR}/; see CLI error above${NC}" >&2
     SLOT_RESULT=""
     return 1
   fi

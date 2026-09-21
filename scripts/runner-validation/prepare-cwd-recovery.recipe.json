@@ -1,0 +1,33 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Prepare recovery from a deleted working directory",
+  "description": "Replay prepare on a remote slot while the operator tmux server retains a deleted cwd. Set FARMSLOT_GATEWAY and FARMSLOT_CWD_PROOF_RUN_ID. Verifies the completed run through the live gateway and its actual fixture-copy log. Separate shell regressions exercise deleted inherited cwd and reject a missing target before hooks run.",
+  "workflow": {
+    "entry": "live-prepare",
+    "nodes": {
+      "live-prepare": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/prepare-cwd-recovery.mjs",
+        "intent": "Read the replayed production run through run.get and verify prepare completed and fresh run-specific logs prove fixture files were copied.",
+        "next": "directory-regressions"
+      },
+      "directory-regressions": {
+        "action": "command",
+        "cmd": "node --import tsx --test --test-name-pattern='prepare enters|prepare reports' services/gateway/src/methods/slot/prepare-command.test.ts",
+        "intent": "Exercise a deleted inherited cwd and a missing requested directory in real child processes, including sentinel and hook execution checks.",
+        "next": "replay-recovery"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "replay-recovery": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/prepare-replay-recovery.mjs",
+        "timeout_ms": 360000,
+        "intent": "Through run.create and run.replayStep, prove a missing-simulator failure retries without assuming a branch exists, preserves committed and dirty work on later retries, and blocks a lost previously established branch. Temporary slots, projects, runs and Git repos are cleaned up.",
+        "next": "done"
+      }
+    }
+  }
+}

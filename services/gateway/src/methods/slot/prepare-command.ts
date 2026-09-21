@@ -311,6 +311,7 @@ export function buildPrepareWrappedCommand(
   sentinelPath: string,
   scratchDir: string,
   opts?: {
+    cwd?: string;
     keepAliveOnSuccess?: boolean;
     workspaceRoot?: string | null;
     prepareScope?: { token: string; identityPath: string };
@@ -345,6 +346,13 @@ export function buildPrepareWrappedCommand(
     'unset FORCE_COLOR',
     ...workspaceExports,
     `mkdir -p ${shellQuote(scratchDir)} || { echo 1 > ${quotedSentinelPath}; exit 1; }`,
+    // tmux 3.7 can ignore -c when its server's cwd was deleted. Establish the
+    // phase directory in the child before hooks, Node or scope setup run.
+    ...(opts?.cwd
+      ? [
+          `cd -- ${shellQuote(opts.cwd)} || { echo ${shellQuote(`Prepare working directory unavailable: ${opts.cwd}`)} >&2; echo 1 > ${quotedSentinelPath}; exit 1; }`,
+        ]
+      : []),
     '__farmslot_kill_tree() {',
     '  local parent="$1"',
     '  local signal="${2:-TERM}"',
@@ -507,6 +515,7 @@ export async function runPrepareCommand(
   // install. The companion strip in core/exec.ts only protects gateway-direct
   // execLocal callers, not commands launched inside an existing tmux pane.
   const wrappedCmd = buildPrepareWrappedCommand(cmd, sentinelPath, slotHostScratchDir, {
+    cwd: windowCwd,
     keepAliveOnSuccess: opts?.phase === 'preflight',
     workspaceRoot: resolveWorkspaceRoot(),
     ...(opts?.prepareScope ? { prepareScope: opts.prepareScope } : {}),

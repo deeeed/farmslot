@@ -2,13 +2,17 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import {
+  type AgentContext,
+  isTerminalRunStatus,
+  type Run,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 import { upsertAgentContext } from '../agents/contexts.js';
-import { loadProjectVars } from '../core/config.js';
+import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
-import { loadPoolConfigs } from '../fleet/state.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -18,6 +22,21 @@ import {
   workspaceTerminalSessionCreateArgv,
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
+
+export const REVIEW_TMUX_START_TIMEOUT_MS = 120_000;
+
+/** Only the task's validated signal acknowledges startup, across monitor restarts. */
+export function reviewTmuxStartupState(
+  context: Pick<AgentContext, 'promptDeliveryStartedAt' | 'attemptStartedAt'> | undefined,
+  signal: WorkerSignal | null,
+  now = Date.now(),
+): 'acknowledged' | 'starting' | 'timed-out' {
+  if (signal) return 'acknowledged';
+  const start = Date.parse(context?.attemptStartedAt ?? context?.promptDeliveryStartedAt ?? '');
+  return Number.isFinite(start) && now >= start && now - start < REVIEW_TMUX_START_TIMEOUT_MS
+    ? 'starting'
+    : 'timed-out';
+}
 
 /** Recover only a unique structured metadata match, never the newest unrelated conversation. */
 export async function recoverReviewTmuxSession(run: Run, assertCurrent: () => void): Promise<void> {
@@ -155,16 +174,17 @@ export async function reviewTmuxOperation(
     task: w.taskPath,
   };
   if (action === 'launch') {
-    const pool = (await loadPoolConfigs()).find((pool) => pool.machine === w.machine);
-    if (!pool) throw new Error('Review machine is unavailable');
+    const pool = await loadMachinePool(w.machine);
     const environment = await reviewEnvironment(run);
     const command = buildInteractiveRefinementRunnerCommand({
       runner,
+      machine: pool,
       model: run.metrics.model,
       promptPath: path.posix.join(w.taskPath, '.terminal-prompt.txt'),
       repo: w.checkoutPath,
       effort: run.effort,
       trustWorkspace: true,
+      workspaceTrust: 'untrusted',
       resumeSessionId:
         run.agentContexts?.find((context) => context.id === 'review')?.runnerSessionId ?? undefined,
       safetyTier: 'dangerous',
@@ -243,7 +263,7 @@ export async function launchReviewTmux(
   await assertCurrent();
   await upsertAgentContext(runId, 'review', {
     id: 'review',
-    status: 'working',
+    status: 'launching',
     promptDeliveryStartedAt: started.startedAt ?? context.attemptStartedAt,
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');

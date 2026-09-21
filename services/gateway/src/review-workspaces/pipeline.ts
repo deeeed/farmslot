@@ -8,6 +8,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { upsertAgentContext } from '../agents/contexts.js';
 import { loadProjectVars } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { fetchGitHubPR } from '../external/github.js';
@@ -27,6 +28,7 @@ import {
   launchReviewTmux,
   recoverReviewTmuxSession,
   reviewTmuxOperation,
+  reviewTmuxStartupState,
 } from '../runners/review-tmux.js';
 import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { withSubtaskMetrics } from '../tasks/subtask-metrics.js';
@@ -40,6 +42,7 @@ import {
   collectReviewWorkspaceSubtaskMetrics,
   materializeReviewWorkspaceTask,
   readReviewWorkspaceCompletion,
+  readReviewWorkspaceSignal,
 } from './task.js';
 import {
   allocateReviewWorkspace,
@@ -438,20 +441,69 @@ export async function executeReviewWorkspaceStep(
         await progress.publish();
         check();
         if (run.transport === 'tmux') {
+          const signal = await readReviewWorkspaceSignal(runId);
+          check();
+          const current = currentWorkspaceRun(runId, generation);
+          const context = current.agentContexts?.find((entry) => entry.id === 'review');
+          const startup = reviewTmuxStartupState(context, signal);
+          if (startup === 'timed-out') {
+            throw new BlockedRunError(
+              'Reviewer did not acknowledge task startup within two minutes. Check runner sign-in and provider connectivity before retrying; an existing terminal is not evidence of work.',
+              'review-worker-not-started',
+            );
+          }
+          const status = startup === 'acknowledged' ? 'working' : 'launching';
+          if (
+            context &&
+            (context.status !== status ||
+              (signal?.attemptId !== undefined && context.signalAttemptId !== signal.attemptId))
+          ) {
+            await upsertAgentContext(
+              runId,
+              'review',
+              { id: 'review' },
+              {
+                resolvePatch: () => {
+                  check();
+                  return {
+                    id: 'review',
+                    status,
+                    ...(signal?.attemptId ? { signalAttemptId: signal.attemptId } : {}),
+                  };
+                },
+              },
+            );
+            await persistRunNow(getRun(runId)!, 'reviewer startup acknowledgment');
+            emit(Events.RUN_UPDATED, { run: getRun(runId) });
+          }
           const completion = await readReviewWorkspaceCompletion(runId);
           check();
           if (completion) {
-            if (!completion.result || completion.signal.outcome !== 'success')
+            if (
+              !completion.result ||
+              (completion.signal.outcome !== 'success' && completion.signal.status !== 'blocked')
+            )
               throw new BlockedRunError(
                 completion.signal.reason ?? 'Review did not complete',
                 'review-incomplete',
               );
+            const partialReason =
+              completion.signal.status === 'blocked'
+                ? `Review found ${completion.result.lineComments.length} issue(s), but the required comparison evidence was not available. The report and line comments are ready for the publication decision.`
+                : undefined;
+            if (partialReason) {
+              await persistRunNow(
+                updateRun(runId, { error: partialReason }),
+                'review findings ready',
+              );
+            }
             await recordWorkspaceReviewCompletion(runId, generation, completion.result);
             emit(Events.RUN_UPDATED, { run: getRun(runId) });
             return {
               outputs: {
                 workerSignal: completion.signal,
                 headSha: run.reviewWorkspaceSubject?.headSha,
+                ...(completion.signal.status === 'blocked' ? { partial: true } : {}),
               },
             };
           }

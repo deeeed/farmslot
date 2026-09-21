@@ -568,6 +568,11 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
  * the callers are reading inconsistent state.
  */
 export async function loadMachineSlots(machine: string): Promise<RawPoolSlot[]> {
+  return (await loadMachinePool(machine)).slots;
+}
+
+/** Read machine launch settings from the same pool source as slot dispatch. */
+export async function loadMachinePool(machine: string): Promise<RawPoolJson> {
   let files: string[];
   try {
     files = await readdir(poolDir);
@@ -581,7 +586,7 @@ export async function loadMachineSlots(machine: string): Promise<RawPoolSlot[]> 
     try {
       const content = await readFile(path.join(poolDir, file), 'utf-8');
       const pool: RawPoolJson = JSON.parse(content);
-      if (pool.machine === machine) return pool.slots;
+      if (pool.machine === machine) return pool;
     } catch {
       /* skip invalid files — same tolerance as resolveSlot */
     }

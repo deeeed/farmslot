@@ -377,20 +377,31 @@ export const stepInspectorStyles = css`
     background: ${unsafeCSS(colors.statusOk)};
   }
   .task-phase {
-    border-top: 1px solid ${unsafeCSS(colors.textMuted)}18;
-    padding-top: 4px;
+    margin-top: 6px;
+    padding: 5px 6px 3px;
+    border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: ${unsafeCSS(colors.bgCard)};
   }
   .task-phase-title {
     display: flex;
     justify-content: space-between;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     font-size: 10px;
-    margin-bottom: 2px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}22;
   }
   .task-progress-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 10px;
-    padding: 1px 0;
+    line-height: 1.35;
+    padding: 2px 0;
   }
   .task-progress-step.done {
     color: ${unsafeCSS(colors.textSecondary)};
@@ -398,6 +409,20 @@ export const stepInspectorStyles = css`
   .task-progress-step.running {
     color: ${unsafeCSS(colors.textPrimary)};
     font-weight: 700;
+  }
+  .task-progress-step-icon {
+    flex: 0 0 12px;
+    color: ${unsafeCSS(colors.textMuted)};
+    text-align: center;
+  }
+  .task-progress-step.done .task-progress-step-icon {
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .task-progress-step.running .task-progress-step-icon {
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .task-progress-step-name {
+    min-width: 0;
   }
   .review-loop {
     display: flex;

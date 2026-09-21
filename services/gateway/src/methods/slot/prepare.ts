@@ -75,6 +75,7 @@ import {
   prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
+import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
 import {
   buildDepsSentinelWriteCommand,
@@ -425,33 +426,12 @@ async function slotPrepareInner(
     `Prepare profile '${prepareProfile.name}' — phases: ${[...prepareProfile.phases].join(', ')}`,
   );
 
-  // 1c. Device existence check (fail fast)
-  const iosSim = vars.resourceVars.simulator ?? '';
-  const androidAvd = vars.resourceVars.avd ?? '';
-  if (vars.platform === 'ios' && iosSim) {
-    step('device', `Checking simulator ${iosSim}...`);
-    const findSimulatorScript = [
-      'import json,sys',
-      'name=sys.argv[1]',
-      'data=json.load(sys.stdin)',
-      "for rt,devs in data.get('devices',{}).items():",
-      '  for d in devs:',
-      "    if d.get('name') == name: print(d.get('udid','')); sys.exit(0)",
-    ].join('\n');
-    const r = await execOnSlot(
-      vars,
-      `xcrun simctl list devices -j 2>/dev/null | python3 -c ${shellQuote(findSimulatorScript)} ${shellQuote(iosSim)}`,
-    );
-    if (!r.stdout.trim()) throw new Error(`Simulator '${iosSim}' not found`);
-    step('device', `Simulator ${iosSim} found`);
-  } else if (vars.platform === 'android' && androidAvd) {
-    step('device', `Checking AVD ${androidAvd}...`);
-    const r = await execOnSlot(
-      vars,
-      `\${ANDROID_HOME:-\$HOME/Android/Sdk}/cmdline-tools/latest/bin/avdmanager list avd -c 2>/dev/null | grep -Fx -- ${shellQuote(androidAvd)}`,
-    );
-    if (!r.stdout.trim()) throw new Error(`AVD '${androidAvd}' not found`);
-    step('device', `AVD ${androidAvd} found`);
+  // 1c. Device inventory errors must retain their cause, not look like missing devices.
+  const device = vars.resourceVars.simulator || vars.resourceVars.avd;
+  if (device && (vars.platform === 'ios' || vars.platform === 'android')) {
+    step('device', `Checking device ${device}...`);
+    const detail = await checkPrepareDevice(vars);
+    if (detail) step('device', detail);
   }
 
   let fixturesSynced = false;
@@ -568,33 +548,6 @@ async function slotPrepareInner(
     step('origin-head', `origin/HEAD = ${expectedHead}`);
   }
 
-  if (branch && opts?.preserveBranch) {
-    const localExists =
-      (
-        await execOnSlot(
-          vars,
-          `cd ${shellQuote(vars.remoteRepo)} && git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
-        )
-      ).exitCode === 0;
-    if (!localExists) {
-      throw new Error(
-        `Replay cannot preserve ${branch}: the local branch no longer exists on ${params.slotId}. ` +
-          `Restore the branch before replaying prepare, or replay from find-slot with a published branch.`,
-      );
-    }
-    if (current !== branch) {
-      const checkoutR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
-      );
-      if (checkoutR.exitCode !== 0) {
-        throw new Error(
-          `Replay could not restore ${branch} on ${params.slotId}: ${checkoutR.stderr.slice(-200) || checkoutR.stdout.slice(-200)}`,
-        );
-      }
-    }
-    step('branch', `Replay preserving existing local ${branch} without reset or clean`);
-  }
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
   // fresh branch. The dispatch refuses a run without it.
@@ -645,6 +598,54 @@ async function slotPrepareInner(
     }
     step('branch', `${branch} reset to requested start ref ${resolvedStartRef.resolvedSha}`);
   };
+  if (branch) await opts?.beforeBranchSetup?.();
+  if (branch && opts?.preserveBranch) {
+    const localExists =
+      (
+        await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && git show-ref --verify --quiet ${shellQuote(`refs/heads/${branch}`)}`,
+        )
+      ).exitCode === 0;
+    if (!localExists && !opts.allowMissingReplayBranch) {
+      throw new Error(
+        `Replay cannot preserve ${branch}: the local branch no longer exists on ${params.slotId}. ` +
+          `Restore the branch before replaying prepare, or replay from find-slot with a published branch.`,
+      );
+    }
+    if (!localExists) {
+      // This retry has durable proof branch setup never started. Create without
+      // reset/clean or deleting refs; conflicting local work must stop checkout.
+      const fetch = await execOnSlot(
+        vars,
+        `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      );
+      if (fetch.exitCode !== 0)
+        throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
+      await resolveRequestedStartRef();
+      const base = resolvedStartRef?.resolvedSha ?? `origin/${defaultBranch}`;
+      const create = await execOnSlot(
+        vars,
+        `git -C ${shellQuote(vars.remoteRepo)} checkout -b ${shellQuote(branch)} ${shellQuote(base)}`,
+      );
+      if (create.exitCode !== 0)
+        throw new Error(`Replay branch creation failed: ${create.stderr || create.stdout}`);
+      step('branch', `Created ${branch} after prepare failed before branch setup`);
+    } else if (current !== branch) {
+      const checkoutR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
+      );
+      if (checkoutR.exitCode !== 0) {
+        throw new Error(
+          `Replay could not restore ${branch} on ${params.slotId}: ${checkoutR.stderr.slice(-200) || checkoutR.stdout.slice(-200)}`,
+        );
+      }
+    }
+    if (localExists) {
+      step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+    }
+  }
   if (branch && opts?.preserveBranch) {
     await resolveRequestedStartRef();
   } else if (branch) {

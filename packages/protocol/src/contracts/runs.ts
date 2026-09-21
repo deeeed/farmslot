@@ -2452,6 +2452,9 @@ export function isInteractiveDevRun(run: Pick<Run, 'flowType' | 'mode'>): boolea
 
 /** Persisted run-engine state — see ADR-027. */
 export interface RunEngineState {
+  /** Persisted before branch mutations. A matching false value proves an early
+   * prepare failure never reached branch setup; absent historical state is unknown. */
+  prepareBranch?: { slotId: string; branch: string; started: boolean };
   /** Runtime hints set by dispatch UI (e.g. skipPrepare) or engine (warmRecovery on crash resume).
    * `nudgeReuse` is set when the operator picks "Nudge worker" in the dispatch wizard or the
    * branch-affinity decision card; FIND_SLOT honors it to bind the busy slot, and DISPATCH

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover prepare from deleted working directories and early branch/device failures without resetting existing work; require an owned startup signal before treating review sessions as working.
+
 - Support safe default-branch checkout updates that survive development restarts, preserve local edits and reject dependency changes requiring manual installation.
 
 - No behaviour change: the child-unit module's doc comment now cites the task directory contract, because the ADR-060 implementation plan it referenced was deleted when that ADR was accepted.
