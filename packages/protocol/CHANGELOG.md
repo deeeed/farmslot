@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add the admin-only gateway.update operation and checkout update progress to gateway.status.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-09-20

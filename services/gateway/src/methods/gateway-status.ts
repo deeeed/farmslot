@@ -21,6 +21,7 @@ import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
 import { githubQueryBudget } from '../integrations/github-query-budget.js';
 
+import { readCheckoutUpdate } from './gateway-update.js';
 import { workerSessionHistoryEnabled } from './worker-session-history.js';
 
 const execFile = promisify(execFileCb);
@@ -142,7 +143,10 @@ async function runGitFreshness(): Promise<GatewayUpdateStatus> {
   base.branch = branch;
   base.localSha = (await git(['rev-parse', '--short', 'HEAD'])).stdout.trim();
 
-  const fetch = await git(['fetch', 'origin', branch, '--quiet'], FETCH_TIMEOUT_MS);
+  const fetch = await git(
+    ['fetch', '--no-write-fetch-head', 'origin', branch, '--quiet'],
+    FETCH_TIMEOUT_MS,
+  );
   if (fetch.exitCode !== 0) {
     // Offline / no remote access is expected and recoverable: surface it as the
     // status `error`, never throw — a transient network failure must not break
@@ -173,7 +177,8 @@ async function runGitFreshness(): Promise<GatewayUpdateStatus> {
 async function computeUpdateStatus(force: boolean): Promise<GatewayUpdateStatus> {
   const now = Date.now();
   if (!force && cached && now - cachedAtMs < (cached.error ? TTL_ERR_MS : TTL_OK_MS)) {
-    return cached;
+    const head = await git(['rev-parse', '--short', 'HEAD']);
+    if (head.exitCode === 0 && head.stdout.trim() === cached.localSha) return cached;
   }
   // Collapse concurrent callers (the UI fans out bootstrap RPCs) onto one fetch.
   if (!inFlight) {
@@ -210,7 +215,21 @@ async function computeUpdateStatus(force: boolean): Promise<GatewayUpdateStatus>
 }
 
 export async function gatewayStatus(params?: GatewayStatusParams): Promise<GatewayStatusResult> {
-  const update = await computeUpdateStatus(params?.refresh === true);
+  const update = {
+    ...(await computeUpdateStatus(params?.refresh === true)),
+    checkoutPath: farmslotRoot,
+    canUpdate: true,
+    operation: await readCheckoutUpdate(),
+  };
+  if (
+    update.operation?.phase === 'error' &&
+    update.operation.targetSha.startsWith(update.localSha) &&
+    update.localSha
+  ) {
+    // A manual pull can complete the requested update after a refusal. The
+    // earlier error no longer describes the checkout and must not linger.
+    update.operation = undefined;
+  }
   const listen = getGatewayListenSnapshot();
   return {
     version: GATEWAY_VERSION,

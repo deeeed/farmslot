@@ -185,8 +185,8 @@ const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
 const WHATS_NEW_SEEN_VERSION_KEY = 'farmslot:whats-new-seen-version';
-// Re-poll gateway freshness hourly; the gateway itself caches the git fetch.
-const UPDATE_POLL_MS = 60 * 60_000;
+// Local pulls should be reflected promptly; remote fetches remain cached by the gateway.
+const UPDATE_POLL_MS = 30_000;
 const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change.';
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
@@ -416,10 +416,12 @@ export class FarmApp extends LitElement {
     }
   }
 
-  private async checkForUpdate(): Promise<void> {
+  private async checkForUpdate(refresh = false): Promise<void> {
     if (gateway.workspaceAccess !== 'farm') return;
     try {
-      const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS);
+      const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {
+        refresh,
+      });
       this.updateStatus = result.update;
     } catch (err) {
       // Advisory only: a closed socket or timeout just means no fresh reading this
@@ -433,10 +435,17 @@ export class FarmApp extends LitElement {
 
   private renderUpdateBanner() {
     const s = this.updateStatus;
-    if (!s || !s.updateAvailable) return nothing;
-    if (s.remoteSha && s.remoteSha === this.updateDismissedSha) return nothing;
+    if (!s || (!s.updateAvailable && !s.operation)) return nothing;
+    const dismissalKey = s.operation
+      ? `${s.remoteSha}:${s.operation.id}:${s.operation.phase}`
+      : s.remoteSha;
+    if (s.operation?.phase !== 'running' && dismissalKey === this.updateDismissedSha)
+      return nothing;
     return html`<update-banner
       .status=${s}
+      @refresh=${(event: CustomEvent<boolean>) => {
+        void this.checkForUpdate(event.detail);
+      }}
       @dismiss=${() => this.dismissUpdateBanner()}
     ></update-banner>`;
   }
@@ -467,7 +476,10 @@ export class FarmApp extends LitElement {
   }
 
   private dismissUpdateBanner() {
-    const sha = this.updateStatus?.remoteSha;
+    const status = this.updateStatus;
+    const sha = status?.operation
+      ? `${status.remoteSha}:${status.operation.id}:${status.operation.phase}`
+      : status?.remoteSha;
     if (sha) {
       this.updateDismissedSha = sha;
       localStorage.setItem(UPDATE_DISMISS_KEY, sha);

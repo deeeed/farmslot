@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Safe checkout update from Electron",
+  "description": "Uses a disposable local Git remote, an isolated gateway, Vite and a Dev app profile on ports 8991/5190/9523. Build the Dev desktop app first. No operator checkout changes or model calls.",
+  "workflow": {
+    "entry": "checkout-update",
+    "nodes": {
+      "checkout-update": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-checkout-update.mts",
+        "timeout_ms": 300000,
+        "intent": "Click Update checkout and confirm the identified gateway repository. Restart the isolated gateway during the real Git merge and verify progress survives. Prove the actual Git HEAD and file contents advanced, then prove local edits block an update and remain intact. Pull manually and verify the real gateway status and UI stop reporting the old commit.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

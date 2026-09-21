@@ -106,6 +106,7 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `gateway.doctor`                        | admin          |                                                          |
 | `gateway.ping`                          | native-owner   |                                                          |
 | `gateway.status`                        | admin          | runs git fetch against the gateway clone                 |
+| `gateway.update`                        | admin          | fast-forwards the gateway source checkout                |
 | `git.branchDiff`                        | admin          |                                                          |
 | `git.diff`                              | admin          |                                                          |
 | `git.discard`                           | admin          |                                                          |

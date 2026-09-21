@@ -68,6 +68,25 @@ creates a temporary profile, briefly edits and restores the worktree's UI title,
 and only reads the gateway. Screenshots and results go to `temp/desktop-live-ui/`.
 The same check is in `docs/examples/recipes/farmslot/electron-live-ui.recipe.json`.
 
+## Updating the checkout
+
+The shared **Update checkout** banner names the gateway's source checkout and target commit
+before applying an update. This may be on a remote machine. For Farmslot Dev, frontend changes
+appear automatically only when Vite serves that same checkout.
+
+The action only fast-forwards a clean default branch. Local edits, feature branches, divergent
+history and dependency changes stop the update with an explanation. For dependency changes,
+update that checkout in a terminal and run `yarn install --immutable`. The action never stashes
+or resets local work. Git operations continue if a development gateway watcher reconnects;
+the banner resumes progress from disk. **Check again** refreshes remote status, and local pulls
+appear on the next poll within 30 seconds.
+
+Desktop shell changes require rebuilding and replacing the `.app`. A source update does not
+install a new macOS binary or restart a packaged gateway. The banner calls out these follow-ups.
+
+The [checkout update recipe](../../docs/examples/recipes/farmslot/checkout-update.recipe.json)
+uses a disposable repository and an isolated Electron profile to verify the real update action.
+
 ## Daily use
 
 Remember me is enabled by default in connection settings and desktop login. Saved credentials use macOS Keychain encryption. Turning it off deletes the saved record; the current connection lasts until you quit, including window close/reopen.

@@ -1395,6 +1395,10 @@
       "surface": "rpc-only",
       "command": "farmslot rpc tmux.worker.endSession",
       "note": "Command Center ends an explicitly confirmed unmanaged session after checking current pane identity."
+    },
+    "gateway.update": {
+      "surface": "rpc-only",
+      "note": "Update a clean default-branch checkout through the shared UI or farmslot rpc gateway.update."
     }
   }
 }

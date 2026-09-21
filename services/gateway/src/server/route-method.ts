@@ -79,6 +79,7 @@ import {
   type FsWriteParams,
   type GatewayDoctorParams,
   type GatewayStatusParams,
+  type GatewayUpdateParams,
   type GitBranchDiffParams,
   type GitDiffParams,
   type GitDiscardParams,
@@ -336,6 +337,7 @@ import {
 } from '../methods/fleet-refresh.js';
 import { gatewayDoctor } from '../methods/gateway-doctor.js';
 import { gatewayStatus } from '../methods/gateway-status.js';
+import { gatewayUpdate } from '../methods/gateway-update.js';
 import {
   gitBranchDiff,
   gitDiff,
@@ -612,6 +614,8 @@ async function routeAuthorizedMethod(
     // Gateway self-status
     case Methods.GATEWAY_PING:
       return { ok: true, serverTimeMs: Date.now() };
+    case Methods.GATEWAY_UPDATE:
+      return gatewayUpdate(p as GatewayUpdateParams);
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:
