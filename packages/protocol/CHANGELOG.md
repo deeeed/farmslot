@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Persist prepare branch intent so early retries can distinguish a never-created branch from a lost work branch.
+
 - Add the admin-only gateway.update operation and checkout update progress to gateway.status.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

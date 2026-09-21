@@ -83,7 +83,10 @@ export async function holdWorkspaceReview(runId: string) {
             throw new Error('Wait for the reviewer to finish its follow-up before publishing');
         }
         const completion = await readReviewWorkspaceCompletion(runId);
-        if (!completion?.result || completion.signal.outcome !== 'success')
+        if (
+          !completion?.result ||
+          (completion.signal.outcome !== 'success' && completion.signal.status !== 'blocked')
+        )
           throw new Error('Reviewer must finish its updated result before publication');
         const presented = decision.payload as ReviewGatePayload;
         if (

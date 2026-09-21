@@ -25,7 +25,7 @@ import {
 } from '../runners/usage-limit-error.js';
 import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
-import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
@@ -305,6 +305,29 @@ export async function executePrepareStep(
   const activeRecoveryAttempt = current.recoveryAttempts?.at(-1);
   const isPrepareReplay =
     activeRecoveryAttempt?.stepName === 'prepare' && activeRecoveryAttempt.status === 'started';
+  const branchIdentity = current.branch
+    ? { slotId: current.slotId, branch: current.branch }
+    : undefined;
+  if (!isPrepareReplay && branchIdentity && !current.engineState?.prepareBranch) {
+    await persistRunNow(
+      updateRun(runId, {
+        engineState: {
+          ...current.engineState,
+          prepareBranch: {
+            ...branchIdentity,
+            started: false,
+          },
+        },
+      }),
+      'prepare branch intent',
+    );
+  }
+  const branchState = current.engineState?.prepareBranch;
+  const allowMissingReplayBranch =
+    isPrepareReplay &&
+    branchState?.slotId === current.slotId &&
+    branchState.branch === current.branch &&
+    branchState.started === false;
   const forceNewBranch =
     !isPrepareReplay && (current.flowType === 'fix-bug' || current.flowType === 'dev');
   const prepareController = new AbortController();
@@ -337,6 +360,25 @@ export async function executePrepareStep(
       {
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ? { preserveBranch: true } : {}),
+        allowMissingReplayBranch,
+        beforeBranchSetup: branchIdentity
+          ? async () => {
+              const latest = getRun(runId);
+              if (!latest) throw new Error(`Run ${runId} was removed during prepare`);
+              await persistRunNow(
+                updateRun(runId, {
+                  engineState: {
+                    ...latest.engineState,
+                    prepareBranch: {
+                      ...branchIdentity,
+                      started: true,
+                    },
+                  },
+                }),
+                'prepare branch setup starting',
+              );
+            }
+          : undefined,
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.

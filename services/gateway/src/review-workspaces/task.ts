@@ -309,13 +309,13 @@ export async function materializeReviewWorkspaceTask(
       '## Completion',
       '',
       'Run ./mark start once, then read its SIGNAL.json attemptId. Use ./mark N for checklist progress.',
-      'Write artifacts/review.md with VERDICT: APPROVE or REQUEST_CHANGES, exact COMMIT, findings, evidence and unchecked areas.',
+      'Write artifacts/review.md with VERDICT: APPROVE, REQUEST_CHANGES or COMMENT, exact COMMIT, findings, evidence and unchecked areas.',
       'Write artifacts/line-comments.json as {"comments":[{"path":"file","line":1,"body":"finding","severity":"major"}]}; use an empty comments array for a clean review.',
-      `Write ${RESULT} using schemaVersion 1, verdict "pass" with issues [] or "issues" with at least one {file,line,description,severity}. Severity is blocker, major, minor, or nit.`,
+      `Write ${RESULT} using schemaVersion 1, verdict "pass" with issues [] or "issues" with at least one {file,line,description,severity}. Severity is blocker, major, minor, or nit. Add recommendation APPROVE, REQUEST_CHANGES or COMMENT matching the report.`,
       `Add runId ${JSON.stringify(run.id)}, workspaceId ${JSON.stringify(run.reviewWorkspace.workspaceId)}, headSha ${JSON.stringify(subject.headSha)}, baseSha ${JSON.stringify(subject.baseSha)}, attemptId copied from SIGNAL.json, and reportSha256 containing the SHA-256 of the exact review.md bytes.`,
       `Required artifacts: ${terminalContract.commands.complete.artifacts.join(', ')}.`,
       'Each line-comments entry must exactly match the corresponding issue: path=file, body=description, with the same line and severity.',
-      'Complete every checklist item, then run ./mark complete --mark-last. Do not use skip flags or write SIGNAL.json manually. Findings still complete the review; report blocked requirements with ./mark blocked --reason.',
+      'Complete every checklist item, then run ./mark complete --mark-last. Do not use skip flags or write SIGNAL.json manually. Findings and unavailable comparison evidence still complete a static review: record every criterion outcome, use REQUEST_CHANGES for actionable findings or COMMENT for evidence gaps, complete the child, and finish the parent. Block only when you cannot produce a review report. Never claim unchecked evidence passed.',
     ].join('\n');
     const handoff = buildHandoffMetadata({
       attemptId: run.id,
@@ -459,28 +459,27 @@ async function materializeReviewViewer(
   return path.join(viewer, 'TASK.md');
 }
 
-export async function readReviewWorkspaceCompletion(
-  runId: string,
-  deps: Dependencies = defaults,
-): Promise<{ signal: WorkerSignal; result: RunReviewResult | null } | null> {
+async function readOwnedReviewWorkspaceSignal(runId: string, deps: Dependencies = defaults) {
   const run = structuredClone(ownedRun(runId, deps));
   const snapshot = await loadSnapshot(run, deps);
   if (!snapshot) throw new Error('Static review task snapshot is missing');
-  const io = await locality(run, deps);
-  const taskDir = snapshot.workspace.taskPath;
+  const cleaned = Boolean(run.reviewWorkspace.cleanedAt);
+  const io = cleaned ? ORCHESTRATOR : await locality(run, deps);
+  const taskDir = cleaned ? viewDirFor(run.id, deps) : snapshot.workspace.taskPath;
   if (!(await slotFileExists(io, path.posix.join(taskDir, 'SIGNAL.json')))) return null;
   const signalText = await confinedRead(io, taskDir, 'SIGNAL.json');
   const normalized = normalizeWorkerSignal(JSON.parse(signalText));
   if (!normalized.ok) throw new Error(`Invalid static review signal: ${normalized.reason}`);
   const signal = normalized.signal;
-  if (signal.status === 'running') return null;
   const context = run.agentContexts?.find((candidate) => candidate.id === 'review');
   if (
     !(run.transport === 'tmux'
       ? context?.promptDeliveryStartedAt
       : context?.nativeSession?.acceptedAt) ||
     !signal.attemptId ||
-    (context?.signalAttemptId && context.signalAttemptId !== signal.attemptId) ||
+    (context?.signalAttemptId &&
+      context.signalAttemptId !== signal.attemptId &&
+      signal.status !== 'running') ||
     (signal.role && signal.role !== 'review') ||
     (signal.contextId && signal.contextId !== 'review') ||
     parseStrictIsoMs(signal.timestamp) === null ||
@@ -492,30 +491,57 @@ export async function readReviewWorkspaceCompletion(
       )
   )
     throw new Error('Static review signal does not belong to its accepted worker attempt');
-  if (signal.status === 'blocked') {
+  return { run, snapshot, io, taskDir, signalText, signal };
+}
+
+/** A task-owned mark is startup evidence; an existing terminal is not. */
+export async function readReviewWorkspaceSignal(
+  runId: string,
+  deps: Dependencies = defaults,
+): Promise<WorkerSignal | null> {
+  return (await readOwnedReviewWorkspaceSignal(runId, deps))?.signal ?? null;
+}
+
+export async function readReviewWorkspaceCompletion(
+  runId: string,
+  deps: Dependencies = defaults,
+): Promise<{ signal: WorkerSignal; result: RunReviewResult | null } | null> {
+  const observed = await readOwnedReviewWorkspaceSignal(runId, deps);
+  if (!observed || observed.signal.status === 'running') return null;
+  const { run, snapshot, io, taskDir, signalText, signal } = observed;
+  const blocked = signal.status === 'blocked';
+  if (blocked && !(await slotFileExists(io, path.posix.join(taskDir, RESULT)))) {
     const viewer = viewDirFor(run.id, deps);
-    await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(viewer, 'artifacts'));
-    await mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
-    await writeFile(
-      path.join(viewer, 'CHECKLIST.md'),
-      await confinedRead(io, taskDir, 'CHECKLIST.md'),
-    );
-    await writeFile(path.join(viewer, 'SIGNAL.json'), signalText);
+    if (!run.reviewWorkspace.cleanedAt) {
+      await slotCopyDir(io, snapshot.workspace.artifactPath, path.join(viewer, 'artifacts'));
+      await mirrorWorkerSubtasks(io, taskDir, viewer, VIEW_SUBTASK_MIRROR);
+      await writeFile(
+        path.join(viewer, 'CHECKLIST.md'),
+        await confinedRead(io, taskDir, 'CHECKLIST.md'),
+      );
+      await writeFile(path.join(viewer, 'SIGNAL.json'), signalText);
+    }
     assertCompletionIdentity(runId, snapshot, deps);
-    return { signal: { ...signal, role: 'review', contextId: 'review' }, result: null };
+    return {
+      signal: { ...signal, role: 'review', contextId: 'review' },
+      result: null,
+    };
   }
   if (
-    !['complete', 'done'].includes(signal.status) ||
-    signal.outcome !== 'success' ||
-    signal.disposition !== 'fixed'
+    !blocked &&
+    (!['complete', 'done'].includes(signal.status) ||
+      signal.outcome !== 'success' ||
+      signal.disposition !== 'fixed')
   )
     throw new Error(`Static review did not complete: ${signal.reason ?? signal.status}`);
   // A registered child checklist unit (ADR-060) is part of this signal's proof.
   // `mark` already refuses the parent terminal command while a child is open, so
   // a signal that arrives here with one was written around the engine. Same
   // refusal the slot terminal check applies, on this task's own directory.
-  const openChild = await subtaskTerminalRefusal(io, taskDir, 'complete');
-  if (openChild) throw new Error(openChild);
+  if (!blocked) {
+    const openChild = await subtaskTerminalRefusal(io, taskDir, 'complete');
+    if (openChild) throw new Error(openChild);
+  }
   const raw = await confinedRead(io, taskDir, RESULT);
   const artifact = JSON.parse(raw) as Record<string, unknown>;
   const feedback = parseStructuredReviewFeedback(raw, RESULT);
@@ -548,7 +574,14 @@ export async function readReviewWorkspaceCompletion(
   const reviewMd = await confinedRead(io, taskDir, 'artifacts/review.md');
   if (!reviewMd.trim() || artifact.reportSha256 !== sha256(reviewMd))
     throw new Error('Static review report is missing or its digest changed');
-  const recommendation = feedback.verdict === 'pass' ? 'APPROVE' : 'REQUEST_CHANGES';
+  const recommendation =
+    artifact.recommendation ?? (feedback.verdict === 'pass' ? 'APPROVE' : 'REQUEST_CHANGES');
+  if (
+    !['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(String(recommendation)) ||
+    (recommendation === 'APPROVE' && (blocked || feedback.verdict !== 'pass')) ||
+    (recommendation === 'REQUEST_CHANGES' && feedback.verdict !== 'issues')
+  )
+    throw new Error('Review recommendation conflicts with findings or incomplete evidence');
   if (
     reviewRecommendationFromMarkdown(reviewMd) !== recommendation ||
     !new RegExp(`^COMMIT: *${snapshot.subject.headSha} *$`, 'm').test(reviewMd)
@@ -558,11 +591,17 @@ export async function readReviewWorkspaceCompletion(
   const originalLines = snapshot.checklist.split('\n');
   const actualLines = checklist.split('\n');
   const items = enumerateChecklistCheckboxes(snapshot.checklist);
-  for (const item of items)
+  for (const item of items) {
     originalLines[item.lineIndex] = originalLines[item.lineIndex].replace(
       /^(\s*- \[)[ xX](\])/,
       '$1x$2',
     );
+    if (blocked && actualLines[item.lineIndex])
+      actualLines[item.lineIndex] = actualLines[item.lineIndex].replace(
+        /^(\s*- \[)[ xX](\])/,
+        '$1x$2',
+      );
+  }
   if (!items.length || actualLines.join('\n') !== originalLines.join('\n'))
     throw new Error('Static review checklist is incomplete or changed beyond completion marks');
   const comments = JSON.parse(await confinedRead(io, taskDir, 'artifacts/line-comments.json')) as {
@@ -591,7 +630,7 @@ export async function readReviewWorkspaceCompletion(
         '--contract',
         contractPath,
         '--terminal',
-        'complete',
+        blocked ? 'blocked' : 'complete',
       ],
       { maxBuffer: 256 * 1024, timeout: 30_000 },
     );
@@ -606,7 +645,7 @@ export async function readReviewWorkspaceCompletion(
   return {
     signal: { ...signal, role: 'review', contextId: 'review' },
     result: {
-      recommendation,
+      recommendation: recommendation as RunReviewResult['recommendation'],
       reviewMd,
       lineComments,
       artifactManifest: await scanArtifacts(viewer),

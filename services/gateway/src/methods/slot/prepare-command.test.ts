@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
+import { shellQuote } from '../../core/tmux.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import {
@@ -24,6 +33,60 @@ test('prepareSignalHint names external tmux kills and ignores ordinary exit code
   assert.equal(prepareSignalHint(1), null);
   assert.equal(prepareSignalHint(0), null);
   assert.equal(prepareSignalHint(null), null);
+});
+
+test('prepare enters the requested directory even when its inherited cwd was deleted', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-cwd-'));
+  const deleted = path.join(root, 'deleted');
+  const target = path.join(root, "phase's directory");
+  mkdirSync(deleted);
+  mkdirSync(target);
+  const sentinel = path.join(root, 'result.exit');
+  const script = path.join(root, 'prepare.sh');
+  writeFileSync(
+    script,
+    buildPrepareWrappedCommand(
+      `${shellQuote(process.execPath)} -p 'process.cwd()'`,
+      sentinel,
+      root,
+      { cwd: target },
+    ),
+  );
+  try {
+    const result = spawnSync(
+      'python3',
+      [
+        '-c',
+        'import os,sys; os.chdir(sys.argv[1]); os.rmdir(sys.argv[1]); os.execv("/bin/bash", ["bash", sys.argv[2]])',
+        deleted,
+        script,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), realpathSync(target));
+    assert.equal(readFileSync(sentinel, 'utf8').trim(), '0');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prepare reports a missing requested directory without executing the hook', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'prepare-cwd-'));
+  const sentinel = path.join(root, 'result.exit');
+  const marker = path.join(root, 'hook-ran');
+  try {
+    const script = buildPrepareWrappedCommand(`touch '${marker}'`, sentinel, root, {
+      cwd: path.join(root, 'missing'),
+    });
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 10_000 });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Prepare working directory unavailable/);
+    assert.equal(readFileSync(sentinel, 'utf8').trim(), '1');
+    assert.equal(existsSync(marker), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // Local slot: execOnSlot runs the cleanup script via execLocal (bash -c) on this

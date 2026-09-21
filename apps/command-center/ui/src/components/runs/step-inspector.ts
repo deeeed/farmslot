@@ -278,9 +278,18 @@ export class StepInspector extends StepInspectorState {
    * (ADR-060). `nested` draws the child's rows and stops: one level in v1.
    */
   private _renderTaskProgressStep(step: TaskStepProgress, nested = false): TemplateResult {
+    const icon =
+      step.status === 'done'
+        ? '✓'
+        : step.status === 'running'
+          ? '▸'
+          : step.status === 'skipped'
+            ? '–'
+            : '○';
     return html`
       <div class="task-progress-step ${step.status}">
-        ${step.status === 'done' ? 'v' : step.status === 'running' ? '*' : '.'} ${step.name}
+        <span class="task-progress-step-icon">${icon}</span>
+        <span class="task-progress-step-name">${step.name}</span>
       </div>
       ${step.subtask && !nested
         ? renderSubtaskBlock(

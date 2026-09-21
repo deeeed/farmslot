@@ -13,7 +13,11 @@ import type { ProjectVars } from '../core/config.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
 import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
 
-import { materializeReviewWorkspaceTask, readReviewWorkspaceCompletion } from './task.js';
+import {
+  materializeReviewWorkspaceTask,
+  readReviewWorkspaceCompletion,
+  readReviewWorkspaceSignal,
+} from './task.js';
 
 const exec = promisify(execFile);
 const checklist = '# Review\n\n- [ ] Read the exact diff.\n- [ ] Write review artifacts.\n';
@@ -178,6 +182,39 @@ test('materialization preserves canonical checklist, freezes offline guidance/pr
       /subject changed/,
     );
     assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
+  });
+});
+
+test('tmux startup requires a fresh signal belonging to its reviewer attempt', async () => {
+  await withFixture(async (f) => {
+    f.run.transport = 'tmux';
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    const startedAt = new Date().toISOString();
+    const context = {
+      id: 'review',
+      role: 'review' as const,
+      label: 'Review',
+      slotId: null,
+      runId: f.run.id,
+      status: 'launching' as const,
+      attemptStartedAt: startedAt,
+      promptDeliveryStartedAt: startedAt,
+      signalAttemptId: 'accepted-attempt',
+    };
+    f.run.agentContexts = [context];
+    assert.equal(await readReviewWorkspaceSignal(f.run.id, f.deps), null);
+    const signal = { status: 'running', timestamp: startedAt, attemptId: 'accepted-attempt' };
+    const signalPath = path.join(f.task, 'SIGNAL.json');
+    await writeFile(signalPath, JSON.stringify(signal));
+    assert.equal((await readReviewWorkspaceSignal(f.run.id, f.deps))?.attemptId, signal.attemptId);
+    for (const patch of [
+      { attemptId: 'another-attempt' },
+      { contextId: 'worker' },
+      { timestamp: new Date(Date.parse(startedAt) - 1000).toISOString() },
+    ]) {
+      await writeFile(signalPath, JSON.stringify({ ...signal, ...patch }));
+      await assert.rejects(readReviewWorkspaceSignal(f.run.id, f.deps), /accepted worker attempt/);
+    }
   });
 });
 
