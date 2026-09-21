@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add Farmslot Dev with a red icon, separate settings and links, live frontend updates from local Vite, and bundled-UI recovery.
+
 - Show pending decisions in the Dock badge and open `farmslot://` links to runs, gates and slots, with a native menu action to copy the current view link.
 
 ## 0.2.0 - 2026-09-20

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Electron development profile and live UI",
+  "description": "Build package:mac and package:mac:dev first. Uses its own profile and ports 5186/9513/9514. Set FARMSLOT_GATEWAY and FARMSLOT_GATEWAY_TOKEN for an existing gateway. Only reads gateway state; no dispatch or inference.",
+  "workflow": {
+    "entry": "live-ui",
+    "nodes": {
+      "live-ui": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-desktop-live-ui.mts",
+        "timeout_ms": 300000,
+        "intent": "Save a real gateway login through desktop settings, read fleet.status, observe a source edit reload through Vite, reject remote source configuration, verify the Dev link scheme and gateway-derived Dock badge, relaunch with saved credentials, stop Vite and recover through bundled settings, then retry the live UI. Verify production keeps separate login settings and rejects Development UI.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

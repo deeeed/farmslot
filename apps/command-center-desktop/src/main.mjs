@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,10 +31,25 @@ import {
   validateAttention,
   validateShortcut,
 } from './preferences.mjs';
-import { allowsPermission, assertTrustedSender, isAppPage, linkAction } from './security.mjs';
+import { desktopProfile } from './profile.mjs';
+import {
+  allowsPermission,
+  assertTrustedSender,
+  CONTENT_SECURITY_POLICY,
+  isAppPage,
+  isUiPage,
+  linkAction,
+} from './security.mjs';
 import { startUiServer } from './server.mjs';
+import { uiUrl, validateDevelopmentSource } from './ui-source.mjs';
 
-app.setName('Farmslot');
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const profile = desktopProfile(
+  app.isPackaged ? metadata.desktopProfile : process.env.FARMSLOT_DESKTOP_PROFILE,
+);
+app.setName(profile.name);
+app.setPath('userData', join(app.getPath('appData'), profile.name));
 if (process.env.FARMSLOT_DESKTOP_USER_DATA) {
   app.setPath('userData', resolve(process.env.FARMSLOT_DESKTOP_USER_DATA));
 }
@@ -45,7 +61,6 @@ if (process.env.FARMSLOT_DESKTOP_CDP_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', String(port));
 }
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let window;
 let clientSession;
 let server;
@@ -53,7 +68,11 @@ let store;
 let connection = null;
 let quitting = false;
 let preferencesStore;
-let preferences = { shortcut: DEFAULT_SHORTCUT, route: '#fleet' };
+let preferences = {
+  shortcut: DEFAULT_SHORTCUT,
+  route: '#fleet',
+  development: validateDevelopmentSource({ enabled: profile.development }),
+};
 let registeredShortcut = '';
 let shortcutError = '';
 let tray;
@@ -62,10 +81,47 @@ let boundsTimer;
 let desktopReady = false;
 let pendingRoute = null;
 let openingDeepLink = false;
+let developmentRecovery = null;
+
+function developmentUrl() {
+  return profile.development && preferences.development.enabled
+    ? preferences.development.url
+    : null;
+}
+
+function showDevelopmentUnavailable() {
+  if (quitting) return Promise.resolve();
+  if (!developmentRecovery) {
+    developmentRecovery = loadPage('/settings?developmentUnavailable=1').finally(() => {
+      developmentRecovery = null;
+    });
+  }
+  return developmentRecovery;
+}
+
+async function loadUi(route) {
+  const target = uiUrl(server.origin, developmentUrl()) + route;
+  try {
+    await window.loadURL(target);
+    return true;
+  } catch (error) {
+    // Another navigation can supersede an in-flight load.
+    if (error.code === 'ERR_ABORTED') return false;
+    if (!developmentUrl()) throw error;
+    await showDevelopmentUnavailable();
+    return false;
+  }
+}
+
+function profileRoute(value) {
+  if (typeof value !== 'string' || !value.toLowerCase().startsWith(`${profile.scheme}:`))
+    return null;
+  return routeFromDeepLink('farmslot:' + value.slice(profile.scheme.length + 1));
+}
 
 function receiveDeepLink(value) {
   if (quitting) return;
-  const route = routeFromDeepLink(value);
+  const route = profileRoute(value);
   if (!route) {
     console.warn('Ignored unsupported Farmslot link.');
     return;
@@ -80,10 +136,10 @@ async function flushDeepLink() {
   try {
     while (pendingRoute && !quitting) {
       const route = pendingRoute;
-      await showWindow(connection ? route : undefined);
+      const opened = await showWindow(connection ? route : undefined);
       // Connection Settings consumes the pending route after login. Do not
       // reload that form when another link arrives while the user is typing.
-      if (!connection) break;
+      if (!connection || opened === false) break;
       if (pendingRoute === route) pendingRoute = null;
     }
   } finally {
@@ -97,8 +153,8 @@ app.on('open-url', (event, url) => {
 });
 
 function currentDeepLink(url = window?.webContents.getURL()) {
-  if (!url || !isAppPage(url, server.origin) || new URL(url).pathname !== '/cc/') return null;
-  return deepLinkFromRoute(new URL(url).hash);
+  if (!url || !isUiPage(url, server.origin, developmentUrl())) return null;
+  return deepLinkFromRoute(new URL(url).hash)?.replace(/^farmslot:/, `${profile.scheme}:`) ?? null;
 }
 
 function updateCopyLink(url) {
@@ -120,22 +176,23 @@ function saveWindowBounds() {
 async function showWindow(route) {
   if (!window || window.isDestroyed()) await createWindow();
   if (window.isMinimized()) window.restore();
+  let opened = true;
   if (route && connection) {
     const current = window.webContents.getURL();
     if (
-      isAppPage(current, server.origin) &&
-      new URL(current).pathname === '/cc/' &&
+      isUiPage(current, server.origin, developmentUrl()) &&
       !window.webContents.isLoadingMainFrame()
     ) {
       // loadURL waits for a full document load, which a fragment change may
       // never produce. The preload receives this even before the UI boots.
       window.webContents.send('desktop:navigate', route);
     } else {
-      await window.loadURL(`${server.origin}/cc/${route}`);
+      opened = await loadUi(route);
     }
   }
   window.show();
   window.focus();
+  return opened;
 }
 
 function toggleWindow() {
@@ -168,13 +225,13 @@ function updateTray() {
   app.dock?.setBadge(attentionBadge(attention));
   if (!tray) return;
   const label = attentionLabel(attention);
-  tray.setToolTip(`Farmslot: ${label}`);
+  tray.setToolTip(`${profile.name}: ${label}`);
   tray.setTitle(attentionBadge(attention));
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label, enabled: false },
       {
-        label: 'Show Farmslot',
+        label: `Show ${profile.name}`,
         click: () => showWindow().catch((error) => reportError('Could not open Farmslot', error)),
       },
       {
@@ -219,11 +276,11 @@ async function loadPage(path) {
 }
 
 async function openLink(url) {
-  if (routeFromDeepLink(url)) {
+  if (profileRoute(url)) {
     receiveDeepLink(url);
     return;
   }
-  switch (linkAction(url, server.origin, connection)) {
+  switch (linkAction(url, server.origin, connection, developmentUrl())) {
     case 'internal':
       await window.loadURL(url);
       break;
@@ -238,7 +295,7 @@ async function openLink(url) {
 
 async function createWindow() {
   window = new BrowserWindow({
-    title: 'Farmslot',
+    title: profile.name,
     ...restoreBounds(
       preferences.bounds,
       screen.getAllDisplays().map((display) => display.workArea),
@@ -260,17 +317,38 @@ async function createWindow() {
     },
   });
   const contents = window.webContents;
+  contents.on('page-title-updated', (event, title) => {
+    event.preventDefault();
+    window.setTitle(
+      profile.development
+        ? `${profile.name}: ${title}${developmentUrl() ? ' [Live]' : ' [Bundled]'}`
+        : title,
+    );
+  });
+  contents.on('did-fail-load', (_event, code, _description, url, isMainFrame) => {
+    if (
+      isMainFrame &&
+      code !== -3 &&
+      developmentUrl() &&
+      isUiPage(url, server.origin, developmentUrl())
+    ) {
+      showDevelopmentUnavailable().catch((error) =>
+        reportError('Could not open recovery settings', error),
+      );
+    }
+  });
+
   contents.setWindowOpenHandler(({ url }) => {
     openLink(url).catch((error) => reportError('Could not open link', error));
     return { action: 'deny' };
   });
   contents.on('will-navigate', (event, url) => {
-    if (isAppPage(url, server.origin)) return;
+    if (isAppPage(url, server.origin, developmentUrl())) return;
     event.preventDefault();
     openLink(url).catch((error) => reportError('Could not open link', error));
   });
   contents.on('will-redirect', (event, url) => {
-    if (!isAppPage(url, server.origin)) event.preventDefault();
+    if (!isAppPage(url, server.origin, developmentUrl())) event.preventDefault();
   });
   contents.on('will-attach-webview', (event) => event.preventDefault());
   window.on('close', (event) => {
@@ -297,7 +375,7 @@ async function createWindow() {
     });
   const rememberRoute = (url) => {
     updateCopyLink(url);
-    if (!isAppPage(url, server.origin) || new URL(url).pathname !== '/cc/') return;
+    if (!isUiPage(url, server.origin, developmentUrl())) return;
     try {
       const route = savedRoute(new URL(url).hash);
       savePreferences({ route });
@@ -324,18 +402,17 @@ async function createWindow() {
     window = null;
   });
   window.once('ready-to-show', () => window?.show());
-  await window.loadURL(
-    `${server.origin}${connection ? '/cc/' + (pendingRoute ?? preferences.route) : '/settings'}`,
-  );
+  if (connection) await loadUi(pendingRoute ?? preferences.route);
+  else await window.loadURL(`${server.origin}/settings`);
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  for (const value of process.argv.filter((arg) => /^farmslot:/i.test(arg))) receiveDeepLink(value);
+  for (const value of process.argv.filter((arg) => profileRoute(arg))) receiveDeepLink(value);
   app.on('second-instance', (_event, argv) => {
     if (quitting) return;
-    const link = argv.find((arg) => /^farmslot:/i.test(arg));
+    const link = argv.find((arg) => profileRoute(arg));
     if (link) {
       receiveDeepLink(link);
       return;
@@ -354,7 +431,7 @@ if (!app.requestSingleInstanceLock()) {
       if (
         app.isPackaged &&
         !process.env.FARMSLOT_DESKTOP_USER_DATA &&
-        !app.setAsDefaultProtocolClient('farmslot')
+        !app.setAsDefaultProtocolClient(profile.scheme)
       ) {
         reportError(
           'Could not register Farmslot links',
@@ -371,7 +448,7 @@ if (!app.requestSingleInstanceLock()) {
         join(root, 'settings'),
         app.getPath('userData'),
       );
-      preferencesStore = createPreferencesStore(app.getPath('userData'));
+      preferencesStore = createPreferencesStore(app.getPath('userData'), profile.development);
       try {
         preferences = preferencesStore.load();
       } catch (error) {
@@ -382,6 +459,7 @@ if (!app.requestSingleInstanceLock()) {
       } catch (error) {
         shortcutError = error instanceof Error ? error.message : String(error);
       }
+      app.dock?.setIcon(join(root, 'build', profile.icon));
       createTray();
       store = createConnectionStore(app.getPath('userData'), safeStorage);
       try {
@@ -391,40 +469,76 @@ if (!app.requestSingleInstanceLock()) {
         reportError('Could not read saved connection', error);
       }
       ipcMain.handle('desktop:load-connection', (event) => {
-        assertTrustedSender(event, window, server.origin);
+        assertTrustedSender(event, window, server.origin, developmentUrl());
         return connection;
       });
       ipcMain.handle('desktop:save-connection', async (event, value) => {
-        assertTrustedSender(event, window, server.origin);
+        assertTrustedSender(event, window, server.origin, developmentUrl());
         connection = await store.save(value);
       });
       ipcMain.handle('desktop:load-preferences', (event) => {
-        assertTrustedSender(event, window, server.origin);
+        assertTrustedSender(event, window, server.origin, developmentUrl());
         return {
           shortcut: preferences.shortcut,
           shortcutError,
           route: pendingRoute ?? preferences.route,
+          development: preferences.development,
+          profile: profile.name,
+          supportsDevelopment: profile.development,
+          uiUrl: uiUrl(server.origin, developmentUrl()),
         };
       });
+      ipcMain.handle('desktop:save-development', (event, value) => {
+        assertTrustedSender(event, window, server.origin, developmentUrl());
+        if (!profile.development) throw new Error('Use Farmslot Dev for the Development UI.');
+        if (new URL(event.senderFrame.url).pathname !== '/settings')
+          throw new Error('Change Development UI from Connection Settings.');
+        savePreferences({ development: validateDevelopmentSource(value) });
+      });
+      ipcMain.handle('desktop:open-ui', (event) => {
+        assertTrustedSender(event, window, server.origin, developmentUrl());
+        const route = pendingRoute ?? preferences.route;
+        // Acknowledge before navigation replaces the settings frame.
+        const opening = connection ? loadUi(route) : loadPage('/settings');
+        opening.catch((error) => reportError('Could not open Command Center', error));
+      });
       ipcMain.handle('desktop:save-shortcut', (event, value) => {
-        assertTrustedSender(event, window, server.origin);
+        assertTrustedSender(event, window, server.origin, developmentUrl());
         setShortcut(value);
       });
       ipcMain.handle('desktop:update-attention', (event, value) => {
-        assertTrustedSender(event, window, server.origin);
-        if (new URL(event.senderFrame.url).pathname !== '/cc/')
+        assertTrustedSender(event, window, server.origin, developmentUrl());
+        if (!isUiPage(event.senderFrame.url, server.origin, developmentUrl()))
           throw new Error('Status must come from Command Center.');
         attention = validateAttention(value);
         updateTray();
       });
+      clientSession.webRequest.onHeadersReceived((details, callback) => {
+        if (
+          details.resourceType !== 'mainFrame' ||
+          !developmentUrl() ||
+          !isUiPage(details.url, server.origin, developmentUrl())
+        ) {
+          callback({});
+          return;
+        }
+        const headers = { ...details.responseHeaders };
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === 'content-security-policy') delete headers[key];
+        }
+        headers['Content-Security-Policy'] = [CONTENT_SECURITY_POLICY];
+        callback({ responseHeaders: headers });
+      });
       clientSession.setPermissionRequestHandler((contents, permission, callback, details) =>
-        callback(allowsPermission(window, contents, permission, details, server.origin)),
+        callback(
+          allowsPermission(window, contents, permission, details, server.origin, developmentUrl()),
+        ),
       );
       clientSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
-        allowsPermission(window, contents, permission, details, server.origin),
+        allowsPermission(window, contents, permission, details, server.origin, developmentUrl()),
       );
       clientSession.on('will-download', (event, item, contents) => {
-        const action = linkAction(item.getURL(), server.origin, connection);
+        const action = linkAction(item.getURL(), server.origin, connection, developmentUrl());
         if (!window || contents !== window.webContents || action !== 'download') {
           event.preventDefault();
           return;
@@ -438,7 +552,7 @@ if (!app.requestSingleInstanceLock()) {
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
           {
-            label: 'Farmslot',
+            label: profile.name,
             submenu: [
               { role: 'about' },
               { type: 'separator' },
@@ -491,7 +605,7 @@ if (!app.requestSingleInstanceLock()) {
         ]),
       );
       powerMonitor.on('resume', () => {
-        if (window && isAppPage(window.webContents.getURL(), server.origin)) {
+        if (window && isAppPage(window.webContents.getURL(), server.origin, developmentUrl())) {
           window.webContents.send('desktop:resume');
         }
       });

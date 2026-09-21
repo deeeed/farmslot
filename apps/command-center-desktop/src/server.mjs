@@ -2,6 +2,8 @@ import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 
+import { CONTENT_SECURITY_POLICY } from './security.mjs';
+
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -36,10 +38,7 @@ export async function startUiServer(uiDirectory, settingsDirectory, userDataDire
   const settingsRoot = await realpath(settingsDirectory);
   let origin;
   const server = createServer(async (request, response) => {
-    response.setHeader(
-      'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data: blob: http: https:; media-src 'self' blob: http: https:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    );
+    response.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Cache-Control', 'no-store');

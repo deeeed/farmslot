@@ -41,7 +41,26 @@
         </p>
         <p id="error" role="alert"></p>
         <button type="submit">Save and connect</button>
-        <a id="cancel" href="/cc/" hidden>Cancel</a>
+        <a id="cancel" href="#" hidden>Back to Command Center</a>
+      </form>
+      <form id="development-form" hidden>
+        <h2>Development UI</h2>
+        <p id="development-recovery" role="alert" hidden>
+          The development server is unavailable. Start it and retry, or use the bundled UI.
+        </p>
+        <label class="checkbox">
+          <input id="development-enabled" type="checkbox" /> Load from local dev server
+        </label>
+        <label for="development-url">Vite URL</label>
+        <input id="development-url" type="url" required spellcheck="false" autocomplete="off" />
+        <p class="hint">
+          Frontend edits reload here while Vite is running. Native app changes require a rebuild.
+          Only enable this for a local server you trust. It can access your saved gateway login.
+        </p>
+        <p id="development-status" role="status"></p>
+        <button type="submit">Save and open</button>
+        <button id="development-retry" type="button">Retry development UI</button>
+        <button id="development-bundled" type="button">Use bundled UI</button>
       </form>
       <form id="desktop-form">
         <h2>Desktop</h2>

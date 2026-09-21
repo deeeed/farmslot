@@ -12,7 +12,9 @@
     "start": "electron .",
     "test": "node --test test/*.test.mjs",
     "package:mac": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --config.mac.identity=null",
-    "package:mac:signed": "node scripts/notarization.mjs preflight && yarn build && electron-builder --mac --arm64 -c.mac.notarize=true -c.forceCodeSigning=true && node scripts/notarization.mjs verify"
+    "package:mac:signed": "node scripts/notarization.mjs preflight && yarn build && electron-builder --mac --arm64 -c.mac.notarize=true -c.forceCodeSigning=true && node scripts/notarization.mjs verify",
+    "start:dev": "FARMSLOT_DESKTOP_PROFILE=development electron .",
+    "package:mac:dev": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config build/development.cjs --mac --arm64 --config.mac.identity=null"
   },
   "devDependencies": {
     "electron": "44.4.3",
@@ -28,7 +30,8 @@
       "src/**",
       "settings/**",
       "ui-dist/**",
-      "package.json"
+      "package.json",
+      "build/*.png"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

@@ -1,6 +1,8 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { validateDevelopmentSource } from './ui-source.mjs';
+
 export const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+Space';
 
 export function validateShortcut(value) {
@@ -44,7 +46,7 @@ export function restoreBounds(bounds, displays) {
   };
 }
 
-export function createPreferencesStore(directory) {
+export function createPreferencesStore(directory, development = false) {
   const path = join(directory, 'preferences.json');
   return {
     load() {
@@ -54,9 +56,15 @@ export function createPreferencesStore(directory) {
           shortcut: validateShortcut(value.shortcut ?? DEFAULT_SHORTCUT),
           route: savedRoute(value.route),
           bounds: value.bounds,
+          development: validateDevelopmentSource(value.development ?? { enabled: development }),
         };
       } catch (error) {
-        if (error.code === 'ENOENT') return { shortcut: DEFAULT_SHORTCUT, route: '#fleet' };
+        if (error.code === 'ENOENT')
+          return {
+            shortcut: DEFAULT_SHORTCUT,
+            route: '#fleet',
+            development: validateDevelopmentSource({ enabled: development }),
+          };
         throw error;
       }
     },
@@ -68,6 +76,7 @@ export function createPreferencesStore(directory) {
           shortcut: validateShortcut(value.shortcut),
           route: savedRoute(value.route),
           bounds: value.bounds,
+          development: validateDevelopmentSource(value.development ?? { enabled: development }),
         }),
         { mode: 0o600 },
       );
