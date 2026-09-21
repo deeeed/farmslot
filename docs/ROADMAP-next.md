@@ -69,7 +69,7 @@ Accepted follow-up: menu-bar pending-decision and connection status, a configura
 
 Accepted follow-up: Dock badges for pending decisions and `farmslot://` run/gate/slot navigation, including cold launch, hidden-window activation, connection setup, and copying the current view link. Preserve the configured gateway and require normal authorization for all actions.
 
-Accepted follow-up: a separate Farmslot Dev app with a red icon background and its own settings and deep-link scheme, using a validated local Vite server for live frontend changes. Preserve desktop permissions and credentials, and provide retry or bundled-UI recovery when the server is stopped.
+Accepted follow-up: a separate Farmslot Dev app with red Dock and menu-bar icons, purple icons for production, and its own settings and deep-link scheme, using a validated local Vite server for live frontend changes. Preserve desktop permissions and credentials, and provide retry or bundled-UI recovery when the server is stopped.
 
 Accepted follow-up: replace the misleading update-command label with an operator-triggered **Update checkout** action shared by web and desktop. Fast-forward only a clean checkout on its remote default branch, keep local work intact, report progress and failures across gateway reconnects, and refresh stale status after a local pull. Explain when dependencies, the gateway runtime, or the installed desktop shell require follow-up. Signed distribution updates remain deferred.
 
