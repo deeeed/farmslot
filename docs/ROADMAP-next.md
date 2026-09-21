@@ -65,6 +65,8 @@ Keep one UI source in `apps/command-center/ui/`; the `apps/command-center-deskto
 
 Keep the renderer sandboxed with isolated, narrowly scoped IPC. Preserve gateway authentication, credential protection, origin checks, and TLS validation. Each implementation slice follows the repository's normal validation and review requirements.
 
+Accepted follow-up: confirm intentional desktop quits before closing, complete shutdown reliably so Dock relaunch works, and preserve window-close-to-hide behavior.
+
 Accepted follow-up: menu-bar pending-decision and connection status, a configurable global show/hide shortcut, saved window bounds and last view, and Remember me enabled by default. Remembered credentials stay encrypted across quit and app replacement; opting out is session-only. Validate credential persistence, shortcuts, attention state and window restoration through direct app checks.
 
 Accepted follow-up: Dock badges for pending decisions and `farmslot://` run/gate/slot navigation, including cold launch, hidden-window activation, connection setup, and copying the current view link. Preserve the configured gateway and require normal authorization for all actions.

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Desktop quit confirmation and relaunch",
+  "description": "Requires macOS Accessibility permission, a built Dev app and FARMSLOT_GATEWAY_TOKEN for an existing gateway. Uses an isolated profile and ports 9543/9544. Set FARMSLOT_DESKTOP_APP to repeat with the production bundle. No inference or dispatch.",
+  "workflow": {
+    "entry": "quit-and-relaunch",
+    "nodes": {
+      "quit-and-relaunch": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-desktop-quit.mts",
+        "timeout_ms": 240000,
+        "intent": "Press real Command+Q, verify one native confirmation, cancel with Escape and retain the connected window. Close and reactivate the window, confirm Quit, prove the process and debugger endpoints exit while fleet.status remains available, then relaunch through macOS with saved credentials and route.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

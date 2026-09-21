@@ -18,7 +18,7 @@ The build writes production UI assets to this workspace's `ui-dist/`; it does no
 
 Open **Farmslot > Connection Settings** with `Cmd+,` to change the connection or replace a rejected credential. Settings are encrypted with Electron `safeStorage`, backed by macOS Keychain, in `~/Library/Application Support/Farmslot/connection.encrypted`. App replacement preserves this directory. Credentials are never added to the app's page URL.
 
-Standard macOS edit shortcuts and View menu zoom/reload commands are available. Closing the window leaves Farmslot in the Dock; clicking its icon reopens the window. `Cmd+Q` quits. Web links open in the default browser. Gateway artifact links and exported files use a native save dialog.
+Standard macOS edit shortcuts and View menu zoom/reload commands are available. Closing the window leaves Farmslot in the Dock; clicking its icon reopens the window. `Cmd+Q` and the Quit menu ask for confirmation, with Cancel selected by default. Confirming Quit stops the client completely so the Dock can launch it again. Web links open in the default browser. Gateway artifact links and exported files use a native save dialog.
 
 ## Installable build
 
@@ -123,6 +123,15 @@ FARMSLOT_DESKTOP_USER_DATA=/tmp/farmslot-desktop-validation \
 `FARMSLOT_DESKTOP_USER_DATA` isolates settings and Chromium storage. `FARMSLOT_DESKTOP_CDP_PORT` explicitly enables a localhost debugging endpoint for the existing Command Center CDP tools. Normal launches have no debugger endpoint.
 
 The main process serves bundled assets on a loopback port under `/cc/`. First launch allocates the port and saves it in `ui-port.json` within userData. Later launches reuse it so UI preferences survive a full quit. If another process occupies that port, launch fails with an error; close that process before reopening Farmslot. It accepts only its own Host header and confines requests to bundled files. The renderer has no Node integration, runs sandboxed with context isolation, and receives connection settings, shortcut preferences, a resume notification, and a narrowly validated menu-bar status API through the preload bridge. IPC accepts requests only from the app's main frame. Notifications and clipboard permissions are restricted to the trusted app main frame. The persistent renderer session disables HTTP caching so authenticated resource URLs never enter Chromium's disk cache; UI preferences remain persistent. Startup also clears HTTP cache left by earlier development builds. The app does not proxy gateway requests or alter gateway authentication or TLS checks.
+
+### Quit and relaunch validation
+
+With a built Dev app and an existing gateway, export `FARMSLOT_GATEWAY` and
+`FARMSLOT_GATEWAY_TOKEN`, then run `node --import tsx scripts/e2e-desktop-quit.mts`.
+The [quit recipe](../../docs/examples/recipes/farmslot/desktop-quit.recipe.json)
+uses real macOS keyboard and dialog actions, so the terminal needs Accessibility permission.
+It creates its own profile on ports 9543/9544 and only reads gateway state. Set
+`FARMSLOT_DESKTOP_APP` to the production `.app` path to repeat for that profile.
 
 ### Reproduce the live recipe
 

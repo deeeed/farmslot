@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Confirm before quitting, and fully exit after cleanup so a cancelled native quit cannot leave an invisible process blocking Dock relaunch.
+
 - Document the shared checkout update action, local-edit protection and desktop rebuild requirements.
 
 - Add Farmslot Dev with matching red Dock and menu-bar icons, purple production icons, separate settings and links, live frontend updates from local Vite, and bundled-UI recovery.
