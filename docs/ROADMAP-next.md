@@ -71,6 +71,8 @@ Accepted follow-up: Dock badges for pending decisions and `farmslot://` run/gate
 
 Accepted follow-up: a separate Farmslot Dev app with a red icon background and its own settings and deep-link scheme, using a validated local Vite server for live frontend changes. Preserve desktop permissions and credentials, and provide retry or bundled-UI recovery when the server is stopped.
 
+Accepted follow-up: replace the misleading update-command label with an operator-triggered **Update checkout** action shared by web and desktop. Fast-forward only a clean checkout on its remote default branch, keep local work intact, report progress and failures across gateway reconnects, and refresh stale status after a local pull. Explain when dependencies, the gateway runtime, or the installed desktop shell require follow-up. Signed distribution updates remain deferred.
+
 The [desktop workspace](../apps/command-center-desktop/README.md) documents build, installation, and isolated validation setup. The [live recipe](examples/recipes/farmslot/electron-client.recipe.json) verifies real gateway actions, terminals, source viewing, and authenticated images. Synthetic H.264 checks renderer compatibility; actual device transport and OS sleep/resume remain manual validation limits.
 
 The scope is an installable macOS client for the existing Command Center. Performance benchmarks, optimization targets, automatic updates, bundled gateway provisioning, multiple windows, and a separate SwiftUI UI are outside this delivery.

@@ -3,6 +3,7 @@ export const Methods = {
   // Gateway self-status
   GATEWAY_PING: 'gateway.ping',
   GATEWAY_STATUS: 'gateway.status',
+  GATEWAY_UPDATE: 'gateway.update',
   GATEWAY_DOCTOR: 'gateway.doctor',
 
   // Fleet

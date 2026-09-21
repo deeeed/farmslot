@@ -15,7 +15,26 @@ export interface GatewayStatusParams {
   refresh?: boolean;
 }
 
+export interface GatewayUpdateParams {
+  localSha: string;
+  targetSha: string;
+}
+
+export interface CheckoutUpdateOperation extends GatewayUpdateParams {
+  id: string;
+  phase: 'running' | 'complete' | 'error';
+  message: string;
+  updatedAt: string;
+  pid?: number;
+  desktopRebuildRequired?: boolean;
+  gatewayRestartRequired?: boolean;
+}
+
 export interface GatewayUpdateStatus {
+  /** Gateway-owned source checkout, which may be on a remote machine. */
+  checkoutPath?: string;
+  operation?: CheckoutUpdateOperation;
+  canUpdate?: boolean;
   /** True when the local clone is behind the tracked remote branch (commitsBehind > 0). */
   updateAvailable: boolean;
   /** Commits the local HEAD is behind origin/<branch>. */

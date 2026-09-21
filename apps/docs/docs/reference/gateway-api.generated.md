@@ -150,6 +150,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `gateway.doctor`                        | gateway          | read-only     | —      | —      | Gateway Doctor gateway method.                        |
 | `gateway.ping`                          | gateway          | read-only     | —      | —      | Gateway Ping gateway method.                          |
 | `gateway.status`                        | gateway          | read-only     | —      | —      | Gateway Status gateway method.                        |
+| `gateway.update`                        | gateway          | bounded-write | —      | —      | Gateway Update gateway method.                        |
 | `git.branchDiff`                        | git              | bounded-write | —      | —      | Git BranchDiff gateway method.                        |
 | `git.diff`                              | git              | bounded-write | —      | —      | Git Diff gateway method.                              |
 | `git.discard`                           | git              | high-impact   | —      | —      | Git Discard gateway method.                           |

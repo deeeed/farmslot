@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Document the shared checkout update action, local-edit protection and desktop rebuild requirements.
+
 - Add Farmslot Dev with a red icon, separate settings and links, live frontend updates from local Vite, and bundled-UI recovery.
 
 - Show pending decisions in the Dock badge and open `farmslot://` links to runs, gates and slots, with a native menu action to copy the current view link.

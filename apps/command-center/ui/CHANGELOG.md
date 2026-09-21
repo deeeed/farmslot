@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Update a clean gateway checkout from the update banner with progress, errors and rebuild guidance; refresh stale status after local pulls.
+
 - Keep navigation on the requested run or slot when background work from a previous slot finishes, including desktop deep links.
 
 - Restore diff and source editor styles inside review gates in packaged desktop and production web builds, where bundled CSS filenames no longer identify their libraries.

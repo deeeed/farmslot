@@ -122,6 +122,10 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'gateway.doctor': { classification: 'admin' },
   'gateway.ping': { classification: 'native-owner' },
   'gateway.status': { classification: 'admin', reason: 'runs git fetch against the gateway clone' },
+  'gateway.update': {
+    classification: 'admin',
+    reason: 'fast-forwards the gateway source checkout',
+  },
   'git.branchDiff': { classification: 'admin' },
   'git.diff': { classification: 'admin' },
   'git.discard': { classification: 'admin' },

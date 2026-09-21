@@ -67,6 +67,8 @@ Show pending decisions in the macOS Dock badge, clearing stale counts when disco
 
 Offer an installable Farmslot Dev profile alongside Farmslot, with a red icon background, distinct bundle identity and separate saved settings. It loads one explicitly configured loopback Vite URL and shows frontend edits through the existing dev server. Keep encrypted connections, badges and deep links in both profiles. Use farmslot-dev:// for development links so the production handler stays unchanged. Keep packaged UI available, and return to settings with recovery controls when the dev server is unavailable. The client does not own the dev server or gateway; native main/preload changes still require rebuilding the shell.
 
+Provide a shared Update checkout action with progress and errors. Only fast-forward a clean default-branch checkout after checking the displayed target. Preserve local edits and refuse dependency-changing updates that need a manual install. Refresh status after local pulls, and distinguish checkout updates from rebuilding the installed desktop shell.
+
 Prove terminal input/resize, source/diff viewing, live device streams, authenticated artifacts, and operator actions through real gateway flows in both web and desktop clients.
 
 Initial delivery connects to an existing gateway. Performance benchmarking/optimization, automatic updates, bundled gateway installation/upgrades, multiple windows, and a separate SwiftUI interface are outside this first release. See the [staged delivery and acceptance checks](ROADMAP-next.md#electron-desktop-client).
