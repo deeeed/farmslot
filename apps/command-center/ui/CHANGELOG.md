@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Expand and scroll long step commands and output so preparation failures remain inspectable.
+
 - Update a clean gateway checkout from the update banner with progress, errors and rebuild guidance; refresh stale status after local pulls.
 
 - Keep navigation on the requested run or slot when background work from a previous slot finishes, including desktop deep links.

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+
 import type { ExecResult } from '@farmslot/protocol';
+
 import type { SlotVars } from '../../core/index.js';
 
 let result: ExecResult;

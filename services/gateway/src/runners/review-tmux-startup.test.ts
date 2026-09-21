@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { RawPoolJson } from '../core/config.js';
-import { REVIEW_TMUX_START_TIMEOUT_MS, reviewTmuxStartupState } from './review-tmux.js';
+
 import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
+import { REVIEW_TMUX_START_TIMEOUT_MS, reviewTmuxStartupState } from './review-tmux.js';
 
 const started = Date.parse('2026-09-21T09:35:00Z');
 const context = { attemptStartedAt: new Date(started).toISOString() };
