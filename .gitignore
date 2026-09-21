@@ -167,3 +167,6 @@ pool/*.bak.*
 
 # Root-level test byproducts (dispatch pressure tests write here)
 /artifacts/
+
+# Development desktop bundle
+apps/command-center-desktop/release-dev/

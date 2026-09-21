@@ -42,8 +42,7 @@ form.addEventListener('submit', async (event) => {
     const connection = { url: gatewayUrl.value.trim(), rememberMe: rememberMe.checked };
     if (auth.value !== 'none') connection[auth.value] = secret.value;
     await window.farmslotDesktop.saveConnection(connection);
-    const preferences = await window.farmslotDesktop.loadPreferences();
-    window.location.assign('/cc/' + preferences.route);
+    await window.farmslotDesktop.openUi();
   } catch (cause) {
     error.textContent = cause.message;
     button.disabled = false;
@@ -58,7 +57,7 @@ shortcutButton.disabled = true;
 try {
   const preferences = await window.farmslotDesktop.loadPreferences();
   shortcut.value = preferences.shortcut;
-  document.querySelector('#cancel').href = '/cc/' + preferences.route;
+  document.title = `${preferences.profile} settings`;
   shortcutStatus.textContent = preferences.shortcutError;
 } catch (cause) {
   shortcutStatus.textContent = cause.message;
@@ -75,4 +74,57 @@ desktopForm.addEventListener('submit', async (event) => {
   } finally {
     shortcutButton.disabled = false;
   }
+});
+
+document.querySelector('#cancel').addEventListener('click', async (event) => {
+  event.preventDefault();
+  try {
+    await window.farmslotDesktop.openUi();
+  } catch (cause) {
+    error.textContent = cause.message;
+  }
+});
+
+const developmentForm = document.querySelector('#development-form');
+const developmentEnabled = document.querySelector('#development-enabled');
+const developmentUrl = document.querySelector('#development-url');
+const developmentStatus = document.querySelector('#development-status');
+try {
+  const preferences = await window.farmslotDesktop.loadPreferences();
+  developmentForm.hidden = !preferences.supportsDevelopment;
+  developmentEnabled.checked = preferences.development.enabled;
+  developmentUrl.value = preferences.development.url;
+  document.querySelector('#development-recovery').hidden = !new URLSearchParams(
+    location.search,
+  ).has('developmentUnavailable');
+} catch (cause) {
+  error.textContent = cause.message;
+}
+async function openDevelopment(enabled) {
+  const buttons = developmentForm.querySelectorAll('button');
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  developmentStatus.textContent = '';
+  try {
+    await window.farmslotDesktop.saveDevelopment({ enabled, url: developmentUrl.value.trim() });
+    developmentEnabled.checked = enabled;
+    await window.farmslotDesktop.openUi();
+  } catch (cause) {
+    developmentStatus.textContent = cause.message;
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+  }
+}
+developmentForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void openDevelopment(developmentEnabled.checked);
+});
+document.querySelector('#development-retry').addEventListener('click', () => {
+  void openDevelopment(true);
+});
+document.querySelector('#development-bundled').addEventListener('click', () => {
+  void openDevelopment(false);
 });

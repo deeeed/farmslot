@@ -36,6 +36,38 @@ yarn workspace @farmslot/command-center-desktop package:mac:signed
 
 The command rejects missing or incomplete notarization credentials before building. It also accepts electron-builder's `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` or `APPLE_KEYCHAIN_PROFILE` credentials. After packaging, it verifies the app signature, stapled notarization ticket, and Gatekeeper assessment. These checks cover the app inside the DMG/ZIP; the DMG itself is not signed. All checks must succeed before distributing the result. No automatic updater is included.
 
+## Development app
+
+Farmslot keeps its purple icon and bundled UI. Farmslot Dev has a red icon background,
+a distinct bundle ID, and separate credentials and preferences in
+`~/Library/Application Support/Farmslot Dev`. Both can stay installed and pinned in the Dock.
+
+```sh
+yarn workspace @farmslot/command-center-desktop package:mac:dev
+```
+
+Install `release-dev/mac-arm64/Farmslot Dev.app` beside Farmslot. In Dev's Connection
+Settings, enter your gateway login and set **Development UI → Vite URL** to your running
+Command Center frontend, for example `http://localhost:5175/`. Only use a server you trust;
+it receives the saved gateway connection through the desktop bridge. The allowed hosts
+are `localhost`, `127.0.0.1`, and `[::1]`, with `/` or `/cc/` as the path.
+
+Frontend edits appear through Vite reloads. The app does not start Vite or the gateway.
+If the server is unavailable during navigation or reload, settings offer **Retry development UI**
+and **Use bundled UI**. Native main/preload changes require rebuilding and replacing the app.
+This is a local development workflow, not an automatic distribution updater.
+
+For an unpackaged shell, build once then run `yarn workspace @farmslot/command-center-desktop start:dev`.
+Development links use `farmslot-dev://` with the same destinations as `farmslot://`.
+Each app registers only its own scheme. Choose different global shortcuts if running both at once.
+
+To reproduce the live check in a dedicated worktree, build both app profiles, export
+`FARMSLOT_GATEWAY` and `FARMSLOT_GATEWAY_TOKEN`, then run
+`node --import tsx scripts/e2e-desktop-live-ui.mts`. It owns ports 5186/9513/9514,
+creates a temporary profile, briefly edits and restores the worktree's UI title,
+and only reads the gateway. Screenshots and results go to `temp/desktop-live-ui/`.
+The same check is in `docs/examples/recipes/farmslot/electron-live-ui.recipe.json`.
+
 ## Daily use
 
 Remember me is enabled by default in connection settings and desktop login. Saved credentials use macOS Keychain encryption. Turning it off deletes the saved record; the current connection lasts until you quit, including window close/reopen.

@@ -286,6 +286,11 @@ jobs:
       - name: Build unsigned macOS installer
         run: yarn workspace @farmslot/command-center-desktop package:mac
 
+      - name: Build unsigned development installer
+        run: yarn workspace @farmslot/command-center-desktop exec electron-builder --config build/development.cjs --mac --arm64 --config.mac.identity=null
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
       - name: Upload unsigned installer
         uses: actions/upload-artifact@v6
         with:
@@ -294,6 +299,8 @@ jobs:
           path: |
             apps/command-center-desktop/release/*.dmg
             apps/command-center-desktop/release/*.zip
+            apps/command-center-desktop/release-dev/*.dmg
+            apps/command-center-desktop/release-dev/*.zip
           if-no-files-found: error
 
   command-center:

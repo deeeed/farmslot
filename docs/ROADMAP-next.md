@@ -69,6 +69,8 @@ Accepted follow-up: menu-bar pending-decision and connection status, a configura
 
 Accepted follow-up: Dock badges for pending decisions and `farmslot://` run/gate/slot navigation, including cold launch, hidden-window activation, connection setup, and copying the current view link. Preserve the configured gateway and require normal authorization for all actions.
 
+Accepted follow-up: a separate Farmslot Dev app with a red icon background and its own settings and deep-link scheme, using a validated local Vite server for live frontend changes. Preserve desktop permissions and credentials, and provide retry or bundled-UI recovery when the server is stopped.
+
 The [desktop workspace](../apps/command-center-desktop/README.md) documents build, installation, and isolated validation setup. The [live recipe](examples/recipes/farmslot/electron-client.recipe.json) verifies real gateway actions, terminals, source viewing, and authenticated images. Synthetic H.264 checks renderer compatibility; actual device transport and OS sleep/resume remain manual validation limits.
 
 The scope is an installable macOS client for the existing Command Center. Performance benchmarks, optimization targets, automatic updates, bundled gateway provisioning, multiple windows, and a separate SwiftUI UI are outside this delivery.
