@@ -24,6 +24,7 @@ import {
 } from '../core/config.js';
 import { diffKindForFlow } from '../core/diff-kind.js';
 import { execOnSlot } from '../core/exec.js';
+import { reviewDiffHash } from '../core/review-diff-identity.js';
 import {
   buildSourceDiffFilter,
   isSourceCodePath,
@@ -35,12 +36,7 @@ import { shellQuote } from '../core/tmux.js';
 import { fetchGitHubCompareFiles, fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 
-import {
-  atomicWriteTextFile,
-  parseDiffTooLargeBytes,
-  sha256Text,
-  withTimeout,
-} from './diff-artifact-utils.js';
+import { atomicWriteTextFile, parseDiffTooLargeBytes, withTimeout } from './diff-artifact-utils.js';
 
 type LoadedProjectVars = Awaited<ReturnType<typeof loadProjectVars>>;
 
@@ -102,7 +98,7 @@ export function resolveReviewInputCaptureTimeoutMs(
   if (raw > REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS) return REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS;
   return raw;
 }
-const GIT_DIFF_NO_QUOTE_PATH = 'git -c core.quotePath=false diff --binary';
+const GIT_DIFF_NO_QUOTE_PATH = 'git -c core.quotePath=false diff --binary --full-index';
 // Sentinel exit code returned by `cappedGitDiffCommand`'s bash script when the
 // captured diff exceeds MAX_DIFF_ARTIFACT_BYTES. 42 is chosen to avoid clashing
 // with git's documented exit codes (0=no-diff, 1=diff, 128=error) and the
@@ -436,7 +432,7 @@ export function cappedRunSourceDiffCommand(
     "  while IFS= read -r -d '' file; do",
     '    [ -f "$file" ] || continue',
     '    set +e',
-    '    git -c core.quotePath=false diff --no-index -- /dev/null "$file"',
+    '    git -c core.quotePath=false diff --binary --full-index --no-index -- /dev/null "$file"',
     '    code=$?',
     '    set -e',
     '    if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then exit "$code"; fi',
@@ -1049,7 +1045,7 @@ export async function readReviewInputSnapshot(
         headRef: commit?.headRef ?? stat?.headRef ?? null,
         headSha: commit?.headSha ?? stat?.headSha ?? null,
         diffPath: existsSync(diffPath) ? 'inputs/diff.txt' : null,
-        diffHash: existsSync(diffPath) ? sha256Text(diffText) : null,
+        diffHash: existsSync(diffPath) ? reviewDiffHash(diffText) : null,
         diffStat: stat
           ? { files: stat.files, additions: stat.additions, deletions: stat.deletions }
           : undefined,

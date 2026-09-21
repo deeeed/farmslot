@@ -83,7 +83,6 @@ import {
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   assertUnavailableSnapshotOverrideAvailable,
-  assertUnresolvedPublishOverrideAvailable,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
   buildUnavailableSnapshotAction,
@@ -1145,11 +1144,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     if (isPublishApprovalAction(actionId)) {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
       validatePackageApprovalSelection(approvedPackage, decision);
-      if (actionId === APPROVE_PUBLISH_UNRESOLVED_ACTION) {
-        assertUnresolvedPublishOverrideAvailable(
-          getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
-        );
-      } else {
+      if (actionId !== APPROVE_PUBLISH_UNRESOLVED_ACTION) {
         assertPublicationReviewPolicySatisfied(getRun(runId)!, approvedPackage);
       }
     }

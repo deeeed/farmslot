@@ -29,6 +29,7 @@ import {
   mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runEvidenceSummary,
@@ -729,4 +730,13 @@ test('a progress update targets the run it names, slot run or review workspace',
     'a run with neither a slot nor a review workspace has no progress source',
   );
   assert.equal(taskProgressUpdateTargetsRun(null, { slotId: '', runId: 'run-workspace' }), false);
+});
+
+test('direct run snapshot recovers actions after list failure only for its run and connection', () => {
+  const verified = { runId: 'selected', connectionEpoch: 2 };
+  assert.equal(runBootstrapBlocksActions(true, 'selected', verified, 2), false);
+  assert.equal(runBootstrapBlocksActions(true, 'other', verified, 2), true);
+  assert.equal(runBootstrapBlocksActions(true, 'selected', verified, 3), true);
+  assert.equal(runBootstrapBlocksActions(true, 'selected', null, 2), true);
+  assert.equal(runBootstrapBlocksActions(false, 'selected', null, 2), false);
 });

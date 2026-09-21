@@ -400,189 +400,193 @@ test('runResolveDecision keeps publish gate pending when approved package select
   assert.equal(stillPending?.resolvedAt, undefined);
 });
 
-test('runResolveDecision rejects approval when current package artifact drifted', async (t) => {
-  const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-package-drift-'));
-  t.after(() => rmSync(taskDir, { recursive: true, force: true }));
-  mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
-  const taskFile = path.join(taskDir, 'task.md');
-  writeFileSync(taskFile, 'task', 'utf-8');
+for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
+  test(`runResolveDecision rejects approval when current package artifact drifted (${actionId})`, async (t) => {
+    const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-package-drift-'));
+    t.after(() => rmSync(taskDir, { recursive: true, force: true }));
+    mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+    const taskFile = path.join(taskDir, 'task.md');
+    writeFileSync(taskFile, 'task', 'utf-8');
 
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `PUBLISH-DRIFT-${Date.now().toString(16).toUpperCase()}`,
-    mode: 'autonomous',
-    initialContext: 'Exercise current package drift approval',
-  });
-  t.after(async () => {
-    if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
-    }
-  });
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PUBLISH-DRIFT-${Date.now().toString(16).toUpperCase()}`,
+      mode: 'autonomous',
+      initialContext: 'Exercise current package drift approval',
+    });
+    t.after(async () => {
+      if (getRun(run.id)) {
+        updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(run.id);
+      }
+    });
 
-  const visiblePackage = makeReadyGatePackage({ id: 'pkg-visible' });
-  const currentPackage = makeReadyGatePackage({ id: 'pkg-current' });
-  writeFileSync(
-    path.join(taskDir, currentPackage.artifactPath),
-    JSON.stringify(currentPackage, null, 2),
-    'utf-8',
-  );
-  const decision: RunDecision = {
-    id: 'publish-gate-drift',
-    type: 'engine_human_gate',
-    title: 'Ready',
-    description: 'Ready',
-    actions: [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }],
-    createdAt: '2026-04-15T00:00:00.000Z',
-    payload: {
-      kind: 'ready',
-      prNumber: null,
-      repo: null,
-      diffStat: visiblePackage.diffStat,
-      workerReport: 'ready',
-      branch: visiblePackage.branch,
-      headSha: visiblePackage.headSha,
-      artifactManifest: visiblePackage.evidenceManifest,
-      prPackage: visiblePackage,
-      publicationTarget: 'ready',
-      publicationStatus: 'not_published',
-      reviewDepth: visiblePackage.reviewDepth,
-      independentReviews: [],
-    },
-  };
-  updateRun(run.id, {
-    taskFile,
-    decisions: [decision],
-    engineState: {
-      publishGate: {
-        packageArtifactPath: currentPackage.artifactPath,
+    const visiblePackage = makeReadyGatePackage({ id: 'pkg-visible' });
+    const currentPackage = makeReadyGatePackage({ id: 'pkg-current' });
+    writeFileSync(
+      path.join(taskDir, currentPackage.artifactPath),
+      JSON.stringify(currentPackage, null, 2),
+      'utf-8',
+    );
+    const decision: RunDecision = {
+      id: 'publish-gate-drift',
+      type: 'engine_human_gate',
+      title: 'Ready',
+      description: 'Ready',
+      actions: [{ id: actionId, label: 'Approve Publish', style: 'primary' as const }],
+      createdAt: '2026-04-15T00:00:00.000Z',
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        diffStat: visiblePackage.diffStat,
+        workerReport: 'ready',
+        branch: visiblePackage.branch,
+        headSha: visiblePackage.headSha,
+        artifactManifest: visiblePackage.evidenceManifest,
+        prPackage: visiblePackage,
+        publicationTarget: 'ready',
         publicationStatus: 'not_published',
         reviewDepth: visiblePackage.reviewDepth,
         independentReviews: [],
       },
-    },
-  });
-
-  await assert.rejects(
-    () =>
-      runResolveDecision(
-        {
-          runId: run.id,
-          decisionId: decision.id,
-          actionId: 'approve-publish',
-          selectionData: {
-            packageId: visiblePackage.id,
-            packageHash: visiblePackage.packageHash,
-            packageHeadSha: visiblePackage.headSha,
-          },
+    };
+    updateRun(run.id, {
+      taskFile,
+      decisions: [decision],
+      engineState: {
+        publishGate: {
+          packageArtifactPath: currentPackage.artifactPath,
+          publicationStatus: 'not_published',
+          reviewDepth: visiblePackage.reviewDepth,
+          independentReviews: [],
         },
-        () => {},
-      ),
-    /refresh package and re-review before publishing/,
-  );
-  const stillPending = getRun(run.id)?.decisions.find((entry) => entry.id === decision.id);
-  assert.equal(stillPending?.resolvedAt, undefined);
-});
-
-test('runResolveDecision rejects approval when selected evidence hash drifted', async (t) => {
-  const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-evidence-drift-'));
-  t.after(() => rmSync(taskDir, { recursive: true, force: true }));
-  mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
-  const taskFile = path.join(taskDir, 'task.md');
-  const evidencePath = path.join(taskDir, 'artifacts/keep.png');
-  writeFileSync(taskFile, 'task', 'utf-8');
-  writeFileSync(evidencePath, 'original-image', 'utf-8');
-
-  const prPackage = makeReadyGatePackage({
-    evidenceManifest: [
-      {
-        path: 'artifacts/keep.png',
-        purpose: 'after',
-        sizeBytes: 'original-image'.length,
-        sha256: sha256Text('original-image'),
       },
-    ],
-    selectedEvidenceKeys: ['artifacts/keep.png'],
-  });
-  writeFileSync(
-    path.join(taskDir, prPackage.artifactPath),
-    JSON.stringify(prPackage, null, 2),
-    'utf-8',
-  );
-  writeFileSync(evidencePath, 'mutated-image', 'utf-8');
+    });
 
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `EVIDENCE-DRIFT-${Date.now().toString(16).toUpperCase()}`,
-    mode: 'autonomous',
-    initialContext: 'Exercise selected evidence drift approval',
+    await assert.rejects(
+      () =>
+        runResolveDecision(
+          {
+            runId: run.id,
+            decisionId: decision.id,
+            actionId,
+            selectionData: {
+              packageId: visiblePackage.id,
+              packageHash: visiblePackage.packageHash,
+              packageHeadSha: visiblePackage.headSha,
+            },
+          },
+          () => {},
+        ),
+      /refresh package and re-review before publishing/,
+    );
+    const stillPending = getRun(run.id)?.decisions.find((entry) => entry.id === decision.id);
+    assert.equal(stillPending?.resolvedAt, undefined);
   });
-  t.after(async () => {
-    if (getRun(run.id)) {
-      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-      await deleteRun(run.id);
-    }
-  });
+}
 
-  const decision: RunDecision = {
-    id: 'publish-gate-evidence-drift',
-    type: 'engine_human_gate',
-    title: 'Ready',
-    description: 'Ready',
-    actions: [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }],
-    createdAt: '2026-04-15T00:00:00.000Z',
-    payload: {
-      kind: 'ready',
-      prNumber: null,
-      repo: null,
-      diffStat: prPackage.diffStat,
-      workerReport: 'ready',
-      branch: prPackage.branch,
-      headSha: prPackage.headSha,
-      artifactManifest: prPackage.evidenceManifest,
-      prPackage,
-      publicationTarget: 'ready',
-      publicationStatus: 'not_published',
-      reviewDepth: prPackage.reviewDepth,
-      independentReviews: [],
-    },
-  };
-  updateRun(run.id, {
-    taskFile,
-    decisions: [decision],
-    engineState: {
-      publishGate: {
-        packageArtifactPath: prPackage.artifactPath,
+for (const actionId of ['approve-publish', 'approve-publish-unresolved']) {
+  test(`runResolveDecision rejects approval when selected evidence hash drifted (${actionId})`, async (t) => {
+    const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-evidence-drift-'));
+    t.after(() => rmSync(taskDir, { recursive: true, force: true }));
+    mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+    const taskFile = path.join(taskDir, 'task.md');
+    const evidencePath = path.join(taskDir, 'artifacts/keep.png');
+    writeFileSync(taskFile, 'task', 'utf-8');
+    writeFileSync(evidencePath, 'original-image', 'utf-8');
+
+    const prPackage = makeReadyGatePackage({
+      evidenceManifest: [
+        {
+          path: 'artifacts/keep.png',
+          purpose: 'after',
+          sizeBytes: 'original-image'.length,
+          sha256: sha256Text('original-image'),
+        },
+      ],
+      selectedEvidenceKeys: ['artifacts/keep.png'],
+    });
+    writeFileSync(
+      path.join(taskDir, prPackage.artifactPath),
+      JSON.stringify(prPackage, null, 2),
+      'utf-8',
+    );
+    writeFileSync(evidencePath, 'mutated-image', 'utf-8');
+
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `EVIDENCE-DRIFT-${Date.now().toString(16).toUpperCase()}`,
+      mode: 'autonomous',
+      initialContext: 'Exercise selected evidence drift approval',
+    });
+    t.after(async () => {
+      if (getRun(run.id)) {
+        updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(run.id);
+      }
+    });
+
+    const decision: RunDecision = {
+      id: 'publish-gate-evidence-drift',
+      type: 'engine_human_gate',
+      title: 'Ready',
+      description: 'Ready',
+      actions: [{ id: actionId, label: 'Approve Publish', style: 'primary' as const }],
+      createdAt: '2026-04-15T00:00:00.000Z',
+      payload: {
+        kind: 'ready',
+        prNumber: null,
+        repo: null,
+        diffStat: prPackage.diffStat,
+        workerReport: 'ready',
+        branch: prPackage.branch,
+        headSha: prPackage.headSha,
+        artifactManifest: prPackage.evidenceManifest,
+        prPackage,
+        publicationTarget: 'ready',
         publicationStatus: 'not_published',
         reviewDepth: prPackage.reviewDepth,
         independentReviews: [],
       },
-    },
-  });
-
-  await assert.rejects(
-    () =>
-      runResolveDecision(
-        {
-          runId: run.id,
-          decisionId: decision.id,
-          actionId: 'approve-publish',
-          selectionData: {
-            packageId: prPackage.id,
-            packageHash: prPackage.packageHash,
-            packageHeadSha: prPackage.headSha,
-            selectedEvidenceKeys: ['artifacts/keep.png'],
-          },
+    };
+    updateRun(run.id, {
+      taskFile,
+      decisions: [decision],
+      engineState: {
+        publishGate: {
+          packageArtifactPath: prPackage.artifactPath,
+          publicationStatus: 'not_published',
+          reviewDepth: prPackage.reviewDepth,
+          independentReviews: [],
         },
-        () => {},
-      ),
-    /selected evidence hash mismatch/,
-  );
-  const stillPending = getRun(run.id)?.decisions.find((entry) => entry.id === decision.id);
-  assert.equal(stillPending?.resolvedAt, undefined);
-});
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        runResolveDecision(
+          {
+            runId: run.id,
+            decisionId: decision.id,
+            actionId,
+            selectionData: {
+              packageId: prPackage.id,
+              packageHash: prPackage.packageHash,
+              packageHeadSha: prPackage.headSha,
+              selectedEvidenceKeys: ['artifacts/keep.png'],
+            },
+          },
+          () => {},
+        ),
+      /selected evidence hash mismatch/,
+    );
+    const stillPending = getRun(run.id)?.decisions.find((entry) => entry.id === decision.id);
+    assert.equal(stillPending?.resolvedAt, undefined);
+  });
+}
 
 test('runResolveDecision rejects approval when selected evidence differs from refreshed package', async (t) => {
   const taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-evidence-selection-'));

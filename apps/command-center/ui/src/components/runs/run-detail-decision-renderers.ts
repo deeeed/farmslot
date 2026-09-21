@@ -135,7 +135,7 @@ export interface RunDecisionRenderContext {
 export function publicationGateWaitingTitle(decision: Pick<RunDecision, 'actions'>): string {
   const ids = new Set((decision.actions ?? []).map((action) => action.id));
   if (ids.has('continue-review-fix')) return 'Independent review found issues';
-  if (ids.has('approve-publish-unresolved')) return 'Review retries exhausted';
+  if (ids.has('approve-publish-unresolved')) return 'Publication gate: review blocked';
   if (ids.has('approve-publish') || ids.has('ready')) {
     return 'Worker finished — verify before marking ready';
   }

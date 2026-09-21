@@ -577,7 +577,7 @@ test('exhausted extra-review still offers bypass when only the review subject ha
   );
 });
 
-test('bypass is not offered for an older exhausted review after a newer unspent loop', () => {
+test('bypass remains available before a newer review exhausts its retries', () => {
   const oldCap: IndependentReviewStatus = {
     id: 'independent-review-2',
     source: 'human-gate',
@@ -612,10 +612,38 @@ test('bypass is not offered for an older exhausted review after a newer unspent 
   });
   assert.equal(
     actions.some((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION),
-    false,
+    true,
   );
   assert.equal(
     actions.some((action) => action.id === 'continue-review-fix'),
     true,
   );
 });
+
+for (const verdict of [undefined, 'pass', 'skipped', 'issues'] as const) {
+  test(`review-blocked gate offers explicit bypass for ${verdict ?? 'missing'} review`, () => {
+    const actions = publicationGateDecisionActions({
+      reviewSatisfied: false,
+      independentReviews: verdict
+        ? [
+            {
+              id: 'review-1',
+              source: 'dispatch',
+              crossRunner: false,
+              loopNumber: 1,
+              verdict,
+              unresolvedCount: verdict === 'issues' ? 1 : 0,
+            },
+          ]
+        : [],
+    });
+    assert.equal(
+      actions.find((action) => action.id === APPROVE_PUBLISH_UNRESOLVED_ACTION)?.style,
+      'danger',
+    );
+    assert.equal(
+      actions.some((action) => action.id === 'approve-publish'),
+      false,
+    );
+  });
+}

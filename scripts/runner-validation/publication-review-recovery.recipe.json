@@ -1,0 +1,41 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Publication review identity and explicit override",
+  "description": "Set FARMSLOT_GATEWAY and FARMSLOT_PUBLICATION_PROOF_RUN_ID. Read the actual recovered gate without approving or publishing.",
+  "workflow": {
+    "entry": "live-gate",
+    "nodes": {
+      "live-gate": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/publication-review-recovery.mjs",
+        "timeout_ms": 60000,
+        "intent": "Prove through run.get that the historical accepted review matches the refreshed package and normal publication is offered, with no publication performed.",
+        "next": "identity-and-override"
+      },
+      "identity-and-override": {
+        "action": "command",
+        "cmd": "node --import tsx --test services/gateway/src/core/review-diff-identity.test.ts services/gateway/src/run-engine/review-diff-refresh.test.ts services/gateway/src/run-engine/gate-policy.test.ts services/gateway/src/run-engine/publication-review-policy.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Verify display-only diff changes preserve identity, actual source/mode/binary/untracked changes invalidate it, tampered historical evidence stays stale, and an explicit override is offered without exhausting retries.",
+        "next": "override-freshness"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "override-freshness": {
+        "action": "command",
+        "cmd": "node --import tsx --test --test-name-pattern='approval when current package artifact drifted|approval when selected evidence hash drifted' services/gateway/src/methods/run.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Prove ordinary publication and the dangerous override both reject changed package artifacts and evidence before resolving the gate.",
+        "next": "direct-run-freshness"
+      },
+      "direct-run-freshness": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=apps/command-center/ui/tsconfig.json node --import tsx --test --test-name-pattern='direct run snapshot|publication gate title' apps/command-center/ui/src/components/runs/run-detail-model.test.ts apps/command-center/ui/src/components/runs/run-detail-decision-renderers.test.ts",
+        "intent": "Only a successful direct fetch of the selected run in this connection can recover its gate after the bulk run list fails; the bypass label describes any review block rather than only exhausted retries.",
+        "next": "done"
+      }
+    }
+  }
+}

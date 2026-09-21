@@ -73,6 +73,7 @@ import {
   mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runFamilyPrStatus,
@@ -221,6 +222,7 @@ export class RunDetail extends RunDetailState {
     const prev = this.run;
     const wasHydrating = this._hydrating;
     if (this.runId !== this._lastRequestedRunId) {
+      this._verifiedRunSnapshot = null;
       this._lastRequestedRunId = this.runId;
       // Copied/error/liveness state belongs to the run it was fetched for.
       // Carrying it across would label the next run's contexts with the
@@ -345,13 +347,17 @@ export class RunDetail extends RunDetailState {
     // the retry window has passed (the clock tick re-enters syncRun).
     if (
       this.runId &&
-      shouldFetchTrimmedRun({
+      (shouldFetchTrimmedRun({
         sharedRun,
         directRun,
         refreshing: this._directRunRefreshing,
         failedAt: this._directRunFailedAt,
         now: Date.now(),
-      })
+      }) ||
+        (this._runBootstrapBlocked() &&
+          !this._connectionStale &&
+          !this._directRunRefreshing &&
+          (this._directRunFailedAt === null || Date.now() - this._directRunFailedAt >= 5000)))
     ) {
       void this.fetchRun(this.runId);
     }
@@ -634,10 +640,24 @@ export class RunDetail extends RunDetailState {
     }
   }
 
+  private _verifiedRunSnapshot: { runId: string; connectionEpoch: number } | null = null;
+
+  private _runBootstrapBlocked(): boolean {
+    return runBootstrapBlocksActions(
+      this._bootstrapFailed,
+      this.runId,
+      this._verifiedRunSnapshot,
+      gateway.connectionEpoch,
+    );
+  }
+
   private async fetchRun(runId: string) {
     const requestSeq = ++this._directRunRequestSeq;
+    const connectionEpoch = gateway.connectionEpoch;
     const requestStillCurrent = () =>
-      requestSeq === this._directRunRequestSeq && this.runId === runId;
+      requestSeq === this._directRunRequestSeq &&
+      this.runId === runId &&
+      gateway.connectionEpoch === connectionEpoch;
     this._directRunRefreshing = true;
     this._directRunRefreshFailed = false;
     this._directRunUnavailable = false;
@@ -645,6 +665,7 @@ export class RunDetail extends RunDetailState {
       const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
       if (!requestStillCurrent()) return;
       if (res.run) {
+        this._verifiedRunSnapshot = { runId, connectionEpoch };
         this._directRun = res.run;
         this.run = res.run;
         this._directRunRefreshFailed = false;
@@ -665,11 +686,14 @@ export class RunDetail extends RunDetailState {
         this._directRunFailedAt = Date.now();
       }
     } finally {
-      if (requestStillCurrent()) this._directRunRefreshing = false;
+      if (requestSeq === this._directRunRequestSeq && this.runId === runId) {
+        this._directRunRefreshing = false;
+      }
     }
   }
 
   private _markDirectRunUnavailable(runId: string): void {
+    this._verifiedRunSnapshot = null;
     if (this._directRun?.id === runId) {
       this._directRun = null;
       this.run = null;
@@ -776,7 +800,7 @@ export class RunDetail extends RunDetailState {
     return (
       this._connectionStale ||
       this._hydrating ||
-      this._bootstrapFailed ||
+      this._runBootstrapBlocked() ||
       this._directRunRefreshing ||
       this._directRunRefreshFailed
     );
@@ -1040,7 +1064,7 @@ export class RunDetail extends RunDetailState {
       selectedStep: this.selectedStep,
       selectedStepProgress: this.selectedStepProgress,
       _hydrating: this._hydrating,
-      _bootstrapFailed: this._bootstrapFailed,
+      _bootstrapFailed: this._runBootstrapBlocked(),
       _connectionStale: this._connectionStale,
       _directRunRefreshing: this._directRunRefreshing,
       _directRunRefreshFailed: this._directRunRefreshFailed,
@@ -1288,7 +1312,7 @@ export class RunDetail extends RunDetailState {
     return renderRunGateSection(run, {
       allRuns: getState().runs,
       pendingDecisions: getState().decisions,
-      bootstrapFailed: this._bootstrapFailed,
+      bootstrapFailed: this._runBootstrapBlocked(),
       directRunRefreshFailed: this._directRunRefreshFailed,
       actionsBlocked: this._actionsBlocked(),
       pendingConfirm: this._pendingConfirm,

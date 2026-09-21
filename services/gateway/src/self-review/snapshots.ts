@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   agentRoleWindow,
   type DiffStat,
@@ -11,6 +9,7 @@ import {
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { reviewDiffHash } from '../core/review-diff-identity.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   writeLargeTextFileOnSlot,
@@ -38,10 +37,6 @@ export type ReviewSessionMeta = {
   runnerSessionId: string | null;
   error?: string;
 };
-
-function sha256(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
 
 function parseReviewNumstat(text: string): DiffStat {
   const stat = { files: 0, additions: 0, deletions: 0 };
@@ -295,7 +290,7 @@ export async function captureCurrentReviewSnapshot(
         baseSha,
         headRef: branchResult.stdout.trim() || null,
         headSha: headResult.stdout.trim(),
-        diffHash: sha256(reviewDiffIdentity),
+        diffHash: reviewDiffHash(reviewDiffIdentity),
         diffStat: parseReviewNumstat(numstat.stdout),
         ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
         capturedAt: new Date().toISOString(),
@@ -440,7 +435,7 @@ export async function captureFixDeltaSnapshot(
       fixBaseSha,
       fixHeadSha,
       diffPath: diffRel,
-      diffHash: sha256(fixDiffIdentity),
+      diffHash: reviewDiffHash(fixDiffIdentity),
       diffStat: parseReviewNumstat(numstat.stdout),
       ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
