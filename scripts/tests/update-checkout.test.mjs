@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { updateCheckout } from '../update-checkout.mjs';
@@ -29,6 +29,7 @@ async function fixture(t) {
   git(dir, 'clone', remote, root);
   const localSha = git(root, 'rev-parse', 'HEAD');
   const publish = async (file = 'README.md', content = 'after\n') => {
+    await mkdir(dirname(join(publisher, file)), { recursive: true });
     await writeFile(join(publisher, file), content);
     git(publisher, 'add', '.');
     git(publisher, 'commit', '-m', 'fix: advance fixture');
@@ -105,4 +106,15 @@ test('preserves ignored files when an incoming commit would overwrite them', asy
   assert.equal((await f.run(target)).phase, 'error');
   assert.equal(f.git(f.root, 'rev-parse', 'HEAD'), f.localSha);
   assert.equal(await readFile(join(f.root, 'collision.txt'), 'utf8'), 'private local content');
+});
+
+test('rebuild guidance distinguishes documentation from desktop shell code', async (t) => {
+  const f = await fixture(t);
+  const docs = await f.publish('apps/command-center-desktop/README.md', 'updated docs');
+  assert.equal((await f.run(docs)).desktopRebuildRequired, false);
+  const shell = await f.publish(
+    'apps/command-center-desktop/src/example.mjs',
+    'export const version = 2;',
+  );
+  assert.equal((await f.run(shell)).desktopRebuildRequired, true);
 });

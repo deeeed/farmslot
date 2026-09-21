@@ -88,8 +88,15 @@ export async function updateCheckout(root, recordPath) {
       );
     await save({
       message: 'Applying the fast-forward update…',
-      desktopRebuildRequired: files.some((file) => file.startsWith('apps/command-center-desktop/')),
-      gatewayRestartRequired: files.some((file) => /^(services\/gateway|packages)\//.test(file)),
+      desktopRebuildRequired: files.some((file) =>
+        /^apps\/command-center-desktop\/(src\/|settings\/|build\/|package\.json$)/.test(file),
+      ),
+      gatewayRestartRequired: files.some(
+        (file) =>
+          /^(services\/gateway|packages)\//.test(file) &&
+          /\.(?:[cm]?js|ts|json)$/.test(file) &&
+          !/\.test\.[cm]?[jt]s$/.test(file),
+      ),
     });
     await checkLocal();
     await git('merge', '--ff-only', '--no-overwrite-ignore', target);
