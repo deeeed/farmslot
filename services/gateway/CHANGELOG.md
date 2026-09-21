@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover prepare from deleted working directories and early branch/device failures without resetting existing work; require an owned startup signal before treating review sessions as working.
+
 - Keep passing reviews valid across Git object-ID display changes, repair verified historical snapshots on package refresh, and allow explicit publication overrides for any blocked review while retaining package and source freshness checks.
 
 - Support safe default-branch checkout updates that survive development restarts, preserve local edits and reject dependency changes requiring manual installation.
