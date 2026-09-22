@@ -2,7 +2,11 @@ import { wilsonInterval } from '../evaluation.js';
 
 import { LABELS, type TriageCase, type TriageResult } from './types.js';
 
-export function triageMetrics(cases: TriageCase[], results: TriageResult[]) {
+export function triageMetrics(
+  cases: TriageCase[],
+  results: TriageResult[],
+  corpusCases: TriageCase[] = cases,
+) {
   const byId = new Map(results.map((r) => [r.caseId, r]));
   if (byId.size !== results.length)
     throw new Error('Repeated attempts cannot be scored as independent cases');
@@ -48,18 +52,43 @@ export function triageMetrics(cases: TriageCase[], results: TriageResult[]) {
     return 2 * tp + fp + fn ? (2 * tp) / (2 * tp + fp + fn) : 0;
   });
   const completed = cases.filter((c) => byId.get(c.id)?.status === 'completed').length;
+  const families = [...new Set(cases.map((c) => c.group))];
+  // Subset evaluation inherits the full corpus's dependence, even for one selected case.
+  const correlated = new Set(corpusCases.map((c) => c.group)).size !== corpusCases.length;
+  const familyAccuracy = families.map((group) => {
+    const members = cases.filter((c) => c.group === group);
+    return (
+      members.filter((c) => {
+        const r = byId.get(c.id);
+        return r?.status === 'completed' && r.prediction?.label === c.reference.label;
+      }).length / members.length
+    );
+  });
   return {
     cases: cases.length,
+    families: families.length,
+    familiesByLabel: Object.fromEntries(
+      LABELS.map((label) => [
+        label,
+        new Set(cases.filter((c) => c.reference.label === label).map((c) => c.group)).size,
+      ]),
+    ),
+    familyWeightedAccuracy: familyAccuracy.length
+      ? familyAccuracy.reduce((a, b) => a + b, 0) / familyAccuracy.length
+      : null,
+    uncertainty: correlated
+      ? 'Correlated synthetic variants; population confidence intervals unsupported'
+      : 'Case-level Wilson intervals assume independent observations',
     completed,
     unavailable: cases.length - completed,
     correct,
     accuracy: cases.length ? correct / cases.length : null,
-    accuracyInterval95: wilsonInterval(correct, cases.length),
+    accuracyInterval95: correlated ? null : wilsonInterval(correct, cases.length),
     macroF1: f1.reduce((sum, n) => sum + n, 0) / LABELS.length,
     definiteAnswers: definite,
     definiteCorrect,
     definitePrecision: definite ? definiteCorrect / definite : null,
-    definitePrecisionInterval95: wilsonInterval(definiteCorrect, definite),
+    definitePrecisionInterval95: correlated ? null : wilsonInterval(definiteCorrect, definite),
     definiteCases,
     definiteOnDefinite,
     definiteCoverage: definiteCases ? definiteOnDefinite / definiteCases : null,

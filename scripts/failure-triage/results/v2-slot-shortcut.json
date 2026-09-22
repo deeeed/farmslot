@@ -1,0 +1,382 @@
+{
+  "artifact": "slot-ownership-shortcut-comparator",
+  "purpose": "Reproduce review finding B1: a trivial deterministic rule over v2 structured state matches or beats the live candidate, so the recorded macro-F1 gain over the frozen v1 text classifiers is not evidence of model capability.",
+  "postHoc": true,
+  "notAGateBaseline": true,
+  "providerCalls": 0,
+  "findingRaisedAtSha": "f80adaf3ecd727acc91908fdde28b17f60c670ef",
+  "corpusHash": "f678519daa6c014922e1f89a046ec22e4985cb2d1a2155047674e781c3d13d62",
+  "slotRule": {
+    "no serialized fixture state in evidence": "unclear",
+    "upstream populated": "external_service",
+    "proof populated": "missing_evidence",
+    "dependency populated": "dependencies",
+    "env populated": "environment",
+    "otherwise": "implementation"
+  },
+  "heldOut": {
+    "cases": 21,
+    "correct": 18,
+    "correctOfCases": "18/21",
+    "accuracy": 0.8571428571428571,
+    "macroF1": 0.8095238095238094,
+    "perLabelF1": {
+      "environment": 1,
+      "dependencies": 1,
+      "implementation": 0.6666666666666666,
+      "test_harness": 0,
+      "missing_evidence": 1,
+      "external_service": 1,
+      "unclear": 1
+    },
+    "confusion": {
+      "environment": {
+        "environment": 3,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "dependencies": {
+        "environment": 0,
+        "dependencies": 3,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "implementation": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 3,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "test_harness": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 3,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "missing_evidence": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 3,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "external_service": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 3,
+        "unclear": 0
+      },
+      "unclear": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 3
+      }
+    },
+    "predictions": [
+      {
+        "id": "c1602833342b0",
+        "reference": "external_service",
+        "predicted": "external_service",
+        "correct": true
+      },
+      {
+        "id": "c272271f2400d",
+        "reference": "external_service",
+        "predicted": "external_service",
+        "correct": true
+      },
+      {
+        "id": "c29a1794b9822",
+        "reference": "missing_evidence",
+        "predicted": "missing_evidence",
+        "correct": true
+      },
+      {
+        "id": "c2d20d244f421",
+        "reference": "dependencies",
+        "predicted": "dependencies",
+        "correct": true
+      },
+      {
+        "id": "c55a9a1e63f42",
+        "reference": "external_service",
+        "predicted": "external_service",
+        "correct": true
+      },
+      {
+        "id": "c55b4d02f00dd",
+        "reference": "environment",
+        "predicted": "environment",
+        "correct": true
+      },
+      {
+        "id": "c6758298c3b8d",
+        "reference": "test_harness",
+        "predicted": "implementation",
+        "correct": false
+      },
+      {
+        "id": "c836a14e6204a",
+        "reference": "implementation",
+        "predicted": "implementation",
+        "correct": true
+      },
+      {
+        "id": "c855fea4e86dd",
+        "reference": "test_harness",
+        "predicted": "implementation",
+        "correct": false
+      },
+      {
+        "id": "c8b28a3d00477",
+        "reference": "implementation",
+        "predicted": "implementation",
+        "correct": true
+      },
+      {
+        "id": "c99760a8bd306",
+        "reference": "missing_evidence",
+        "predicted": "missing_evidence",
+        "correct": true
+      },
+      {
+        "id": "c9d2bc5e36bcc",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "ca07df9582bf5",
+        "reference": "environment",
+        "predicted": "environment",
+        "correct": true
+      },
+      {
+        "id": "ca4792ea0011a",
+        "reference": "environment",
+        "predicted": "environment",
+        "correct": true
+      },
+      {
+        "id": "caa92407880f7",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "cb56e4277ea45",
+        "reference": "dependencies",
+        "predicted": "dependencies",
+        "correct": true
+      },
+      {
+        "id": "cbb7bc8ac08b0",
+        "reference": "dependencies",
+        "predicted": "dependencies",
+        "correct": true
+      },
+      {
+        "id": "cbc75b2f62de7",
+        "reference": "test_harness",
+        "predicted": "implementation",
+        "correct": false
+      },
+      {
+        "id": "cc15e73163579",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "cddf139328eba",
+        "reference": "missing_evidence",
+        "predicted": "missing_evidence",
+        "correct": true
+      },
+      {
+        "id": "ceff4866f5650",
+        "reference": "implementation",
+        "predicted": "implementation",
+        "correct": true
+      }
+    ]
+  },
+  "development": {
+    "cases": 9,
+    "correct": 8,
+    "correctOfCases": "8/9",
+    "accuracy": 0.8888888888888888,
+    "macroF1": 0.8095238095238094,
+    "perLabelF1": {
+      "environment": 1,
+      "dependencies": 1,
+      "implementation": 0.6666666666666666,
+      "test_harness": 0,
+      "missing_evidence": 1,
+      "external_service": 1,
+      "unclear": 1
+    },
+    "confusion": {
+      "environment": {
+        "environment": 1,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "dependencies": {
+        "environment": 0,
+        "dependencies": 1,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "implementation": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 1,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "test_harness": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 1,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "missing_evidence": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 1,
+        "external_service": 0,
+        "unclear": 0
+      },
+      "external_service": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 1,
+        "unclear": 0
+      },
+      "unclear": {
+        "environment": 0,
+        "dependencies": 0,
+        "implementation": 0,
+        "test_harness": 0,
+        "missing_evidence": 0,
+        "external_service": 0,
+        "unclear": 3
+      }
+    },
+    "predictions": [
+      {
+        "id": "c1472fbfb9b8b",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "c17f4e4888bb6",
+        "reference": "implementation",
+        "predicted": "implementation",
+        "correct": true
+      },
+      {
+        "id": "c2a91338be1d5",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "c38f7e8bec0de",
+        "reference": "external_service",
+        "predicted": "external_service",
+        "correct": true
+      },
+      {
+        "id": "c4ab63dcf00dc",
+        "reference": "dependencies",
+        "predicted": "dependencies",
+        "correct": true
+      },
+      {
+        "id": "c60d22e54f28b",
+        "reference": "unclear",
+        "predicted": "unclear",
+        "correct": true
+      },
+      {
+        "id": "ca4c6724da9d5",
+        "reference": "environment",
+        "predicted": "environment",
+        "correct": true
+      },
+      {
+        "id": "cedd6207f0f79",
+        "reference": "test_harness",
+        "predicted": "implementation",
+        "correct": false
+      },
+      {
+        "id": "cf46ab17474f1",
+        "reference": "missing_evidence",
+        "predicted": "missing_evidence",
+        "correct": true
+      }
+    ]
+  },
+  "comparisonHeldOut": {
+    "slotShortcut": {
+      "correct": "18/21",
+      "macroF1": 0.8095238095238094
+    },
+    "liveCandidate": {
+      "correct": "17/21",
+      "macroF1": 0.7999999999999999
+    },
+    "frozenCueSheet": {
+      "correct": "9/21",
+      "macroF1": 0.33333333333333337
+    },
+    "frozenExistingClassifier": {
+      "correct": "3/21",
+      "macroF1": 0.03571428571428571
+    },
+    "shortcutBeatsCandidate": true
+  }
+}

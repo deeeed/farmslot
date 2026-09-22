@@ -19,7 +19,7 @@ function parse(args: string[]): TriageOptions {
     }
     if (key === '--help') {
       console.log(
-        'Usage: yarn triage:evaluate --out <new-directory> [--live --provider typesafe --model jev-1.13.0] [--split development|held-out] [--max-calls 1..60] [--max-usd <=0.10] [--timeout-ms <=10000] [--max-bytes <=24000] [--case <opaque-id>]\nDefault: offline baselines and hold. Test-only transport: --fixture valid|invalid-label|fabricated-evidence|timeout|rate-limit|credential-echo|control-action; cannot combine with --live.',
+        'Usage: yarn triage:evaluate --out <new-directory> [--live --provider typesafe --model jev-1.13.0] [--corpus v1|v2] [--split development|held-out] [--max-calls 1..60] [--max-usd <=0.10] [--timeout-ms <=10000] [--max-bytes <=24000] [--case <opaque-id>]\nDefault: offline baselines and hold. Test-only transport: --fixture valid|invalid-label|fabricated-evidence|timeout|rate-limit|credential-echo|control-action; cannot combine with --live.',
       );
       process.exit(0);
     }
@@ -28,6 +28,10 @@ function parse(args: string[]): TriageOptions {
     switch (key) {
       case '--out':
         options.out = path.resolve(value);
+        break;
+      case '--corpus':
+        if (value !== 'v1' && value !== 'v2') throw new Error('Invalid corpus');
+        options.corpus = value;
         break;
       case '--provider':
         if (!/^[\w.-]{1,100}$/.test(value)) throw new Error('Invalid provider');
@@ -98,6 +102,8 @@ try {
     ].map((n) => `services/gateway/src/assessment/failure-triage/${n}.ts`),
     'scripts/failure-triage/evaluate.mts',
     'scripts/failure-triage/generate-corpus.mts',
+    'scripts/failure-triage/generate-v2.mjs',
+    'scripts/failure-triage/corpus-v2-audit.md',
     'services/gateway/src/assessment/typesafe.ts',
     'services/gateway/src/assessment/provider.ts',
     'services/gateway/src/assessment/default-providers.ts',
@@ -126,7 +132,7 @@ try {
     sourceSnapshotHash,
     files: sourceManifest,
   });
-  const reportText = `# Failure-triage evaluation\n\nRevision: ${revision}; checkout dirty: ${dirty}. Source snapshot: ${sourceSnapshotHash}.\nCorpus: ${report.corpusHash}.\nRubric: ${report.rubricVersion}; baselines: ${report.baselineVersion}.\n\nDecision: **${report.decision}**. Live status: ${report.liveStatus}. Efficiency: ${report.efficiencyClaim}.\n\n| Measure | Existing baseline | Diagnostic cues | Candidate |\n| --- | --- | --- | --- |\n| Correct / cases | ${report.baselines.deterministic.correct}/${report.selectedCases} | ${report.baselines.diagnosticCueSheet.correct}/${report.selectedCases} | ${report.metrics.correct}/${report.selectedCases} |\n| Macro-F1 | ${report.baselines.deterministic.macroF1} | ${report.baselines.diagnosticCueSheet.macroF1} | ${report.metrics.macroF1} |\n\nAttempts: ${report.usage.attempts}; reserved USD: ${report.usage.reservedUsd}; known estimated USD: ${report.usage.knownEstimatedUsd}; unknown charges: ${report.usage.unknownCharges}.\nBatch time: ${report.latency.batchMs}ms.\n\n${report.pilotGate.checks.map((c) => `- ${c.passed ? 'PASS' : 'HOLD'}: ${c.id}`).join('\n')}\n\n${report.limitations.map((l) => `- ${l}`).join('\n')}\n`;
+  const reportText = `# Failure-triage evaluation\n\nRevision: ${revision}; checkout dirty: ${dirty}. Source snapshot: ${sourceSnapshotHash}.\nCorpus: ${report.corpusHash}. Selected families: ${report.metrics.families}.\nRubric: ${report.rubricVersion}; baselines: ${report.baselineVersion}.\n\nDecision: **${report.decision}**. Live status: ${report.liveStatus}. Efficiency: ${report.efficiencyClaim}.\n\n| Measure | Existing baseline | Diagnostic cues | Candidate |\n| --- | --- | --- | --- |\n| Correct / cases | ${report.baselines.deterministic.correct}/${report.selectedCases} | ${report.baselines.diagnosticCueSheet.correct}/${report.selectedCases} | ${report.metrics.correct}/${report.selectedCases} |\n| Macro-F1 | ${report.baselines.deterministic.macroF1} | ${report.baselines.diagnosticCueSheet.macroF1} | ${report.metrics.macroF1} |\n\nAttempts: ${report.usage.attempts}; reserved USD: ${report.usage.reservedUsd}; known estimated USD: ${report.usage.knownEstimatedUsd}; unknown charges: ${report.usage.unknownCharges}.\nBatch time: ${report.latency.batchMs}ms.\n\n${report.pilotGate.checks.map((c) => `- ${c.passed ? 'PASS' : 'HOLD'}: ${c.id}`).join('\n')}\n\n${report.limitations.map((l) => `- ${l}`).join('\n')}\n`;
   assertNoCredentials(reportText);
   await writeFile(path.join(options.out, 'report.md'), reportText, { flag: 'wx', mode: 0o600 });
   const details = JSON.parse(await readFile(path.join(options.out, 'evaluation.json'), 'utf8'));
@@ -160,6 +166,7 @@ try {
     'Invalid provider',
     'Invalid model',
     'Invalid split',
+    'Invalid corpus',
     'Invalid fixture',
     'Unknown evaluation option',
     '--out is required and must be a new directory',

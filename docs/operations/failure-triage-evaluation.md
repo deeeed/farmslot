@@ -20,40 +20,45 @@ eligibility are blocked for this corpus. A separately versioned, reviewed corpus
 with raw incident observations and real family-disjoint provenance is required.
 Do not remove the quarantine to repeat the held-out pass.
 
-## Run the baselines
+## Select the reviewed v2 experiment
 
-From the installed checkout:
+V2 uses fault-time output, source and state from 24 controlled virtual component
+faults, plus six unclear cases. Each definite reference derives from a passing
+fixture, one component mutation, failure and successful restoration. Controls and
+reference explanations stay outside provider input. The hash-bound methodology
+review is in `scripts/failure-triage/corpus-v2-audit.md`.
+
+The 21 held-out cases represent 16 families. External-service and unclear each
+have only one family. Complete compact snapshots and explicit contracts make
+this easier than sparse production diagnostics. Reports show family counts and
+`familyWeightedAccuracy`, the equal-weight mean over families, and suppress independent-case confidence intervals
+when variants repeat. These are descriptive synthetic results, not population
+estimates. The existing classifier, v1 cue sheet and rubric remain unchanged.
+
+From the installed checkout, first inspect the offline outputs:
 
 ```bash
-yarn triage:evaluate --out temp/triage/development --split development
-yarn triage:evaluate --out temp/triage/held-out-offline
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-development --split development
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-held-out-offline
 ```
 
-Output directories must be new. The default is offline even when the gateway's
-assessment setting and API key are present. The bundled corpus has 30 cases,
-with nine development and 21 held-out. The generator executes 24 controlled
-fault/repair pairs and supplies six ambiguous, mixed or injected-instruction
-fixtures. Reference fields were excluded structurally, but repair commentary leaked
-semantically into the packets; that is one reason v1 is quarantined.
+Output directories must be new. The default remains offline even when the gateway
+setting and API key are present. Omitting `--corpus` selects quarantined v1 for
+historical inspection. Only explicit v2 selection can pass the integrity guard.
 
-The existing classifier and frozen diagnostic cue sheet see the same redacted
-packets as the candidate. Unmapped or conflicting diagnostic cues abstain.
-`source-manifest.json` records code hashes; the corpus and every packet/question
-also carry hashes. Regenerating the corpus starts a new experiment, never a way
-to tune held-out cases after seeing candidate answers.
-
-## Candidate command and current hold
-
-This command currently returns `not_run` with `corpus-integrity-failed` when the
-key, price and budget checks pass. It cannot send v1 packets again:
+After freezing the source, rubric and baselines, candidate evaluation is explicit:
 
 ```bash
-yarn triage:evaluate --out temp/triage/held-out-live \
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-held-out-live \
   --live --provider typesafe --model jev-1.13.0
 ```
 
+`source-manifest.json` records code hashes; corpus, packets and questions also carry
+hashes. Preserve every attempt. Do not regenerate or tune held-out cases after
+candidate inference. A negative result is a valid outcome, not a reason to rerun.
+
 The TypeSafe adapter reads `TYPESAFE_API_KEY`. No key is accepted in arguments.
-Only the bundled synthetic corpus is admitted. Arbitrary packet/file inputs and
+Only the two pinned synthetic corpora are admitted. Arbitrary packet/file inputs and
 unknown options are rejected; public/company data import is not implemented.
 
 One attempt per selected case, no retries or model fallback. Limits are 60 calls,
@@ -67,6 +72,51 @@ held until an appropriate output bound is implemented.
 Useful smaller experiments use `--split development` or `--case <opaque-id>`.
 They cannot pass the held-out pilot gate. Every repetition retains the same
 corpus/case identities and writes a separate output directory.
+
+## Recorded v2 result
+
+The frozen held-out pass on source revision `913a7782` passed the predeclared
+classification gate. Its [report](../../scripts/failure-triage/results/v2-held-out/report.md)
+and raw receipts retain every attempt. Development and held-out runs used identical
+source hashes, rubric and baseline versions with no tuning between batches.
+
+- 17/21 correct across 16 families; familyWeightedAccuracy 0.75, the equal-weight mean over families.
+- Four extra abstentions; all 14 definite answers correct; 14/18 definite-case coverage.
+- All three unclear cases abstained. No unavailable responses or unknown charges.
+- The separate model-selected next check was correct only 11/21 times. The pilot
+  must use the existing deterministic cause-to-check map; raw answers remain in receipts.
+- Macro-F1 0.80 versus 0.33 for diagnostic cues and 0.036 for the existing classifier.
+- Held-out usage: 26,035 input and 4,305 output tokens, estimated USD 0.00109347.
+  Median provider latency 347ms, batch duration 8.2s.
+- Including the nine development calls: 30 attempts, estimated USD 0.001547238.
+
+Both frozen baselines are v1 text classifiers that cannot interpret v2's structured
+state. A post-hoc rule using component ownership scored 18/21 and macro-F1 about
+0.81, slightly above the model. The recorded gain over the frozen baselines does
+not establish an advantage over a cheap rule suited to v2. This diagnostic was
+not used to alter the frozen gate or tune model inputs. The reproducible
+[diagnostic result](../../scripts/failure-triage/results/v2-slot-shortcut.json) is
+separate from the immutable live receipts:
+
+```bash
+node scripts/failure-triage/analyze-v2-shortcut.mjs /tmp/new-shortcut-result.json
+```
+
+The result satisfies the original bounded on-demand pilot prerequisite. It does not enable a
+production call site, establish real-log accuracy or prove workflow savings.
+The compact synthetic contracts and small family counts limit interpretation.
+
+Verify the pilot prerequisite before configuring its eventual call site:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/verify-pilot-evidence.mts scripts/failure-triage/results/v2-held-out
+```
+
+The verifier pins the approved receipt manifest, checks every artifact hash and
+recomputes the gate from references and per-case responses. Missing, changed or
+handwritten `eligible=true` reports are rejected. This grants only the recorded
+provider/model/rubric identity, not permission to export an arbitrary run.
 
 ## Read the report
 
@@ -94,6 +144,8 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 export TRIAGE_PROOF_OUT=/tmp/triage-proof-new-run
 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json \
   node --import tsx scripts/failure-triage/prove.mts "$TRIAGE_PROOF_OUT"
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json \
+  node --import tsx scripts/failure-triage/prove-v2.mts "$TRIAGE_PROOF_OUT-v2"
 ```
 
 The living recipe is `scripts/runner-validation/failure-triage-evaluation.recipe.json`.
@@ -109,7 +161,7 @@ not recorded then. That run exceeded the pre-existing classifier by +0.554
 macro-F1, but failed completion and abstention gates even without the cue sheet.
 This arithmetic does not repair the corpus-integrity failure.
 
-Current quarantine takes precedence over key, price and budget diagnostics on the
+V1 quarantine takes precedence over key, price and budget diagnostics on its
 live path. The proof records those cases as quarantine outcomes; simulated
 transport exercises dollar/call budgets and response handling. No-network proof
 is not evidence of live model quality.
