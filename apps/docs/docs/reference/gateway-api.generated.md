@@ -51,7 +51,13 @@ Source: `packages/protocol/src/transport/frames.ts`
 | --------------------------------------- | ---------------- | ------------- | ------ | ------ | ----------------------------------------------------- |
 | `analytics.backfill`                    | analytics        | bounded-write | —      | —      | Analytics Backfill gateway method.                    |
 | `analytics.query`                       | analytics        | bounded-write | —      | —      | Analytics Query gateway method.                       |
+| `assessment.evaluate`                   | assessment       | bounded-write | —      | —      | Assessment Evaluate gateway method.                   |
+| `assessment.feedback`                   | assessment       | bounded-write | —      | —      | Assessment Feedback gateway method.                   |
+| `assessment.get`                        | assessment       | read-only     | —      | —      | Assessment Get gateway method.                        |
+| `assessment.list`                       | assessment       | read-only     | —      | —      | Assessment List gateway method.                       |
+| `assessment.report`                     | assessment       | bounded-write | —      | —      | Assessment Report gateway method.                     |
 | `assessment.status`                     | assessment       | read-only     | —      | —      | Assessment Status gateway method.                     |
+| `assessment.summary`                    | assessment       | bounded-write | —      | —      | Assessment Summary gateway method.                    |
 | `assessment.test`                       | assessment       | bounded-write | —      | —      | Assessment Test gateway method.                       |
 | `auth.connect`                          | auth             | bounded-write | —      | —      | Auth Connect gateway method.                          |
 | `backlog.archive`                       | backlog          | bounded-write | —      | —      | Backlog Archive gateway method.                       |

@@ -18,10 +18,16 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## assessment.\*
 
-| Method              | Surface  | CLI command | TUI | Note                                                                      |
-| ------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------- |
-| `assessment.status` | rpc-only |             |     | Interim provider status inspection; use `farmslot rpc assessment.status`. |
-| `assessment.test`   | rpc-only |             |     | Explicit provider smoke test; use `farmslot rpc assessment.test`.         |
+| Method                | Surface  | CLI command | TUI | Note                                                                                     |
+| --------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------- |
+| `assessment.evaluate` | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.evaluate. |
+| `assessment.get`      | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.get.      |
+| `assessment.report`   | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.report.   |
+| `assessment.list`     | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.list.     |
+| `assessment.feedback` | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.feedback. |
+| `assessment.summary`  | rpc-only |             |     | Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.summary.  |
+| `assessment.status`   | rpc-only |             |     | Interim provider status inspection; use `farmslot rpc assessment.status`.                |
+| `assessment.test`     | rpc-only |             |     | Explicit provider smoke test; use `farmslot rpc assessment.test`.                        |
 
 ## auth.\*
 

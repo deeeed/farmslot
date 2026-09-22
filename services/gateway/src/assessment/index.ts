@@ -68,7 +68,6 @@ export async function assess(
     return {
       provider: request.provider,
       requestedModel: request.model,
-      stateHash: hash(request.state),
       questionSchemaHash: hash(request.questions),
       status: 'unavailable',
       error: 'Assessment configuration unavailable',
@@ -84,7 +83,6 @@ export async function assess(
   const base = {
     provider: providerId,
     requestedModel: model,
-    stateHash: hash(request.state),
     questionSchemaHash: hash(request.questions),
   };
   // Saved config remains opt-in through enabled=true; a credential or provider
@@ -115,6 +113,10 @@ export async function assess(
       error: error instanceof Error ? error.message : 'Assessment input rejected',
     };
   }
+  const preparedIdentity = {
+    stateHash: hash(input.state),
+    questionSchemaHash: hash(input.questions),
+  };
   if (Object.values(input.questions).some((q) => !provider.capabilities.includes(q.type)))
     return {
       ...base,
@@ -129,6 +131,7 @@ export async function assess(
     const response = await provider.assess({ ...input, model, apiKey, signal });
     return {
       ...base,
+      ...preparedIdentity,
       status: 'completed',
       returnedModel: response.returnedModel,
       answers: response.answers,
@@ -145,9 +148,34 @@ export async function assess(
     return {
       ...base,
       status: 'unavailable',
+      ...preparedIdentity,
       error: signal.aborted
         ? 'Assessment cancelled or timed out'
         : 'Assessment provider request failed',
     };
   }
+}
+
+/** Frozen, redacted identity only; does not send context or return credentials. */
+export function assessmentRequestIdentity(request: AssessmentRequest) {
+  const status = assessmentProviderStatus();
+  const providerId = request.provider ?? status.provider;
+  const provider = providerId ? providers.get(providerId) : undefined;
+  const model =
+    request.model ??
+    (request.provider && request.provider !== status.provider ? undefined : status.model) ??
+    provider?.defaultModel;
+  const config = getAssessmentConfig();
+  const input = prepareAssessmentInput(
+    request.state,
+    request.questions,
+    config.maxStateBytes,
+    provider ? (process.env[provider.credentialEnv] ?? '') : '',
+  );
+  return {
+    provider: providerId,
+    model,
+    inputDigest: hash(input.state),
+    questionSchemaHash: hash(input.questions),
+  };
 }

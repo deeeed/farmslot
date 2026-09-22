@@ -1,0 +1,28 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "assessment-monitoring",
+  "description": "Prove assessment persistence, uncertainty, feedback and frozen exports through the production gateway. Seed only an isolated validation home first; rerun after restarting it.",
+  "workflow": {
+    "entry": "gateway-proof",
+    "nodes": {
+      "gateway-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/prove.mjs",
+        "timeout_ms": 60000,
+        "intent": "Read real RPC history and verify all terminal states, uncertainty, feedback persistence and inconclusive evaluation without references.",
+        "next": "browser-proof"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "browser-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/browser.mjs",
+        "timeout_ms": 60000,
+        "intent": "Open the real assessment detail, type feedback with CDP and confirm its persisted revision through assessment.get. Requires isolated CDP and UI URLs; dismiss the first-launch welcome modal before running.",
+        "next": "done"
+      }
+    }
+  }
+}

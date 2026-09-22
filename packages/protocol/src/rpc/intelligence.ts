@@ -17,6 +17,12 @@ export const IntelligenceMethods = {
   llmConfigGet: Methods.LLM_CONFIG_GET,
   llmConfigSet: Methods.LLM_CONFIG_SET,
   llmTiers: Methods.LLM_TIERS,
+  assessmentEvaluate: Methods.ASSESSMENT_EVALUATE,
+  assessmentGet: Methods.ASSESSMENT_GET,
+  assessmentReport: Methods.ASSESSMENT_REPORT,
+  assessmentList: Methods.ASSESSMENT_LIST,
+  assessmentFeedback: Methods.ASSESSMENT_FEEDBACK,
+  assessmentSummary: Methods.ASSESSMENT_SUMMARY,
   assessmentStatus: Methods.ASSESSMENT_STATUS,
   assessmentTest: Methods.ASSESSMENT_TEST,
 } as const;

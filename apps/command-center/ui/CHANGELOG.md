@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show assessment history, answers, uncertainty and operator feedback under Intelligence, with PR preview links and report export.
+
 - Explain unavailable review terminals when dispatch never started or the worktree was cleaned up.
 - Offer Grok 4.7 model choices for Grok and Cursor.
 

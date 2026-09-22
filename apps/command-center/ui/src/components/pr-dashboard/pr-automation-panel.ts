@@ -1053,6 +1053,16 @@ export class PRAutomationPanel extends LitElement {
                     ([kind, errors]) =>
                       html`<span class="error"> · ${kind}: ${errors.join('; ')}</span>`,
                   )}
+                  ${item.reviewIntakeAdvisory
+                    ? html`<span>
+                        · Advice: ${item.reviewIntakeAdvisory.route}
+                        (${item.reviewIntakeAdvisory.assessment.status})
+                        <a
+                          href=${`#intelligence?tab=assessments&assessment=${encodeURIComponent(item.reviewIntakeAdvisory.assessment.assessmentId ?? '')}`}
+                          >Assessment history</a
+                        ></span
+                      >`
+                    : nothing}
                   ${(item.policySummary ?? []).map(
                     (summary) => html`<span class="muted"> · ${summary}</span>`,
                   )}

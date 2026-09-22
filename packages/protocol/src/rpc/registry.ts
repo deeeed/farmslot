@@ -380,6 +380,12 @@ export const Methods = {
   LLM_TIERS: 'llm.tiers',
 
   // Structured assessment providers
+  ASSESSMENT_EVALUATE: 'assessment.evaluate',
+  ASSESSMENT_GET: 'assessment.get',
+  ASSESSMENT_REPORT: 'assessment.report',
+  ASSESSMENT_LIST: 'assessment.list',
+  ASSESSMENT_FEEDBACK: 'assessment.feedback',
+  ASSESSMENT_SUMMARY: 'assessment.summary',
   ASSESSMENT_STATUS: 'assessment.status',
   ASSESSMENT_TEST: 'assessment.test',
 
