@@ -121,7 +121,7 @@ const result = {
   postHoc: true,
   notAGateBaseline: true,
   providerCalls: 0,
-  reviewedSha: 'f80adaf3ecd727acc91908fdde28b17f60c670ef',
+  findingRaisedAtSha: 'f80adaf3ecd727acc91908fdde28b17f60c670ef',
   corpusHash,
   slotRule: {
     'no serialized fixture state in evidence': 'unclear',

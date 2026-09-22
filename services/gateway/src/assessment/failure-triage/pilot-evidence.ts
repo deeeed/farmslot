@@ -62,9 +62,9 @@ export async function verifyTriagePilotEvidence(directory: string) {
   const gate = triageGate({
     liveStatus: report.liveStatus,
     corpusIntegrityPassed: corpusIntegrityPassed(corpus.corpusHash),
-    metrics: triageMetrics(cases, candidate),
-    baseline: triageMetrics(cases, baselines.deterministic),
-    cueSheet: triageMetrics(cases, baselines.cueSheet),
+    metrics: triageMetrics(cases, candidate, corpus.cases),
+    baseline: triageMetrics(cases, baselines.deterministic, corpus.cases),
+    cueSheet: triageMetrics(cases, baselines.cueSheet, corpus.cases),
     violations: report.safetyViolations,
     withinBudget:
       report.usage.attempts <= Math.min(60, report.usage.limits.maxCalls) &&

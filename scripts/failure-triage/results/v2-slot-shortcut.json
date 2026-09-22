@@ -4,7 +4,7 @@
   "postHoc": true,
   "notAGateBaseline": true,
   "providerCalls": 0,
-  "reviewedSha": "f80adaf3ecd727acc91908fdde28b17f60c670ef",
+  "findingRaisedAtSha": "f80adaf3ecd727acc91908fdde28b17f60c670ef",
   "corpusHash": "f678519daa6c014922e1f89a046ec22e4985cb2d1a2155047674e781c3d13d62",
   "slotRule": {
     "no serialized fixture state in evidence": "unclear",
