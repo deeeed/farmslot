@@ -90,7 +90,8 @@ out of the held-out evaluation.
 ## Storage and privacy
 
 History is scoped to the authenticated owner and retained for 30 days, capped at
-5,000 records across the gateway. Records contain metadata and typed answers;
+5,000 records across the gateway. Reads hide expired rows. New attempts prune
+expired rows, with at most one sweep per minute. Records contain metadata and typed answers;
 raw titles, diffs, model inputs and upstream error bodies are not stored.
 Credential values known to the gateway are rejected. Use evidence references,
 not copied review bodies, in feedback.

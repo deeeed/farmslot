@@ -26,6 +26,7 @@ const RETENTION_DAYS = 30;
 const MAX_RECORDS = 5000;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const active = new Set<string>();
+const nextPruneAt = new Map<string, number>();
 let failedWritesSinceStart = 0;
 export function assessmentAuditHealth(): import('@farmslot/protocol').AssessmentAuditHealth {
   return { status: failedWritesSinceStart ? 'degraded' : 'ok', failedWritesSinceStart };
@@ -109,8 +110,13 @@ export async function beginAssessment(context: AssessmentAuditContext): Promise<
   return serialized(async () => {
     assertAssessmentSubject(context.subject);
     await mkdir(root(), { recursive: true, mode: 0o700 });
-    if ((await files()).length >= MAX_RECORDS && (await retained(true)).length >= MAX_RECORDS)
-      throw new Error('Assessment history is full');
+    // Retention is write-side maintenance. Throttle full scans even at capacity;
+    // read RPCs only filter expired rows and never mutate storage.
+    if (Date.now() >= (nextPruneAt.get(root()) ?? 0)) {
+      await retained(true);
+      nextPruneAt.set(root(), Date.now() + 60_000);
+    }
+    if ((await files()).length >= MAX_RECORDS) throw new Error('Assessment history is full');
     const record: AssessmentRecord = {
       version: 1,
       id: randomUUID(),

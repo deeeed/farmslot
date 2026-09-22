@@ -187,4 +187,8 @@ test('read RPCs filter expired history without deleting it', async (t) => {
   await writeFile(file, JSON.stringify(saved));
   assert.equal((await assessmentHistory('alice')).records.length, 0);
   assert.ok((await stat(file)).isFile());
+  const nextMinute = Date.now() + 61_000;
+  t.mock.method(Date, 'now', () => nextMinute);
+  await beginAssessment(context);
+  await assert.rejects(stat(file), /ENOENT/);
 });
