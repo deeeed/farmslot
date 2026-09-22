@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { assess } from './index.js';
@@ -9,6 +12,15 @@ const request = {
     visual: { type: 'boolean' as const, instructions: 'Does this require visual review?' },
   },
 };
+
+const previousHome = process.env.FARMSLOT_HOME;
+const testHome = mkdtempSync(path.join(tmpdir(), 'assessment-index-'));
+process.env.FARMSLOT_HOME = testHome;
+test.after(() => {
+  if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+  else process.env.FARMSLOT_HOME = previousHome;
+  rmSync(testHome, { recursive: true, force: true });
+});
 
 test('assessment is disabled when no explicit opt-in is present', async () => {
   const previous = process.env.FARMSLOT_ASSESSMENT_ENABLED;
@@ -31,6 +43,18 @@ test('explicit assessment with no provider key is skipped without exposing crede
     const result = await assess({ ...request, provider: 'typesafe', enabled: true });
     assert.equal(result.status, 'skipped');
     assert.doesNotMatch(result.error ?? '', /TYPESAFE_API_KEY|Bearer/);
+  } finally {
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
+test('provider selection does not bypass the saved opt-in', async () => {
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'test-key';
+  try {
+    const result = await assess({ ...request, provider: 'typesafe' });
+    assert.equal(result.status, 'disabled');
   } finally {
     if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
     else process.env.TYPESAFE_API_KEY = previous;

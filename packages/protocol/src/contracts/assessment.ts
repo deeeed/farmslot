@@ -97,6 +97,7 @@ export interface AssessmentStatusResult {
   model?: string;
   keyAvailable: boolean;
   providers: AssessmentProviderDescriptor[];
+  error?: string;
 }
 
 export interface AssessmentTestParams {

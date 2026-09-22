@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 
 import {
   type AnalyticsQueryParams,
+  type AssessmentTestParams,
   type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
   type BacklogCloseShippedParams,
@@ -1430,7 +1431,7 @@ async function routeAuthorizedMethod(
     case Methods.ASSESSMENT_STATUS:
       return assessmentStatus();
     case Methods.ASSESSMENT_TEST:
-      return assessmentTest(p as import('@farmslot/protocol').AssessmentTestParams);
+      return assessmentTest(p as AssessmentTestParams);
 
     // Node Health
     case Methods.NODE_HEALTH: {

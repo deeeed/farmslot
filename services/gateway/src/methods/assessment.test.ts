@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { assessmentStatus, assessmentTest } from './assessment.js';
+
+const previousHome = process.env.FARMSLOT_HOME;
+const testHome = mkdtempSync(path.join(tmpdir(), 'assessment-method-'));
+process.env.FARMSLOT_HOME = testHome;
+test.after(() => {
+  if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+  else process.env.FARMSLOT_HOME = previousHome;
+  rmSync(testHome, { recursive: true, force: true });
+});
 
 test('assessment status reports providers and never returns the credential', () => {
   const previous = process.env.TYPESAFE_API_KEY;
@@ -33,4 +45,11 @@ test('assessment test remains optional when the configured provider has no key',
     if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
     else process.env.TYPESAFE_API_KEY = previous;
   }
+});
+
+test('assessment status reports corrupt optional configuration without throwing', () => {
+  writeFileSync(path.join(testHome, 'assessment-config.json'), '{bad', 'utf8');
+  const result = assessmentStatus();
+  assert.equal(result.enabled, false);
+  assert.equal(result.error, 'Assessment configuration unavailable');
 });

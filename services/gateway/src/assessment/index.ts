@@ -28,7 +28,21 @@ function hash(value: AssessmentJsonValue): string {
 }
 
 export function assessmentProviderStatus(): AssessmentStatusResult {
-  const config = getAssessmentConfig();
+  let config;
+  try {
+    config = getAssessmentConfig();
+  } catch {
+    return {
+      enabled: false,
+      keyAvailable: false,
+      providers: providers.list().map(({ id, defaultModel, capabilities }) => ({
+        id,
+        defaultModel,
+        capabilities: [...capabilities],
+      })),
+      error: 'Assessment configuration unavailable',
+    };
+  }
   const provider = config.provider ? providers.get(config.provider) : undefined;
   return {
     enabled: config.enabled,
@@ -73,8 +87,8 @@ export async function assess(
     stateHash: hash(request.state),
     questionSchemaHash: hash(request.questions),
   };
-  // A provider passed on a single request is itself the explicit opt-in. Saved
-  // config remains opt-in through enabled=true; a credential alone does nothing.
+  // Saved config remains opt-in through enabled=true; a credential or provider
+  // selection alone does nothing.
   if (!(request.enabled ?? config.enabled)) return { ...base, status: 'disabled' };
   if (!provider)
     return {
@@ -101,10 +115,9 @@ export async function assess(
       error: error instanceof Error ? error.message : 'Assessment input rejected',
     };
   }
-  const provenance = base;
   if (Object.values(input.questions).some((q) => !provider.capabilities.includes(q.type)))
     return {
-      ...provenance,
+      ...base,
       status: 'skipped',
       error: 'Provider does not support the requested question type',
     };
@@ -115,7 +128,7 @@ export async function assess(
   try {
     const response = await provider.assess({ ...input, model, apiKey, signal });
     return {
-      ...provenance,
+      ...base,
       status: 'completed',
       returnedModel: response.returnedModel,
       answers: response.answers,
@@ -130,7 +143,7 @@ export async function assess(
     // Optional provider failures leave the workflow intact. Never persist upstream
     // exception text: SDK/network errors can include credentials or input excerpts.
     return {
-      ...provenance,
+      ...base,
       status: 'unavailable',
       error: signal.aborted
         ? 'Assessment cancelled or timed out'

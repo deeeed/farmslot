@@ -7,6 +7,17 @@ import type {
 
 import { assess } from './index.js';
 
+const ALLOWED_FACT_KEYS = new Set([
+  'repository',
+  'author',
+  'state',
+  'draft',
+  'base-branch',
+  'head-branch',
+  'labels',
+  'changed-paths',
+]);
+
 function asJsonValue(value: unknown): AssessmentJsonValue {
   if (
     value === null ||
@@ -39,21 +50,15 @@ function choice(result: AssessmentResult, id: string): string | undefined {
 }
 
 /** Read-only review routing hint. It never changes the review profile or admission. */
-export async function assessReviewIntake(subject: PRRuleSubject): Promise<ReviewIntakeAdvisory> {
-  const allowedFactKeys = new Set([
-    'repository',
-    'author',
-    'state',
-    'draft',
-    'base-branch',
-    'head-branch',
-    'labels',
-    'changed-paths',
-  ]);
+export async function assessReviewIntake(
+  subject: PRRuleSubject,
+  signal?: AbortSignal,
+): Promise<ReviewIntakeAdvisory> {
   const facts = Object.fromEntries(
-    Object.entries(subject.facts).filter(([key]) => allowedFactKeys.has(key)),
+    Object.entries(subject.facts).filter(([key]) => ALLOWED_FACT_KEYS.has(key)),
   );
   const assessment = await assess({
+    signal,
     state: asJsonValue({
       pullRequest: subject.pr,
       title: subject.title.slice(0, 500),

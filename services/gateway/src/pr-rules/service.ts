@@ -63,6 +63,37 @@ import type { PRSourceCheckpoints } from './source-checkpoints.js';
 import { validateQaSourceReview } from './source-review.js';
 import type { PRRuleStore } from './store.js';
 
+const REVIEW_INTAKE_ASSESSMENT_CONCURRENCY = 4;
+const REVIEW_INTAKE_ASSESSMENT_BUDGET_MS = 30_000;
+
+async function attachReviewIntakeAdvisories(items: PRRulePreview['items']): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REVIEW_INTAKE_ASSESSMENT_BUDGET_MS);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const item = items[next++];
+      try {
+        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject, controller.signal);
+      } catch (error) {
+        // Advisory work must never disturb the review preview or scheduler.
+        console.warn(
+          `[pr-rules] review intake assessment skipped: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  };
+  try {
+    await Promise.allSettled(
+      Array.from({ length: Math.min(REVIEW_INTAKE_ASSESSMENT_CONCURRENCY, items.length) }, () =>
+        worker(),
+      ),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class PRRuleService {
   private timer?: ReturnType<typeof setInterval>;
   private sweep?: Promise<void>;
@@ -542,11 +573,7 @@ export class PRRuleService {
       }
     }
     if (assessmentEnabled) {
-      await Promise.all(
-        result.items.map(async (item) => {
-          item.reviewIntakeAdvisory = await assessReviewIntake(item.subject);
-        }),
-      );
+      await attachReviewIntakeAdvisories(result.items);
     }
     for (const item of result.items) {
       const profiles = [
