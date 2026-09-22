@@ -20,40 +20,45 @@ eligibility are blocked for this corpus. A separately versioned, reviewed corpus
 with raw incident observations and real family-disjoint provenance is required.
 Do not remove the quarantine to repeat the held-out pass.
 
-## Run the baselines
+## Select the reviewed v2 experiment
 
-From the installed checkout:
+V2 uses fault-time output, source and state from 24 controlled virtual component
+faults, plus six unclear cases. Each definite reference derives from a passing
+fixture, one component mutation, failure and successful restoration. Controls and
+reference explanations stay outside provider input. The hash-bound methodology
+review is in `scripts/failure-triage/corpus-v2-audit.md`.
+
+The 21 held-out cases represent 16 families. External-service and unclear each
+have only one family. Complete compact snapshots and explicit contracts make
+this easier than sparse production diagnostics. Reports show family counts and
+equal-family weighted accuracy, and suppress independent-case confidence intervals
+when variants repeat. These are descriptive synthetic results, not population
+estimates. The existing classifier, v1 cue sheet and rubric remain unchanged.
+
+From the installed checkout, first inspect the offline outputs:
 
 ```bash
-yarn triage:evaluate --out temp/triage/development --split development
-yarn triage:evaluate --out temp/triage/held-out-offline
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-development --split development
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-held-out-offline
 ```
 
-Output directories must be new. The default is offline even when the gateway's
-assessment setting and API key are present. The bundled corpus has 30 cases,
-with nine development and 21 held-out. The generator executes 24 controlled
-fault/repair pairs and supplies six ambiguous, mixed or injected-instruction
-fixtures. Reference fields were excluded structurally, but repair commentary leaked
-semantically into the packets; that is one reason v1 is quarantined.
+Output directories must be new. The default remains offline even when the gateway
+setting and API key are present. Omitting `--corpus` selects quarantined v1 for
+historical inspection. Only explicit v2 selection can pass the integrity guard.
 
-The existing classifier and frozen diagnostic cue sheet see the same redacted
-packets as the candidate. Unmapped or conflicting diagnostic cues abstain.
-`source-manifest.json` records code hashes; the corpus and every packet/question
-also carry hashes. Regenerating the corpus starts a new experiment, never a way
-to tune held-out cases after seeing candidate answers.
-
-## Candidate command and current hold
-
-This command currently returns `not_run` with `corpus-integrity-failed` when the
-key, price and budget checks pass. It cannot send v1 packets again:
+After freezing the source, rubric and baselines, candidate evaluation is explicit:
 
 ```bash
-yarn triage:evaluate --out temp/triage/held-out-live \
+yarn triage:evaluate --corpus v2 --out temp/triage/v2-held-out-live \
   --live --provider typesafe --model jev-1.13.0
 ```
 
+`source-manifest.json` records code hashes; corpus, packets and questions also carry
+hashes. Preserve every attempt. Do not regenerate or tune held-out cases after
+candidate inference. A negative result is a valid outcome, not a reason to rerun.
+
 The TypeSafe adapter reads `TYPESAFE_API_KEY`. No key is accepted in arguments.
-Only the bundled synthetic corpus is admitted. Arbitrary packet/file inputs and
+Only the two pinned synthetic corpora are admitted. Arbitrary packet/file inputs and
 unknown options are rejected; public/company data import is not implemented.
 
 One attempt per selected case, no retries or model fallback. Limits are 60 calls,
@@ -94,6 +99,8 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 export TRIAGE_PROOF_OUT=/tmp/triage-proof-new-run
 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json \
   node --import tsx scripts/failure-triage/prove.mts "$TRIAGE_PROOF_OUT"
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json \
+  node --import tsx scripts/failure-triage/prove-v2.mts "$TRIAGE_PROOF_OUT-v2"
 ```
 
 The living recipe is `scripts/runner-validation/failure-triage-evaluation.recipe.json`.
@@ -109,7 +116,7 @@ not recorded then. That run exceeded the pre-existing classifier by +0.554
 macro-F1, but failed completion and abstention gates even without the cue sheet.
 This arithmetic does not repair the corpus-integrity failure.
 
-Current quarantine takes precedence over key, price and budget diagnostics on the
+V1 quarantine takes precedence over key, price and budget diagnostics on its
 live path. The proof records those cases as quarantine outcomes; simulated
 transport exercises dollar/call budgets and response handling. No-network proof
 is not evidence of live model quality.

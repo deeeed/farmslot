@@ -33,7 +33,8 @@ The initial v1 corpus is quarantined after review found repair-commentary leakag
 and incident-family overlap. Its frozen live run is not valid comparative
 effectiveness evidence. MANUAL-000128 remains unfinished until a separately
 versioned, methodology-reviewed corpus meets the specification. No repeated v1
-live calls or operator pilot are permitted.
+live calls or operator pilot are permitted. V2 has a separate hash-bound methodology
+audit and explicit corpus selection; its evaluation is still pending.
 
 MANUAL-000128 defines the first experiment. Its detailed local backlog spec
 remains authoritative:

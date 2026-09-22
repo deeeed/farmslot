@@ -1,27 +1,30 @@
 import { readFileSync } from 'node:fs';
 
-import { CORPUS_HASH } from './corpus-lock.js';
+import { CORPORA, type CorpusVersion } from './corpus-lock.js';
 import { textDigest } from './packet.js';
-import { LABELS, type TriageCorpus } from './types.js';
+import { LABELS, type TriageCase, type TriageCorpus } from './types.js';
 
-export function loadTriageCorpus(): TriageCorpus {
+export function loadTriageCorpus(version: CorpusVersion = 'v1'): TriageCorpus {
+  const admission = CORPORA[version];
+  if (!admission) throw new Error('Unknown corpus version');
   const bytes = readFileSync(
-    new URL('../../../../../scripts/failure-triage/corpus.json', import.meta.url),
+    new URL(`../../../../../scripts/failure-triage/${admission.file}`, import.meta.url),
     'utf8',
   );
-  if (textDigest(bytes) !== CORPUS_HASH)
+  if (textDigest(bytes) !== admission.hash)
     throw new Error('Bundled corpus changed; freeze a new experiment before evaluation');
   // Exact-byte admission binds this parse to the generated, reviewed schema.
   const corpus = JSON.parse(bytes) as TriageCorpus;
   if (corpus.version !== 1 || corpus.cases.length !== 30) throw new Error('Invalid frozen corpus');
-  // Legacy row-group uniqueness is shape validation, not evidence of family independence.
-  // corpus-integrity.ts records the failed semantic grouping audit.
-  const groups = new Set<string>(),
+  // Related variants may share a split, never cross the development boundary.
+  // Exact-byte admission binds semantic family assignments to the independent audit.
+  const groups = new Map<string, TriageCase['split']>(),
     ids = new Set<string>();
   for (const c of corpus.cases) {
     if (
       ids.has(c.id) ||
-      groups.has(c.group) ||
+      (groups.has(c.group) && groups.get(c.group) !== c.split) ||
+      !['development', 'held-out'].includes(c.split) ||
       c.origin.kind !== 'synthetic' ||
       c.origin.generator !== corpus.generatorVersion ||
       c.packet.caseId !== c.id ||
@@ -29,7 +32,7 @@ export function loadTriageCorpus(): TriageCorpus {
     )
       throw new Error('Invalid corpus identity, split or provenance');
     ids.add(c.id);
-    groups.add(c.group);
+    groups.set(c.group, c.split);
     for (const e of c.packet.evidence)
       if (textDigest(e.text) !== e.digest) throw new Error('Invalid corpus evidence digest');
   }

@@ -8,8 +8,8 @@ import { assertNoCredentials } from '../record-validation.js';
 
 import { BASELINE_VERSION, cueBaseline, existingBaseline, PATTERN_MAPPING } from './baselines.js';
 import { loadTriageCorpus } from './corpus.js';
-import { CORPUS_INTEGRITY, corpusIntegrityPassed } from './corpus-integrity.js';
-import { CORPUS_HASH } from './corpus-lock.js';
+import { corpusIntegrity, corpusIntegrityPassed } from './corpus-integrity.js';
+import { CORPORA, type CorpusVersion } from './corpus-lock.js';
 import { percentiles, triageGate, triageMetrics } from './metrics.js';
 import {
   digest,
@@ -48,6 +48,7 @@ export function triageSkipReason(input: {
 
 export interface TriageOptions {
   out: string;
+  corpus?: CorpusVersion;
   live?: boolean;
   provider?: string;
   model?: string;
@@ -170,7 +171,9 @@ export async function evaluateTriage(options: TriageOptions) {
     throw new Error('Invalid evaluation limits');
   if (options.live && options.fixture)
     throw new Error('Transport fixtures cannot be live evidence');
-  const corpus = loadTriageCorpus();
+  const corpusVersion = options.corpus ?? 'v1';
+  const corpus = loadTriageCorpus(corpusVersion);
+  const corpusHash = CORPORA[corpusVersion].hash;
   const split = options.split ?? 'held-out';
   const cases = corpus.cases.filter(
     (c) => c.split === split && (!options.caseId || c.id === options.caseId),
@@ -210,13 +213,13 @@ export async function evaluateTriage(options: TriageOptions) {
   const candidate: TriageResult[] = [],
     baseline: TriageResult[] = [],
     cueSheet: TriageResult[] = [];
-  await save('corpus-manifest.json', { corpusHash: CORPUS_HASH, ...corpus });
+  await save('corpus-manifest.json', { corpusHash: corpusHash, ...corpus });
   const runStart = {
     version: 1,
     mode,
     status: 'started',
     startedAt: new Date().toISOString(),
-    corpusHash: CORPUS_HASH,
+    corpusHash: corpusHash,
     rubricVersion: RUBRIC_VERSION,
     baselineVersion: BASELINE_VERSION,
     price,
@@ -280,14 +283,15 @@ export async function evaluateTriage(options: TriageOptions) {
     candidate.push(row);
     row.reason = triageSkipReason({
       mode,
-      integrityPassed: corpusIntegrityPassed(CORPUS_HASH),
+      integrityPassed: corpusIntegrityPassed(corpusHash),
       providerAvailable: !!provider,
       keyAvailable: !!key,
       priceReady,
       budgetExhausted:
         overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12,
     });
-    if (!row.reason && provider && key) {
+    if (!row.reason) {
+      if (!provider || !key) throw new Error('Assessment policy admitted an unavailable provider');
       attempts++;
       reservedUsd += reservation;
       row.status = 'started';
@@ -333,15 +337,16 @@ export async function evaluateTriage(options: TriageOptions) {
         const status =
           error && typeof error === 'object' && 'status' in error ? error.status : undefined;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
-        row.reason = overBound
-          ? 'spend-bound-exceeded'
-          : signal.aborted
-            ? 'timeout'
-            : status === 429
-              ? 'rate-limit'
-              : receivedResponse || error instanceof AssessmentResponseError
-                ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
-                : 'provider-request-failed';
+        row.reason =
+          error instanceof AssessmentSpendBoundError
+            ? 'spend-bound-exceeded'
+            : signal.aborted
+              ? 'timeout'
+              : status === 429
+                ? 'rate-limit'
+                : receivedResponse || error instanceof AssessmentResponseError
+                  ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
+                  : 'provider-request-failed';
       }
     }
     row.durationMs = Date.now() - caseStarted;
@@ -367,7 +372,7 @@ export async function evaluateTriage(options: TriageOptions) {
     diagnostic = triageMetrics(cases, cueSheet);
   const pilotGate = triageGate({
     liveStatus,
-    corpusIntegrityPassed: corpusIntegrityPassed(CORPUS_HASH),
+    corpusIntegrityPassed: corpusIntegrityPassed(corpusHash),
     metrics,
     baseline: deterministic,
     cueSheet: diagnostic,
@@ -376,7 +381,7 @@ export async function evaluateTriage(options: TriageOptions) {
   });
   const report = {
     version: 1,
-    corpusHash: CORPUS_HASH,
+    corpusHash: corpusHash,
     rubricVersion: RUBRIC_VERSION,
     baselineVersion: BASELINE_VERSION,
     priceHash: digest(price),
@@ -389,6 +394,7 @@ export async function evaluateTriage(options: TriageOptions) {
     developmentCases: 9,
     heldOutCases: 21,
     selectedCases: cases.length,
+    corpusVersion,
     liveStatus,
     metrics,
     baselines: { deterministic, diagnosticCueSheet: diagnostic },
@@ -411,14 +417,15 @@ export async function evaluateTriage(options: TriageOptions) {
     },
     safetyViolations: violations,
     admissionSkips,
-    corpusIntegrity: CORPUS_INTEGRITY,
+    corpusIntegrity: corpusIntegrity(corpusHash),
     pilotGate,
     decision: pilotGate.decision,
     efficiencyClaim: 'not_established',
     limitations: [
       'Synthetic known-cause classification and next-check accuracy are proxies, not measured operator time savings.',
-      'Twenty-one held-out cases cannot establish broad accuracy.',
-      'The cue sheet is corpus-visible and optimistic, not an independent blind comparator. Historical v1 arithmetic is documented separately and cannot repair its integrity failure.',
+      'Twenty-one held-out cases cannot establish broad accuracy. Family counts describe correlation; case-level confidence intervals are unavailable when families repeat.',
+      'V2 uses compact virtual fixtures with explicit contracts and component ownership, not sparse production logs. External-service and unclear each have only one held-out family.',
+      'The cue sheet was designed against v1 and frozen before v2; it is not an independently authored blind comparator. Historical v1 arithmetic is documented separately and cannot repair its integrity failure.',
       'Next-check references are derived from cause labels; nextCheckCorrect is not an independent measure of diagnostic utility.',
       'The v1 live run had two unattributed invalid-response failures; controlled sub-reasons were added only afterward.',
       'Rubric v1 additionally rejects a definite cause with evidence:none. This rule is now explicit; it was not documented before the frozen run.',
@@ -438,7 +445,7 @@ export async function evaluateTriage(options: TriageOptions) {
     ...runStart,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    corpusHash: CORPUS_HASH,
+    corpusHash: corpusHash,
     decision: report.decision,
   });
   return report;
