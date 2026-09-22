@@ -29,3 +29,12 @@ test('held-out correlation is visible and does not produce independence-based in
   );
   assert.ok(cases.every((c) => !development.has(c.group)));
 });
+
+test('single-case evaluation inherits full-corpus correlation', () => {
+  const corpus = loadTriageCorpus('v2');
+  const metrics = triageMetrics([corpus.cases[0]], [], corpus.cases);
+  assert.equal(metrics.cases, 1);
+  assert.equal(metrics.families, 1);
+  assert.equal(metrics.accuracyInterval95, null);
+  assert.equal(metrics.definitePrecisionInterval95, null);
+});

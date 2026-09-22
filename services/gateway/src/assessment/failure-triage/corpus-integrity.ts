@@ -26,7 +26,7 @@ export const CORPUS_INTEGRITY = {
 };
 
 export function corpusIntegrityPassed(hash: string): boolean {
-  return corpusIntegrity(hash)?.passed === true;
+  return corpusIntegrity(hash).passed === true;
 }
 
 /** Independent methodology audit before any v2 candidate inference. */

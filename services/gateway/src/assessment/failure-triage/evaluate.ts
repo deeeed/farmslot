@@ -213,13 +213,13 @@ export async function evaluateTriage(options: TriageOptions) {
   const candidate: TriageResult[] = [],
     baseline: TriageResult[] = [],
     cueSheet: TriageResult[] = [];
-  await save('corpus-manifest.json', { corpusHash: corpusHash, ...corpus });
+  await save('corpus-manifest.json', { corpusHash, ...corpus });
   const runStart = {
     version: 1,
     mode,
     status: 'started',
     startedAt: new Date().toISOString(),
-    corpusHash: corpusHash,
+    corpusHash,
     rubricVersion: RUBRIC_VERSION,
     baselineVersion: BASELINE_VERSION,
     price,
@@ -367,9 +367,9 @@ export async function evaluateTriage(options: TriageOptions) {
         : candidate.every((r) => r.status === 'completed')
           ? 'completed'
           : 'unavailable';
-  const metrics = triageMetrics(cases, candidate),
-    deterministic = triageMetrics(cases, baseline),
-    diagnostic = triageMetrics(cases, cueSheet);
+  const metrics = triageMetrics(cases, candidate, corpus.cases),
+    deterministic = triageMetrics(cases, baseline, corpus.cases),
+    diagnostic = triageMetrics(cases, cueSheet, corpus.cases);
   const pilotGate = triageGate({
     liveStatus,
     corpusIntegrityPassed: corpusIntegrityPassed(corpusHash),
@@ -381,7 +381,7 @@ export async function evaluateTriage(options: TriageOptions) {
   });
   const report = {
     version: 1,
-    corpusHash: corpusHash,
+    corpusHash,
     rubricVersion: RUBRIC_VERSION,
     baselineVersion: BASELINE_VERSION,
     priceHash: digest(price),
@@ -424,6 +424,7 @@ export async function evaluateTriage(options: TriageOptions) {
     limitations: [
       'Synthetic known-cause classification and next-check accuracy are proxies, not measured operator time savings.',
       'Twenty-one held-out cases cannot establish broad accuracy. Family counts describe correlation; case-level confidence intervals are unavailable when families repeat.',
+      'Both frozen baselines are v1 text classifiers that cannot interpret v2 structured state. A post-hoc deterministic component-ownership rule scored 18/21, macro-F1 about 0.81, so the recorded gain does not establish an advantage over a cheap v2-appropriate rule.',
       'V2 uses compact virtual fixtures with explicit contracts and component ownership, not sparse production logs. External-service and unclear each have only one held-out family.',
       'The cue sheet was designed against v1 and frozen before v2; it is not an independently authored blind comparator. Historical v1 arithmetic is documented separately and cannot repair its integrity failure.',
       'Next-check references are derived from cause labels; nextCheckCorrect is not an independent measure of diagnostic utility.',
@@ -445,7 +446,7 @@ export async function evaluateTriage(options: TriageOptions) {
     ...runStart,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    corpusHash: corpusHash,
+    corpusHash,
     decision: report.decision,
   });
   return report;
