@@ -67,6 +67,7 @@ const sidebars = {
         'guides/customize-worker-prompts',
         'guides/write-a-recipe',
         'guides/learning-package',
+        'guides/assessment-monitoring',
       ],
     },
     {

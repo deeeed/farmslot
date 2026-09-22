@@ -138,6 +138,8 @@ function inferSafetyTier(method: string): string {
     method.includes('capabilities') ||
     // History-only pressure read: in-memory rings + freshness, no mutation.
     method === 'resource.pressure.history' ||
+    // Owner-scoped assessment aggregates do not mutate history.
+    method === 'assessment.summary' ||
     // Device enumeration: runs `simctl`/`adb`/`emulator` list commands and fills
     // a read cache. The heuristic cannot see it because the name says neither
     // "list" nor "get".

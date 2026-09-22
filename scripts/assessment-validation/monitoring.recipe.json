@@ -1,0 +1,49 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "assessment-monitoring",
+  "description": "Prove assessment persistence, uncertainty, feedback and frozen exports through the production gateway. Seed only an isolated validation home first; rerun after restarting it.",
+  "workflow": {
+    "entry": "gateway-proof",
+    "nodes": {
+      "gateway-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/prove.mjs",
+        "timeout_ms": 60000,
+        "intent": "Read real RPC history and verify all terminal states, uncertainty, feedback persistence and inconclusive evaluation without references.",
+        "next": "browser-proof"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "browser-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/browser.mjs",
+        "timeout_ms": 60000,
+        "intent": "Open the real assessment detail, type feedback with CDP and confirm its persisted revision through assessment.get. Requires isolated CDP and UI URLs; dismiss the first-launch welcome modal before running.",
+        "next": "pagination-proof"
+      },
+      "pagination-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/pagination.mjs",
+        "timeout_ms": 60000,
+        "intent": "Verify draft identity survives a newer RPC record, then save two feedback questions on a loaded older page. Seed --pagination before startup.",
+        "next": "restart-proof"
+      },
+      "restart-proof": {
+        "action": "command",
+        "cmd": "node scripts/assessment-validation/restart.mjs",
+        "timeout_ms": 60000,
+        "intent": "Own and restart a separate gateway process on FARMSLOT_ASSESSMENT_RESTART_PORT, proving persisted feedback/report and interrupted attempts.",
+        "next": "screenshot"
+      },
+      "screenshot": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs screenshot intelligence /tmp/assessment-monitoring-recipe.png",
+        "intent": "Capture the actual isolated assessment UI after real gateway actions.",
+        "next": "done",
+        "timeout_ms": 60000
+      }
+    }
+  }
+}

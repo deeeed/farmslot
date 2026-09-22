@@ -29,7 +29,7 @@ test('assessment is disabled when no explicit opt-in is present', async () => {
     const result = await assess(request);
     assert.equal(result.status, 'disabled');
     assert.equal(result.answers, undefined);
-    assert.match(result.stateHash ?? '', /^[a-f0-9]{64}$/);
+    assert.equal(result.stateHash, undefined); // No input was prepared or sent.
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_ASSESSMENT_ENABLED;
     else process.env.FARMSLOT_ASSESSMENT_ENABLED = previous;
