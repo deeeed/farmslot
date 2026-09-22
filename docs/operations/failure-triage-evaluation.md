@@ -73,6 +73,39 @@ Useful smaller experiments use `--split development` or `--case <opaque-id>`.
 They cannot pass the held-out pilot gate. Every repetition retains the same
 corpus/case identities and writes a separate output directory.
 
+## Recorded v2 result
+
+The frozen held-out pass on source revision `913a7782` passed the predeclared
+classification gate. Its [report](../../scripts/failure-triage/results/v2-held-out/report.md)
+and raw receipts retain every attempt. Development and held-out runs used identical
+source hashes, rubric and baseline versions with no tuning between batches.
+
+- 17/21 correct across 16 families; equal-family accuracy 0.75.
+- Four extra abstentions; all 14 definite answers correct; 14/18 definite-case coverage.
+- All three unclear cases abstained. No unavailable responses or unknown charges.
+- The separate model-selected next check was correct only 11/21 times. The pilot
+  must use the existing deterministic cause-to-check map; raw answers remain in receipts.
+- Macro-F1 0.80 versus 0.33 for diagnostic cues and 0.036 for the existing classifier.
+- Held-out usage: 26,035 input and 4,305 output tokens, estimated USD 0.00109347.
+  Median provider latency 347ms, batch duration 8.2s.
+- Including the nine development calls: 30 attempts, estimated USD 0.001547238.
+
+This qualifies the bounded on-demand pilot prerequisite. It does not enable a
+production call site, establish real-log accuracy or prove workflow savings.
+The compact synthetic contracts and small family counts limit interpretation.
+
+Verify the pilot prerequisite before configuring its eventual call site:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/verify-pilot-evidence.mts scripts/failure-triage/results/v2-held-out
+```
+
+The verifier pins the approved receipt manifest, checks every artifact hash and
+recomputes the gate from references and per-case responses. Missing, changed or
+handwritten `eligible=true` reports are rejected. This grants only the recorded
+provider/model/rubric identity, not permission to export an arbitrary run.
+
 ## Read the report
 
 `report.md` and `evaluation.json` show both baselines, candidate confusion matrix,

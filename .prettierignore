@@ -24,3 +24,6 @@ projects/
 
 .githooks/*
 apps/command-center/scripts/git-hooks/*
+
+# Exact-byte experiment receipts. Do not rewrite historical measurements.
+scripts/failure-triage/results/

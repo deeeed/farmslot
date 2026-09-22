@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "sourceRevision": "913a77829b3af5a5a8c06f1ea725fb2b1fdbd5de",
+  "files": {
+    "baseline-results.json": "a872f9d71a2342220c58f03a59a2943c7de9c634fc58f77704e4db8c3a649c36",
+    "candidate-results.json": "7fa1618d3ef76ab97224a856ad183a4cd905cb20bf750b5be83eb50822d5d85d",
+    "candidate-results.jsonl": "bb177a9993e5d5ead3843f54e9404a1958c1fa0f6186192f3fb7626fefa00ac8",
+    "corpus-manifest.json": "4f9b77a4a52ec5e17f2886e80e59f63b529ff873b6572370a3d3e78460e4e8fa",
+    "evaluation.json": "9a4d9d440d830d88c34f8e02e7bf513c49a1e6027529a812d40d2af43814b3f0",
+    "report.md": "aa077d3313ab8a4053ef9997a0221501c4d7c8a73beb0c59f8b1115ee5c6dcf2",
+    "run.json": "ffdae34c73f62d017ed6277edab0b9cb1754e92aa2759a219ab25699cfade03b",
+    "source-manifest.json": "00167ef449a9e0019dda8d4e8b46b0fdbce27208ab8d1194cfcd6536bb2a17b3"
+  }
+}

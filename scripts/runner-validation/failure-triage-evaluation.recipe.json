@@ -21,6 +21,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/prove-v2.mts \"$TRIAGE_PROOF_OUT-v2\"",
         "timeout_ms": 60000,
         "intent": "Prove admitted v2 selection, no reference/control data in serialized SDK input, no retries, live guards and correlated-family reporting without external transport.",
+        "next": "pilot-evidence"
+      },
+      "pilot-evidence": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/prove-pilot-evidence.mts \"$TRIAGE_PROOF_OUT-pilot-evidence\"",
+        "timeout_ms": 60000,
+        "intent": "Validate the immutable pilot prerequisite through the real verifier CLI; reject absent, tampered and handwritten gates without provider calls.",
         "next": "done"
       }
     }
