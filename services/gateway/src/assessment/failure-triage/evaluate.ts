@@ -287,7 +287,8 @@ export async function evaluateTriage(options: TriageOptions) {
       budgetExhausted:
         overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12,
     });
-    if (!row.reason && provider && key) {
+    if (!row.reason) {
+      if (!provider || !key) throw new Error('Assessment policy admitted an unavailable provider');
       attempts++;
       reservedUsd += reservation;
       row.status = 'started';
@@ -333,15 +334,16 @@ export async function evaluateTriage(options: TriageOptions) {
         const status =
           error && typeof error === 'object' && 'status' in error ? error.status : undefined;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
-        row.reason = overBound
-          ? 'spend-bound-exceeded'
-          : signal.aborted
-            ? 'timeout'
-            : status === 429
-              ? 'rate-limit'
-              : receivedResponse || error instanceof AssessmentResponseError
-                ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
-                : 'provider-request-failed';
+        row.reason =
+          error instanceof AssessmentSpendBoundError
+            ? 'spend-bound-exceeded'
+            : signal.aborted
+              ? 'timeout'
+              : status === 429
+                ? 'rate-limit'
+                : receivedResponse || error instanceof AssessmentResponseError
+                  ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
+                  : 'provider-request-failed';
       }
     }
     row.durationMs = Date.now() - caseStarted;

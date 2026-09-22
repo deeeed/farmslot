@@ -316,6 +316,8 @@ test('a future approved corpus still requires provider, credentials, pricing and
     budgetExhausted: false,
   };
   assert.equal(triageSkipReason(valid), undefined);
+  assert.equal(triageSkipReason({ ...valid, mode: 'offline' }), 'offline');
+  assert.equal(triageSkipReason({ ...valid, mode: 'fixture', priceReady: false }), undefined);
   assert.equal(triageSkipReason({ ...valid, providerAvailable: false }), 'unknown-provider');
   assert.equal(triageSkipReason({ ...valid, keyAvailable: false }), 'missing-key');
   assert.equal(triageSkipReason({ ...valid, priceReady: false }), 'unknown-or-stale-price');
