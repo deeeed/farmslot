@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resetAssessmentConfigForTests } from './config.js';
 import { assess } from './index.js';
 
 const request = {
@@ -14,7 +13,6 @@ const request = {
 test('assessment is disabled when no explicit opt-in is present', async () => {
   const previous = process.env.FARMSLOT_ASSESSMENT_ENABLED;
   delete process.env.FARMSLOT_ASSESSMENT_ENABLED;
-  resetAssessmentConfigForTests();
   try {
     const result = await assess(request);
     assert.equal(result.status, 'disabled');
@@ -23,7 +21,6 @@ test('assessment is disabled when no explicit opt-in is present', async () => {
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_ASSESSMENT_ENABLED;
     else process.env.FARMSLOT_ASSESSMENT_ENABLED = previous;
-    resetAssessmentConfigForTests();
   }
 });
 
@@ -31,7 +28,7 @@ test('explicit assessment with no provider key is skipped without exposing crede
   const previous = process.env.TYPESAFE_API_KEY;
   delete process.env.TYPESAFE_API_KEY;
   try {
-    const result = await assess({ ...request, provider: 'typesafe' });
+    const result = await assess({ ...request, provider: 'typesafe', enabled: true });
     assert.equal(result.status, 'skipped');
     assert.doesNotMatch(result.error ?? '', /TYPESAFE_API_KEY|Bearer/);
   } finally {
@@ -41,7 +38,7 @@ test('explicit assessment with no provider key is skipped without exposing crede
 });
 
 test('unknown provider is unavailable and does not change the normal workflow', async () => {
-  const result = await assess({ ...request, provider: 'missing-provider' });
+  const result = await assess({ ...request, provider: 'missing-provider', enabled: true });
   assert.equal(result.status, 'unavailable');
   assert.match(result.error ?? '', /unknown structured assessment provider/);
 });

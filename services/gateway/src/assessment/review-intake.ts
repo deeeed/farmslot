@@ -40,13 +40,24 @@ function choice(result: AssessmentResult, id: string): string | undefined {
 
 /** Read-only review routing hint. It never changes the review profile or admission. */
 export async function assessReviewIntake(subject: PRRuleSubject): Promise<ReviewIntakeAdvisory> {
+  const allowedFactKeys = new Set([
+    'repository',
+    'author',
+    'state',
+    'draft',
+    'base-branch',
+    'head-branch',
+    'labels',
+    'changed-paths',
+  ]);
+  const facts = Object.fromEntries(
+    Object.entries(subject.facts).filter(([key]) => allowedFactKeys.has(key)),
+  );
   const assessment = await assess({
     state: asJsonValue({
       pullRequest: subject.pr,
-      title: subject.title,
-      headSha: subject.headSha,
-      facts: subject.facts,
-      reviewObservation: subject.reviewObservation ?? null,
+      title: subject.title.slice(0, 500),
+      facts,
     }),
     questions: {
       risk: {

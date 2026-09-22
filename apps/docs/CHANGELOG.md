@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Refresh the generated gateway API reference for the structured assessment status/test RPCs.
+
 - Document the gateway.update RPC for safe source checkout updates.
 
 - Task directory contract page: a slot-free static review workspace mirrors `subtasks/` into its operator-visible view under the worker's own names, the review-workspace progress publisher and that view mirror are listed as consumers of the child-unit files, and the layout tree shows `acceptance-status.json` under `artifacts/`, where it is written.

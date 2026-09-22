@@ -78,6 +78,3 @@ export function getAssessmentConfig(): AssessmentConfig {
   }
   return { ...DEFAULTS, ...file, ...validate(overrides) };
 }
-
-/** Compatibility seam for isolated gateway tests; configuration is read per call. */
-export function resetAssessmentConfigForTests(): void {}

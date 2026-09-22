@@ -496,7 +496,12 @@ export class PRRuleService {
     this.notifyChanges();
     return rule;
   }
-  async preview(ownerId: string, id: string, target?: MonitoredPRIdentity): Promise<PRRulePreview> {
+  async preview(
+    ownerId: string,
+    id: string,
+    target?: MonitoredPRIdentity,
+    options: { includeAssessment?: boolean } = {},
+  ): Promise<PRRulePreview> {
     this.assertAuthorized(ownerId);
     const rule = this.store.rule(id, ownerId);
     const team = this.store.team(rule.config.teamId, ownerId);
@@ -527,10 +532,23 @@ export class PRRuleService {
     const validations = new Map<string, string[]>();
     const reviewAction = rule.config.actions.find((action) => action.kind === 'review');
     const monitorAction = rule.config.actions.find((action) => action.kind === 'monitor');
-    for (const item of result.items) {
-      if (getAssessmentConfig().enabled) {
-        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject);
+    let assessmentEnabled = false;
+    if (options.includeAssessment) {
+      try {
+        assessmentEnabled = getAssessmentConfig().enabled;
+      } catch {
+        // A malformed optional assessment config must not break PR discovery or admission.
+        assessmentEnabled = false;
       }
+    }
+    if (assessmentEnabled) {
+      await Promise.all(
+        result.items.map(async (item) => {
+          item.reviewIntakeAdvisory = await assessReviewIntake(item.subject);
+        }),
+      );
+    }
+    for (const item of result.items) {
       const profiles = [
         ...(reviewAction && item.execution
           ? [{ kind: 'review' as const, execution: item.execution }]

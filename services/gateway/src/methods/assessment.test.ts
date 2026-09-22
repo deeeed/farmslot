@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resetAssessmentConfigForTests } from '../assessment/config.js';
-
 import { assessmentStatus, assessmentTest } from './assessment.js';
 
 test('assessment status reports providers and never returns the credential', () => {
@@ -10,7 +8,6 @@ test('assessment status reports providers and never returns the credential', () 
   const previousProvider = process.env.FARMSLOT_ASSESSMENT_PROVIDER;
   process.env.TYPESAFE_API_KEY = 'private-test-key';
   process.env.FARMSLOT_ASSESSMENT_PROVIDER = 'typesafe';
-  resetAssessmentConfigForTests();
   try {
     const result = assessmentStatus();
     assert.equal(result.enabled, false);
@@ -22,7 +19,6 @@ test('assessment status reports providers and never returns the credential', () 
     else process.env.TYPESAFE_API_KEY = previous;
     if (previousProvider === undefined) delete process.env.FARMSLOT_ASSESSMENT_PROVIDER;
     else process.env.FARMSLOT_ASSESSMENT_PROVIDER = previousProvider;
-    resetAssessmentConfigForTests();
   }
 });
 

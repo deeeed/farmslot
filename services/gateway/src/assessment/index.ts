@@ -47,7 +47,19 @@ export async function assess(
   request: AssessmentRequest & { signal?: AbortSignal },
   registry: AssessmentProviderRegistry = providers,
 ): Promise<AssessmentResult> {
-  const config = getAssessmentConfig();
+  let config;
+  try {
+    config = getAssessmentConfig();
+  } catch {
+    return {
+      provider: request.provider,
+      requestedModel: request.model,
+      stateHash: hash(request.state),
+      questionSchemaHash: hash(request.questions),
+      status: 'unavailable',
+      error: 'Assessment configuration unavailable',
+    };
+  }
   const providerId = request.provider ?? config.provider;
   const provider = providerId ? registry.get(providerId) : undefined;
   // A provider override must not inherit another provider's saved model.
@@ -63,8 +75,7 @@ export async function assess(
   };
   // A provider passed on a single request is itself the explicit opt-in. Saved
   // config remains opt-in through enabled=true; a credential alone does nothing.
-  if (!(request.enabled ?? (Boolean(request.provider) || config.enabled)))
-    return { ...base, status: 'disabled' };
+  if (!(request.enabled ?? config.enabled)) return { ...base, status: 'disabled' };
   if (!provider)
     return {
       ...base,
@@ -80,17 +91,17 @@ export async function assess(
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
     throw new Error('Invalid assessment timeout');
   if (!/^[\w.-]{1,100}$/.test(model)) throw new Error('Invalid assessment model');
-  const input = prepareAssessmentInput(
-    request.state,
-    request.questions,
-    config.maxStateBytes,
-    apiKey,
-  );
-  const provenance = {
-    ...base,
-    stateHash: hash(input.state),
-    questionSchemaHash: hash(input.questions),
-  };
+  let input;
+  try {
+    input = prepareAssessmentInput(request.state, request.questions, config.maxStateBytes, apiKey);
+  } catch (error) {
+    return {
+      ...base,
+      status: 'skipped',
+      error: error instanceof Error ? error.message : 'Assessment input rejected',
+    };
+  }
+  const provenance = base;
   if (Object.values(input.questions).some((q) => !provider.capabilities.includes(q.type)))
     return {
       ...provenance,
