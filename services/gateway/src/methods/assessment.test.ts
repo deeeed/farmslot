@@ -48,8 +48,17 @@ test('assessment test remains optional when the configured provider has no key',
 });
 
 test('assessment status reports corrupt optional configuration without throwing', () => {
-  writeFileSync(path.join(testHome, 'assessment-config.json'), '{bad', 'utf8');
-  const result = assessmentStatus();
-  assert.equal(result.enabled, false);
-  assert.equal(result.error, 'Assessment configuration unavailable');
+  const corruptHome = mkdtempSync(path.join(tmpdir(), 'assessment-corrupt-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = corruptHome;
+  try {
+    writeFileSync(path.join(corruptHome, 'assessment-config.json'), '{bad', 'utf8');
+    const result = assessmentStatus();
+    assert.equal(result.enabled, false);
+    assert.equal(result.error, 'Assessment configuration unavailable');
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    rmSync(corruptHome, { recursive: true, force: true });
+  }
 });

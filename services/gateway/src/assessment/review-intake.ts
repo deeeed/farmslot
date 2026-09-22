@@ -1,13 +1,14 @@
 import type {
   AssessmentJsonValue,
   AssessmentResult,
+  PRRuleField,
   PRRuleSubject,
   ReviewIntakeAdvisory,
 } from '@farmslot/protocol';
 
 import { assess } from './index.js';
 
-const ALLOWED_FACT_KEYS = new Set([
+const ALLOWED_FACT_KEYS = new Set<string>([
   'repository',
   'author',
   'state',
@@ -16,7 +17,7 @@ const ALLOWED_FACT_KEYS = new Set([
   'head-branch',
   'labels',
   'changed-paths',
-]);
+] as const satisfies readonly PRRuleField[]);
 
 function asJsonValue(value: unknown): AssessmentJsonValue {
   if (

@@ -72,6 +72,7 @@ async function attachReviewIntakeAdvisories(items: PRRulePreview['items']): Prom
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < items.length) {
+      if (controller.signal.aborted) break;
       const item = items[next++];
       try {
         item.reviewIntakeAdvisory = await assessReviewIntake(item.subject, controller.signal);

@@ -61,6 +61,24 @@ test('provider selection does not bypass the saved opt-in', async () => {
   }
 });
 
+test('oversized assessment input is skipped before provider transport', async () => {
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'test-key';
+  try {
+    const result = await assess({
+      state: { text: 'x'.repeat(70 * 1024) },
+      questions: request.questions,
+      provider: 'typesafe',
+      enabled: true,
+    });
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.error, 'Assessment input limit exceeded');
+  } finally {
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+});
+
 test('unknown provider is unavailable and does not change the normal workflow', async () => {
   const result = await assess({ ...request, provider: 'missing-provider', enabled: true });
   assert.equal(result.status, 'unavailable');
