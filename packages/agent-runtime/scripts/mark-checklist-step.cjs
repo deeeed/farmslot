@@ -393,7 +393,9 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
 function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPath, _taskDir) {
   const base = {
     ...pickSignalPassthrough(signal),
-    ...(isStartCommand ? { attemptId: randomUUID() } : {}),
+    ...(isStartCommand
+      ? { attemptId: process.env.FARMSLOT_SIGNAL_ATTEMPT_ID || randomUUID() }
+      : {}),
     step: target?.label ?? signal.step ?? 'complete',
     checklistTiming: {
       schemaVersion: 1,
@@ -507,6 +509,17 @@ const target = isStartCommand
 
 const now = new Date().toISOString();
 const signal = readJson(signalPath);
+// The launcher owns the attempt. Descendants may repeat bootstrap, but must not
+// replace the parent's identity or reset progress within that same attempt.
+if (
+  isStartCommand &&
+  process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
+  signal.attemptId === process.env.FARMSLOT_SIGNAL_ATTEMPT_ID &&
+  signal.status === 'running'
+) {
+  console.log('signal already started');
+  process.exit(0);
+}
 const timing =
   signal.checklistTiming && typeof signal.checklistTiming === 'object'
     ? signal.checklistTiming

@@ -33,6 +33,13 @@ const acceptance = context.promptAcceptance;
 const signal = existsSync(context.signalFile)
   ? JSON.parse(readFileSync(context.signalFile, 'utf8'))
   : null;
+const launchReceipt = JSON.parse(
+  readFileSync(path.join(run.reviewWorkspace.taskPath, '.terminal-launch.json'), 'utf8'),
+);
+if (launchReceipt.signalAttemptId) {
+  assert.equal(context.signalAttemptId, launchReceipt.signalAttemptId);
+  if (signal) assert.equal(signal.attemptId, launchReceipt.signalAttemptId);
+}
 if (acceptance) {
   assert.equal(acceptance.runner, run.metrics.runner);
   assert.equal(acceptance.deliveryStartedAt, context.promptDeliveryStartedAt);

@@ -224,6 +224,32 @@ assert.equal(parsed.status, 'running');
 assert.equal(parsed.step, 'started');
 assert.equal(parsed.checklistTiming.events.length, 0);
 
+// The launcher supplies one identity to the reviewer and all its descendants.
+const launchAttempt = '11111111-1111-4111-8111-111111111111';
+const launchEnv = { ...process.env, FARMSLOT_SIGNAL_ATTEMPT_ID: launchAttempt };
+result = spawnSync(process.execPath, [helper, startDir, 'start'], {
+  env: launchEnv,
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+assert.equal(JSON.parse(readFileSync(startSignal, 'utf8')).attemptId, launchAttempt);
+result = spawnSync(process.execPath, [helper, startDir, '1'], { env: launchEnv, encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+const beforeRepeatedStart = readFileSync(startSignal, 'utf8');
+result = spawnSync(process.execPath, [helper, startDir, 'start'], {
+  env: launchEnv,
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(startSignal, 'utf8'), beforeRepeatedStart);
+const nextAttempt = '22222222-2222-4222-8222-222222222222';
+result = spawnSync(process.execPath, [helper, startDir, 'start'], {
+  env: { ...launchEnv, FARMSLOT_SIGNAL_ATTEMPT_ID: nextAttempt },
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+assert.equal(JSON.parse(readFileSync(startSignal, 'utf8')).attemptId, nextAttempt);
+
 result = spawnSync(process.execPath, [helper, dir, '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0);
 assert.match(result.stdout, /mark no-change/);

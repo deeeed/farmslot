@@ -28,6 +28,7 @@ export interface ReviewTmuxOperationResult {
   exists?: boolean;
   startedAt?: string;
   stopped?: boolean;
+  signalAttemptId?: string;
 }
 
 /** Native prompt acceptance and task progress are independent startup evidence. */
@@ -267,6 +268,7 @@ export async function launchReviewTmux(
     id: 'review',
     status: 'launching',
     promptDeliveryStartedAt: started.startedAt ?? context.attemptStartedAt,
+    ...(started.signalAttemptId ? { signalAttemptId: started.signalAttemptId } : {}),
   });
   await persistRunNow(getRun(runId)!, 'terminal review launched');
   return { session };

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Copy links to nested Config pages, including pool, project and flow selections.
+
 - Expose the current-view copy action to the Electron UI, with `farmslot://` or `farmslot-dev://` full-view links preserving URL navigation state.
 
 - Confirm before quitting, and fully exit after cleanup so a cancelled native quit cannot leave an invisible process blocking Dock relaunch.

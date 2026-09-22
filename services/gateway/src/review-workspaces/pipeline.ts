@@ -454,7 +454,11 @@ export async function executeReviewWorkspaceStep(
             context &&
             (context.status !== status ||
               (signal?.attemptId !== undefined && context.signalAttemptId !== signal.attemptId) ||
-              (acceptance && context.promptAcceptance !== acceptance))
+              (acceptance &&
+                (!context.promptAcceptance ||
+                  context.promptAcceptance.deliveryStartedAt !== acceptance.deliveryStartedAt ||
+                  context.promptAcceptance.sessionId !== acceptance.sessionId ||
+                  context.promptAcceptance.runner !== acceptance.runner)))
           ) {
             await upsertAgentContext(
               runId,
