@@ -39,8 +39,9 @@ Run the same static PR intake corpus twice:
 1. control: assessment disabled;
 2. candidate: assessment enabled with a pinned provider/model.
 
-The candidate receives only PR identity, title, head SHA, normalized facts, and
-existing review observations. It does not receive screenshots. The advisory
+The candidate receives only PR identity, title, and an allowlisted set of
+normalized facts. It does not receive the head SHA, existing review
+observations, or screenshots. The advisory
 classifies risk, visual-review need, and a review surface. It is attached to the
 preview item and never changes `match`, execution, review profile, admission,
 publication, or merge state.
