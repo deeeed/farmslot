@@ -55,6 +55,7 @@ const env = { ...process.env, TSX_TSCONFIG_PATH: 'services/gateway/tsconfig.json
 delete env.TYPESAFE_API_KEY;
 for (const [name, args, reason] of [
   ['offline', [], 'offline'],
+  ['single-case', ['--case', corpus.cases.find((c) => c.split === 'held-out')!.id], 'offline'],
   ['missing-key', ['--live', '--provider', 'typesafe', '--model', 'jev-1.13.0'], 'missing-key'],
   ['unknown-provider', ['--live', '--provider', 'unregistered'], 'unknown-provider'],
 ] as const) {
@@ -86,7 +87,7 @@ for (const [name, args, reason] of [
   const report = JSON.parse(await readFile(path.join(dir, 'evaluation.json'), 'utf8'));
   const records = JSON.parse(await readFile(path.join(dir, 'candidate-results.json'), 'utf8'));
   assert.equal(report.corpusHash, CORPORA.v2.hash);
-  assert.equal(report.metrics.families, 16);
+  assert.equal(report.metrics.families, name === 'single-case' ? 1 : 16);
   assert.equal(report.metrics.accuracyInterval95, null);
   assert.equal(report.usage.attempts, 0);
   assert.equal(report.decision, 'hold');

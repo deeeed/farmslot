@@ -31,7 +31,7 @@ review is in `scripts/failure-triage/corpus-v2-audit.md`.
 The 21 held-out cases represent 16 families. External-service and unclear each
 have only one family. Complete compact snapshots and explicit contracts make
 this easier than sparse production diagnostics. Reports show family counts and
-equal-family weighted accuracy, and suppress independent-case confidence intervals
+`familyWeightedAccuracy`, the equal-weight mean over families, and suppress independent-case confidence intervals
 when variants repeat. These are descriptive synthetic results, not population
 estimates. The existing classifier, v1 cue sheet and rubric remain unchanged.
 
@@ -80,7 +80,7 @@ classification gate. Its [report](../../scripts/failure-triage/results/v2-held-o
 and raw receipts retain every attempt. Development and held-out runs used identical
 source hashes, rubric and baseline versions with no tuning between batches.
 
-- 17/21 correct across 16 families; equal-family accuracy 0.75.
+- 17/21 correct across 16 families; familyWeightedAccuracy 0.75, the equal-weight mean over families.
 - Four extra abstentions; all 14 definite answers correct; 14/18 definite-case coverage.
 - All three unclear cases abstained. No unavailable responses or unknown charges.
 - The separate model-selected next check was correct only 11/21 times. The pilot
@@ -90,7 +90,19 @@ source hashes, rubric and baseline versions with no tuning between batches.
   Median provider latency 347ms, batch duration 8.2s.
 - Including the nine development calls: 30 attempts, estimated USD 0.001547238.
 
-This qualifies the bounded on-demand pilot prerequisite. It does not enable a
+Both frozen baselines are v1 text classifiers that cannot interpret v2's structured
+state. A post-hoc rule using component ownership scored 18/21 and macro-F1 about
+0.81, slightly above the model. The recorded gain over the frozen baselines does
+not establish an advantage over a cheap rule suited to v2. This diagnostic was
+not used to alter the frozen gate or tune model inputs. The reproducible
+[diagnostic result](../../scripts/failure-triage/results/v2-slot-shortcut.json) is
+separate from the immutable live receipts:
+
+```bash
+node scripts/failure-triage/analyze-v2-shortcut.mjs /tmp/new-shortcut-result.json
+```
+
+The result satisfies the original bounded on-demand pilot prerequisite. It does not enable a
 production call site, establish real-log accuracy or prove workflow savings.
 The compact synthetic contracts and small family counts limit interpretation.
 

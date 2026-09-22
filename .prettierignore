@@ -27,3 +27,5 @@ apps/command-center/scripts/git-hooks/*
 
 # Exact-byte experiment receipts. Do not rewrite historical measurements.
 scripts/failure-triage/results/
+scripts/failure-triage/corpus.json
+scripts/failure-triage/corpus-v2.json

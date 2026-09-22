@@ -7,7 +7,7 @@ import { triageGate, triageMetrics } from './metrics.js';
 import { RUBRIC_VERSION, textDigest } from './packet.js';
 import type { TriageCorpus, TriageResult } from './types.js';
 
-/** Exact receipts from the frozen, reviewed experiment; not a client assertion. */
+/** Exact receipts from one reviewed experiment. Admitting another requires a reviewed source change. */
 export const TRIAGE_PILOT_RECEIPT_HASH =
   'afe213b7c88ed4e0b2a9d432144c9f8417f4cddfa778a0f48a766e09b5ca8862';
 
@@ -62,9 +62,9 @@ export async function verifyTriagePilotEvidence(directory: string) {
   const gate = triageGate({
     liveStatus: report.liveStatus,
     corpusIntegrityPassed: corpusIntegrityPassed(corpus.corpusHash),
-    metrics: triageMetrics(cases, candidate),
-    baseline: triageMetrics(cases, baselines.deterministic),
-    cueSheet: triageMetrics(cases, baselines.cueSheet),
+    metrics: triageMetrics(cases, candidate, corpus.cases),
+    baseline: triageMetrics(cases, baselines.deterministic, corpus.cases),
+    cueSheet: triageMetrics(cases, baselines.cueSheet, corpus.cases),
     violations: report.safetyViolations,
     withinBudget:
       report.usage.attempts <= Math.min(60, report.usage.limits.maxCalls) &&

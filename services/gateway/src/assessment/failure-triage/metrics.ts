@@ -2,7 +2,11 @@ import { wilsonInterval } from '../evaluation.js';
 
 import { LABELS, type TriageCase, type TriageResult } from './types.js';
 
-export function triageMetrics(cases: TriageCase[], results: TriageResult[]) {
+export function triageMetrics(
+  cases: TriageCase[],
+  results: TriageResult[],
+  corpusCases: TriageCase[] = cases,
+) {
   const byId = new Map(results.map((r) => [r.caseId, r]));
   if (byId.size !== results.length)
     throw new Error('Repeated attempts cannot be scored as independent cases');
@@ -49,7 +53,8 @@ export function triageMetrics(cases: TriageCase[], results: TriageResult[]) {
   });
   const completed = cases.filter((c) => byId.get(c.id)?.status === 'completed').length;
   const families = [...new Set(cases.map((c) => c.group))];
-  const correlated = families.length !== cases.length;
+  // Subset evaluation inherits the full corpus's dependence, even for one selected case.
+  const correlated = new Set(corpusCases.map((c) => c.group)).size !== corpusCases.length;
   const familyAccuracy = families.map((group) => {
     const members = cases.filter((c) => c.group === group);
     return (
