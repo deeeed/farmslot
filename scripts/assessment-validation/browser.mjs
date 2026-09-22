@@ -52,8 +52,10 @@ console.log(
   }),
 );
 
-const nonReview = rpc('assessment.list', { consumer: 'smoke-test' }).records[0];
-if (nonReview) {
+const smoke = rpc('assessment.test', { provider: 'missing-validation-provider' });
+assert.ok(smoke.assessmentId, 'Synthetic smoke attempt must be recorded');
+const nonReview = rpc('assessment.get', { id: smoke.assessmentId });
+{
   cdp('goto', `intelligence?tab=assessments&assessment=${nonReview.id}`);
   let disabled = false;
   for (let i = 0; i < 40; i++) {

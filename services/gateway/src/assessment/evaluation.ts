@@ -13,7 +13,11 @@ import { computePackageHash, stableJson } from '../evals/package-store.js';
 import { saveAssessmentArtifact } from './artifacts.js';
 import { assertNoCredentials } from './record-validation.js';
 import { assessmentReport } from './report.js';
-import { assessmentCohort, representativeAssessments } from './summary.js';
+import {
+  assessmentAccountingCase,
+  assessmentCohort,
+  representativeAssessments,
+} from './summary.js';
 
 export function wilsonInterval(correct: number, total: number): [number, number] | null {
   if (!total) return null;
@@ -144,9 +148,18 @@ export function evaluateAssessmentReport(
       computePackageHash(a) !== a.packageHash
     )
       throw new Error('Invalid or changed eval package');
+    const attempts = report.records.filter((r) => r.consumer === 'review-intake');
+    const accountingKey = representatives[0] && assessmentAccountingCase(representatives[0]);
+    // A treatment may call a requested alias that resolves to several builds.
+    // Compare usage for that one request cohort; keep accuracy grouped by returned build.
+    const oneAccountingCase = Boolean(
+      accountingKey && attempts.every((r) => assessmentAccountingCase(r) === accountingKey),
+    );
     comparison = {
       status: 'inconclusive',
-      reason: 'Packages must be final, distinct and match task, source and reviewer configuration',
+      reason: oneAccountingCase
+        ? 'Packages must be final, distinct and match task, source and reviewer configuration'
+        : 'Report must contain one PR/head/requested-model/policy cohort with a completed assessment',
       baselinePackageHash: b.packageHash,
       assistedPackageHash: a.packageHash,
     };
@@ -160,7 +173,7 @@ export function evaluateAssessmentReport(
       Boolean(b.axes.model?.ref && b.axes.runner?.ref && b.axes.review?.ref) &&
       aa?.ref === report.reportId &&
       a.source.kind === 'merged-pr' &&
-      representatives.length === 1 &&
+      oneAccountingCase &&
       representatives[0].subject.pr?.repo.toLowerCase() === a.source.repo.toLowerCase() &&
       representatives[0].subject.pr?.number === a.source.prNumber &&
       representatives[0].subject.pr?.headSha === a.source.headSha &&
@@ -188,7 +201,6 @@ export function evaluateAssessmentReport(
           elapsedDeltaMs: ad! - bd!,
         };
       else comparison.reason = 'Comparable packages lack reported token or duration metrics';
-      const attempts = report.records.filter((r) => r.consumer === 'review-intake');
       if (comparison.status === 'comparable') {
         const missing = attempts.filter(
           (r) =>

@@ -82,10 +82,18 @@ try {
   const alias = rpc('assessment.list').records.find(
     (r) => r.status === 'completed' && r.result?.requestedModel === 'latest',
   );
+  assert.ok(alias, 'Alias completion fixture must exist');
   const accounting = rpc('assessment.report', { assessmentId: alias.id });
-  assert.equal(accounting.records.length, 2);
-  assert.equal(accounting.summary.callsWithUsage, 1);
+  assert.equal(accounting.records.length, 3);
+  assert.equal(accounting.summary.callsWithUsage, 2);
+  assert.equal(accounting.summary.uniqueCases, 2);
   assert.ok(accounting.records.some((r) => r.status === 'unavailable'));
+  const paired = execFileSync(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/assessment-validation/evaluate-pair.mts', accounting.reportId],
+    { env, encoding: 'utf8' },
+  );
+  console.log(paired.trim());
   const record = rpc('assessment.list').records.find((r) => r.status === 'completed');
   const updated = rpc('assessment.feedback', {
     id: record.id,

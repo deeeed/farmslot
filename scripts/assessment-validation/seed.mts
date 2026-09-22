@@ -73,7 +73,8 @@ if (process.argv.includes('--alias')) {
     requestedIdentity: identity,
     subject: { pr: { ...context.subject.pr, number: 9 } },
   };
-  for (const status of ['unavailable', 'completed'] as const) {
+  let build = 0;
+  for (const status of ['unavailable', 'completed', 'completed'] as const) {
     const record = await beginAssessment(audit);
     const result =
       status === 'completed'
@@ -81,7 +82,7 @@ if (process.argv.includes('--alias')) {
             status,
             provider: 'fixture',
             requestedModel: 'latest',
-            returnedModel: 'fixed',
+            returnedModel: `fixed-${++build}`,
             questionSchemaHash: identity.questionSchemaHash,
             answers: {
               risk: {

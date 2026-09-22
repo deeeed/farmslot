@@ -253,7 +253,7 @@ test('owner can freeze a single case after assessing other PRs without borrowing
       {
         ...fixture.result!,
         requestedModel: 'alias',
-        returnedModel: 'fixed',
+        returnedModel: ids.length === 3 ? 'fixed-v2' : 'fixed',
         usage: {
           provider: 'fake',
           requestedModel: 'alias',
@@ -270,7 +270,7 @@ test('owner can freeze a single case after assessing other PRs without borrowing
   const selected = await assessmentReport('alice', undefined, ids[0]);
   assert.equal(selected.records.length, 2);
   assert.equal(selected.summary.tokens, 22);
-  assert.equal(selected.summary.uniqueCases, 1);
+  assert.equal(selected.summary.uniqueCases, 2);
   assert.ok(selected.records.every((r) => r.subject.pr?.number === 1));
   assert.deepEqual(await assessmentReport('alice', selected.reportId), selected);
   await assert.rejects(assessmentReport('bob', undefined, ids[0]), /not found/);

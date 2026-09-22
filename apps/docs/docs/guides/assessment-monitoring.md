@@ -76,8 +76,9 @@ question types. A small sample or selective accuracy is not proof of safe routin
 The optional `pair` accepts hashed `baseline` and `assisted` result-package
 manifests. They must be final, have distinct run IDs, matching objective, task,
 source and reviewer axes, and no missing data. The assisted assessment axis
-`ref` must equal the report ID. The report must contain one unique PR/head cohort
-matching the packages' merged-PR source. Use explicit `ref` values for the model,
+`ref` must equal the report ID. The report must contain one requested-model cohort for one PR/head
+matching the packages' merged-PR source. Repeated calls may return different builds;
+usage includes them all while accuracy remains grouped by returned build. Use explicit `ref` values for the model,
 runner and review configuration, including effort in the review ref.
 
 The report compares declared reviewer tokens and elapsed time. `assessmentTokensStatus` and `assessmentAttemptsMissingUsage` expose incomplete
