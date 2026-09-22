@@ -386,6 +386,9 @@ export const Methods = {
   ASSESSMENT_LIST: 'assessment.list',
   ASSESSMENT_FEEDBACK: 'assessment.feedback',
   ASSESSMENT_SUMMARY: 'assessment.summary',
+  FAILURE_TRIAGE_GET: 'intelligence.triage.get',
+  FAILURE_TRIAGE_ANALYZE: 'intelligence.triage.analyze',
+  FAILURE_TRIAGE_FEEDBACK: 'intelligence.triage.feedback',
   ASSESSMENT_STATUS: 'assessment.status',
   ASSESSMENT_TEST: 'assessment.test',
 

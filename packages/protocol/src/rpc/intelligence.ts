@@ -1,6 +1,9 @@
 import { Methods } from './registry.js';
 
 export const IntelligenceMethods = {
+  triageGet: Methods.FAILURE_TRIAGE_GET,
+  triageAnalyze: Methods.FAILURE_TRIAGE_ANALYZE,
+  triageFeedback: Methods.FAILURE_TRIAGE_FEEDBACK,
   actionsSummary: Methods.INTELLIGENCE_ACTIONS_SUMMARY,
   finetuneIndex: Methods.FINETUNE_INDEX,
   finetuneExportSft: Methods.FINETUNE_EXPORT_SFT,

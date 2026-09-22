@@ -991,6 +991,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         `
       : nothing}
     ${r.grade ? ctx.renderGrade(r.grade) : nothing} ${ctx._renderPosture(r)}
+    ${r.flowType === 'dev' && r.steps.some((s) => s.status === 'failed')
+      ? html`<failure-triage-panel
+          .runId=${r.id}
+          .runVersion=${JSON.stringify([
+            r.status,
+            r.steps
+              .filter((s) => s.status === 'failed')
+              .map((s) => [s.name, s.startedAt, s.completedAt, s.detail]),
+          ])}
+        ></failure-triage-panel>`
+      : nothing}
     <div class="pipeline-section">
       <run-pipeline
         .run=${r}

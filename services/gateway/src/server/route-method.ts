@@ -69,6 +69,9 @@ import {
   type DispatchQueueUpdateParams,
   type EventFrame,
   Events,
+  type FailureTriageAnalyzeParams,
+  type FailureTriageFeedbackParams,
+  type FailureTriageGetParams,
   type FinetuneExportDPOParams,
   type FinetuneExportSFTParams,
   type FinetuneIndexParams,
@@ -329,6 +332,11 @@ import {
   refreshBranches,
   setPressureAdmissionEnabled,
 } from '../methods/dispatch.js';
+import {
+  failureTriageAnalyze,
+  failureTriageFeedback,
+  failureTriageGet,
+} from '../methods/failure-triage.js';
 import {
   fileTransferCancel,
   fileTransferList,
@@ -1454,6 +1462,12 @@ async function routeAuthorizedMethod(
       return assessmentFeedback(p as AssessmentFeedbackParams);
     case Methods.ASSESSMENT_SUMMARY:
       return assessmentSummary();
+    case Methods.FAILURE_TRIAGE_GET:
+      return failureTriageGet(p as FailureTriageGetParams);
+    case Methods.FAILURE_TRIAGE_ANALYZE:
+      return failureTriageAnalyze(p as FailureTriageAnalyzeParams);
+    case Methods.FAILURE_TRIAGE_FEEDBACK:
+      return failureTriageFeedback(p as FailureTriageFeedbackParams);
     case Methods.ASSESSMENT_STATUS:
       return assessmentStatus();
     case Methods.ASSESSMENT_TEST:

@@ -3,8 +3,8 @@ title: Monitor structured assessments
 ---
 
 Open **Intelligence → Assessments** to inspect saved experimental assessments.
-The history currently includes synthetic connection tests and historical PR-intake
-advice. **PR rule previews and scheduled scans do not call the classifier.**
+The history includes synthetic connection tests, historical PR-intake advice and
+opt-in failure-triage requests. **PR rule previews and scheduled scans do not call the classifier.**
 The earlier PR-metadata pilot has no demonstrated workflow benefit and its
 automatic preview invocation has been removed.
 
@@ -13,12 +13,31 @@ correctness or lower workflow cost. Failure-triage evaluation and other consumer
 must pass their own baseline comparisons before operator rollout. Recipe/result
 assessment is outside the current implementation scope.
 
+## Request experimental failure advice
+
+A failed development run has an **Experimental failure advice** panel. It is off
+by default and requires an evaluated provider/model plus explicit approval of
+public or synthetic source bytes. Configuration, stale data, budgets and missing
+credentials block calls independently. A key alone never enables it.
+
+An explicit request saves the sanitized text and a reservation before contacting
+the provider. The panel shows the cause, a fixed read-only diagnostic, requested
+and returned model, source identities, cost/usage and optional feedback. Cached
+advice makes no new call; interrupted attempts require an explicit retry.
+No run verdict or recovery action changes.
+
+Follow the [gateway setup guide](https://github.com/deeeed/farmslot/blob/main/docs/operations/experimental-failure-advice.md)
+for source drafts, policy and checkout-local CLI commands. The pilot's workflow
+efficiency remains unproven.
+
 ## Evaluate failure triage
 
 The checkout-local `yarn triage:evaluate --out <new-directory>` command runs the
 frozen failure-triage baselines offline. The initial corpus is quarantined for repair-commentary leakage and related
 incidents crossing splits. `--live` is blocked for that corpus; no operator pilot
-is enabled. Read the
+is enabled by an evaluation command. V2 is separately admitted with `--corpus v2`.
+Its original gate passes, but a cheap rule suited to those synthetic fixtures
+scored slightly higher than the model. Read the
 result's per-baseline metrics and pilot/hold decision; it does not measure
 operator time savings. This experiment does not create normal run classifications
 or enable an operator pilot automatically.
@@ -30,7 +49,7 @@ attempts. Interrupted means the gateway did not save a terminal result, includin
 a restart during a call. A storage failure suppresses the optional call and shows
 an audit warning. The warning count covers the current gateway process only.
 
-The `needs-review` recommendation means gateway policy abstained. Causes include
+For historical PR-intake records, the `needs-review` recommendation means gateway policy abstained. Causes include
 missing changed-path context, low confidence, an uncertain visual probability or
 contradictory answers. The thresholds are experimental, not calibrated accuracy.
 The detail view retains the provider's original answers.

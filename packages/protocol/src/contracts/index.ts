@@ -13,6 +13,7 @@ export * from './diff-view.js';
 export * from './dispatch.js';
 export * from './evals.js';
 export * from './execution-templates.js';
+export * from './failure-triage.js';
 export * from './family.js';
 export * from './gate-park.js';
 export * from './glob.js';

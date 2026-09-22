@@ -70,6 +70,7 @@ export async function assess(
       requestedModel: request.model,
       questionSchemaHash: hash(request.questions),
       status: 'unavailable',
+      attempted: false,
       error: 'Assessment configuration unavailable',
     };
   }
@@ -81,6 +82,7 @@ export async function assess(
     (request.provider && request.provider !== config.provider ? undefined : config.model) ??
     provider?.defaultModel;
   const base = {
+    attempted: false,
     provider: providerId,
     requestedModel: model,
     questionSchemaHash: hash(request.questions),
@@ -133,6 +135,7 @@ export async function assess(
       ...base,
       ...preparedIdentity,
       status: 'completed',
+      attempted: true,
       returnedModel: response.returnedModel,
       answers: response.answers,
       usage: {
@@ -148,6 +151,7 @@ export async function assess(
     return {
       ...base,
       status: 'unavailable',
+      attempted: true,
       ...preparedIdentity,
       error: signal.aborted
         ? 'Assessment cancelled or timed out'

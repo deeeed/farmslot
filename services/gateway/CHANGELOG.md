@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
+
 - Add an offline-first, bounded failure-triage evaluation CLI with versioned, audited synthetic corpora, deterministic baselines, family-aware reporting and an explicit pilot/hold decision.
 
 - Keep PR matching deterministic: previews no longer invoke optional assessment models, and long source reads return resumable progress within a bounded attempt.

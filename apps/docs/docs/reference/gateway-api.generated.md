@@ -171,6 +171,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `improvement.apply`                     | improvement      | bounded-write | —      | —      | Improvement Apply gateway method.                     |
 | `improvement.chat`                      | improvement      | bounded-write | —      | —      | Improvement Chat gateway method.                      |
 | `intelligence.actions.summary`          | intelligence     | bounded-write | —      | —      | Intelligence Actions Summary gateway method.          |
+| `intelligence.triage.analyze`           | intelligence     | bounded-write | —      | —      | Intelligence Triage Analyze gateway method.           |
+| `intelligence.triage.feedback`          | intelligence     | bounded-write | —      | —      | Intelligence Triage Feedback gateway method.          |
+| `intelligence.triage.get`               | intelligence     | read-only     | —      | —      | Intelligence Triage Get gateway method.               |
 | `llm.auth.add`                          | llm              | bounded-write | —      | —      | Llm Auth Add gateway method.                          |
 | `llm.auth.import`                       | llm              | bounded-write | —      | —      | Llm Auth Import gateway method.                       |
 | `llm.auth.list`                         | llm              | read-only     | —      | —      | Llm Auth List gateway method.                         |

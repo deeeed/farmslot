@@ -67,6 +67,7 @@ export interface AssessmentUsage {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  costKind?: 'estimated' | 'reported';
   durationMs: number;
   requestId?: string;
 }
@@ -74,6 +75,8 @@ export interface AssessmentUsage {
 export type AssessmentStatus = 'disabled' | 'skipped' | 'unavailable' | 'completed';
 
 export interface AssessmentResult {
+  /** Provider adapter invoked; absent means historical/unknown, not zero calls. */
+  attempted?: boolean;
   assessmentId?: string;
   monitoringError?: string;
   status: AssessmentStatus;
@@ -123,6 +126,32 @@ export interface ReviewIntakeAdvisory {
 /** Audit-only context. It never enters the model's state. */
 export interface AssessmentSubject {
   pr?: { host: string; repo: string; number: number; headSha: string };
+  run?: {
+    id: string;
+    project: string;
+    step: string;
+    snapshotHash: string;
+    sources?: Array<{ id: string; sourceId: string; digest: string }>;
+  };
+}
+
+export const ASSESSMENT_CONSUMERS = ['review-intake', 'smoke-test', 'failure-triage'] as const;
+
+export interface AssessmentReservation {
+  /** Stable request identity; pending attempts are never silently replayed. */
+  key: string;
+  maxUsd: number;
+  priceHash: string;
+  price?: {
+    version: 1;
+    provider: string;
+    model: string;
+    verifiedAt: string;
+    source: string;
+    inputUsdPerMillion: number;
+    outputUsdPerMillion: number;
+    maxRequestTokens: number;
+  };
 }
 
 export type AssessmentFeedbackVerdict = 'correct' | 'incorrect' | 'insufficient-context';
@@ -143,7 +172,7 @@ export interface AssessmentRecord {
   version: 1;
   id: string;
   ownerId: string;
-  consumer: 'review-intake' | 'smoke-test';
+  consumer: (typeof ASSESSMENT_CONSUMERS)[number];
   subject: AssessmentSubject;
   startedAt: string;
   completedAt?: string;
@@ -151,6 +180,7 @@ export interface AssessmentRecord {
   result?: AssessmentResult;
   recommendation?: ReviewIntakeAdvisory;
   policyVersion: string;
+  reservation?: AssessmentReservation;
   requestedIdentity?: {
     provider?: string;
     model?: string;
@@ -186,6 +216,15 @@ export interface AssessmentFeedbackParams {
 
 export interface AssessmentSummary {
   calls: number;
+  attemptedCalls?: number;
+  unknownAttemptCalls?: number;
+  selectedCases?: number;
+  completedCases?: number;
+  reservedUsd?: number;
+  knownEstimatedUsd?: number;
+  knownReportedUsd?: number;
+  knownUnclassifiedUsd?: number;
+  unknownCharges?: number;
   completed: number;
   failed: number;
   skipped: number;
@@ -206,6 +245,7 @@ export interface AssessmentSummary {
   unlabeledQuestions: number;
   savings: null;
   groups: Array<{
+    consumer?: AssessmentRecord['consumer'];
     provider: string;
     model: string;
     questionSchemaHash: string;

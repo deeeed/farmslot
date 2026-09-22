@@ -1431,6 +1431,18 @@
     "assessment.evaluate": {
       "surface": "rpc-only",
       "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.evaluate."
+    },
+    "intelligence.triage.get": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.get; shared typed gateway result, no arbitrary paths or terminal buffers."
+    },
+    "intelligence.triage.analyze": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.analyze; shared typed gateway result, no arbitrary paths or terminal buffers."
+    },
+    "intelligence.triage.feedback": {
+      "surface": "rpc-only",
+      "note": "Explicit experimental failure triage via farmslot rpc intelligence.triage.feedback; shared typed gateway result, no arbitrary paths or terminal buffers."
     }
   }
 }

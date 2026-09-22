@@ -71,6 +71,17 @@ export function prepareTriage(
     digest(packet) !== digest(trusted.packet)
   )
     throw new Error('data-not-admitted');
+  return prepareAdmittedTriage(packet, digest(trusted.packet), apiKey, maxBytes);
+}
+
+/** The caller must establish source permission before supplying this snapshot digest. */
+export function prepareAdmittedTriage(
+  packet: TriagePacket,
+  admittedDigest: string,
+  apiKey = '',
+  maxBytes = 12000,
+): PreparedTriage {
+  if (digest(packet) !== admittedDigest) throw new Error('data-not-admitted');
   if (packet.version !== 1 || packet.failure.status !== 'failed' || !packet.evidence.length)
     throw new Error('missing-required-context');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 512 || maxBytes > 24000)

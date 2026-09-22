@@ -1,4 +1,4 @@
-import type { AssessmentResult, ReviewIntakeAdvisory } from '@farmslot/protocol';
+import type { AssessmentRecord, AssessmentResult, ReviewIntakeAdvisory } from '@farmslot/protocol';
 
 import { serializeAssessment } from './record-validation.js';
 import {
@@ -23,6 +23,14 @@ export async function monitorAssessment(
       monitoringError: 'Assessment history unavailable; no provider call made',
     };
   }
+  return completeAssessment(record, operation);
+}
+
+/** Complete an already reserved request through the same audit boundary. */
+export async function completeAssessment(
+  record: AssessmentRecord,
+  operation: () => Promise<AssessmentResult | ReviewIntakeAdvisory>,
+): Promise<AssessmentResult | ReviewIntakeAdvisory> {
   let value: AssessmentResult | ReviewIntakeAdvisory;
   try {
     value = await operation();
