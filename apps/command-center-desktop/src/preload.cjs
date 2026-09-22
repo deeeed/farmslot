@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('farmslotDesktop', {
   saveConnection: (connection) => ipcRenderer.invoke('desktop:save-connection', connection),
   openUi: () => ipcRenderer.invoke('desktop:open-ui'),
   saveDevelopment: (value) => ipcRenderer.invoke('desktop:save-development', value),
+  copyCurrentLink: () => ipcRenderer.invoke('desktop:copy-current-link'),
   loadPreferences: () => ipcRenderer.invoke('desktop:load-preferences'),
   saveShortcut: (shortcut) => ipcRenderer.invoke('desktop:save-shortcut', shortcut),
   updateAttention: (state) => ipcRenderer.invoke('desktop:update-attention', state),

@@ -93,6 +93,18 @@ Remember me is enabled by default in connection settings and desktop login. Save
 
 The menu bar shows connection status and pending decisions. Closing the window hides it and keeps status updates running. Use the menu bar or Dock to reopen it. Command+Shift+Space shows or hides Farmslot; change or disable this shortcut in Connection Settings. Conflicting shortcuts report an error and keep the previous shortcut. The last view and window bounds survive quit and app replacement.
 
+## Copying the current view
+
+**Copy link** beside the desktop connection status copies `farmslot://view/#...` or
+`farmslot-dev://view/#...`. These app links preserve the active route and supported URL
+state, including filters and selected source files. The app menu uses the same format.
+Links open the recipient's configured gateway and never carry login credentials.
+The recipient needs the matching installed app and access to the same gateway data.
+These are custom app links, not HTTPS Universal Links; there is no browser fallback.
+Unknown or connection-related URL parameters produce a visible error rather than copying
+credentials or a private localhost URL. Updating an older desktop shell is required to
+use the button and open full-view links.
+
 ## Dock badge and links
 
 The Dock badge shows the same pending-decision count as the menu bar. It clears while disconnected or loading, and when no decisions remain.
@@ -107,7 +119,7 @@ Open a run, its current gate, or a slot with a `farmslot://` link:
 | `farmslot://slot/<slot-id>?runId=<run-id>`                    | Slot view in a run's context                  |
 | `farmslot://fleet`, `farmslot://runs`, `farmslot://decisions` | Main views                                    |
 
-Use **Farmslot → Copy Link to Current View** for supported views. Links target the app's configured gateway; they do not contain credentials, change gateways, or perform actions. On first use, connection setup opens and retains the link until you connect. Opening a link restores a hidden or minimized window. Selected source files and other temporary view filters are not included in copied links.
+Use **Farmslot → Copy Link to Current View** for supported views. Links target the app's configured gateway; they do not contain credentials, change gateways, or perform actions. On first use, connection setup opens and retains the link until you connect. Opening a link restores a hidden or minimized window. Copied full-view links include supported URL filters and selected files.
 
 Packaged normal launches register the URL scheme with macOS. Isolated profiles using `FARMSLOT_DESKTOP_USER_DATA` skip changing the default handler; tests can target their bundle explicitly with `open -a <test-app> <link>`.
 

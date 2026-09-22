@@ -69,6 +69,8 @@ Accepted follow-up: confirm intentional desktop quits before closing, complete s
 
 Accepted follow-up: menu-bar pending-decision and connection status, a configurable global show/hide shortcut, saved window bounds and last view, and Remember me enabled by default. Remembered credentials stay encrypted across quit and app replacement; opting out is session-only. Validate credential persistence, shortcuts, attention state and window restoration through direct app checks.
 
+Accepted follow-up: a Copy link button beside desktop connection status, preserving the active screen, filters and selected file in a validated app-scheme URL. Keep gateway credentials out of links; recipients use their configured gateway. HTTPS Universal Links remain separate from local unsigned builds.
+
 Accepted follow-up: Dock badges for pending decisions and `farmslot://` run/gate/slot navigation, including cold launch, hidden-window activation, connection setup, and copying the current view link. Preserve the configured gateway and require normal authorization for all actions.
 
 Accepted follow-up: a separate Farmslot Dev app with red Dock and menu-bar icons, purple icons for production, and its own settings and deep-link scheme, using a validated local Vite server for live frontend changes. Preserve desktop permissions and credentials, and provide retry or bundled-UI recovery when the server is stopped.

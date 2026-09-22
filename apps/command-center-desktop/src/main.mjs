@@ -42,6 +42,7 @@ import {
 } from './security.mjs';
 import { startUiServer } from './server.mjs';
 import { uiUrl, validateDevelopmentSource } from './ui-source.mjs';
+import { viewLinkFromRoute } from './view-links.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const metadata = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -156,6 +157,14 @@ app.on('open-url', (event, url) => {
 function currentDeepLink(url = window?.webContents.getURL()) {
   if (!url || !isUiPage(url, server.origin, developmentUrl())) return null;
   return deepLinkFromRoute(new URL(url).hash)?.replace(/^farmslot:/, `${profile.scheme}:`) ?? null;
+}
+
+function currentViewLink(url = window?.webContents.getURL()) {
+  if (!url || !isUiPage(url, server.origin, developmentUrl())) return null;
+  return viewLinkFromRoute(new URL(url).hash || '#fleet')?.replace(
+    /^farmslot:/,
+    `${profile.scheme}:`,
+  );
 }
 
 function updateCopyLink(url) {
@@ -505,6 +514,16 @@ if (!app.requestSingleInstanceLock()) {
         // Acknowledge before navigation replaces the settings frame.
         const opening = connection ? loadUi(route) : loadPage('/settings');
         opening.catch((error) => reportError('Could not open Command Center', error));
+      });
+      ipcMain.handle('desktop:copy-current-link', async (event) => {
+        assertTrustedSender(event, window, server.origin, developmentUrl());
+        const url = window?.webContents.getURL();
+        if (!url || !isAppPage(url, server.origin, developmentUrl()))
+          throw new Error('The current Farmslot view is not available to copy.');
+        const link = currentViewLink(url);
+        if (!link) throw new Error('This view contains URL parameters that cannot be shared.');
+        await clipboard.writeText(link);
+        return link;
       });
       ipcMain.handle('desktop:save-shortcut', (event, value) => {
         assertTrustedSender(event, window, server.origin, developmentUrl());
