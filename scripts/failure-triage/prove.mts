@@ -74,24 +74,31 @@ async function run(name: string, args: string[], environment = env) {
 }
 assert.equal((await run('offline', [])).report.usage.attempts, 0);
 assert.equal(
-  (await run('missing-key', ['--live', '--provider', 'typesafe', '--model', 'jev-1.13.0']))
-    .records[0].reason,
-  'missing-key',
+  (
+    await run('quarantine-without-key', [
+      '--live',
+      '--provider',
+      'typesafe',
+      '--model',
+      'jev-1.13.0',
+    ])
+  ).records[0].reason,
+  'corpus-integrity-failed',
 );
 const keyed = { ...env, TYPESAFE_API_KEY: canary };
 assert.equal(
-  (await run('unknown-cost', ['--live', '--provider', 'typesafe', '--model', 'unknown'], keyed))
-    .report.usage.attempts,
-  0,
-);
-assert.equal(
   (
     await run(
-      'budget',
-      ['--live', '--provider', 'typesafe', '--model', 'jev-1.13.0', '--max-usd', '0.000001'],
+      'quarantine-with-unknown-model',
+      ['--live', '--provider', 'typesafe', '--model', 'unknown'],
       keyed,
     )
   ).report.usage.attempts,
+  0,
+);
+assert.equal(
+  (await run('simulated-dollar-budget', ['--fixture', 'valid', '--max-usd', '0.000001'], keyed))
+    .report.usage.attempts,
   0,
 );
 const quarantined = await run(

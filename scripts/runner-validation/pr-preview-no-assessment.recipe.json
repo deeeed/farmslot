@@ -10,9 +10,19 @@
         "cmd": "node scripts/runner-validation/gateway/pr-preview-no-assessment.mjs",
         "timeout_ms": 120000,
         "intent": "Use the real preview RPC, assert a collected PR with no model work, and compare review intents and rule state before/after.",
-        "next": "done"
+        "next": "resumption"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "resumption": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/pr-preview-resume.mjs",
+        "timeout_ms": 60000,
+        "intent": "Start an owned isolated gateway with a local GitHub CLI fixture; prove timeout, checkpoint persistence across restart, cursor continuation, one pause error for many candidates, and real shared-child cancellation isolation. Set PR_PREVIEW_RESUME_OUT to a new directory and PR_PREVIEW_RESUME_PORT to a free port.",
+        "next": "done"
+      }
     }
   }
 }

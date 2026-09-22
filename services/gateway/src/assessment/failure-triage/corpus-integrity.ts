@@ -1,9 +1,7 @@
-import { CORPUS_HASH } from './corpus-lock.js';
-
 /** Audit of the frozen v1 corpus. Never repair this record by editing old observations. */
 export const CORPUS_INTEGRITY = {
   version: 1,
-  corpusHash: CORPUS_HASH,
+  corpusHash: '359d970de22283865cc4d171fac735a819e93cdb7feb42248833c1887de361d4',
   status: 'quarantined' as const,
   passed: false,
   findings: [
@@ -26,3 +24,7 @@ export const CORPUS_INTEGRITY = {
   decision: 'hold' as const,
   next: 'Preserve v1 and its live artifacts. A separately versioned corpus with raw incident observations and reviewed family-disjoint provenance is required before new live evaluation.',
 };
+
+export function corpusIntegrityPassed(hash: string): boolean {
+  return CORPUS_INTEGRITY.passed && CORPUS_INTEGRITY.corpusHash === hash;
+}

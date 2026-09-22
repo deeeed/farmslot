@@ -1,3 +1,6 @@
+// Covers the current evaluator because it explicitly injects boundedAssessmentFetch,
+// which resolves global fetch after this preload. This is not a general network sandbox;
+// future transports need equivalent guards.
 // Test-process preload: any unexpected provider fetch is counted and blocked.
 import { readFileSync, writeFileSync } from 'node:fs';
 const file = process.env.TRIAGE_NETWORK_GUARD;

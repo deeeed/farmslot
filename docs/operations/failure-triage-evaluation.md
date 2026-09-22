@@ -108,3 +108,22 @@ responses in the original live run remain unattributed because those codes were
 not recorded then. That run exceeded the pre-existing classifier by +0.554
 macro-F1, but failed completion and abstention gates even without the cue sheet.
 This arithmetic does not repair the corpus-integrity failure.
+
+Current quarantine takes precedence over key, price and budget diagnostics on the
+live path. The proof records those cases as quarantine outcomes; simulated
+transport exercises dollar/call budgets and response handling. No-network proof
+is not evidence of live model quality.
+
+## PR-preview regression proof
+
+`scripts/runner-validation/pr-preview-no-assessment.recipe.json` covers the removed
+inference hook and resumable discovery. Its second node owns a temporary gateway
+and a local GitHub CLI fixture. It proves incomplete progress, persistence across
+restart, cursor continuation and cancellation isolation without external requests.
+Set a fresh `PR_PREVIEW_RESUME_OUT` and free `PR_PREVIEW_RESUME_PORT` for that node.
+
+Only checkpointed bulk PR discovery gets the new wall-clock GraphQL budget,
+including time queued for GitHub transport. `FARMSLOT_PR_SOURCE_BUDGET_MS` can lower
+its 45-second default. Single-PR target/submission reads retain their prior behavior.
+Authentication, local validation and other RPC work are outside this budget; it is
+not an end-to-end RPC deadline.

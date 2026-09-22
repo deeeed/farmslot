@@ -26,7 +26,7 @@ mock.module('./github-client.js', {
 after(() => mock.restoreAll());
 const { githubGraphQL, withGitHubQueryDeadline } = await import('./github-graphql.js');
 const account = { host: 'github.com', token: 'synthetic-token', scope: 'fixture' };
-test('a source deadline cancels its transport without changing concurrent unscoped callers', async () => {
+test('a source deadline scopes its signal without leaking it into unscoped queries', async () => {
   const pending = withGitHubQueryDeadline(10, () => githubGraphQL('query { value }', {}, account));
   const rejection = assert.rejects(pending, /Source scan paused at its time limit/);
   assert.deepEqual(await githubGraphQL('query { value }', {}, account), { value: 'ready' });

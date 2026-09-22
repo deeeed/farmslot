@@ -17,12 +17,16 @@ export type GitHubQueryAccount = NonNullable<GhRequestOpts['account']>;
 type Variables = Record<string, string | number | null>;
 const queryDeadlines = new AsyncLocalStorage<AbortSignal>();
 
-/** Scope cancellation to one resumable source traversal, not other GitHub callers. */
+/** Wall-clock GraphQL budget, including queue wait; other RPC work is outside it. */
 export function withGitHubQueryDeadline<T>(
   milliseconds: number,
   work: () => Promise<T>,
 ): Promise<T> {
   return queryDeadlines.run(AbortSignal.timeout(milliseconds), work);
+}
+
+export function gitHubQueryDeadlineExpired(): boolean {
+  return queryDeadlines.getStore()?.aborted ?? false;
 }
 
 export async function githubGraphQL<T>(

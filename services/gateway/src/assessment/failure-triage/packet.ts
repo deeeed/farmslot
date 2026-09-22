@@ -151,7 +151,11 @@ export class TriageResponseError extends Error {
       | 'check-vocabulary'
       | 'evidence-id'
       | 'definite-without-evidence'
-      | 'confidence',
+      | 'confidence'
+      | 'model-identity'
+      | 'usage'
+      | 'duration'
+      | 'spend-bound',
   ) {
     super(`invalid-response:${code}`);
     this.name = 'TriageResponseError';

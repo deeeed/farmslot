@@ -38,6 +38,7 @@ mock.module('../integrations/github-graphql.js', {
   namedExports: {
     // Source-shape tests use an immediate fake transport; deadline isolation has its own suite.
     withGitHubQueryDeadline: <T>(_milliseconds: number, work: () => Promise<T>) => work(),
+    gitHubQueryDeadlineExpired: () => false,
     collectGitHubPages,
     githubGraphQL: async (document: string) => {
       if (document.includes('pullRequests')) return { repository: { pullRequests: page([pr]) } };

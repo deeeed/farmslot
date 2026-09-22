@@ -8,7 +8,7 @@ import { assertNoCredentials } from '../record-validation.js';
 
 import { BASELINE_VERSION, cueBaseline, existingBaseline, PATTERN_MAPPING } from './baselines.js';
 import { loadTriageCorpus } from './corpus.js';
-import { CORPUS_INTEGRITY } from './corpus-integrity.js';
+import { CORPUS_INTEGRITY, corpusIntegrityPassed } from './corpus-integrity.js';
 import { CORPUS_HASH } from './corpus-lock.js';
 import { percentiles, triageGate, triageMetrics } from './metrics.js';
 import {
@@ -254,12 +254,13 @@ export async function evaluateTriage(options: TriageOptions) {
     };
     candidate.push(row);
     if (mode === 'offline') row.reason = 'offline';
+    else if (mode === 'live' && !corpusIntegrityPassed(CORPUS_HASH))
+      row.reason = 'corpus-integrity-failed';
     else if (!provider) row.reason = 'unknown-provider';
     else if (!key) row.reason = 'missing-key';
     else if (!options.fixture && !priceReady) row.reason = 'unknown-or-stale-price';
     else if (overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12)
       row.reason = 'budget-exhausted';
-    else if (mode === 'live' && !CORPUS_INTEGRITY.passed) row.reason = 'corpus-integrity-failed';
     else {
       attempts++;
       reservedUsd += reservation;
@@ -284,16 +285,16 @@ export async function evaluateTriage(options: TriageOptions) {
         receivedResponse = true;
         assertNoCredentials(JSON.stringify(response));
         if (response.returnedModel !== undefined && !/^[\w.-]{1,100}$/.test(response.returnedModel))
-          throw new Error('invalid-model');
+          throw new TriageResponseError('model-identity');
         const usage = response.usage;
         for (const tokens of [usage.inputTokens, usage.outputTokens])
           if (tokens !== undefined && (!Number.isSafeInteger(tokens) || tokens < 0))
-            throw new Error('invalid-usage');
+            throw new TriageResponseError('usage');
         if (!Number.isFinite(usage.durationMs) || usage.durationMs < 0)
-          throw new Error('invalid-duration');
+          throw new TriageResponseError('duration');
         if (!options.fixture && (usage.inputTokens ?? 0) > price.maxRequestTokens) {
           overBound = true;
-          throw new Error('reservation-bound-exceeded');
+          throw new TriageResponseError('spend-bound');
         }
         row.prediction = triagePrediction(response.answers, prepared.packet);
         row.status = 'completed';
@@ -306,13 +307,15 @@ export async function evaluateTriage(options: TriageOptions) {
         const status =
           error && typeof error === 'object' && 'status' in error ? error.status : undefined;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
-        row.reason = signal.aborted
-          ? 'timeout'
-          : status === 429
-            ? 'rate-limit'
-            : receivedResponse || error instanceof AssessmentResponseError
-              ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
-              : 'provider-request-failed';
+        row.reason = overBound
+          ? 'spend-bound-exceeded'
+          : signal.aborted
+            ? 'timeout'
+            : status === 429
+              ? 'rate-limit'
+              : receivedResponse || error instanceof AssessmentResponseError
+                ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
+                : 'provider-request-failed';
       }
     }
     row.durationMs = Date.now() - caseStarted;
@@ -338,7 +341,7 @@ export async function evaluateTriage(options: TriageOptions) {
     diagnostic = triageMetrics(cases, cueSheet);
   const pilotGate = triageGate({
     liveStatus,
-    corpusIntegrityPassed: CORPUS_INTEGRITY.passed,
+    corpusIntegrityPassed: corpusIntegrityPassed(CORPUS_HASH),
     metrics,
     baseline: deterministic,
     cueSheet: diagnostic,
