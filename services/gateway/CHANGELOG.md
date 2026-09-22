@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Preserve valid worker completion signals when monitoring resumes after a timeout; reject stale attempts by worker identity instead of the restarted monitor clock.
+
+- Deliver each Pi worker and reviewer task independently, acknowledge follow-up fix launches, and preserve completed fix attempts across gateway restarts so review loops cannot stall on an earlier session.
+
 - Add an opt-in, provider-neutral structured-assessment boundary with TypeSafe SDK transport, bounded/redacted inputs, typed answers, provenance hashes, read-only status/smoke RPCs, and advisory review-intake routing. Assessment output never admits, publishes, retries, or proves visual review.
 
 - Recover static reviews from unchanged support-bundle republishes, initialize reviewer trust, and recognize native prompt acceptance without timing out while waiting for the first task mark.

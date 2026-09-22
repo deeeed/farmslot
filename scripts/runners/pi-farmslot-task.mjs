@@ -1,5 +1,6 @@
 // Farmslot task/mark helpers used by the PI extension. Fail closed if TASK.md is missing.
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -53,6 +54,19 @@ export function readFarmslotSignal(env = process.env) {
   return { present: true, path: file, body: JSON.parse(fs.readFileSync(file, 'utf8')) };
 }
 
-export function taskDeliveredMarker(obsDir) {
-  return path.join(obsDir, 'task-delivered');
+export async function deliverTaskOnce({ obsDir, sessionId, sendUserMessage, env = process.env }) {
+  const task = readTaskMarkdown(env);
+  if (!task?.trim()) return false;
+  // A slot hosts multiple workers and reviewers. Only this session's delivery
+  // of this task may suppress a duplicate session_start notification.
+  const key = createHash('sha256')
+    .update(JSON.stringify([sessionId, path.resolve(taskFilePath(env))]))
+    .digest('hex');
+  const marker = path.join(obsDir, 'task-deliveries', key);
+  if (fs.existsSync(marker)) return false;
+  if (!sendUserMessage) throw new Error('PI task delivery requires sendUserMessage');
+  await sendUserMessage(task);
+  fs.mkdirSync(path.dirname(marker), { recursive: true });
+  fs.writeFileSync(marker, `${Date.now()}\n`);
+  return true;
 }

@@ -1643,6 +1643,10 @@ export async function dispatchExecute(
   if (params.runId && currentRun) {
     await upsertAgentContext(params.runId, workerRole, {
       status: 'launching',
+      // A cold dispatch starts a new task attempt; the previous binding must
+      // not survive until a fast worker's terminal signal is first observed.
+      signalAttemptId: undefined,
+      attemptStartedAt: new Date().toISOString(),
       taskFile: `${workerTaskDir}/TASK.md`,
       signalFile: `${workerTaskDir}/SIGNAL.json`,
       runner,

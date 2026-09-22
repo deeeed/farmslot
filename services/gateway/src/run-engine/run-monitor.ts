@@ -500,7 +500,10 @@ export interface MonitorResult {
   workerSignal?: WorkerSignal;
 }
 
-type FreshnessAgentContext = Pick<AgentContext, 'id' | 'role' | 'startedAt' | 'nativeSession'>;
+type FreshnessAgentContext = Pick<
+  AgentContext,
+  'id' | 'role' | 'startedAt' | 'attemptStartedAt' | 'signalAttemptId' | 'nativeSession'
+>;
 
 type FreshnessRunContext = {
   steps: Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt' | 'outputs'>[];
@@ -533,7 +536,8 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
     const signalAt = parseStrictIsoMs(signal.timestamp);
     if (heldAt === null || signalAt === null || signalAt <= heldAt) return false;
   }
-  const native = matchingSignalContext(run, signal)?.nativeSession;
+  const context = matchingSignalContext(run, signal);
+  const native = context?.nativeSession;
   if (native) {
     // Reconciliation and monitor restart do not create a new native task. Their
     // controller timestamps cannot invalidate a signal already written by this lease.
@@ -541,16 +545,26 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
     const signalAt = parseStrictIsoMs(signal.timestamp);
     return !native.releasedAt && launchAt !== null && signalAt !== null && signalAt >= launchAt;
   }
+  if (context?.signalAttemptId) {
+    // Continue/restart resets the monitor's timeout budget, not the worker task.
+    // The bound attempt is authoritative even when gateway and worker clocks differ.
+    return (
+      signal.attemptId === context.signalAttemptId && parseStrictIsoMs(signal.timestamp) !== null
+    );
+  }
+  const dispatch = run.steps.find((s) => s.name === PipelineSteps.DISPATCH);
+  // Legacy signals follow task launch boundaries, never the monitor timeout clock.
   const durableFreshnessFloors = [
-    run.steps.find((s) => s.name === PipelineSteps.DISPATCH)?.completedAt,
-    run.monitorState?.startedAt,
-    matchingSignalContext(run, signal)?.startedAt,
+    // A fast worker can finish before dispatch's acknowledgement wait returns.
+    dispatch?.startedAt ?? dispatch?.completedAt,
+    context?.attemptStartedAt ?? context?.startedAt,
   ];
   if (durableFreshnessFloors.some(Boolean)) {
     return signalFreshAfterAll(signal, durableFreshnessFloors);
   }
   return signalFreshAfterAll(signal, [
-    run.steps.find((s) => s.name === PipelineSteps.MONITOR)?.startedAt,
+    run.monitorState?.startedAt ??
+      run.steps.find((s) => s.name === PipelineSteps.MONITOR)?.startedAt,
   ]);
 }
 

@@ -1389,6 +1389,31 @@ export async function resumeSelfReviewFixPromptDelivery(
     : { status: 'deferred' };
 }
 
+export function canSettleRecoveredFixContext(
+  current: AgentContext | undefined,
+  snapshot: AgentContext,
+  expectedAttemptId: string | undefined,
+  artifactScope?: string | null,
+): boolean {
+  if (
+    !current ||
+    current.artifactScope !== artifactScope ||
+    current.taskFile !== snapshot.taskFile ||
+    current.signalFile !== snapshot.signalFile
+  )
+    return false;
+  if (current.signalAttemptId === expectedAttemptId) return true;
+  // Recovery may first observe an already-complete signal. Adopt its validated
+  // identity only if no newer delivery or watcher binding replaced our snapshot.
+  return (
+    Boolean(expectedAttemptId) &&
+    !current.signalAttemptId &&
+    !snapshot.signalAttemptId &&
+    current.attemptStartedAt === snapshot.attemptStartedAt &&
+    current.promptDeliveryStartedAt === snapshot.promptDeliveryStartedAt
+  );
+}
+
 async function recoverSelfReviewFixPass({
   vars,
   taskDir,
@@ -1446,12 +1471,19 @@ async function recoverSelfReviewFixPass({
         { id: fixContext.id },
         {
           resolvePatch: (current) =>
-            current &&
-            current.artifactScope === findingsArtifactScope &&
-            current.taskFile === fixContext.taskFile &&
-            current.signalFile === fixContext.signalFile &&
-            current.signalAttemptId === expectedAttemptId
-              ? { id: fixContext.id, status, completedAt: new Date().toISOString(), ...patch }
+            canSettleRecoveredFixContext(
+              current,
+              fixContext,
+              expectedAttemptId,
+              findingsArtifactScope,
+            )
+              ? {
+                  id: fixContext.id,
+                  status,
+                  completedAt: new Date().toISOString(),
+                  ...(expectedAttemptId ? { signalAttemptId: expectedAttemptId } : {}),
+                  ...patch,
+                }
               : null,
         },
       ),
@@ -1544,6 +1576,13 @@ async function recoverSelfReviewFixPass({
 
     let expiredAttemptId: string | undefined;
     if (!fixSignal) {
+      // The progress watcher below only observes checkboxes. Restore the signal
+      // subscription too, so recovery can bind a new worker attempt before waiting.
+      if (run?.transport !== 'native') {
+        await watchContext(vars.slotId, fixContext, {
+          assertCurrent: async () => assertNativeReviewOperationCurrent(),
+        });
+      }
       const expectedWorkerModel = resolveWorkerModel(run, workerRunner, model);
       const fixContextMatchesWorker =
         normalizeRunner(fixContext.runner) === normalizeRunner(workerRunner) &&
@@ -2403,6 +2442,7 @@ async function relaunchWorkerForFix(
     safetyTier: parentSafetyTier,
     runtimeDir,
     taskDir: taskDir ?? undefined,
+    taskFile: fixContext?.taskFile ?? parentRun?.activeTaskFile ?? parentRun?.taskFile ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd, {

@@ -492,7 +492,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     sessionReload: 'none',
     sessionPortability: 'workspace',
     gracefulExit: null,
-    retainedSessionHandoff: 'unsupported',
+    // Pi receives each task through its startup extension. Reuse the guarded
+    // relaunch contract rather than typing into an unobservable TUI composer.
+    retainedSessionHandoff: 'argv-relaunch',
     supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
     promptSubmitKey: 'Enter',

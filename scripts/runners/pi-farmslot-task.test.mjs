@@ -5,12 +5,64 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  deliverTaskOnce,
   farmslotStatusLine,
   readFarmslotSignal,
   readTaskMarkdown,
   runFarmslotMark,
   taskDir,
 } from './pi-farmslot-task.mjs';
+
+test('task delivery is isolated across sessions and tasks sharing a slot', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-delivery-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const worker = path.join(dir, 'TASK.md');
+  const reviewer = path.join(dir, 'SELF-REVIEW.rev-pi.md');
+  fs.writeFileSync(worker, 'worker task');
+  fs.writeFileSync(reviewer, 'review task');
+  fs.writeFileSync(path.join(dir, 'task-delivered'), 'old slot-wide marker');
+  const delivered = [];
+  const options = {
+    obsDir: dir,
+    sessionId: 'worker-session',
+    sendUserMessage: async (text) => {
+      delivered.push(text);
+    },
+    env: { FARMSLOT_TASK_FILE: worker },
+  };
+  assert.equal(await deliverTaskOnce(options), true);
+  assert.equal(await deliverTaskOnce(options), false);
+  const reviewOptions = {
+    ...options,
+    sessionId: 'review-session',
+    env: { FARMSLOT_TASK_FILE: reviewer },
+  };
+  assert.equal(await deliverTaskOnce(reviewOptions), true);
+  assert.equal(await deliverTaskOnce(reviewOptions), false);
+  // A retry of the same task in a fresh session must also receive it.
+  assert.equal(await deliverTaskOnce({ ...reviewOptions, sessionId: 'retry-session' }), true);
+  assert.equal(await deliverTaskOnce({ ...options, env: reviewOptions.env }), true);
+  assert.deepEqual(delivered, ['worker task', 'review task', 'review task', 'review task']);
+});
+
+test('failed task submission does not prevent a retry', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-delivery-failure-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const task = path.join(dir, 'TASK.md');
+  fs.writeFileSync(task, 'task');
+  const options = { obsDir: dir, sessionId: 'session', env: { FARMSLOT_TASK_FILE: task } };
+  await assert.rejects(deliverTaskOnce(options), /requires sendUserMessage/);
+  await assert.rejects(
+    deliverTaskOnce({
+      ...options,
+      sendUserMessage: async () => {
+        throw new Error('submission failed');
+      },
+    }),
+    /submission failed/,
+  );
+  assert.equal(await deliverTaskOnce({ ...options, sendUserMessage: async () => {} }), true);
+});
 
 test('farmslotStatusLine includes slot thinking and truncated run id', () => {
   assert.equal(

@@ -250,6 +250,58 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
   );
 });
 
+test('Pi fix handoff launches its task file without typing into the prior session', async (t) => {
+  commands.length = 0;
+  advanceTaskSignalOnRespawn = true;
+  t.after(() => {
+    advanceTaskSignalOnRespawn = false;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'pi',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    timeoutMs: 1_000,
+  });
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
+  assert.match(command, /FARMSLOT_TASK_FILE=/);
+  assert.match(command, /tasks\/run-1\/SELF-REVIEW-FIX[.]md/);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('send-keys')),
+    false,
+  );
+});
+
+test('Pi fix handoff does not replace a worker whose task is still running', async (t) => {
+  commands.length = 0;
+  replacementSignalOutput = '1000000000\n{"status":"running"}\n';
+  t.after(() => {
+    replacementSignalOutput =
+      '1000000000\n{"status":"complete","timestamp":"2026-08-01T00:00:00.000Z"}\n';
+  });
+  const result = await deliverPromptToLiveRunner({
+    vars,
+    target: '%1',
+    runnerId: 'pi',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    promptMarker: 'SELF-REVIEW-FIX.md',
+    taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+    replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+  assert.equal(result.delivered, false);
+  assert.equal(
+    commands.some((candidate) => candidate.includes('respawn-window')),
+    false,
+  );
+});
+
 test('Cursor argv relaunch preserves dispatch templates that require task_file', async (t) => {
   commands.length = 0;
   advanceTaskSignalOnRespawn = true;
