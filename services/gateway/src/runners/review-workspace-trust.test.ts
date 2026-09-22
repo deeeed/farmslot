@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,23 @@ test('review trust preserves configuration across concurrent workspaces and refu
   assert.deepEqual(config.projects['/existing'], { allowedTools: ['read'] });
   assert.equal(config.projects['/review-a'].hasTrustDialogAccepted, true);
   assert.equal(config.projects['/review-b'].hasTrustDialogAccepted, true);
+  const holder = spawn('python3', [
+    '-c',
+    "import fcntl,sys,time\nf=open(sys.argv[1],'a')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('locked',flush=True)\ntime.sleep(60)",
+    file + '.farmslot-review.lock',
+  ]);
+  t.after(() => {
+    holder.kill('SIGKILL');
+  });
+  const exited = once(holder, 'exit');
+  await once(holder.stdout, 'data');
+  holder.kill('SIGKILL');
+  await exited;
+  await seed('/after-crash');
+  assert.equal(
+    JSON.parse(await readFile(file, 'utf8')).projects['/after-crash'].hasTrustDialogAccepted,
+    true,
+  );
   await writeFile(file, '{broken');
   await assert.rejects(seed('/review-c'));
   assert.equal(await readFile(file, 'utf8'), '{broken');

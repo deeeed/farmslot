@@ -367,6 +367,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
+  const terminalUnavailable = reviewTerminalUnavailableReason(r);
   // ADR-054 `free-slot`: while the park record holds the release, the slot row
   // belongs to dispatch, not to this run. `isSlotFreedByPark` ignores `phase`,
   // and cancel deliberately skips slot release for a park-freed run, so this
@@ -1035,7 +1036,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     </div>
     ${ctx._renderInteractivePackets(r)}
     ${r.reviewWorkspaceTarget ? nothing : ctx._renderRunEvidence(r)}
-    ${boundSlotId || (r.reviewWorkspace && !reviewTerminalUnavailableReason(r))
+    ${boundSlotId || (r.reviewWorkspace && !terminalUnavailable)
       ? html`
           <button
             data-testid="run-terminal-toggle"
@@ -1063,9 +1064,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         `
       : r.reviewWorkspace
-        ? html`<p data-testid="review-terminal-unavailable">
-            ${reviewTerminalUnavailableReason(r)}
-          </p>`
+        ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
     ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
     ${r.error
