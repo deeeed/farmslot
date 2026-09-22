@@ -44,6 +44,10 @@ reference judgments.
 ## Freeze and score a sample
 
 **Export effectiveness snapshot** downloads a frozen, content-hashed report.
+When viewing one completed PR assessment, **Export selected case** freezes only its
+PR/head/model/policy cohort, including repeated attempts. Use `assessmentId` in
+the report RPC to select the same cohort. This keeps other PR usage out of a trial.
+
 Use the shared RPCs from the checkout-local CLI:
 
 ```bash
@@ -51,6 +55,7 @@ cd apps/command-center
 yarn farmslot rpc assessment.list '{"limit":50}'
 yarn farmslot rpc assessment.summary '{}'
 yarn farmslot rpc assessment.report '{}'
+yarn farmslot rpc assessment.report '{"assessmentId":"<completed-assessment-id>"}'
 yarn farmslot rpc assessment.report '{"id":"<report-id>"}'
 yarn farmslot rpc assessment.evaluate '{"reportId":"<report-id>","references":[]}'
 ```
@@ -62,8 +67,10 @@ Collect labels before revealing candidate answers. The importer declares
 independence; Farmslot cannot verify how a label was produced.
 
 Scoring reports per-question/cohort denominators, abstentions, unlabeled cases,
-visual false negatives/positives and 95% Wilson intervals. Unused references are
-reported. A small sample or selective accuracy is not proof of safe routing.
+visual false negatives/positives and 95% Wilson intervals. Unused and rejected non-blinded references are reported separately. Abstention
+is counted even without a reference, so abstained and unlabeled counts can
+overlap. `excluded` counts records; `unsupportedQuestions` counts unscored
+question types. A small sample or selective accuracy is not proof of safe routing.
 
 The optional `pair` accepts hashed `baseline` and `assisted` result-package
 manifests. They must be final, have distinct run IDs, matching objective, task,

@@ -95,7 +95,7 @@ separate assessment store rather than forcing records into the recovery-action
 schema, which requires a run and an applied recovery action.
 
 Each record carries an ID, authenticated owner, consumer, timestamps, PR identity
-and frozen head SHA, optional run link, question-schema and routing-policy
+and frozen head SHA, question-schema and routing-policy
 versions, prepared-input digest when available, requested/returned provider model, typed answers,
 probabilities, confidence, abstention/reason codes, usage, provider latency and
 end-to-end duration. Head SHA is provenance and need not be sent to the provider.
@@ -216,3 +216,10 @@ synthetic, not evidence of provider quality. Run `seed.mts` with a dedicated
 `FARMSLOT_HOME` containing `assessment-proof` and
 `FARMSLOT_ASSESSMENT_VALIDATION=1`, then point `FARMSLOT_GATEWAY` at that gateway
 and run `prove.mjs`. Rerun after restart to prove feedback and report persistence.
+
+The recipe also runs `pagination.mjs`, `restart.mjs`, and a screenshot node.
+Before starting the UI validation stack, seed both the default fixtures and
+`seed.mts --pagination`. Set `FARMSLOT_CDP_PORT`, `FARMSLOT_UI_URL`, and a separate
+free `FARMSLOT_ASSESSMENT_RESTART_PORT`. The restart node owns only its child
+gateway and temporary home. The pagination node inserts a synthetic request for
+an unavailable provider, so it makes no paid provider call.

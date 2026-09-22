@@ -2,12 +2,20 @@ import { createHash } from 'node:crypto';
 
 import type { AssessmentReport } from '@farmslot/protocol';
 
+import { stableJson } from '../evals/package-store.js';
+
 import { readAssessmentArtifact, saveAssessmentArtifact } from './artifacts.js';
 import { assertAssessmentRecord } from './record-validation.js';
-import { assessmentRecords } from './store.js';
-import { summarizeAssessments } from './summary.js';
+import { assessmentRecord, assessmentRecords } from './store.js';
+import { assessmentCase, summarizeAssessments } from './summary.js';
 
-export async function assessmentReport(ownerId: string, id?: string): Promise<AssessmentReport> {
+export async function assessmentReport(
+  ownerId: string,
+  id?: string,
+  assessmentId?: string,
+): Promise<AssessmentReport> {
+  if (id !== undefined && assessmentId !== undefined)
+    throw new Error('Select an existing report or an assessment cohort');
   if (id !== undefined) {
     const value = await readAssessmentArtifact(ownerId, 'reports', id);
     if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -16,7 +24,7 @@ export async function assessmentReport(ownerId: string, id?: string): Promise<As
     const { reportId: storedId, ...payload } = report;
     if (
       storedId !== id ||
-      createHash('sha256').update(JSON.stringify(payload)).digest('hex') !== id ||
+      createHash('sha256').update(stableJson(payload)).digest('hex') !== id ||
       report.version !== 1 ||
       report.scope !== 'observational' ||
       !Array.isArray(report.records)
@@ -28,7 +36,14 @@ export async function assessmentReport(ownerId: string, id?: string): Promise<As
     }
     return report;
   }
-  const records = await assessmentRecords(ownerId);
+  let records = await assessmentRecords(ownerId);
+  if (assessmentId !== undefined) {
+    const anchor = await assessmentRecord(ownerId, assessmentId);
+    const key = assessmentCase(anchor);
+    if (!key || anchor.status !== 'completed' || anchor.consumer !== 'review-intake')
+      throw new Error('Select a completed review assessment');
+    records = records.filter((r) => assessmentCase(r) === key);
+  }
   const payload = {
     version: 1 as const,
     createdAt: new Date().toISOString(),
@@ -43,7 +58,7 @@ export async function assessmentReport(ownerId: string, id?: string): Promise<As
       'No model suggestion authorizes a review, dispatch, publication or merge.',
     ],
   };
-  const reportId = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const reportId = createHash('sha256').update(stableJson(payload)).digest('hex');
   const report = { ...payload, reportId };
   await saveAssessmentArtifact(ownerId, 'reports', reportId, report);
   return report;

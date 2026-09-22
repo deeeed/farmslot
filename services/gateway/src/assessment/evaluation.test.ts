@@ -203,3 +203,113 @@ test('reports are immutable and owner scoped; altered content is rejected', asyn
   await writeFile(file, JSON.stringify(content));
   await assert.rejects(assessmentReport('alice', frozen.reportId), /changed/);
 });
+
+test('unlabeled abstentions and rejected references keep distinct denominators', () => {
+  const record = row();
+  record.recommendation!.route = 'needs-review';
+  const frozen = report([record]);
+  const empty = evaluateAssessmentReport(frozen, { reportId: frozen.reportId, references: [] });
+  assert.equal(empty.questions[0].abstained, 1);
+  assert.equal(empty.questions[0].unlabeled, 1);
+  const rejected = evaluateAssessmentReport(frozen, {
+    reportId: frozen.reportId,
+    references: [
+      {
+        assessmentId: record.id,
+        questionId: 'visualReview',
+        expected: true,
+        blinded: false,
+        evidenceRef: 'fixture:unblinded',
+        source: 'human',
+      },
+    ],
+  });
+  assert.equal(rejected.rejectedReferences, 1);
+  assert.equal(rejected.unusedReferences, 0);
+  assert.equal(rejected.excluded, 0);
+  assert.equal(rejected.unsupportedQuestions, 0);
+});
+
+test('owner can freeze a single case after assessing other PRs without borrowing their usage', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'assessment-select-')),
+    old = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  t.after(async () => {
+    if (old === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = old;
+    await rm(home, { recursive: true, force: true });
+  });
+  const ids: string[] = [];
+  for (const number of [1, 2, 1]) {
+    const fixture = row();
+    const record = await beginAssessment({
+      ownerId: 'alice',
+      consumer: 'review-intake',
+      subject: { pr: { ...pr, number } },
+    });
+    ids.push(record.id);
+    await finishAssessment(
+      record,
+      {
+        ...fixture.result!,
+        usage: {
+          provider: 'fake',
+          requestedModel: 'fixed',
+          durationMs: 1,
+          inputTokens: number === 2 ? 1000 : 10,
+          outputTokens: 1,
+        },
+      },
+      fixture.recommendation,
+    );
+  }
+  const all = await assessmentReport('alice');
+  assert.equal(all.records.length, 3);
+  const selected = await assessmentReport('alice', undefined, ids[0]);
+  assert.equal(selected.records.length, 2);
+  assert.equal(selected.summary.tokens, 22);
+  assert.equal(selected.summary.uniqueCases, 1);
+  assert.ok(selected.records.every((r) => r.subject.pr?.number === 1));
+  assert.deepEqual(await assessmentReport('alice', selected.reportId), selected);
+  await assert.rejects(assessmentReport('bob', undefined, ids[0]), /not found/);
+  const packageFor = (assisted: boolean): ResultPackageManifest => {
+    const p: ResultPackageManifest = {
+      version: 1,
+      kind: 'result-package',
+      packageId: assisted ? 'assisted' : 'baseline',
+      packageHash: '',
+      status: 'final',
+      createdAt: all.createdAt,
+      finalizedAt: all.createdAt,
+      project: 'example',
+      familyId: 'family',
+      objectiveHash: 'objective',
+      taskProfile: 'fix-bug',
+      source: { kind: 'merged-pr', repo: pr.repo, prNumber: pr.number, headSha: pr.headSha },
+      runId: assisted ? 'run-a' : 'run-b',
+      diff: unavailableDiff('fixture'),
+      axes: {
+        model: { ref: 'fixed' },
+        runner: { ref: 'reviewer' },
+        review: { ref: 'medium' },
+        ...(assisted ? { assessment: { ref: selected.reportId } } : {}),
+      },
+      visualEvidence: [],
+      validationEvidence: [],
+      reviewEvidence: [],
+      outcomeClaims: [],
+      missingData: [],
+      metrics: { sessionTotalTokens: assisted ? 50 : 100, durationMs: 1000 },
+    };
+    p.packageHash = computePackageHash(p);
+    return p;
+  };
+  const evaluation = evaluateAssessmentReport(selected, {
+    reportId: selected.reportId,
+    references: [],
+    pair: { baseline: packageFor(false), assisted: packageFor(true) },
+  });
+  assert.equal(evaluation.comparison.status, 'comparable');
+  assert.equal(evaluation.comparison.assessmentTokens, 22);
+  assert.equal(evaluation.comparison.totalTokenDelta, -28);
+});

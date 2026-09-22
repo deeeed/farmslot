@@ -169,3 +169,22 @@ test('invalid provider metadata is rejected from both storage and returned resul
   assert.equal('assessment' in result ? result.assessment.status : result.status, 'unavailable');
   assert.ok(!JSON.stringify(await assessmentHistory('alice')).includes('credential-sentinel'));
 });
+
+test('read RPCs filter expired history without deleting it', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'assessment-expiry-')),
+    old = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  t.after(async () => {
+    if (old === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = old;
+    await rm(home, { recursive: true, force: true });
+  });
+  const record = await beginAssessment(context);
+  await finishAssessment(record, { status: 'disabled' });
+  const file = path.join(home, 'assessments', `${record.id}.json`);
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  saved.startedAt = new Date(Date.now() - 31 * 86400_000).toISOString();
+  await writeFile(file, JSON.stringify(saved));
+  assert.equal((await assessmentHistory('alice')).records.length, 0);
+  assert.ok((await stat(file)).isFile());
+});

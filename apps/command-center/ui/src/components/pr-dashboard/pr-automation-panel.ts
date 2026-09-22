@@ -1057,10 +1057,12 @@ export class PRAutomationPanel extends LitElement {
                     ? html`<span>
                         · Advice: ${item.reviewIntakeAdvisory.route}
                         (${item.reviewIntakeAdvisory.assessment.status})
-                        <a
-                          href=${`#intelligence?tab=assessments&assessment=${encodeURIComponent(item.reviewIntakeAdvisory.assessment.assessmentId ?? '')}`}
-                          >Assessment history</a
-                        ></span
+                        ${item.reviewIntakeAdvisory.assessment.assessmentId
+                          ? html`<a
+                              href=${`#intelligence?tab=assessments&assessment=${encodeURIComponent(item.reviewIntakeAdvisory.assessment.assessmentId)}`}
+                              >Assessment history</a
+                            >`
+                          : nothing}</span
                       >`
                     : nothing}
                   ${(item.policySummary ?? []).map(

@@ -25,9 +25,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export function assertAssessmentSubject(value: unknown): asserts value is AssessmentSubject {
-  if (!record(value) || Object.keys(value).some((k) => !['pr', 'runId'].includes(k)))
+  if (!record(value) || Object.keys(value).some((k) => !['pr'].includes(k)))
     throw new Error('Invalid assessment subject');
-  if (value.runId !== undefined && !bounded(value.runId)) throw new Error('Invalid assessment run');
   if (value.pr !== undefined) {
     if (
       !record(value.pr) ||

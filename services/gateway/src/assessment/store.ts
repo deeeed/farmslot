@@ -18,6 +18,7 @@ import { writeAtomicJSON } from '../core/atomic-json.js';
 import {
   assertAssessmentRecord,
   assertAssessmentSubject,
+  assertNoCredentials,
   serializeAssessment,
 } from './record-validation.js';
 
@@ -59,7 +60,7 @@ async function load(id: string): Promise<AssessmentRecord> {
   if ((await stat(file)).size > 256 * 1024) throw new Error('Assessment record exceeds limit');
   const value: unknown = JSON.parse(await readFile(file, 'utf8'));
   assertAssessmentRecord(value);
-  serializeAssessment(value);
+  assertNoCredentials(JSON.stringify(value));
   if (
     value.version !== 1 ||
     value.id !== id ||
@@ -79,7 +80,7 @@ async function files(): Promise<string[]> {
     throw error;
   }
 }
-async function retained(): Promise<AssessmentRecord[]> {
+async function retained(prune = false): Promise<AssessmentRecord[]> {
   const names = await files();
   if (names.length > MAX_RECORDS) throw new Error('Assessment store exceeds limit');
   const records: AssessmentRecord[] = [];
@@ -87,7 +88,7 @@ async function retained(): Promise<AssessmentRecord[]> {
   for (const name of names) {
     const record = await load(name.slice(0, -5));
     if (Date.parse(record.startedAt) < cutoff && !active.has(location(record.id))) {
-      await rm(location(record.id));
+      if (prune) await rm(location(record.id));
       continue;
     }
     if (record.status === 'started' && !active.has(location(record.id)))
@@ -108,7 +109,7 @@ export async function beginAssessment(context: AssessmentAuditContext): Promise<
   return serialized(async () => {
     assertAssessmentSubject(context.subject);
     await mkdir(root(), { recursive: true, mode: 0o700 });
-    if ((await files()).length >= MAX_RECORDS && (await retained()).length >= MAX_RECORDS)
+    if ((await files()).length >= MAX_RECORDS && (await retained(true)).length >= MAX_RECORDS)
       throw new Error('Assessment history is full');
     const record: AssessmentRecord = {
       version: 1,

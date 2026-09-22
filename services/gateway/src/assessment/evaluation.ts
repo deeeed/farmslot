@@ -70,8 +70,10 @@ export function evaluateAssessmentReport(
   const groups = new Map<string, AssessmentEvaluation['questions'][number]>();
   const usedLabels = new Set<string>();
   const representatives = representativeAssessments(report.records);
-  let excluded = report.records.length - representatives.length,
-    missingReferences = 0;
+  const excluded = report.records.length - representatives.length;
+  let missingReferences = 0,
+    rejectedReferences = 0,
+    unsupportedQuestions = 0;
   for (const r of representatives) {
     const cohort = JSON.stringify(assessmentCohort(r));
     for (const [questionId, answer] of Object.entries(r.result?.answers ?? {})) {
@@ -91,24 +93,23 @@ export function evaluateAssessmentReport(
       };
       groups.set(key, entry);
       entry.eligible++;
+      const abstains = r.recommendation?.route === 'needs-review' || !r.recommendation;
+      if (abstains) entry.abstained++;
       const labelKey = JSON.stringify([r.id, questionId]);
       const reference = labels.get(labelKey);
       if (reference) usedLabels.add(labelKey);
       if (!reference || !reference.blinded) {
         missingReferences++;
         entry.unlabeled++;
+        if (reference) rejectedReferences++;
         continue;
       }
-      const abstains = r.recommendation?.route === 'needs-review' || !r.recommendation;
-      if (abstains) {
-        entry.abstained++;
-        continue;
-      }
+      if (abstains) continue;
       let predicted: string | boolean;
       if (answer.type === 'choice') predicted = answer.choice;
       else if (answer.type === 'boolean') predicted = answer.probability >= 0.65;
       else {
-        excluded++;
+        unsupportedQuestions++;
         continue;
       }
       if (typeof reference.expected !== typeof predicted)
@@ -213,6 +214,8 @@ export function evaluateAssessmentReport(
         : 'inconclusive',
     excluded,
     missingReferences,
+    rejectedReferences,
+    unsupportedQuestions,
     unusedReferences: params.references.length - usedLabels.size,
     questions: [...groups.values()],
     comparison,

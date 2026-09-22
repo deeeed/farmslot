@@ -123,7 +123,6 @@ export interface ReviewIntakeAdvisory {
 /** Audit-only context. It never enters the model's state. */
 export interface AssessmentSubject {
   pr?: { host: string; repo: string; number: number; headSha: string };
-  runId?: string;
 }
 
 export type AssessmentFeedbackVerdict = 'correct' | 'incorrect' | 'insufficient-context';
@@ -240,6 +239,8 @@ export interface AssessmentRecordParams {
 }
 export interface AssessmentReportParams {
   id?: string;
+  /** Freeze the PR/head/model cohort containing this completed assessment. */
+  assessmentId?: string;
 }
 
 export interface AssessmentReferenceLabel {
@@ -265,9 +266,12 @@ export interface AssessmentEvaluation {
   evaluationId: string;
   createdAt: string;
   status: 'inconclusive' | 'scored';
+  /** Excluded records, including smoke tests and repeated case/cohort attempts. */
   excluded: number;
   missingReferences: number;
   unusedReferences: number;
+  rejectedReferences: number;
+  unsupportedQuestions: number;
   questions: Array<{
     cohort: string;
     questionId: string;

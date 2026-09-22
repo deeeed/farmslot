@@ -90,9 +90,9 @@ export async function assessmentSummary() {
 }
 
 export async function assessmentExport(params: AssessmentReportParams) {
-  assertParams(params, ['id']);
+  assertParams(params, ['id', 'assessmentId']);
   const { assessmentReport } = await import('../assessment/report.js');
-  return assessmentReport(owner(), params.id);
+  return assessmentReport(owner(), params.id, params.assessmentId);
 }
 
 export async function assessmentGet(params: AssessmentRecordParams) {

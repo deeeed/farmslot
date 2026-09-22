@@ -12,8 +12,13 @@ function rpc(method, params = {}) {
     ),
   );
 }
-const history = rpc('assessment.list');
-const rows = history.records.filter((r) => r.subject.pr?.repo === 'example/assessment-fixture');
+let history = rpc('assessment.list');
+const records = [...history.records];
+while (history.nextCursor) {
+  history = rpc('assessment.list', { before: history.nextCursor });
+  records.push(...history.records);
+}
+const rows = records.filter((r) => r.subject.pr?.repo === 'example/assessment-fixture');
 for (const state of ['completed', 'disabled', 'skipped', 'unavailable', 'interrupted'])
   assert.ok(
     rows.some((r) => r.status === state),

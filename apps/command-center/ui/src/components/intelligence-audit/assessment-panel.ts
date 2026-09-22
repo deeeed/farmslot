@@ -1,5 +1,6 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 import {
   type AssessmentFeedbackVerdict,
@@ -25,10 +26,12 @@ export class AssessmentPanel extends LitElement {
   @state() private auditError = '';
   private onHashChange = () => {
     this.selectedId = getHashParam('assessment');
-    void this.load();
+    if (this.busy) this.reloadPending = true;
+    else void this.load();
   };
+  private reloadPending = false;
   private loadedPages = 1;
-  private selectedId = getHashParam('assessment');
+  @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
   private interval?: ReturnType<typeof setInterval>;
   private unsubscribe?: () => void;
@@ -144,25 +147,30 @@ export class AssessmentPanel extends LitElement {
       ]);
       if (!this.isConnected) return;
       const selectedId = this.selectedId;
+      let page = history;
+      let refreshed = history.records;
+      if (!more && !selectedId) {
+        for (let i = 1; i < this.loadedPages && page.nextCursor; i++) {
+          page = await gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
+            limit: 50,
+            before: page.nextCursor,
+          });
+          refreshed = [...refreshed, ...page.records];
+        }
+      }
       this.records = selectedId
         ? [await gateway.request<AssessmentRecord>(Methods.ASSESSMENT_GET, { id: selectedId })]
         : more
           ? [...this.records, ...history.records]
-          : [
-              ...history.records,
-              ...this.records.filter(
-                (r) => this.loadedPages > 1 && !history.records.some((n) => n.id === r.id),
-              ),
-            ];
+          : refreshed;
       this.auditError =
         history.auditHealth.status === 'degraded'
           ? `${history.auditHealth.failedWritesSinceStart} assessment writes failed since startup. History may be incomplete.`
           : '';
       if (more) this.loadedPages++;
-      if (more || this.loadedPages === 1) this.cursor = history.nextCursor;
+      this.cursor = page.nextCursor;
       if (selectedId !== this.selectedId) {
-        this.busy = false;
-        void this.load();
+        this.reloadPending = true;
         return;
       }
       this.summary = summary;
@@ -171,6 +179,10 @@ export class AssessmentPanel extends LitElement {
       this.error = 'Assessment history could not be loaded. Refresh to retry.';
     } finally {
       this.busy = false;
+      if (this.reloadPending) {
+        this.reloadPending = false;
+        void this.load();
+      }
     }
   }
   private async feedback(
@@ -181,9 +193,13 @@ export class AssessmentPanel extends LitElement {
     evidenceRef: string,
     correctedAnswer?: string | boolean,
   ) {
+    if (verdict === 'incorrect' && correctedAnswer === undefined) {
+      this.error = 'Choose the corrected answer before saving an incorrect judgment.';
+      return;
+    }
     this.busy = true;
     try {
-      await gateway.request(Methods.ASSESSMENT_FEEDBACK, {
+      const updated = await gateway.request<AssessmentRecord>(Methods.ASSESSMENT_FEEDBACK, {
         id: record.id,
         expectedRevision: record.feedback.length,
         questionId,
@@ -193,6 +209,7 @@ export class AssessmentPanel extends LitElement {
         evidenceRef,
         ...(correctedAnswer !== undefined ? { correctedAnswer } : {}),
       });
+      this.records = this.records.map((r) => (r.id === updated.id ? updated : r));
       this.busy = false;
       await this.load();
     } catch {
@@ -204,7 +221,10 @@ export class AssessmentPanel extends LitElement {
   private async exportReport() {
     this.busy = true;
     try {
-      const report = await gateway.request<AssessmentReport>(Methods.ASSESSMENT_REPORT, {});
+      const report = await gateway.request<AssessmentReport>(
+        Methods.ASSESSMENT_REPORT,
+        this.selectedId ? { assessmentId: this.selectedId } : {},
+      );
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
       );
@@ -227,9 +247,11 @@ export class AssessmentPanel extends LitElement {
         Advisory only. No review, dispatch or publication action is applied. History covers the last
         30 days.
       </p>
-      <button @click=${() => this.load()} ?disabled=${this.busy}>Refresh</button>
+      <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
+        Refresh
+      </button>
       <button @click=${() => this.exportReport()} ?disabled=${this.busy}>
-        Export effectiveness snapshot
+        ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
       ${this.auditError ? html`<p role="alert" class="error">${this.auditError}</p>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
@@ -274,7 +296,9 @@ export class AssessmentPanel extends LitElement {
             No assessments recorded. Ordinary run monitoring does not invoke this feature.
           </p>`
         : nothing}
-      ${this.records.map(
+      ${repeat(
+        this.records,
+        (record) => record.id,
         (record) =>
           html`<article id=${record.id}>
             <strong>${record.consumer} · ${record.status}</strong>
@@ -295,12 +319,15 @@ export class AssessmentPanel extends LitElement {
             </p>
             <details ?open=${Boolean(this.selectedId)}>
               <summary>Answers, provenance and feedback</summary>
-              ${Object.entries(record.result?.answers ?? {}).map(
+              ${repeat(
+                Object.entries(record.result?.answers ?? {}),
+                ([question]) => question,
                 ([question, answer]) =>
                   html`<section>
                     <h4>${question}</h4>
                     <pre>${JSON.stringify(answer, null, 2)}</pre>
                     <form
+                      data-question=${question}
                       @submit=${(event: SubmitEvent) => {
                         event.preventDefault();
                         const form = event.currentTarget as HTMLFormElement;
@@ -370,7 +397,9 @@ ${JSON.stringify(
           </article>`,
       )}
       ${this.cursor && !this.selectedId
-        ? html`<button @click=${() => this.load(true)} ?disabled=${this.busy}>Load older</button>`
+        ? html`<button data-action="older" @click=${() => this.load(true)} ?disabled=${this.busy}>
+            Load older
+          </button>`
         : nothing}
     `;
   }

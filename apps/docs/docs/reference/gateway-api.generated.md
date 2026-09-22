@@ -57,7 +57,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `assessment.list`                       | assessment       | read-only     | —      | —      | Assessment List gateway method.                       |
 | `assessment.report`                     | assessment       | bounded-write | —      | —      | Assessment Report gateway method.                     |
 | `assessment.status`                     | assessment       | read-only     | —      | —      | Assessment Status gateway method.                     |
-| `assessment.summary`                    | assessment       | bounded-write | —      | —      | Assessment Summary gateway method.                    |
+| `assessment.summary`                    | assessment       | read-only     | —      | —      | Assessment Summary gateway method.                    |
 | `assessment.test`                       | assessment       | bounded-write | —      | —      | Assessment Test gateway method.                       |
 | `auth.connect`                          | auth             | bounded-write | —      | —      | Auth Connect gateway method.                          |
 | `backlog.archive`                       | backlog          | bounded-write | —      | —      | Backlog Archive gateway method.                       |

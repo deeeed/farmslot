@@ -27,6 +27,8 @@ export async function monitorAssessment(
   try {
     value = await operation();
   } catch {
+    // Optional failures cannot abort the caller. Discard exception text, which may
+    // contain request data or credentials; persist a safe unavailable outcome.
     value = { status: 'unavailable', error: 'Assessment could not be completed' };
   }
   // Validate the outbound value as well as storage. A failed write must never
@@ -40,6 +42,8 @@ export async function monitorAssessment(
       ...('assessment' in value ? { recommendation: value } : {}),
     });
   } catch {
+    // Optional failures cannot abort the caller. Discard exception text, which may
+    // contain request data or credentials; persist a safe unavailable outcome.
     value = { status: 'unavailable', error: 'Assessment response rejected by audit validation' };
   }
   const result = 'assessment' in value ? value.assessment : value;

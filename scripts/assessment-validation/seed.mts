@@ -25,7 +25,10 @@ const context = {
     questionSchemaHash: 'b'.repeat(64),
   },
 };
-for (const status of ['completed', 'disabled', 'skipped', 'unavailable', 'interrupted'] as const) {
+const statuses = process.argv.includes('--pagination')
+  ? Array.from({ length: 55 }, () => 'completed' as const)
+  : (['completed', 'disabled', 'skipped', 'unavailable', 'interrupted'] as const);
+for (const status of statuses) {
   const record = await beginAssessment(context);
   if (status === 'interrupted') continue;
   const result =
