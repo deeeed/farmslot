@@ -52,7 +52,7 @@ export function triageFailureHash(run: Run, step: RunStep): string {
   });
 }
 
-/** Include nested runtime logs disclosed by canonical step outputs, never client paths. */
+/** Host-wide registry plus nested runtime logs disclosed by canonical step outputs. */
 export async function registeredFailureLogs(step: RunStep) {
   const registry = await listLogRegistryEntries();
   const paths = failureLogPaths(step);
@@ -143,7 +143,8 @@ export async function admittedFailureSnapshot(
     packet,
     sources,
     origin: approval.origin,
-    policyVersion: policy.policyVersion,
+    approval,
+    price: policy.price,
   });
   return { ...identity, packet, sources, snapshotHash };
 }

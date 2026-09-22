@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -10,6 +11,18 @@ assert.ok(
 );
 const gatewayProof = JSON.parse(await readFile(path.join(out, 'proof.json'), 'utf8'));
 assert.equal(gatewayProof.mode, 'simulated');
+const recoverNoCall = process.argv.includes('--recover-no-call');
+assert.ok(process.argv.slice(2).every((a) => a === '--recover-no-call'));
+if (!recoverNoCall) {
+  const policyFile = path.join(out, 'home/triage-policy.json');
+  const policy = JSON.parse(await readFile(policyFile, 'utf8'));
+  const sourceFile = path.join(out, 'root/.omx/logs/validation/failure.log');
+  const source =
+    (await readFile(sourceFile, 'utf8')) + 'Fresh browser observation: ' + Date.now() + '\n';
+  await writeFile(sourceFile, source);
+  policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
+  await writeFile(policyFile, JSON.stringify(policy));
+}
 const session = JSON.parse(await readFile(path.join(out, 'ui-session.json'), 'utf8'));
 const route = `run/${session.runId}?step=validation&proof=triage-browser-${Date.now()}`;
 const env = {
@@ -32,6 +45,7 @@ const probe = `
   const p=find(document,'failure-triage-panel');const d=p?.shadowRoot?.querySelector('details');
   const text=d?.textContent ?? '';
   return { found:!!p, open:!!d?.open, state:p?.shadowRoot?.querySelector('[data-triage-state]')?.textContent?.trim(),
+    noCall:text.includes('No provider call was made'), savedAdvice:text.includes('Saved advice;'),
     button:p?.shadowRoot?.querySelector('[data-triage-action=analyze]')?.textContent?.trim(),
     feedback:text.includes('Saved feedback: correct'), corrected:text.includes('corrected cause: test_harness'), redacted:text.includes('[REDACTED]'),
     canaryAbsent:!text.includes('triage-canary-private'), approvedModel:text.includes('Returned model: jev-1.13.0'),
@@ -66,11 +80,17 @@ if (modal) cdp('click', route, '.backdrop > .panel > .actions > button.primary')
 await waitFor((r) => r.found && !['loading', 'loading configuration'].includes(r.state));
 cdp('click', route, '#failure-triage-summary');
 const before = await waitFor((r) => r.open);
+if (recoverNoCall) {
+  assert.equal(before.state, 'not assessed');
+  assert.equal(before.noCall, true);
+  assert.equal(before.savedAdvice, false);
+  assert.equal(before.button, 'Retry advice once');
+} else assert.equal(before.button, 'Analyze once');
 const requestsBefore = await count();
 cdp('click', route, '[data-triage-action="analyze"]');
 const completed = await waitFor((r) => r.state === 'completed');
 assert.equal(completed.approvedModel, true, 'Browser must show returned model identity');
-assert.equal(await count(), requestsBefore + (before.button === 'Use saved advice' ? 0 : 1));
+assert.equal(await count(), requestsBefore + 1);
 cdp(
   'select',
   route,

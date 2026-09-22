@@ -8,6 +8,7 @@ import {
   type AssessmentRecord,
   type AssessmentReport,
   type AssessmentSummary,
+  failureTriageCause,
   Methods,
 } from '@farmslot/protocol';
 
@@ -305,9 +306,10 @@ export class AssessmentPanel extends LitElement {
             </p>
             <p>
               Model cost estimates: $${(s.knownEstimatedUsd ?? 0).toFixed(6)} · reported costs:
-              $${(s.knownReportedUsd ?? 0).toFixed(6)} · ${s.unknownCharges ?? 'unknown'} requests
-              with unknown charges. Conservative reservations: $${(s.reservedUsd ?? 0).toFixed(6)}.
-              Completed snapshot cohorts:
+              $${(s.knownReportedUsd ?? 0).toFixed(6)} · legacy amount with unspecified cost source:
+              $${(s.knownUnclassifiedUsd ?? 0).toFixed(6)} · ${s.unknownCharges ?? 'unknown'}
+              requests with unknown charges. Conservative reservations:
+              $${(s.reservedUsd ?? 0).toFixed(6)}. Completed snapshot cohorts:
               ${s.completedCases ?? 'unknown'}/${s.selectedCases ?? 'unknown'}. Workflow savings:
               not measured. Paired workflows at equal independently checked quality are required.
             </p>`
@@ -343,9 +345,7 @@ export class AssessmentPanel extends LitElement {
             <p>
               Recommendation:
               ${record.consumer === 'failure-triage'
-                ? record.result?.answers?.cause?.type === 'choice'
-                  ? record.result.answers.cause.choice
-                  : 'Unavailable'
+                ? (failureTriageCause(record) ?? 'Unavailable')
                 : (record.recommendation?.route ?? 'Not assessed')}
               · ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none
             </p>

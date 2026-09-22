@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { AssessmentRecord, AssessmentReport, ResultPackageManifest } from '@farmslot/protocol';
+import {
+  type AssessmentRecord,
+  type AssessmentReport,
+  failureTriageCause,
+  type ResultPackageManifest,
+} from '@farmslot/protocol';
 
 import { computePackageHash, unavailableDiff } from '../evals/package-store.js';
 
@@ -398,4 +403,57 @@ test('owner can freeze a single case after assessing other PRs without borrowing
   assert.equal(incomplete.comparison.assessmentAttemptsMissingUsage, 1);
   assert.equal(incomplete.comparison.totalTokenDelta, undefined);
   assert.match(incomplete.comparison.reason, /usage is incomplete/);
+});
+
+test('triage cause display requires matched evidence in both clients', () => {
+  const r = row();
+  r.consumer = 'failure-triage';
+  r.subject = {
+    run: {
+      id: 'r1',
+      project: 'fixture',
+      step: 'validation',
+      snapshotHash: 'a'.repeat(64),
+      sources: [{ id: 'e1', sourceId: 'log1', digest: 'b'.repeat(64) }],
+    },
+  };
+  r.result!.answers = {
+    cause: { type: 'choice', choice: 'environment', probabilities: { environment: 1 } },
+    evidence: { type: 'choice', choice: 'e2', probabilities: { e2: 1 } },
+  };
+  assert.equal(failureTriageCause(r), undefined);
+  r.result!.answers.evidence = { type: 'choice', choice: 'e1', probabilities: { e1: 1 } };
+  assert.equal(failureTriageCause(r), 'environment');
+  r.status = 'unavailable';
+  assert.equal(failureTriageCause(r), undefined);
+});
+
+test('legacy cost amounts are not relabeled as provider-reported', () => {
+  const legacy = row(),
+    estimated = row(),
+    reported = row();
+  legacy.result!.usage = {
+    provider: 'fake',
+    requestedModel: 'fixed',
+    durationMs: 1,
+    costUsd: 0.01,
+  };
+  estimated.result!.usage = {
+    provider: 'fake',
+    requestedModel: 'fixed',
+    durationMs: 1,
+    costUsd: 0.02,
+    costKind: 'estimated',
+  };
+  reported.result!.usage = {
+    provider: 'fake',
+    requestedModel: 'fixed',
+    durationMs: 1,
+    costUsd: 0.03,
+    costKind: 'reported',
+  };
+  const result = summarizeAssessments([legacy, estimated, reported]);
+  assert.equal(result.knownReportedUsd, 0.03);
+  assert.equal(result.knownEstimatedUsd, 0.02);
+  assert.equal(result.knownUnclassifiedUsd, 0.01);
 });

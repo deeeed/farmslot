@@ -146,7 +146,11 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
     ),
     knownReportedUsd: rows.reduce(
       (n, r) =>
-        n + (r.result?.usage?.costKind !== 'estimated' ? (r.result?.usage?.costUsd ?? 0) : 0),
+        n + (r.result?.usage?.costKind === 'reported' ? (r.result?.usage?.costUsd ?? 0) : 0),
+      0,
+    ),
+    knownUnclassifiedUsd: rows.reduce(
+      (n, r) => n + (r.result?.usage?.costKind === undefined ? (r.result?.usage?.costUsd ?? 0) : 0),
       0,
     ),
     unknownCharges: rows.filter(

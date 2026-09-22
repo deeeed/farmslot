@@ -148,7 +148,8 @@ export async function reserveAssessment(
   reservation: NonNullable<AssessmentRecord['reservation']>,
   limits: { maxCalls: number; maxUsd: number },
 ): Promise<
-  { status: 'reserved' | 'existing'; record: AssessmentRecord } | { status: 'budget-blocked' }
+  | { status: 'reserved' | 'existing'; record: AssessmentRecord }
+  | { status: 'budget-blocked'; cause: 'spend-bound' | 'daily' }
 > {
   if (
     !Number.isSafeInteger(limits.maxCalls) ||
@@ -175,7 +176,7 @@ export async function reserveAssessment(
           r.result?.error === 'spend-bound-exceeded',
       )
     )
-      return { status: 'budget-blocked' };
+      return { status: 'budget-blocked', cause: 'spend-bound' };
     const today = new Date().toISOString().slice(0, 10);
     const attempts = records.filter((r) => r.reservation && r.startedAt.slice(0, 10) === today);
     if (
@@ -183,7 +184,7 @@ export async function reserveAssessment(
       attempts.reduce((sum, r) => sum + r.reservation!.maxUsd, 0) + reservation.maxUsd >
         limits.maxUsd + 1e-12
     )
-      return { status: 'budget-blocked' };
+      return { status: 'budget-blocked', cause: 'daily' };
     return { status: 'reserved', record: await createAssessment(context, reservation) };
   });
 }

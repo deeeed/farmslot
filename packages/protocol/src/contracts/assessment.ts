@@ -223,6 +223,7 @@ export interface AssessmentSummary {
   reservedUsd?: number;
   knownEstimatedUsd?: number;
   knownReportedUsd?: number;
+  knownUnclassifiedUsd?: number;
   unknownCharges?: number;
   completed: number;
   failed: number;

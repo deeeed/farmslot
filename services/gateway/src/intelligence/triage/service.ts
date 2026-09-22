@@ -1,9 +1,10 @@
-import type {
-  AssessmentRecord,
-  AssessmentResult,
-  FailureTriageAnalyzeParams,
-  FailureTriageGetParams,
-  FailureTriageView,
+import {
+  type AssessmentRecord,
+  type AssessmentResult,
+  type FailureTriageAnalyzeParams,
+  failureTriageCause,
+  type FailureTriageGetParams,
+  type FailureTriageView,
 } from '@farmslot/protocol';
 
 import { readAssessmentArtifact, saveAssessmentArtifact } from '../../assessment/artifacts.js';
@@ -18,11 +19,7 @@ import {
 } from '../../assessment/failure-triage/packet.js';
 import { verifyTriagePilotEvidence } from '../../assessment/failure-triage/pilot-evidence.js';
 import { boundedAssessmentFetch } from '../../assessment/failure-triage/transport.js';
-import {
-  CHECK_FOR_LABEL,
-  LABELS,
-  type TriageLabel,
-} from '../../assessment/failure-triage/types.js';
+import { CHECK_FOR_LABEL } from '../../assessment/failure-triage/types.js';
 import { assess } from '../../assessment/index.js';
 import { completeAssessment } from '../../assessment/monitor.js';
 import {
@@ -46,19 +43,12 @@ function canRetry(record: AssessmentRecord): boolean {
 }
 
 function advice(record: AssessmentRecord): FailureTriageView['advice'] {
-  const cause = record.result?.answers?.cause;
+  const label = failureTriageCause(record);
+  if (!label) return undefined;
   const evidence = record.result?.answers?.evidence;
-  if (
-    record.status !== 'completed' ||
-    cause?.type !== 'choice' ||
-    !LABELS.some((l) => l === cause.choice)
-  )
-    return undefined;
   const sources = (record.subject.run?.sources ?? []).filter(
     (s) => evidence?.type === 'choice' && s.id === evidence.choice,
   );
-  if (cause.choice !== 'unclear' && !sources.length) return undefined;
-  const label = cause.choice as TriageLabel;
   return { cause: label, nextCheck: CHECK_FOR_LABEL[label], evidence: sources };
 }
 
@@ -112,6 +102,7 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
       return { view };
     }
     if (!validTriagePrice(policy.price, provider.id, config.model)) {
+      view.availability = 'unavailable';
       view.reason = 'A current, compatible price snapshot is required.';
       return { view };
     }
@@ -139,7 +130,9 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
     });
     view.snapshotHash = snapshotHash;
     view.step = snapshot.step;
-    view.record = records.find((r) => r.subject.run?.snapshotHash === snapshotHash) ?? records[0];
+    view.record =
+      records.find((r) => r.subject.run?.snapshotHash === snapshotHash) ??
+      records.find((r) => r.subject.run?.step === snapshot.step);
     view.stale = !!view.record && view.record.subject.run?.snapshotHash !== snapshotHash;
     view.advice = view.record && advice(view.record);
     view.retryAllowed = !view.stale && !!view.record && canRetry(view.record);
@@ -147,9 +140,13 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
     view.reason =
       !view.stale && view.record?.status === 'started'
         ? 'An assessment of this snapshot is already running.'
-        : !view.stale && view.record?.status === 'interrupted'
-          ? 'The previous attempt has no saved result; its charge is unknown. Retry only explicitly.'
-          : 'One optional assessment of this approved failure snapshot. No recovery action is available.';
+        : !view.stale &&
+            ['skipped', 'disabled'].includes(view.record?.status ?? '') &&
+            view.record?.result?.attempted === false
+          ? 'No provider call was made. Retry explicitly when the settings and evidence are ready.'
+          : !view.stale && view.record?.status === 'interrupted'
+            ? 'The previous attempt has no saved result; its charge is unknown. Retry only explicitly.'
+            : 'One optional assessment of this approved failure snapshot. No recovery action is available.';
     return {
       view,
       ready: {
@@ -269,7 +266,10 @@ export async function analyzeFailureTriage(
       return {
         ...view,
         availability: 'budget-blocked',
-        reason: 'The shared daily assessment budget is exhausted.',
+        reason:
+          reserved.cause === 'spend-bound'
+            ? 'A previous response exceeded this price snapshot’s token bound. Verify a new price snapshot before requesting advice.'
+            : 'The shared daily assessment budget is exhausted.',
       };
     if (reserved.status === 'reserved') {
       await completeAssessment(reserved.record, async (): Promise<AssessmentResult> => {
@@ -286,7 +286,11 @@ export async function analyzeFailureTriage(
           };
         }
         const current = await inspect(ownerId, { runId: params.runId, step: snapshot.step });
-        if (!current.ready || current.ready.snapshotHash !== snapshotHash)
+        if (
+          !current.ready ||
+          current.ready.snapshotHash !== snapshotHash ||
+          current.ready.policy.policyVersion !== policy.policyVersion
+        )
           return {
             status: 'skipped',
             attempted: false,
@@ -354,6 +358,7 @@ export async function analyzeFailureTriage(
       });
     }
     // Re-read storage: an uncertain/failed write cannot become a completed UI result.
+    // Recheck admission after transport to mark changes during inference as stale.
     const record = await assessmentRecord(ownerId, reserved.record.id);
     const current = await inspect(ownerId, { runId: params.runId, step: snapshot.step });
     return {
@@ -364,13 +369,15 @@ export async function analyzeFailureTriage(
       reason:
         current.view.availability !== 'ready'
           ? current.view.reason
-          : record.status === 'interrupted'
-            ? 'The previous attempt has no saved result; its charge is unknown. Retry only explicitly.'
-            : record.status === 'unavailable'
-              ? (record.result?.error ?? 'Assessment unavailable.')
-              : reserved.status === 'existing'
-                ? 'Saved advice; no new provider call.'
-                : 'Assessment saved. This does not change the run verdict.',
+          : ['skipped', 'disabled'].includes(record.status) && record.result?.attempted === false
+            ? 'No provider call was made. Retry explicitly when the settings and evidence are ready.'
+            : record.status === 'interrupted'
+              ? 'The previous attempt has no saved result; its charge is unknown. Retry only explicitly.'
+              : record.status === 'unavailable'
+                ? (record.result?.error ?? 'Assessment unavailable.')
+                : reserved.status === 'existing'
+                  ? 'Saved advice; no new provider call.'
+                  : 'Assessment saved. This does not change the run verdict.',
     };
   })();
   pending.set(key, operation);

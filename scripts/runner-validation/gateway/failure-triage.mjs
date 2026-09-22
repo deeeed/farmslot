@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
 assert.ok(
-  process.argv.slice(2).every((arg) => ['--keep', '--live-smoke'].includes(arg)),
+  process.argv.slice(2).every((arg) => ['--keep', '--keep-no-call', '--live-smoke'].includes(arg)),
   'Unknown proof option',
 );
 const smoke = process.argv.includes('--live-smoke');
-assert.ok(!(smoke && process.argv.includes('--keep')), 'Live smoke must stop its gateway');
+const keep = process.argv.includes('--keep') || process.argv.includes('--keep-no-call');
+assert.ok(!(smoke && keep), 'Live smoke must stop its gateway');
 const liveKey = process.env.TYPESAFE_API_KEY?.trim() || process.env.TYPESCRIPT_API_KEY?.trim();
 if (smoke) assert.ok(liveKey, 'A live provider credential is required');
 let liveTransport = false;
@@ -100,7 +101,7 @@ const run = {
 };
 const runFile = path.join(runs, `${id}.json`);
 await writeFile(runFile, JSON.stringify(run));
-const source =
+let source =
   'Error: configured executable is unavailable\nAuthorization: Bearer triage-canary-private\n';
 await writeFile(sourcePath, source);
 await writeFile(path.join(out, 'mode'), 'valid');
@@ -252,7 +253,12 @@ try {
   assert.equal(draft.approval.failureHash, setup.failureHash);
   assert.equal(draft.approval.sources[0].digest, setup.digest);
   assert.ok(!JSON.stringify(draft).includes('triage-canary-private'));
-  const price = JSON.parse(await readFile('scripts/failure-triage/prices.json', 'utf8'));
+  const price = JSON.parse(
+    await readFile(
+      process.env.TRIAGE_PILOT_PRICE_FILE ?? 'scripts/failure-triage/prices.json',
+      'utf8',
+    ),
+  );
   const policy = {
     enabled: true,
     projects: ['triage-fixture'],
@@ -272,6 +278,12 @@ try {
     ],
   };
   const savePolicy = () => writeFile(path.join(home, 'triage-policy.json'), JSON.stringify(policy));
+  async function advanceSnapshot() {
+    source += 'Observation sequence: ' + Date.now() + '\n';
+    await writeFile(sourcePath, source);
+    policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
+    await savePolicy();
+  }
   await savePolicy();
   await writeFile(
     path.join(home, 'assessment-config.json'),
@@ -338,6 +350,10 @@ try {
   assert.equal(await count(), 1);
   policy.maxCalls = 6;
   await savePolicy();
+  assert.equal(rpc('intelligence.triage.get', { runId: id }).snapshotHash, params.snapshotHash);
+  assert.equal(rpc('intelligence.triage.analyze', params).record.id, first.record.id);
+  assert.equal(await count(), 1, 'Budget edits must not rebill cached advice');
+  await advanceSnapshot();
   await writeFile(path.join(out, 'mode'), 'hang');
   const next = rpc('intelligence.triage.get', { runId: id });
   const interrupted = asyncRpc('intelligence.triage.analyze', {
@@ -377,7 +393,7 @@ try {
   assert.notEqual(retried.record.id, uncertain.record.id);
   assert.equal(await count(), 3);
   policy.maxCalls = 3;
-  await savePolicy();
+  await advanceSnapshot();
   const limited = rpc('intelligence.triage.get', { runId: id });
   assert.equal(
     rpc('intelligence.triage.analyze', { runId: id, snapshotHash: limited.snapshotHash })
@@ -474,6 +490,7 @@ try {
     await start();
     const beforeRetry = rpc('intelligence.triage.get', { runId: id });
     assert.equal(beforeRetry.retryAllowed, true, status);
+    assert.match(beforeRetry.reason, /No provider call was made/, status);
     const callsBefore = await count();
     assert.equal(
       rpc('intelligence.triage.analyze', { runId: id, snapshotHash: beforeRetry.snapshotHash })
@@ -504,11 +521,76 @@ try {
   await start();
   assert.equal(await count(), 8);
   assert.equal(JSON.stringify(rpc('run.get', { runId: id }).run), authorityBefore);
+  await stop();
+  const secondRun = structuredClone(run);
+  secondRun.steps.push({ ...secondRun.steps[0], name: 'second-failure' });
+  const secondFailureHash = execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `import {triageFailureHash} from './services/gateway/src/intelligence/triage/snapshot.ts'; const run=${JSON.stringify(secondRun)}; console.log(triageFailureHash(run,run.steps[1]));`,
+    ],
+    { env, encoding: 'utf8' },
+  ).trim();
+  policy.approvals.push({
+    ...policy.approvals[0],
+    step: 'second-failure',
+    failureHash: secondFailureHash,
+  });
+  await writeFile(runFile, JSON.stringify(secondRun));
+  await savePolicy();
+  await start();
+  const secondStep = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(secondStep.availability, 'ready');
+  assert.equal(secondStep.step, 'second-failure');
+  assert.equal(secondStep.record, undefined, 'Never display another failed step’s saved advice');
+  assert.equal(await count(), 8);
+  await stop();
+  policy.approvals.pop();
+  await writeFile(runFile, JSON.stringify(run));
+  await savePolicy();
+  await start();
+  // A saved overspend incident blocks its price snapshot, not merely today's budget.
+  const prior = rpc('intelligence.triage.get', { runId: id }).record;
+  await stop();
+  const latch = {
+    ...prior,
+    id: randomUUID(),
+    startedAt: new Date(Date.now() - 86400000).toISOString(),
+    status: 'unavailable',
+    reservation: { ...prior.reservation, key: 'd'.repeat(64) },
+    result: { status: 'unavailable', attempted: true, error: 'spend-bound-exceeded' },
+    feedback: [],
+  };
+  await writeFile(path.join(home, 'assessments', latch.id + '.json'), JSON.stringify(latch));
+  await advanceSnapshot();
+  await start();
+  const boundView = rpc('intelligence.triage.get', { runId: id });
+  const bound = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: boundView.snapshotHash,
+  });
+  assert.equal(bound.availability, 'budget-blocked');
+  assert.match(bound.reason, /exceeded this price snapshot/);
+  assert.equal(await count(), 8);
+  await stop();
+  await rm(path.join(home, 'assessments', latch.id + '.json'));
+  source = source.slice(0, source.lastIndexOf('Observation sequence:'));
+  await writeFile(sourcePath, source);
+  policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
+  await savePolicy();
+  await start();
   const proof = {
     passed: true,
     mode: 'simulated',
     providerCalls: 8,
     modelIdentityEnforced: true,
+    unrelatedBudgetEditPreservesCache: true,
+    latestFailedStepDoesNotBorrowAdvice: true,
+    spendBoundReasonDistinct: true,
     malformedOutputRejected: true,
     inputLimitPreflight: true,
     noCallExplicitRetry: true,
@@ -533,7 +615,7 @@ try {
     // A separate, explicitly authorized wiring smoke. It is never benchmark evidence.
     liveTransport = true;
     env.TYPESAFE_API_KEY = liveKey;
-    policy.price = { ...price, verifiedAt: new Date().toISOString() };
+    policy.price = price;
     await savePolicy();
     await start();
     const view = rpc('intelligence.triage.get', { runId: id });
@@ -562,7 +644,20 @@ try {
       JSON.stringify({ liveSmoke: true, status: receipt.status, efficacyEvidence: false }),
     );
   }
-  if (process.argv.includes('--keep')) {
+  if (process.argv.includes('--keep-no-call')) {
+    const latest = rpc('intelligence.triage.get', { runId: id }).record;
+    await stop();
+    latest.status = 'skipped';
+    latest.result = {
+      status: 'skipped',
+      attempted: false,
+      provider: env.FARMSLOT_ASSESSMENT_PROVIDER,
+      requestedModel: env.FARMSLOT_ASSESSMENT_MODEL,
+    };
+    await writeFile(path.join(home, 'assessments', latest.id + '.json'), JSON.stringify(latest));
+    await start();
+  }
+  if (keep) {
     await writeFile(
       path.join(out, 'ui-session.json'),
       JSON.stringify({

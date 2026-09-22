@@ -54,3 +54,33 @@ export interface FailureTriageView {
   };
   efficiencyClaim: 'not_established';
 }
+
+/** A definite cause is displayable only with a source-bound evidence answer. */
+export function failureTriageCause(record: AssessmentRecord): FailureTriageCause | undefined {
+  const cause = record.result?.answers?.cause;
+  const evidence = record.result?.answers?.evidence;
+  const causes: readonly string[] = [
+    'environment',
+    'dependencies',
+    'implementation',
+    'test_harness',
+    'missing_evidence',
+    'external_service',
+    'unclear',
+  ];
+  if (
+    record.consumer !== 'failure-triage' ||
+    record.status !== 'completed' ||
+    cause?.type !== 'choice' ||
+    !causes.includes(cause.choice)
+  )
+    return undefined;
+  if (
+    cause.choice !== 'unclear' &&
+    !(record.subject.run?.sources ?? []).some(
+      (s) => evidence?.type === 'choice' && s.id === evidence.choice,
+    )
+  )
+    return undefined;
+  return cause.choice as FailureTriageCause;
+}

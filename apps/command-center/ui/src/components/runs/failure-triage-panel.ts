@@ -179,15 +179,18 @@ export class FailureTriagePanel extends LitElement {
           ? v.availability.replaceAll('-', ' ')
           : v.stale && record
             ? 'stale'
-            : record?.status === 'started'
-              ? 'analyzing'
-              : record?.status === 'interrupted' || record?.status === 'unavailable'
-                ? 'unavailable'
-                : v.advice?.cause === 'unclear'
-                  ? 'unclear'
-                  : record?.status === 'completed'
-                    ? 'completed'
-                    : 'ready';
+            : ['skipped', 'disabled'].includes(record?.status ?? '') &&
+                record?.result?.attempted === false
+              ? 'not assessed'
+              : record?.status === 'started'
+                ? 'analyzing'
+                : record?.status === 'interrupted' || record?.status === 'unavailable'
+                  ? 'unavailable'
+                  : v.advice?.cause === 'unclear'
+                    ? 'unclear'
+                    : record?.status === 'completed'
+                      ? 'completed'
+                      : 'ready';
     const causeAnswer = record?.result?.answers?.cause;
     const corrections =
       causeAnswer?.type === 'choice'

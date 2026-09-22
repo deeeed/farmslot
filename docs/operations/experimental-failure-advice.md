@@ -50,8 +50,9 @@ The draft command makes no provider call and does not change policy. Review its
 `sanitizedPreview`; the origin declaration is an operator approval of those exact
 source bytes. It is not inferred from a project name or a client checkbox.
 Changing the recorded failure or source contents requires a new approval.
-Nested runtime logs are discoverable only when canonical step outputs disclose
-them through the existing log registry.
+The operator selects sources from the host’s whole log registry. Canonical step
+outputs can additionally disclose nested runtime logs. Approval binds the chosen
+bytes to a failure; registration alone does not prove that a log belongs to it.
 
 Copy the reviewed `approval` into `approvals` in
 `<FARMSLOT_HOME>/triage-policy.json`:
@@ -104,11 +105,18 @@ and returned models, evidence identities, usage, latency and estimated cost.
 **Show assessed text** reads the saved sanitized packet. This is text-only advice.
 A completed response is not proof that the failure was fixed.
 
-Simultaneous identical requests share one attempt. Cached advice keeps its
+Within one gateway, simultaneous identical requests share one attempt. Each
+FARMSLOT_HOME must have one gateway owner; reservations do not use a cross-process
+lock. Cached advice keeps its
 original model and timestamp. An interrupted attempt is returned as uncertain
 after restart, with no replay. **Retry advice once** sends `retryOf` referencing
 that unavailable/interrupted record, or a skipped/disabled record confirmed to
-have made no provider call. Repeating that retry identity is also idempotent. A successful retry becomes the cached result.
+have made no provider call. Repeating that retry identity is also idempotent. A successful retry becomes the cached result. Unrelated approvals and daily-budget
+edits preserve cached advice. Changes to the matched approval, source, model,
+rubric or price snapshot require a new assessment. A response exceeding the price
+snapshot’s token bound blocks that price snapshot until it is replaced after
+verification, or the incident expires after 30 days. Waiting until the next UTC
+day does not clear this block.
 
 Correct/incorrect/insufficient-context feedback updates only the advisory record.
 **I used this advice** is an explicit operator declaration. These labels are
@@ -150,3 +158,16 @@ An explicit `--live-smoke` option runs the simulated checks, then sends one fres
 synthetic snapshot through the real provider. It requires a gateway-host key,
 saves `live-smoke.json`, and stops its gateway. It cannot be combined with
 `--keep`. This checks wiring only and never contributes to the frozen benchmark.
+
+Use `--keep-no-call` to leave an owned gateway with a historical skipped fixture,
+then pass `--recover-no-call` to the browser proof. The normal browser proof
+approves a fresh synthetic source before navigation, verifies its Analyze button
+makes one request, and verifies cache reuse makes none.
+
+The live smoke preserves the price snapshot's verification date. Set
+`TRIAGE_PILOT_PRICE_FILE` to an independently verified snapshot to replace the
+bundled one. Stale pricing blocks the request. For a negative test, preload
+`scripts/runner-validation/fixtures/triage-no-external.mjs` with `NODE_OPTIONS`,
+set `TRIAGE_NETWORK_GUARD` to a file containing `0`, and supply an expired price.
+The smoke must reject before that counter changes. The guard permits localhost
+health checks and blocks external fetches; it is validation infrastructure only.
