@@ -239,7 +239,7 @@ export async function prRulesMethod(method: string, value: unknown): Promise<unk
   }
   if (method === Methods.PR_RULE_PREVIEW) {
     if (p.pr !== undefined) assertMonitoredPRIdentity(p.pr);
-    return { preview: await service.preview(ownerId, id, p.pr, { includeAssessment: true }) };
+    return { preview: await service.preview(ownerId, id, p.pr) };
   }
   if (method === Methods.PR_RULE_SCAN) return { preview: await service.scan(ownerId, id) };
   if (method === Methods.PR_RULE_SET_ENABLED) {

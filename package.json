@@ -73,7 +73,8 @@
     "e2e:acceptance-gateway": "tsx scripts/e2e-acceptance-gateway.mts",
     "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs",
     "quality:review-loop": "node scripts/quality/check-review-loop-validation-contract.mjs",
-    "quality:gateway-api-docs": "node scripts/quality/check-gateway-api-docs.mjs"
+    "quality:gateway-api-docs": "node scripts/quality/check-gateway-api-docs.mjs",
+    "triage:evaluate": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/evaluate.mts"
   },
   "license": "MIT",
   "resolutions": {

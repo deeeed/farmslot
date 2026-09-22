@@ -415,13 +415,13 @@ test('accept refreshes GitHub review state before rejecting duplicate work or al
   assert.equal(reads, 3, 'An unauthorized principal never reads the PR through another account');
 });
 
-test('assessment history is created only by explicit previews, never scans', async (t) => {
+test('PR previews and scans never invoke assessments even when the provider is enabled', async (t) => {
   const { store, rule, subject } = await revisionFixture(t);
   const home = await mkdtemp(join(tmpdir(), 'pr-assessment-isolation-'));
   const oldHome = process.env.FARMSLOT_HOME,
     oldEnabled = process.env.FARMSLOT_ASSESSMENT_ENABLED;
   process.env.FARMSLOT_HOME = home;
-  process.env.FARMSLOT_ASSESSMENT_ENABLED = 'false';
+  process.env.FARMSLOT_ASSESSMENT_ENABLED = 'true';
   t.after(async () => {
     if (oldHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = oldHome;
@@ -442,11 +442,11 @@ test('assessment history is created only by explicit previews, never scans', asy
   const { assessmentHistory } = await import('../assessment/store.js');
   const baseline = await service.preview('owner', rule.id, subject.pr);
   assert.equal((await assessmentHistory('owner')).records.length, 0);
-  const assisted = await service.preview('owner', rule.id, subject.pr, { includeAssessment: true });
-  assert.equal(assisted.items[0].reviewIntakeAdvisory?.assessment.status, 'disabled');
-  assert.deepEqual(assisted.items[0].match, baseline.items[0].match);
-  assert.equal((await assessmentHistory('owner')).records.length, 1);
+  const preview = await service.preview('owner', rule.id, subject.pr);
+  assert.equal(preview.items[0].reviewIntakeAdvisory, undefined);
+  assert.deepEqual(preview.items[0].match, baseline.items[0].match);
+  assert.equal((await assessmentHistory('owner')).records.length, 0);
   await store.setEnabled('owner', rule.id, rule.revision, true, false);
   await service.scan('owner', rule.id);
-  assert.equal((await assessmentHistory('owner')).records.length, 1);
+  assert.equal((await assessmentHistory('owner')).records.length, 0);
 });

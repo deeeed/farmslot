@@ -23,7 +23,6 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { assessReviewIntake } from '../assessment/review-intake.js';
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
 import { loadProjectConfig } from '../fleet/state.js';
@@ -61,50 +60,6 @@ import { resolvePreviewQaPreset } from './qa-preset.js';
 import type { PRSourceCheckpoints } from './source-checkpoints.js';
 import { validateQaSourceReview } from './source-review.js';
 import type { PRRuleStore } from './store.js';
-
-const REVIEW_INTAKE_ASSESSMENT_CONCURRENCY = 4;
-const REVIEW_INTAKE_ASSESSMENT_BUDGET_MS = 30_000;
-
-async function attachReviewIntakeAdvisories(
-  ownerId: string,
-  items: PRRulePreview['items'],
-): Promise<void> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REVIEW_INTAKE_ASSESSMENT_BUDGET_MS);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const item = items[next++];
-      try {
-        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject, controller.signal, {
-          ownerId,
-          consumer: 'review-intake',
-          subject: { pr: { ...item.subject.pr, headSha: item.subject.headSha } },
-        });
-      } catch {
-        // Optional assessment failure is visible without changing deterministic matches.
-        item.reviewIntakeAdvisory = {
-          assessment: {
-            status: 'unavailable',
-            monitoringError: 'Assessment could not be recorded',
-          },
-          route: 'needs-review',
-          visualReviewRequired: false,
-          reasons: ['assessment-unavailable'],
-        };
-      }
-    }
-  };
-  try {
-    await Promise.all(
-      Array.from({ length: Math.min(REVIEW_INTAKE_ASSESSMENT_CONCURRENCY, items.length) }, () =>
-        worker(),
-      ),
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 export class PRRuleService {
   private timer?: ReturnType<typeof setInterval>;
@@ -539,12 +494,7 @@ export class PRRuleService {
     this.notifyChanges();
     return rule;
   }
-  async preview(
-    ownerId: string,
-    id: string,
-    target?: MonitoredPRIdentity,
-    options: { includeAssessment?: boolean } = {},
-  ): Promise<PRRulePreview> {
+  async preview(ownerId: string, id: string, target?: MonitoredPRIdentity): Promise<PRRulePreview> {
     this.assertAuthorized(ownerId);
     const rule = this.store.rule(id, ownerId);
     const team = this.store.team(rule.config.teamId, ownerId);
@@ -575,9 +525,6 @@ export class PRRuleService {
     const validations = new Map<string, string[]>();
     const reviewAction = rule.config.actions.find((action) => action.kind === 'review');
     const monitorAction = rule.config.actions.find((action) => action.kind === 'monitor');
-    if (options.includeAssessment) {
-      await attachReviewIntakeAdvisories(ownerId, result.items);
-    }
     for (const item of result.items) {
       const profiles = [
         ...(reviewAction && item.execution

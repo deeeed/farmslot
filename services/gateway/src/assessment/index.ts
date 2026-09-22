@@ -8,11 +8,11 @@ import type {
 } from '@farmslot/protocol';
 
 import { getAssessmentConfig } from './config.js';
+import { defaultAssessmentProviders } from './default-providers.js';
 import { prepareAssessmentInput } from './input.js';
-import { type AssessmentProviderRegistry, createAssessmentProviderRegistry } from './provider.js';
-import { createTypeSafeProvider } from './typesafe.js';
+import type { AssessmentProviderRegistry } from './provider.js';
 
-const providers = createAssessmentProviderRegistry([createTypeSafeProvider()]);
+const providers = defaultAssessmentProviders();
 
 function canonical(value: AssessmentJsonValue): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "provider": "typesafe",
+  "model": "jev-1.13.0",
+  "verifiedAt": "2026-09-22T16:25:25.380051Z",
+  "source": "https://docs.typesafe.ai/models",
+  "inputUsdPerMillion": 0.042,
+  "outputUsdPerMillion": 0,
+  "maxRequestTokens": 65536
+}

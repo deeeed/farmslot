@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { AssessmentResponseError } from './provider.js';
 import { createTypeSafeProvider } from './typesafe.js';
 
 function response(body: unknown, status = 200): Response {
@@ -76,7 +77,7 @@ test('TypeSafe adapter rejects an answer outside the declared choice set', async
         apiKey: 'test-key',
         signal: new AbortController().signal,
       }),
-      /unknown choice/,
+      AssessmentResponseError,
     );
   } finally {
     if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
