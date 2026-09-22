@@ -19,7 +19,7 @@ const record = rpc('assessment.list').records.find(
 );
 assert.ok(record);
 cdp('goto', `intelligence?tab=assessments&assessment=${record.id}`);
-const inspect = `function find(root){const p=root.querySelector('assessment-panel');if(p)return p;for(const e of root.querySelectorAll('*'))if(e.shadowRoot){const r=find(e.shadowRoot);if(r)return r}}const p=find(document);return {ready:!!p?.shadowRoot?.querySelector('input[name=evidence]'),text:p?.shadowRoot?.textContent ?? ''};`;
+const inspect = `function find(root){const p=root.querySelector('assessment-panel');if(p)return p;for(const e of root.querySelectorAll('*'))if(e.shadowRoot){const r=find(e.shadowRoot);if(r)return r}}const p=find(document);return {ready:!!p?.shadowRoot?.querySelector('article[id="${record.id}"] input[name=evidence]'),text:p?.shadowRoot?.textContent ?? ''};`;
 for (let i = 0; i < 50; i++) {
   if (cdp('eval', 'intelligence', inspect).ready) break;
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -51,3 +51,20 @@ console.log(
     revision: saved.feedback.length,
   }),
 );
+
+const nonReview = rpc('assessment.list', { consumer: 'smoke-test' }).records[0];
+if (nonReview) {
+  cdp('goto', `intelligence?tab=assessments&assessment=${nonReview.id}`);
+  let disabled = false;
+  for (let i = 0; i < 40; i++) {
+    disabled = cdp(
+      'eval',
+      'intelligence',
+      `function find(root){const p=root.querySelector('assessment-panel');if(p)return p;for(const e of root.querySelectorAll('*'))if(e.shadowRoot){const r=find(e.shadowRoot);if(r)return r}}const p=find(document);return Boolean(p?.shadowRoot?.querySelector('article[id="${nonReview.id}"]') && p.shadowRoot.querySelector('button[data-action=export]')?.disabled);`,
+    );
+    if (disabled) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(disabled, true, 'A smoke test cannot export a PR comparison case');
+  console.log(JSON.stringify({ invalidCaseExportDisabled: true }));
+}

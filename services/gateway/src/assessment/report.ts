@@ -7,7 +7,7 @@ import { stableJson } from '../evals/package-store.js';
 import { readAssessmentArtifact, saveAssessmentArtifact } from './artifacts.js';
 import { assertAssessmentRecord } from './record-validation.js';
 import { assessmentRecord, assessmentRecords } from './store.js';
-import { assessmentCase, summarizeAssessments } from './summary.js';
+import { assessmentAccountingCase, summarizeAssessments } from './summary.js';
 
 export async function assessmentReport(
   ownerId: string,
@@ -39,10 +39,10 @@ export async function assessmentReport(
   let records = await assessmentRecords(ownerId);
   if (assessmentId !== undefined) {
     const anchor = await assessmentRecord(ownerId, assessmentId);
-    const key = assessmentCase(anchor);
+    const key = assessmentAccountingCase(anchor);
     if (!key || anchor.status !== 'completed' || anchor.consumer !== 'review-intake')
       throw new Error('Select a completed review assessment');
-    records = records.filter((r) => assessmentCase(r) === key);
+    records = records.filter((r) => assessmentAccountingCase(r) === key);
   }
   const payload = {
     version: 1 as const,

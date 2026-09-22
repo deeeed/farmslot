@@ -239,7 +239,7 @@ export interface AssessmentRecordParams {
 }
 export interface AssessmentReportParams {
   id?: string;
-  /** Freeze the PR/head/model cohort containing this completed assessment. */
+  /** Freeze the PR/head/requested-model cohort containing this completed assessment. */
   assessmentId?: string;
 }
 
@@ -277,6 +277,7 @@ export interface AssessmentEvaluation {
     questionId: string;
     correct: number;
     judged: number;
+    /** All representative answers; abstained and unlabeled may overlap. */
     eligible: number;
     unlabeled: number;
     abstained: number;
@@ -292,6 +293,8 @@ export interface AssessmentEvaluation {
     assistedPackageHash?: string;
     reportedTokenDelta?: number;
     assessmentTokens?: number;
+    assessmentTokensStatus?: 'complete' | 'partial';
+    assessmentAttemptsMissingUsage?: number;
     totalTokenDelta?: number;
     elapsedDeltaMs?: number;
   };

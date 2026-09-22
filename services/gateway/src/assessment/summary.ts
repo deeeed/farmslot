@@ -27,6 +27,21 @@ export function assessmentCase(record: AssessmentRecord): string | undefined {
       ])
     : undefined;
 }
+/** Accounting groups requested identity so failures without a returned build stay visible. */
+export function assessmentAccountingCase(record: AssessmentRecord): string | undefined {
+  const pr = record.subject.pr;
+  if (!pr || record.consumer !== 'review-intake') return undefined;
+  return JSON.stringify([
+    pr.host.toLowerCase(),
+    pr.repo.toLowerCase(),
+    pr.number,
+    pr.headSha.toLowerCase(),
+    record.requestedIdentity?.provider ?? record.result?.provider ?? 'unknown',
+    record.requestedIdentity?.model ?? record.result?.requestedModel ?? 'unknown',
+    record.requestedIdentity?.questionSchemaHash ?? record.result?.questionSchemaHash ?? 'unknown',
+    record.policyVersion,
+  ]);
+}
 /** Pick before looking at labels. Never transfer feedback between repeated predictions. */
 export function representativeAssessments(rows: AssessmentRecord[]): AssessmentRecord[] {
   const cases = new Set<string>();

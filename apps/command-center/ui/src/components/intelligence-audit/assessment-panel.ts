@@ -218,7 +218,23 @@ export class AssessmentPanel extends LitElement {
       this.busy = false;
     }
   }
+  private get canExportSelected(): boolean {
+    return (
+      !this.selectedId ||
+      this.records.some(
+        (r) =>
+          r.id === this.selectedId &&
+          r.consumer === 'review-intake' &&
+          r.status === 'completed' &&
+          r.subject.pr,
+      )
+    );
+  }
   private async exportReport() {
+    if (!this.canExportSelected) {
+      this.error = 'Select a completed PR assessment to export its case.';
+      return;
+    }
     this.busy = true;
     try {
       const report = await gateway.request<AssessmentReport>(
@@ -250,7 +266,14 @@ export class AssessmentPanel extends LitElement {
       <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
         Refresh
       </button>
-      <button @click=${() => this.exportReport()} ?disabled=${this.busy}>
+      <button
+        data-action="export"
+        title=${this.canExportSelected
+          ? 'Export assessment report'
+          : 'Select a completed PR assessment to export its case'}
+        @click=${() => this.exportReport()}
+        ?disabled=${this.busy || !this.canExportSelected}
+      >
         ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
       ${this.auditError ? html`<p role="alert" class="error">${this.auditError}</p>` : nothing}

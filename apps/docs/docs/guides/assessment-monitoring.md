@@ -45,7 +45,8 @@ reference judgments.
 
 **Export effectiveness snapshot** downloads a frozen, content-hashed report.
 When viewing one completed PR assessment, **Export selected case** freezes only its
-PR/head/model/policy cohort, including repeated attempts. Use `assessmentId` in
+PR/head/requested-model/policy cohort, including failures without a returned model.
+Quality statistics still separate returned model versions. Use `assessmentId` in
 the report RPC to select the same cohort. This keeps other PR usage out of a trial.
 
 Use the shared RPCs from the checkout-local CLI:
@@ -79,8 +80,8 @@ source and reviewer axes, and no missing data. The assisted assessment axis
 matching the packages' merged-PR source. Use explicit `ref` values for the model,
 runner and review configuration, including effort in the review ref.
 
-The report compares declared reviewer tokens and elapsed time. When all
-assessment usage is known, it also adds assessment tokens to the token delta.
+The report compares declared reviewer tokens and elapsed time. `assessmentTokensStatus` and `assessmentAttemptsMissingUsage` expose incomplete
+usage. When all assessment usage is known, it also adds assessment tokens to the token delta.
 Package `sessionTotalTokens` must exclude assessment tokens to avoid counting them
 twice. Matching metadata does not prove independent sessions or equal findings
 quality. Use blinded adjudication and counterbalanced order before claiming

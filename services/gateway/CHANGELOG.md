@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Record optional assessments durably with owner-scoped feedback, retention and reproducible effectiveness reports; uncertain advice requests review without changing admission.
+- Record optional assessments durably with owner-scoped feedback, retention and reproducible effectiveness reports scoped to full history or a selected case; uncertain advice requests review without changing admission.
 
 - Add an opt-in, provider-neutral structured-assessment boundary with TypeSafe SDK transport, bounded/redacted inputs, typed answers, provenance hashes, read-only status/smoke RPCs, and advisory review-intake routing. Assessment output never admits, publishes, retries, or proves visual review.
 

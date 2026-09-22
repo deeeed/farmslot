@@ -41,7 +41,8 @@
         "action": "command",
         "cmd": "node apps/command-center/scripts/cdp.mjs screenshot intelligence /tmp/assessment-monitoring-recipe.png",
         "intent": "Capture the actual isolated assessment UI after real gateway actions.",
-        "next": "done"
+        "next": "done",
+        "timeout_ms": 60000
       }
     }
   }

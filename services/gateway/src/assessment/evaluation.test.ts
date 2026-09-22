@@ -252,9 +252,11 @@ test('owner can freeze a single case after assessing other PRs without borrowing
       record,
       {
         ...fixture.result!,
+        requestedModel: 'alias',
+        returnedModel: 'fixed',
         usage: {
           provider: 'fake',
-          requestedModel: 'fixed',
+          requestedModel: 'alias',
           durationMs: 1,
           inputTokens: number === 2 ? 1000 : 10,
           outputTokens: 1,
@@ -272,7 +274,7 @@ test('owner can freeze a single case after assessing other PRs without borrowing
   assert.ok(selected.records.every((r) => r.subject.pr?.number === 1));
   assert.deepEqual(await assessmentReport('alice', selected.reportId), selected);
   await assert.rejects(assessmentReport('bob', undefined, ids[0]), /not found/);
-  const packageFor = (assisted: boolean): ResultPackageManifest => {
+  const packageFor = (assisted: boolean, reportId = selected.reportId): ResultPackageManifest => {
     const p: ResultPackageManifest = {
       version: 1,
       kind: 'result-package',
@@ -292,7 +294,7 @@ test('owner can freeze a single case after assessing other PRs without borrowing
         model: { ref: 'fixed' },
         runner: { ref: 'reviewer' },
         review: { ref: 'medium' },
-        ...(assisted ? { assessment: { ref: selected.reportId } } : {}),
+        ...(assisted ? { assessment: { ref: reportId } } : {}),
       },
       visualEvidence: [],
       validationEvidence: [],
@@ -312,4 +314,43 @@ test('owner can freeze a single case after assessing other PRs without borrowing
   assert.equal(evaluation.comparison.status, 'comparable');
   assert.equal(evaluation.comparison.assessmentTokens, 22);
   assert.equal(evaluation.comparison.totalTokenDelta, -28);
+  assert.equal(evaluation.comparison.assessmentTokensStatus, 'complete');
+  for (const model of ['alias', 'unrelated']) {
+    const failed = await beginAssessment({
+      ownerId: 'alice',
+      consumer: 'review-intake',
+      subject: { pr },
+      requestedIdentity: { provider: 'fake', model, questionSchemaHash: 'b'.repeat(64) },
+    });
+    await finishAssessment(failed, {
+      status: 'unavailable',
+      provider: 'fake',
+      requestedModel: model,
+      questionSchemaHash: 'b'.repeat(64),
+    });
+  }
+  const partial = await assessmentReport('alice', undefined, ids[0]);
+  assert.equal(partial.records.length, 3);
+  assert.equal(partial.summary.callsWithUsage, 2);
+  assert.ok(
+    partial.records.some((r) => r.status === 'unavailable' && r.result?.requestedModel === 'alias'),
+  );
+  assert.ok(
+    partial.records.every(
+      (r) => r.subject.pr?.number === 1 && r.result?.requestedModel === 'alias',
+    ),
+  );
+  const incomplete = evaluateAssessmentReport(partial, {
+    reportId: partial.reportId,
+    references: [],
+    pair: {
+      baseline: packageFor(false, partial.reportId),
+      assisted: packageFor(true, partial.reportId),
+    },
+  });
+  assert.equal(incomplete.comparison.status, 'comparable');
+  assert.equal(incomplete.comparison.assessmentTokensStatus, 'partial');
+  assert.equal(incomplete.comparison.assessmentAttemptsMissingUsage, 1);
+  assert.equal(incomplete.comparison.totalTokenDelta, undefined);
+  assert.match(incomplete.comparison.reason, /usage is incomplete/);
 });

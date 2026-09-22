@@ -111,12 +111,14 @@ export async function beginAssessment(context: AssessmentAuditContext): Promise<
     assertAssessmentSubject(context.subject);
     await mkdir(root(), { recursive: true, mode: 0o700 });
     // Retention is write-side maintenance. Throttle full scans even at capacity;
-    // read RPCs only filter expired rows and never mutate storage.
+    // read RPCs only filter expired rows and never mutate storage. At capacity,
+    // expired space may remain unavailable until the next sweep, at most one minute.
     if (Date.now() >= (nextPruneAt.get(root()) ?? 0)) {
       await retained(true);
       nextPruneAt.set(root(), Date.now() + 60_000);
     }
-    if ((await files()).length >= MAX_RECORDS) throw new Error('Assessment history is full');
+    if ((await files()).length >= MAX_RECORDS)
+      throw new Error('Assessment history is full; expiry sweep may free space within one minute');
     const record: AssessmentRecord = {
       version: 1,
       id: randomUUID(),

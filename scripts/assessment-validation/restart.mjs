@@ -70,11 +70,22 @@ async function stop() {
   log = undefined;
 }
 try {
-  execFileSync(process.execPath, ['--import', 'tsx', 'scripts/assessment-validation/seed.mts'], {
-    env,
-    stdio: 'pipe',
-  });
+  execFileSync(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/assessment-validation/seed.mts', '--alias'],
+    {
+      env,
+      stdio: 'pipe',
+    },
+  );
   await start();
+  const alias = rpc('assessment.list').records.find(
+    (r) => r.status === 'completed' && r.result?.requestedModel === 'latest',
+  );
+  const accounting = rpc('assessment.report', { assessmentId: alias.id });
+  assert.equal(accounting.records.length, 2);
+  assert.equal(accounting.summary.callsWithUsage, 1);
+  assert.ok(accounting.records.some((r) => r.status === 'unavailable'));
   const record = rpc('assessment.list').records.find((r) => r.status === 'completed');
   const updated = rpc('assessment.feedback', {
     id: record.id,
@@ -93,6 +104,7 @@ try {
   assert.ok(rpc('assessment.list').records.some((r) => r.status === 'interrupted'));
   console.log(
     JSON.stringify({
+      failedAliasAttemptRetained: true,
       restartPreservedFeedback: true,
       restartPreservedReport: true,
       interruptedVisible: true,

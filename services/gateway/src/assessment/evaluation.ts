@@ -189,19 +189,24 @@ export function evaluateAssessmentReport(
         };
       else comparison.reason = 'Comparable packages lack reported token or duration metrics';
       const attempts = report.records.filter((r) => r.consumer === 'review-intake');
-      if (
-        comparison.status === 'comparable' &&
-        attempts.length &&
-        attempts.every(
+      if (comparison.status === 'comparable') {
+        const missing = attempts.filter(
           (r) =>
-            r.result?.usage?.inputTokens !== undefined && r.result.usage.outputTokens !== undefined,
-        )
-      ) {
-        comparison.assessmentTokens = attempts.reduce(
-          (sum, r) => sum + r.result!.usage!.inputTokens! + r.result!.usage!.outputTokens!,
-          0,
-        );
-        comparison.totalTokenDelta = comparison.reportedTokenDelta! + comparison.assessmentTokens;
+            r.result?.usage?.inputTokens === undefined || r.result.usage.outputTokens === undefined,
+        ).length;
+        comparison.assessmentTokensStatus =
+          attempts.length > 0 && missing === 0 ? 'complete' : 'partial';
+        comparison.assessmentAttemptsMissingUsage = missing;
+        if (comparison.assessmentTokensStatus === 'complete') {
+          comparison.assessmentTokens = attempts.reduce(
+            (sum, r) => sum + r.result!.usage!.inputTokens! + r.result!.usage!.outputTokens!,
+            0,
+          );
+          comparison.totalTokenDelta = comparison.reportedTokenDelta! + comparison.assessmentTokens;
+        } else {
+          comparison.reason +=
+            '; assessment usage is incomplete, so total token savings are unknown';
+        }
       }
     }
   }

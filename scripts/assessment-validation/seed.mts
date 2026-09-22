@@ -65,3 +65,46 @@ for (const status of statuses) {
   await finishAssessment(record, result, reviewIntakeRecommendation(result));
 }
 console.log('Synthetic startup fixtures prepared');
+
+if (process.argv.includes('--alias')) {
+  const identity = { provider: 'fixture', model: 'latest', questionSchemaHash: 'b'.repeat(64) };
+  const audit = {
+    ...context,
+    requestedIdentity: identity,
+    subject: { pr: { ...context.subject.pr, number: 9 } },
+  };
+  for (const status of ['unavailable', 'completed'] as const) {
+    const record = await beginAssessment(audit);
+    const result =
+      status === 'completed'
+        ? {
+            status,
+            provider: 'fixture',
+            requestedModel: 'latest',
+            returnedModel: 'fixed',
+            questionSchemaHash: identity.questionSchemaHash,
+            answers: {
+              risk: {
+                type: 'choice' as const,
+                choice: 'low',
+                confidence: 1,
+                probabilities: { low: 1 },
+              },
+            },
+            usage: {
+              provider: 'fixture',
+              requestedModel: 'latest',
+              inputTokens: 10,
+              outputTokens: 1,
+              durationMs: 1,
+            },
+          }
+        : {
+            status,
+            provider: 'fixture',
+            requestedModel: 'latest',
+            questionSchemaHash: identity.questionSchemaHash,
+          };
+    await finishAssessment(record, result, reviewIntakeRecommendation(result));
+  }
+}
