@@ -23,6 +23,8 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { getAssessmentConfig } from '../assessment/config.js';
+import { assessReviewIntake } from '../assessment/review-intake.js';
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
 import { loadProjectConfig } from '../fleet/state.js';
@@ -526,6 +528,9 @@ export class PRRuleService {
     const reviewAction = rule.config.actions.find((action) => action.kind === 'review');
     const monitorAction = rule.config.actions.find((action) => action.kind === 'monitor');
     for (const item of result.items) {
+      if (getAssessmentConfig().enabled) {
+        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject);
+      }
       const profiles = [
         ...(reviewAction && item.execution
           ? [{ kind: 'review' as const, execution: item.execution }]

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   isEvalDatasetManifest,
   isEvalExperimentManifest,
+  isEvalPackageAxes,
   isEvalScorerConfigRef,
   isEvalSuiteDraftManifest,
   isResultPackageManifest,
@@ -410,6 +411,25 @@ test('isEvalScorerConfigRef accepts refs and rejects score/report/export payload
   );
   assert.equal(
     isEvalScorerConfigRef(validScorerConfigRef({ metadata: { owner: 'evals', score: 1 } })),
+    false,
+  );
+});
+
+test('eval packages accept a provider-neutral assessment axis and scorer', () => {
+  assert.equal(
+    isEvalPackageAxes({
+      assessment: { name: 'structured-assessment', version: '1', hash: 'assessment-hash' },
+    }),
+    true,
+  );
+  assert.equal(
+    isEvalScorerConfigRef(
+      validScorerConfigRef({ kind: 'structured-assessment', scorerId: 'assessment-review' }),
+    ),
+    true,
+  );
+  assert.equal(
+    isEvalPackageAxes({ assessment: { name: 'structured-assessment', hash: 42 } }),
     false,
   );
 });

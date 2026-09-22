@@ -422,6 +422,8 @@ export interface PRRulePreviewItem {
   actionErrors?: Partial<Record<PRRuleAction['kind'], string[]>>;
   /** Supplemental team policy observations; never merge authority. */
   policySummary?: string[];
+  /** Optional model advisory; never admits, publishes, or selects a reviewer by itself. */
+  reviewIntakeAdvisory?: import('./assessment.js').ReviewIntakeAdvisory;
 }
 
 export interface PRRulePreview {

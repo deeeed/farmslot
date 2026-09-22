@@ -8,6 +8,8 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
     classification: 'admin',
     reason: 'enumerates and reads analytics paths directly',
   },
+  'assessment.status': { classification: 'admin' },
+  'assessment.test': { classification: 'admin' },
   'auth.connect': { classification: 'admin' },
   'backlog.archive': { classification: 'admin' },
   'backlog.autoDispatchTick': { classification: 'admin' },

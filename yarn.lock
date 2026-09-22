@@ -4706,6 +4706,7 @@ __metadata:
     "@sinclair/typebox": "npm:^0.34.49"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"
+    "@typesafe-ai/sdk": "npm:^0.6.0"
     ajv: "npm:^8.20.0"
     chokidar: "npm:^4.0.0"
     node-pty: "npm:^1.0.0"
@@ -7928,6 +7929,13 @@ __metadata:
   dependencies:
     "@types/yargs-parser": "npm:*"
   checksum: 10c0/609557826a6b85e73ccf587923f6429850d6dc70e420b455bab4601b670bfadf684b09ae288bccedab042c48ba65f1666133cf375814204b544009f57d6eef63
+  languageName: node
+  linkType: hard
+
+"@typesafe-ai/sdk@npm:^0.6.0":
+  version: 0.6.0
+  resolution: "@typesafe-ai/sdk@npm:0.6.0"
+  checksum: 10c0/588bee41cea853f94d7c5c3b6d23c4040bc49ebe92294f2c75d3196958ed3ef7dd74031365f3a249de019c2ee9c81a27a7ff25e8086e91805e8e2301141f9375
   languageName: node
   linkType: hard
 

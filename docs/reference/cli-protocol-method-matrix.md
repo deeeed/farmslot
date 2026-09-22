@@ -16,6 +16,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `analytics.query`    | typed-command | `farmslot analytics` |     |      |
 | `analytics.backfill` | typed-command | `farmslot analytics` |     |      |
 
+## assessment.\*
+
+| Method              | Surface  | CLI command | TUI | Note                                                                      |
+| ------------------- | -------- | ----------- | --- | ------------------------------------------------------------------------- |
+| `assessment.status` | rpc-only |             |     | Interim provider status inspection; use `farmslot rpc assessment.status`. |
+| `assessment.test`   | rpc-only |             |     | Explicit provider smoke test; use `farmslot rpc assessment.test`.         |
+
 ## auth.\*
 
 | Method         | Surface       | CLI command      | TUI | Note                                                                            |
