@@ -69,28 +69,55 @@ function stricterReviewRecommendation(left: string, right: string): string {
   return REVIEW_RECOMMENDATION_RANK[right] > REVIEW_RECOMMENDATION_RANK[left] ? right : left;
 }
 
+function reviewMetadataLines(markdown: string): string[] {
+  let fence: string | undefined;
+  return markdown.split(/\r?\n/).flatMap((rawLine) => {
+    const delimiter = /^\s*(`{3,}|~{3,})/.exec(rawLine)?.[1];
+    if (delimiter) {
+      if (!fence) fence = delimiter;
+      else if (delimiter[0] === fence[0] && delimiter.length >= fence.length) fence = undefined;
+      return [];
+    }
+    if (fence) return [];
+    return [
+      rawLine
+        .replace(/\*\*|__|`/g, '')
+        .replace(/^\s*[-+]\s*/, '')
+        .replace(/^\s*#{1,6}\s*/, '')
+        .replace(/^\s*\d+[.)]\s*/, '')
+        .trim(),
+    ];
+  });
+}
+
+/** A report may format metadata as headings, list items, bold text or code spans. */
+export function reviewCommitFromMarkdown(markdown: string): string | null {
+  const commits = new Set<string>();
+  for (const line of reviewMetadataLines(markdown)) {
+    const field = /^COMMIT(?:\s*\(head\))?\s*:\s*(.*)$/i.exec(line);
+    if (!field) continue;
+    if (!/^[a-f0-9]{40}$/i.test(field[1])) return null;
+    commits.add(field[1].toLowerCase());
+  }
+  return commits.size === 1 ? [...commits][0] : null;
+}
+
 export function reviewRecommendationFromMarkdown(markdown: string): string | null {
-  const lines = markdown.split(/\r?\n/).map((rawLine) =>
-    rawLine
-      .replace(/\*\*|__|`/g, '')
-      .replace(/^\s*[-+]\s*/, '')
-      .replace(/^\s*#{1,6}\s*/, '')
-      .replace(/^\s*\d+[.)]\s*/, '')
-      .trim(),
-  );
+  const lines = reviewMetadataLines(markdown);
+  const recommendations = new Set<string>();
   for (let index = 0; index < lines.length; index += 1) {
     const inline =
       /^(?:Recommended Action|Recommendation|Verdict)\s*:\s*(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(
         lines[index],
       );
-    if (inline) return inline[1].toUpperCase();
+    if (inline) recommendations.add(inline[1].toUpperCase());
     if (/^(?:Recommended Action|Recommendation|Verdict)\s*:?[.!]?$/i.test(lines[index])) {
       const nextValue = lines.slice(index + 1).find((line) => line.length > 0) ?? '';
       const following = /^(APPROVE|REQUEST_CHANGES|COMMENT)\s*[.!]?$/i.exec(nextValue);
-      if (following) return following[1].toUpperCase();
+      if (following) recommendations.add(following[1].toUpperCase());
     }
   }
-  return null;
+  return recommendations.size === 1 ? [...recommendations][0] : null;
 }
 
 async function workerGatewayOwnedCopyExcludes(

@@ -17,6 +17,7 @@ import {
   ACCEPTANCE_STATUS_ARTIFACT,
   enumerateChecklistCheckboxes,
   isTerminalRunStatus,
+  type ReviewWorkspaceBinding,
   type ReviewWorkspaceSubject,
   type Run,
   type RunReviewResult,
@@ -42,7 +43,10 @@ import { loadPoolConfigs } from '../fleet/state.js';
 import { collectSupportFiles } from '../node-support/files.js';
 import { mirrorWorkerSubtasks } from '../run-completion/artifact-mirror.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
-import { reviewRecommendationFromMarkdown } from '../run-engine/review-artifacts.js';
+import {
+  reviewCommitFromMarkdown,
+  reviewRecommendationFromMarkdown,
+} from '../run-engine/review-artifacts.js';
 import { requestNativeNode } from '../runners/native/node.js';
 import { assertReviewWorkspaceRun } from '../runners/native/review-workspace.js';
 import { getRun, runsDirectory } from '../runs/store.js';
@@ -63,6 +67,15 @@ const RESULT = 'artifacts/review-result.json';
 /** The gateway's own filesystem, for the operator-visible copy of a review task. */
 const ORCHESTRATOR: SlotLocality = { host: 'localhost', machine: 'local', sshTarget: '' };
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function sameWorkspaceIdentity(
+  a: ReviewWorkspaceBinding | undefined,
+  b: ReviewWorkspaceBinding,
+): boolean {
+  return (
+    Boolean(a) && isDeepStrictEqual({ ...a, cleanedAt: undefined }, { ...b, cleanedAt: undefined })
+  );
+}
 
 type Dependencies = {
   getRun: typeof getRun;
@@ -164,7 +177,7 @@ async function loadSnapshot(run: Run, deps: Dependencies): Promise<Snapshot | nu
   if (
     snapshot.version !== 1 ||
     snapshot.runId !== run.id ||
-    !isDeepStrictEqual(snapshot.workspace, run.reviewWorkspace) ||
+    !sameWorkspaceIdentity(run.reviewWorkspace, snapshot.workspace) ||
     !isDeepStrictEqual(snapshot.subject, run.reviewWorkspaceSubject) ||
     !isDeepStrictEqual(snapshot.executionTemplate, run.executionTemplate) ||
     sha256(snapshot.checklist) !== run.executionTemplate!.sha256
@@ -464,8 +477,15 @@ async function readOwnedReviewWorkspaceSignal(runId: string, deps: Dependencies 
   const snapshot = await loadSnapshot(run, deps);
   if (!snapshot) throw new Error('Static review task snapshot is missing');
   const cleaned = Boolean(run.reviewWorkspace.cleanedAt);
-  const io = cleaned ? ORCHESTRATOR : await locality(run, deps);
-  const taskDir = cleaned ? viewDirFor(run.id, deps) : snapshot.workspace.taskPath;
+  let io = cleaned ? ORCHESTRATOR : await locality(run, deps);
+  let taskDir = cleaned ? viewDirFor(run.id, deps) : snapshot.workspace.taskPath;
+  if (cleaned && !(await slotFileExists(io, path.posix.join(taskDir, 'SIGNAL.json')))) {
+    // Validation can fail before the completion archive is written. Cleanup
+    // removes the source checkout, but the owned task directory is retained.
+    // Revalidate those original bytes rather than rerunning the reviewer.
+    io = await locality(run, deps);
+    taskDir = snapshot.workspace.taskPath;
+  }
   if (!(await slotFileExists(io, path.posix.join(taskDir, 'SIGNAL.json')))) return null;
   const signalText = await confinedRead(io, taskDir, 'SIGNAL.json');
   const normalized = normalizeWorkerSignal(JSON.parse(signalText));
@@ -582,7 +602,7 @@ export async function readReviewWorkspaceCompletion(
     throw new Error('Review recommendation conflicts with findings or incomplete evidence');
   if (
     reviewRecommendationFromMarkdown(reviewMd) !== recommendation ||
-    !new RegExp(`^COMMIT: *${snapshot.subject.headSha} *$`, 'm').test(reviewMd)
+    reviewCommitFromMarkdown(reviewMd) !== snapshot.subject.headSha
   )
     throw new Error('Static review Markdown verdict or commit disagrees with its typed result');
   const checklist = await confinedRead(io, taskDir, 'CHECKLIST.md');
@@ -669,7 +689,7 @@ export async function readReviewWorkspaceCompletion(
 function assertCompletionIdentity(runId: string, snapshot: Snapshot, deps: Dependencies): void {
   const current = ownedRun(runId, deps);
   if (
-    !isDeepStrictEqual(current.reviewWorkspace, snapshot.workspace) ||
+    !sameWorkspaceIdentity(current.reviewWorkspace, snapshot.workspace) ||
     !isDeepStrictEqual(current.reviewWorkspaceSubject, snapshot.subject) ||
     !isDeepStrictEqual(current.executionTemplate, snapshot.executionTemplate)
   )

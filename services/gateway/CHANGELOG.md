@@ -25,6 +25,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Record optional assessments durably with owner-scoped feedback, retention and reproducible effectiveness reports scoped to full history or a selected case; uncertain advice requests review without changing admission.
 
 - Add an opt-in, provider-neutral structured-assessment boundary with TypeSafe SDK transport, bounded/redacted inputs, typed answers, provenance hashes, read-only status/smoke RPCs, and advisory review-intake routing. Assessment output never admits, publishes, retries, or proves visual review.
+- Accept equivalent Markdown formatting for static-review metadata and recover completed reports after checkout cleanup without rerunning the reviewer or changing report content.
 
 - Recover static reviews from unchanged support-bundle republishes, initialize reviewer trust, and recognize native prompt acceptance without timing out while waiting for the first task mark.
 - Offer Grok 4.7 in Grok and Cursor model selection while preserving existing defaults.
