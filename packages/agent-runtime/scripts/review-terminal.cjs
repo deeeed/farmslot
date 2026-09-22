@@ -75,7 +75,6 @@ async function main() {
   const guard = await sandbox(policy, runtimeRoots);
   const promptFile = path.join(task, '.terminal-prompt.txt');
   fs.writeFileSync(promptFile, input.prompt, { mode: 0o600 });
-  if (input.setup) check(cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, encoding: 'utf8' }));
   const environment = {
     ...process.env,
     ...input.environment.set,
@@ -91,6 +90,10 @@ async function main() {
     'FARMSLOT_GATEWAY_PASSWORD',
   ])
     delete environment[key];
+  if (input.setup)
+    check(
+      cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, env: environment, encoding: 'utf8' }),
+    );
   const commandFile = path.join(task, '.terminal-start.cjs');
   const record = {
     runId: input.runId,

@@ -17,6 +17,32 @@ export interface ProviderRunnerCoolingEntry {
   expiresAt?: string;
 }
 
+/** One credential entry; readiness does not establish billing or quota. */
+export interface RunnerProviderAccount {
+  id: string;
+  provider: string;
+  label?: string;
+  email?: string;
+  status: 'configured' | 'ready' | 'not_ready' | 'invalid' | 'unknown';
+  authType: 'oauth' | 'api_key' | 'unknown';
+  source: 'native-status' | 'credential-store';
+}
+
+export interface RunnerAccountInspection {
+  command: string;
+  description: string;
+}
+
+export interface RunnerAccountInventory {
+  status: 'available' | 'unavailable' | 'unsupported';
+  /** Host default configuration only; not the account used by every active run. */
+  scope: 'host-default';
+  accounts: RunnerProviderAccount[];
+  /** Copy-only command prepared by the runner adapter; never contains credentials. */
+  inspection?: RunnerAccountInspection;
+  error?: string;
+}
+
 /** Live identity/quota mirrored from CodexBar on the execution host. */
 export interface ProviderRunnerUsageMirror {
   /** Account email from CodexBar when available (not persisted on RunMetrics). */
@@ -36,6 +62,8 @@ export interface ProviderRunnerUsageMirror {
 /** One runner's connected subscription on a machine. */
 export interface ProviderRunnerAccountStatus {
   runner: string;
+  /** Provider-aware, read-only inventory. Older gateways may omit it. */
+  inventory?: RunnerAccountInventory;
   status: ProviderRunnerAccountStatusKind;
   /** Operator-local account label, or null when ambient/unsupported. */
   activeLabel: string | null;

@@ -24,6 +24,7 @@ import {
   launchReviewWorkspaceWorker,
   readReviewWorkspaceWorker,
 } from '../runners/native/review-workspace.js';
+import { observeReviewPromptAcceptance } from '../runners/review-startup.js';
 import {
   launchReviewTmux,
   recoverReviewTmuxSession,
@@ -445,18 +446,15 @@ export async function executeReviewWorkspaceStep(
           check();
           const current = currentWorkspaceRun(runId, generation);
           const context = current.agentContexts?.find((entry) => entry.id === 'review');
-          const startup = reviewTmuxStartupState(context, signal);
-          if (startup === 'timed-out') {
-            throw new BlockedRunError(
-              'Reviewer did not acknowledge task startup within two minutes. Check runner sign-in and provider connectivity before retrying; an existing terminal is not evidence of work.',
-              'review-worker-not-started',
-            );
-          }
+          const acceptance = await observeReviewPromptAcceptance(current);
+          check();
+          const startup = reviewTmuxStartupState(signal, acceptance);
           const status = startup === 'acknowledged' ? 'working' : 'launching';
           if (
             context &&
             (context.status !== status ||
-              (signal?.attemptId !== undefined && context.signalAttemptId !== signal.attemptId))
+              (signal?.attemptId !== undefined && context.signalAttemptId !== signal.attemptId) ||
+              (acceptance && context.promptAcceptance !== acceptance))
           ) {
             await upsertAgentContext(
               runId,
@@ -469,6 +467,14 @@ export async function executeReviewWorkspaceStep(
                     id: 'review',
                     status,
                     ...(signal?.attemptId ? { signalAttemptId: signal.attemptId } : {}),
+                    ...(acceptance
+                      ? {
+                          promptAcceptance: acceptance,
+                          runnerSessionId: acceptance.sessionId,
+                          runnerSessionPath: acceptance.sessionPath,
+                          runnerSessionCapturedAt: new Date(acceptance.observedAt).toISOString(),
+                        }
+                      : {}),
                   };
                 },
               },

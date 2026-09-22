@@ -4,10 +4,9 @@ import test from 'node:test';
 import type { RawPoolJson } from '../core/config.js';
 
 import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
-import { REVIEW_TMUX_START_TIMEOUT_MS, reviewTmuxStartupState } from './review-tmux.js';
+import { reviewTmuxStartupState } from './review-tmux.js';
 
 const started = Date.parse('2026-09-21T09:35:00Z');
-const context = { attemptStartedAt: new Date(started).toISOString() };
 
 test('interactive launch honors each machine runner executable and explicit override', () => {
   const machine: RawPoolJson = {
@@ -54,50 +53,27 @@ test('read-only Codex review records untrusted workspace policy in launch argume
   assert.ok(!command?.includes('trust_level="trusted"'));
 });
 
-test('a launched terminal without a task signal stays starting and reaches a bounded failure', () => {
-  assert.equal(reviewTmuxStartupState(context, null, started), 'starting');
-  assert.equal(
-    reviewTmuxStartupState(context, null, started + REVIEW_TMUX_START_TIMEOUT_MS),
-    'timed-out',
-  );
-  assert.equal(reviewTmuxStartupState(context, null, started + 2 * 60 * 60_000), 'timed-out');
+test('a missing task mark does not time out or manufacture startup acknowledgment', () => {
+  assert.equal(reviewTmuxStartupState(null, null), 'starting');
 });
 
-test('a validated task signal acknowledges startup without inferring terminal state', () => {
+test('native exact-prompt acceptance acknowledges startup before a model-written task mark', () => {
   assert.equal(
-    reviewTmuxStartupState(
-      context,
-      {
-        status: 'running',
-        attemptId: 'attempt',
-        timestamp: new Date(started + 1000).toISOString(),
-      },
-      started + 1000,
-    ),
+    reviewTmuxStartupState(null, {
+      runner: 'codex',
+      deliveryStartedAt: new Date(started).toISOString(),
+      sessionId: 'session',
+      sessionPath: '/sessions/session.jsonl',
+      observedAt: started + 1000,
+      turnToken: 'turn',
+    }),
     'acknowledged',
   );
-});
-
-test('monitor restarts and later delivery bookkeeping do not reset the attempt deadline', () => {
   assert.equal(
     reviewTmuxStartupState(
-      {
-        ...context,
-        promptDeliveryStartedAt: new Date(started + REVIEW_TMUX_START_TIMEOUT_MS).toISOString(),
-      },
+      { status: 'running', attemptId: 'attempt', timestamp: new Date(started).toISOString() },
       null,
-      started + REVIEW_TMUX_START_TIMEOUT_MS,
     ),
-    'timed-out',
-  );
-  assert.equal(reviewTmuxStartupState(undefined, null, started), 'timed-out');
-  assert.equal(reviewTmuxStartupState({ attemptStartedAt: 'invalid' }, null, started), 'timed-out');
-  assert.equal(
-    reviewTmuxStartupState(
-      { attemptStartedAt: new Date(started + 1).toISOString() },
-      null,
-      started,
-    ),
-    'timed-out',
+    'acknowledged',
   );
 });

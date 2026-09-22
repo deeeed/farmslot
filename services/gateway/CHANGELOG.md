@@ -4,6 +4,11 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Recover static reviews from unchanged support-bundle republishes, initialize reviewer trust, and recognize native prompt acceptance without timing out while waiting for the first task mark.
+- Offer Grok 4.7 in Grok and Cursor model selection while preserving existing defaults.
+
+- Inventory runner accounts by provider, including Pi login readiness and OpenCode saved credentials on each execution host without copying secrets.
+
 - Recover prepare from deleted working directories and early branch/device failures without resetting existing work; require an owned startup signal before treating review sessions as working.
 
 - Keep passing reviews valid across Git object-ID display changes, repair verified historical snapshots on package refresh, and allow explicit publication overrides for any blocked review while retaining package and source freshness checks.

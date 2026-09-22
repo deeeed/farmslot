@@ -25,6 +25,23 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
 }
 
+export function reviewTerminalUnavailableReason(
+  run: Pick<Run, 'reviewWorkspace' | 'transport' | 'agentContexts' | 'status'>,
+): string | null {
+  if (!run.reviewWorkspace) return null;
+  if (run.reviewWorkspace.cleanedAt) return 'The review worktree has been cleaned up.';
+  if (
+    run.transport === 'tmux' &&
+    !run.agentContexts?.some(
+      (context) => context.id === 'review' && context.promptDeliveryStartedAt,
+    )
+  )
+    return run.status === 'failed' || run.status === 'blocked'
+      ? 'The review failed before its terminal started. Retry the failed step to launch the reviewer.'
+      : 'The reviewer terminal will be available after dispatch.';
+  return null;
+}
+
 export function isActiveInteractiveDevRun(run: Run): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive' && !isTerminalRunStatus(run.status);
 }

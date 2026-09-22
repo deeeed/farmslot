@@ -143,6 +143,14 @@ export interface RunnerDefinition {
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
   nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
+  /**
+   * Review-workspace launches run interactively in a brand-new git worktree the
+   * runner has never seen, which can trigger a one-time "trust this folder?"
+   * dialog nothing answers. Codex and Cursor bypass it via launch flags; a
+   * runner without a flag (e.g. Claude's trust record lives in a JSON file, not
+   * argv) returns a script here that pre-seeds trust before launch.
+   */
+  reviewWorkspaceTrustSeed?: (checkoutPath: string) => string;
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
@@ -264,8 +272,33 @@ export function assertSupportedRunnerSpelling(runnerId?: string | null): void {
 // list for codex and the allow set for claude.
 const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
+// Claude Code records folder trust in ~/.claude.json (projects[path].hasTrustDialogAccepted),
+// not a CLI flag — mirrors how Codex seeds config.toml trust_level and Grok seeds
+// ~/.grok/trusted_folders.toml for the same review-workspace launch problem.
+function claudeReviewWorkspaceTrustSeed(checkoutPath: string): string {
+  return [
+    "const fs=require('node:fs'),os=require('node:os'),path=require('node:path');",
+    "const file=path.join(process.env.CLAUDE_CONFIG_DIR||os.homedir(),'.claude.json');",
+    "const lock=file+'.farmslot-review-lock';",
+    'const deadline=Date.now()+10000;',
+    "for(;;){try{fs.mkdirSync(lock);break;}catch(error){if(error.code!=='EEXIST')throw error;if(Date.now()>=deadline)throw Error('Claude trust configuration is locked');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,25);}}",
+    'try {',
+    'let data={};',
+    "try{data=JSON.parse(fs.readFileSync(file,'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}",
+    "if(!data||typeof data!=='object'||Array.isArray(data))throw Error('Invalid Claude configuration');",
+    'data.projects=data.projects||{};',
+    `const key=${JSON.stringify(checkoutPath)};`,
+    'data.projects[key]={...(data.projects[key]||{}),hasTrustDialogAccepted:true};',
+    "const temporary=file+'.review-'+process.pid;",
+    "fs.writeFileSync(temporary,JSON.stringify(data,null,2),{mode:0o600,flag:'wx'});",
+    'fs.renameSync(temporary,file);',
+    '} finally {fs.rmdirSync(lock);}',
+  ].join('\n');
+}
+
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
+    reviewWorkspaceTrustSeed: claudeReviewWorkspaceTrustSeed,
     supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',
@@ -379,6 +412,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
         DEFAULT_CURSOR_MODEL,
         'composer-2.5',
         'cursor-grok-4.6-xhigh',
+        'cursor-grok-4.7-xhigh',
         'gpt-5.6-sol-medium',
         'gpt-5.6-sol-high',
         'gpt-5.6-sol-max',
@@ -428,7 +462,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'grok',
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['grok-4.6'], modes: ['default'] },
+    nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's

@@ -40,6 +40,7 @@ import {
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
   isInteractiveCompletionAwaitingOperator,
+  reviewTerminalUnavailableReason,
   runEvidenceSummary,
 } from './run-detail-model.js';
 import { runInventoryHashFromDetail } from './run-detail-url-state.js';
@@ -1034,7 +1035,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     </div>
     ${ctx._renderInteractivePackets(r)}
     ${r.reviewWorkspaceTarget ? nothing : ctx._renderRunEvidence(r)}
-    ${boundSlotId || (r.reviewWorkspace && !r.reviewWorkspace.cleanedAt)
+    ${boundSlotId || (r.reviewWorkspace && !reviewTerminalUnavailableReason(r))
       ? html`
           <button
             data-testid="run-terminal-toggle"
@@ -1061,7 +1062,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               `
             : nothing}
         `
-      : nothing}
+      : r.reviewWorkspace
+        ? html`<p data-testid="review-terminal-unavailable">
+            ${reviewTerminalUnavailableReason(r)}
+          </p>`
+        : nothing}
     ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
     ${r.error
       ? html`

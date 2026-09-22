@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Runner provider account inventory",
+  "description": "Read-only proof through providerAccounts.snapshot and real Config/Fleet controls. Requires macOS, Pi Anthropic logins on FARMSLOT_ACCOUNT_MACHINES, the operator gateway in FARMSLOT_GATEWAY and its UI in FARMSLOT_UI_URL. Does not send model requests or copy credentials. Status-command checks overwrite the clipboard.",
+  "workflow": {
+    "entry": "inventory",
+    "nodes": {
+      "inventory": {
+        "action": "command",
+        "cmd": "node scripts/e2e-runner-accounts.mjs",
+        "timeout_ms": 300000,
+        "intent": "Prove per-runner provider/account arrays on local and remote execution hosts, no fabricated Pi email/quota, explicit unavailable hosts, provider rows after real Config refresh and Fleet account-button clicks, and exact clipboard contents from each manual status-command button.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

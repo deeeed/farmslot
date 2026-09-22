@@ -30,6 +30,7 @@ import {
   getAttentionAlertPreferences,
   setAttentionAlertPreferences,
 } from '../../utils/notifications.js';
+import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 
 import {
   type AutoRecoveryDraft,
@@ -521,7 +522,7 @@ export class ConfigPanel extends LitElement {
     return html`
       <div class="cp-pool-info" data-testid="config-runner-seats">
         <div class="cp-info-row">
-          <span class="cp-info-label">Runner seats</span>
+          <span class="cp-info-label">Runner accounts</span>
           <span class="cp-info-value">
             ${fetching ? 'querying node…' : runners.length ? '' : 'no snapshot'}
             ${snap?.checkedAt && !fetching
@@ -539,6 +540,12 @@ export class ConfigPanel extends LitElement {
             </button>
           </span>
         </div>
+        <div class="cp-info-row">
+          <span class="cp-info-label"></span
+          ><span class="cp-info-value"
+            >Default host configuration; running sessions may use other accounts.</span
+          >
+        </div>
         ${providerAccountsStore.error() && !runners.length
           ? html`<div class="cp-info-row">
               <span class="cp-info-label"></span>
@@ -547,10 +554,10 @@ export class ConfigPanel extends LitElement {
           : nothing}
         ${runners.map(
           (r) => html`
-            <div class="cp-info-row">
+            <div class="cp-info-row" data-runner=${r.runner}>
               <span class="cp-info-label">${r.runner}</span>
               <span class="cp-info-value">
-                ${r.usage?.accountEmail ?? r.activeLabel ?? r.status}
+                ${renderRunnerAccountInventory(r)}
                 ${r.usage?.remainingPercent != null
                   ? ` · ${Math.round(r.usage.remainingPercent)}% left`
                   : ''}

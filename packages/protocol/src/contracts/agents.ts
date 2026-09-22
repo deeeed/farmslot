@@ -161,6 +161,8 @@ export interface AgentContext {
   attemptStartedAt?: string;
   /** Durable boundary recorded immediately before a task prompt may mutate the runner. */
   promptDeliveryStartedAt?: string;
+  /** Exact prompt acceptance from the runner's native protocol, not a model-written mark. */
+  promptAcceptance?: RunnerPromptAcceptance;
   /** Optional source ref captured with the delivery boundary, such as the pre-fix HEAD. */
   deliveryBaselineRef?: string;
   /** Tmux pane PID captured before a destructive delivery, used to prove whether respawn occurred. */
@@ -170,6 +172,15 @@ export interface AgentContext {
   updatedAt?: string;
   completedAt?: string;
   lastSignalAt?: string;
+}
+
+export interface RunnerPromptAcceptance {
+  runner: string;
+  deliveryStartedAt: string;
+  sessionId: string;
+  sessionPath: string;
+  observedAt: number;
+  turnToken?: string;
 }
 
 export interface AgentContextSummary {

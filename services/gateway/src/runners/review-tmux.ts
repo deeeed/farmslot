@@ -3,9 +3,9 @@ import path from 'node:path';
 
 import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
-  type AgentContext,
   isTerminalRunStatus,
   type Run,
+  type RunnerPromptAcceptance,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -13,6 +13,7 @@ import { upsertAgentContext } from '../agents/contexts.js';
 import { loadMachinePool, loadProjectVars } from '../core/config.js';
 import { execFileArgv } from '../core/exec.js';
 import { resolveProjectCommandEnv } from '../core/project-env.js';
+import { shellQuote } from '../core/tmux.js';
 import { getAllRuns, getRun, persistRunNow } from '../runs/store.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
 
@@ -23,19 +24,18 @@ import {
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
 
-export const REVIEW_TMUX_START_TIMEOUT_MS = 120_000;
+export interface ReviewTmuxOperationResult {
+  exists?: boolean;
+  startedAt?: string;
+  stopped?: boolean;
+}
 
-/** Only the task's validated signal acknowledges startup, across monitor restarts. */
+/** Native prompt acceptance and task progress are independent startup evidence. */
 export function reviewTmuxStartupState(
-  context: Pick<AgentContext, 'promptDeliveryStartedAt' | 'attemptStartedAt'> | undefined,
   signal: WorkerSignal | null,
-  now = Date.now(),
-): 'acknowledged' | 'starting' | 'timed-out' {
-  if (signal) return 'acknowledged';
-  const start = Date.parse(context?.attemptStartedAt ?? context?.promptDeliveryStartedAt ?? '');
-  return Number.isFinite(start) && now >= start && now - start < REVIEW_TMUX_START_TIMEOUT_MS
-    ? 'starting'
-    : 'timed-out';
+  acceptance: RunnerPromptAcceptance | null,
+): 'acknowledged' | 'starting' {
+  return signal || acceptance ? 'acknowledged' : 'starting';
 }
 
 /** Recover only a unique structured metadata match, never the newest unrelated conversation. */
@@ -161,7 +161,7 @@ export async function reviewTmuxOperation(
   run: Run,
   action: 'launch' | 'inspect' | 'stop',
   prompt?: string,
-): Promise<{ exists?: boolean; startedAt?: string; stopped?: boolean }> {
+): Promise<ReviewTmuxOperationResult> {
   assertNativeRunOwner(run);
   const w = run.reviewWorkspace!;
   const runner = run.metrics.runner!;
@@ -190,10 +190,12 @@ export async function reviewTmuxOperation(
       safetyTier: 'dangerous',
     });
     if (!command) throw new Error('Runner does not support terminal review');
+    const trustSeed = getRunnerDefinition(runner).reviewWorkspaceTrustSeed?.(w.checkoutPath);
     Object.assign(input, {
       command,
       prompt,
       environment,
+      ...(trustSeed ? { setup: `node -e ${shellQuote(trustSeed)}` } : {}),
       support: w.support?.path,
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',

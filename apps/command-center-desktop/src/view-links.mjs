@@ -23,6 +23,11 @@ const routes = new Set([
 ]);
 const entity =
   /^(run|family|slot|terminal|config)\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/workspace)?$/;
+// Config uses nested paths such as config/pool/macwork and
+// config/flows/fix-bug/interactive/phase/metamask-farm. Keep every segment
+// constrained to the same identifier grammar used by entity routes.
+const config =
+  /^config\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}){0,4}$/;
 // These parameters select views or prefill forms. No link submits a form.
 const parameters = new Set(
   (
@@ -46,7 +51,7 @@ export function validViewRoute(route) {
     return false;
   const [path, ...queryParts] = route.slice(1).split('?');
   if (
-    (!routes.has(path) && !entity.test(path)) ||
+    (!routes.has(path) && !entity.test(path) && !config.test(path)) ||
     queryParts.length > 1 ||
     route.slice(1).includes('#')
   )

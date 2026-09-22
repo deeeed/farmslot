@@ -45,6 +45,29 @@ Recovery instructions and compatibility shims must be portable enough that futur
 
 Command Center, automation/orchestration, and core platform layers must consume this model rather than each defining runner behavior independently.
 
+#### Runner account inventory
+
+Config and Fleet display the same read-only host-default inventory of runners,
+providers and account entries. A runner can report several providers concurrently;
+there is no implied single active account for Pi or OpenCode. Runner status adapters
+own discovery and credential checks. The protocol distinguishes stored credentials
+from reported readiness, identity and quota. Refresh does not change credentials,
+dispatch bindings or running sessions, and never copies tokens between nodes.
+Each capable adapter also supplies a copy-only manual inspection command. Remote
+commands target the selected execution host over SSH. Only configuration-directory
+overrides enter copied commands; API keys and tokens never do. Command descriptions
+distinguish account identity, provider readiness and saved credential presence.
+
+Pi inventories saved logins in `PI_CODING_AGENT_DIR` or its default directory and
+checks each through its configured executable's structured auth command without
+refreshing OAuth. OpenCode inventories its default XDG credential store or
+`OPENCODE_AUTH_CONTENT`; configured credentials do not prove readiness. Environment-only
+and project-specific providers, wrapper-private directories, and additional named
+native profiles are outside this default-configuration inventory. Configure directory
+overrides in the pool environment so discovery and launch agree. Existing runner
+identity/quota adapters retain their source and account-binding behavior. Unknown
+identity and quota remain unknown; credential presence does not prove subscription billing.
+
 ### 6. Native structured sessions
 
 Runner adapters own native protocol mechanics and declare supported interactions. Clients consume shared session commands and events for text, tools, approval, questions, interruption, and recovery. Acceptance, turn start, and turn completion are separate facts. Missing structured evidence remains unknown; unsupported operations fail closed.

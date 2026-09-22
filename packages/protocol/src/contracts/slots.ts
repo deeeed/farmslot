@@ -101,7 +101,7 @@ export interface SlotStatus {
   dispatchedAt: string | null;
   completedAt: string | null;
   runner: string | null; // claude | codex | cursor | grok | opencode | pi | custom
-  model: string | null; // sonnet | opus | haiku | gpt-6-astra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna | gpt-5.5 | cursor-grok-4.6-high-fast | grok-4.6 | custom
+  model: string | null; // sonnet | opus | haiku | gpt-6-astra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna | gpt-5.5 | cursor-grok-4.6-high-fast | cursor-grok-4.7-xhigh | grok-4.6 | grok-4.7 | custom
   resources?: Record<string, Record<string, string | number | boolean>>;
   deviceName: string | null;
   taskPhase: string | null; // e.g. "Validate 5/7"
