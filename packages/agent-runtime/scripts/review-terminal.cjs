@@ -75,7 +75,6 @@ async function main() {
   const guard = await sandbox(policy, runtimeRoots);
   const promptFile = path.join(task, '.terminal-prompt.txt');
   fs.writeFileSync(promptFile, input.prompt, { mode: 0o600 });
-  if (input.setup) check(cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, encoding: 'utf8' }));
   const environment = {
     ...process.env,
     ...input.environment.set,
@@ -91,12 +90,18 @@ async function main() {
     'FARMSLOT_GATEWAY_PASSWORD',
   ])
     delete environment[key];
+  environment.FARMSLOT_SIGNAL_ATTEMPT_ID = require('node:crypto').randomUUID();
+  if (input.setup)
+    check(
+      cp.spawnSync('/bin/sh', ['-c', input.setup], { cwd, env: environment, encoding: 'utf8' }),
+    );
   const commandFile = path.join(task, '.terminal-start.cjs');
   const record = {
     runId: input.runId,
     workspaceId: input.workspaceId,
     session: input.session,
     startedAt: new Date().toISOString(),
+    signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
   };
   const launch = `const cp=require('node:child_process');const env={...process.env};for(const key of ['FARMSLOT_NODE_TOKEN','FARMSLOT_GATEWAY_TOKEN','FARMSLOT_GATEWAY_PASSWORD','CLAUDECODE'])delete env[key];const r=cp.spawnSync(${JSON.stringify(guard.sandbox.executable)},${JSON.stringify([...guard.sandbox.args, '/bin/sh', '-c', input.command])},{cwd:${JSON.stringify(cwd)},env,stdio:'inherit'});process.exit(r.status??1);`;
   fs.writeFileSync(commandFile, launch, { mode: 0o600 });

@@ -18,6 +18,15 @@ export type EffortLevel = '' | CodexReasoningEffort | PiThinkingLevel;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
 
+// Pi's Anthropic OAuth provider uses Anthropic model IDs. Keep the provider
+// prefix so launch-command.ts cannot mistake them for xAI's bare model IDs.
+export const PI_ANTHROPIC_MODELS = [
+  'anthropic/claude-opus-5',
+  'anthropic/claude-sonnet-5',
+  'anthropic/claude-haiku-4-5',
+  'anthropic/claude-fable-5-1',
+] as const;
+
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
   // Astra first; retain earlier Codex models for explicit selections.
@@ -37,17 +46,19 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
     'cursor-grok-4.6-xhigh',
+    'cursor-grok-4.7-high',
+    'cursor-grok-4.7-xhigh',
     'gpt-5.6-sol-medium',
     'gpt-5.6-sol-high',
     'gpt-5.6-sol-max',
   ],
-  grok: [DEFAULT_GROK_MODEL],
-  pi: [DEFAULT_PI_MODEL],
+  grok: [DEFAULT_GROK_MODEL, 'grok-4.7'],
+  pi: [DEFAULT_PI_MODEL, ...PI_ANTHROPIC_MODELS],
 };
 
 /** Dispatch hint: PI accepts OpenAI-compatible ids once the worker registers them. */
 export const PI_COMPAT_MODEL_HINT =
-  'Ollama/LiteLLM/router: type ollama/<id> or litellm/<id>. Pool env: OLLAMA_HOST, LITELLM_URL, FARMSLOT_PI_ROUTER_URL. Thinking applies to every PI model.';
+  'Anthropic OAuth: type anthropic/<id>. Ollama/LiteLLM/router: type ollama/<id> or litellm/<id>. Pool env: OLLAMA_HOST, LITELLM_URL, FARMSLOT_PI_ROUTER_URL. Thinking applies to every PI model.';
 
 export const DEFAULT_MODEL: Record<string, string> = {
   claude: DEFAULT_CLAUDE_MODEL,

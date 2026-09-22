@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  accountInspectionForHost,
   FLEET_SUBSCRIPTION_RUNNERS,
   getRunnerStatusProvider,
   listRunnerFailoverCandidates,
@@ -10,6 +11,31 @@ import {
 import { makeVars } from './test-fixtures.js';
 
 describe('RunnerStatusProvider subscription + bind surface', () => {
+  it('manual inspection targets the host and copies only directory overrides', () => {
+    const vars = makeVars({
+      host: 'remote.example',
+      machine: 'remote',
+      sshTarget: 'operator@remote.example',
+      machineEnv: {
+        PI_CODING_AGENT_DIR: '/home/operator/pi company',
+        ANTHROPIC_API_KEY: 'PRIVATE-SENTINEL',
+      },
+    });
+    const inspection = accountInspectionForHost(vars, {
+      command: 'pi auth check --provider anthropic --json --no-refresh',
+      description: 'Pi readiness',
+    });
+    assert.match(inspection.command, /ssh 'operator@remote.example'/);
+    assert.ok(inspection.command.includes('PI_CODING_AGENT_DIR'));
+    assert.ok(!inspection.command.includes('PRIVATE-SENTINEL'));
+    assert.ok(!inspection.command.includes('ANTHROPIC_API_KEY'));
+    assert.ok(
+      !accountInspectionForHost(makeVars({ host: 'localhost' }), {
+        command: 'claude auth status --json',
+        description: 'Claude identity',
+      }).command.startsWith('ssh'),
+    );
+  });
   it('exposes bind only for codex among fleet runners', () => {
     assert.equal(getRunnerStatusProvider('codex')?.supportsAccountBinding, true);
     assert.equal(getRunnerStatusProvider('claude')?.supportsAccountBinding, false);
@@ -18,8 +44,11 @@ describe('RunnerStatusProvider subscription + bind surface', () => {
     assert.equal(getRunnerStatusProvider('unknown-runner'), null);
   });
 
-  it('fleet subscription runners include codex/claude/grok/cursor in display order', () => {
-    assert.deepEqual([...FLEET_SUBSCRIPTION_RUNNERS], ['codex', 'claude', 'grok', 'cursor']);
+  it('fleet inventory includes single and multi-provider runners', () => {
+    assert.deepEqual(
+      [...FLEET_SUBSCRIPTION_RUNNERS],
+      ['codex', 'claude', 'grok', 'cursor', 'pi', 'opencode'],
+    );
   });
 
   it('codex buildAccountBindSpec stamps launch label without inventing auth path', () => {

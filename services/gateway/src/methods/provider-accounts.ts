@@ -25,6 +25,11 @@ import { loadExhaustionLedger } from '../runners/usage-exhaustion-ledger.js';
 function statusFromSubscription(
   sub: RunnerActiveSubscription,
 ): ProviderRunnerAccountStatus['status'] {
+  if (sub.inventory) {
+    if (sub.inventory.status === 'unavailable') return 'error';
+    if (sub.inventory.status === 'unsupported') return 'unsupported';
+    if (!sub.supportsAccountBinding) return sub.inventory.accounts.length ? 'ambient' : 'unknown';
+  }
   if (sub.source === 'error' && !sub.accountEmail && !sub.accountLabel) return 'error';
   if (sub.source === 'unsupported' && !sub.accountEmail) return 'unsupported';
   if (sub.supportsAccountBinding) {
@@ -107,7 +112,13 @@ async function snapshotMachine(
       reachable: false,
       runners: FLEET_SUBSCRIPTION_RUNNERS.map((runner) => ({
         runner,
-        status: runner === 'codex' ? 'unknown' : 'unsupported',
+        status: 'unknown',
+        inventory: {
+          status: 'unavailable',
+          scope: 'host-default',
+          accounts: [],
+          error: 'Execution host unavailable',
+        },
         activeLabel: null,
         source: null,
         usage: null,
@@ -126,6 +137,12 @@ async function snapshotMachine(
       runners: FLEET_SUBSCRIPTION_RUNNERS.map((runner) => ({
         runner,
         status: 'error',
+        inventory: {
+          status: 'unavailable',
+          scope: 'host-default',
+          accounts: [],
+          error: 'Execution host unavailable',
+        },
         activeLabel: null,
         error: (err as Error).message,
         usage: null,
@@ -140,6 +157,7 @@ async function snapshotMachine(
 
   const runners: ProviderRunnerAccountStatus[] = subs.map((sub) => ({
     runner: sub.runner,
+    ...(sub.inventory ? { inventory: sub.inventory } : {}),
     status: statusFromSubscription(sub),
     activeLabel: sub.accountLabel,
     source: sub.source,

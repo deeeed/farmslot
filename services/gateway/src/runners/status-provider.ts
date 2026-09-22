@@ -9,8 +9,14 @@
  * - Fail-open for optional tools (CodexBar, missing statusline)
  */
 
-import type { loadSlotVars } from '../core/config.js';
+import type { RunnerAccountInspection, RunnerAccountInventory } from '@farmslot/protocol';
 
+import type { loadSlotVars } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { shellQuote } from '../core/tmux.js';
+
+import { probeOpenCodeAccounts, probePiAccounts } from './account-inventory.js';
 import { formatClaudeAuthLoginMethod, probeClaudeAuthStatus } from './claude-auth-status.js';
 import { claudeHookObservability } from './claude-observability.js';
 import { formatCodexAuthLoginMethod, probeCodexAuthStatus } from './codex-auth-status.js';
@@ -19,6 +25,7 @@ import { formatCursorAuthLoginMethod, probeCursorAuthStatus } from './cursor-aut
 import { formatGrokAuthLoginMethod, probeGrokAuthStatus } from './grok-auth-status.js';
 import {
   hostGetActiveProfile,
+  hostIdentityInspectionCommand,
   hostListEligibleLabels,
   hostResolveProviderAccount,
   hostSelectProviderAccount,
@@ -37,12 +44,14 @@ export type RunnerSubscriptionSource =
   | 'grok-auth'
   | 'codex-auth'
   | 'cursor-auth'
+  | 'runner-inventory'
   | 'unsupported'
   | 'error';
 
 /** Active subscription for one runner on one execution host. */
 export interface RunnerActiveSubscription {
   runner: string;
+  inventory?: RunnerAccountInventory;
   /** Farmslot operator label when bind is supported; null otherwise. */
   accountLabel: string | null;
   /** Absolute auth path when bind is supported and resolved. */
@@ -84,6 +93,15 @@ export interface AccountBindSpec {
  */
 export interface RunnerStatusProvider {
   readonly runnerId: string;
+  readonly providerId?: string;
+  accountInspection?(
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    inventory: RunnerAccountInventory,
+  ): RunnerAccountInspection | undefined;
+  /** Multiple provider credentials in the runner's default host configuration. */
+  getAccountInventory?(
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  ): Promise<RunnerAccountInventory>;
 
   /** Can farmslot rebind credentials for this runner (rotation)? */
   readonly supportsAccountBinding: boolean;
@@ -159,6 +177,11 @@ async function codexBarFields(
 
 const claudeStatusProvider: RunnerStatusProvider = {
   runnerId: 'claude',
+  providerId: 'anthropic',
+  accountInspection: (vars) => ({
+    command: `${shellExpressionForRemotePath(vars.claudePath || 'claude')} auth status --json`,
+    description: 'Claude account identity and login method',
+  }),
   supportsAccountBinding: false,
   codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.claude ?? null,
 
@@ -219,6 +242,11 @@ const claudeStatusProvider: RunnerStatusProvider = {
 
 const codexStatusProvider: RunnerStatusProvider = {
   runnerId: 'codex',
+  providerId: 'openai',
+  accountInspection: (vars) => ({
+    command: hostIdentityInspectionCommand(vars, 'codex'),
+    description: 'Saved Codex account identity; no tokens',
+  }),
   supportsAccountBinding: true,
   codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.codex ?? null,
 
@@ -315,6 +343,11 @@ const codexStatusProvider: RunnerStatusProvider = {
 
 const grokStatusProvider: RunnerStatusProvider = {
   runnerId: 'grok',
+  providerId: 'xai',
+  accountInspection: (vars) => ({
+    command: hostIdentityInspectionCommand(vars, 'grok'),
+    description: 'Saved Grok account identity; no tokens',
+  }),
   supportsAccountBinding: false,
   codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.grok ?? null,
 
@@ -366,6 +399,11 @@ const grokStatusProvider: RunnerStatusProvider = {
 
 const cursorStatusProvider: RunnerStatusProvider = {
   runnerId: 'cursor',
+  providerId: 'cursor',
+  accountInspection: (vars) => ({
+    command: `${shellExpressionForRemotePath(vars.cursorPath || 'cursor-agent')} status --format json`,
+    description: 'Cursor login status and account identity',
+  }),
   supportsAccountBinding: false,
   codexBarProviderId: RUNNER_TO_CODEXBAR_PROVIDER.cursor ?? null,
 
@@ -416,15 +454,117 @@ const cursorStatusProvider: RunnerStatusProvider = {
  * Per-runner status provider registry. Runners without an entry expose no
  * runtime status surface; {@link getRunnerStatusProvider} returns null.
  */
+function inventoryStatusProvider(
+  runnerId: string,
+  getAccountInventory: NonNullable<RunnerStatusProvider['getAccountInventory']>,
+  accountInspection: NonNullable<RunnerStatusProvider['accountInspection']>,
+): RunnerStatusProvider {
+  return {
+    runnerId,
+    supportsAccountBinding: false,
+    codexBarProviderId: null,
+    getAccountInventory,
+    accountInspection,
+    async getContextPct() {
+      return null;
+    },
+    async getActiveSubscription() {
+      // A multi-provider runner has no single host-wide active subscription.
+      return {
+        runner: runnerId,
+        accountLabel: null,
+        accountEmail: null,
+        remainingPercent: null,
+        usedPercent: null,
+        resetsAt: null,
+        loginMethod: null,
+        source: 'unsupported',
+        supportsAccountBinding: false,
+        codexBarProviderId: null,
+      };
+    },
+  };
+}
+
 export const KNOWN_RUNNER_STATUS_PROVIDERS: Record<string, RunnerStatusProvider> = {
-  claude: claudeStatusProvider,
   codex: codexStatusProvider,
+  claude: claudeStatusProvider,
   grok: grokStatusProvider,
   cursor: cursorStatusProvider,
+  pi: inventoryStatusProvider('pi', probePiAccounts, (vars, inventory) =>
+    inventory.accounts.length
+      ? {
+          command: inventory.accounts
+            .map(
+              (a) =>
+                `${shellExpressionForRemotePath(vars.piPath || 'pi')} auth check --provider ${shellQuote(a.provider)} --json --no-refresh`,
+            )
+            .join('\n'),
+          description:
+            'Check each saved Pi provider without refreshing credentials; Pi does not report an email',
+        }
+      : undefined,
+  ),
+  opencode: inventoryStatusProvider('opencode', probeOpenCodeAccounts, (vars) => ({
+    command: `${shellExpressionForRemotePath(vars.opencodePath || 'opencode')} auth list`,
+    description:
+      'List saved OpenCode providers; credential presence does not verify account identity',
+  })),
 };
 
 /** Runners shown on the machine Accounts panel (ordered). */
-export const FLEET_SUBSCRIPTION_RUNNERS = ['codex', 'claude', 'grok', 'cursor'] as const;
+export const FLEET_SUBSCRIPTION_RUNNERS = Object.keys(KNOWN_RUNNER_STATUS_PROVIDERS);
+
+export function accountInspectionForHost(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  inspection: RunnerAccountInspection,
+): RunnerAccountInspection {
+  // Only configuration directories are safe to copy. Never embed pool API keys
+  // or tokens, even when launch uses those environment variables.
+  const names = [
+    'PI_CODING_AGENT_DIR',
+    'XDG_DATA_HOME',
+    'CLAUDE_CONFIG_DIR',
+    'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+    'CODEX_HOME',
+  ];
+  const env = names
+    .filter((name) => vars.machineEnv?.[name])
+    .map((name) => `export ${name}=${shellQuote(vars.machineEnv![name])}`)
+    .join('\n');
+  const command = ['cd "$HOME"', env, inspection.command].filter(Boolean).join('\n');
+  return {
+    ...inspection,
+    command: isLocal(vars.host, vars.machine)
+      ? command
+      : `ssh ${shellQuote(vars.sshTarget)} ${shellQuote(command)}`,
+  };
+}
+
+export function subscriptionInventory(
+  sub: RunnerActiveSubscription,
+  provider: string,
+): RunnerAccountInventory {
+  const known = Boolean(sub.accountEmail || sub.accountLabel);
+  return {
+    scope: 'host-default',
+    status: known ? 'available' : sub.source === 'error' ? 'unavailable' : 'unsupported',
+    accounts: known
+      ? [
+          {
+            id: sub.accountLabel ?? 'ambient',
+            provider,
+            ...(sub.accountLabel ? { label: sub.accountLabel } : {}),
+            ...(sub.accountEmail ? { email: sub.accountEmail } : {}),
+            // A cached identity/binding alone cannot prove current authentication.
+            status: 'configured',
+            authType: 'unknown',
+            source: 'native-status',
+          },
+        ]
+      : [],
+  };
+}
 
 export function getRunnerStatusProvider(runnerId?: string | null): RunnerStatusProvider | null {
   if (!runnerId) return null;
@@ -458,7 +598,21 @@ export async function getHostRunnerSubscriptions(
           codexBarProviderId: null,
         };
       }
-      return provider.getActiveSubscription(vars, { machineId: options?.machineId });
+      const [sub, inventory] = await Promise.all([
+        provider.getActiveSubscription(vars, { machineId: options?.machineId }),
+        provider.getAccountInventory?.(vars),
+      ]);
+      const resolvedInventory =
+        inventory ?? subscriptionInventory(sub, provider.providerId ?? runnerId);
+      const inspection = provider.accountInspection?.(vars, resolvedInventory);
+      if (inspection) resolvedInventory.inspection = accountInspectionForHost(vars, inspection);
+      return {
+        ...sub,
+        ...(inventory && sub.source === 'unsupported'
+          ? { source: 'runner-inventory' as const }
+          : {}),
+        inventory: resolvedInventory,
+      };
     }),
   );
 }

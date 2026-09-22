@@ -46,7 +46,12 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
   },
   claude: {
     supportsReadOnlyWorkspace: hostReviewSandboxAvailable(),
-    reviewRuntimeRoots: (env) => [env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude')],
+    reviewRuntimeRoots: (env) => [
+      env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), '.claude'),
+      // Claude Code creates its tool-runner scratch directory outside
+      // CLAUDE_CONFIG_DIR. Keep that state writable inside the review sandbox.
+      ...(typeof process.getuid === 'function' ? [join('/tmp', `claude-${process.getuid()}`)] : []),
+    ],
     adapter: claudeNativeAdapter,
     binary: 'claude',
     supportsWorkers: true,

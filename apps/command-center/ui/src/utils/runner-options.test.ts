@@ -20,6 +20,7 @@ import {
   modelForRunnerChange,
   MODELS_BY_RUNNER,
   modelsForRunner,
+  PI_ANTHROPIC_MODELS,
   PI_COMPAT_MODEL_HINT,
 } from './runner-options.js';
 
@@ -34,11 +35,13 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
     'cursor-grok-4.6-xhigh',
+    'cursor-grok-4.7-high',
+    'cursor-grok-4.7-xhigh',
     'gpt-5.6-sol-medium',
     'gpt-5.6-sol-high',
     'gpt-5.6-sol-max',
   ]);
-  assert.deepEqual(MODELS_BY_RUNNER.grok, [DEFAULT_GROK_MODEL]);
+  assert.deepEqual(MODELS_BY_RUNNER.grok, [DEFAULT_GROK_MODEL, 'grok-4.7']);
   assert.equal(DEFAULT_GROK_MODEL, 'grok-4.6');
   assert.equal(DEFAULT_MODEL.cursor, DEFAULT_CURSOR_MODEL);
   assert.equal(MODELS_BY_RUNNER.cursor.includes('gpt-5.6-sol-max'), true);
@@ -52,7 +55,10 @@ test('PI is a dispatch runner defaulting to Grok', () => {
   assert.equal(EVAL_CANDIDATE_RUNNERS.includes('pi'), true);
   assert.equal(DEFAULT_PI_MODEL, 'grok-4.6');
   assert.equal(DEFAULT_MODEL.pi, DEFAULT_PI_MODEL);
-  assert.deepEqual(MODELS_BY_RUNNER.pi, [DEFAULT_PI_MODEL]);
+  assert.deepEqual(MODELS_BY_RUNNER.pi, [DEFAULT_PI_MODEL, ...PI_ANTHROPIC_MODELS]);
+  assert.equal(MODELS_BY_RUNNER.pi.includes('anthropic/claude-opus-5'), true);
+  assert.equal(MODELS_BY_RUNNER.pi.includes('anthropic/claude-opus-4-8'), false);
+  assert.equal(MODELS_BY_RUNNER.pi.includes('anthropic/claude-sonnet-4-6'), false);
   assert.equal(modelForRunnerChange('pi', ''), DEFAULT_PI_MODEL);
   assert.match(PI_COMPAT_MODEL_HINT, /OLLAMA_HOST/);
   assert.equal(DEFAULT_EFFORT.pi, DEFAULT_PI_THINKING);

@@ -75,6 +75,7 @@ import {
   readLaunchAckSignalSnapshot,
   type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
+import { claudeReviewWorkspaceTrustSeed } from './review-trust.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 import {
   claudeSessionUsageProvider,
@@ -143,6 +144,14 @@ export interface RunnerDefinition {
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
   nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
+  /**
+   * Review-workspace launches run interactively in a brand-new git worktree the
+   * runner has never seen, which can trigger a one-time "trust this folder?"
+   * dialog nothing answers. Codex and Cursor bypass it via launch flags; a
+   * runner without a flag (e.g. Claude's trust record lives in a JSON file, not
+   * argv) returns a script here that pre-seeds trust before launch.
+   */
+  reviewWorkspaceTrustSeed?: (checkoutPath: string) => string;
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   processMatchers: string[];
@@ -266,6 +275,7 @@ const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {
+    reviewWorkspaceTrustSeed: claudeReviewWorkspaceTrustSeed,
     supportsInitialPromptArg: true,
     id: 'claude',
     nativeTransport: 'claude-stream-json',
@@ -379,6 +389,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
         DEFAULT_CURSOR_MODEL,
         'composer-2.5',
         'cursor-grok-4.6-xhigh',
+        'cursor-grok-4.7-xhigh',
         'gpt-5.6-sol-medium',
         'gpt-5.6-sol-high',
         'gpt-5.6-sol-max',
@@ -428,7 +439,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'grok',
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['grok-4.6'], modes: ['default'] },
+    nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's

@@ -4,6 +4,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Explain unavailable review terminals when dispatch never started or the worktree was cleaned up.
+- Offer Grok 4.7 model choices for Grok and Cursor.
+
+- Display and refresh provider/account entries for each runner in Config and Fleet, including Pi and OpenCode, with host-targeted status commands to copy for manual inspection.
+
+- Offer current Anthropic Opus, Sonnet, Haiku and Fable models in the Pi runner picker.
+
 - Expand and scroll long step commands and output so preparation failures remain inspectable.
 
 - Offer the dangerous publication override for missing, failed, or stale reviews, without waiting for review retries to run out. A fresh direct run fetch also restores gate actions when the bulk run list times out.

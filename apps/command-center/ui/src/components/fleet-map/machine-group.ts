@@ -25,6 +25,7 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+import { renderRunnerAccountInventory } from '../shared/runner-account-inventory.js';
 import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
 import { slotBranchDisplay } from './slot-branch-display.js';
@@ -453,9 +454,7 @@ export class MachineGroup extends LitElement {
       min-width: 0;
       font-size: 11px;
       color: ${unsafeCSS(colors.textPrimary)};
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
     }
     .setup-identity.muted {
       color: ${unsafeCSS(colors.textMuted)};
@@ -575,11 +574,7 @@ export class MachineGroup extends LitElement {
   private orderedRunners(): ProviderRunnerAccountStatus[] {
     const snap = this.providerAccounts;
     if (!snap?.runners?.length) return [];
-    const order = ['codex', 'claude', 'grok', 'cursor'];
-    return [...snap.runners].sort(
-      (a, b) =>
-        order.indexOf(a.runner) - order.indexOf(b.runner) || a.runner.localeCompare(b.runner),
-    );
+    return snap.runners;
   }
 
   /** Sync light-DOM attrs for recipes without cluttering the header. */
@@ -603,6 +598,8 @@ export class MachineGroup extends LitElement {
   }
 
   private providerRowPlainText(r: ProviderRunnerAccountStatus): string {
+    if (r.inventory)
+      return `${r.runner}:${r.inventory.status} ${r.inventory.accounts.map((a) => `${a.provider}:${a.status}`).join(' ')}`;
     let base: string;
     if (r.status === 'unsupported' && !r.usage?.accountEmail) {
       base = `${r.runner}:—`;
@@ -705,7 +702,7 @@ export class MachineGroup extends LitElement {
           </header>
           <div class="setup-body">
             <div class="setup-section-label">
-              Runner seats
+              Runner accounts
               ${this.providerAccountsFetching
                 ? html`<span class="setup-loading" data-testid="machine-accounts-loading"
                     >querying node…</span
@@ -716,7 +713,7 @@ export class MachineGroup extends LitElement {
               ? runners.map((r) => this.renderSetupRow(r))
               : this.providerAccountsFetching
                 ? html`<div class="setup-empty" data-testid="machine-accounts-empty">
-                    Querying the node for runner seats…
+                    Querying the node for runner accounts…
                   </div>`
                 : html`<div class="setup-empty" data-testid="machine-accounts-empty">
                     No provider-account snapshot for <strong>${this.machine}</strong> yet.
@@ -725,8 +722,8 @@ export class MachineGroup extends LitElement {
                           Last fetch failed: ${this.providerAccountsError}
                         </div>`
                       : html`<div>
-                          Usual cause: the machine's node service is not connected, so runner seats
-                          cannot be probed.
+                          Usual cause: the machine's node service is not connected, so runner
+                          accounts cannot be probed.
                         </div>`}
                     <button
                       type="button"
@@ -745,7 +742,8 @@ export class MachineGroup extends LitElement {
                   </div>`}
           </div>
           <div class="setup-foot">
-            Bind labels are farmslot-owned; identity &amp; quota mirror CodexBar when available.
+            Default host configuration; running sessions may use other accounts. Identity and quota
+            are shown only when reported by the runner or usage provider.
             <a href="#config/${this.machine}">Machine config →</a>
             ${this.providerAccounts?.checkedAt
               ? html`<span class="setup-age"
@@ -796,7 +794,10 @@ export class MachineGroup extends LitElement {
     const cooling = Boolean(r.cooling?.length);
     let badgeClass = 'off';
     let badgeText = '—';
-    if (cooling) {
+    if (r.inventory && !r.usage && r.inventory.status === 'available') {
+      badgeClass = 'ambient';
+      badgeText = r.inventory.accounts.length ? 'configured' : 'no logins';
+    } else if (cooling) {
       badgeClass = 'warn';
       badgeText = 'cool';
     } else if (r.status === 'bound') {
@@ -814,10 +815,10 @@ export class MachineGroup extends LitElement {
       <div class="setup-row" data-runner=${r.runner}>
         <span class="setup-runner">${r.runner}</span>
         <span
-          class="setup-identity ${identity ? '' : 'muted'}"
+          class="setup-identity ${identity || r.inventory?.accounts.length ? '' : 'muted'}"
           title=${identityTitle || (r.usage?.error ? r.usage.error : '')}
         >
-          ${identity ?? (r.usage?.error ? 'unavailable' : '—')}
+          ${renderRunnerAccountInventory(r)}
         </span>
         <span class="setup-meta">
           ${quota ? html`<span>${quota}</span>` : nothing}

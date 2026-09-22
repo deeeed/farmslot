@@ -29,6 +29,7 @@ import {
   mergeTrimmedDecisions,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
+  reviewTerminalUnavailableReason,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
@@ -41,6 +42,34 @@ import {
   taskProgressUpdateTargetsRun,
   TRIMMED_RUN_FETCH_RETRY_MS,
 } from './run-detail-model.js';
+
+test('review terminals require a launched reviewer and an available worktree', () => {
+  const run: Pick<Run, 'reviewWorkspace' | 'transport' | 'agentContexts' | 'status'> = {
+    transport: 'tmux',
+    status: 'failed',
+    reviewWorkspace: {
+      workspaceId: 'workspace',
+      machine: 'host',
+      executionNodeId: 'local',
+      checkoutPath: '/source',
+      taskPath: '/task',
+      artifactPath: '/artifacts',
+    },
+  };
+  assert.match(reviewTerminalUnavailableReason(run)!, /failed before its terminal started/);
+  assert.match(
+    reviewTerminalUnavailableReason({ ...run, status: 'dispatching' })!,
+    /after dispatch/,
+  );
+  assert.equal(reviewTerminalUnavailableReason({ ...run, transport: 'native' }), null);
+  assert.match(
+    reviewTerminalUnavailableReason({
+      ...run,
+      reviewWorkspace: { ...run.reviewWorkspace!, cleanedAt: '2026-09-22' },
+    })!,
+    /cleaned up/,
+  );
+});
 
 test('interactive completion hold is distinct from a resumable pause', () => {
   const held = makeRun({

@@ -4,6 +4,10 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Record runner-native prompt acceptance separately from model-written task progress for review startup.
+
+- Add provider/account inventories to runner snapshots, separating configured credentials, readiness, identity and host scope.
+
 - Persist prepare branch intent so early retries can distinguish a never-created branch from a lost work branch.
 
 - Add the admin-only gateway.update operation and checkout update progress to gateway.status.

@@ -9,6 +9,8 @@ test('view links preserve safe navigation state and round trip', () => {
   assert.equal(link, `farmslot://view/${route}`);
   assert.equal(viewRouteFromLink(link), route);
   assert.equal(validViewRoute('#slot/runner-1?runId=run-1&contextId=ctx-1'), true);
+  assert.equal(validViewRoute('#config/pool/macwork'), true);
+  assert.equal(validViewRoute('#config/flows/fix-bug/interactive/phase/metamask-farm'), true);
 });
 
 test('view links reject credentials, actions and unknown parameters', () => {

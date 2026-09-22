@@ -161,6 +161,33 @@ test('concurrent reviews publish once, and warm/restarted runs reuse verified ca
   assert.equal(f.counts.writes, writes);
 });
 
+test('a blocked run stamped with cleanedAt still reuses its admitted support', async (t) => {
+  const f = await fixture(t);
+  const run = await f.addRun('review-cleaned');
+  const first = (await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps))!;
+  f.deps.updateRun!(run.id, {
+    reviewWorkspace: {
+      ...f.runs.get(run.id)!.reviewWorkspace!,
+      cleanedAt: new Date().toISOString(),
+    },
+  });
+  assert.deepEqual(await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps), first);
+  assert.equal(f.counts.collect, 1);
+  assert.equal(f.counts.publish, 1);
+});
+
+test('unchanged bytes republish after source metadata changes without a false conflict', async (t) => {
+  const f = await fixture(t);
+  const firstRun = await f.addRun('review-original');
+  const first = (await ensureReviewWorkspaceSupport(firstRun.id, () => {}, f.deps))!;
+  await writeFile(path.join(f.pack, 'skill/skill.md'), '# Canonical review\n');
+  const secondRun = await f.addRun('review-refrozen');
+  const second = (await ensureReviewWorkspaceSupport(secondRun.id, () => {}, f.deps))!;
+  assert.equal(f.counts.collect, 2);
+  assert.equal(second.sha256, first.sha256);
+  assert.equal(f.counts.publish, 1);
+});
+
 test('cache corruption and extra files are rejected without silently refreshing an admitted review', async (t) => {
   const f = await fixture(t);
   const run = await f.addRun('review-corrupt');

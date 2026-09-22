@@ -212,14 +212,16 @@ export async function collectReviewWorkspaceSupport(
           : definition.kind === 'library'
             ? `libraries/${definition.name}`
             : 'runtime/package';
+      const sourceRevision = executionTemplateSourceRevision(source.root);
+      const sourceDirty = executionTemplateSourceDirty(source.root);
       const identity: SourceManifest = {
         kind: definition.kind,
         name: definition.name,
         root: structuredClone(definition.root),
         ...(definition.subpath ? { subpath: definition.subpath } : {}),
         destination,
-        sourceRevision: executionTemplateSourceRevision(source.root),
-        sourceDirty: executionTemplateSourceDirty(source.root),
+        ...(sourceRevision !== undefined ? { sourceRevision } : {}),
+        ...(sourceDirty !== undefined ? { sourceDirty } : {}),
       };
       if ('entry' in definition) {
         await regularEntry(source.root, definition.entry);

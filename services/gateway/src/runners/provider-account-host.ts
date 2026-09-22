@@ -48,6 +48,14 @@ function cliPathForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string 
   return path.posix.join(farmslotDirForSlot(vars), CLI_REL);
 }
 
+/** Identity-only operator command, using the same host helper as the probe. */
+export function hostIdentityInspectionCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  provider: 'codex' | 'grok',
+): string {
+  return `node ${shellExpressionForRemotePath(cliPathForSlot(vars))} probe-identity --provider ${provider}`;
+}
+
 function parseJsonLine(stdout: string): Record<string, unknown> {
   const line = stdout
     .split('\n')
