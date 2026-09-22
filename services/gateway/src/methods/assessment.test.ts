@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runWithSessionOriginator } from '../security/work-originator.js';
+
 import { assessmentStatus, assessmentTest } from './assessment.js';
 
 const previousHome = process.env.FARMSLOT_HOME;
@@ -38,7 +40,10 @@ test('assessment test remains optional when the configured provider has no key',
   const previous = process.env.TYPESAFE_API_KEY;
   delete process.env.TYPESAFE_API_KEY;
   try {
-    const result = await assessmentTest({ provider: 'typesafe' });
+    const result = await runWithSessionOriginator(
+      { id: 'test-owner', subject: { type: 'person', displayName: 'Tester' }, roles: [] },
+      () => assessmentTest({ provider: 'typesafe' }),
+    );
     assert.equal(result.status, 'skipped');
     assert.match(result.error ?? '', /not configured/);
   } finally {

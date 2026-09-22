@@ -4,6 +4,11 @@ import { WebSocket } from 'ws';
 
 import {
   type AnalyticsQueryParams,
+  type AssessmentEvaluationParams,
+  type AssessmentFeedbackParams,
+  type AssessmentHistoryParams,
+  type AssessmentRecordParams,
+  type AssessmentReportParams,
   type AssessmentTestParams,
   type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
@@ -240,7 +245,16 @@ import {
   machinePauseStatus,
 } from '../machine-parking/service.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
-import { assessmentStatus, assessmentTest } from '../methods/assessment.js';
+import {
+  assessmentEvaluate,
+  assessmentExport,
+  assessmentFeedback,
+  assessmentGet,
+  assessmentList,
+  assessmentStatus,
+  assessmentSummary,
+  assessmentTest,
+} from '../methods/assessment.js';
 import {
   backlogArchive,
   backlogAutoDispatchTick,
@@ -1428,6 +1442,18 @@ async function routeAuthorizedMethod(
       return llmTiers();
 
     // Structured assessment providers
+    case Methods.ASSESSMENT_EVALUATE:
+      return assessmentEvaluate(p as AssessmentEvaluationParams);
+    case Methods.ASSESSMENT_GET:
+      return assessmentGet(p as AssessmentRecordParams);
+    case Methods.ASSESSMENT_REPORT:
+      return assessmentExport(p as AssessmentReportParams);
+    case Methods.ASSESSMENT_LIST:
+      return assessmentList(p as AssessmentHistoryParams);
+    case Methods.ASSESSMENT_FEEDBACK:
+      return assessmentFeedback(p as AssessmentFeedbackParams);
+    case Methods.ASSESSMENT_SUMMARY:
+      return assessmentSummary();
     case Methods.ASSESSMENT_STATUS:
       return assessmentStatus();
     case Methods.ASSESSMENT_TEST:

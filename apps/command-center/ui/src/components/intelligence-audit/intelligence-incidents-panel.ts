@@ -8,9 +8,12 @@ import {
   type MonitorViolation,
 } from '@farmslot/protocol';
 
+import './assessment-panel.js';
+
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { buildHash, getHashParam } from '../../utils/url-state.js';
 
 function shortId(id: string | undefined): string {
   return id ? id.slice(0, 8) : '-';
@@ -342,8 +345,14 @@ export class IntelligenceIncidentsPanel extends LitElement {
     }
   `;
 
+  private syncTab = () => {
+    this.assessmentTab = getHashParam('tab') === 'assessments';
+  };
+
   connectedCallback() {
     super.connectedCallback();
+    this.syncTab();
+    window.addEventListener('hashchange', this.syncTab);
     if (this.injectedSummary || this.injectedSignals) {
       this.summary = this.injectedSummary;
       this.monitorSignals = this.injectedSignals ?? [];
@@ -359,6 +368,7 @@ export class IntelligenceIncidentsPanel extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener('hashchange', this.syncTab);
     this.unsubscribeConnection?.();
     this.unsubscribeConnection = undefined;
     this.unsubscribeState?.();
@@ -476,11 +486,31 @@ export class IntelligenceIncidentsPanel extends LitElement {
     `;
   }
 
+  @state() private assessmentTab = false;
+
   render() {
+    const navigation = html`<nav>
+      <button
+        @click=${() => {
+          location.hash = buildHash('intelligence');
+        }}
+      >
+        Recovery incidents
+      </button>
+      <button
+        @click=${() => {
+          location.hash = buildHash('intelligence', new URLSearchParams({ tab: 'assessments' }));
+        }}
+      >
+        Assessments
+      </button>
+    </nav>`;
+    if (this.assessmentTab) return html`${navigation}<assessment-panel></assessment-panel>`;
     const summary = this.summary;
     const hasDrift =
       !!summary && (summary.metadata.parseFailures > 0 || summary.metadata.shapeDriftFailures > 0);
     return html`
+      ${navigation}
       <div class="header">
         <div>
           <h2>Recovery incidents</h2>

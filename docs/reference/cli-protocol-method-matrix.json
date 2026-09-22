@@ -1407,6 +1407,30 @@
     "assessment.test": {
       "surface": "rpc-only",
       "note": "Explicit provider smoke test; use `farmslot rpc assessment.test`."
+    },
+    "assessment.list": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.list."
+    },
+    "assessment.get": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.get."
+    },
+    "assessment.feedback": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.feedback."
+    },
+    "assessment.summary": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.summary."
+    },
+    "assessment.report": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.report."
+    },
+    "assessment.evaluate": {
+      "surface": "rpc-only",
+      "note": "Owner-scoped assessment monitoring and evaluation; use farmslot rpc assessment.evaluate."
     }
   }
 }

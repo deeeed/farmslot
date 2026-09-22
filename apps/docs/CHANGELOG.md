@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document assessment monitoring and evaluation endpoints.
+
 - Refresh the generated gateway API reference for the structured assessment status/test RPCs.
 
 - Document the gateway.update RPC for safe source checkout updates.

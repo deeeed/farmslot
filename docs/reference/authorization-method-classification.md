@@ -7,7 +7,13 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | --------------------------------------- | -------------- | -------------------------------------------------------- |
 | `analytics.backfill`                    | admin          | writes analytics records and updates runs                |
 | `analytics.query`                       | admin          | enumerates and reads analytics paths directly            |
+| `assessment.evaluate`                   | admin          |                                                          |
+| `assessment.feedback`                   | admin          |                                                          |
+| `assessment.get`                        | admin          |                                                          |
+| `assessment.list`                       | admin          |                                                          |
+| `assessment.report`                     | admin          |                                                          |
 | `assessment.status`                     | admin          |                                                          |
+| `assessment.summary`                    | admin          |                                                          |
 | `assessment.test`                       | admin          |                                                          |
 | `auth.connect`                          | admin          |                                                          |
 | `backlog.archive`                       | admin          |                                                          |

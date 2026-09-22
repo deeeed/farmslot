@@ -1,12 +1,15 @@
 import type {
   AssessmentJsonValue,
+  AssessmentRequest,
   AssessmentResult,
   PRRuleField,
   PRRuleSubject,
   ReviewIntakeAdvisory,
 } from '@farmslot/protocol';
 
-import { assess } from './index.js';
+import { assess, assessmentRequestIdentity } from './index.js';
+import { monitorAssessment } from './monitor.js';
+import type { AssessmentAuditContext } from './store.js';
 
 const ALLOWED_FACT_KEYS = new Set<string>([
   'repository',
@@ -32,7 +35,7 @@ function asJsonValue(value: unknown): AssessmentJsonValue {
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [key, asJsonValue(entry)]),
     );
-  return String(value);
+  throw new Error('Review assessment state must be JSON');
 }
 
 function confidence(result: AssessmentResult, id: string): number {
@@ -51,14 +54,14 @@ function choice(result: AssessmentResult, id: string): string | undefined {
 }
 
 /** Read-only review routing hint. It never changes the review profile or admission. */
-export async function assessReviewIntake(
+function reviewIntakeRequest(
   subject: PRRuleSubject,
   signal?: AbortSignal,
-): Promise<ReviewIntakeAdvisory> {
+): AssessmentRequest & { signal?: AbortSignal } {
   const facts = Object.fromEntries(
     Object.entries(subject.facts).filter(([key]) => ALLOWED_FACT_KEYS.has(key)),
   );
-  const assessment = await assess({
+  return {
     signal,
     state: asJsonValue({
       pullRequest: subject.pr,
@@ -91,7 +94,22 @@ export async function assessReviewIntake(
         },
       },
     },
-  });
+  };
+}
+async function assessReviewIntakeUnrecorded(
+  subject: PRRuleSubject,
+  signal?: AbortSignal,
+): Promise<ReviewIntakeAdvisory> {
+  const assessment = await assess(reviewIntakeRequest(subject, signal));
+  const advisory = reviewIntakeRecommendation(assessment);
+  if (subject.facts['changed-paths']?.state !== 'known') {
+    advisory.route = 'needs-review';
+    advisory.reasons.push('missing-changed-path-context');
+  }
+  return advisory;
+}
+
+export function reviewIntakeRecommendation(assessment: AssessmentResult): ReviewIntakeAdvisory {
   const risk = choice(assessment, 'risk');
   const visualReviewRequired = booleanProbability(assessment, 'visualReview') >= 0.65;
   const surface = choice(assessment, 'reviewSurface');
@@ -99,8 +117,22 @@ export async function assessReviewIntake(
   if (risk === 'high') reasons.push('assessment-risk-high');
   if (visualReviewRequired) reasons.push('assessment-visual-review-required');
   if (surface === 'human') reasons.push('assessment-uncertain-routing');
-  const route =
-    surface === 'multimodal' || visualReviewRequired
+  const visualProbability = booleanProbability(assessment, 'visualReview');
+  const uncertain =
+    !['low', 'medium', 'high'].includes(risk ?? '') ||
+    !['static', 'multimodal', 'human'].includes(surface ?? '') ||
+    assessment.answers?.visualReview?.type !== 'boolean' ||
+    surface === 'human' ||
+    (visualProbability > 0.35 && visualProbability < 0.65) ||
+    assessment.status !== 'completed' ||
+    confidence(assessment, 'reviewSurface') < 0.6 ||
+    confidence(assessment, 'risk') < 0.6 ||
+    (surface === 'multimodal' && !visualReviewRequired) ||
+    (surface === 'static' && visualReviewRequired);
+  if (uncertain) reasons.push('uncertain-or-conflicting-assessment');
+  const route = uncertain
+    ? 'needs-review'
+    : surface === 'multimodal' || visualReviewRequired
       ? 'multimodal-review'
       : surface === 'human' || assessment.status !== 'completed'
         ? 'strong-reviewer'
@@ -108,4 +140,29 @@ export async function assessReviewIntake(
           ? 'strong-reviewer'
           : 'standard-review';
   return { assessment, route, visualReviewRequired, reasons };
+}
+
+export async function assessReviewIntake(
+  subject: PRRuleSubject,
+  signal?: AbortSignal,
+  audit?: AssessmentAuditContext,
+): Promise<ReviewIntakeAdvisory> {
+  if (!audit) return assessReviewIntakeUnrecorded(subject, signal);
+  let requestedIdentity;
+  try {
+    requestedIdentity = assessmentRequestIdentity(reviewIntakeRequest(subject, signal));
+  } catch {
+    requestedIdentity = undefined;
+  } // Invalid optional context is recorded as skipped by assess().
+  const result = await monitorAssessment({ ...audit, requestedIdentity }, () =>
+    assessReviewIntakeUnrecorded(subject, signal),
+  );
+  return 'assessment' in result
+    ? result
+    : {
+        assessment: result,
+        route: 'needs-review',
+        visualReviewRequired: false,
+        reasons: ['assessment-unavailable'],
+      };
 }

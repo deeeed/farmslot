@@ -23,7 +23,6 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { getAssessmentConfig } from '../assessment/config.js';
 import { assessReviewIntake } from '../assessment/review-intake.js';
 import { getQueueSnapshot } from '../backlog/dispatch-queue.js';
 import { resolvePRExecution } from '../backlog/pr-execution.js';
@@ -66,26 +65,38 @@ import type { PRRuleStore } from './store.js';
 const REVIEW_INTAKE_ASSESSMENT_CONCURRENCY = 4;
 const REVIEW_INTAKE_ASSESSMENT_BUDGET_MS = 30_000;
 
-async function attachReviewIntakeAdvisories(items: PRRulePreview['items']): Promise<void> {
+async function attachReviewIntakeAdvisories(
+  ownerId: string,
+  items: PRRulePreview['items'],
+): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REVIEW_INTAKE_ASSESSMENT_BUDGET_MS);
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < items.length) {
-      if (controller.signal.aborted) break;
       const item = items[next++];
       try {
-        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject, controller.signal);
-      } catch (error) {
-        // Advisory work must never disturb the review preview or scheduler.
-        console.warn(
-          `[pr-rules] review intake assessment skipped: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        item.reviewIntakeAdvisory = await assessReviewIntake(item.subject, controller.signal, {
+          ownerId,
+          consumer: 'review-intake',
+          subject: { pr: { ...item.subject.pr, headSha: item.subject.headSha } },
+        });
+      } catch {
+        // Optional assessment failure is visible without changing deterministic matches.
+        item.reviewIntakeAdvisory = {
+          assessment: {
+            status: 'unavailable',
+            monitoringError: 'Assessment could not be recorded',
+          },
+          route: 'needs-review',
+          visualReviewRequired: false,
+          reasons: ['assessment-unavailable'],
+        };
       }
     }
   };
   try {
-    await Promise.allSettled(
+    await Promise.all(
       Array.from({ length: Math.min(REVIEW_INTAKE_ASSESSMENT_CONCURRENCY, items.length) }, () =>
         worker(),
       ),
@@ -564,17 +575,8 @@ export class PRRuleService {
     const validations = new Map<string, string[]>();
     const reviewAction = rule.config.actions.find((action) => action.kind === 'review');
     const monitorAction = rule.config.actions.find((action) => action.kind === 'monitor');
-    let assessmentEnabled = false;
     if (options.includeAssessment) {
-      try {
-        assessmentEnabled = getAssessmentConfig().enabled;
-      } catch {
-        // A malformed optional assessment config must not break PR discovery or admission.
-        assessmentEnabled = false;
-      }
-    }
-    if (assessmentEnabled) {
-      await attachReviewIntakeAdvisories(result.items);
+      await attachReviewIntakeAdvisories(ownerId, result.items);
     }
     for (const item of result.items) {
       const profiles = [
