@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add an offline-first, bounded failure-triage evaluation CLI with a frozen synthetic corpus, deterministic baselines and an explicit pilot/hold decision.
+
+- Keep PR matching deterministic: previews no longer invoke optional assessment models, and long source reads return resumable progress within a bounded attempt.
+
 - Preserve valid worker completion signals when monitoring resumes after a timeout; reject stale attempts by worker identity instead of the restarted monitor clock.
 
 - Deliver each Pi worker and reviewer task independently, acknowledge follow-up fix launches, and preserve completed fix attempts across gateway restarts so review loops cannot stall on an earlier session.

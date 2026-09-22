@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Separate experimental assessment monitoring from evaluation-gated workflow integrations; remove instructions to trigger inference through PR matching.
+
 - Document assessment monitoring and evaluation endpoints.
 
 - Refresh the generated gateway API reference for the structured assessment status/test RPCs.

@@ -36,3 +36,8 @@ export function createAssessmentProviderRegistry(
     list: () => providers,
   };
 }
+
+/** A provider replied, but its output cannot satisfy the assessment contract. */
+export class AssessmentResponseError extends Error {
+  override name = 'AssessmentResponseError';
+}

@@ -8,11 +8,11 @@ import type {
 } from '@farmslot/protocol';
 
 import { getAssessmentConfig } from './config.js';
+import { defaultAssessmentProviders } from './default-providers.js';
 import { prepareAssessmentInput } from './input.js';
-import { type AssessmentProviderRegistry, createAssessmentProviderRegistry } from './provider.js';
-import { createTypeSafeProvider } from './typesafe.js';
+import type { AssessmentProviderRegistry } from './provider.js';
 
-const providers = createAssessmentProviderRegistry([createTypeSafeProvider()]);
+const providers = defaultAssessmentProviders();
 
 function canonical(value: AssessmentJsonValue): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -154,28 +154,4 @@ export async function assess(
         : 'Assessment provider request failed',
     };
   }
-}
-
-/** Frozen, redacted identity only; does not send context or return credentials. */
-export function assessmentRequestIdentity(request: AssessmentRequest) {
-  const status = assessmentProviderStatus();
-  const providerId = request.provider ?? status.provider;
-  const provider = providerId ? providers.get(providerId) : undefined;
-  const model =
-    request.model ??
-    (request.provider && request.provider !== status.provider ? undefined : status.model) ??
-    provider?.defaultModel;
-  const config = getAssessmentConfig();
-  const input = prepareAssessmentInput(
-    request.state,
-    request.questions,
-    config.maxStateBytes,
-    provider ? (process.env[provider.credentialEnv] ?? '') : '',
-  );
-  return {
-    provider: providerId,
-    model,
-    inputDigest: hash(input.state),
-    questionSchemaHash: hash(input.questions),
-  };
 }

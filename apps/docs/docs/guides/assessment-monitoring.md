@@ -2,14 +2,26 @@
 title: Monitor structured assessments
 ---
 
-Open **Intelligence → Assessments** to inspect optional review-intake advice.
-Each entry shows the PR and frozen head, provider/model, raw answers, policy
-recommendation, token usage and feedback. A PR automation preview links to its
-assessment. Ordinary run monitoring and scheduled PR scans do not call this lane.
+Open **Intelligence → Assessments** to inspect saved experimental assessments.
+The history currently includes synthetic connection tests and historical PR-intake
+advice. **PR rule previews and scheduled scans do not call the classifier.**
+The earlier PR-metadata pilot has no demonstrated workflow benefit and its
+automatic preview invocation has been removed.
 
 A completed request means the provider returned an answer. It does not establish
-that the answer was correct or that the review became cheaper. Advice never
-changes admission, reviewer selection, visual proof, publication or merge.
+correctness or lower workflow cost. Failure-triage evaluation and other consumers
+must pass their own baseline comparisons before operator rollout. Recipe/result
+assessment is outside the current implementation scope.
+
+## Evaluate failure triage
+
+The checkout-local `yarn triage:evaluate --out <new-directory>` command runs the
+frozen failure-triage baselines offline. The initial corpus is quarantined for repair-commentary leakage and related
+incidents crossing splits. `--live` is blocked for that corpus; no operator pilot
+is enabled. Read the
+result's per-baseline metrics and pilot/hold decision; it does not measure
+operator time savings. This experiment does not create normal run classifications
+or enable an operator pilot automatically.
 
 ## Inspect an attempt
 
@@ -44,7 +56,7 @@ reference judgments.
 ## Freeze and score a sample
 
 **Export effectiveness snapshot** downloads a frozen, content-hashed report.
-When viewing one completed PR assessment, **Export selected case** freezes only its
+When viewing a historical completed PR assessment, **Export selected case** freezes only its
 PR/head/requested-model/policy cohort, including failures without a returned model.
 Quality statistics still separate returned model versions. Use `assessmentId` in
 the report RPC to select the same cohort. This keeps other PR usage out of a trial.

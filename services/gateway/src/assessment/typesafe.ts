@@ -2,7 +2,7 @@ import { choice, noul, type Questions, score, TypeSafeClient } from '@typesafe-a
 
 import type { AssessmentAnswer, AssessmentQuestion, AssessmentQuestions } from '@farmslot/protocol';
 
-import type { AssessmentProvider } from './provider.js';
+import { type AssessmentProvider, AssessmentResponseError } from './provider.js';
 
 function toQuestions(questions: AssessmentQuestions): Questions {
   return Object.fromEntries(
@@ -94,19 +94,24 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
           { signal, retry: { maxRetries: 0 } },
         )
         .withResponse();
-      const answers: Record<string, AssessmentAnswer> = {};
-      for (const [id, question] of Object.entries(questions))
-        answers[id] = normalizeAnswer(question, result.data.answers[id]);
-      return {
-        returnedModel: result.data.model,
-        answers,
-        usage: {
-          inputTokens: result.data.usage.input_tokens,
-          outputTokens: result.data.usage.output_tokens,
-          durationMs: Date.now() - started,
-          requestId: result.requestId,
-        },
-      };
+      try {
+        const answers: Record<string, AssessmentAnswer> = {};
+        for (const [id, question] of Object.entries(questions))
+          answers[id] = normalizeAnswer(question, result.data.answers[id]);
+        return {
+          returnedModel: result.data.model,
+          answers,
+          usage: {
+            inputTokens: result.data.usage.input_tokens,
+            outputTokens: result.data.usage.output_tokens,
+            durationMs: Date.now() - started,
+            requestId: result.requestId,
+          },
+        };
+      } catch {
+        // Never propagate response fragments in validation errors.
+        throw new AssessmentResponseError('Assessment provider response failed validation');
+      }
     },
   };
 }

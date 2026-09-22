@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import { ghRequest, type GhRequestOpts, githubRequestCacheKey } from './github-client.js';
 import {
   GitHubCursorError,
@@ -13,6 +15,19 @@ export interface GitHubPage<T> {
 }
 export type GitHubQueryAccount = NonNullable<GhRequestOpts['account']>;
 type Variables = Record<string, string | number | null>;
+const queryDeadlines = new AsyncLocalStorage<AbortSignal>();
+
+/** Wall-clock GraphQL budget, including queue wait; other RPC work is outside it. */
+export function withGitHubQueryDeadline<T>(
+  milliseconds: number,
+  work: () => Promise<T>,
+): Promise<T> {
+  return queryDeadlines.run(AbortSignal.timeout(milliseconds), work);
+}
+
+export function gitHubQueryDeadlineExpired(): boolean {
+  return queryDeadlines.getStore()?.aborted ?? false;
+}
 
 export async function githubGraphQL<T>(
   document: string,
@@ -28,7 +43,20 @@ export async function githubGraphQL<T>(
   for (const [key, value] of Object.entries(variables)) {
     if (value !== null) args.push(typeof value === 'number' ? '-F' : '-f', `${key}=${value}`);
   }
-  const { stdout } = await ghRequest(args, { account, caller });
+  const signal = queryDeadlines.getStore();
+  let stdout: string;
+  try {
+    if (signal?.aborted) throw new Error('Source deadline reached');
+    ({ stdout } = await ghRequest(args, { account, caller, signal }));
+  } catch (error) {
+    // Traversals persist each completed page. Cancellation is an expected partial
+    // observation; callers report it and resume, rather than losing the UI request.
+    if (signal?.aborted)
+      throw new Error(
+        'Source scan paused at its time limit; preview again to resume saved progress',
+      );
+    throw error;
+  }
   const result = JSON.parse(stdout) as {
     data?: T & { rateLimit?: unknown };
     errors?: { message: string }[];

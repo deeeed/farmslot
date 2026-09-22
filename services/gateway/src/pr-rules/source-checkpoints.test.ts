@@ -281,3 +281,30 @@ test('provider-rejected cursor resets progress while quota errors retain it', as
   assert.equal(complete.complete, true);
   assert.deepEqual(cursors, [null, 'expired', null]);
 });
+
+test('an interruption between reads keeps completed pages even without a pending connection', async (t) => {
+  const f = await fixture(t);
+  const partial = await f.store.read(scope, 10, async (traversal) => {
+    await traversal.pages('repository', async () => page(['saved']));
+    traversal.interrupted = true;
+    return {
+      subjects: [],
+      complete: false,
+      errors: ['Source scan paused between reads'],
+      ignoredItems: 0,
+    };
+  });
+  assert.equal(partial.progress.pages, 1);
+  assert.equal(partial.progress.pendingConnections, 0);
+  const restarted = await PRSourceCheckpoints.load(f.file);
+  const completed = await restarted.read(scope, 10, async (traversal) =>
+    success(
+      await traversal.pages('repository', async () => {
+        throw new Error('Saved page was discarded');
+      }),
+    ),
+  );
+  assert.equal(completed.complete, true);
+  assert.equal(completed.ignoredItems, 1);
+  assert.equal(completed.progress.requestsThisAttempt, 0);
+});
