@@ -286,6 +286,8 @@ export async function analyzeFailureTriage(
           };
         }
         const current = await inspect(ownerId, { runId: params.runId, step: snapshot.step });
+        // Snapshot caching excludes unrelated policy edits; full policy equality still
+        // catches admission changes such as projects or receiptDirectory before transport.
         if (
           !current.ready ||
           current.ready.snapshotHash !== snapshotHash ||

@@ -4,14 +4,16 @@ import type {
   AssessmentRecord,
 } from './assessment.js';
 
-export type FailureTriageCause =
-  | 'environment'
-  | 'dependencies'
-  | 'implementation'
-  | 'test_harness'
-  | 'missing_evidence'
-  | 'external_service'
-  | 'unclear';
+export const FAILURE_TRIAGE_CAUSES = [
+  'environment',
+  'dependencies',
+  'implementation',
+  'test_harness',
+  'missing_evidence',
+  'external_service',
+  'unclear',
+] as const;
+export type FailureTriageCause = (typeof FAILURE_TRIAGE_CAUSES)[number];
 
 export interface FailureTriageGetParams {
   runId: string;
@@ -59,28 +61,20 @@ export interface FailureTriageView {
 export function failureTriageCause(record: AssessmentRecord): FailureTriageCause | undefined {
   const cause = record.result?.answers?.cause;
   const evidence = record.result?.answers?.evidence;
-  const causes: readonly string[] = [
-    'environment',
-    'dependencies',
-    'implementation',
-    'test_harness',
-    'missing_evidence',
-    'external_service',
-    'unclear',
-  ];
   if (
     record.consumer !== 'failure-triage' ||
     record.status !== 'completed' ||
-    cause?.type !== 'choice' ||
-    !causes.includes(cause.choice)
+    cause?.type !== 'choice'
   )
     return undefined;
+  const selected = FAILURE_TRIAGE_CAUSES.find((label) => label === cause.choice);
+  if (!selected) return undefined;
   if (
-    cause.choice !== 'unclear' &&
+    selected !== 'unclear' &&
     !(record.subject.run?.sources ?? []).some(
       (s) => evidence?.type === 'choice' && s.id === evidence.choice,
     )
   )
     return undefined;
-  return cause.choice as FailureTriageCause;
+  return selected;
 }
