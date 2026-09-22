@@ -1399,6 +1399,14 @@
     "gateway.update": {
       "surface": "rpc-only",
       "note": "Update a clean default-branch checkout through the shared UI or farmslot rpc gateway.update."
+    },
+    "assessment.status": {
+      "surface": "rpc-only",
+      "note": "Interim provider status inspection; use `farmslot rpc assessment.status`."
+    },
+    "assessment.test": {
+      "surface": "rpc-only",
+      "note": "Explicit provider smoke test; use `farmslot rpc assessment.test`."
     }
   }
 }

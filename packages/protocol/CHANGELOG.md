@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add provider-neutral structured-assessment contracts, eval axes/scorer kind, and optional review-intake advisory data.
+
 - Record runner-native prompt acceptance separately from model-written task progress for review startup.
 
 - Add provider/account inventories to runner snapshots, separating configured credentials, readiness, identity and host scope.

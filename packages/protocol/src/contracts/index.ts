@@ -1,6 +1,7 @@
 export * from './acceptance.js';
 export * from './agents.js';
 export * from './analytics.js';
+export * from './assessment.js';
 export * from './backlog.js';
 export * from './bug-input.js';
 export * from './bug-score.js';

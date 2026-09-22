@@ -101,6 +101,8 @@ export interface EvalPackageAxes {
   runner?: EvalPackageAxisRef;
   model?: EvalPackageAxisRef;
   actualModel?: EvalPackageAxisRef;
+  /** Provider-neutral structured-assessment configuration/provenance. */
+  assessment?: EvalPackageAxisRef;
 }
 
 export type EvalHarnessLifecycleStatus = 'pending' | 'passed' | 'failed' | 'skipped';
@@ -195,6 +197,7 @@ export type EvalScorerConfigKind =
   | 'human'
   | 'heuristic'
   | 'llm-judge'
+  | 'structured-assessment'
   | 'deterministic'
   | 'external-ref';
 
@@ -511,7 +514,8 @@ export function isEvalPackageAxes(value: unknown): value is EvalPackageAxes {
     (value.review == null || isEvalPackageAxisRef(value.review)) &&
     (value.runner == null || isEvalPackageAxisRef(value.runner)) &&
     (value.model == null || isEvalPackageAxisRef(value.model)) &&
-    (value.actualModel == null || isEvalPackageAxisRef(value.actualModel))
+    (value.actualModel == null || isEvalPackageAxisRef(value.actualModel)) &&
+    (value.assessment == null || isEvalPackageAxisRef(value.assessment))
   );
 }
 
@@ -665,6 +669,7 @@ function isEvalScorerConfigKind(value: unknown): value is EvalScorerConfigKind {
     value === 'human' ||
     value === 'heuristic' ||
     value === 'llm-judge' ||
+    value === 'structured-assessment' ||
     value === 'deterministic' ||
     value === 'external-ref'
   );

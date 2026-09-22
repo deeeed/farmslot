@@ -379,6 +379,10 @@ export const Methods = {
   LLM_CONFIG_SET: 'llm.config.set',
   LLM_TIERS: 'llm.tiers',
 
+  // Structured assessment providers
+  ASSESSMENT_STATUS: 'assessment.status',
+  ASSESSMENT_TEST: 'assessment.test',
+
   // Co-Pilot Chat
   OPERATOR_SNAPSHOT: 'operator.snapshot',
   CHAT_SEND: 'chat.send',

@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 
 import {
   type AnalyticsQueryParams,
+  type AssessmentTestParams,
   type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
   type BacklogCloseShippedParams,
@@ -239,6 +240,7 @@ import {
   machinePauseStatus,
 } from '../machine-parking/service.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
+import { assessmentStatus, assessmentTest } from '../methods/assessment.js';
 import {
   backlogArchive,
   backlogAutoDispatchTick,
@@ -1424,6 +1426,12 @@ async function routeAuthorizedMethod(
       return llmConfigSet(p as LLMConfigSetParams);
     case Methods.LLM_TIERS:
       return llmTiers();
+
+    // Structured assessment providers
+    case Methods.ASSESSMENT_STATUS:
+      return assessmentStatus();
+    case Methods.ASSESSMENT_TEST:
+      return assessmentTest(p as AssessmentTestParams);
 
     // Node Health
     case Methods.NODE_HEALTH: {

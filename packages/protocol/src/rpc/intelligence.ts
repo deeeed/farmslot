@@ -17,6 +17,8 @@ export const IntelligenceMethods = {
   llmConfigGet: Methods.LLM_CONFIG_GET,
   llmConfigSet: Methods.LLM_CONFIG_SET,
   llmTiers: Methods.LLM_TIERS,
+  assessmentStatus: Methods.ASSESSMENT_STATUS,
+  assessmentTest: Methods.ASSESSMENT_TEST,
 } as const;
 
 // ─── Fine-tuning data export param/result types ───
