@@ -3,6 +3,9 @@ import { customElement, property } from 'lit/decorators.js';
 
 import type { FleetSummary, GitHubRateLimitPayload } from '@farmslot/protocol';
 
+import './copy-view-link.js';
+
+import { isDesktopClient } from '../../desktop-connection.js';
 import type { ConnectionState } from '../../gateway-client.js';
 import { colors, fonts, layout, spacing } from '../../styles/theme-tokens.js';
 
@@ -160,6 +163,7 @@ export class FleetSummaryBar extends LitElement {
           <span>${this.connStateLabel()}</span>
           <span class="conn-meta">${this.connectionMeta()}</span>
         </button>
+        ${isDesktopClient() ? html`<copy-view-link></copy-view-link>` : ''}
       </span>
     `;
   }

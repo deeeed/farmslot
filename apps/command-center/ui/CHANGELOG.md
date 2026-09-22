@@ -7,6 +7,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Expand and scroll long step commands and output so preparation failures remain inspectable.
 
 - Offer the dangerous publication override for missing, failed, or stale reviews, without waiting for review retries to run out. A fresh direct run fetch also restores gate actions when the bulk run list times out.
+- Add a native-app Copy link button beside the connection status, preserving screens, filters and selected files in credential-free app links.
 
 - Update a clean gateway checkout from the update banner with progress, errors and rebuild guidance; refresh stale status after local pulls.
 

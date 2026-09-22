@@ -1,3 +1,5 @@
+import { viewRouteFromLink } from './view-links.mjs';
+
 const ID = '[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}';
 const entityLink = new RegExp(`^farmslot://(run|gate|slot)/(${ID})(?:\\?runId=(${ID}))?$`, 'i');
 const entityRoute = new RegExp(`^(run|slot)/(${ID})$`);
@@ -6,6 +8,8 @@ const views = new Set(['fleet', 'runs', 'decisions']);
 
 /** Only navigation targets are accepted, never credentials, gateways or actions. */
 export function routeFromDeepLink(value) {
+  const fullView = viewRouteFromLink(value);
+  if (fullView) return fullView;
   if (typeof value !== 'string' || value.length > 512) return null;
   const view = /^farmslot:\/\/(fleet|runs|decisions)\/?$/i.exec(value);
   if (view) return `#${view[1].toLowerCase()}`;

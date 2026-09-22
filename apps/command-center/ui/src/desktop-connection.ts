@@ -9,6 +9,7 @@ export interface DesktopConnection {
 export interface FarmslotDesktopBridge {
   loadConnection(): Promise<DesktopConnection | null>;
   saveConnection(connection: DesktopConnection): Promise<void>;
+  copyCurrentLink?(): Promise<string>;
   updateAttention?(value: { connected: boolean; ready: boolean; decisions: number }): Promise<void>;
   onResume(callback: () => void): () => void;
 }
