@@ -28,6 +28,7 @@ import {
 } from '@farmslot/protocol';
 
 import './native-worker-history.js';
+import './failure-triage-panel.js';
 import './step-inspector.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';

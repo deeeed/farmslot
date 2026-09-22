@@ -1,8 +1,9 @@
-import type {
-  AssessmentAnswer,
-  AssessmentRecord,
-  AssessmentResult,
-  AssessmentSubject,
+import {
+  ASSESSMENT_CONSUMERS,
+  type AssessmentAnswer,
+  type AssessmentRecord,
+  type AssessmentResult,
+  type AssessmentSubject,
 } from '@farmslot/protocol';
 
 const statuses = new Set([
@@ -25,7 +26,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export function assertAssessmentSubject(value: unknown): asserts value is AssessmentSubject {
-  if (!record(value) || Object.keys(value).some((k) => !['pr'].includes(k)))
+  if (!record(value) || Object.keys(value).some((k) => !['pr', 'run'].includes(k)))
     throw new Error('Invalid assessment subject');
   if (value.pr !== undefined) {
     if (
@@ -39,6 +40,36 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
       !/^[a-f0-9]{40,64}$/i.test(value.pr.headSha)
     )
       throw new Error('Invalid assessment PR identity');
+  }
+  if (value.run !== undefined) {
+    const r = value.run;
+    if (
+      !record(r) ||
+      Object.keys(r).some(
+        (k) => !['id', 'project', 'step', 'snapshotHash', 'sources'].includes(k),
+      ) ||
+      !bounded(r.id) ||
+      !bounded(r.project) ||
+      !bounded(r.step) ||
+      typeof r.snapshotHash !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(r.snapshotHash)
+    )
+      throw new Error('Invalid assessment run identity');
+    if (
+      r.sources !== undefined &&
+      (!Array.isArray(r.sources) ||
+        r.sources.length > 4 ||
+        !r.sources.every(
+          (s) =>
+            record(s) &&
+            Object.keys(s).every((k) => ['id', 'sourceId', 'digest'].includes(k)) &&
+            bounded(s.id) &&
+            bounded(s.sourceId) &&
+            typeof s.digest === 'string' &&
+            /^[a-f0-9]{64}$/.test(s.digest),
+        ))
+    )
+      throw new Error('Invalid assessment source identities');
   }
 }
 function answer(value: unknown): value is AssessmentAnswer {
@@ -81,6 +112,7 @@ function result(value: unknown): value is AssessmentResult {
       (k) =>
         ![
           'status',
+          'attempted',
           'assessmentId',
           'monitoringError',
           'provider',
@@ -95,6 +127,7 @@ function result(value: unknown): value is AssessmentResult {
     )
   )
     return false;
+  if (value.attempted !== undefined && typeof value.attempted !== 'boolean') return false;
   for (const key of [
     'provider',
     'requestedModel',
@@ -133,12 +166,15 @@ function result(value: unknown): value is AssessmentResult {
             'inputTokens',
             'outputTokens',
             'costUsd',
+            'costKind',
           ].includes(k),
       )
     )
       return false;
     for (const k of ['inputTokens', 'outputTokens', 'costUsd'])
       if (u[k] !== undefined && !count(u[k])) return false;
+    if (u.costKind !== undefined && !['estimated', 'reported'].includes(String(u.costKind)))
+      return false;
     for (const k of ['requestId', 'returnedModel'])
       if (u[k] !== undefined && !bounded(u[k])) return false;
   }
@@ -161,6 +197,7 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
           'result',
           'recommendation',
           'policyVersion',
+          'reservation',
           'requestedIdentity',
           'feedback',
         ].includes(k),
@@ -169,12 +206,56 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
     !bounded(value.id) ||
     !bounded(value.ownerId) ||
     !bounded(value.policyVersion) ||
-    !['review-intake', 'smoke-test'].includes(String(value.consumer)) ||
+    !ASSESSMENT_CONSUMERS.some((consumer) => consumer === value.consumer) ||
     !statuses.has(String(value.status)) ||
     typeof value.startedAt !== 'string' ||
     !Number.isFinite(Date.parse(value.startedAt))
   )
     throw new Error('Invalid assessment record');
+  if (value.reservation !== undefined) {
+    const r = value.reservation;
+    if (
+      !record(r) ||
+      Object.keys(r).some((k) => !['key', 'maxUsd', 'priceHash', 'price'].includes(k)) ||
+      typeof r.key !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(r.key) ||
+      typeof r.priceHash !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(r.priceHash) ||
+      !count(r.maxUsd) ||
+      r.maxUsd <= 0 ||
+      r.maxUsd > 0.1
+    )
+      throw new Error('Invalid assessment reservation');
+    if (r.price !== undefined) {
+      const p = r.price;
+      if (
+        !record(p) ||
+        Object.keys(p).some(
+          (k) =>
+            ![
+              'version',
+              'provider',
+              'model',
+              'verifiedAt',
+              'source',
+              'inputUsdPerMillion',
+              'outputUsdPerMillion',
+              'maxRequestTokens',
+            ].includes(k),
+        ) ||
+        p.version !== 1 ||
+        !bounded(p.provider) ||
+        !bounded(p.model) ||
+        !bounded(p.source, 1000) ||
+        typeof p.verifiedAt !== 'string' ||
+        !Number.isFinite(Date.parse(p.verifiedAt)) ||
+        !count(p.inputUsdPerMillion) ||
+        !count(p.outputUsdPerMillion) ||
+        !count(p.maxRequestTokens)
+      )
+        throw new Error('Invalid assessment price snapshot');
+    }
+  }
   if (
     value.completedAt !== undefined &&
     (typeof value.completedAt !== 'string' ||

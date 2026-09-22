@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
+
 - Keep PR-rule previews deterministic, show loading feedback and report match counts explicitly.
 
 - Show assessment history, answers, uncertainty and operator feedback under Intelligence, with PR preview links and full-history or selected-case report export.

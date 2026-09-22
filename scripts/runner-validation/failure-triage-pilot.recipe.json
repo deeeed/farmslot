@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "On-demand failure advice boundaries",
+  "description": "Run from the checkout with a new TRIAGE_PILOT_PROOF_OUT and free TRIAGE_PILOT_PROOF_PORT. Provider responses are simulated; no external inference or workflow efficiency claim.",
+  "workflow": {
+    "entry": "gateway",
+    "nodes": {
+      "gateway": {
+        "action": "command",
+        "cmd": "FARMSLOT_ASSESSMENT_VALIDATION=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/failure-triage.mjs",
+        "timeout_ms": 120000,
+        "intent": "Drive actual triage RPCs with two clients. Prove coalescing, saved input redaction, feedback, stale-source rejection, restart/crash behavior, explicit retry, bounded spending, role denial and unchanged run authority.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document opt-in failure advice, source approval and honest assessment monitoring.
+
 - Separate experimental assessment monitoring from evaluation-gated workflow integrations; remove instructions to trigger inference through PR matching.
 
 - Document assessment monitoring and evaluation endpoints.

@@ -11,7 +11,7 @@ import { assertNoCredentials } from './record-validation.js';
 const MAX_BYTES = 20 * 1024 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 let tail: Promise<unknown> = Promise.resolve();
-function directory(owner: string, kind: 'reports' | 'evaluations') {
+function directory(owner: string, kind: 'reports' | 'evaluations' | 'inputs') {
   return path.join(
     farmslotHome(),
     `assessment-${kind}`,
@@ -30,19 +30,19 @@ async function prune(dir: string) {
 }
 export function saveAssessmentArtifact(
   owner: string,
-  kind: 'reports' | 'evaluations',
+  kind: 'reports' | 'evaluations' | 'inputs',
   id: string,
   value: unknown,
 ): Promise<void> {
   const operation = tail.then(async () => {
     if (!ID.test(id)) throw new Error('Invalid artifact ID');
     const bytes = JSON.stringify(value);
-    if (Buffer.byteLength(bytes) > MAX_BYTES)
+    if (Buffer.byteLength(bytes) > (kind === 'inputs' ? 24000 : MAX_BYTES))
       throw new Error('Assessment artifact exceeds 20 MiB limit');
     assertNoCredentials(bytes);
     const dir = directory(owner, kind);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    if ((await prune(dir)) >= 100)
+    if ((await prune(dir)) >= (kind === 'inputs' ? 5000 : 100))
       throw new Error(
         'Assessment artifact limit reached; export retained artifacts before removing them locally',
       );
@@ -57,13 +57,14 @@ export function saveAssessmentArtifact(
 }
 export async function readAssessmentArtifact(
   owner: string,
-  kind: 'reports' | 'evaluations',
+  kind: 'reports' | 'evaluations' | 'inputs',
   id: string,
 ): Promise<unknown> {
   if (!ID.test(id)) throw new Error('Invalid artifact ID');
   const file = path.join(directory(owner, kind), `${id}.json`);
   const metadata = await stat(file);
-  if (metadata.size > MAX_BYTES) throw new Error('Assessment artifact exceeds limit');
+  if (metadata.size > (kind === 'inputs' ? 24000 : MAX_BYTES))
+    throw new Error('Assessment artifact exceeds limit');
   if (metadata.mtimeMs < Date.now() - 30 * 86400_000)
     throw new Error('Assessment artifact expired');
   const bytes = await readFile(file, 'utf8');

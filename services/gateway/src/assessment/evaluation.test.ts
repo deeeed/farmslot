@@ -52,6 +52,51 @@ function report(records: AssessmentRecord[]): AssessmentReport {
     limitations: [],
   };
 }
+
+test('triage history is visible and run snapshots form distinct cases', () => {
+  const triage = row();
+  triage.consumer = 'failure-triage';
+  triage.subject = {
+    run: { id: 'r1', project: 'fixture', step: 'validation', snapshotHash: 'a'.repeat(64) },
+  };
+  delete triage.recommendation;
+  triage.result!.answers = {
+    cause: {
+      type: 'choice',
+      choice: 'implementation',
+      probabilities: { implementation: 1, unclear: 0 },
+    },
+  };
+  const repeated = { ...triage, id: randomUUID(), startedAt: '2026-01-02T00:00:00Z' };
+  const changed = {
+    ...triage,
+    id: randomUUID(),
+    subject: { run: { ...triage.subject.run!, snapshotHash: 'b'.repeat(64) } },
+  };
+  const summary = summarizeAssessments([row(), triage, repeated, changed]);
+  assert.equal(summary.calls, 4);
+  assert.equal(summary.uniqueCases, 3);
+  assert.deepEqual(
+    new Set(summary.groups.map((g) => g.consumer)),
+    new Set(['review-intake', 'failure-triage']),
+  );
+  const result = evaluateAssessmentReport(report([triage]), {
+    reportId: 'd'.repeat(64),
+    references: [
+      {
+        assessmentId: triage.id,
+        questionId: 'cause',
+        expected: 'implementation',
+        evidenceRef: 'fixture:controlled-fault',
+        source: 'human',
+        blinded: true,
+      },
+    ],
+  });
+  assert.equal(result.questions[0].correct, 1);
+  assert.equal(result.questions[0].abstained, 0);
+  assert.equal(result.comparison.status, 'inconclusive');
+});
 test('predictions are deduplicated before feedback; repeated answers cannot borrow labels', () => {
   const first = row(),
     repeated = { ...row(), startedAt: '2026-01-02T00:00:00Z' };

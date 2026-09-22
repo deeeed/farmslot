@@ -127,6 +127,9 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `improvement.apply`                     | admin          |                                                          |
 | `improvement.chat`                      | admin          |                                                          |
 | `intelligence.actions.summary`          | admin          |                                                          |
+| `intelligence.triage.analyze`           | admin          |                                                          |
+| `intelligence.triage.feedback`          | admin          |                                                          |
+| `intelligence.triage.get`               | admin          |                                                          |
 | `llm.auth.add`                          | admin          |                                                          |
 | `llm.auth.import`                       | admin          |                                                          |
 | `llm.auth.list`                         | admin          |                                                          |

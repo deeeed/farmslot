@@ -224,15 +224,15 @@ export class AssessmentPanel extends LitElement {
       this.records.some(
         (r) =>
           r.id === this.selectedId &&
-          r.consumer === 'review-intake' &&
+          r.consumer !== 'smoke-test' &&
           r.status === 'completed' &&
-          r.subject.pr,
+          (r.subject.pr || r.subject.run),
       )
     );
   }
   private async exportReport() {
     if (!this.canExportSelected) {
-      this.error = 'Select a completed PR assessment to export its case.';
+      this.error = 'Select a completed workflow assessment to export its case.';
       return;
     }
     this.busy = true;
@@ -280,12 +280,15 @@ export class AssessmentPanel extends LitElement {
       ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${s
         ? html`<div class="stats">
-              <span>${s.calls} review attempts</span><span>${s.completed} completed</span
+              <span>${s.calls} assessment records</span><span>${s.completed} completed</span
               ><span>${s.failed} unavailable</span><span>${s.skipped} skipped / disabled</span
               ><span>${s.interrupted} interrupted</span
               ><span
                 >${s.tokens} reported tokens · ${s.callsWithUsage}/${s.calls} attempts have complete
                 token usage</span
+              ><span
+                >${s.attemptedCalls ?? 0} confirmed provider attempts ·
+                ${s.unknownAttemptCalls ?? 0} unknown</span
               ><span
                 >Provider latency across ${s.callsWithLatency} calls: median
                 ${s.medianLatencyMs ?? '—'} ms · p95 ${s.p95LatencyMs ?? '—'} ms</span
@@ -297,19 +300,23 @@ export class AssessmentPanel extends LitElement {
               unlabeled. Operator labels, not independent ground truth. Smoke tests excluded.
             </p>
             <p>
-              End-to-end median ${s.endToEndMedianMs ?? 'unknown'} ms · p95
+              Recorded assessment duration: median ${s.endToEndMedianMs ?? 'unknown'} ms · p95
               ${s.endToEndP95Ms ?? 'unknown'} ms
             </p>
             <p>
-              Efficiency savings: not measured. Cost: unknown unless the provider supplies billing
-              evidence. A paired baseline and assisted review is required.
+              Model cost estimates: $${(s.knownEstimatedUsd ?? 0).toFixed(6)} · reported costs:
+              $${(s.knownReportedUsd ?? 0).toFixed(6)} · ${s.unknownCharges ?? 'unknown'} requests
+              with unknown charges. Conservative reservations: $${(s.reservedUsd ?? 0).toFixed(6)}.
+              Completed snapshot cohorts:
+              ${s.completedCases ?? 'unknown'}/${s.selectedCases ?? 'unknown'}. Workflow savings:
+              not measured. Paired workflows at equal independently checked quality are required.
             </p>`
         : nothing}
       ${s?.groups.map(
         (g) =>
           html`<p>
-            ${g.provider}/${g.model} · policy ${g.policyVersion} · questions
-            ${g.questionSchemaHash.slice(0, 8)} · ${g.questionId}:
+            ${g.consumer ?? 'review-intake'} · ${g.provider}/${g.model} · policy ${g.policyVersion}
+            · questions ${g.questionSchemaHash.slice(0, 8)} · ${g.questionId}:
             ${g.correct}/${g.correct + g.incorrect} operator-judged correct,
             ${g.insufficientContext} insufficient context, ${g.unlabeled} unlabeled.
           </p>`,
@@ -328,12 +335,19 @@ export class AssessmentPanel extends LitElement {
             <p>
               ${record.subject.pr
                 ? `${record.subject.pr.repo}#${record.subject.pr.number} @ ${record.subject.pr.headSha.slice(0, 8)}`
-                : 'Synthetic connection test'}
+                : record.subject.run
+                  ? `${record.subject.run.project} · run ${record.subject.run.id} · ${record.subject.run.step} @ ${record.subject.run.snapshotHash.slice(0, 8)}`
+                  : 'Synthetic connection test'}
               · ${record.startedAt}
             </p>
             <p>
-              Recommendation: ${record.recommendation?.route ?? 'Not assessed'} ·
-              ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none
+              Recommendation:
+              ${record.consumer === 'failure-triage'
+                ? record.result?.answers?.cause?.type === 'choice'
+                  ? record.result.answers.cause.choice
+                  : 'Unavailable'
+                : (record.recommendation?.route ?? 'Not assessed')}
+              · ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none
             </p>
             <p>
               ${record.result?.provider ?? 'No provider'} /

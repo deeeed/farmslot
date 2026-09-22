@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
+
 - Remove the unreachable PR-preview assessment field; retain historical assessment records.
 
 - Add assessment history, feedback and effectiveness report contracts with explicit uncertainty.

@@ -232,9 +232,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## intelligence.\*
 
-| Method                         | Surface  | CLI command | TUI | Note                                                                                           |
-| ------------------------------ | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `intelligence.actions.summary` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                         | Surface  | CLI command | TUI | Note                                                                                                                                                     |
+| ------------------------------ | -------- | ----------- | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `intelligence.actions.summary` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted.                                                           |
+| `intelligence.triage.get`      | rpc-only |             |     | Explicit experimental failure triage via farmslot rpc intelligence.triage.get; shared typed gateway result, no arbitrary paths or terminal buffers.      |
+| `intelligence.triage.analyze`  | rpc-only |             |     | Explicit experimental failure triage via farmslot rpc intelligence.triage.analyze; shared typed gateway result, no arbitrary paths or terminal buffers.  |
+| `intelligence.triage.feedback` | rpc-only |             |     | Explicit experimental failure triage via farmslot rpc intelligence.triage.feedback; shared typed gateway result, no arbitrary paths or terminal buffers. |
 
 ## llm.\*
 

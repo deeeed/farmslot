@@ -2,14 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  AssessmentFeedbackParams,
-  AssessmentHistoryParams,
-  AssessmentHistoryResult,
-  AssessmentRecord,
-  AssessmentResult,
-  AssessmentSubject,
-  ReviewIntakeAdvisory,
+import {
+  ASSESSMENT_CONSUMERS,
+  type AssessmentFeedbackParams,
+  type AssessmentHistoryParams,
+  type AssessmentHistoryResult,
+  type AssessmentRecord,
+  type AssessmentResult,
+  type AssessmentSubject,
+  type ReviewIntakeAdvisory,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
@@ -104,34 +105,86 @@ export interface AssessmentAuditContext {
   consumer: AssessmentRecord['consumer'];
   subject: AssessmentSubject;
   requestedIdentity?: AssessmentRecord['requestedIdentity'];
+  policyVersion?: string;
 }
 
+async function createAssessment(
+  context: AssessmentAuditContext,
+  reservation?: AssessmentRecord['reservation'],
+): Promise<AssessmentRecord> {
+  assertAssessmentSubject(context.subject);
+  await mkdir(root(), { recursive: true, mode: 0o700 });
+  // Retention is write-side maintenance. Throttle full scans even at capacity;
+  // read RPCs only filter expired rows and never mutate storage. At capacity,
+  // expired space may remain unavailable until the next sweep, at most one minute.
+  if (Date.now() >= (nextPruneAt.get(root()) ?? 0)) {
+    await retained(true);
+    nextPruneAt.set(root(), Date.now() + 60_000);
+  }
+  if ((await files()).length >= MAX_RECORDS)
+    throw new Error('Assessment history is full; expiry sweep may free space within one minute');
+  const record: AssessmentRecord = {
+    version: 1,
+    id: randomUUID(),
+    ...context,
+    startedAt: new Date().toISOString(),
+    status: 'started',
+    policyVersion: context.policyVersion ?? 'review-intake-v2',
+    ...(reservation ? { reservation } : {}),
+    feedback: [],
+  };
+  serializeAssessment(record);
+  await writeAtomicJSON(location(record.id), record);
+  active.add(location(record.id));
+  return record;
+}
 export async function beginAssessment(context: AssessmentAuditContext): Promise<AssessmentRecord> {
+  return serialized(() => createAssessment(context));
+}
+
+/** Reserve before transport. All bounded consumers share the gateway's daily allowance. */
+export async function reserveAssessment(
+  context: AssessmentAuditContext,
+  reservation: NonNullable<AssessmentRecord['reservation']>,
+  limits: { maxCalls: number; maxUsd: number },
+): Promise<
+  { status: 'reserved' | 'existing'; record: AssessmentRecord } | { status: 'budget-blocked' }
+> {
+  if (
+    !Number.isSafeInteger(limits.maxCalls) ||
+    limits.maxCalls < 1 ||
+    limits.maxCalls > 60 ||
+    !Number.isFinite(limits.maxUsd) ||
+    limits.maxUsd <= 0 ||
+    limits.maxUsd > 0.1
+  )
+    throw new Error('Invalid assessment budget');
   return serialized(async () => {
-    assertAssessmentSubject(context.subject);
-    await mkdir(root(), { recursive: true, mode: 0o700 });
-    // Retention is write-side maintenance. Throttle full scans even at capacity;
-    // read RPCs only filter expired rows and never mutate storage. At capacity,
-    // expired space may remain unavailable until the next sweep, at most one minute.
-    if (Date.now() >= (nextPruneAt.get(root()) ?? 0)) {
-      await retained(true);
-      nextPruneAt.set(root(), Date.now() + 60_000);
-    }
-    if ((await files()).length >= MAX_RECORDS)
-      throw new Error('Assessment history is full; expiry sweep may free space within one minute');
-    const record: AssessmentRecord = {
-      version: 1,
-      id: randomUUID(),
-      ...context,
-      startedAt: new Date().toISOString(),
-      status: 'started',
-      policyVersion: 'review-intake-v2',
-      feedback: [],
-    };
-    serializeAssessment(record);
-    await writeAtomicJSON(location(record.id), record);
-    active.add(location(record.id));
-    return record;
+    const records = await retained();
+    const existing = records.find(
+      (r) =>
+        r.ownerId === context.ownerId &&
+        r.consumer === context.consumer &&
+        r.reservation?.key === reservation.key,
+    );
+    if (existing) return { status: 'existing', record: existing };
+    if (
+      records.some(
+        (r) =>
+          r.reservation?.priceHash === reservation.priceHash &&
+          r.result?.error === 'spend-bound-exceeded',
+      )
+    )
+      return { status: 'budget-blocked' };
+    const today = new Date().toISOString().slice(0, 10);
+    const attempts = records.filter((r) => r.reservation && r.startedAt.slice(0, 10) === today);
+    if (
+      attempts.length >= limits.maxCalls ||
+      attempts.reduce((sum, r) => sum + r.reservation!.maxUsd, 0) + reservation.maxUsd >
+        limits.maxUsd + 1e-12
+    )
+      return { status: 'budget-blocked' };
+    return { status: 'reserved', record: await createAssessment(context, reservation) };
   });
 }
 export async function finishAssessment(
@@ -168,7 +221,7 @@ export async function assessmentHistory(
       (typeof params.before !== 'string' || params.before.length > 100)
     )
       throw new Error('Invalid history cursor');
-    if (params.consumer !== undefined && !['review-intake', 'smoke-test'].includes(params.consumer))
+    if (params.consumer !== undefined && !ASSESSMENT_CONSUMERS.includes(params.consumer))
       throw new Error('Invalid consumer');
     const records = (await retained())
       .filter((r) => r.ownerId === ownerId && (!params.consumer || r.consumer === params.consumer))

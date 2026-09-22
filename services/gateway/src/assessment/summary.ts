@@ -2,6 +2,7 @@ import type { AssessmentRecord, AssessmentSummary } from '@farmslot/protocol';
 
 export function assessmentCohort(record: AssessmentRecord) {
   return {
+    consumer: record.consumer,
     provider: record.result?.provider ?? record.requestedIdentity?.provider ?? 'unknown',
     model:
       record.result?.returnedModel ??
@@ -16,6 +17,15 @@ export function assessmentCohort(record: AssessmentRecord) {
   };
 }
 export function assessmentCase(record: AssessmentRecord): string | undefined {
+  const run = record.subject.run;
+  if (record.consumer === 'failure-triage' && run)
+    return JSON.stringify([
+      record.consumer,
+      run.id,
+      run.step,
+      run.snapshotHash,
+      assessmentCohort(record),
+    ]);
   const pr = record.subject.pr;
   return pr
     ? JSON.stringify([
@@ -29,6 +39,20 @@ export function assessmentCase(record: AssessmentRecord): string | undefined {
 }
 /** Accounting groups requested identity so failures without a returned build stay visible. */
 export function assessmentAccountingCase(record: AssessmentRecord): string | undefined {
+  const run = record.subject.run;
+  if (record.consumer === 'failure-triage' && run)
+    return JSON.stringify([
+      record.consumer,
+      run.id,
+      run.step,
+      run.snapshotHash,
+      record.requestedIdentity?.provider ?? record.result?.provider ?? 'unknown',
+      record.requestedIdentity?.model ?? record.result?.requestedModel ?? 'unknown',
+      record.requestedIdentity?.questionSchemaHash ??
+        record.result?.questionSchemaHash ??
+        'unknown',
+      record.policyVersion,
+    ]);
   const pr = record.subject.pr;
   if (!pr || record.consumer !== 'review-intake') return undefined;
   return JSON.stringify([
@@ -50,7 +74,7 @@ export function representativeAssessments(rows: AssessmentRecord[]): AssessmentR
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))
     .filter((r) => {
       const key = assessmentCase(r);
-      if (r.consumer !== 'review-intake' || r.status !== 'completed' || !key || cases.has(key))
+      if (r.consumer === 'smoke-test' || r.status !== 'completed' || !key || cases.has(key))
         return false;
       cases.add(key);
       return true;
@@ -62,7 +86,14 @@ const percentile = (values: number[], q: number) => {
 };
 
 export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary {
-  const rows = all.filter((r) => r.consumer === 'review-intake');
+  const rows = all.filter((r) => r.consumer !== 'smoke-test');
+  const selectedCases = new Set(rows.map(assessmentAccountingCase).filter(Boolean));
+  const completedCases = new Set(
+    rows
+      .filter((r) => r.status === 'completed')
+      .map(assessmentAccountingCase)
+      .filter(Boolean),
+  );
   const timings = rows.flatMap((r) => (r.result?.usage ? [r.result.usage.durationMs] : []));
   const elapsed = rows.flatMap((r) =>
     r.completedAt ? [Date.parse(r.completedAt) - Date.parse(r.startedAt)] : [],
@@ -106,6 +137,28 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
     insufficient = total('insufficientContext');
   return {
     calls: rows.length,
+    selectedCases: selectedCases.size,
+    completedCases: completedCases.size,
+    reservedUsd: rows.reduce((n, r) => n + (r.reservation?.maxUsd ?? 0), 0),
+    knownEstimatedUsd: rows.reduce(
+      (n, r) => n + (r.result?.usage?.costKind === 'estimated' ? (r.result.usage.costUsd ?? 0) : 0),
+      0,
+    ),
+    knownReportedUsd: rows.reduce(
+      (n, r) =>
+        n + (r.result?.usage?.costKind !== 'estimated' ? (r.result?.usage?.costUsd ?? 0) : 0),
+      0,
+    ),
+    unknownCharges: rows.filter(
+      (r) =>
+        r.result?.attempted !== false &&
+        !['disabled', 'skipped'].includes(r.status) &&
+        r.result?.usage?.costUsd === undefined,
+    ).length,
+    attemptedCalls: rows.filter((r) => r.result?.attempted === true).length,
+    unknownAttemptCalls: rows.filter(
+      (r) => r.result?.attempted === undefined && !['disabled', 'skipped'].includes(r.status),
+    ).length,
     completed: rows.filter((r) => r.status === 'completed').length,
     failed: rows.filter((r) => r.status === 'unavailable').length,
     skipped: rows.filter((r) => r.status === 'skipped' || r.status === 'disabled').length,

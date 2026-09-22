@@ -40,8 +40,8 @@ export async function assessmentReport(
   if (assessmentId !== undefined) {
     const anchor = await assessmentRecord(ownerId, assessmentId);
     const key = assessmentAccountingCase(anchor);
-    if (!key || anchor.status !== 'completed' || anchor.consumer !== 'review-intake')
-      throw new Error('Select a completed review assessment');
+    if (!key || anchor.status !== 'completed' || anchor.consumer === 'smoke-test')
+      throw new Error('Select a completed workflow assessment');
     records = records.filter((r) => assessmentAccountingCase(r) === key);
   }
   const payload = {
@@ -54,7 +54,7 @@ export async function assessmentReport(
       'Operator labels are observational, not independent reference truth.',
       'Smoke tests are excluded from effectiveness totals.',
       'Only retained assessment history is included; no raw model inputs are stored.',
-      'Savings are unknown until independent baseline and assisted review trials are compared.',
+      'Savings are unknown until independent baseline and assisted workflow trials are compared.',
       'No model suggestion authorizes a review, dispatch, publication or merge.',
     ],
   };

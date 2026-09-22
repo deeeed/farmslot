@@ -97,7 +97,11 @@ export function evaluateAssessmentReport(
       };
       groups.set(key, entry);
       entry.eligible++;
-      const abstains = r.recommendation?.route === 'needs-review' || !r.recommendation;
+      const cause = r.result?.answers?.cause;
+      const abstains =
+        r.consumer === 'failure-triage'
+          ? cause?.type !== 'choice' || cause.choice === 'unclear'
+          : r.recommendation?.route === 'needs-review' || !r.recommendation;
       if (abstains) entry.abstained++;
       const labelKey = JSON.stringify([r.id, questionId]);
       const reference = labels.get(labelKey);
@@ -153,7 +157,9 @@ export function evaluateAssessmentReport(
     // A treatment may call a requested alias that resolves to several builds.
     // Compare usage for that one request cohort; keep accuracy grouped by returned build.
     const oneAccountingCase = Boolean(
-      accountingKey && attempts.every((r) => assessmentAccountingCase(r) === accountingKey),
+      accountingKey &&
+      attempts.length > 0 &&
+      attempts.every((r) => assessmentAccountingCase(r) === accountingKey),
     );
     comparison = {
       status: 'inconclusive',
