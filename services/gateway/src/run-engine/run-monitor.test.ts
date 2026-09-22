@@ -270,6 +270,101 @@ test('isWorkerSignalFreshForRun rejects signals older than the current dispatch'
   );
 });
 
+test('resuming the monitor cannot invalidate the current worker attempt', () => {
+  const run = {
+    steps: [
+      { name: 'dispatch', startedAt: '2026-09-22T07:27:00Z', completedAt: '2026-09-22T07:28:00Z' },
+      { name: 'monitor', startedAt: '2026-09-22T13:35:00Z' },
+    ],
+    monitorState: { startedAt: '2026-09-22T13:35:00Z' },
+    agentContexts: [
+      {
+        id: 'primary',
+        role: 'primary' as const,
+        startedAt: '2026-09-22T07:27:00Z',
+        attemptStartedAt: '2026-09-22T07:29:00Z',
+        signalAttemptId: 'current-attempt',
+      },
+    ],
+  };
+  const signal: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    timestamp: '2026-09-22T09:18:00Z',
+    attemptId: 'current-attempt',
+  };
+  assert.equal(isWorkerSignalFreshForRun(run, signal), true);
+  assert.equal(isFreshTerminalHandoffSignal(run, signal), true);
+  // Identity remains authoritative even when host clocks disagree.
+  assert.equal(
+    isWorkerSignalFreshForRun(run, { ...signal, timestamp: '2026-09-22T07:20:00Z' }),
+    true,
+  );
+  assert.equal(
+    isWorkerSignalFreshForRun(run, {
+      ...signal,
+      attemptId: 'prior-attempt',
+      timestamp: '2026-09-22T14:00:00Z',
+    }),
+    false,
+  );
+  assert.equal(isWorkerSignalFreshForRun(run, { ...signal, attemptId: undefined }), false);
+  assert.equal(isWorkerSignalFreshForRun(run, { ...signal, timestamp: 'invalid' }), false);
+});
+
+test('legacy signal freshness uses worker launch boundaries, not the resumed timeout window', () => {
+  const run = {
+    steps: [
+      { name: 'dispatch', startedAt: '2026-09-22T07:27:00Z', completedAt: '2026-09-22T07:28:00Z' },
+    ],
+    monitorState: { startedAt: '2026-09-22T13:35:00Z' },
+    agentContexts: [{ id: 'primary', role: 'primary' as const, startedAt: '2026-09-22T07:27:00Z' }],
+  };
+  const signal: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    timestamp: '2026-09-22T07:27:30Z',
+  };
+  assert.equal(isWorkerSignalFreshForRun(run, signal), true);
+  assert.equal(
+    isWorkerSignalFreshForRun(run, { ...signal, timestamp: '2026-09-22T07:26:00Z' }),
+    false,
+  );
+  assert.equal(
+    isWorkerSignalFreshForRun(
+      {
+        ...run,
+        agentContexts: [{ ...run.agentContexts[0], attemptStartedAt: '2026-09-22T09:30:00Z' }],
+      },
+      signal,
+    ),
+    false,
+  );
+});
+
+test('matching attempt identity cannot consume an operator-held signal twice', () => {
+  const signal: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    timestamp: '2026-09-22T09:18:00Z',
+    attemptId: 'current',
+  };
+  const run = {
+    steps: [
+      {
+        name: 'monitor',
+        outputs: { reason: 'interactive-worker-operator-owned', workerSignal: signal },
+      },
+    ],
+    agentContexts: [{ id: 'primary', role: 'primary' as const, signalAttemptId: 'current' }],
+  };
+  assert.equal(isWorkerSignalFreshForRun(run, signal), false);
+  assert.equal(
+    isWorkerSignalFreshForRun(run, { ...signal, timestamp: '2026-09-22T09:19:00Z' }),
+    true,
+  );
+});
+
 test('bindSignalToMonitorContext lets recovery match untagged flow-owned signals', () => {
   const monitorContext = { id: 'fix-bug', role: 'fix-bug' as const };
   const signal = bindSignalToMonitorContext(

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { SelfReviewIssue, WorkerSignal } from '@farmslot/protocol';
+import type { AgentContext, SelfReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
+  canSettleRecoveredFixContext,
   resolveRecoveredFixBaseSha,
   resolveSelfReviewMaxRetries,
   resolveSelfReviewRunnerModel,
@@ -17,6 +18,44 @@ import {
   shouldSkipForDisabledSelfReviewConfig,
 } from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
+
+test('recovery binds a completed fix when its running signal was missed, but never a successor', () => {
+  const context: AgentContext = {
+    id: 'self-review-fix',
+    role: 'self-review-fix',
+    runId: 'run-1',
+    slotId: 'slot-1',
+    label: 'Fix',
+    status: 'working',
+    updatedAt: '2026-09-22T10:00:00Z',
+    taskFile: 'task/SELF-REVIEW-FIX.md',
+    signalFile: 'task/SELF-REVIEW-FIX-SIGNAL.json',
+    attemptStartedAt: '2026-09-22T10:00:00Z',
+    promptDeliveryStartedAt: '2026-09-22T10:00:01Z',
+  };
+  assert.equal(canSettleRecoveredFixContext(context, context, 'completed-attempt'), true);
+  assert.equal(
+    canSettleRecoveredFixContext(
+      { ...context, signalAttemptId: 'completed-attempt' },
+      context,
+      'completed-attempt',
+    ),
+    true,
+  );
+  for (const changed of [
+    { signalAttemptId: 'successor' },
+    { attemptStartedAt: '2026-09-22T11:00:00Z' },
+    { promptDeliveryStartedAt: '2026-09-22T11:00:01Z' },
+    { taskFile: 'other/SELF-REVIEW-FIX.md' },
+    { signalFile: 'other/SIGNAL.json' },
+    { artifactScope: 'review-2' },
+  ]) {
+    assert.equal(
+      canSettleRecoveredFixContext({ ...context, ...changed }, context, 'completed-attempt'),
+      false,
+    );
+  }
+});
 
 test('parseSelfReviewIssueBullets recovers issues from SELF-REVIEW-FIX.md', () => {
   const issues = parseSelfReviewIssueBullets(`

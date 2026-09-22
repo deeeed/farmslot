@@ -1,6 +1,5 @@
 // Farmslot PI extension: hooks, task delivery, mark/signal tools, HUD, slash cmds.
 // Do not import @earendil-works/pi-coding-agent — PI's jiti provides `pi` at load.
-import fs from 'node:fs';
 import path from 'node:path';
 
 import { Type } from 'typebox';
@@ -8,11 +7,11 @@ import { Type } from 'typebox';
 import { writePiHook } from './pi-farmslot-hook-writer.mjs';
 import { resolvePiProviderCatalog } from './pi-farmslot-providers.mjs';
 import {
+  deliverTaskOnce,
   farmslotStatusLine,
   readFarmslotSignal,
   readTaskMarkdown,
   runFarmslotMark,
-  taskDeliveredMarker,
 } from './pi-farmslot-task.mjs';
 
 function obsDir() {
@@ -117,6 +116,7 @@ export default async function (pi: {
         ctx.ui?.notify?.('No FARMSLOT_TASK_FILE', 'error');
         return;
       }
+      // An explicit operator request bypasses automatic-delivery deduplication.
       pi.sendUserMessage?.(text);
     },
   });
@@ -146,13 +146,11 @@ export default async function (pi: {
       // Print/JSON modes already have the prompt on argv (`-p`). Interactive
       // dispatch delivers TASK.md once so Farmslot does not tmux-type it.
       if (ctx.hasUI === false) return;
-      const task = readTaskMarkdown();
-      if (!task?.trim()) return;
-      const marker = taskDeliveredMarker(obsDir());
-      if (fs.existsSync(marker)) return;
-      fs.mkdirSync(path.dirname(marker), { recursive: true });
-      fs.writeFileSync(marker, `${Date.now()}\n`);
-      pi.sendUserMessage?.(task);
+      await deliverTaskOnce({
+        obsDir: obsDir(),
+        sessionId: sessionIdFrom(ctx),
+        sendUserMessage: pi.sendUserMessage?.bind(pi),
+      });
     },
   );
 

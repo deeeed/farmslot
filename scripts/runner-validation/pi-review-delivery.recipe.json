@@ -1,0 +1,39 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Pi reviewer receives its task after worker completion",
+  "description": "Set FARMSLOT_GATEWAY and FARMSLOT_PI_REVIEW_PROOF_RUN_ID after replaying self-review. Reads the actual reviewer signal and checklist through the production gateway.",
+  "workflow": {
+    "entry": "reviewer-progress",
+    "nodes": {
+      "reviewer-progress": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/pi-review-delivery.mjs",
+        "timeout_ms": 60000,
+        "intent": "Prove the worker remains complete and a separate Pi reviewer has executed its own checklist under its current attempt identity.",
+        "next": "fix-handoff"
+      },
+      "fix-handoff": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/pi-review-delivery.mjs self-review-fix",
+        "timeout_ms": 60000,
+        "intent": "Prove reviewer findings reach a fresh Pi fix worker and advance its scoped checklist, without typing into the completed worker's composer.",
+        "next": "recovered-completion"
+      },
+      "recovered-completion": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/pi-review-delivery.mjs self-review-fix --complete",
+        "timeout_ms": 60000,
+        "intent": "Prove the gateway binds and settles the actual completed fix attempt after restart, even when it missed the running signal.",
+        "next": "delivery-isolation"
+      },
+      "delivery-isolation": {
+        "action": "command",
+        "cmd": "node --test scripts/runners/pi-farmslot-task.test.mjs scripts/runners/pi-farmslot-hook-writer.test.mjs",
+        "timeout_ms": 30000,
+        "intent": "Guard against a worker marker suppressing reviewers or retries; reject duplicate delivery within one session and permit retry after a submission error.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

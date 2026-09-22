@@ -1785,6 +1785,7 @@ describe('buildLaunchCommand', () => {
       assert.equal(def.defaultLaunchMode, 'interactive');
       assert.equal(def.observabilityScope, 'event-driven');
       assert.equal(def.sessionReload, 'none');
+      assert.equal(def.retainedSessionHandoff, 'argv-relaunch');
       assert.equal(def.defaultModel, DEFAULT_PI_MODEL);
       assert.equal(runnerDefaultModel('pi'), DEFAULT_PI_MODEL);
       assert.equal(def.acceptsModel('grok-4.6'), true);

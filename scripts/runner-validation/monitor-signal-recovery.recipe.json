@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Monitor resume preserves worker completion",
+  "description": "Set FARMSLOT_GATEWAY, FARMSLOT_SIGNAL_PROOF_RUN_ID and FARMSLOT_SIGNAL_PROOF_SHA256 to prove the original signal survives a later monitoring window.",
+  "workflow": {
+    "entry": "original-completion",
+    "nodes": {
+      "original-completion": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/monitor-signal-recovery.mjs",
+        "timeout_ms": 90000,
+        "intent": "Use run.get, run.probeWorkerSignal and fs.read to prove acceptance of an unchanged terminal signal matching the worker attempt, despite the newer monitor timeout clock.",
+        "next": "freshness-guards"
+      },
+      "freshness-guards": {
+        "action": "command",
+        "cmd": "node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/run-engine/run-monitor.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Verify wrong attempts, stale legacy signals, released native leases and already-consumed operator handoffs remain rejected.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}
