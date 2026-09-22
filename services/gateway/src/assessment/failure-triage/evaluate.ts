@@ -21,6 +21,31 @@ import {
 import { boundedAssessmentFetch } from './transport.js';
 import type { TriagePrice, TriageResult } from './types.js';
 
+class AssessmentSpendBoundError extends Error {
+  constructor() {
+    super('spend-bound-exceeded');
+    this.name = 'AssessmentSpendBoundError';
+  }
+}
+
+/** Pure policy checks; the evaluator supplies integrity from the pinned audit. */
+export function triageSkipReason(input: {
+  mode: 'offline' | 'live' | 'fixture';
+  integrityPassed: boolean;
+  providerAvailable: boolean;
+  keyAvailable: boolean;
+  priceReady: boolean;
+  budgetExhausted: boolean;
+}): string | undefined {
+  if (input.mode === 'offline') return 'offline';
+  if (input.mode === 'live' && !input.integrityPassed) return 'corpus-integrity-failed';
+  if (!input.providerAvailable) return 'unknown-provider';
+  if (!input.keyAvailable) return 'missing-key';
+  if (input.mode !== 'fixture' && !input.priceReady) return 'unknown-or-stale-price';
+  if (input.budgetExhausted) return 'budget-exhausted';
+  return undefined;
+}
+
 export interface TriageOptions {
   out: string;
   live?: boolean;
@@ -253,15 +278,16 @@ export async function evaluateTriage(options: TriageOptions) {
       reservedUsd: 0,
     };
     candidate.push(row);
-    if (mode === 'offline') row.reason = 'offline';
-    else if (mode === 'live' && !corpusIntegrityPassed(CORPUS_HASH))
-      row.reason = 'corpus-integrity-failed';
-    else if (!provider) row.reason = 'unknown-provider';
-    else if (!key) row.reason = 'missing-key';
-    else if (!options.fixture && !priceReady) row.reason = 'unknown-or-stale-price';
-    else if (overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12)
-      row.reason = 'budget-exhausted';
-    else {
+    row.reason = triageSkipReason({
+      mode,
+      integrityPassed: corpusIntegrityPassed(CORPUS_HASH),
+      providerAvailable: !!provider,
+      keyAvailable: !!key,
+      priceReady,
+      budgetExhausted:
+        overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12,
+    });
+    if (!row.reason && provider && key) {
       attempts++;
       reservedUsd += reservation;
       row.status = 'started';
@@ -294,7 +320,7 @@ export async function evaluateTriage(options: TriageOptions) {
           throw new TriageResponseError('duration');
         if (!options.fixture && (usage.inputTokens ?? 0) > price.maxRequestTokens) {
           overBound = true;
-          throw new TriageResponseError('spend-bound');
+          throw new AssessmentSpendBoundError();
         }
         row.prediction = triagePrediction(response.answers, prepared.packet);
         row.status = 'completed';

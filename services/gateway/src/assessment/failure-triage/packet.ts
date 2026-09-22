@@ -154,8 +154,7 @@ export class TriageResponseError extends Error {
       | 'confidence'
       | 'model-identity'
       | 'usage'
-      | 'duration'
-      | 'spend-bound',
+      | 'duration',
   ) {
     super(`invalid-response:${code}`);
     this.name = 'TriageResponseError';

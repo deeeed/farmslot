@@ -169,10 +169,16 @@ try {
     1,
     'Restart must not refetch the saved first page',
   );
+  const enabled = rpc('prRules.setEnabled', {
+    id: rule.id,
+    revision: rule.revision,
+    enabled: true,
+    backfill: false,
+  }).rule;
   await writeFile(path.join(out, 'phase'), 'slow-files');
   const changed = rpc('prRules.ruleSave', {
     id: rule.id,
-    revision: rule.revision,
+    revision: enabled.revision,
     config: {
       ...rule.config,
       predicate: {
@@ -190,11 +196,20 @@ try {
     1,
     'Only one paused message may be emitted for 80 remaining candidates',
   );
+  const pauseMessage =
+    'Source scan paused at its time limit; preview again to resume saved progress';
+  assert.deepEqual(truncated.sourceErrors, [pauseMessage]);
+  const scanned = rpc('prRules.scan', { id: changed.id }).preview;
+  assert.equal(scanned.complete, false);
+  assert.deepEqual(scanned.sourceErrors, [pauseMessage]);
+  const persisted = rpc('prRules.list').rules.find((r) => r.id === changed.id);
+  assert.equal(persisted.scan.error, pauseMessage);
   assert.equal(rpc('assessment.list', { limit: 1 }).records.length, 0);
   const result = {
     pausedThenResumed: true,
     savedPageNotRefetched: true,
     singlePauseFor80Candidates: true,
+    persistedSinglePause: true,
     zeroAssessments: true,
   };
   await writeFile(path.join(out, 'proof.json'), JSON.stringify(result, null, 2), { mode: 0o600 });

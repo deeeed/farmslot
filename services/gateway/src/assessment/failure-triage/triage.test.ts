@@ -304,3 +304,24 @@ test('definite causes without evidence have a controlled rejection code', () => 
     /definite-without-evidence/,
   );
 });
+
+test('a future approved corpus still requires provider, credentials, pricing and budget', async () => {
+  const { triageSkipReason } = await import('./evaluate.js');
+  const valid = {
+    mode: 'live' as const,
+    integrityPassed: true,
+    providerAvailable: true,
+    keyAvailable: true,
+    priceReady: true,
+    budgetExhausted: false,
+  };
+  assert.equal(triageSkipReason(valid), undefined);
+  assert.equal(triageSkipReason({ ...valid, providerAvailable: false }), 'unknown-provider');
+  assert.equal(triageSkipReason({ ...valid, keyAvailable: false }), 'missing-key');
+  assert.equal(triageSkipReason({ ...valid, priceReady: false }), 'unknown-or-stale-price');
+  assert.equal(triageSkipReason({ ...valid, budgetExhausted: true }), 'budget-exhausted');
+  assert.equal(
+    triageSkipReason({ ...valid, integrityPassed: false, providerAvailable: false }),
+    'corpus-integrity-failed',
+  );
+});

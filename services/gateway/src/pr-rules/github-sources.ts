@@ -45,9 +45,9 @@ import {
 } from './source-checkpoints.js';
 
 function withPRSourceReadBudget<T>(caller: string, work: () => Promise<T>): Promise<T> {
-  const configured = Number(process.env.FARMSLOT_PR_SOURCE_BUDGET_MS ?? 45000);
+  const configured = Number(process.env.FARMSLOT_PR_SOURCE_BUDGET_MS?.trim() || 45000);
   if (!Number.isInteger(configured) || configured < 1 || configured > 45000)
-    throw new Error('Source budget must be 1 to 45000ms');
+    throw new Error('FARMSLOT_PR_SOURCE_BUDGET_MS must be an integer from 1 to 45000');
   return withGitHubQueryCaller(caller, () => withGitHubQueryDeadline(configured, work));
 }
 
@@ -217,15 +217,13 @@ async function collectPRSubjects(
   );
   const errors: string[] = [];
   let pauseRecorded = false;
-  const paused = () => {
-    if (!gitHubQueryDeadlineExpired()) return false;
+  const recordPause = () => {
     if (!pauseRecorded)
       errors.push('Source scan paused at its time limit; preview again to resume saved progress');
     pauseRecorded = true;
     // A deadline can fall between reads, with no pending connection yet. Keep
     // completed pages instead of treating the partial result as invalid data.
     if (traversal) traversal.interrupted = true;
-    return true;
   };
   const candidates = new Map<string, GitHubRulePR>();
   const origins = new Map<string, Set<number>>();
@@ -271,7 +269,10 @@ async function collectPRSubjects(
       )
     : [];
   for (const [sourceIndex, source] of team.config.sources.entries()) {
-    if (paused()) break;
+    if (gitHubQueryDeadlineExpired()) {
+      recordPause();
+      break;
+    }
     if (onlyPR && source.kind === 'repository') {
       if (targetPR && source.repo.toLowerCase() === onlyPR.repo.toLowerCase())
         addCandidate(targetPR, sourceIndex);
@@ -334,7 +335,10 @@ async function collectPRSubjects(
         projectItems.set(source.projectId, byPR);
       }
     } catch (error) {
-      if (paused()) break;
+      if (gitHubQueryDeadlineExpired()) {
+        recordPause();
+        break;
+      }
       if (source.kind === 'github-project') failedProjects.add(source.projectId);
       // Partial source discovery is reported explicitly and cannot authorize admission or withdrawals.
       errors.push(
@@ -343,11 +347,15 @@ async function collectPRSubjects(
       if (traversal?.exhausted) break;
     }
   }
-  if (!paused()) errors.push(...projectBindingErrors(predicates, projectFields));
+  if (gitHubQueryDeadlineExpired()) recordPause();
+  else errors.push(...projectBindingErrors(predicates, projectFields));
   const memberships = new Map<string, Set<string>>();
   if (needed.includes('author-teams')) {
     for (const configured of team.config.githubTeams) {
-      if (paused()) break;
+      if (gitHubQueryDeadlineExpired()) {
+        recordPause();
+        break;
+      }
       const [org, slug] = configured.split('/');
       try {
         const members = await readPages<{ login: string }>(
@@ -366,7 +374,10 @@ async function collectPRSubjects(
         );
         memberships.set(configured, new Set(members.map((member) => member.login.toLowerCase())));
       } catch (error) {
-        if (paused()) break;
+        if (gitHubQueryDeadlineExpired()) {
+          recordPause();
+          break;
+        }
         errors.push(`${configured}: ${error instanceof Error ? error.message : String(error)}`);
         if (traversal?.exhausted) break;
       }
@@ -374,7 +385,10 @@ async function collectPRSubjects(
   }
   const subjects: PRRuleSubject[] = [];
   for (const field of needed) {
-    if (paused()) break;
+    if (gitHubQueryDeadlineExpired()) {
+      recordPause();
+      break;
+    }
     if (typeof field === 'string') continue;
     const definition = projectFields
       .get(field.projectId)
@@ -385,7 +399,10 @@ async function collectPRSubjects(
   if (needed.includes('author-teams') && !team.config.githubTeams.length)
     errors.push('Configure GitHub team membership sources before using author-teams');
   candidateLoop: for (const pr of candidates.values()) {
-    if (paused()) break;
+    if (gitHubQueryDeadlineExpired()) {
+      recordPause();
+      break;
+    }
     const subject: PRRuleSubject = {
       pr: { host: account.host, repo: pr.repository.nameWithOwner, number: pr.number },
       headSha: pr.headRefOid,
@@ -483,7 +500,10 @@ async function collectPRSubjects(
         };
       }
     } catch (error) {
-      if (paused()) break candidateLoop;
+      if (gitHubQueryDeadlineExpired()) {
+        recordPause();
+        break candidateLoop;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       errors.push(`${pr.repository.nameWithOwner}#${pr.number}: ${reason}`);
       if (!subject.facts.labels) subject.facts.labels = { state: 'unknown', reason };
@@ -559,7 +579,10 @@ async function collectPRSubjects(
                   : (value?.text ?? null),
         };
       } catch (error) {
-        if (paused()) break candidateLoop;
+        if (gitHubQueryDeadlineExpired()) {
+          recordPause();
+          break candidateLoop;
+        }
         const reason = error instanceof Error ? error.message : String(error);
         subject.facts[key] = { state: 'unknown', reason };
         errors.push(`${field.projectId}/${field.fieldId}: ${reason}`);
