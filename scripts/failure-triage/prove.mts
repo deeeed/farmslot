@@ -42,12 +42,24 @@ delete env.TYPESAFE_API_KEY;
 const receipts: Record<string, unknown> = {};
 async function run(name: string, args: string[], environment = env) {
   const dir = path.join(out, name);
+  const guard = path.join(out, `${name}-network-count.txt`);
+  await writeFile(guard, '0', { mode: 0o600, flag: 'wx' });
   const result = spawnSync(
     process.execPath,
-    ['--import', 'tsx', 'scripts/failure-triage/evaluate.mts', '--out', dir, ...args],
-    { env: environment, encoding: 'utf8', timeout: 30000 },
+    [
+      '--import',
+      'tsx',
+      '--import',
+      './scripts/failure-triage/network-guard.mts',
+      'scripts/failure-triage/evaluate.mts',
+      '--out',
+      dir,
+      ...args,
+    ],
+    { env: { ...environment, TRIAGE_NETWORK_GUARD: guard }, encoding: 'utf8', timeout: 30000 },
   );
   assert.equal(result.status, 0, `${name}: ${result.stderr}`);
+  assert.equal(await readFile(guard, 'utf8'), '0', `${name} attempted real provider transport`);
   const report = JSON.parse(await readFile(path.join(dir, 'evaluation.json'), 'utf8'));
   const records = JSON.parse(await readFile(path.join(dir, 'candidate-results.json'), 'utf8'));
   assert.equal(report.decision, 'hold');
@@ -82,6 +94,13 @@ assert.equal(
   ).report.usage.attempts,
   0,
 );
+const quarantined = await run(
+  'quarantined-corpus',
+  ['--live', '--provider', 'typesafe', '--model', 'jev-1.13.0'],
+  keyed,
+);
+assert.equal(quarantined.report.usage.attempts, 0);
+assert.equal(quarantined.report.corpusIntegrity.passed, false);
 for (const scenario of [
   'valid',
   'invalid-label',
@@ -154,8 +173,7 @@ async function files(dir: string): Promise<string[]> {
     )
   ).flat();
 }
-for (const file of await files(out))
-  assert.ok(!(await readFile(file, 'utf8')).includes(canary), `Credential leaked into ${file}`);
+
 const afterState = await Promise.all(authoritativeFiles.map((f) => readFile(f, 'utf8')));
 assert.deepEqual(afterState, beforeState, 'Evaluation changed authoritative run/slot fixtures');
 const proofFiles = {
@@ -192,4 +210,6 @@ for (const [name, value] of Object.entries(proofFiles))
     mode: 0o600,
     flag: 'wx',
   });
+for (const file of await files(out))
+  assert.ok(!(await readFile(file, 'utf8')).includes(canary), `Credential leaked into ${file}`);
 console.log(JSON.stringify({ out, passed: true, scenarios: Object.keys(receipts), liveCalls: 0 }));

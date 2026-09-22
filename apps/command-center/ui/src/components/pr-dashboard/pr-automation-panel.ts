@@ -91,6 +91,7 @@ export class PRAutomationPanel extends LitElement {
   @state() private repairProject = '';
   @state() private repairExecution = newPRExecution();
   @state() private preview?: PRRulePreview;
+  @state() private previewingRuleId?: string;
   @state() private draftId?: string;
   @state() private restoredDraft?: PRFormDraft;
   @state() private navigationError = '';
@@ -989,14 +990,21 @@ export class PRAutomationPanel extends LitElement {
                 data-testid="pr-rule-preview"
                 ?disabled=${disabled}
                 @click=${async () => {
-                  const result = await this.controller.mutate<PRRulePreviewResult>(
-                    Methods.PR_RULE_PREVIEW,
-                    { id: rule.id },
-                  );
-                  if (result) this.preview = result.preview;
+                  if (this.controller.busy) return;
+                  this.previewingRuleId = rule.id;
+                  this.preview = undefined;
+                  try {
+                    const result = await this.controller.mutate<PRRulePreviewResult>(
+                      Methods.PR_RULE_PREVIEW,
+                      { id: rule.id },
+                    );
+                    if (result) this.preview = result.preview;
+                  } finally {
+                    this.previewingRuleId = undefined;
+                  }
                 }}
               >
-                Preview matches
+                ${this.previewingRuleId === rule.id ? 'Loading preview…' : 'Preview matches'}
               </button>
               <button
                 data-testid="pr-rule-toggle"
@@ -1035,6 +1043,13 @@ export class PRAutomationPanel extends LitElement {
       ${this.preview
         ? html`<section aria-label="Rule preview">
             <h3>Preview · ${this.preview.complete ? 'Complete' : 'Incomplete coverage'}</h3>
+            <p role="status">
+              ${this.preview.items.filter((item) => item.match.state === 'match').length} matching
+              PRs · ${this.preview.items.length} checked.
+              ${!this.preview.complete
+                ? 'Discovery is incomplete. Preview again to continue from saved progress.'
+                : ''}
+            </p>
             ${sourceProgress(this.preview.sourceProgress)}
             ${this.preview.ignoredItems
               ? html`<p class="muted">
@@ -1053,18 +1068,6 @@ export class PRAutomationPanel extends LitElement {
                     ([kind, errors]) =>
                       html`<span class="error"> · ${kind}: ${errors.join('; ')}</span>`,
                   )}
-                  ${item.reviewIntakeAdvisory
-                    ? html`<span>
-                        · Advice: ${item.reviewIntakeAdvisory.route}
-                        (${item.reviewIntakeAdvisory.assessment.status})
-                        ${item.reviewIntakeAdvisory.assessment.assessmentId
-                          ? html`<a
-                              href=${`#intelligence?tab=assessments&assessment=${encodeURIComponent(item.reviewIntakeAdvisory.assessment.assessmentId)}`}
-                              >Assessment history</a
-                            >`
-                          : nothing}</span
-                      >`
-                    : nothing}
                   ${(item.policySummary ?? []).map(
                     (summary) => html`<span class="muted"> · ${summary}</span>`,
                   )}

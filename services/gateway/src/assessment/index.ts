@@ -155,27 +155,3 @@ export async function assess(
     };
   }
 }
-
-/** Frozen, redacted identity only; does not send context or return credentials. */
-export function assessmentRequestIdentity(request: AssessmentRequest) {
-  const status = assessmentProviderStatus();
-  const providerId = request.provider ?? status.provider;
-  const provider = providerId ? providers.get(providerId) : undefined;
-  const model =
-    request.model ??
-    (request.provider && request.provider !== status.provider ? undefined : status.model) ??
-    provider?.defaultModel;
-  const config = getAssessmentConfig();
-  const input = prepareAssessmentInput(
-    request.state,
-    request.questions,
-    config.maxStateBytes,
-    provider ? (process.env[provider.credentialEnv] ?? '') : '',
-  );
-  return {
-    provider: providerId,
-    model,
-    inputDigest: hash(input.state),
-    questionSchemaHash: hash(input.questions),
-  };
-}

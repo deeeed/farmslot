@@ -5,6 +5,21 @@ This is the evaluation slice for MANUAL-000128 in the
 It does not add a run watcher or operator triage action. MANUAL-000129 remains
 gated by the frozen held-out evaluation.
 
+## Corpus v1 is quarantined
+
+The first corpus failed independent integrity review. Its definite-case packets
+contained authored repair explanations also used in reference rationales; related
+HTTP status variants crossed the development/held-out split. Its cue sheet was
+authored with visibility of the case design, so it is an optimistic corpus-visible
+comparator, not a blind baseline. The row-derived group IDs did not prove family
+independence.
+
+The frozen live run and corpus are retained, not relabeled or rerun. Their raw
+numbers cannot establish comparative effectiveness. New live calls and pilot
+eligibility are blocked for this corpus. A separately versioned, reviewed corpus
+with raw incident observations and real family-disjoint provenance is required.
+Do not remove the quarantine to repeat the held-out pass.
+
 ## Run the baselines
 
 From the installed checkout:
@@ -18,7 +33,8 @@ Output directories must be new. The default is offline even when the gateway's
 assessment setting and API key are present. The bundled corpus has 30 cases,
 with nine development and 21 held-out. The generator executes 24 controlled
 fault/repair pairs and supplies six ambiguous, mixed or injected-instruction
-fixtures. Expected causes/rationale stay outside provider state.
+fixtures. Reference fields were excluded structurally, but repair commentary leaked
+semantically into the packets; that is one reason v1 is quarantined.
 
 The existing classifier and frozen diagnostic cue sheet see the same redacted
 packets as the candidate. Unmapped or conflicting diagnostic cues abstain.
@@ -26,9 +42,10 @@ packets as the candidate. Unmapped or conflicting diagnostic cues abstain.
 also carry hashes. Regenerating the corpus starts a new experiment, never a way
 to tune held-out cases after seeing candidate answers.
 
-## Run the candidate explicitly
+## Candidate command and current hold
 
-With the provider key in the process environment:
+This command currently returns `not_run` with `corpus-integrity-failed` when the
+key, price and budget checks pass. It cannot send v1 packets again:
 
 ```bash
 yarn triage:evaluate --out temp/triage/held-out-live \
@@ -55,11 +72,14 @@ corpus/case identities and writes a separate output directory.
 
 `report.md` and `evaluation.json` show both baselines, candidate confusion matrix,
 macro-F1, definite precision/coverage, unclear-case abstention, next-check accuracy,
-evidence-reference validity, all attempts, known/unknown charges and latency.
+evidence-reference validity, attempt counts, known/unknown charges and latency.
+Per-attempt status/reason codes are in `candidate-results.json`. Next-check
+references are derived from labels, so this metric is not independent diagnostic
+utility evidence.
 `candidate-results.json` persists reservations before calls; a surviving `started`
 entry is unfinished, not a successful result. JSONL is the completed batch export.
 
-A pilot needs all 21 held-out cases completed live, no data/authority violations,
+A pilot first needs a passed corpus-integrity review, then all 21 held-out cases completed live, no data/authority violations,
 all three unclear cases abstaining, definite precision at least 0.85, coverage at
 least 0.60, macro-F1 at least 0.05 above the stronger baseline, and respected
 budgets. Otherwise the decision is `hold`. Transport fixtures always report
@@ -80,3 +100,11 @@ The living recipe is `scripts/runner-validation/failure-triage-evaluation.recipe
 It invokes the real CLI through offline and explicitly simulated transport paths,
 checks run/slot fixture snapshots and preserves proof JSON. No live provider
 request is made by the proof. Do not interpret its passing status as model quality.
+
+Rubric v1 also rejects a definite cause paired with `evidence: none`. Controlled
+rejection sub-codes now distinguish answer shape, label/check vocabulary,
+fabricated evidence, absent support and invalid confidence. The two invalid
+responses in the original live run remain unattributed because those codes were
+not recorded then. That run exceeded the pre-existing classifier by +0.554
+macro-F1, but failed completion and abstention gates even without the cue sheet.
+This arithmetic does not repair the corpus-integrity failure.

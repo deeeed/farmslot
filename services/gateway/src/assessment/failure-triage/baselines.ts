@@ -31,7 +31,8 @@ export function existingBaseline(packet: TriagePacket): TriagePrediction {
       : [],
   );
 }
-// Frozen generic cues, not per-case IDs or reference labels. Multiple causes abstain.
+// Frozen with visibility of the synthetic case design: an optimistic corpus-visible
+// comparator, not an independently authored blind baseline. Multiple causes abstain.
 const CUES: Array<[TriageLabel, RegExp]> = [
   ['environment', /ECONNREFUSED|ENOENT|missing required .*variable|wrong working directory/i],
   [

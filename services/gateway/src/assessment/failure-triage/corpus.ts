@@ -14,6 +14,8 @@ export function loadTriageCorpus(): TriageCorpus {
   // Exact-byte admission binds this parse to the generated, reviewed schema.
   const corpus = JSON.parse(bytes) as TriageCorpus;
   if (corpus.version !== 1 || corpus.cases.length !== 30) throw new Error('Invalid frozen corpus');
+  // Legacy row-group uniqueness is shape validation, not evidence of family independence.
+  // corpus-integrity.ts records the failed semantic grouping audit.
   const groups = new Set<string>(),
     ids = new Set<string>();
   for (const c of corpus.cases) {

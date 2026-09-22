@@ -91,6 +91,7 @@ try {
       'baselines',
       'corpus',
       'corpus-lock',
+      'corpus-integrity',
       'metrics',
       'evaluate',
       'transport',

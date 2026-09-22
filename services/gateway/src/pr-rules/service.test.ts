@@ -443,7 +443,7 @@ test('PR previews and scans never invoke assessments even when the provider is e
   const baseline = await service.preview('owner', rule.id, subject.pr);
   assert.equal((await assessmentHistory('owner')).records.length, 0);
   const preview = await service.preview('owner', rule.id, subject.pr);
-  assert.equal(preview.items[0].reviewIntakeAdvisory, undefined);
+  assert.equal(Object.hasOwn(preview.items[0], 'reviewIntakeAdvisory'), false);
   assert.deepEqual(preview.items[0].match, baseline.items[0].match);
   assert.equal((await assessmentHistory('owner')).records.length, 0);
   await store.setEnabled('owner', rule.id, rule.revision, true, false);

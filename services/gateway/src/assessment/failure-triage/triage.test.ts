@@ -13,7 +13,7 @@ import { prepareTriage, textDigest, triagePrediction } from './packet.js';
 import { CHECK_FOR_LABEL, type TriageCase, type TriagePrice, type TriageResult } from './types.js';
 
 const corpus = loadTriageCorpus();
-test('frozen corpus has thirty admitted cases and an incident-disjoint 9/21 split', () => {
+test('legacy v1 stays byte-frozen without claiming its row groups prove incident independence', () => {
   assert.match(CORPUS_HASH, /^[a-f0-9]{64}$/);
   assert.equal(corpus.cases.length, 30);
   assert.equal(corpus.cases.filter((c) => c.split === 'development').length, 9);
@@ -23,7 +23,7 @@ test('frozen corpus has thirty admitted cases and an incident-disjoint 9/21 spli
     seen.add(c.group);
     const p = prepareTriage(c.packet, c);
     assert.equal(p.packet.caseId, c.id);
-    assert.ok(!JSON.stringify(p.packet).includes(c.reference.rationale));
+    assert.equal(Object.hasOwn(p.packet, 'reference'), false); // Structural exclusion does not fix the known commentary leak.
   }
 });
 test('admission rejects changed evidence and does not trust a provenance flag', () => {
@@ -77,7 +77,7 @@ test('unknown labels, fabricated evidence and unsupported actions fail closed', 
         { cause: choice('invented'), nextCheck: choice('inspect_prepare'), evidence: choice('e1') },
         packet,
       ),
-    /invalid-label/,
+    /label-vocabulary/,
   );
   assert.throws(
     () =>
@@ -89,7 +89,7 @@ test('unknown labels, fabricated evidence and unsupported actions fail closed', 
         },
         packet,
       ),
-    /invalid-label-or-evidence/,
+    /evidence-id/,
   );
   assert.throws(
     () =>
@@ -97,7 +97,7 @@ test('unknown labels, fabricated evidence and unsupported actions fail closed', 
         { cause: choice('environment'), nextCheck: choice('kill-process'), evidence: choice('e1') },
         packet,
       ),
-    /invalid-label/,
+    /check-vocabulary/,
   );
 });
 test('uncertain cases and missing transport do not masquerade as correct abstentions', () => {
@@ -122,6 +122,7 @@ test('uncertain cases and missing transport do not masquerade as correct abstent
   assert.equal(
     triageGate({
       liveStatus: 'not_run',
+      corpusIntegrityPassed: true,
       metrics,
       baseline: missing,
       cueSheet: missing,
@@ -133,6 +134,7 @@ test('uncertain cases and missing transport do not masquerade as correct abstent
   assert.equal(
     triageGate({
       liveStatus: 'completed',
+      corpusIntegrityPassed: true,
       metrics,
       baseline: missing,
       cueSheet: missing,
@@ -144,6 +146,7 @@ test('uncertain cases and missing transport do not masquerade as correct abstent
   assert.equal(
     triageGate({
       liveStatus: 'completed',
+      corpusIntegrityPassed: true,
       metrics,
       baseline: metrics,
       cueSheet: missing,
@@ -217,4 +220,87 @@ test('transport forbids redirects and rejects oversized bodies before SDK parsin
   assert.deepEqual(await (await boundedAssessmentFetch(valid)('https://example.test')).json(), {
     ok: true,
   });
+});
+
+test('quarantined corpus cannot qualify even with perfect metrics', () => {
+  const cases = corpus.cases.filter((c) => c.split === 'held-out');
+  const rows: TriageResult[] = cases.map((c) => ({
+    caseId: c.id,
+    status: 'completed',
+    prediction: { label: c.reference.label, nextCheck: c.reference.nextCheck, evidenceIds: ['e1'] },
+    durationMs: 0,
+    reservedUsd: 0,
+  }));
+  const m = triageMetrics(cases, rows),
+    empty = triageMetrics(cases, []);
+  const gate = triageGate({
+    liveStatus: 'completed',
+    corpusIntegrityPassed: false,
+    metrics: m,
+    baseline: empty,
+    cueSheet: empty,
+    violations: 0,
+    withinBudget: true,
+  });
+  assert.equal(gate.eligible, false);
+  assert.equal(gate.checks.find((c) => c.id === 'corpus-integrity-reviewed')?.passed, false);
+});
+test('terminal metadata preserves start/config and size skips are not safety violations', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-meta-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const result = await evaluateTriage({ out: path.join(root, 'out'), maxBytes: 512 });
+  assert.equal(result.safetyViolations, 0);
+  assert.equal(result.admissionSkips, 21);
+  const run = JSON.parse(await readFile(path.join(root, 'out', 'run.json'), 'utf8'));
+  assert.ok(run.startedAt);
+  assert.equal(run.options.maxBytes, 512);
+  assert.ok(run.priceHash);
+  assert.equal(run.status, 'completed');
+});
+
+test('live v1 is vetoed before transport even with credentials and a valid price', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-quarantine-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const price = JSON.parse(
+    await readFile(
+      new URL('../../../../../scripts/failure-triage/prices.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  t.mock.method(Date, 'now', () => Date.parse(price.verifiedAt) + 1000);
+  const request = t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('Unexpected transport');
+  });
+  const old = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'test-quarantine-canary';
+  t.after(() => {
+    if (old === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = old;
+  });
+  const result = await evaluateTriage({
+    out: path.join(root, 'out'),
+    live: true,
+    provider: price.provider,
+    model: price.model,
+  });
+  assert.equal(request.mock.callCount(), 0);
+  assert.equal(result.usage.attempts, 0);
+  assert.equal(result.liveStatus, 'not_run');
+  assert.equal(result.corpusIntegrity.passed, false);
+  const rows = JSON.parse(await readFile(path.join(root, 'out', 'candidate-results.json'), 'utf8'));
+  assert.ok(rows.every((r: { reason: string }) => r.reason === 'corpus-integrity-failed'));
+});
+test('definite causes without evidence have a controlled rejection code', () => {
+  assert.throws(
+    () =>
+      triagePrediction(
+        {
+          cause: choice('implementation'),
+          nextCheck: choice('inspect_failed_assertion'),
+          evidence: choice('none'),
+        },
+        corpus.cases[0].packet,
+      ),
+    /definite-without-evidence/,
+  );
 });

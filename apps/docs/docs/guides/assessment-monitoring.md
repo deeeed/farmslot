@@ -16,8 +16,9 @@ assessment is outside the current implementation scope.
 ## Evaluate failure triage
 
 The checkout-local `yarn triage:evaluate --out <new-directory>` command runs the
-frozen failure-triage baselines offline. An explicit `--live --provider typesafe
---model jev-1.13.0` adds the candidate within the request/cost limits. Read the
+frozen failure-triage baselines offline. The initial corpus is quarantined for repair-commentary leakage and related
+incidents crossing splits. `--live` is blocked for that corpus; no operator pilot
+is enabled. Read the
 result's per-baseline metrics and pilot/hold decision; it does not measure
 operator time savings. This experiment does not create normal run classifications
 or enable an operator pilot automatically.

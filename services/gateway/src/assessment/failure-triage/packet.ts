@@ -143,29 +143,50 @@ export function prepareTriage(
     omissions,
   };
 }
+export class TriageResponseError extends Error {
+  constructor(
+    readonly code:
+      | 'answer-shape'
+      | 'label-vocabulary'
+      | 'check-vocabulary'
+      | 'evidence-id'
+      | 'definite-without-evidence'
+      | 'confidence',
+  ) {
+    super(`invalid-response:${code}`);
+    this.name = 'TriageResponseError';
+  }
+}
 export function triagePrediction(
   answers: Record<string, AssessmentAnswer>,
   packet: TriagePacket,
 ): TriagePrediction {
   if (Object.keys(answers).sort().join(',') !== 'cause,evidence,nextCheck')
-    throw new Error('invalid-answer-shape');
+    throw new TriageResponseError('answer-shape');
   const { cause, nextCheck, evidence } = answers;
   if (
+    !cause ||
+    !nextCheck ||
+    !evidence ||
     cause.type !== 'choice' ||
     nextCheck.type !== 'choice' ||
-    evidence.type !== 'choice' ||
-    !LABELS.includes(cause.choice as TriagePrediction['label']) ||
-    !CHECKS.includes(nextCheck.choice as TriagePrediction['nextCheck']) ||
-    (evidence.choice !== 'none' && !packet.evidence.some((e) => e.id === evidence.choice)) ||
-    (cause.choice !== 'unclear' && evidence.choice === 'none')
+    evidence.type !== 'choice'
   )
-    throw new Error('invalid-label-or-evidence');
+    throw new TriageResponseError('answer-shape');
+  if (!LABELS.includes(cause.choice as TriagePrediction['label']))
+    throw new TriageResponseError('label-vocabulary');
+  if (!CHECKS.includes(nextCheck.choice as TriagePrediction['nextCheck']))
+    throw new TriageResponseError('check-vocabulary');
+  if (evidence.choice !== 'none' && !packet.evidence.some((e) => e.id === evidence.choice))
+    throw new TriageResponseError('evidence-id');
+  if (cause.choice !== 'unclear' && evidence.choice === 'none')
+    throw new TriageResponseError('definite-without-evidence');
   for (const answer of [cause, nextCheck, evidence]) {
     if (
       answer.confidence !== undefined &&
       (!Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1)
     )
-      throw new Error('invalid-confidence');
+      throw new TriageResponseError('confidence');
   }
   return {
     label: cause.choice as TriagePrediction['label'],

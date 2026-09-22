@@ -79,6 +79,7 @@ export function triageMetrics(cases: TriageCase[], results: TriageResult[]) {
 }
 export function triageGate(params: {
   liveStatus: string;
+  corpusIntegrityPassed: boolean;
   metrics: ReturnType<typeof triageMetrics>;
   baseline: ReturnType<typeof triageMetrics>;
   cueSheet: ReturnType<typeof triageMetrics>;
@@ -87,6 +88,7 @@ export function triageGate(params: {
 }) {
   const { liveStatus, metrics: m, baseline, cueSheet, violations, withinBudget } = params;
   const checks = [
+    { id: 'corpus-integrity-reviewed', passed: params.corpusIntegrityPassed === true },
     {
       id: 'complete-live-held-out',
       passed: liveStatus === 'completed' && m.cases === 21 && m.completed === 21,

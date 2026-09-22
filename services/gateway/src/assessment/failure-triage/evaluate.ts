@@ -8,9 +8,16 @@ import { assertNoCredentials } from '../record-validation.js';
 
 import { BASELINE_VERSION, cueBaseline, existingBaseline, PATTERN_MAPPING } from './baselines.js';
 import { loadTriageCorpus } from './corpus.js';
+import { CORPUS_INTEGRITY } from './corpus-integrity.js';
 import { CORPUS_HASH } from './corpus-lock.js';
 import { percentiles, triageGate, triageMetrics } from './metrics.js';
-import { digest, prepareTriage, RUBRIC_VERSION, triagePrediction } from './packet.js';
+import {
+  digest,
+  prepareTriage,
+  RUBRIC_VERSION,
+  triagePrediction,
+  TriageResponseError,
+} from './packet.js';
 import { boundedAssessmentFetch } from './transport.js';
 import type { TriagePrice, TriageResult } from './types.js';
 
@@ -35,6 +42,8 @@ export interface TriageOptions {
     | 'credential-echo'
     | 'control-action';
 }
+// Supported reservation envelope: the bundled snapshot documents input-only pricing
+// and a 64k request limit. Paid outputs need their own bound before admission.
 export function validTriagePrice(
   value: TriagePrice,
   provider: string,
@@ -171,12 +180,13 @@ export async function evaluateTriage(options: TriageOptions) {
   let attempts = 0,
     reservedUsd = 0,
     violations = 0,
+    admissionSkips = 0,
     overBound = false;
   const candidate: TriageResult[] = [],
     baseline: TriageResult[] = [],
     cueSheet: TriageResult[] = [];
   await save('corpus-manifest.json', { corpusHash: CORPUS_HASH, ...corpus });
-  await save('run.json', {
+  const runStart = {
     version: 1,
     mode,
     status: 'started',
@@ -188,21 +198,30 @@ export async function evaluateTriage(options: TriageOptions) {
     priceHash: digest(price),
     options: { ...options, out: undefined },
     efficiencyClaim: 'not_established',
-  });
+  };
+  await save('run.json', runStart);
   for (const c of cases) {
     const caseStarted = Date.now();
     let prepared;
     try {
       prepared = prepareTriage(c.packet, c, key ?? '', options.maxBytes);
-    } catch {
+    } catch (error) {
+      const benign =
+        error instanceof Error &&
+        [
+          'missing-required-context',
+          'invalid-byte-limit',
+          'Assessment input limit exceeded',
+        ].includes(error.message);
       candidate.push({
         caseId: c.id,
         status: 'skipped',
-        reason: 'input-not-admitted-or-too-large',
+        reason: benign ? 'missing-or-oversized-required-context' : 'input-not-admitted',
         durationMs: Date.now() - caseStarted,
         reservedUsd: 0,
       });
-      violations++;
+      if (benign) admissionSkips++;
+      else violations++;
       await save('candidate-results.json', candidate);
       continue;
     }
@@ -240,6 +259,7 @@ export async function evaluateTriage(options: TriageOptions) {
     else if (!options.fixture && !priceReady) row.reason = 'unknown-or-stale-price';
     else if (overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12)
       row.reason = 'budget-exhausted';
+    else if (mode === 'live' && !CORPUS_INTEGRITY.passed) row.reason = 'corpus-integrity-failed';
     else {
       attempts++;
       reservedUsd += reservation;
@@ -291,7 +311,7 @@ export async function evaluateTriage(options: TriageOptions) {
           : status === 429
             ? 'rate-limit'
             : receivedResponse || error instanceof AssessmentResponseError
-              ? 'invalid-response'
+              ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
               : 'provider-request-failed';
       }
     }
@@ -307,7 +327,8 @@ export async function evaluateTriage(options: TriageOptions) {
   const liveStatus =
     mode === 'fixture'
       ? 'fixture'
-      : mode === 'offline'
+      : mode === 'offline' ||
+          (attempts === 0 && candidate.some((r) => r.reason === 'corpus-integrity-failed'))
         ? 'not_run'
         : candidate.every((r) => r.status === 'completed')
           ? 'completed'
@@ -317,6 +338,7 @@ export async function evaluateTriage(options: TriageOptions) {
     diagnostic = triageMetrics(cases, cueSheet);
   const pilotGate = triageGate({
     liveStatus,
+    corpusIntegrityPassed: CORPUS_INTEGRITY.passed,
     metrics,
     baseline: deterministic,
     cueSheet: diagnostic,
@@ -359,14 +381,20 @@ export async function evaluateTriage(options: TriageOptions) {
       batchMs: Date.now() - started,
     },
     safetyViolations: violations,
+    admissionSkips,
+    corpusIntegrity: CORPUS_INTEGRITY,
     pilotGate,
     decision: pilotGate.decision,
     efficiencyClaim: 'not_established',
     limitations: [
       'Synthetic known-cause classification and next-check accuracy are proxies, not measured operator time savings.',
       'Twenty-one held-out cases cannot establish broad accuracy.',
+      'The cue sheet is corpus-visible and optimistic, not an independent blind comparator. Historical v1 arithmetic is documented separately and cannot repair its integrity failure.',
+      'Next-check references are derived from cause labels; nextCheckCorrect is not an independent measure of diagnostic utility.',
+      'The v1 live run had two unattributed invalid-response failures; controlled sub-reasons were added only afterward.',
+      'Rubric v1 additionally rejects a definite cause with evidence:none. This rule is now explicit; it was not documented before the frozen run.',
       'No run, slot, recovery, publication or dispatch action is available to this evaluator.',
-      'Reference labels and rationale are never provider input. Repeats retain the same case/corpus identity.',
+      'The v1 corpus is quarantined: repair commentary overlaps its reference rationale and HTTP-family variants cross splits. Its numbers cannot establish comparative effectiveness.',
       'Reserved cost covers unknown charges conservatively; reported monetary values are estimates from a price snapshot, not invoices.',
     ],
   };
@@ -378,8 +406,7 @@ export async function evaluateTriage(options: TriageOptions) {
     flag: 'wx',
   });
   await save('run.json', {
-    version: 1,
-    mode,
+    ...runStart,
     status: 'completed',
     completedAt: new Date().toISOString(),
     corpusHash: CORPUS_HASH,

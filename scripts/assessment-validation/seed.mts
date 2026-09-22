@@ -1,7 +1,6 @@
 // Startup fixtures for an isolated validation gateway, never the operator store.
 import assert from 'node:assert/strict';
 import { beginAssessment, finishAssessment } from '../../services/gateway/src/assessment/store.js';
-import { reviewIntakeRecommendation } from '../../services/gateway/src/assessment/review-intake.js';
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1', 'Explicit fixture opt-in required');
 assert.ok(
   process.env.FARMSLOT_HOME?.includes('assessment-proof'),
@@ -62,7 +61,12 @@ for (const status of statuses) {
           },
         }
       : { status };
-  await finishAssessment(record, result, reviewIntakeRecommendation(result));
+  await finishAssessment(record, result, {
+    assessment: result,
+    route: 'needs-review',
+    visualReviewRequired: false,
+    reasons: ['historical-uncertainty-fixture'],
+  });
 }
 console.log('Synthetic startup fixtures prepared');
 
@@ -106,6 +110,11 @@ if (process.argv.includes('--alias')) {
             requestedModel: 'latest',
             questionSchemaHash: identity.questionSchemaHash,
           };
-    await finishAssessment(record, result, reviewIntakeRecommendation(result));
+    await finishAssessment(record, result, {
+      assessment: result,
+      route: 'needs-review',
+      visualReviewRequired: false,
+      reasons: ['historical-uncertainty-fixture'],
+    });
   }
 }

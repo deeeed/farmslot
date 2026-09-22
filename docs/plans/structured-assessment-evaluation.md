@@ -29,6 +29,12 @@ recovery and dispatch retain existing owners and human gates.
 
 ## Failure triage first
 
+The initial v1 corpus is quarantined after review found repair-commentary leakage
+and incident-family overlap. Its frozen live run is not valid comparative
+effectiveness evidence. MANUAL-000128 remains unfinished until a separately
+versioned, methodology-reviewed corpus meets the specification. No repeated v1
+live calls or operator pilot are permitted.
+
 MANUAL-000128 defines the first experiment. Its detailed local backlog spec
 remains authoritative:
 

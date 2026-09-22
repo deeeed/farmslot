@@ -15,6 +15,7 @@ import {
   githubGraphQL as query,
   type GitHubPage as Page,
   type GitHubQueryAccount as Account,
+  withGitHubQueryDeadline,
 } from '../integrations/github-graphql.js';
 import { githubQueryBudget, withGitHubQueryCaller } from '../integrations/github-query-budget.js';
 import { resolvePRSourceAccount } from '../pr-monitoring/github-account.js';
@@ -41,6 +42,10 @@ import {
   prSourceCheckpointScope,
   PRSourceTraversal,
 } from './source-checkpoints.js';
+
+function withPRSourceReadBudget<T>(caller: string, work: () => Promise<T>): Promise<T> {
+  return withGitHubQueryCaller(caller, () => withGitHubQueryDeadline(45_000, work));
+}
 
 function requiredFields(predicate: PRRulePredicate): PRRuleField[] {
   if (predicate.kind === 'compare') return [predicate.field];
@@ -139,7 +144,7 @@ export async function collectPRRuleSources(
   checkpoints?: PRSourceCheckpoints,
   requestLimit = 25,
 ): Promise<PRSourceScan> {
-  return withGitHubQueryCaller('pr-rules:sources', () =>
+  return withPRSourceReadBudget('pr-rules:sources', () =>
     loadPRRuleSources(team, rule, checkpoints, requestLimit),
   );
 }
@@ -170,7 +175,7 @@ export async function collectPRRuleTarget(
   rule: PRTriggerRule,
   pr: MonitoredPRIdentity,
 ): Promise<PRSourceScan> {
-  return withGitHubQueryCaller('pr-rules:target', () =>
+  return withPRSourceReadBudget('pr-rules:target', () =>
     collectPRSubjects(team, rule.config.predicate, pr, true),
   );
 }
@@ -179,7 +184,7 @@ export async function collectPRSubmissionSources(
   team: PRTeamProfile,
   pr: MonitoredPRIdentity,
 ): Promise<PRSourceScan> {
-  return withGitHubQueryCaller('pr-rules:sources', () =>
+  return withPRSourceReadBudget('pr-rules:sources', () =>
     collectPRSubjects(team, { kind: 'all', items: [] }, pr),
   );
 }

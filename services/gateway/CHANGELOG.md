@@ -6,7 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Add an offline-first, bounded failure-triage evaluation CLI with a frozen synthetic corpus, deterministic baselines and an explicit pilot/hold decision.
 
-- Keep PR matching deterministic: previews no longer invoke optional assessment models for discovered PRs.
+- Keep PR matching deterministic: previews no longer invoke optional assessment models, and long source reads return resumable progress within a bounded attempt.
 
 - Preserve valid worker completion signals when monitoring resumes after a timeout; reject stale attempts by worker identity instead of the restarted monitor clock.
 

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Remove the unreachable PR-preview assessment field; retain historical assessment records.
+
 - Add assessment history, feedback and effectiveness report contracts with explicit uncertainty.
 
 - Add provider-neutral structured-assessment contracts, eval axes/scorer kind, and optional review-intake advisory data.
