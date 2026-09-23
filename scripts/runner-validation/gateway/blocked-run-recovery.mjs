@@ -8,8 +8,10 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
@@ -30,7 +32,18 @@ const successRunId = randomUUID();
 const evalRunId = randomUUID();
 const rollbackRunId = randomUUID();
 const freeRollbackRunId = randomUUID();
+const rollbackFailureRunId = randomUUID();
+const reservedRollbackRunId = randomUUID();
+const boundReservedRollbackRunId = randomUUID();
+const transferRollbackRunId = randomUUID();
+const releasingRollbackRunId = randomUUID();
+const heldReleasingRunId = randomUUID();
 const freeRollbackSlotId = `free-rollback-${randomUUID()}`;
+const reservedRollbackSlotId = `reserved-rollback-${randomUUID()}`;
+const boundReservedRollbackSlotId = `bound-reserved-rollback-${randomUUID()}`;
+const transferRollbackSlotId = `transfer-rollback-${randomUUID()}`;
+const releasingRollbackSlotId = `releasing-rollback-${randomUUID()}`;
+const heldReleasingSlotId = `held-releasing-${randomUUID()}`;
 const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
@@ -232,6 +245,29 @@ try {
         enabled: true,
         mode: 'dispatch',
       },
+      {
+        id: reservedRollbackSlotId,
+        project,
+        platform: 'cli',
+        repo,
+        session: reservedRollbackSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
+      ...[
+        boundReservedRollbackSlotId,
+        transferRollbackSlotId,
+        releasingRollbackSlotId,
+        heldReleasingSlotId,
+      ].map((id) => ({
+        id,
+        project,
+        platform: 'cli',
+        repo,
+        session: id,
+        enabled: true,
+        mode: 'dispatch',
+      })),
     ],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -257,6 +293,19 @@ try {
           },
           release_effects: ['Disposable proof resource released'],
         },
+        'proof-dependent': {
+          label: 'Disposable dependent proof resource',
+          version: '1',
+          share_policy: 'exclusive',
+          dependencies: ['proof-resource'],
+          cost: { class: 'low', resources: [] },
+          actions: {
+            acquire: { kind: 'slot-action', action_id: 'proof-check' },
+            health: { kind: 'slot-action', action_id: 'proof-check' },
+            release: { kind: 'slot-action', action_id: 'proof-check' },
+          },
+          release_effects: ['Disposable dependent proof resource released'],
+        },
       },
     },
     worker_terminal: {
@@ -264,12 +313,43 @@ try {
       flows: { 'fix-bug': { acceptance: { require: true } } },
     },
   });
+  const initialFleetCheckedAt = new Date().toISOString();
   writeJson(path.join(root, '.farm-status.json'), {
+    checked_at: initialFleetCheckedAt,
     slots: [
       { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
       { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
-      { slot: rollbackSlotId, lifecycle: 'busy', phase: 'working', current_run_id: rollbackRunId },
+      {
+        slot: rollbackSlotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: rollbackRunId,
+      },
       { slot: freeRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
+      {
+        slot: reservedRollbackSlotId,
+        lifecycle: 'ready',
+        phase: 'idle',
+        current_run_id: null,
+        handoff_run_id: reservedRollbackRunId,
+      },
+      {
+        slot: boundReservedRollbackSlotId,
+        lifecycle: 'ready',
+        phase: 'idle',
+        current_run_id: null,
+        handoff_run_id: boundReservedRollbackRunId,
+      },
+      { slot: transferRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
+      { slot: releasingRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
+      {
+        slot: heldReleasingSlotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: heldReleasingRunId,
+      },
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
@@ -313,6 +393,26 @@ try {
     selectedSlot: freeRollbackSlotId,
   };
   writeJson(path.join(root, '.runs', `${freeRollbackRunId}.json`), freeRollbackRun);
+  const rollbackFailureRun = blockedRun(rollbackFailureRunId, null);
+  rollbackFailureRun.steps.find((step) => step.name === 'find-slot').outputs = {
+    selectedSlot: freeRollbackSlotId,
+  };
+  writeJson(path.join(root, '.runs', `${rollbackFailureRunId}.json`), rollbackFailureRun);
+  const reservedRollbackRun = blockedRun(reservedRollbackRunId, null);
+  reservedRollbackRun.steps.find((step) => step.name === 'find-slot').outputs = {
+    selectedSlot: reservedRollbackSlotId,
+  };
+  writeJson(path.join(root, '.runs', `${reservedRollbackRunId}.json`), reservedRollbackRun);
+  for (const [runId, slotId, priorSlotId] of [
+    [boundReservedRollbackRunId, boundReservedRollbackSlotId, boundReservedRollbackSlotId],
+    [transferRollbackRunId, transferRollbackSlotId, null],
+    [releasingRollbackRunId, releasingRollbackSlotId, null],
+    [heldReleasingRunId, heldReleasingSlotId, heldReleasingSlotId],
+  ]) {
+    const run = blockedRun(runId, priorSlotId);
+    run.steps.find((step) => step.name === 'find-slot').outputs = { selectedSlot: slotId };
+    writeJson(path.join(root, '.runs', `${runId}.json`), run);
+  }
   writeJson(path.join(root, '.runs', `${rollbackRunId}.json`), rollbackRun);
   mkdirSync(path.dirname(rollbackRun.taskFile), { recursive: true });
   writeFileSync(rollbackRun.taskFile, '# Disposable blocked rollback worker\n');
@@ -368,7 +468,9 @@ try {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     NODE_TEST_CONTEXT: '1',
-    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS: `${rollbackRunId},${freeRollbackRunId}`,
+    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS: `${rollbackRunId},${freeRollbackRunId},${rollbackFailureRunId},${reservedRollbackRunId},${boundReservedRollbackRunId},${transferRollbackRunId},${releasingRollbackRunId},${heldReleasingRunId}`,
+    FARMSLOT_TEST_REPLAY_TRANSFER_AFTER_CLAIM_RUN_IDS: transferRollbackRunId,
+    FARMSLOT_TEST_REPLAY_RELEASING_AFTER_CLAIM_RUN_IDS: `${releasingRollbackRunId},${heldReleasingRunId}`,
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
@@ -394,6 +496,7 @@ try {
 
   logFd = openSync(path.join(temporaryRoot, 'gateway.log'), 'w');
   gateway = await startGateway(port, env);
+  assert.equal(rpc('fleet.status', {}).fleet.checkedAt, initialFleetCheckedAt);
   assert.equal(rpc('run.get', { runId }).run.status, 'blocked');
 
   const lost = denied({ runId: lostRunId, stepName: 'monitor' }, /no longer owns its slot/);
@@ -444,20 +547,29 @@ try {
     ownerRunId: rollbackRunId,
   }).leases.find((lease) => lease.owner.runId === rollbackRunId);
   assert.equal(heldLease?.state, 'acquired');
+  const beforeRollback = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === rollbackSlotId);
+  assert.equal(beforeRollback?.current_run_id, rollbackRunId);
+  assert.equal(beforeRollback?.lifecycle, 'held');
+  assert.equal(beforeRollback?.phase, 'pr-watch');
+  assert.equal(beforeRollback?.agent, 'idle');
   const rolledBack = denied(
     { runId: rollbackRunId, stepName: 'monitor' },
     /Injected replay failure after claim/,
   );
   assert.equal(rolledBack.slotId, rollbackSlotId);
-  const rollbackSlot = rpc('fleet.status', {}).fleet.slots.find(
-    (candidate) => candidate.slot === rollbackSlotId,
-  );
-  assert.equal(rollbackSlot?.currentRunId, rollbackRunId);
   const restoredRow = JSON.parse(
     readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
   ).slots.find((candidate) => candidate.slot === rollbackSlotId);
   assert.equal(restoredRow?.current_run_id, rollbackRunId);
-  assert.notEqual(restoredRow?.lifecycle, 'ready');
+  assert.equal(restoredRow?.lifecycle, beforeRollback.lifecycle);
+  assert.equal(restoredRow?.phase, beforeRollback.phase);
+  assert.equal(restoredRow?.agent, beforeRollback.agent);
+  const rollbackSlot = rpc('fleet.status', {}).fleet.slots.find(
+    (candidate) => candidate.slot === rollbackSlotId,
+  );
+  assert.equal(rollbackSlot?.currentRunId, rollbackRunId);
   execFileSync('tmux', ['has-session', '-t', rollbackSlotId]);
   const restoredLease = rpc('runtime.capability.status', {
     slotId: rollbackSlotId,
@@ -517,6 +629,88 @@ try {
     keepWarm: false,
   });
   assert.equal(freeRelease.ok, true, JSON.stringify(freeRelease));
+  const parkedRepo = path.join(root, 'repo-parked');
+  renameSync(repo, parkedRepo);
+  let symlinkCreated = false;
+  try {
+    symlinkSync(root, repo, 'dir');
+    symlinkCreated = true;
+    const rollbackFailure = denied(
+      { runId: rollbackFailureRunId, stepName: 'prepare' },
+      /Injected replay failure after claim.*rollback of reclaimed slot.*failed.*Refusing to release slot/s,
+    );
+    assert.equal(rollbackFailure.slotId, freeRollbackSlotId);
+    const failedRollbackRow = JSON.parse(
+      readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+    ).slots.find((candidate) => candidate.slot === freeRollbackSlotId);
+    assert.equal(failedRollbackRow?.current_run_id, rollbackFailureRunId);
+  } finally {
+    if (symlinkCreated) unlinkSync(repo);
+    renameSync(parkedRepo, repo);
+  }
+  const boundReservedRollback = denied(
+    { runId: boundReservedRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(boundReservedRollback.slotId, null);
+  rpc('fleet.status', { forceRefresh: true });
+  const boundReservedStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === boundReservedRollbackSlotId);
+  assert.equal(boundReservedStatus?.current_run_id, null);
+  assert.equal(boundReservedStatus?.handoff_run_id, boundReservedRollbackRunId);
+  assert.equal(boundReservedStatus?.lifecycle, 'ready');
+  const reservedRollback = denied(
+    { runId: reservedRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(reservedRollback.slotId, null);
+  const restoredReservedRow = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === reservedRollbackSlotId);
+  assert.equal(restoredReservedRow?.current_run_id, null);
+  assert.equal(restoredReservedRow?.handoff_run_id, reservedRollbackRunId);
+  assert.equal(restoredReservedRow?.lifecycle, 'ready');
+  assert.equal(restoredReservedRow?.phase, 'idle');
+  const refreshedReservedRow = rpc('fleet.status', { forceRefresh: true }).fleet.slots.find(
+    (candidate) => candidate.slot === reservedRollbackSlotId,
+  );
+  assert.equal(refreshedReservedRow?.currentRunId, null);
+  assert.equal(refreshedReservedRow?.lifecycle, 'ready');
+  const refreshedReservedStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === reservedRollbackSlotId);
+  assert.equal(refreshedReservedStatus?.handoff_run_id, reservedRollbackRunId);
+  const transferRollback = denied(
+    { runId: transferRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(transferRollback.slotId, null);
+  const transferredStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === transferRollbackSlotId);
+  assert.ok(transferredStatus?.current_run_id);
+  assert.notEqual(transferredStatus.current_run_id, transferRollbackRunId);
+  const releasingRollback = denied(
+    { runId: releasingRollbackRunId, stepName: 'prepare' },
+    /"message":"Injected replay failure after claim"/,
+  );
+  const releasingStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === releasingRollbackSlotId);
+  assert.equal(releasingRollback.slotId, releasingRollbackSlotId);
+  assert.equal(releasingStatus?.phase, 'releasing');
+  assert.equal(releasingStatus?.current_run_id, releasingRollbackRunId);
+  const heldReleasing = denied(
+    { runId: heldReleasingRunId, stepName: 'prepare' },
+    /"message":"Injected replay failure after claim"/,
+  );
+  const heldReleasingStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === heldReleasingSlotId);
+  assert.equal(heldReleasing.slotId, heldReleasingSlotId);
+  assert.equal(heldReleasingStatus?.phase, 'releasing');
+  assert.equal(heldReleasingStatus?.current_run_id, heldReleasingRunId);
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
@@ -534,8 +728,20 @@ try {
   const heldBeforeRestart = rpc('runtime.capability.status', {
     slotId,
     ownerRunId: runId,
-  }).leases.find((lease) => lease.owner.runId === runId);
+  }).leases.find((lease) => lease.capabilityId === 'proof-resource');
   assert.equal(heldBeforeRestart?.state, 'acquired');
+  const dependentBeforeRestart = rpc('runtime.capability.acquire', {
+    slotId,
+    capabilityId: 'proof-dependent',
+    ownerRunId: runId,
+    proofRequirement: {
+      capabilityId: 'proof-dependent',
+      reason: 'dependent proof before find-slot restart',
+      mode: 'state',
+    },
+  });
+  assert.equal(dependentBeforeRestart.ok, true, JSON.stringify(dependentBeforeRestart));
+  const dependentLeaseId = dependentBeforeRestart.lease.id;
   rpc('run.replayStep', { runId, stepName: 'find-slot', triggeredBy: 'operator' });
   const restarted = rpc('run.get', { runId }).run;
   const slot = rpc('fleet.status', {}).fleet.slots.find((candidate) => candidate.slot === slotId);
@@ -547,6 +753,20 @@ try {
   assert.equal(
     afterRestart.leases.find((lease) => lease.id === heldBeforeRestart.id)?.state,
     'released',
+  );
+  assert.equal(
+    afterRestart.leases.find((lease) => lease.id === dependentLeaseId)?.state,
+    'released',
+  );
+  assert.deepEqual(
+    afterRestart.events
+      .filter(
+        (event) =>
+          event.kind === 'released' &&
+          [dependentLeaseId, heldBeforeRestart.id].includes(event.leaseId),
+      )
+      .map((event) => event.capabilityId),
+    ['proof-dependent', 'proof-resource'],
   );
 
   const capabilityStore = JSON.parse(readFileSync(env.FARMSLOT_CAPABILITY_STORE_FILE, 'utf8'));
@@ -593,6 +813,7 @@ try {
     ),
   );
   writeJson(path.join(root, '.farm-status.json'), {
+    checked_at: new Date().toISOString(),
     slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId }],
   });
   execFileSync('tmux', ['new-session', '-d', '-s', slotId, '-c', repo, 'sleep 300']);
@@ -717,6 +938,12 @@ try {
       evalRunId,
       rollbackRunId,
       freeRollbackRunId,
+      rollbackFailureRunId,
+      reservedRollbackRunId,
+      boundReservedRollbackRunId,
+      transferRollbackRunId,
+      releasingRollbackRunId,
+      heldReleasingRunId,
       updateRunId,
       restart: restarted.status,
       slot: slot?.lifecycle,

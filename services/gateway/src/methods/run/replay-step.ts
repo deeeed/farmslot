@@ -721,7 +721,7 @@ export async function runReplayStep(
       const status = await runtimeCapabilityStatus({ slotId });
       if (!blockedMonitorProofReady(existing, status)) {
         blocker =
-          status.catalog.length && !status.proofPlans[existing.id]
+          status.catalog?.length && !status.proofPlans[existing.id]
             ? `No proof plan is recorded. ${nextAction} instead.`
             : `Proof resources are not healthy after the block. ${nextAction} instead.`;
       }
@@ -862,6 +862,7 @@ export async function runReplayStep(
   let reclaimedSlotId: string | null = null;
   let reclaimedSlotEpoch: number | null = null;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
+  const priorRunSlotId = existing.slotId ?? null;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -995,16 +996,36 @@ export async function runReplayStep(
               // only claim that same worker; an intervening release or reassignment
               // must not turn this into a generic free-slot reclaim.
               if (probeBlockedMonitor && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
-              if (existing.status === 'blocked' && blockedMonitorOwnsSlot(slot, params.runId)) {
+              const reclaim = replaySlotReclaimCheck(slot, params.runId, {
+                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
+              });
+              if (
+                reclaim.ok &&
+                existing.status === 'blocked' &&
+                blockedMonitorOwnsSlot(slot, params.runId)
+              ) {
                 priorOwnedSlotFields = {
                   lifecycle: slot.lifecycle,
                   phase: slot.phase,
                   agent: slot.agent,
+                  current_run_id: slot.current_run_id,
                 };
               }
-              return replaySlotReclaimCheck(slot, params.runId, {
-                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-              }).ok;
+              if (reclaim.ok && slot.handoff_run_id === params.runId) {
+                priorOwnedSlotFields = {
+                  lifecycle: slot.lifecycle,
+                  phase: slot.phase,
+                  agent: slot.agent,
+                  current_run_id: slot.current_run_id ?? null,
+                  current_flow_type: slot.current_flow_type,
+                  current_ticket_or_pr: slot.current_ticket_or_pr,
+                  current_mode: slot.current_mode,
+                  current_family_id: slot.current_family_id,
+                  current_lane: slot.current_lane,
+                  current_variant: slot.current_variant,
+                };
+              }
+              return reclaim.ok;
             },
             {
               lifecycle: 'busy',
@@ -1043,6 +1064,29 @@ export async function runReplayStep(
           updateRun(params.runId, { slotId: replaySlotId });
           // The disposable gateway recipe injects a failure after a real claim.
           if (shouldInjectReplayClaimFailure(params.runId)) {
+            if (
+              process.env.FARMSLOT_TEST_REPLAY_TRANSFER_AFTER_CLAIM_RUN_IDS?.split(',').includes(
+                params.runId,
+              )
+            ) {
+              await claimSlotStatusIf(
+                replaySlotId,
+                (slot) => slot.current_run_id === params.runId && slot.slot_epoch === epoch,
+                { current_run_id: randomUUID() },
+              );
+            }
+            if (
+              process.env.FARMSLOT_TEST_REPLAY_RELEASING_AFTER_CLAIM_RUN_IDS?.split(',').includes(
+                params.runId,
+              )
+            ) {
+              const { markSlotStatusIf } = await import('../../core/index.js');
+              await markSlotStatusIf(
+                replaySlotId,
+                (slot) => slot.current_run_id === params.runId && slot.slot_epoch === epoch,
+                { phase: SLOT_PHASE_RELEASING },
+              );
+            }
             throw new Error('Injected replay failure after claim');
           }
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
@@ -1539,23 +1583,59 @@ export async function runReplayStep(
       try {
         if (priorOwnedSlotFields) {
           const { markSlotStatusIf } = await import('../../core/index.js');
-          await markSlotStatusIf(
+          const restored = await markSlotStatusIf(
             reclaimedSlotId,
             (slot) =>
-              slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
+              slot.current_run_id === params.runId &&
+              slot.slot_epoch === reclaimedSlotEpoch &&
+              slot.phase !== SLOT_PHASE_RELEASING,
             priorOwnedSlotFields,
           );
+          if (restored.applied) {
+            const restoredSlotId =
+              priorRunSlotId === reclaimedSlotId &&
+              (priorOwnedSlotFields as Record<string, unknown>).current_run_id !== params.runId
+                ? null
+                : priorRunSlotId;
+            if (getRun(params.runId)?.slotId !== restoredSlotId) {
+              const run = updateRun(params.runId, { slotId: restoredSlotId });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
         } else {
           const { slotRelease } = await import('../slot.js');
-          await slotRelease(
+          const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
             rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
           );
+          if (!release.released) {
+            const current = await readSlotRow(reclaimedSlotId);
+            if (
+              current?.current_run_id === params.runId &&
+              current.slot_epoch === reclaimedSlotEpoch &&
+              current.phase !== SLOT_PHASE_RELEASING
+            ) {
+              throw new Error('slot release refused while replay still owns the reclaimed slot');
+            }
+            if (
+              current?.current_run_id !== params.runId &&
+              getRun(params.runId)?.slotId === reclaimedSlotId
+            ) {
+              const run = updateRun(params.runId, { slotId: null });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
         }
       } catch (releaseErr) {
-        console.warn(
-          `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
+        const replayMessage = err instanceof Error ? err.message : String(err);
+        const rollbackMessage =
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
+        throw new AggregateError(
+          [err, releaseErr],
+          `Replay failed: ${replayMessage}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${rollbackMessage}`,
         );
       }
     }
