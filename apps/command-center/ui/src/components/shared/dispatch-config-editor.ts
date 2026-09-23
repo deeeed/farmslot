@@ -418,7 +418,9 @@ export class DispatchConfigEditor extends LitElement {
     ) {
       return nothing;
     }
-    const loops = this.normalizeReviewPlan(this.pendingReviewPlan);
+    // Render the stored depth so a legacy full-live round stays visible until the operator
+    // repairs it; edits normalize to static.
+    const loops = this.pendingReviewPlan.slice(0, 5);
     const runnerOptions: Array<ReviewLoopRequest['runner']> = [
       'same',
       ...(RUNNER_OPTIONS as ReviewRunnerId[]),
@@ -435,7 +437,7 @@ export class DispatchConfigEditor extends LitElement {
                     ${runnerOptions.map(
                       (runner) =>
                         html`<button
-                          class="pill ${loop.runner === runner ? 'selected' : ''}"
+                          class="pill ${(loop.runner || 'same') === runner ? 'selected' : ''}"
                           type="button"
                           ?disabled=${this.disabled}
                           @click=${() => this.updateReviewLoop(index, { runner })}

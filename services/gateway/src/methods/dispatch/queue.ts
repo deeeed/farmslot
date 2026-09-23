@@ -17,9 +17,9 @@ import {
   addItem,
   listItems,
   queueRecordOriginator,
+  recheckRepairedReviewPlan,
   removeItem,
   reorderItems,
-  recheckRepairedReviewPlan,
   updateItem,
 } from '../../backlog/dispatch-queue.js';
 import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';

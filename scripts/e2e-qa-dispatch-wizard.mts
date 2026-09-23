@@ -282,6 +282,7 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
     FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+    FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(gatewayPort),
     VITE_PORT: String(uiPort),
@@ -296,6 +297,26 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_UI_URL: `http://127.0.0.1:${uiPort}/#dispatch`,
     FARMSLOT_CDP_HEADLESS: '1',
   };
+  // A pre-ADR-058 backlog record: its stored publication-review round still asks for full-live.
+  const legacyBacklogId = 'legacy-live-review-item';
+  const seededAt = new Date().toISOString();
+  await json(path.join(fixture, '.backlog.json'), [
+    {
+      id: legacyBacklogId,
+      project: 'wizard-farm',
+      title: 'Legacy live review round',
+      sourceKind: 'manual',
+      sourceRef: 'MANUAL-900',
+      flowType: 'fix-bug',
+      status: 'ready',
+      priority: 10,
+      pendingReviewPlan: [
+        { order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'full-live' },
+      ],
+      createdAt: seededAt,
+      updatedAt: seededAt,
+    },
+  ]);
   servers = startReviewInterfaceServers({ root, evidence, environment });
   const client = new GatewayClient({
     url: `ws://127.0.0.1:${gatewayPort}`,
@@ -781,6 +802,54 @@ process.stdout.write(JSON.stringify(body));
   assert.deepEqual(release.qaInputs, { scope: 'payments', lane: 'source' });
   await json(path.join(evidence, 'qa-dynamic-actions.json'), { daily, release });
   checkpoints.push('farm-fields-domain-and-non-pr-qa-actions');
+
+  // The shared dispatch-config editor (Backlog and Work Graph) shows a stored legacy round as
+  // legacy and repairs it to static only when the operator asks.
+  const backlogPlan = async () =>
+    (
+      await connection!.call<{
+        items: Array<{ id: string; pendingReviewPlan?: QueueItem['pendingReviewPlan'] }>;
+      }>('backlog.list', {})
+    ).items.find((item) => item.id === legacyBacklogId)?.pendingReviewPlan;
+  assert.equal((await backlogPlan())?.[0]?.validationDepth, 'full-live');
+  cdp('goto', '#fleet');
+  cdp('goto', `#backlog?item=${legacyBacklogId}&dispatchConfig=1`);
+  activeRoute = 'backlog';
+  const makeStatic = `find('[data-testid="dispatch-config-review-make-static"]')?.element`;
+  await waitUI(`return Boolean(${makeStatic}?.getClientRects().length);`);
+  evaluate(`${makeStatic}.scrollIntoView({block:'center'});return true;`);
+  screenshot('backlog-legacy-review-round');
+  const legacyLabel = evaluate(
+    `return {button:${makeStatic}.textContent.trim(),statics:Boolean(find('[data-testid="dispatch-config-review-depth"]'))};`,
+  );
+  assert.match(legacyLabel.button, /Legacy full live · make static/);
+  assert.equal(legacyLabel.statics, false, 'A legacy round must not be labelled Static');
+  click('dispatch-config-review-make-static');
+  const repairedUntil = Date.now() + 30000;
+  let repairedPlan = await backlogPlan();
+  while (repairedPlan?.[0]?.validationDepth !== 'static-code' && Date.now() < repairedUntil) {
+    await delay(250);
+    repairedPlan = await backlogPlan();
+  }
+  assert.deepEqual(
+    repairedPlan,
+    [{ order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'static-code' }],
+    'make static persists a static round and keeps the runner and model',
+  );
+  await waitUI(
+    `return !${makeStatic} && find('[data-testid="dispatch-config-review-depth"]')?.element.textContent.trim()==='Static';`,
+  );
+  evaluate(
+    `find('[data-testid="dispatch-config-review-depth"]').element.scrollIntoView({block:'center'});return true;`,
+  );
+  screenshot('backlog-review-round-made-static');
+  await json(path.join(evidence, 'backlog-legacy-review-repair.json'), {
+    itemId: legacyBacklogId,
+    before: 'full-live',
+    label: legacyLabel,
+    after: repairedPlan,
+  });
+  checkpoints.push('backlog-editor-repairs-legacy-review-round');
 
   await noExecution();
   await json(path.join(evidence, 'queue.json'), {
