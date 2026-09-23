@@ -84,8 +84,11 @@ reserved, not money spent. Each request reserves the
 full supported context cost, including uncertain charges. There is one attempt,
 a ten-second deadline, no hidden retry and no fallback model. Required text must
 fit the lower of the configured input limit and 12,000 bytes; it is never
-silently truncated. A missing or different returned model rejects the response
-and leaves its charge unknown.
+silently truncated. A completed reply without input-token usage rejects the response as
+`spend-bound-unverifiable`, retains any valid partial receipt, and blocks later requests
+under that price snapshot. A received reply above the input limit records
+`spend-bound-exceeded`. A missing or different returned model rejects advice and leaves
+its charge unknown.
 
 ## Request and inspect advice
 
@@ -117,9 +120,9 @@ that unavailable/interrupted record, or a skipped/disabled record confirmed to
 have made no provider call. Repeating that retry identity is also idempotent. A successful retry becomes the cached result. Unrelated approvals and daily-budget
 edits preserve cached advice. Changes to the matched approval, source, model,
 rubric or price snapshot require a new assessment. A response exceeding the price
-snapshot’s token bound blocks that price snapshot until it is replaced after
-verification, or the incident expires after 30 days. Waiting until the next UTC
-day does not clear this block.
+snapshot's token bound, or one that cannot establish the bound, blocks that price
+snapshot until it is replaced after verification, or the incident expires after 30
+days. Waiting until the next UTC day does not clear this block.
 
 Correct/incorrect/insufficient-context feedback updates only the advisory record.
 **I used this advice** is an explicit operator declaration. These labels are

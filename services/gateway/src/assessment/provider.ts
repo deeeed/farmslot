@@ -27,6 +27,12 @@ export interface AssessmentProviderRegistry {
   list(): readonly AssessmentProvider[];
 }
 
+/** Controlled result codes. Callers persist these instead of upstream response text. */
+export const ASSESSMENT_RESPONSE_VALIDATION_ERROR =
+  'Assessment provider response failed validation';
+export const TRIAGE_SPEND_BOUND_EXCEEDED = 'spend-bound-exceeded';
+export const TRIAGE_SPEND_BOUND_UNVERIFIABLE = 'spend-bound-unverifiable';
+
 export function createAssessmentProviderRegistry(
   providers: readonly AssessmentProvider[],
 ): AssessmentProviderRegistry {
@@ -45,6 +51,8 @@ export class AssessmentResponseError extends Error {
     readonly attempted = true,
     readonly usage?: Omit<AssessmentUsage, 'provider' | 'requestedModel'>,
     readonly returnedModel?: string,
+    /** The provider returned a response, but it did not meet the adapter contract. */
+    readonly responseReceived = false,
   ) {
     super(message);
   }

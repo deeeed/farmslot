@@ -120,3 +120,64 @@ test('TypeSafe adapter rejects malformed token counts without completing advice'
     },
   );
 });
+
+test('TypeSafe adapter rejects a completed reply without an input receipt and retains valid output usage', async () => {
+  const provider = createTypeSafeProvider(async () =>
+    response({
+      model: 'jev-1.13.0',
+      answers: { risk: { type: 'noul', noul: 0.9 } },
+      usage: { output_tokens: 30 },
+    }),
+  );
+  await assert.rejects(
+    provider.assess({
+      state: 'synthetic risk',
+      questions: { risk: { type: 'boolean', instructions: 'Is the risk present?' } },
+      model: 'jev-1.13.0',
+      apiKey: 'fixture-key',
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AssessmentResponseError);
+      assert.equal(error.attempted, true);
+      assert.equal(error.responseReceived, true);
+      assert.equal(error.usage?.inputTokens, undefined);
+      assert.equal(error.usage?.outputTokens, 30);
+      return true;
+    },
+  );
+});
+
+test('TypeSafe adapter retains an HTTP error receipt without retrying', async () => {
+  let calls = 0;
+  const provider = createTypeSafeProvider(async () => {
+    calls++;
+    return response(
+      {
+        model: 'jev-1.13.0',
+        usage: { input_tokens: 19, output_tokens: 7 },
+      },
+      503,
+    );
+  });
+  await assert.rejects(
+    provider.assess({
+      state: 'synthetic risk',
+      questions: { risk: { type: 'boolean', instructions: 'Is the risk present?' } },
+      model: 'jev-1.13.0',
+      apiKey: 'fixture-key',
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AssessmentResponseError);
+      assert.equal(error.message, 'Assessment provider returned an HTTP error');
+      assert.equal(error.attempted, true);
+      assert.equal(error.responseReceived, true);
+      assert.equal(error.usage?.inputTokens, 19);
+      assert.equal(error.usage?.outputTokens, 7);
+      assert.equal(typeof error.usage?.durationMs, 'number');
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});

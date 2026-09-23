@@ -10,7 +10,11 @@ import type {
 import { getAssessmentConfig } from './config.js';
 import { defaultAssessmentProviders } from './default-providers.js';
 import { prepareAssessmentInput } from './input.js';
-import { type AssessmentProviderRegistry, AssessmentResponseError } from './provider.js';
+import {
+  ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+  type AssessmentProviderRegistry,
+  AssessmentResponseError,
+} from './provider.js';
 
 const providers = defaultAssessmentProviders();
 
@@ -166,7 +170,9 @@ export async function assess(
       ...preparedIdentity,
       error: signal.aborted
         ? 'Assessment cancelled or timed out'
-        : 'Assessment provider request failed',
+        : error instanceof AssessmentResponseError && error.responseReceived
+          ? ASSESSMENT_RESPONSE_VALIDATION_ERROR
+          : 'Assessment provider request failed',
     };
   }
 }

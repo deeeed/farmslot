@@ -81,8 +81,18 @@ export function createLlmAssessmentProvider(
         ...(result.cacheWriteTokens === null ? {} : { cacheWriteTokens: result.cacheWriteTokens }),
       };
       const reject = (reason: string): never => {
-        throw new AssessmentResponseError(reason, result.attempted, usage, result.returnedModel);
+        throw new AssessmentResponseError(
+          reason,
+          result.attempted,
+          usage,
+          result.returnedModel,
+          result.responseReceived,
+        );
       };
+      // A terminal response without a valid input receipt may have charged the request, but
+      // cannot establish the configured input bound. Do not return an answer in that state.
+      if (result.status === 'completed' && result.inputTokens === null)
+        return reject('LLM assessment has invalid input-token usage');
       if (result.status !== 'completed' || !result.text)
         return reject('LLM assessment unavailable');
       let raw: unknown;

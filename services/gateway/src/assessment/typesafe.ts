@@ -1,4 +1,4 @@
-import { choice, noul, type Questions, score, TypeSafeClient } from '@typesafe-ai/sdk';
+import { APIError, choice, noul, type Questions, score, TypeSafeClient } from '@typesafe-ai/sdk';
 
 import type { AssessmentAnswer, AssessmentQuestion, AssessmentQuestions } from '@farmslot/protocol';
 
@@ -70,6 +70,34 @@ function normalizeProbabilities(raw: unknown, expected: string[]): Record<string
   );
 }
 
+const object = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+const token = (value: unknown) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+const identity = (value: unknown, apiKey: string) =>
+  typeof value === 'string' && /^[\w.-]{1,200}$/.test(value) && !value.includes(apiKey)
+    ? value
+    : undefined;
+
+function receipt(value: unknown, requestId: unknown, apiKey: string, started: number) {
+  const body = object(value) ? value : {};
+  const rawUsage = object(body.usage) ? body.usage : undefined;
+  const inputTokens = token(rawUsage?.input_tokens);
+  const outputTokens = token(rawUsage?.output_tokens);
+  const safeRequestId = identity(requestId, apiKey);
+  return {
+    returnedModel: identity(body.model, apiKey),
+    hasValidInputUsage: rawUsage?.input_tokens !== undefined && inputTokens !== undefined,
+    hasValidOutputUsage: rawUsage?.output_tokens === undefined || outputTokens !== undefined,
+    usage: {
+      ...(inputTokens === undefined ? {} : { inputTokens }),
+      ...(outputTokens === undefined ? {} : { outputTokens }),
+      durationMs: Date.now() - started,
+      ...(safeRequestId === undefined ? {} : { requestId: safeRequestId }),
+    },
+  };
+}
+
 export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProvider {
   return {
     id: 'typesafe',
@@ -88,48 +116,50 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
       });
       const sdkState =
         typeof state === 'number' || typeof state === 'boolean' ? String(state) : state;
-      const result = await client
-        .systemOne(
-          { state: sdkState, model, questions: toQuestions(questions) },
-          { signal, retry: { maxRetries: 0 } },
-        )
-        .withResponse();
-      const token = (value: unknown) =>
-        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
-      const identity = (value: unknown) =>
-        typeof value === 'string' && /^[\w.-]{1,200}$/.test(value) && !value.includes(apiKey)
-          ? value
-          : undefined;
-      const inputTokens = token(result.data.usage?.input_tokens);
-      const outputTokens = token(result.data.usage?.output_tokens);
-      const usage = {
-        ...(inputTokens === undefined ? {} : { inputTokens }),
-        ...(outputTokens === undefined ? {} : { outputTokens }),
-        durationMs: Date.now() - started,
-        requestId: identity(result.requestId),
-      };
-      const returnedModel = identity(result.data.model);
+      let result: Awaited<ReturnType<ReturnType<typeof client.systemOne>['withResponse']>>;
       try {
-        if (
-          (result.data.usage?.input_tokens !== undefined && inputTokens === undefined) ||
-          (result.data.usage?.output_tokens !== undefined && outputTokens === undefined)
-        )
+        result = await client
+          .systemOne(
+            { state: sdkState, model, questions: toQuestions(questions) },
+            { signal, retry: { maxRetries: 0 } },
+          )
+          .withResponse();
+      } catch (error) {
+        if (error instanceof APIError) {
+          const received = receipt(error.body, error.requestId, apiKey, started);
+          throw new AssessmentResponseError(
+            'Assessment provider returned an HTTP error',
+            true,
+            received.usage,
+            received.returnedModel,
+            true,
+          );
+        }
+        throw error;
+      }
+      const received = receipt(result.data, result.requestId, apiKey, started);
+      try {
+        // Validate answers after capturing safe receipt fields; malformed replies must not
+        // escape as provider text or discard known usage.
+        const data = result.data;
+        if (!received.hasValidInputUsage || !received.hasValidOutputUsage)
           throw new Error('provider returned invalid usage');
         const answers: Record<string, AssessmentAnswer> = {};
         for (const [id, question] of Object.entries(questions))
-          answers[id] = normalizeAnswer(question, result.data.answers[id]);
+          answers[id] = normalizeAnswer(question, data.answers[id]);
         return {
-          returnedModel,
+          returnedModel: received.returnedModel,
           answers,
-          usage,
+          usage: received.usage,
         };
       } catch {
         // Never propagate response fragments in validation errors.
         throw new AssessmentResponseError(
           'Assessment provider response failed validation',
           true,
-          usage,
-          returnedModel,
+          received.usage,
+          received.returnedModel,
+          true,
         );
       }
     },

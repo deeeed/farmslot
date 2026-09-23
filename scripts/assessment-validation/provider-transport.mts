@@ -22,6 +22,10 @@ globalThis.fetch = async (input, init) => {
     );
   if (ordinary) {
     assert.equal(body.text.format.strict, true);
+    if (mode === 'early-invalid-tail')
+      return new Response('event: response.failed\ndata: {invalid}\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      });
     if (mode === 'invalid-tail') {
       const terminal = {
         type: 'response.completed',
@@ -54,7 +58,7 @@ globalThis.fetch = async (input, init) => {
         status: 'completed',
         model: mode === 'wrong-model' ? 'unexpected-model' : body.model,
         usage: {
-          input_tokens: 120,
+          ...(mode === 'ordinary-missing-usage' ? {} : { input_tokens: 120 }),
           output_tokens: 20,
           input_tokens_details: { cached_tokens: 10, cache_write_tokens: 0 },
         },
@@ -76,6 +80,20 @@ globalThis.fetch = async (input, init) => {
       { headers: { 'content-type': 'application/json' } },
     );
   }
+  if (mode === 'native-http-error')
+    return new Response(
+      JSON.stringify({
+        model: body.model,
+        usage: { input_tokens: 100, output_tokens: 20 },
+      }),
+      {
+        status: 503,
+        headers: {
+          'content-type': 'application/json',
+          'x-typesafe-request-id': 'typesafe_503_fixture',
+        },
+      },
+    );
   return new Response(
     JSON.stringify({
       model: body.model,
@@ -88,8 +106,12 @@ globalThis.fetch = async (input, init) => {
         },
       },
       usage: {
-        input_tokens:
-          mode === 'native-invalid' ? 321 : mode === 'native-invalid-usage' ? 70000.5 : 100,
+        ...(mode === 'native-missing-usage'
+          ? {}
+          : {
+              input_tokens:
+                mode === 'native-invalid' ? 321 : mode === 'native-invalid-usage' ? 70000.5 : 100,
+            }),
         output_tokens: mode === 'native-invalid' || mode === 'native-invalid-usage' ? 30 : 20,
       },
     }),

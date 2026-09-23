@@ -23,6 +23,11 @@ import { CHECK_FOR_LABEL, type TriagePrice } from '../../assessment/failure-tria
 import { assess } from '../../assessment/index.js';
 import { completeAssessment } from '../../assessment/monitor.js';
 import {
+  ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+  TRIAGE_SPEND_BOUND_EXCEEDED,
+  TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+} from '../../assessment/provider.js';
+import {
   assessmentRecord,
   assessmentRecords,
   recordAuditFailure,
@@ -42,7 +47,20 @@ export function priceTriageResult(
   modelMatched = true,
 ): AssessmentResult {
   const usage = result.usage;
-  if (!usage || usage.inputTokens === undefined) return result;
+  if (!usage || usage.inputTokens === undefined) {
+    const receivedReply =
+      result.status === 'completed' || result.error === ASSESSMENT_RESPONSE_VALIDATION_ERROR;
+    return receivedReply
+      ? {
+          ...result,
+          status: 'unavailable',
+          answers: undefined,
+          // The provider has replied, but its receipt cannot prove the per-request token bound.
+          // Keep valid partial usage so the audit never treats that attempt as free.
+          error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+        }
+      : result;
+  }
   const priced = modelMatched
     ? {
         ...usage,
@@ -56,9 +74,7 @@ export function priceTriageResult(
         status: 'unavailable',
         answers: undefined,
         usage: priced,
-        error: modelMatched
-          ? 'spend-bound-exceeded'
-          : 'spend-bound-exceeded: returned model does not match the evaluated model',
+        error: TRIAGE_SPEND_BOUND_EXCEEDED,
       }
     : { ...result, usage: priced };
 }
@@ -296,7 +312,7 @@ export async function analyzeFailureTriage(
         availability: 'budget-blocked',
         reason:
           reserved.cause === 'spend-bound'
-            ? 'A previous response exceeded this price snapshot’s token bound. Verify a new price snapshot before requesting advice.'
+            ? 'A previous response exceeded or could not establish this price snapshot’s token bound. Verify a new price snapshot before requesting advice.'
             : 'The shared daily assessment budget is exhausted.',
       };
     if (reserved.status === 'reserved') {

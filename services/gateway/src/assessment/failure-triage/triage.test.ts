@@ -9,7 +9,7 @@ import { defaultAssessmentProviders } from '../default-providers.js';
 import { cueBaseline, existingBaseline } from './baselines.js';
 import { loadTriageCorpus } from './corpus.js';
 import { CORPUS_HASH } from './corpus-lock.js';
-import { evaluateTriage, validTriagePrice } from './evaluate.js';
+import { estimateTriageInputCost, evaluateTriage, validTriagePrice } from './evaluate.js';
 import { triageGate, triageMetrics } from './metrics.js';
 import { prepareTriage, textDigest, triagePrediction } from './packet.js';
 import { boundedAssessmentFetch } from './transport.js';
@@ -235,6 +235,26 @@ test('failed adapter replies retain received usage and preflight rejections rele
   assert.equal(notCharged.reason, 'provider-not-attempted');
   assert.equal(notCharged.reservedUsd, 0);
   assert.equal(notCharged.usage, undefined);
+});
+test('a returned model outside the price snapshot leaves the evaluator charge unknown', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-model-price-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const caseId = corpus.cases.find((c) => c.split === 'held-out')!.id;
+  await evaluateTriage({
+    out: path.join(root, 'wrong-model'),
+    fixture: 'wrong-model',
+    caseId,
+    maxCalls: 1,
+  });
+  const [row] = JSON.parse(
+    await readFile(path.join(root, 'wrong-model', 'candidate-results.json'), 'utf8'),
+  );
+  assert.equal(row.status, 'unavailable');
+  assert.equal(row.returnedModel, 'unpriced-model');
+  assert.equal(row.usage.inputTokens > 0, true);
+  assert.equal(row.estimatedUsd, undefined);
+  assert.equal(estimateTriageInputCost(120, { inputUsdPerMillion: 1 }, false, false), undefined);
+  assert.equal(estimateTriageInputCost(120, { inputUsdPerMillion: 1 }, true, false), 0.00012);
 });
 test('price validation refuses unknown models, expired snapshots and paid outputs without bounds', () => {
   const price: TriagePrice = {

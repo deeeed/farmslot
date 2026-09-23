@@ -172,6 +172,35 @@ try {
     rpc('assessment.get', { id: invalidUsage.assessmentId }).result.status,
     'unavailable',
   );
+  await writeFile(path.join(out, 'mode'), 'native-http-error');
+  const nativeHttpError = rpc('assessment.test', { provider: 'typesafe', model: 'jev-1.13.0' });
+  assert.equal(nativeHttpError.status, 'unavailable');
+  assert.equal(nativeHttpError.error, 'Assessment provider response failed validation');
+  assert.equal(nativeHttpError.attempted, true);
+  assert.equal(nativeHttpError.usage?.inputTokens, 100);
+  assert.equal(nativeHttpError.usage?.outputTokens, 20);
+  assert.equal(nativeHttpError.usage?.requestId, 'typesafe_503_fixture');
+  assert.ok(nativeHttpError.usage?.durationMs >= 0);
+  assert.equal(
+    rpc('assessment.get', { id: nativeHttpError.assessmentId }).result.usage.inputTokens,
+    100,
+  );
+  for (const [provider, model, mode] of [
+    ['typesafe', 'jev-1.13.0', 'native-missing-usage'],
+    ['codex-lb', 'gpt-6-luna', 'ordinary-missing-usage'],
+  ]) {
+    await writeFile(path.join(out, 'mode'), mode);
+    const missing = rpc('assessment.test', { provider, model });
+    assert.equal(missing.status, 'unavailable', mode);
+    assert.equal(missing.attempted, true, mode);
+    assert.equal(missing.usage?.inputTokens, undefined, mode);
+    assert.equal(missing.usage?.costUsd, undefined, mode);
+    assert.equal(missing.usage?.outputTokens, 20, mode);
+    assert.equal(
+      rpc('assessment.get', { id: missing.assessmentId }).result.usage.inputTokens,
+      undefined,
+    );
+  }
   await writeFile(path.join(out, 'mode'), 'valid');
   const feedback = rpc('assessment.feedback', {
     id: ordinary.assessmentId,
@@ -184,18 +213,21 @@ try {
     evidenceRef: 'fixture:provider-proof',
   });
   assert.equal(feedback.feedback.at(-1).correctedAnswer, 'red');
-  for (const mode of ['invalid', 'wrong-model', 'invalid-tail', 'timeout']) {
+  for (const mode of ['invalid', 'wrong-model', 'invalid-tail', 'early-invalid-tail', 'timeout']) {
     await writeFile(path.join(out, 'mode'), mode);
     const failed = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
     assert.equal(failed.status, 'unavailable', mode);
     assert.equal(failed.attempted, true);
-    if (mode === 'timeout') assert.equal(failed.usage?.inputTokens, undefined);
-    else {
+    if (mode === 'timeout' || mode === 'early-invalid-tail') {
+      assert.equal(failed.usage?.inputTokens, undefined);
+      if (mode === 'early-invalid-tail')
+        assert.equal(failed.error, 'Assessment provider response failed validation');
+    } else {
       assert.equal(failed.usage?.inputTokens, 120, mode);
       assert.equal(failed.usage?.outputTokens, 20, mode);
     }
   }
-  assert.equal(await count(), 8, 'No hidden retry or provider fallback');
+  assert.equal(await count(), 12, 'No hidden retry or provider fallback');
   const rejected = rpc('assessment.list', { limit: 10 });
   const rejectedRow = rejected.records.find(
     (record) =>
@@ -234,7 +266,7 @@ try {
     rpc('intelligence.triage.get', { runId: randomUUID() }).availability,
     'unsupported-model',
   );
-  assert.equal(await count(), 8, 'An adapter must not inherit another provider’s evaluation gate');
+  assert.equal(await count(), 12, 'An adapter must not inherit another provider’s evaluation gate');
   await stop();
   delete env.CODEX_LB_API_KEY;
   await start();
@@ -242,7 +274,7 @@ try {
   const missing = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
   assert.equal(missing.status, 'skipped');
   assert.equal(missing.attempted, false);
-  assert.equal(await count(), 8);
+  assert.equal(await count(), 12);
   assert.equal(rpc('assessment.get', { id: ordinary.assessmentId }).feedback.length, 1);
   await stop();
   env.CODEX_LB_API_KEY = 'provider-fixture-lb-key';
@@ -250,9 +282,12 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 8,
+    providerCalls: 12,
     nativeRejectedUsageRetained: true,
     invalidNativeUsageRejected: true,
+    nativeHttpErrorReceiptRetained: true,
+    earlyMalformedSseReceiptRetained: true,
+    missingNativeAndOrdinaryUsageRejected: true,
     externalProviderCalls: 0,
     nativeAndOrdinaryAnswers: true,
     plainChoiceFeedback: true,

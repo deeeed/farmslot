@@ -25,6 +25,8 @@ export interface MeasuredResponse {
   /** Raw Responses input_tokens includes cache reads/writes. */
   inputAccounting: 'includes-cache';
   durationMs: number;
+  /** `fetch` resolved with an HTTP response, even if its body cannot be parsed. */
+  responseReceived: boolean;
   receiptHash?: string;
   error?: string;
 }
@@ -91,6 +93,7 @@ export async function measuredResponsesCall(
     cacheWriteTokens: null,
     inputAccounting: 'includes-cache',
     durationMs: 0,
+    responseReceived: false,
   };
   const safeId = (value: unknown) =>
     typeof value === 'string' && /^[\w.-]{1,200}$/.test(value) && !value.includes(options.apiKey)
@@ -121,6 +124,9 @@ export async function measuredResponsesCall(
       headers: { authorization: `Bearer ${options.apiKey}`, 'content-type': 'application/json' },
       body,
     });
+    // This is deliberately set before reading the body. A malformed first SSE frame still
+    // means the provider responded and must not be classified as a retryable transport failure.
+    base.responseReceived = true;
     const reader = response.body?.getReader();
     if (!reader)
       return { ...base, error: 'missing-response-body', durationMs: performance.now() - start };

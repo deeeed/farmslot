@@ -17,6 +17,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 
+import { TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE } from './provider.js';
 import {
   assertAssessmentRecord,
   assertAssessmentSubject,
@@ -174,10 +175,9 @@ export async function reserveAssessment(
       records.some(
         (r) =>
           r.reservation?.priceHash === reservation.priceHash &&
-          [
-            'spend-bound-exceeded',
-            'spend-bound-exceeded: returned model does not match the evaluated model',
-          ].includes(r.result?.error ?? ''),
+          [TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE].includes(
+            r.result?.error ?? '',
+          ),
       )
     )
       return { status: 'budget-blocked', cause: 'spend-bound' };
