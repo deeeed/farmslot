@@ -862,6 +862,7 @@ export async function runReplayStep(
   let reclaimedSlotId: string | null = null;
   let reclaimedSlotEpoch: number | null = null;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
+  const priorRunSlotId = existing.slotId ?? null;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -1558,12 +1559,16 @@ export async function runReplayStep(
       try {
         if (priorOwnedSlotFields) {
           const { markSlotStatusIf } = await import('../../core/index.js');
-          await markSlotStatusIf(
+          const restored = await markSlotStatusIf(
             reclaimedSlotId,
             (slot) =>
               slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
             priorOwnedSlotFields,
           );
+          if (restored.applied && priorRunSlotId !== reclaimedSlotId) {
+            const run = updateRun(params.runId, { slotId: priorRunSlotId });
+            emit(Events.RUN_UPDATED, { run });
+          }
         } else {
           const { slotRelease } = await import('../slot.js');
           const release = await slotRelease(
@@ -1575,7 +1580,8 @@ export async function runReplayStep(
             const current = await readSlotRow(reclaimedSlotId);
             if (
               current?.current_run_id === params.runId &&
-              current.slot_epoch === reclaimedSlotEpoch
+              current.slot_epoch === reclaimedSlotEpoch &&
+              current.phase !== SLOT_PHASE_RELEASING
             ) {
               throw new Error('slot release refused while replay still owns the reclaimed slot');
             }

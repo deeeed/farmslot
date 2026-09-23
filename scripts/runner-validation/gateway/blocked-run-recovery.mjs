@@ -602,14 +602,19 @@ try {
     { runId: reservedRollbackRunId, stepName: 'prepare' },
     /Injected replay failure after claim/,
   );
-  assert.equal(reservedRollback.slotId, reservedRollbackSlotId);
-  const reservedRow = JSON.parse(
+  assert.equal(reservedRollback.slotId, null);
+  const restoredReservedRow = JSON.parse(
     readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
   ).slots.find((candidate) => candidate.slot === reservedRollbackSlotId);
-  assert.equal(reservedRow?.current_run_id, null);
-  assert.equal(reservedRow?.handoff_run_id, reservedRollbackRunId);
-  assert.equal(reservedRow?.lifecycle, 'ready');
-  assert.equal(reservedRow?.phase, 'idle');
+  assert.equal(restoredReservedRow?.current_run_id, null);
+  assert.equal(restoredReservedRow?.handoff_run_id, reservedRollbackRunId);
+  assert.equal(restoredReservedRow?.lifecycle, 'ready');
+  assert.equal(restoredReservedRow?.phase, 'idle');
+  const refreshedReservedRow = rpc('fleet.status', { forceRefresh: true }).fleet.slots.find(
+    (candidate) => candidate.slot === reservedRollbackSlotId,
+  );
+  assert.equal(refreshedReservedRow?.currentRunId, null);
+  assert.equal(refreshedReservedRow?.lifecycle, 'ready');
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
