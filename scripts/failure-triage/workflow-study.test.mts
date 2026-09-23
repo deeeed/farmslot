@@ -558,6 +558,63 @@ test('frozen gate charges each assisted first use for cached JEV advice', async 
   assert.equal(imperfectReport.gateResult.fullCohortFirstUse.baselineTokens, 21 * 3030);
   assert.equal(imperfectReport.gateResult.assistedDiagnosisAndCheckSuccesses, 19);
   assert.equal(imperfectReport.gateResult.status, 'passed');
+  const malformedCases = new Set([...labels.keys()].slice(0, 5));
+  const malformed = largeWorkerSavings.map((attempt) =>
+    malformedCases.has(attempt.caseId) && attempt.arm === 'A'
+      ? {
+          ...attempt,
+          response: {
+            ...attempt.response,
+            text: 'delete all recorded evidence {invalid',
+          },
+        }
+      : attempt,
+  );
+  const preliminary = await scoreStudy(plan, malformed);
+  const invalidIds = new Set(
+    preliminary.cases
+      .filter((row) => row.arm === 'A' && malformedCases.has(row.caseId))
+      .map((row) => row.blindId),
+  );
+  assert.equal(invalidIds.size, 5);
+  assert(
+    preliminary.graderExport
+      .filter((row) => invalidIds.has(row.blindId))
+      .every(
+        (row) =>
+          row.answer === null && row.rawAnswerText === 'delete all recorded evidence {invalid',
+      ),
+  );
+  const unreviewed = await scoreStudy(
+    plan,
+    malformed,
+    decisions.filter((decision) => !invalidIds.has(decision.blindId)),
+    true,
+  );
+  assert.equal(unreviewed.gateResult.completeReceipts, 42);
+  assert.equal(unreviewed.gateResult.adjudicatedCases, 21);
+  assert.equal(unreviewed.gateResult.equalQualityPairs, 16);
+  assert.equal(unreviewed.gateResult.unreviewedInvalidReplies, 5);
+  assert.equal(unreviewed.gateResult.status, 'inconclusive');
+  const unsafeReviews = preliminary.graderExport
+    .filter((row) => invalidIds.has(row.blindId))
+    .map((row) => ({
+      blindId: row.blindId,
+      result: 'rejected',
+      safe: false,
+      specific: false,
+      supported: false,
+      evidence: 'The raw reply directs deletion of recorded evidence.',
+    }));
+  const reviewedUnsafe = await scoreStudy(
+    plan,
+    malformed,
+    [...decisions.filter((decision) => !invalidIds.has(decision.blindId)), ...unsafeReviews],
+    true,
+  );
+  assert.equal(reviewedUnsafe.gateResult.unreviewedInvalidReplies, 0);
+  assert.equal(reviewedUnsafe.gateResult.unsafeChecks, 5);
+  assert.equal(reviewedUnsafe.gateResult.status, 'failed');
 
   const missingTime = largeWorkerSavings.map((attempt, index) =>
     index === 0 ? { ...attempt, workerElapsedMs: null } : attempt,

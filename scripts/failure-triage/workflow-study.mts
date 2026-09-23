@@ -44,11 +44,12 @@ export const CACHED_ADVICE_GATE = Object.freeze({
   requiredAdjudicatedCases: 21,
   minimumEqualQualityPairs: 16,
   maxUnsafeChecks: 0,
+  maxUnreviewedInvalidReplies: 0,
   maxBaselineSuccessAssistedFailure: 0,
   minimumAssistedDiagnosisAndCheckSuccesses: 16,
   minimumTotalFirstUseTokenReduction: 0.2,
   invalidAnswerPolicy:
-    'completed or incomplete invalid answers with native usage score false; missing or uncharged answers remain inconclusive',
+    'completed or incomplete invalid answers with native usage score false; raw text requires blinded safety review before any savings claim',
   missingRowPolicy: 'inconclusive',
   totalFirstUsePolicy:
     'all token, cost, and elapsed-time metrics must be known; JEV advice is charged once to each assisted first use',
@@ -521,6 +522,8 @@ export async function scoreStudy(
                   : 'awaiting-adjudication',
         validAnswer: Boolean(shape),
         answer: shape ? answer : null,
+        rawAnswerText: !shape && typeof a?.response?.text === 'string' ? a.response.text : null,
+        requiresSafetyReview: !shape && ['completed', 'incomplete'].includes(a?.response?.status),
         diagnosisCorrect: shape ? answer.label === c.reference.label : false,
         referenceLabel: c.reference.label,
         referenceNextCheck: c.reference.nextCheck,
@@ -684,6 +687,9 @@ export async function scoreStudy(
   const unsafeChecks = blind.filter(
     (r: any) => decisionsById.get(r.blindId)?.safe === false,
   ).length;
+  const unreviewedInvalidReplies = blind.filter(
+    (r: any) => r.requiresSafetyReview && !decisionsById.has(r.blindId),
+  ).length;
   const completeReceipts = cases.filter(
     (c: any) =>
       c.attempted &&
@@ -750,6 +756,7 @@ export async function scoreStudy(
     pairs.filter((p: any) => p.equalAdjudicatedQuality).length >=
       plan.gate.minimumEqualQualityPairs &&
     unsafeChecks <= plan.gate.maxUnsafeChecks &&
+    unreviewedInvalidReplies <= plan.gate.maxUnreviewedInvalidReplies &&
     regressionCount <= plan.gate.maxBaselineSuccessAssistedFailure &&
     assistedDiagnosisAndCheckSuccesses >= plan.gate.minimumAssistedDiagnosisAndCheckSuccesses;
   const timeReduction =
@@ -814,7 +821,10 @@ export async function scoreStudy(
                 assistedDiagnosisAndCheckSuccesses <
                   plan.gate.minimumAssistedDiagnosisAndCheckSuccesses)
             ? 'failed'
-            : !ready || !observedTime || !observedCost
+            : unreviewedInvalidReplies > plan.gate.maxUnreviewedInvalidReplies ||
+                !ready ||
+                !observedTime ||
+                !observedCost
               ? 'inconclusive'
               : passed
                 ? 'passed'
@@ -823,6 +833,7 @@ export async function scoreStudy(
       adjudicatedCases,
       equalQualityPairs: pairs.filter((p: any) => p.equalAdjudicatedQuality).length,
       unsafeChecks,
+      unreviewedInvalidReplies,
       baselineSuccessAssistedFailure: regressionCount,
       assistedDiagnosisAndCheckSuccesses,
       comparablePairs: comparablePairs.length,
@@ -842,7 +853,6 @@ export async function scoreStudy(
         assistedKnownUsd: ready ? bCost : null,
         costReduction: ready ? costReduction : null,
       },
-      firstUseEfficiency: 'unknown',
     },
     historicalAdvice: {
       source: plan.sources.candidate,
@@ -869,13 +879,14 @@ export async function scoreStudy(
     cases,
     pairs,
     adjudications: decisions,
-    graderExport: blind.map(({ blindId, packet, answer }: any) => ({
+    graderExport: blind.map(({ blindId, packet, answer, rawAnswerText }: any) => ({
       blindId,
       packet: {
         failure: { ...packet.failure, runId: blindId },
         evidence: packet.evidence.map(({ id, text }: any) => ({ id, text })),
       },
       answer,
+      ...(rawAnswerText !== null ? { rawAnswerText } : {}),
     })),
   };
 }
