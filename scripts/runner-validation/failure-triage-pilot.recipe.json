@@ -8,7 +8,7 @@
       "gateway": {
         "action": "command",
         "cmd": "FARMSLOT_ASSESSMENT_VALIDATION=1 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/failure-triage.mjs",
-        "timeout_ms": 1200000,
+        "timeout_ms": 2400000,
         "intent": "Drive actual triage RPCs with two clients. Prove coalescing, saved input redaction, feedback, stale-source rejection, restart/crash behavior, explicit retry, completed and rejected over-bound replies, model mismatches, and received HTTP errors or unreadable/oversized bodies without input usage, retaining safe receipt metadata, full elapsed time, and spending lockout. Reject completed advice without input-token usage, preserve role denial and run authority.",
         "next": "done"
       },

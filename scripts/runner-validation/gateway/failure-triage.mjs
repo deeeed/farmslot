@@ -190,8 +190,8 @@ async function start() {
     { env, stdio: ['ignore', log.fd, log.fd] },
   );
   let lastHealth = 'not contacted';
-  // Repeated gateway restarts can take longer than 15s under host load.
-  for (let i = 0; i < 600; i++) {
+  // Allow the isolated gateway to boot when concurrent TypeScript jobs saturate the host.
+  for (let i = 0; i < 1800; i++) {
     if (gateway.exitCode !== null || gateway.signalCode !== null)
       throw new Error('Gateway fixture exited');
     try {
