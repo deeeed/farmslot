@@ -28,10 +28,11 @@ export const PI_ANTHROPIC_MODELS = [
 ] as const;
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
-  claude: ['sonnet', 'opus', 'haiku', 'fable'],
+  claude: ['sonnet', 'opus', 'claude-opus-5-5', 'haiku', 'fable'],
   // Astra first; retain earlier Codex models for explicit selections.
   codex: [
     DEFAULT_CODEX_MODEL,
+    'gpt-6-sol',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
@@ -46,8 +47,8 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
     'cursor-grok-4.6-xhigh',
-    'cursor-grok-4.7-high',
-    'cursor-grok-4.7-xhigh',
+    'grok-4.7-high',
+    'grok-4.7-xhigh',
     'gpt-5.6-sol-medium',
     'gpt-5.6-sol-high',
     'gpt-5.6-sol-max',

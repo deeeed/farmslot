@@ -2954,6 +2954,7 @@ export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 export function codexReasoningEfforts(model?: string | null): readonly CodexReasoningEffort[] {
   switch (model) {
     case 'gpt-6-astra':
+    case 'gpt-6-sol':
     case 'gpt-5.6-sol':
     case 'gpt-5.6-terra':
       return CODEX_REASONING_EFFORTS;

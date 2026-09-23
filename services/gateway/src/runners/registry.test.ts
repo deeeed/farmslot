@@ -142,12 +142,23 @@ describe('claude runner', () => {
 
   it('accepts fable without making it the default model', () => {
     assert.equal(runnerSupportsModel('claude', 'fable'), true);
+    assert.equal(runnerSupportsModel('claude', 'claude-opus-5-5'), true);
+    assert.equal(
+      getRunnerDefinition('claude').nativeChoices?.models.includes('claude-opus-5-5'),
+      true,
+    );
     assert.notEqual(getRunnerDefinition('claude').defaultModel, 'fable');
     assert.equal(runnerSupportsModel('codex', 'fable'), false);
   });
 });
 
 describe('codex runner', () => {
+  it('advertises GPT-6 Sol with its supported reasoning efforts', () => {
+    const definition = getRunnerDefinition('codex');
+    assert.equal(definition.nativeChoices?.models.includes('gpt-6-sol'), true);
+    assert.equal(definition.acceptsEffort?.('gpt-6-sol', 'ultra'), true);
+  });
+
   it('is an interactive TUI runner that receives its task after launch', () => {
     assert.equal(getRunnerDefinition('codex').defaultLaunchMode, 'interactive');
     assert.equal(runnerNeedsPostLaunchPrompt('codex'), true);
@@ -1144,6 +1155,10 @@ describe('cursor runner', () => {
 
   it('accepts composer-2.5, cursor-grok-4.5-high-fast, and account-specific model names', () => {
     assert.equal(runnerSupportsModel('cursor', DEFAULT_CURSOR_MODEL), true);
+    assert.equal(
+      getRunnerDefinition('cursor').nativeChoices?.models.includes('grok-4.7-xhigh'),
+      true,
+    );
     assert.equal(runnerSupportsModel('cursor', 'cursor-grok-4.5-high-fast'), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
@@ -1167,6 +1182,7 @@ describe('grok runner', () => {
     assert.equal(def.id, 'grok');
     assert.equal(def.defaultLaunchMode, 'interactive');
     assert.equal(runnerDefaultModel('grok'), DEFAULT_GROK_MODEL);
+    assert.equal(def.nativeChoices?.models.includes('grok-4.7'), true);
   });
 
   it('uses post-launch prompt delivery and remains tmux-steerable', () => {

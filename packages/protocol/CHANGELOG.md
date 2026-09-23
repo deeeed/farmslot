@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Support GPT-6 Sol reasoning efforts for Codex selections.
+
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 
 - Remove the unreachable PR-preview assessment field; retain historical assessment records.

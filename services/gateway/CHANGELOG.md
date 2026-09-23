@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Offer GPT-6 Sol and Claude Opus 5.5 in native sessions and use Cursor's advertised Grok 4.7 model ID.
+
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 
 - Add an offline-first, bounded failure-triage evaluation CLI with versioned, audited synthetic corpora, deterministic baselines, family-aware reporting and an explicit pilot/hold decision.

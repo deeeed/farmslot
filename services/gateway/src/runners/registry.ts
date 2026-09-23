@@ -280,7 +280,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'claude',
     nativeTransport: 'claude-stream-json',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
+    nativeChoices: {
+      models: ['sonnet', 'opus', 'claude-opus-5-5', 'haiku', 'fable'],
+      modes: ['default'],
+    },
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
@@ -325,6 +328,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeChoices: {
       models: [
         DEFAULT_CODEX_MODEL,
+        'gpt-6-sol',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
@@ -389,7 +393,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
         DEFAULT_CURSOR_MODEL,
         'composer-2.5',
         'cursor-grok-4.6-xhigh',
-        'cursor-grok-4.7-xhigh',
+        'grok-4.7-xhigh',
         'gpt-5.6-sol-medium',
         'gpt-5.6-sol-high',
         'gpt-5.6-sol-max',
