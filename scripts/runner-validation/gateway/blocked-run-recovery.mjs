@@ -278,7 +278,9 @@ try {
       flows: { 'fix-bug': { acceptance: { require: true } } },
     },
   });
+  const initialFleetCheckedAt = new Date().toISOString();
   writeJson(path.join(root, '.farm-status.json'), {
+    checked_at: initialFleetCheckedAt,
     slots: [
       { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
       { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
@@ -413,6 +415,7 @@ try {
 
   logFd = openSync(path.join(temporaryRoot, 'gateway.log'), 'w');
   gateway = await startGateway(port, env);
+  assert.equal(rpc('fleet.status', {}).fleet.checkedAt, initialFleetCheckedAt);
   assert.equal(rpc('run.get', { runId }).run.status, 'blocked');
 
   const lost = denied({ runId: lostRunId, stepName: 'monitor' }, /no longer owns its slot/);
@@ -657,6 +660,7 @@ try {
     ),
   );
   writeJson(path.join(root, '.farm-status.json'), {
+    checked_at: new Date().toISOString(),
     slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId }],
   });
   execFileSync('tmux', ['new-session', '-d', '-s', slotId, '-c', repo, 'sleep 300']);
