@@ -218,7 +218,11 @@ export async function runUiScrollTo(
     x: initial.offset.x + nearestDelta(initialFrame.proofBounds, initialFrame.safeViewport, 'x'),
     y:
       initial.offset.y +
-      alignDelta(initialFrame.proofBounds, initialFrame.safeViewport, request.align),
+      clearCards(
+        initialFrame.proofBounds,
+        alignDelta(initialFrame.proofBounds, initialFrame.safeViewport, request.align),
+        cardOcclusions(initial, request.viewportPolicy),
+      ),
   };
   observation.offset = offset;
   await session.scrollTo(offset);
@@ -368,6 +372,18 @@ function alignDelta(bounds: UiRect, area: UiRect, align: UiScrollToRequest['alig
   if (align === 'end') return end;
   if (align === 'center') return bounds.y + bounds.height / 2 - (area.y + area.height / 2);
   return nearestDelta(bounds, area, 'y');
+}
+
+/** Extend a vertical move so the element does not come to rest under a card-shaped occlusion. */
+function clearCards(bounds: UiRect, deltaY: number, cards: readonly UiRect[]): number {
+  let delta = deltaY;
+  for (const card of cards) {
+    const moved = { ...bounds, y: bounds.y - delta };
+    if (!intersects(card, moved)) continue;
+    const cardBelow = card.y + card.height / 2 >= moved.y + moved.height / 2;
+    delta += cardBelow ? moved.y + moved.height - card.y : moved.y - (card.y + card.height);
+  }
+  return delta;
 }
 
 function nearestDelta(bounds: UiRect, area: UiRect, axis: 'x' | 'y'): number {

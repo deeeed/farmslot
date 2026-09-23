@@ -370,6 +370,22 @@ test('a corner card only blocks targets it covers; it does not shrink the whole 
   assert.equal(moved.finalVisible, true);
 });
 
+test('default nearest alignment moves a target out from under a corner card', async () => {
+  const surface = new FakeSurface({
+    elements: { filters: { top: 300, height: 40 } },
+    occlusions: [{ x: 100, y: 390, width: 100, height: 60 }],
+  });
+  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { status, trace } = await runScrollRecipe(transport, [{ target_test_id: 'filters' }]);
+  assert.equal(status, 'pass', JSON.stringify(trace[0]));
+  const output = scrollOutput(trace[0]);
+  // Row at y 400-440 sits inside the viewport but under the card (390-450): move it to end at 390.
+  assert.deepEqual(output.before?.targetBounds, { x: 16, y: 400, width: 200, height: 40 });
+  assert.deepEqual(output.offset, { x: 0, y: 50 });
+  assert.deepEqual(output.after?.targetBounds, { x: 16, y: 350, width: 200, height: 40 });
+  assert.equal(output.finalVisible, true);
+});
+
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
   const surface = new FakeSurface({
     elements: { filters: { top: 450, height: 40 } },
