@@ -5,5 +5,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["workflow-navigation*.mts"]
+  "include": ["workflow-navigation*.mts", "prove-navigation-workflow.mts"]
 }
