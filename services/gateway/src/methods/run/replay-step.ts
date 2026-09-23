@@ -1559,9 +1559,12 @@ export async function runReplayStep(
           );
         }
       } catch (releaseErr) {
+        const replayMessage = err instanceof Error ? err.message : String(err);
+        const rollbackMessage =
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
         throw new AggregateError(
           [err, releaseErr],
-          `Replay failed: ${String(err)}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${String(releaseErr)}`,
+          `Replay failed: ${replayMessage}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${rollbackMessage}`,
         );
       }
     }

@@ -551,13 +551,24 @@ try {
   poolWithoutSlot.slots = poolWithoutSlot.slots.filter((slot) => slot.id !== freeRollbackSlotId);
   writeJson(poolFile, poolWithoutSlot);
   try {
-    assert.throws(
-      () => rpc('run.replayStep', { runId: rollbackFailureRunId, stepName: 'prepare' }),
+    const rollbackFailure = denied(
+      { runId: rollbackFailureRunId, stepName: 'prepare' },
       /Injected replay failure after claim.*rollback of reclaimed slot.*failed.*not found/s,
     );
+    assert.equal(rollbackFailure.slotId, freeRollbackSlotId);
+    const failedRollbackRow = JSON.parse(
+      readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+    ).slots.find((candidate) => candidate.slot === freeRollbackSlotId);
+    assert.equal(failedRollbackRow?.current_run_id, rollbackFailureRunId);
   } finally {
     writeFileSync(poolFile, poolBeforeFailure);
   }
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+  assert.ok(
+    rpc('fleet.status', { forceRefresh: true }).fleet.slots.some(
+      (candidate) => candidate.slot === freeRollbackSlotId,
+    ),
+  );
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
@@ -785,6 +796,7 @@ try {
       evalRunId,
       rollbackRunId,
       freeRollbackRunId,
+      rollbackFailureRunId,
       updateRunId,
       restart: restarted.status,
       slot: slot?.lifecycle,
