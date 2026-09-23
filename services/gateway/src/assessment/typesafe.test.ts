@@ -93,3 +93,30 @@ test('TypeSafe adapter rejects an answer outside the declared choice set', async
     else process.env.TYPESAFE_API_KEY = previous;
   }
 });
+
+test('TypeSafe adapter rejects malformed token counts without completing advice', async () => {
+  const provider = createTypeSafeProvider(async () =>
+    response({
+      model: 'jev-1.13.0',
+      answers: { risk: { type: 'noul', noul: 0.9 } },
+      usage: { input_tokens: 70000.5, output_tokens: 30 },
+    }),
+  );
+  await assert.rejects(
+    provider.assess({
+      state: 'synthetic risk',
+      questions: { risk: { type: 'boolean', instructions: 'Is the risk present?' } },
+      model: 'jev-1.13.0',
+      apiKey: 'fixture-key',
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AssessmentResponseError);
+      assert.equal(error.attempted, true);
+      assert.equal(error.usage?.inputTokens, undefined);
+      assert.equal(error.usage?.outputTokens, 30);
+      assert.equal(error.returnedModel, 'jev-1.13.0');
+      return true;
+    },
+  );
+});

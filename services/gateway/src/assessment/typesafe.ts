@@ -110,6 +110,11 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
       };
       const returnedModel = identity(result.data.model);
       try {
+        if (
+          (result.data.usage?.input_tokens !== undefined && inputTokens === undefined) ||
+          (result.data.usage?.output_tokens !== undefined && outputTokens === undefined)
+        )
+          throw new Error('provider returned invalid usage');
         const answers: Record<string, AssessmentAnswer> = {};
         for (const [id, question] of Object.entries(questions))
           answers[id] = normalizeAnswer(question, result.data.answers[id]);

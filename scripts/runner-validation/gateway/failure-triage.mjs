@@ -628,6 +628,39 @@ try {
   );
   assert.equal(await count(), 10);
   await stop();
+  // A mismatched returned model above the bound records both reasons and still
+  // locks out later requests under the same priced snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) - 2000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'over-bound-wrong-model');
+  await start();
+  const mismatchView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(mismatchView.availability, 'ready');
+  const mismatchedBound = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: mismatchView.snapshotHash,
+  });
+  assert.equal(mismatchedBound.record.status, 'unavailable');
+  assert.equal(
+    mismatchedBound.record.result.error,
+    'spend-bound-exceeded: returned model does not match the evaluated model',
+  );
+  assert.equal(mismatchedBound.record.result.usage.inputTokens, 70000);
+  assert.equal(mismatchedBound.record.result.usage.costUsd, undefined);
+  assert.equal(await count(), 11);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const mismatchedNext = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: mismatchedNext.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 11);
+  await stop();
   source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
@@ -636,9 +669,10 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 10,
+    providerCalls: 11,
     overBoundUsageRetained: true,
     rejectedOverBoundUsageRetained: true,
+    mismatchedModelOverBoundLocked: true,
     modelIdentityEnforced: true,
     unrelatedBudgetEditPreservesCache: true,
     latestFailedStepDoesNotBorrowAdvice: true,

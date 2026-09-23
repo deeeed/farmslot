@@ -56,7 +56,9 @@ export function priceTriageResult(
         status: 'unavailable',
         answers: undefined,
         usage: priced,
-        error: 'spend-bound-exceeded',
+        error: modelMatched
+          ? 'spend-bound-exceeded'
+          : 'spend-bound-exceeded: returned model does not match the evaluated model',
       }
     : { ...result, usage: priced };
 }
@@ -354,7 +356,7 @@ export async function analyzeFailureTriage(
               };
         }
         const priced = priceTriageResult(result, policy.price, result.returnedModel === model);
-        if (priced.error === 'spend-bound-exceeded' || priced.status !== 'completed') return priced;
+        if (priced.status !== 'completed') return priced;
         if (priced.returnedModel !== model)
           return {
             ...priced,

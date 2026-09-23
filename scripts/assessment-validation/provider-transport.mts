@@ -88,8 +88,9 @@ globalThis.fetch = async (input, init) => {
         },
       },
       usage: {
-        input_tokens: mode === 'native-invalid' ? 321 : 100,
-        output_tokens: mode === 'native-invalid' ? 30 : 20,
+        input_tokens:
+          mode === 'native-invalid' ? 321 : mode === 'native-invalid-usage' ? 70000.5 : 100,
+        output_tokens: mode === 'native-invalid' || mode === 'native-invalid-usage' ? 30 : 20,
       },
     }),
     { headers: { 'content-type': 'application/json' } },

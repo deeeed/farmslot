@@ -174,7 +174,10 @@ export async function reserveAssessment(
       records.some(
         (r) =>
           r.reservation?.priceHash === reservation.priceHash &&
-          r.result?.error === 'spend-bound-exceeded',
+          [
+            'spend-bound-exceeded',
+            'spend-bound-exceeded: returned model does not match the evaluated model',
+          ].includes(r.result?.error ?? ''),
       )
     )
       return { status: 'budget-blocked', cause: 'spend-bound' };

@@ -66,7 +66,10 @@ test('mismatched model retains tokens and the bound but leaves its charge unknow
     false,
   );
   assert.equal(bounded.status, 'unavailable');
-  assert.equal(bounded.error, 'spend-bound-exceeded');
+  assert.equal(
+    bounded.error,
+    'spend-bound-exceeded: returned model does not match the evaluated model',
+  );
   assert.equal(bounded.usage?.inputTokens, 120);
   assert.equal(bounded.usage?.costUsd, undefined);
   assert.equal(bounded.usage?.costKind, undefined);
@@ -99,6 +102,26 @@ test('persisted over-bound reply locks out later calls under the same price snap
       { maxCalls: 2, maxUsd: 0.02 },
     );
     assert.deepEqual(next, { status: 'budget-blocked', cause: 'spend-bound' });
+    const otherSnapshot = { ...reservation, key: 'e'.repeat(64), priceHash: 'f'.repeat(64) };
+    const mismatch = await reserveAssessment(context, otherSnapshot, { maxCalls: 2, maxUsd: 0.02 });
+    assert.equal(mismatch.status, 'reserved');
+    if (mismatch.status !== 'reserved') throw new Error('Missing mismatch fixture reservation');
+    await finishAssessment(
+      mismatch.record,
+      priceTriageResult(
+        { ...result, returnedModel: 'other-model' },
+        { inputUsdPerMillion: 1, maxRequestTokens: 100 },
+        false,
+      ),
+    );
+    assert.deepEqual(
+      await reserveAssessment(
+        context,
+        { ...otherSnapshot, key: '1'.repeat(64) },
+        { maxCalls: 2, maxUsd: 0.02 },
+      ),
+      { status: 'budget-blocked', cause: 'spend-bound' },
+    );
   } finally {
     if (prior === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = prior;

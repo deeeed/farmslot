@@ -45,7 +45,7 @@ globalThis.fetch = async (_url, init) => {
   return new Response(
     JSON.stringify({
       model:
-        mode === 'wrong-model'
+        mode === 'wrong-model' || mode === 'over-bound-wrong-model'
           ? 'unexpected-model'
           : mode === 'missing-model'
             ? undefined
