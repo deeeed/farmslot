@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Let operators associate saved failure advice with a specific pending decision and inspect associated chosen actions in assessment history.
+
 - Show saved acceptance-evidence verdicts and their admitted text in assessment history, with a dedicated filter.
 
 - Show advice at every eligible run gate. Filter advice history and show the saved decision, options, provider, model, operator rating and chosen run action.

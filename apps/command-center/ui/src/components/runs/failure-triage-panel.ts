@@ -24,6 +24,8 @@ const checks: Record<string, string> = {
 export class FailureTriagePanel extends LitElement {
   @property() runId = '';
   @property() runVersion = '';
+  @property({ type: Boolean }) canLinkDecision = false;
+  @property() linkedAssessmentId = '';
   @state() private view?: FailureTriageView;
   @state() private busy = false;
   @state() private analyzing = false;
@@ -103,11 +105,18 @@ export class FailureTriagePanel extends LitElement {
           this.correction = '';
           this.used = false;
         }
+        if (
+          this.linkedAssessmentId &&
+          (view.record?.id !== this.linkedAssessmentId || !view.decisionLinkable)
+        )
+          this.emitDecisionLink(null);
         this.view = view;
       }
     } catch {
-      if (generation === this.generation)
+      if (generation === this.generation) {
+        if (this.linkedAssessmentId) this.emitDecisionLink(null);
         this.error = 'Advice could not be loaded. Refresh to retry.';
+      }
     } finally {
       if (generation === this.generation) this.busy = false;
     }
@@ -132,17 +141,38 @@ export class FailureTriagePanel extends LitElement {
           this.correction = '';
           this.used = false;
         }
+        if (
+          this.linkedAssessmentId &&
+          (view.record?.id !== this.linkedAssessmentId || !view.decisionLinkable)
+        )
+          this.emitDecisionLink(null);
         this.view = view;
       }
     } catch {
-      if (generation === this.generation)
+      if (generation === this.generation) {
+        if (this.linkedAssessmentId) this.emitDecisionLink(null);
         this.error = 'Advice was not returned. Refresh its saved status before retrying.';
+      }
     } finally {
       if (generation === this.generation) {
         this.busy = false;
         this.analyzing = false;
       }
     }
+  }
+  private emitDecisionLink(assessmentId: string | null) {
+    this.dispatchEvent(
+      new CustomEvent('triage-decision-link', {
+        detail: { runId: this.runId, assessmentId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+  private toggleDecisionLink() {
+    const id = this.view?.record?.id;
+    if (!id || !this.view?.advice) return;
+    this.emitDecisionLink(this.linkedAssessmentId === id ? null : id);
   }
   private async feedback(verdict: 'correct' | 'incorrect' | 'insufficient-context') {
     const record = this.view?.record;
@@ -217,7 +247,7 @@ export class FailureTriagePanel extends LitElement {
       <p>${v?.reason ?? ''}</p>
       <p>Recorded step: ${v?.step ?? record?.subject.run?.step ?? 'unavailable'}</p>
       <p>${v?.provider ?? 'No provider selected'} / ${v?.model ?? 'No model selected'}</p>
-      ${v?.stale && record
+      ${v?.stale && record && !v.decisionLinkable
         ? html`<p class="warning">Saved advice belongs to an older or unavailable snapshot.</p>`
         : nothing}
       ${record
@@ -270,7 +300,17 @@ export class FailureTriagePanel extends LitElement {
             <pre>${e.text}</pre>`,
       )}
       ${v?.advice && record?.status === 'completed'
-        ? html`<p>Your feedback is observational.</p>
+        ? html`${this.canLinkDecision && v.decisionLinkable
+              ? html`<button data-triage-action="link-decision" @click=${this.toggleDecisionLink}>
+                    ${this.linkedAssessmentId === record.id
+                      ? 'Remove from next decision'
+                      : 'Associate with next decision'}</button
+                  ><small
+                    >Only records an association when you choose an action. It does not apply the
+                    advice.</small
+                  >`
+              : nothing}
+            <p>Your feedback is observational.</p>
             <label
               ><input
                 type="checkbox"

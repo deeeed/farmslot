@@ -38,6 +38,7 @@ export function buildRunResolveDecisionParams(input: {
   runId: string;
   decision: Pick<RunDecision, 'id' | 'payload'>;
   actionId: string;
+  triageAssessmentId?: string;
   publicationTarget?: PublicationTarget;
   selectedEvidenceKeys?: string[];
   selectionData?: Record<string, unknown>;
@@ -62,6 +63,9 @@ export function buildRunResolveDecisionParams(input: {
     runId: input.runId,
     decisionId: input.decision.id,
     actionId: input.actionId,
+    ...(input.triageAssessmentId !== undefined
+      ? { triageAssessmentId: input.triageAssessmentId }
+      : {}),
     ...(selectionData ? { selectionData } : {}),
     ...(input.resourcePosture ? { resourcePosture: input.resourcePosture } : {}),
   };

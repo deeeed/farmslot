@@ -30,7 +30,11 @@ export class AssessmentPanel extends LitElement {
   @property({ attribute: false }) injectedHistory: AssessmentHistoryResult | null = null;
   @property({ attribute: false }) injectedSummary: AssessmentSummary | null = null;
   @state() private records: AssessmentRecord[] = [];
-  @state() private historyFilter: 'all' | 'decision-advice' | 'acceptance-evidence' = 'all';
+  @state() private historyFilter:
+    | 'all'
+    | 'decision-advice'
+    | 'acceptance-evidence'
+    | 'failure-triage' = 'all';
   @state() private summary: AssessmentSummary | null = null;
   @state() private error = '';
   @state() private busy = false;
@@ -44,6 +48,7 @@ export class AssessmentPanel extends LitElement {
   private loadedPages = 1;
   private readonly decisionOutcomes = new Map<string, { label: string; final: boolean }>();
   private readonly outcomeRequests = new Set<string>();
+  private readonly expandedOutcomeIds = new Set<string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
   private interval?: ReturnType<typeof setInterval>;
@@ -189,8 +194,13 @@ export class AssessmentPanel extends LitElement {
         this.reloadPending = true;
         return;
       }
-      if (selectedId && this.records[0]?.consumer === 'decision-advice')
-        void this.loadDecisionOutcome(this.records[0]);
+      for (const record of this.records) {
+        if (
+          (selectedId === record.id || this.expandedOutcomeIds.has(record.id)) &&
+          ['decision-advice', 'failure-triage'].includes(record.consumer)
+        )
+          void this.loadDecisionOutcome(record);
+      }
       this.summary = summary;
       this.error = '';
     } catch {
@@ -241,8 +251,7 @@ export class AssessmentPanel extends LitElement {
     const decision = run?.decision;
     if (
       !run ||
-      !decision ||
-      this.decisionOutcomes.get(record.id)?.final ||
+      (record.consumer !== 'failure-triage' && !decision) ||
       this.outcomeRequests.has(record.id) ||
       this.injectedHistory
     )
@@ -252,20 +261,37 @@ export class AssessmentPanel extends LitElement {
     this.requestUpdate();
     try {
       const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
-      const resolved = result.run?.decisions.find((item) => item.id === decision.id);
+      const associated =
+        record.consumer === 'failure-triage'
+          ? (result.run?.decisions.filter((item) => item.triageAssessmentId === record.id) ?? [])
+          : [];
+      const resolved = result.run?.decisions.find((item) => item.id === decision?.id);
       this.decisionOutcomes.set(
         record.id,
-        resolved?.resolvedAction
+        record.consumer === 'failure-triage' && associated.length
           ? {
-              label:
-                decision.actions.find((action) => action.id === resolved.resolvedAction)?.label ??
-                resolved.resolvedAction,
-              final: true,
-            }
-          : {
-              label: resolved ? 'Still pending' : 'Decision no longer available in run',
+              label: associated
+                .map(
+                  (item) =>
+                    `${item.title}: ${item.actions.find((action) => action.id === item.resolvedAction)?.label ?? item.resolvedAction ?? 'Pending'}`,
+                )
+                .join(' · '),
               final: false,
-            },
+            }
+          : resolved?.resolvedAction
+            ? {
+                label: `${resolved.title}: ${resolved.actions.find((action) => action.id === resolved.resolvedAction)?.label ?? resolved.resolvedAction}`,
+                final: true,
+              }
+            : {
+                label:
+                  record.consumer === 'failure-triage'
+                    ? 'No chosen action associated with this advice'
+                    : resolved
+                      ? 'Still pending'
+                      : 'Decision no longer available in run',
+                final: false,
+              },
       );
     } catch (error) {
       this.decisionOutcomes.set(record.id, {
@@ -332,7 +358,8 @@ export class AssessmentPanel extends LitElement {
             this.historyFilter = (event.target as HTMLSelectElement).value as
               | 'all'
               | 'decision-advice'
-              | 'acceptance-evidence';
+              | 'acceptance-evidence'
+              | 'failure-triage';
             this.loadedPages = 1;
             this.cursor = undefined;
             this.records = this.injectedHistory
@@ -347,6 +374,7 @@ export class AssessmentPanel extends LitElement {
         >
           <option value="all">All assessments</option>
           <option value="decision-advice">Decision recommendations</option>
+          <option value="failure-triage">Failure advice</option>
           <option value="acceptance-evidence">AC evidence</option>
         </select>
       </label>
@@ -435,13 +463,14 @@ export class AssessmentPanel extends LitElement {
                   : 'Synthetic connection test'}
               · ${record.startedAt}
               ${(record.consumer === 'decision-advice' ||
+                record.consumer === 'failure-triage' ||
                 record.consumer === 'acceptance-evidence') &&
               record.subject.run
                 ? html` ·
                     <a href=${`#runs?run=${encodeURIComponent(record.subject.run.id)}`}
-                      >${record.consumer === 'acceptance-evidence'
-                        ? 'View run'
-                        : 'View decision in run'}</a
+                      >${record.consumer === 'decision-advice'
+                        ? 'View decision in run'
+                        : 'View run'}</a
                     >`
                 : nothing}
             </p>
@@ -466,9 +495,11 @@ export class AssessmentPanel extends LitElement {
                     : (record.recommendation?.route ?? 'Not assessed')}
               ${record.consumer === 'decision-advice'
                 ? `· ${adviceRating(record)}`
-                : record.consumer === 'acceptance-evidence'
-                  ? '· Advisory only; AC ledger unchanged'
-                  : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
+                : record.consumer === 'failure-triage'
+                  ? '· Advice only; an operator may associate a chosen action'
+                  : record.consumer === 'acceptance-evidence'
+                    ? '· Advisory only; AC ledger unchanged'
+                    : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
               ${record.result?.provider ?? record.requestedIdentity?.provider ?? 'No provider'} /
@@ -481,15 +512,15 @@ export class AssessmentPanel extends LitElement {
             <details
               ?open=${Boolean(this.selectedId)}
               @toggle=${(event: Event) => {
-                if (
-                  (event.currentTarget as HTMLDetailsElement).open &&
-                  record.consumer === 'decision-advice'
-                )
+                if (!['decision-advice', 'failure-triage'].includes(record.consumer)) return;
+                if ((event.currentTarget as HTMLDetailsElement).open) {
+                  this.expandedOutcomeIds.add(record.id);
                   void this.loadDecisionOutcome(record);
+                } else this.expandedOutcomeIds.delete(record.id);
               }}
             >
               <summary>
-                ${record.consumer === 'decision-advice'
+                ${record.consumer === 'decision-advice' || record.consumer === 'failure-triage'
                   ? 'Decision, outcome and feedback'
                   : 'Answers, provenance and feedback'}
               </summary>
@@ -512,6 +543,19 @@ export class AssessmentPanel extends LitElement {
                 : record.consumer === 'decision-advice'
                   ? html`<p>Decision context was not saved with this older assessment.</p>`
                   : nothing}
+              ${record.consumer === 'failure-triage' && record.subject.run
+                ? html`<section>
+                    <h4>Run decision association</h4>
+                    <p>
+                      ${this.decisionOutcomes.get(record.id)?.label ??
+                      (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
+                    </p>
+                    <small
+                      >Association records the operator's choice, not whether advice caused
+                      it.</small
+                    >
+                  </section>`
+                : nothing}
               ${record.consumer === 'acceptance-evidence' && record.subject.run?.criterion
                 ? html`<section>
                     <h4>

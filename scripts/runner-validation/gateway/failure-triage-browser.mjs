@@ -49,7 +49,10 @@ const probe = `
     button:p?.shadowRoot?.querySelector('[data-triage-action=analyze]')?.textContent?.trim(),
     feedback:text.includes('Saved feedback: correct'), corrected:text.includes('corrected cause: test_harness'), redacted:text.includes('[REDACTED]'),
     canaryAbsent:!text.includes('triage-canary-private'), approvedModel:text.includes('Returned model: jev-1.13.0'),
-    inputVisible:!!p?.shadowRoot?.querySelector('pre') };
+    inputVisible:!!p?.shadowRoot?.querySelector('pre'),
+    linkButton:p?.shadowRoot?.querySelector('[data-triage-action=link-decision]')?.textContent?.trim(),
+    decisionError:find(document,'run-detail')?.shadowRoot?.querySelector('[data-decision-resolve-error]')?.textContent?.trim(),
+    gateButtons:[...(find(document,'run-detail')?.shadowRoot?.querySelectorAll('.gate-action-btn') ?? [])].map(b=>({text:b.textContent.trim(),disabled:b.disabled})) };
 `;
 async function waitFor(predicate) {
   for (let i = 0; i < 60; i++) {
@@ -63,6 +66,16 @@ const count = async () =>
   (await readFile(path.join(out, 'requests.jsonl'), 'utf8')).trim().split('\n').filter(Boolean)
     .length;
 cdp('goto', `${process.env.FARMSLOT_UI_URL.replace(/\/$/, '')}/#${route}`, '--new');
+// A fresh CDP profile starts on the first-connection screen. Submit through
+// its form so the browser uses the same connection path as an operator.
+if (cdp('eval', route, "return !!document.querySelector('.onboarding-connect');")) {
+  cdp(
+    'eval',
+    route,
+    `const form=document.querySelector('.onboarding-connect');const input=form.querySelector('input');input.value=${JSON.stringify(session.gateway)};input.dispatchEvent(new Event('input',{bubbles:true}));form.requestSubmit();return true;`,
+  );
+  cdp('goto', `${process.env.FARMSLOT_UI_URL.replace(/\/$/, '')}/#${route}`);
+}
 for (let i = 0; i < 60; i++) {
   if (cdp('eval', route, "return !!document.querySelector('.auth-card');")) {
     cdp('login', route);
@@ -110,6 +123,83 @@ const cachedCount = await count();
 cdp('click', route, '[data-triage-action="analyze"]');
 await waitFor((r) => r.state === 'completed');
 assert.equal(await count(), cachedCount, 'Cached UI advice triggered another request');
+// The kept gateway loaded three pending synthetic decisions during its last restart.
+const decisionIds = JSON.parse(await readFile(path.join(out, 'browser-decision-ids.json'), 'utf8'));
+assert.equal(
+  cdp('gateway', 'run.get', JSON.stringify({ runId: session.runId })).run.decisions.filter(
+    (d) => !d.resolvedAt,
+  ).length,
+  3,
+);
+cdp('goto', `${process.env.FARMSLOT_UI_URL.replace(/\/$/, '')}/#${route}&pending=${Date.now()}`);
+await waitFor((r) => r.found && r.gateButtons.some((b) => b.text === 'Continue'));
+if (!cdp('eval', route, probe).open) cdp('click', route, '#failure-triage-summary');
+await waitFor((r) => r.open && r.linkButton === 'Associate with next decision');
+cdp('click', route, '[data-triage-action="link-decision"]');
+await waitFor((r) => r.linkButton === 'Remove from next decision');
+cdp('click', route, '[data-triage-action="link-decision"]');
+await waitFor((r) => r.linkButton === 'Associate with next decision');
+cdp('click', route, '[data-triage-action="link-decision"]');
+await waitFor((r) => r.linkButton === 'Remove from next decision');
+const sourceFile = path.join(out, 'root/.omx/logs/validation/failure.log');
+const approvedSource = await readFile(sourceFile, 'utf8');
+await writeFile(sourceFile, approvedSource + 'Changed after approval\n');
+// Do not refresh the panel: the selected association must fail visibly when the
+// gateway rechecks the changed source at resolution time.
+cdp('click', route, '.gate-action-btn');
+const rejected = await waitFor((r) => r.decisionError?.includes('Decision was not saved'));
+assert.match(rejected.decisionError, /Advice selection was cleared/);
+assert.equal(rejected.linkButton, 'Associate with next decision');
+assert.equal(
+  cdp('gateway', 'run.get', JSON.stringify({ runId: session.runId })).run.decisions.find(
+    (d) => d.id === decisionIds[0],
+  ).resolvedAt,
+  undefined,
+  'Rejected advice must leave the decision pending',
+);
+cdp('click', route, '.gate-action-btn');
+for (let i = 0; i < 60; i++) {
+  const resolved = cdp(
+    'gateway',
+    'run.get',
+    JSON.stringify({ runId: session.runId }),
+  ).run.decisions.find((d) => d.id === decisionIds[0]);
+  if (resolved?.resolvedAt) {
+    assert.equal(resolved.resolvedAction, 'continue');
+    assert.equal(
+      resolved.triageAssessmentId,
+      undefined,
+      'Stale selection must not block or attach to decision',
+    );
+    break;
+  }
+  if (i === 59) throw new Error('Decision without stale advice did not resolve');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+await writeFile(sourceFile, approvedSource);
+cdp('click', route, 'run-detail >>> failure-triage-panel >>> details button');
+await waitFor((r) => r.state === 'completed' && r.linkButton === 'Associate with next decision');
+cdp('click', route, '[data-triage-action="link-decision"]');
+await waitFor((r) => r.linkButton === 'Remove from next decision');
+cdp('click', route, '.gate-action-btn');
+for (let i = 0; i < 60; i++) {
+  const resolved = cdp(
+    'gateway',
+    'run.get',
+    JSON.stringify({ runId: session.runId }),
+  ).run.decisions.find((d) => d.id === decisionIds[1]);
+  if (resolved?.resolvedAt) {
+    assert.equal(resolved.resolvedAction, 'continue');
+    assert.equal(
+      resolved.triageAssessmentId,
+      cdp('gateway', 'intelligence.triage.get', JSON.stringify({ runId: session.runId })).record.id,
+    );
+    break;
+  }
+  if (i === 59) throw new Error('Decision with selected advice did not resolve');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+assert.equal(await count(), cachedCount, 'Associating a decision must not invoke the provider');
 cdp('screenshot', route, path.join(out, 'browser.png'));
 await writeFile(
   path.join(out, 'browser-proof.json'),
@@ -136,7 +226,7 @@ console.log(
 );
 
 const saved = cdp('gateway', 'intelligence.triage.get', JSON.stringify({ runId: session.runId }));
-const auditRoute = `intelligence?tab=assessments&assessment=${saved.record.id}`;
+const auditRoute = `intelligence?tab=assessments`;
 cdp('goto', `${process.env.FARMSLOT_UI_URL.replace(/\/$/, '')}/#${auditRoute}`);
 const auditProbe = `function find(r){const p=r.querySelector('assessment-panel');if(p)return p;for(const e of r.querySelectorAll('*'))if(e.shadowRoot){const p=find(e.shadowRoot);if(p)return p;}}const p=find(document);return {detail:!!p?.shadowRoot?.querySelector('article[id="${saved.record.id}"]'),text:p?.shadowRoot?.textContent??''};`;
 let audit;
@@ -146,11 +236,45 @@ for (let i = 0; i < 60; i++) {
   await new Promise((resolve) => setTimeout(resolve, 200));
 }
 assert.ok(audit?.detail, 'Triage record must appear in shared assessment history');
+cdp('click', 'intelligence', `article[id="${saved.record.id}"] > details > summary`);
+for (let i = 0; i < 60; i++) {
+  audit = cdp('eval', 'intelligence', auditProbe);
+  if (audit.text.includes('Browser decision 2: Continue')) break;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
 assert.match(audit.text, /failure-triage/);
 assert.match(audit.text, /confirmed provider attempts/);
 assert.match(audit.text, /unknown charges/);
 assert.match(audit.text, /Workflow savings:/);
 assert.ok(audit.text.includes(session.runId));
+assert.match(audit.text, /Browser decision 2: Continue/, 'History must show the chosen action');
+assert.ok(
+  !audit.text.includes('Browser decision 1: Continue'),
+  'History must only associate explicitly selected advice',
+);
+// Keep the history detail open while another decision is associated. Refresh
+// must reread the run outcome without closing or reopening that detail.
+cdp(
+  'gateway',
+  'run.resolveDecision',
+  JSON.stringify({
+    runId: session.runId,
+    decisionId: decisionIds[2],
+    actionId: 'continue',
+    triageAssessmentId: saved.record.id,
+  }),
+);
+cdp('click', 'intelligence', '[data-action="refresh"]');
+for (let i = 0; i < 60; i++) {
+  audit = cdp('eval', 'intelligence', auditProbe);
+  if (audit.text.includes('Browser decision 3: Continue')) break;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+assert.match(
+  audit.text,
+  /Browser decision 3: Continue/,
+  'Open history detail must refresh associations',
+);
 assert.equal(await count(), cachedCount, 'Monitoring must not invoke the provider');
 cdp('screenshot', 'intelligence', path.join(out, 'monitoring.png'));
 console.log(JSON.stringify({ monitoringPassed: true, providerCallsAdded: 0 }));

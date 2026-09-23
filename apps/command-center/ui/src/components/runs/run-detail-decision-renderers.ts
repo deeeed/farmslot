@@ -102,6 +102,7 @@ export interface RunDecisionRenderContext {
   directRunRefreshFailed: boolean;
   actionsBlocked: boolean;
   pendingConfirm: string | null;
+  decisionResolveError: string | null;
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string;
   selectedSlotId: string | null;
@@ -227,6 +228,9 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
               `
             : nothing}
       </div>
+      ${context.decisionResolveError
+        ? html`<p role="alert" data-decision-resolve-error>${context.decisionResolveError}</p>`
+        : nothing}
       ${supportsDecisionAdvice(pending) && !context.actionsBlocked && !recoveredTimeout
         ? html`<decision-advice-panel
             .runId=${run.id}

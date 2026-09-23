@@ -205,8 +205,11 @@ export interface ConfirmDecisionContext extends ConfirmTimerContext {
    * Sent as the typed `resourcePosture` param, never as free-form selection data.
    */
   resourcePosture?: () => ResourcePostureGateChoice | null;
+  triageAssessmentId?: () => string | undefined;
   /** Called with the resolved run so the caller can surface the apply outcome. */
   onDecisionResolved?: (run: Run) => void;
+  onDecisionAttempt?: () => void;
+  onDecisionError?: (error: Error) => void;
 }
 
 export interface InteractiveHandoffSignalContext {
@@ -289,6 +292,8 @@ export function confirmRunDecision(
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);
     const resourcePosture = context.resourcePosture?.() ?? null;
+    const triageAssessmentId = context.triageAssessmentId?.();
+    context.onDecisionAttempt?.();
     gateway
       .request<RunResolveDecisionResult>(
         Methods.RUN_RESOLVE_DECISION,
@@ -297,6 +302,7 @@ export function confirmRunDecision(
           decision,
           actionId,
           ...(resourcePosture ? { resourcePosture } : {}),
+          ...(triageAssessmentId ? { triageAssessmentId } : {}),
         }),
       )
       .then((result) => {
@@ -311,7 +317,7 @@ export function confirmRunDecision(
       })
       .catch((err) => {
         // Keep the decision unresolved in place; the gateway remains the source of truth.
-        console.error('Failed to resolve decision:', err);
+        context.onDecisionError?.(err instanceof Error ? err : new Error(String(err)));
       });
   } else {
     clearTimeout(context.confirmTimer());

@@ -61,6 +61,7 @@ execFileSync(
 const sourcePath = path.join(root, '.omx/logs/validation/failure.log');
 await mkdir(path.dirname(sourcePath), { recursive: true });
 const id = randomUUID(),
+  decisionId = randomUUID(),
   now = new Date().toISOString();
 const run = {
   id,
@@ -83,7 +84,16 @@ const run = {
       outputs: { logPath: sourcePath },
     },
   ],
-  decisions: [],
+  decisions: [
+    {
+      id: decisionId,
+      type: 'blocked_alert',
+      title: 'Synthetic failure gate',
+      description: 'Choose how to continue this synthetic run',
+      actions: [{ id: 'continue', label: 'Continue', style: 'primary' }],
+      createdAt: now,
+    },
+  ],
   metrics: {
     nudgeCount: 0,
     model: 'scripted',
@@ -838,7 +848,6 @@ try {
     dollarBudgetAndStalePriceEnforced: true,
   };
   await writeFile(path.join(out, 'proof.json'), JSON.stringify(proof, null, 2), { mode: 0o600 });
-  console.log(JSON.stringify(proof));
   if (smoke) {
     await stop();
     // A separate, explicitly authorized wiring smoke. It is never benchmark evidence.
@@ -886,6 +895,119 @@ try {
     await writeFile(path.join(home, 'assessments', latest.id + '.json'), JSON.stringify(latest));
     await start();
   }
+  if (!smoke) {
+    // Bind a completed assessment through the real decision RPC. A refusal must
+    // leave the decision open, while a successful choice stores provenance only.
+    policy.price = {
+      ...price,
+      verifiedAt: now,
+      source: 'https://example.invalid/simulated-pricing',
+    };
+    await savePolicy();
+    const restored = rpc('intelligence.triage.get', { runId: id });
+    assert.equal(restored.availability, 'ready', restored.reason);
+    assert.equal(restored.snapshotHash, first.record.subject.run.snapshotHash);
+    const resolution = {
+      runId: id,
+      decisionId,
+      actionId: 'continue',
+      triageAssessmentId: first.record.id,
+    };
+    const owner = rpc('principal.create', {
+      subject: { type: 'person', displayName: 'triage-other-admin' },
+      roles: [{ role: 'admin', scope: { kind: 'global' } }],
+    }).principal;
+    const otherCredential = rpc('credential.issue', {
+      principalId: owner.id,
+      displayName: 'triage-other-admin',
+    });
+    if (otherCredential.adminGrant) env.FARMSLOT_GATEWAY_TOKEN = otherCredential.adminGrant.secret;
+    assert.throws(
+      () => rpc('run.resolveDecision', resolution, otherCredential.secret),
+      /Assessment not found or expired/,
+    );
+    assert.equal(rpc('run.get', { runId: id }).run.decisions[0].resolvedAt, undefined);
+    const anotherId = randomUUID(),
+      anotherDecisionId = randomUUID();
+    await writeFile(
+      path.join(runs, `${anotherId}.json`),
+      JSON.stringify({
+        ...run,
+        id: anotherId,
+        familyId: anotherId,
+        decisions: [{ ...run.decisions[0], id: anotherDecisionId }],
+      }),
+    );
+    await stop();
+    await start();
+    assert.throws(
+      () =>
+        rpc('run.resolveDecision', {
+          ...resolution,
+          runId: anotherId,
+          decisionId: anotherDecisionId,
+        }),
+      /Select a completed failure-triage assessment of this run and failed step/,
+    );
+    assert.equal(rpc('run.get', { runId: anotherId }).run.decisions[0].resolvedAt, undefined);
+    env.FARMSLOT_ASSESSMENT_ENABLED = 'false';
+    await stop();
+    await start();
+    assert.equal(rpc('intelligence.triage.get', { runId: id }).availability, 'disabled');
+    await writeFile(sourcePath, source + 'changed');
+    assert.throws(
+      () => rpc('run.resolveDecision', resolution),
+      /Source content changed since approval/,
+    );
+    assert.equal(rpc('run.get', { runId: id }).run.decisions[0].resolvedAt, undefined);
+    await writeFile(sourcePath, source);
+    const resolved = rpc('run.resolveDecision', resolution);
+    assert.equal(resolved.run.decisions[0].triageAssessmentId, first.record.id);
+    assert.equal(resolved.run.decisions[0].resolvedAction, 'continue');
+    assert.equal(
+      rpc('run.get', { runId: id }).run.decisions[0].triageAssessmentId,
+      first.record.id,
+    );
+    assert.equal(await count(), 16, 'Decision reference makes no provider call');
+    await stop();
+    await start();
+    const persistedDecision = rpc('run.get', { runId: id }).run.decisions.find(
+      (candidate) => candidate.id === decisionId,
+    );
+    assert.equal(persistedDecision?.triageAssessmentId, first.record.id);
+    assert.equal(persistedDecision?.resolvedAction, 'continue');
+    assert.ok(persistedDecision.resolvedAt, 'Resolution must survive a gateway restart');
+    assert.equal(await count(), 16, 'Rereading the decision makes no provider call');
+    proof.decisionBindingSurvivesRestart = true;
+    proof.decisionAssessmentBinding = true;
+    proof.savedAdviceLinksWithAssessmentDisabled = true;
+    await writeFile(path.join(out, 'proof.json'), JSON.stringify(proof, null, 2), { mode: 0o600 });
+    if (keep) {
+      env.FARMSLOT_ASSESSMENT_ENABLED = 'true';
+      await stop();
+      // Browser proof needs pending decisions loaded through the run store's normal
+      // startup path; writes to run JSON after startup do not change the live run.
+      const decisions = Array.from({ length: 3 }, (_, index) => ({
+        id: randomUUID(),
+        type: 'blocked_alert',
+        title: `Browser decision ${index + 1}`,
+        description: 'Choose how to continue this synthetic run',
+        actions: [{ id: 'continue', label: 'Continue', style: 'primary' }],
+        createdAt: new Date(Date.now() + index).toISOString(),
+      }));
+      const savedRun = JSON.parse(await readFile(runFile, 'utf8'));
+      await writeFile(
+        runFile,
+        JSON.stringify({ ...savedRun, decisions: [...savedRun.decisions, ...decisions] }),
+      );
+      await writeFile(
+        path.join(out, 'browser-decision-ids.json'),
+        JSON.stringify(decisions.map((item) => item.id)),
+      );
+      await start();
+    }
+  }
+  console.log(JSON.stringify(proof));
   if (keep) {
     await writeFile(
       path.join(out, 'ui-session.json'),
