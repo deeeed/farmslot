@@ -91,14 +91,16 @@ export async function executeCIWatchStep(
   } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
-  const abortedDecision = current.decisions.find(
-    (decision) =>
-      (decision.type === 'ci_inline_fix_blocked' ||
-        decision.type === 'ci_ci_failed' ||
-        decision.type === 'ci_ci_timeout') &&
-      decision.resolvedAt &&
-      decision.resolvedAction === 'abort',
-  );
+  const abortedDecision = [...current.decisions]
+    .reverse()
+    .find(
+      (decision) =>
+        (decision.type === 'ci_inline_fix_blocked' ||
+          decision.type === 'ci_ci_failed' ||
+          decision.type === 'ci_ci_timeout') &&
+        decision.resolvedAt &&
+        decision.resolvedAction === 'abort',
+    );
   if (abortedDecision) {
     const failedChecks = Array.isArray(abortedDecision.context?.failedChecks)
       ? abortedDecision.context.failedChecks.filter(

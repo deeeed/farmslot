@@ -153,6 +153,17 @@ test('ci-watch does not poll after an operator abort survives a gateway restart'
     prNumber: 123,
     decisions: [
       {
+        id: `earlier-ci-abort-${run.id}`,
+        type: 'ci_ci_timeout',
+        title: 'CI timed out',
+        description: 'CI did not finish',
+        actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
+        createdAt: new Date().toISOString(),
+        context: { failedChecks: ['Old check'] },
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'abort',
+      },
+      {
         id: `ci-abort-${run.id}`,
         type: 'ci_inline_fix_blocked',
         title: 'CI fix blocked',
