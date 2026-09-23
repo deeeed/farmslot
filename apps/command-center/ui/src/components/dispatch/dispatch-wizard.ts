@@ -139,6 +139,13 @@ export class DispatchWizard extends DispatchWizardState {
     if (changed.has('_flowType') && this._project && this._flowType) {
       this._applyVisibleCatalog();
     }
+    if (
+      ['_slotOverride', '_slotOverrideExplicit', '_transport', '_nativeProfileSelection'].some(
+        (key) => changed.has(key),
+      )
+    ) {
+      void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
+    }
     // Ticket identity can change target-branch scoring and nudge rows. Keep the
     // current snapshot on screen and rescore in the background.
     const scoringTickers = ['_ticketId', '_normalizedTicket'];
@@ -702,7 +709,8 @@ export class DispatchWizard extends DispatchWizardState {
       // operator clicked while this fetch was in flight (e.g. a pressure
       // Override pick) must survive the apply instead of being auto-replaced.
       this._applyVisibleCandidates(this._slotOverride || prevOverride);
-      void this._fetchProfileFitSuggestion(this._project, gen);
+      if (this._slotOverride === prevOverride)
+        void this._fetchProfileFitSuggestion(this._project, gen);
     } catch (err) {
       if (gen !== this._fetchGen) return;
       console.warn('[dispatch-wizard] dispatch.candidates failed:', err);
@@ -727,7 +735,9 @@ export class DispatchWizard extends DispatchWizardState {
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
     const requestGen = ++this._profileFitRequestGen;
-    this._profileFitSuggestion = null;
+    const selectionKey = `${this._slotOverride}|${this._slotOverrideExplicit}|${this._transport}|${this._nativeProfileSelection?.executionNodeId ?? ''}`;
+    if (selectionKey !== this._profileFitSelectionKey) this._profileFitSuggestion = null;
+    this._profileFitSelectionKey = selectionKey;
     if (
       this._flowType === 'review-pr' ||
       this._flowType === 'qa' ||
@@ -735,6 +745,7 @@ export class DispatchWizard extends DispatchWizardState {
       !this._flowType ||
       !this._ticketId.trim() ||
       this._prepareProfile.trim() ||
+      (this._transport === 'native' && this._nativeAutomaticSlot && !this._slotOverride) ||
       this.mockMode
     ) {
       this._profileFitSuggestion = null;
@@ -1119,7 +1130,6 @@ export class DispatchWizard extends DispatchWizardState {
     this._closeExecutionTemplatePreview(false);
     this._slotOverride = slotId;
     this._slotOverrideExplicit = true;
-    void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
     this._resetPressureOverrideDraft();
     // A rejected busy nudge candidate keeps its explicit reuse intent through
     // the override flow. The created run carries nudgeReuse/freshReuse, never
@@ -1145,7 +1155,6 @@ export class DispatchWizard extends DispatchWizardState {
     // active one and the next Dispatch click ignores it.
     this._slotOverride = slotId;
     this._slotOverrideExplicit = true;
-    void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
     this._applyVisibleCatalog();
   }
 
@@ -1937,7 +1946,6 @@ export class DispatchWizard extends DispatchWizardState {
         if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
         this._slotOverrideExplicit = Boolean(slotId);
-        void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
         this._applyVisibleCandidates();
         this._applyVisibleCatalog();
       },

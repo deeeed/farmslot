@@ -63,7 +63,7 @@ export abstract class DispatchWizardState extends LitElement {
   _nativeAutomaticSlot = false;
   @state() _effort: EffortLevel = '';
   @state() _slotOverride = '';
-  _slotOverrideExplicit = false;
+  @state() _slotOverrideExplicit = false;
   @state() _project = '';
   @state() _app = '';
   @state() _availableProjects: string[] = [];
@@ -95,6 +95,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _prepareProfile = '';
   @state() _profileFitSuggestion: ProfileFitSuggestion | null = null;
   _profileFitRequestGen = 0;
+  _profileFitSelectionKey = '';
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewMachine = '';
   @state() _legacyReviewPlacementError = '';

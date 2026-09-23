@@ -76,6 +76,7 @@ async function waitForGrade(runId, expectedDecision) {
         profileDecision.actions.map((action) => action.id),
         ['continue', 'abort'],
       );
+      assert.equal(profileDecision.actions[0].style, 'primary');
       assert.deepEqual(
         pending.map((entry) => entry.type),
         ['engine_prepare_profile_mismatch'],
@@ -126,8 +127,7 @@ function cleanup() {
   } catch (error) {
     cleanupErrors.push(error);
   }
-  if (cleanupErrors.length)
-    throw new AggregateError(cleanupErrors, 'Could not cancel synthetic runs');
+  if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Synthetic run cleanup failed');
 }
 
 const errors = [];
@@ -148,6 +148,19 @@ try {
   const fleet = rpc('fleet.refresh').fleet.slots;
   assert.ok(fleet.some((entry) => entry.slot === withoutSim));
   assert.ok(fleet.some((entry) => entry.slot === withSim));
+  const automatic = rpc(
+    'dispatch.preview',
+    request(undefined, `FS-${Math.floor(Date.now() / 1000)}0`),
+  ).preview;
+  assert.ok([withoutSim, withSim].includes(automatic.slotId));
+  if (automatic.slotId === withoutSim) {
+    assert.match(
+      automatic.profileFit?.slotResourceBlocker ?? '',
+      /ios-sim, android-emu, android-device/,
+    );
+  } else {
+    assert.equal(automatic.profileFit, undefined);
+  }
   for (const [slotId, decisionExpected] of [
     [withoutSim, true],
     [withSim, false],
