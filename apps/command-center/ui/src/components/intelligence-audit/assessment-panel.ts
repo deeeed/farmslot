@@ -189,6 +189,8 @@ export class AssessmentPanel extends LitElement {
         this.reloadPending = true;
         return;
       }
+      if (selectedId && this.records[0]?.consumer === 'decision-advice')
+        void this.loadDecisionOutcome(this.records[0]);
       this.summary = summary;
       this.error = '';
     } catch {
