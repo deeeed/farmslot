@@ -721,7 +721,7 @@ export async function runReplayStep(
       const status = await runtimeCapabilityStatus({ slotId });
       if (!blockedMonitorProofReady(existing, status)) {
         blocker =
-          status.catalog.length && !status.proofPlans[existing.id]
+          status.catalog?.length && !status.proofPlans[existing.id]
             ? `No proof plan is recorded. ${nextAction} instead.`
             : `Proof resources are not healthy after the block. ${nextAction} instead.`;
       }
@@ -995,16 +995,21 @@ export async function runReplayStep(
               // only claim that same worker; an intervening release or reassignment
               // must not turn this into a generic free-slot reclaim.
               if (probeBlockedMonitor && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
-              if (existing.status === 'blocked' && blockedMonitorOwnsSlot(slot, params.runId)) {
+              const reclaim = replaySlotReclaimCheck(slot, params.runId, {
+                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
+              });
+              if (
+                reclaim.ok &&
+                existing.status === 'blocked' &&
+                blockedMonitorOwnsSlot(slot, params.runId)
+              ) {
                 priorOwnedSlotFields = {
                   lifecycle: slot.lifecycle,
                   phase: slot.phase,
                   agent: slot.agent,
                 };
               }
-              return replaySlotReclaimCheck(slot, params.runId, {
-                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-              }).ok;
+              return reclaim.ok;
             },
             {
               lifecycle: 'busy',
@@ -1554,8 +1559,9 @@ export async function runReplayStep(
           );
         }
       } catch (releaseErr) {
-        console.warn(
-          `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
+        throw new AggregateError(
+          [err, releaseErr],
+          `Replay failed: ${String(err)}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${String(releaseErr)}`,
         );
       }
     }

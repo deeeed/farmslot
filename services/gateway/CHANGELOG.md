@@ -15,7 +15,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
 
-- Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, and reroute blocked eval runs to prepare or find-slot as ownership requires.
+- Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, report rollback failures alongside the original replay error, and reroute blocked eval runs to prepare or find-slot as ownership requires.
 
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
