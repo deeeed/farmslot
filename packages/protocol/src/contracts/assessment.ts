@@ -148,6 +148,12 @@ export interface AssessmentSubject {
     step: string;
     snapshotHash: string;
     /** Admitted decision packet, retained with the advice so resolved gates remain reviewable. */
+    admission?: { classification: 'public' | 'synthetic'; sourceRef: string };
+    criterion?: {
+      id: string;
+      text: string;
+      evidence: Array<{ id: string; text: string }>;
+    };
     decision?: {
       id: string;
       type: string;
@@ -163,6 +169,7 @@ export const ASSESSMENT_CONSUMERS = [
   'smoke-test',
   'failure-triage',
   'decision-advice',
+  'acceptance-evidence',
 ] as const;
 
 export interface AssessmentReservation {

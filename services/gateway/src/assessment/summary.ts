@@ -18,7 +18,12 @@ export function assessmentCohort(record: AssessmentRecord) {
 }
 export function assessmentCase(record: AssessmentRecord): string | undefined {
   const run = record.subject.run;
-  if ((record.consumer === 'failure-triage' || record.consumer === 'decision-advice') && run)
+  if (
+    (record.consumer === 'failure-triage' ||
+      record.consumer === 'decision-advice' ||
+      record.consumer === 'acceptance-evidence') &&
+    run
+  )
     return JSON.stringify([
       record.consumer,
       run.id,
@@ -40,7 +45,12 @@ export function assessmentCase(record: AssessmentRecord): string | undefined {
 /** Accounting groups requested identity so failures without a returned build stay visible. */
 export function assessmentAccountingCase(record: AssessmentRecord): string | undefined {
   const run = record.subject.run;
-  if ((record.consumer === 'failure-triage' || record.consumer === 'decision-advice') && run)
+  if (
+    (record.consumer === 'failure-triage' ||
+      record.consumer === 'decision-advice' ||
+      record.consumer === 'acceptance-evidence') &&
+    run
+  )
     return JSON.stringify([
       record.consumer,
       run.id,

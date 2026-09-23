@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add an opt-in, source-admitted textual acceptance-evidence assessment for recorded runs, with saved judgments, bounded spend and unchanged AC ledger authority.
+
 - Admit opt-in decision advice for any pending run decision with two described non-decline actions, keeping source admission and the human action gate. Retain the admitted decision packet with the assessment for later review.
 
 - Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.

@@ -53,7 +53,7 @@ export async function assessmentReport(
     limitations: [
       'Operator labels are observational, not independent reference truth.',
       'Smoke tests are excluded from effectiveness totals.',
-      'Only retained assessment history is included; no raw model inputs are stored.',
+      'Only retained assessment history is included; opted-in consumers may retain bounded redacted input snapshots.',
       'Savings are unknown until independent baseline and assisted workflow trials are compared.',
       'No model suggestion authorizes a review, dispatch, publication or merge.',
     ],

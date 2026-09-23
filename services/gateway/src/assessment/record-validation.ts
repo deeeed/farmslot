@@ -48,7 +48,17 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
     if (
       !record(r) ||
       Object.keys(r).some(
-        (k) => !['id', 'project', 'step', 'snapshotHash', 'decision', 'sources'].includes(k),
+        (k) =>
+          ![
+            'id',
+            'project',
+            'step',
+            'snapshotHash',
+            'decision',
+            'criterion',
+            'admission',
+            'sources',
+          ].includes(k),
       ) ||
       !bounded(r.id) ||
       !bounded(r.project) ||
@@ -57,6 +67,39 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
       !/^[a-f0-9]{64}$/.test(r.snapshotHash)
     )
       throw new Error('Invalid assessment run identity');
+    if (r.admission !== undefined) {
+      if (
+        !record(r.admission) ||
+        Object.keys(r.admission).some((key) => !['classification', 'sourceRef'].includes(key)) ||
+        (r.admission.classification !== 'synthetic' && r.admission.classification !== 'public') ||
+        typeof r.admission.sourceRef !== 'string' ||
+        r.admission.sourceRef.length > 300 ||
+        !(r.admission.classification === 'public'
+          ? /^https:\/\/[^\s]+$/.test(r.admission.sourceRef)
+          : /^synthetic:[\w./-]+$/.test(r.admission.sourceRef))
+      )
+        throw new Error('Invalid assessment admission');
+    }
+    if (r.criterion !== undefined) {
+      const criterion = r.criterion;
+      if (
+        !record(criterion) ||
+        Object.keys(criterion).some((k) => !['id', 'text', 'evidence'].includes(k)) ||
+        !/^AC-[1-9][0-9]*$/.test(String(criterion.id)) ||
+        !admittedText(criterion.text, 1200) ||
+        !Array.isArray(criterion.evidence) ||
+        criterion.evidence.length < 1 ||
+        criterion.evidence.length > 4 ||
+        !criterion.evidence.every(
+          (item) =>
+            record(item) &&
+            Object.keys(item).every((k) => ['id', 'text'].includes(k)) &&
+            bounded(item.id, 200) &&
+            admittedText(item.text, 4096),
+        )
+      )
+        throw new Error('Invalid assessment criterion context');
+    }
     if (r.decision !== undefined) {
       const decision = r.decision;
       if (

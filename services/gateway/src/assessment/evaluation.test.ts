@@ -641,3 +641,57 @@ test('decision advice scores labeled abstentions without counting missing refere
   assert.equal(result.questions[0].correct, 1);
   assert.equal(result.questions[0].unlabeled, 1);
 });
+
+test('acceptance evidence scores explicit insufficient and separates changed criterion snapshots', () => {
+  const first = row();
+  first.consumer = 'acceptance-evidence';
+  first.subject = {
+    run: {
+      id: 'synthetic-ac-run',
+      project: 'fixture',
+      step: 'acceptance-evidence:AC-1',
+      snapshotHash: 'c'.repeat(64),
+    },
+  };
+  delete first.recommendation;
+  first.result!.answers = {
+    verdict: {
+      type: 'choice',
+      choice: 'supported',
+      probabilities: { supported: 1, contradicted: 0, insufficient: 0 },
+    },
+  };
+  const second: AssessmentRecord = {
+    ...first,
+    id: randomUUID(),
+    subject: { run: { ...first.subject.run!, snapshotHash: 'd'.repeat(64) } },
+    result: {
+      ...first.result!,
+      answers: {
+        verdict: {
+          type: 'choice',
+          choice: 'insufficient',
+          probabilities: { supported: 0, contradicted: 0, insufficient: 1 },
+        },
+      },
+    },
+  };
+  const frozen = report([first, second]);
+  assert.equal(frozen.summary.uniqueCases, 2);
+  const evaluated = evaluateAssessmentReport(frozen, {
+    reportId: frozen.reportId,
+    references: [first, second].map((item) => ({
+      assessmentId: item.id,
+      questionId: 'verdict',
+      expected: item === second ? 'insufficient' : 'supported',
+      evidenceRef: 'fixture:synthetic-ac-reference',
+      source: 'human' as const,
+      blinded: true,
+    })),
+  });
+  const verdict = evaluated.questions.find((question) => question.questionId === 'verdict')!;
+  assert.equal(verdict.eligible, 2);
+  assert.equal(verdict.judged, 2);
+  assert.equal(verdict.correct, 2);
+  assert.equal(verdict.abstained, 1);
+});

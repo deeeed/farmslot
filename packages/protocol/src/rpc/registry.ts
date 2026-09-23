@@ -186,6 +186,10 @@ export const Methods = {
   PR_DELETE_COMMENT: 'pr.deleteComment',
   PR_SUBMIT_REVIEW: 'pr.submitReview',
 
+  // Advisory acceptance-evidence assessment
+  ACCEPTANCE_EVIDENCE_GET: 'acceptance.evidence.get',
+  ACCEPTANCE_EVIDENCE_ANALYZE: 'acceptance.evidence.analyze',
+
   // Decisions
   DECISION_LIST: 'decision.list',
   DECISION_ADVICE_GET: 'decision.advice.get',

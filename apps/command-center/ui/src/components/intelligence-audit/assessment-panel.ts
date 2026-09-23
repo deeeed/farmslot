@@ -30,7 +30,7 @@ export class AssessmentPanel extends LitElement {
   @property({ attribute: false }) injectedHistory: AssessmentHistoryResult | null = null;
   @property({ attribute: false }) injectedSummary: AssessmentSummary | null = null;
   @state() private records: AssessmentRecord[] = [];
-  @state() private historyFilter: 'all' | 'decision-advice' = 'all';
+  @state() private historyFilter: 'all' | 'decision-advice' | 'acceptance-evidence' = 'all';
   @state() private summary: AssessmentSummary | null = null;
   @state() private error = '';
   @state() private busy = false;
@@ -151,8 +151,7 @@ export class AssessmentPanel extends LitElement {
     if (this.busy || this.injectedHistory || !this.isConnected) return;
     this.busy = true;
     try {
-      const consumer =
-        this.historyFilter === 'decision-advice' ? { consumer: 'decision-advice' } : {};
+      const consumer = this.historyFilter === 'all' ? {} : { consumer: this.historyFilter };
       const [history, summary] = await Promise.all([
         gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
           ...consumer,
@@ -332,12 +331,14 @@ export class AssessmentPanel extends LitElement {
           @change=${(event: Event) => {
             this.historyFilter = (event.target as HTMLSelectElement).value as
               | 'all'
-              | 'decision-advice';
+              | 'decision-advice'
+              | 'acceptance-evidence';
             this.loadedPages = 1;
             this.cursor = undefined;
             this.records = this.injectedHistory
               ? this.injectedHistory.records.filter(
-                  (record) => this.historyFilter === 'all' || record.consumer === 'decision-advice',
+                  (record) =>
+                    this.historyFilter === 'all' || record.consumer === this.historyFilter,
                 )
               : [];
             if (this.busy) this.reloadPending = true;
@@ -346,6 +347,7 @@ export class AssessmentPanel extends LitElement {
         >
           <option value="all">All assessments</option>
           <option value="decision-advice">Decision recommendations</option>
+          <option value="acceptance-evidence">AC evidence</option>
         </select>
       </label>
       <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
@@ -414,7 +416,9 @@ export class AssessmentPanel extends LitElement {
         ? html`<p>
             ${this.historyFilter === 'decision-advice'
               ? 'No decision recommendations recorded.'
-              : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
+              : this.historyFilter === 'acceptance-evidence'
+                ? 'No AC evidence assessments recorded.'
+                : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
           </p>`
         : nothing}
       ${repeat(
@@ -430,15 +434,19 @@ export class AssessmentPanel extends LitElement {
                   ? `${record.subject.run.project} · run ${record.subject.run.id} · ${record.subject.run.step} @ ${record.subject.run.snapshotHash.slice(0, 8)}`
                   : 'Synthetic connection test'}
               · ${record.startedAt}
-              ${record.consumer === 'decision-advice' && record.subject.run
+              ${(record.consumer === 'decision-advice' ||
+                record.consumer === 'acceptance-evidence') &&
+              record.subject.run
                 ? html` ·
                     <a href=${`#runs?run=${encodeURIComponent(record.subject.run.id)}`}
-                      >View decision in run</a
+                      >${record.consumer === 'acceptance-evidence'
+                        ? 'View run'
+                        : 'View decision in run'}</a
                     >`
                 : nothing}
             </p>
             <p>
-              Recommendation:
+              ${record.consumer === 'acceptance-evidence' ? 'Evidence verdict' : 'Recommendation'}:
               ${record.consumer === 'failure-triage'
                 ? (failureTriageCause(record) ?? 'Unavailable')
                 : record.consumer === 'decision-advice'
@@ -448,10 +456,19 @@ export class AssessmentPanel extends LitElement {
                     : record.status === 'started'
                       ? 'Pending'
                       : 'Unavailable'
-                  : (record.recommendation?.route ?? 'Not assessed')}
+                  : record.consumer === 'acceptance-evidence'
+                    ? record.result?.status === 'completed' &&
+                      record.result.answers?.verdict?.type === 'choice'
+                      ? record.result.answers.verdict.choice
+                      : record.status === 'started'
+                        ? 'Pending'
+                        : 'Unavailable'
+                    : (record.recommendation?.route ?? 'Not assessed')}
               ${record.consumer === 'decision-advice'
                 ? `· ${adviceRating(record)}`
-                : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
+                : record.consumer === 'acceptance-evidence'
+                  ? '· Advisory only; AC ledger unchanged'
+                  : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
               ${record.result?.provider ?? record.requestedIdentity?.provider ?? 'No provider'} /
@@ -495,6 +512,22 @@ export class AssessmentPanel extends LitElement {
                 : record.consumer === 'decision-advice'
                   ? html`<p>Decision context was not saved with this older assessment.</p>`
                   : nothing}
+              ${record.consumer === 'acceptance-evidence' && record.subject.run?.criterion
+                ? html`<section>
+                    <h4>
+                      ${record.subject.run.criterion.id}: ${record.subject.run.criterion.text}
+                    </h4>
+                    <p>
+                      Admitted as ${record.subject.run.admission?.classification ?? 'unknown'} ·
+                      ${record.subject.run.admission?.sourceRef ?? 'No source reference'}
+                    </p>
+                    ${record.subject.run.criterion.evidence.map(
+                      (source) =>
+                        html`<p>${source.id}</p>
+                          <pre>${source.text}</pre>`,
+                    )}
+                  </section>`
+                : nothing}
               ${repeat(
                 Object.entries(record.result?.answers ?? {}),
                 ([question]) => question,

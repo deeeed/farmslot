@@ -23,6 +23,7 @@ export function createLlmAssessmentProvider(
     credentialEnv: config.credentialEnv,
     defaultModel: config.defaultModel,
     capabilities: ['choice', 'boolean', 'score'],
+    maxOutputTokens: 2048,
     async assess({ state, questions, model, apiKey, signal }) {
       const schema = Object.fromEntries(
         Object.entries(questions).map(([id, q]) => [
