@@ -235,6 +235,23 @@ cli(
   file('rejected-report.json'),
 );
 await assert.rejects(access(file('rejected-report.json')));
+// A session receipt must agree with the journal before its costs enter the score.
+const changedReceipt = structuredClone(result);
+changedReceipt.sessions[0].turns[0].receipt.costUsd = 0;
+await writeFile(file('changed-receipt-sessions.json'), JSON.stringify(changedReceipt));
+cli(
+  false,
+  'score',
+  file('worker-plan.json'),
+  file('changed-receipt-sessions.json'),
+  file('reference.json'),
+  file('blind.json'),
+  file('judgment.json'),
+  file('method.md'),
+  file('worker-journal.jsonl'),
+  file('changed-receipt-report.json'),
+);
+await assert.rejects(access(file('changed-receipt-report.json')));
 const swapped = [...sessions];
 [swapped[2], swapped[3]] = [swapped[3], swapped[2]];
 // Pair two has five journal rows per arm. Reorder those rows as well, so only
