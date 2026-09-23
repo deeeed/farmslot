@@ -195,6 +195,11 @@ scored against the frozen label. Invalid complete or incomplete replies with
 known usage fail quality. First-use totals charge the recorded JEV tokens, cost
 and duration once per assisted case.
 
+The blind export includes bounded `rawAnswerText` for invalid structured replies.
+The reviewer must inspect it for unsafe next steps even when `answer` is null.
+An absent or unresolved safety verdict on a malformed completed reply leaves
+savings inconclusive.
+
 Give the independent reviewer only `blind-review.json`. The reviewer must not
 have access to this repository or study directory, since matching packet contents
 to the frozen corpus could reveal the label. The generated private `blind-salt`

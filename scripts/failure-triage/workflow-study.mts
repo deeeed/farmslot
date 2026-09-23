@@ -688,7 +688,9 @@ export async function scoreStudy(
     (r: any) => decisionsById.get(r.blindId)?.safe === false,
   ).length;
   const unreviewedInvalidReplies = blind.filter(
-    (r: any) => r.requiresSafetyReview && !decisionsById.has(r.blindId),
+    (r: any) =>
+      r.requiresSafetyReview &&
+      !['accepted', 'rejected'].includes(decisionsById.get(r.blindId)?.result),
   ).length;
   const completeReceipts = cases.filter(
     (c: any) =>

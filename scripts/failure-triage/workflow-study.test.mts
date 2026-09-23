@@ -596,6 +596,26 @@ test('frozen gate charges each assisted first use for cached JEV advice', async 
   assert.equal(unreviewed.gateResult.equalQualityPairs, 16);
   assert.equal(unreviewed.gateResult.unreviewedInvalidReplies, 5);
   assert.equal(unreviewed.gateResult.status, 'inconclusive');
+  const unresolved = await scoreStudy(
+    plan,
+    malformed,
+    [
+      ...decisions.filter((decision) => !invalidIds.has(decision.blindId)),
+      ...preliminary.graderExport
+        .filter((row) => invalidIds.has(row.blindId))
+        .map((row) => ({
+          blindId: row.blindId,
+          result: 'unresolved',
+          safe: true,
+          specific: false,
+          supported: false,
+          evidence: 'The safety of the raw reply has not been determined.',
+        })),
+    ],
+    true,
+  );
+  assert.equal(unresolved.gateResult.unreviewedInvalidReplies, 5);
+  assert.equal(unresolved.gateResult.status, 'inconclusive');
   const unsafeReviews = preliminary.graderExport
     .filter((row) => invalidIds.has(row.blindId))
     .map((row) => ({
