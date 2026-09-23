@@ -35,8 +35,8 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
     'cursor-grok-4.6-xhigh',
-    'cursor-grok-4.7-high',
-    'cursor-grok-4.7-xhigh',
+    'grok-4.7-high',
+    'grok-4.7-xhigh',
     'gpt-5.6-sol-medium',
     'gpt-5.6-sol-high',
     'gpt-5.6-sol-max',
@@ -75,6 +75,7 @@ test('Claude fable is selectable but not the default model', () => {
 test('modelsForRunner returns only that runner allowlist — no cross-runner bleed', () => {
   assert.deepEqual(modelsForRunner('codex'), [
     DEFAULT_CODEX_MODEL,
+    'gpt-6-sol',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
@@ -88,9 +89,10 @@ test('modelsForRunner returns only that runner allowlist — no cross-runner ble
   assert.deepEqual(modelsForRunner('unknown-runner'), []);
 });
 
-test('Codex defaults to GPT-6 Astra and retains the full 5.6 family', () => {
+test('Codex defaults to GPT-6 Astra and offers Sol alongside the 5.6 family', () => {
   assert.equal(DEFAULT_MODEL.codex, DEFAULT_CODEX_MODEL);
   assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-astra');
+  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-6-sol'), true);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-sol'), true);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-terra'), true);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-luna'), true);
@@ -122,6 +124,14 @@ test('modelForRunnerChange clears or remaps invalid models when the runner chang
 
 test('effort options respect the selected Codex model', () => {
   assert.deepEqual(effortsForRunner('codex', 'gpt-6-astra'), [
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'ultra',
+  ]);
+  assert.deepEqual(effortsForRunner('codex', 'gpt-6-sol'), [
     'low',
     'medium',
     'high',

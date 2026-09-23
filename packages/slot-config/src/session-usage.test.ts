@@ -167,6 +167,39 @@ test('runSessionUsage does not double-count Codex detail fields', async () => {
   assert.match(out, /cost_usd=0.0016/);
 });
 
+test('runSessionUsage estimates GPT-6 Sol session cost', async () => {
+  const home = makeTmpDir();
+  const sessionPath = path.join(home, 'codex-sol.jsonl');
+  writeFileSync(
+    sessionPath,
+    [
+      { type: 'session_meta', payload: { cwd: home, model: 'gpt-6-sol' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { input_tokens: 1000, output_tokens: 200 } },
+        },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join('\n') + '\n',
+  );
+
+  const out = await withHome(home, () =>
+    runSessionUsage({
+      repo: home,
+      slotId: 'slot-sol',
+      action: 'total',
+      forcedPath: sessionPath,
+      forcedRunner: 'codex',
+    }),
+  );
+
+  assert.match(out, /model=gpt-6-sol/);
+  assert.match(out, /cost_usd=0.0040/);
+});
+
 // ─── Grok ─────────────────────────────────────────────────────────────────────
 
 test('runSessionUsage extracts Grok usage by joining summary to unified log', async () => {
