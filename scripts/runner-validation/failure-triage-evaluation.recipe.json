@@ -28,6 +28,13 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/prove-pilot-evidence.mts \"$TRIAGE_PROOF_OUT-pilot-evidence\"",
         "timeout_ms": 60000,
         "intent": "Validate the immutable pilot prerequisite through the real verifier CLI; reject absent, tampered and handwritten gates without provider calls.",
+        "next": "navigation-plan"
+      },
+      "navigation-plan": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts seal-advice scripts/failure-triage/navigation-cases.v1.json \"$TRIAGE_PROOF_OUT-navigation-plan.json\" && node -e 'const p=JSON.parse(require(\"node:fs\").readFileSync(process.argv[1],\"utf8\")); if (p.hash!==\"1577ac63d9bb38817f7642b0ef2b27301723e399708338025cd7948227300ccf\" || p.cases.length!==8) process.exit(1)' \"$TRIAGE_PROOF_OUT-navigation-plan.json\"",
+        "timeout_ms": 60000,
+        "intent": "Seal the frozen synthetic navigation corpus through the real CLI and reject unexpected plan hashes or case counts without provider calls.",
         "next": "done"
       }
     }

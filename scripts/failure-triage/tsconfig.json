@@ -1,0 +1,9 @@
+{
+  "extends": "../../services/gateway/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["workflow-navigation*.mts"]
+}

@@ -138,6 +138,113 @@ budgets. Otherwise the decision is `hold`. Transport fixtures always report
 `efficiencyClaim` stays `not_established`. Correct diagnostic classification is
 a proxy; operator time and whole-workflow token savings need matched trials.
 
+## Draft multi-turn navigation pilot
+
+`navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
+`navigation-reference.v1.json` holds their labels and source requirements; no
+provider request loads that file. Its reference status is `frozen`; this still permits only a small exploratory study.
+The case-file SHA-256 is `48caa3a48f03e26dda23ecdd7fcdaff90194f5a52127910d8da321a615e84e69`;
+the reference-file SHA-256 is `9a864f676cd188f2ec7e5ffc82c2730a6badce53e70c5dd416d286c5033febcc`.
+They cover overlapping incident families, so treat the eight pairs as an
+exploratory workflow study, not a general efficiency estimate.
+
+The advice stage asks the configured structured-assessment provider to choose a
+first evidence source from a supplied failure summary and source titles. It does
+not ask for prose or a cause. TypeSafe Jev uses its Choice endpoint; a
+Responses-compatible LLM can supply the same Choice via the existing adapter.
+A separately configured text-generating worker sees the same sources and
+instructions in both arms, with the source suggestion added only to the
+assisted arm. Each session can read at most two named sources in three turns;
+case order alternates arms. Unread source text and reference labels stay out
+of the advice request. Both live stages stop on unknown charges and never retry.
+
+Run the offline checks and seal the advice input first:
+
+```bash
+./node_modules/.bin/tsc -p scripts/failure-triage/tsconfig.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/failure-triage/workflow-navigation*.test.mts
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts seal-advice scripts/failure-triage/navigation-cases.v1.json /tmp/navigation-advice-plan.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts quote-advice /tmp/navigation-advice-plan.json /tmp/navigation-advice-config.json
+```
+
+The price snapshot in each config needs its own verified source and timestamp.
+`quote-advice` and `quote-worker` print plan and config hashes, conservative
+request/token/USD estimates; neither makes a call. Each preflight reserves 1024
+bytes for the request envelope and schema beyond the visible content, then
+stops on unexpected measured usage. Provider-side hidden tokens mean the quote
+is a spend estimate, not a provider-enforced account limit. An independent reviewer must check the
+methodology, case hash, provider and verified price, then create a JSON approval
+with `planHash`, `configHash`, `methodologyHash` (SHA-256 of the method file),
+`journalPath`, `reviewer` and `conclusion: "approved"`. Both live commands require
+`TYPESAFE_API_KEY` for TypeSafe advice and `STUDY_API_KEY` for the worker
+(or an LLM advice provider). Both commands consume their approval exactly once. Keep plans, approvals, journals and results outside the tracked tree.
+
+After advice generation, inspect each chosen source and receipt for label
+leakage, then seal and quote the paired worker plan. Review its separate method,
+price and approval before running it:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts advice /tmp/navigation-advice-plan.json /tmp/navigation-advice-config.json /tmp/navigation-advice-method.md /tmp/navigation-advice-approval.json /tmp/navigation-advice-journal.jsonl /tmp/navigation-advice.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts seal-worker scripts/failure-triage/navigation-cases.v1.json /tmp/navigation-advice-plan.json /tmp/navigation-advice.json /tmp/navigation-advice-journal.jsonl scripts/failure-triage/navigation-reference.v1.json /tmp/navigation-worker-plan.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts quote-worker /tmp/navigation-worker-plan.json /tmp/navigation-worker-config.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts worker /tmp/navigation-worker-plan.json /tmp/navigation-worker-config.json /tmp/navigation-worker-method.md /tmp/navigation-worker-approval.json /tmp/navigation-worker-journal.jsonl /tmp/navigation-sessions.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts blind /tmp/navigation-worker-plan.json /tmp/navigation-sessions.json /tmp/navigation-blind.json
+```
+
+A reviewer judges the blind rows before looking at arms, advice or costs.
+The export omits case IDs because their names can reveal the intended diagnosis;
+keep the case-to-blind-ID mapping in the sealed plan outside the review packet.
+A reviewer records a JSON judgment containing `version: 1`, the blind packet's
+`hash` as `packetHash`, the worker method's SHA-256 as `methodologyHash`, a
+`reviewer` ID, and exactly one `{blindId, decision, reason}` for every row in
+`decisions`. Do not provide the sealed plan or source-reference file to that
+reviewer until their judgment file has been saved.
+Mark `accepted` only for a supported cause (or justified `unclear`), a useful
+read-only next check, and evidence actually read. Map each blind ID to
+`accepted`, `rejected` or `unresolved` with a concrete reason, then run `score`
+with the worker plan, sessions, frozen reference, blind packet, judgments,
+worker method, worker journal and report path. The scorer rejects claimed
+acceptance when the answer label or required evidence IDs disagree with the
+frozen reference. The report includes all
+pairs, quality regressions and advice-inclusive totals. Missing arms, missing
+wall time, unresolved judgments or unknown charges are inconclusive. The current
+blind export accepts one independent rater per answer. Record that reviewer,
+retain their per-row reasons outside the tracked tree, and flag ambiguous rows
+`unresolved`; do not call a single-rater result independently replicated.
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts score /tmp/navigation-worker-plan.json /tmp/navigation-sessions.json scripts/failure-triage/navigation-reference.v1.json /tmp/navigation-blind.json /tmp/navigation-judgment.json /tmp/navigation-worker-method.md /tmp/navigation-worker-journal.jsonl /tmp/navigation-report.json
+```
+
+Compare results by incident family and do not infer a population-wide gain from
+eight synthetic cases.
+
+### Recorded exploratory run
+
+The first paired run used TypeSafe `jev-1.13.0` for the eight advice calls and
+`gpt-6-luna` through the local `codex-lb` Responses route for both worker arms.
+All 16 sessions answered in 48 attempted/completed turns. An independent rater
+judged the blind answers before scoring against the frozen reference. The
+scorer returned `inconclusive`: two cases were assisted-better, four were
+rejected in both arms, and two had equal accepted quality. No case regressed
+from an accepted baseline to a rejected assisted answer.
+
+Both assisted-better cases had **no named TypeSafe recommendation**. The
+assisted arm instead received an abstention message, so those gains cannot be
+attributed to a recommended evidence source. On the two equal-accepted pairs,
+assisted totals including first-use advice overhead were 3,774 versus 2,550
+tokens (+48%), 16.49 versus 14.91 seconds (+10.6%), and $0.00044898 versus
+$0.00039260 (+14.4%) at published API-equivalent rates. The local load
+balancer's actual billing is unknown. The other six pairs have differing or
+rejected quality, so a study-wide efficiency total is deliberately absent.
+Do not rerun or retune this frozen corpus to seek a positive result. A new
+study would need to isolate named hints from the abstention-prompt effect and
+freeze new cases before further candidate calls.
+
+Private raw plans, approvals, journals, blind judgments and the scored report
+are retained at `temp/triage/navigation-v1-luna/` in the operator checkout.
+This gitignored folder is local evidence, not a published study artifact.
+
 ## Verify the boundaries
 
 ```bash
