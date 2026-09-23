@@ -27,6 +27,8 @@ export interface MeasuredResponse {
   durationMs: number;
   /** `fetch` resolved with an HTTP response, even if its body cannot be parsed. */
   responseReceived: boolean;
+  /** Safe HTTP status retained separately from the untrusted response body. */
+  httpStatus?: number;
   receiptHash?: string;
   error?: string;
 }
@@ -34,6 +36,30 @@ const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const counter = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']> {
+  if (signal.aborted) throw signal.reason ?? new Error('Request aborted');
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', aborted);
+      callback();
+    };
+    const aborted = () => done(() => reject(signal.reason ?? new Error('Request aborted')));
+    signal.addEventListener('abort', aborted, { once: true });
+    // The pending reader promise remains observed after an abort. The underlying fetch receives
+    // the same signal, so its body is cancelled without persisting a body fragment as an error.
+    reader.read().then(
+      (value) => done(() => resolve(value)),
+      (error) => done(() => reject(error)),
+    );
+  });
+}
 
 /** One bounded Responses request. No SDK retries, CLI fallback, or tool execution. */
 export async function measuredResponsesCall(
@@ -127,6 +153,8 @@ export async function measuredResponsesCall(
     // This is deliberately set before reading the body. A malformed first SSE frame still
     // means the provider responded and must not be classified as a retryable transport failure.
     base.responseReceived = true;
+    if (Number.isSafeInteger(response.status) && response.status >= 100 && response.status <= 599)
+      base.httpStatus = response.status;
     const reader = response.body?.getReader();
     if (!reader)
       return { ...base, error: 'missing-response-body', durationMs: performance.now() - start };
@@ -164,7 +192,7 @@ export async function measuredResponsesCall(
       }
     };
     while (true) {
-      const chunk = await reader.read();
+      const chunk = await readChunk(reader, signal);
       if (chunk.done) break;
       size += chunk.value.byteLength;
       if (size > 1024 * 1024) {

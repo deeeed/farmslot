@@ -152,6 +152,14 @@ try {
   assert.equal(ordinary.answers.color.probabilities, undefined);
   assert.equal(ordinary.usage.cacheReadTokens, 10);
   assert.equal(await count(), 2);
+  for (const mode of ['native-wrong-model', 'native-missing-model']) {
+    await writeFile(path.join(out, 'mode'), mode);
+    const rejected = rpc('assessment.test', { provider: 'typesafe', model: 'jev-1.13.0' });
+    assert.equal(rejected.status, 'unavailable', mode);
+    assert.equal(rejected.error, 'Assessment provider response failed validation', mode);
+    assert.equal(rejected.attempted, true, mode);
+    assert.equal(rejected.usage?.inputTokens, 100, mode);
+  }
   await writeFile(path.join(out, 'mode'), 'native-invalid');
   const nativeRejected = rpc('assessment.test', { provider: 'typesafe', model: 'jev-1.13.0' });
   assert.equal(nativeRejected.status, 'unavailable');
@@ -213,21 +221,34 @@ try {
     evidenceRef: 'fixture:provider-proof',
   });
   assert.equal(feedback.feedback.at(-1).correctedAnswer, 'red');
-  for (const mode of ['invalid', 'wrong-model', 'invalid-tail', 'early-invalid-tail', 'timeout']) {
+  for (const mode of [
+    'invalid',
+    'wrong-model',
+    'invalid-tail',
+    'early-invalid-tail',
+    'ordinary-oversized-body',
+    'ordinary-after-headers-timeout',
+    'timeout',
+  ]) {
     await writeFile(path.join(out, 'mode'), mode);
     const failed = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
     assert.equal(failed.status, 'unavailable', mode);
     assert.equal(failed.attempted, true);
-    if (mode === 'timeout' || mode === 'early-invalid-tail') {
+    if (
+      mode === 'timeout' ||
+      mode === 'early-invalid-tail' ||
+      mode === 'ordinary-oversized-body' ||
+      mode === 'ordinary-after-headers-timeout'
+    ) {
       assert.equal(failed.usage?.inputTokens, undefined);
-      if (mode === 'early-invalid-tail')
+      if (mode !== 'timeout')
         assert.equal(failed.error, 'Assessment provider response failed validation');
     } else {
       assert.equal(failed.usage?.inputTokens, 120, mode);
       assert.equal(failed.usage?.outputTokens, 20, mode);
     }
   }
-  assert.equal(await count(), 12, 'No hidden retry or provider fallback');
+  assert.equal(await count(), 16, 'No hidden retry or provider fallback');
   const rejected = rpc('assessment.list', { limit: 10 });
   const rejectedRow = rejected.records.find(
     (record) =>
@@ -266,7 +287,7 @@ try {
     rpc('intelligence.triage.get', { runId: randomUUID() }).availability,
     'unsupported-model',
   );
-  assert.equal(await count(), 12, 'An adapter must not inherit another provider’s evaluation gate');
+  assert.equal(await count(), 16, 'An adapter must not inherit another provider’s evaluation gate');
   await stop();
   delete env.CODEX_LB_API_KEY;
   await start();
@@ -274,7 +295,7 @@ try {
   const missing = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
   assert.equal(missing.status, 'skipped');
   assert.equal(missing.attempted, false);
-  assert.equal(await count(), 12);
+  assert.equal(await count(), 16);
   assert.equal(rpc('assessment.get', { id: ordinary.assessmentId }).feedback.length, 1);
   await stop();
   env.CODEX_LB_API_KEY = 'provider-fixture-lb-key';
@@ -282,11 +303,13 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 12,
+    providerCalls: 16,
     nativeRejectedUsageRetained: true,
     invalidNativeUsageRejected: true,
     nativeHttpErrorReceiptRetained: true,
     earlyMalformedSseReceiptRetained: true,
+    nativeModelIdentityRejected: true,
+    postHeaderBodyAndTimeoutReceiptsRetained: true,
     missingNativeAndOrdinaryUsageRejected: true,
     externalProviderCalls: 0,
     nativeAndOrdinaryAnswers: true,

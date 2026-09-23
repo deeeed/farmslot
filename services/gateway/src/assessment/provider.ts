@@ -53,6 +53,8 @@ export class AssessmentResponseError extends Error {
     readonly returnedModel?: string,
     /** The provider returned a response, but it did not meet the adapter contract. */
     readonly responseReceived = false,
+    /** Safe HTTP status retained separately from untrusted provider error text. */
+    readonly httpStatus?: number,
   ) {
     super(message);
   }

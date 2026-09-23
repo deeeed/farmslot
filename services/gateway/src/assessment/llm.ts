@@ -87,6 +87,7 @@ export function createLlmAssessmentProvider(
           usage,
           result.returnedModel,
           result.responseReceived,
+          result.httpStatus,
         );
       };
       // A terminal response without a valid input receipt may have charged the request, but

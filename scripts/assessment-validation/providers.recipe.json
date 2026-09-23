@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "FARMSLOT_ASSESSMENT_VALIDATION=1 node scripts/assessment-validation/providers.mjs",
         "timeout_ms": 120000,
-        "intent": "Verify native and regular-LLM answers through actual RPCs, feedback without probability distributions, native HTTP-error receipts and ordinary-LLM malformed/model/stream-tail/timeout failures, including a malformed first SSE frame, malformed and omitted token counts with retained received usage and no retries, missing-key skips, restart persistence and independent consumer qualification.",
+        "intent": "Verify native and regular-LLM answers through actual RPCs, feedback without probability distributions, native HTTP-error and model-identity receipts, plus ordinary-LLM malformed/model/stream-tail/timeout failures. Include malformed first SSE, oversized body and timeout after headers, malformed and omitted token counts with retained receipts and no retries, missing-key skips, restart persistence and independent consumer qualification.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

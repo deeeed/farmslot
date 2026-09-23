@@ -24,6 +24,14 @@ globalThis.fetch = async (_url, init) => {
       }),
     );
   await new Promise((resolve) => setTimeout(resolve, 500));
+  if (mode === 'native-http-429')
+    return new Response(null, {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        'x-typesafe-request-id': 'fixture-rate-limited',
+      },
+    });
   const selected = { cause: 'environment', nextCheck: 'inspect_external_response', evidence: 'e1' };
   const answers = Object.fromEntries(
     Object.entries(body.questions).map(([id, question]) => {

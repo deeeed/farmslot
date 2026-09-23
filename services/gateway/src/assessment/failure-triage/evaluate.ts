@@ -72,8 +72,10 @@ export interface TriageOptions {
     | 'rate-limit'
     | 'credential-echo'
     | 'wrong-model'
+    | 'missing-model'
     | 'control-action'
     | 'adapter-invalid'
+    | 'adapter-http-rate-limit'
     | 'adapter-preflight';
 }
 // Supported reservation envelope: the bundled snapshot documents input-only pricing
@@ -119,14 +121,20 @@ function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): Assessmen
     credentialEnv: 'UNUSED_FIXTURE_KEY',
     capabilities: ['choice'],
     async assess({ state, questions, signal }) {
-      if (mode === 'adapter-invalid' || mode === 'adapter-preflight')
+      if (
+        mode === 'adapter-invalid' ||
+        mode === 'adapter-http-rate-limit' ||
+        mode === 'adapter-preflight'
+      )
         throw new AssessmentResponseError(
           'Fixture rejected a provider answer',
-          mode === 'adapter-invalid',
+          mode !== 'adapter-preflight',
           mode === 'adapter-invalid'
             ? { inputTokens: 120, outputTokens: 20, cacheReadTokens: 10, durationMs: 2 }
             : undefined,
           mode === 'adapter-invalid' ? 'fixed' : undefined,
+          mode === 'adapter-http-rate-limit',
+          mode === 'adapter-http-rate-limit' ? 429 : undefined,
         );
       if (mode === 'timeout') {
         await new Promise<void>((_resolve, reject) => {
@@ -174,7 +182,9 @@ function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): Assessmen
             ? process.env.TRIAGE_PROOF_API_KEY
             : mode === 'wrong-model'
               ? 'unpriced-model'
-              : 'fixed',
+              : mode === 'missing-model'
+                ? undefined
+                : 'fixed',
         answers,
         usage: {
           inputTokens: Buffer.byteLength(JSON.stringify(state)),
@@ -376,44 +386,61 @@ export async function evaluateTriage(options: TriageOptions) {
           boundFailure = 'exceeded';
           throw new AssessmentSpendBoundError('exceeded');
         }
-        if (!modelMatched) throw new TriageResponseError('model-identity');
+        if (!modelMatched) {
+          boundFailure = 'unverifiable';
+          throw new TriageResponseError('model-identity');
+        }
         row.prediction = triagePrediction(response.answers, prepared.packet);
         row.status = 'completed';
       } catch (error) {
         row.status = 'unavailable';
         if (error instanceof AssessmentResponseError) {
+          if (error.httpStatus !== undefined) row.httpStatus = error.httpStatus;
           if (!error.attempted) {
             // No provider call occurred; release the reservation and call slot.
             attempts--;
             reservedUsd -= reservation;
             row.reservedUsd = 0;
-          } else if (error.usage) {
-            row.returnedModel = error.returnedModel;
-            row.usage = {
-              ...error.usage,
-              provider: provider.id,
-              requestedModel: row.requestedModel!,
-              returnedModel: error.returnedModel,
-            };
-            const modelMatched = error.returnedModel === row.requestedModel;
-            row.estimatedUsd = estimateTriageInputCost(
-              error.usage.inputTokens,
-              price,
-              modelMatched,
-              !!options.fixture,
-            );
-            if (
-              error.usage.inputTokens !== undefined &&
-              error.usage.inputTokens > price.maxRequestTokens
-            ) {
-              boundFailure = 'exceeded';
-            } else if (error.responseReceived && error.usage.inputTokens === undefined) {
-              boundFailure = 'unverifiable';
+          } else {
+            if (error.usage) {
+              row.returnedModel = error.returnedModel;
+              row.usage = {
+                ...error.usage,
+                provider: provider.id,
+                requestedModel: row.requestedModel!,
+                returnedModel: error.returnedModel,
+              };
+              const modelMatched = error.returnedModel === row.requestedModel;
+              row.estimatedUsd = estimateTriageInputCost(
+                error.usage.inputTokens,
+                price,
+                modelMatched,
+                !!options.fixture,
+              );
+              if (
+                error.usage.inputTokens !== undefined &&
+                error.usage.inputTokens > price.maxRequestTokens
+              )
+                boundFailure = 'exceeded';
+              else if (modelMatched === false) boundFailure = 'unverifiable';
             }
+            if (error.responseReceived && error.usage?.inputTokens === undefined)
+              boundFailure = 'unverifiable';
           }
         }
         const status =
-          error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+          error instanceof AssessmentResponseError
+            ? error.httpStatus
+            : error && typeof error === 'object' && 'status' in error
+              ? error.status
+              : undefined;
+        if (
+          typeof status === 'number' &&
+          Number.isSafeInteger(status) &&
+          status >= 100 &&
+          status <= 599
+        )
+          row.httpStatus = status;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
         row.reason =
           error instanceof AssessmentResponseError && !error.attempted

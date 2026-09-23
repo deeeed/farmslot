@@ -80,6 +80,8 @@ export interface TriageResult {
   questionHash?: string;
   omissions?: PreparedTriage['omissions'];
   usage?: AssessmentUsage;
+  /** Safe HTTP status, when a provider response was received. Never includes provider body text. */
+  httpStatus?: number;
   durationMs: number;
   reservedUsd: number;
   estimatedUsd?: number;

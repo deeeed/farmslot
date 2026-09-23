@@ -192,6 +192,7 @@ test('ordinary LLM adapter classifies a malformed first SSE frame as a received 
       assert.ok(error instanceof Error);
       assert.equal((error as { attempted?: unknown }).attempted, true);
       assert.equal((error as { responseReceived?: unknown }).responseReceived, true);
+      assert.equal((error as { httpStatus?: unknown }).httpStatus, 200);
       assert.equal((error as { usage?: { inputTokens?: unknown } }).usage?.inputTokens, undefined);
       return true;
     },

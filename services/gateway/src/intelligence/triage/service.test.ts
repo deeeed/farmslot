@@ -95,6 +95,20 @@ test('mismatched model retains tokens and the bound but leaves its charge unknow
   assert.equal(bounded.usage?.costKind, undefined);
 });
 
+test('an under-bound missing or mismatched model identity locks the price snapshot', () => {
+  for (const returnedModel of [undefined, 'other-model']) {
+    const bounded = priceTriageResult(
+      { ...result, returnedModel, answers: undefined },
+      { inputUsdPerMillion: 1, maxRequestTokens: 200 },
+      false,
+    );
+    assert.equal(bounded.status, 'unavailable');
+    assert.equal(bounded.error, TRIAGE_SPEND_BOUND_UNVERIFIABLE);
+    assert.equal(bounded.usage?.inputTokens, 120);
+    assert.equal(bounded.usage?.costUsd, undefined);
+  }
+});
+
 test('persisted over-bound reply locks out later calls under the same price snapshot', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'triage-bound-'));
   const prior = process.env.FARMSLOT_HOME;
@@ -149,7 +163,7 @@ test('persisted over-bound reply locks out later calls under the same price snap
   }
 });
 
-test('a reply with no input receipt locks its price snapshot, but transport failure remains retryable', async () => {
+test('a provider-neutral reply with no input receipt locks its price snapshot, but transport failure remains retryable', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'triage-unverifiable-'));
   const prior = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = home;
@@ -169,9 +183,11 @@ test('a reply with no input receipt locks its price snapshot, but transport fail
     const rejected = priceTriageResult(
       {
         ...result,
+        provider: 'codex-lb',
+        requestedModel: 'regular-fixture',
         usage: {
-          provider: 'typesafe',
-          requestedModel: 'jev-fixture',
+          provider: 'codex-lb',
+          requestedModel: 'regular-fixture',
           outputTokens: 20,
           durationMs: 8,
         },

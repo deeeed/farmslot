@@ -236,23 +236,46 @@ test('failed adapter replies retain received usage and preflight rejections rele
   assert.equal(notCharged.reservedUsd, 0);
   assert.equal(notCharged.usage, undefined);
 });
-test('a returned model outside the price snapshot leaves the evaluator charge unknown', async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'triage-model-price-test-'));
+test('a received rate-limit without usage keeps its safe status while locking the offline price cohort', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-http-status-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const caseId = corpus.cases.find((c) => c.split === 'held-out')!.id;
-  await evaluateTriage({
-    out: path.join(root, 'wrong-model'),
-    fixture: 'wrong-model',
+  const result = await evaluateTriage({
+    out: path.join(root, 'rate-limit'),
+    fixture: 'adapter-http-rate-limit',
     caseId,
     maxCalls: 1,
   });
   const [row] = JSON.parse(
-    await readFile(path.join(root, 'wrong-model', 'candidate-results.json'), 'utf8'),
+    await readFile(path.join(root, 'rate-limit', 'candidate-results.json'), 'utf8'),
   );
+  assert.equal(result.usage.attempts, 1);
   assert.equal(row.status, 'unavailable');
-  assert.equal(row.returnedModel, 'unpriced-model');
-  assert.equal(row.usage.inputTokens > 0, true);
+  assert.equal(row.reason, 'spend-bound-unverifiable');
+  assert.equal(row.httpStatus, 429);
+  assert.equal(row.usage, undefined);
   assert.equal(row.estimatedUsd, undefined);
+});
+test('an absent or mismatched returned model locks the evaluator price cohort', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-model-price-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const caseId = corpus.cases.find((c) => c.split === 'held-out')!.id;
+  for (const fixture of ['wrong-model', 'missing-model'] as const) {
+    await evaluateTriage({
+      out: path.join(root, fixture),
+      fixture,
+      caseId,
+      maxCalls: 1,
+    });
+    const [row] = JSON.parse(
+      await readFile(path.join(root, fixture, 'candidate-results.json'), 'utf8'),
+    );
+    assert.equal(row.status, 'unavailable');
+    assert.equal(row.returnedModel, fixture === 'wrong-model' ? 'unpriced-model' : undefined);
+    assert.equal(row.usage.inputTokens > 0, true);
+    assert.equal(row.estimatedUsd, undefined);
+    assert.equal(row.reason, 'spend-bound-unverifiable');
+  }
   assert.equal(estimateTriageInputCost(120, { inputUsdPerMillion: 1 }, false, false), undefined);
   assert.equal(estimateTriageInputCost(120, { inputUsdPerMillion: 1 }, true, false), 0.00012);
 });

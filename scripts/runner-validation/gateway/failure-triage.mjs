@@ -493,7 +493,7 @@ try {
         (321 * policy.price.inputUsdPerMillion) / 1_000_000,
       );
     else assert.equal(rejected.record.result.usage?.costUsd, undefined, mode);
-    assert.equal(rejected.retryAllowed, true, mode);
+    assert.equal(rejected.retryAllowed, mode === 'malformed', mode);
   }
   await writeFile(path.join(out, 'mode'), 'valid');
   // A response without an input receipt must halt this exact price snapshot. It
@@ -643,7 +643,7 @@ try {
   await stop();
   // A new price snapshot allows a second admitted call. Reject its answer while
   // retaining native usage, then prove that over-bound usage still locks this snapshot.
-  policy.price.verifiedAt = new Date(Date.parse(now) - 1000).toISOString();
+  policy.price.verifiedAt = new Date(Date.parse(now) + 1000).toISOString();
   await savePolicy();
   await advanceSnapshot();
   await writeFile(path.join(out, 'mode'), 'over-bound-invalid');
@@ -674,7 +674,7 @@ try {
   await stop();
   // A mismatched returned model above the bound records both reasons and still
   // locks out later requests under the same priced snapshot.
-  policy.price.verifiedAt = new Date(Date.parse(now) - 2000).toISOString();
+  policy.price.verifiedAt = new Date(Date.parse(now) + 2000).toISOString();
   await savePolicy();
   await advanceSnapshot();
   await writeFile(path.join(out, 'mode'), 'over-bound-wrong-model');
@@ -702,6 +702,52 @@ try {
   );
   assert.equal(await count(), 13);
   await stop();
+  // A received rate-limit without usage must not be classified as a free transport
+  // failure. It retains only safe receipt metadata and locks this price snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) + 3000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'native-http-429');
+  await start();
+  const rateLimitView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(rateLimitView.availability, 'ready');
+  const rateLimited = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: rateLimitView.snapshotHash,
+  });
+  assert.equal(rateLimited.record.status, 'unavailable');
+  assert.equal(rateLimited.record.result.error, 'spend-bound-unverifiable');
+  assert.equal(rateLimited.record.result.attempted, true);
+  assert.equal(rateLimited.record.result.answers, undefined);
+  assert.equal(rateLimited.record.result.usage.inputTokens, undefined);
+  assert.equal(rateLimited.record.result.usage.outputTokens, undefined);
+  assert.equal(rateLimited.record.result.usage.requestId, 'fixture-rate-limited');
+  assert.equal(rateLimited.record.result.usage.costUsd, undefined);
+  assert.equal(rateLimited.retryAllowed, false);
+  assert.throws(() =>
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rateLimitView.snapshotHash,
+      retryOf: rateLimited.record.id,
+    }),
+  );
+  assert.equal(await count(), 14);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const rateLimitLockView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rateLimitLockView.record.reservation.priceHash,
+    rateLimited.record.reservation.priceHash,
+  );
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rateLimitLockView.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 14);
+  await stop();
   source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
@@ -710,11 +756,13 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 13,
+    providerCalls: 14,
     overBoundUsageRetained: true,
     rejectedOverBoundUsageRetained: true,
     mismatchedModelOverBoundLocked: true,
     missingInputUsageRejectsAdvice: true,
+    receivedHttpErrorWithoutUsageLocksSnapshot: true,
+    unknownSpendRecordCannotRetry: true,
     modelIdentityEnforced: true,
     unrelatedBudgetEditPreservesCache: true,
     latestFailedStepDoesNotBorrowAdvice: true,

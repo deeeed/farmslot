@@ -26,6 +26,22 @@ globalThis.fetch = async (input, init) => {
       return new Response('event: response.failed\ndata: {invalid}\n\n', {
         headers: { 'content-type': 'text/event-stream' },
       });
+    if (mode === 'ordinary-oversized-body')
+      return new Response('x'.repeat(1024 * 1024 + 1), {
+        headers: { 'content-type': 'application/json' },
+      });
+    if (mode === 'ordinary-after-headers-timeout') {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener(
+            'abort',
+            () => controller.error(new Error('fixture timeout after headers')),
+            { once: true },
+          );
+        },
+      });
+      return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+    }
     if (mode === 'invalid-tail') {
       const terminal = {
         type: 'response.completed',
@@ -96,7 +112,12 @@ globalThis.fetch = async (input, init) => {
     );
   return new Response(
     JSON.stringify({
-      model: body.model,
+      model:
+        mode === 'native-wrong-model'
+          ? 'unexpected-model'
+          : mode === 'native-missing-model'
+            ? undefined
+            : body.model,
       answers: {
         color: {
           type: 'choice',

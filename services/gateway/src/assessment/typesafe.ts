@@ -78,6 +78,21 @@ const identity = (value: unknown, apiKey: string) =>
   typeof value === 'string' && /^[\w.-]{1,200}$/.test(value) && !value.includes(apiKey)
     ? value
     : undefined;
+const httpStatus = (value: unknown) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+
+function responseReceipt(response: Response, apiKey: string, started: number) {
+  const safeRequestId = identity(response.headers.get('x-typesafe-request-id'), apiKey);
+  return {
+    usage: {
+      durationMs: Date.now() - started,
+      ...(safeRequestId === undefined ? {} : { requestId: safeRequestId }),
+    },
+    httpStatus: httpStatus(response.status),
+  };
+}
 
 function receipt(value: unknown, requestId: unknown, apiKey: string, started: number) {
   const body = object(value) ? value : {};
@@ -106,24 +121,30 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
     capabilities: ['choice', 'score', 'boolean'],
     async assess({ state, questions, model, signal, apiKey }) {
       const started = Date.now();
+      let receivedHttp: ReturnType<typeof responseReceipt> | undefined;
+      const transport = fetchImpl ?? fetch;
+      const observedFetch: typeof fetch = async (input, init) => {
+        const response = await transport(input, init);
+        receivedHttp = responseReceipt(response, apiKey, started);
+        return response;
+      };
       const client = new TypeSafeClient({
         apiKey,
         defaultModel: model,
         timeout: 60_000,
         retry: { maxRetries: 0 },
         logLevel: 'off',
-        ...(fetchImpl ? { fetch: fetchImpl } : {}),
+        fetch: observedFetch,
       });
       const sdkState =
         typeof state === 'number' || typeof state === 'boolean' ? String(state) : state;
-      let result: Awaited<ReturnType<ReturnType<typeof client.systemOne>['withResponse']>>;
+      const request = client.systemOne(
+        { state: sdkState, model, questions: toQuestions(questions) },
+        { signal, retry: { maxRetries: 0 } },
+      );
+      let result: Awaited<ReturnType<typeof request.withResponse>>;
       try {
-        result = await client
-          .systemOne(
-            { state: sdkState, model, questions: toQuestions(questions) },
-            { signal, retry: { maxRetries: 0 } },
-          )
-          .withResponse();
+        result = await request.withResponse();
       } catch (error) {
         if (error instanceof APIError) {
           const received = receipt(error.body, error.requestId, apiKey, started);
@@ -133,6 +154,19 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
             received.usage,
             received.returnedModel,
             true,
+            httpStatus(error.status),
+          );
+        }
+        // The SDK buffers successful bodies before resolving `withResponse()`. Our transport
+        // wrapper sees headers first, so a body-read failure or timeout still has a safe receipt.
+        if (receivedHttp) {
+          throw new AssessmentResponseError(
+            'Assessment provider response could not be read',
+            true,
+            receivedHttp.usage,
+            undefined,
+            true,
+            receivedHttp.httpStatus,
           );
         }
         throw error;
@@ -144,6 +178,8 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
         const data = result.data;
         if (!received.hasValidInputUsage || !received.hasValidOutputUsage)
           throw new Error('provider returned invalid usage');
+        if (received.returnedModel !== model)
+          throw new Error('provider returned a different model');
         const answers: Record<string, AssessmentAnswer> = {};
         for (const [id, question] of Object.entries(questions))
           answers[id] = normalizeAnswer(question, data.answers[id]);

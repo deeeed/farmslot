@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { assess } from './index.js';
 import { createLlmAssessmentProvider } from './llm.js';
-import { createAssessmentProviderRegistry } from './provider.js';
+import { AssessmentResponseError, createAssessmentProviderRegistry } from './provider.js';
 import { serializeAssessment } from './record-validation.js';
 import { summarizeAssessments } from './summary.js';
 
@@ -122,6 +122,44 @@ test('attempt accounting distinguishes transport invocation from disabled reques
     assert.equal(failed.status, 'unavailable');
     assert.equal(failed.attempted, true);
     assert.equal(calls, 2);
+  } finally {
+    if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
+    else process.env.ASSESSMENT_TEST_KEY = previous;
+  }
+});
+
+test('a timeout after headers remains a received-response validation failure', async () => {
+  const previous = process.env.ASSESSMENT_TEST_KEY;
+  process.env.ASSESSMENT_TEST_KEY = 'fixture-key';
+  const providers = createAssessmentProviderRegistry([
+    {
+      id: 'fixture',
+      defaultModel: 'fixed',
+      credentialEnv: 'ASSESSMENT_TEST_KEY',
+      capabilities: ['boolean'],
+      async assess({ signal }) {
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+        throw new AssessmentResponseError(
+          'Synthetic body timeout after headers',
+          true,
+          { durationMs: 1 },
+          undefined,
+          true,
+          200,
+        );
+      },
+    },
+  ]);
+  try {
+    const result = await assess(
+      { ...request, provider: 'fixture', enabled: true, timeoutMs: 1 },
+      providers,
+    );
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.attempted, true);
+    assert.equal(result.error, 'Assessment provider response failed validation');
   } finally {
     if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
     else process.env.ASSESSMENT_TEST_KEY = previous;

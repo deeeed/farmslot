@@ -76,12 +76,25 @@ export function priceTriageResult(
         usage: priced,
         error: TRIAGE_SPEND_BOUND_EXCEEDED,
       }
-    : { ...result, usage: priced };
+    : !modelMatched
+      ? {
+          ...result,
+          status: 'unavailable',
+          answers: undefined,
+          usage: priced,
+          // Input usage does not establish the configured model's price/bound when the identity
+          // is absent or different. Lock this snapshot instead of treating a reply as free.
+          error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+        }
+      : { ...result, usage: priced };
 }
 
 function canRetry(record: AssessmentRecord): boolean {
   return (
-    ['unavailable', 'interrupted'].includes(record.status) ||
+    (['unavailable', 'interrupted'].includes(record.status) &&
+      ![TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE].includes(
+        record.result?.error ?? '',
+      )) ||
     (['skipped', 'disabled'].includes(record.status) && record.result?.attempted === false)
   );
 }

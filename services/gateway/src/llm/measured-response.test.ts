@@ -53,21 +53,25 @@ test('one request preserves native returned identity and cache-inclusive usage',
   assert.equal(result.cacheWriteTokens, 10);
   assert.equal(result.inputAccounting, 'includes-cache');
   assert.equal(result.responseReceived, true);
+  assert.equal(result.httpStatus, 200);
   assert.match(result.receiptHash!, /^[a-f0-9]{64}$/);
 });
 
-test('HTTP failures never retry or fabricate zero usage', async () => {
-  let calls = 0;
-  const result = await measuredResponsesCall(options, async () => {
-    calls++;
-    return new Response('temporary provider failure', { status: 503 });
-  });
-  assert.equal(calls, 1);
-  assert.equal(result.attempted, true);
-  assert.equal(result.responseReceived, true);
-  assert.equal(result.inputTokens, null);
-  assert.equal(result.status, 'unavailable');
-  assert.equal(result.error, 'provider-http-error');
+test('received HTTP failures never retry or fabricate zero usage', async () => {
+  for (const status of [429, 503]) {
+    let calls = 0;
+    const result = await measuredResponsesCall(options, async () => {
+      calls++;
+      return new Response('temporary provider failure', { status });
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.attempted, true);
+    assert.equal(result.responseReceived, true);
+    assert.equal(result.httpStatus, status);
+    assert.equal(result.inputTokens, null);
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.error, 'provider-http-error');
+  }
 });
 
 test('terminal usage survives a malformed later SSE frame without accepting its answer', async () => {
@@ -110,6 +114,23 @@ test('a malformed first SSE frame retains the HTTP response receipt before a bod
   assert.equal(result.responseReceived, true);
   assert.equal(result.receiptHash, undefined);
   assert.equal(result.inputTokens, null);
+});
+
+test('an abort after response headers retains the HTTP receipt', async () => {
+  const controller = new AbortController();
+  const resultPromise = measuredResponsesCall(
+    { ...options, signal: controller.signal },
+    async () =>
+      new Response(new ReadableStream<Uint8Array>({ pull() {} }), {
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+  );
+  setTimeout(() => controller.abort(new Error('synthetic timeout')), 0);
+  const result = await resultPromise;
+  assert.equal(result.status, 'unavailable');
+  assert.equal(result.responseReceived, true);
+  assert.equal(result.httpStatus, 200);
+  assert.equal(result.error, 'request-timed-out-or-cancelled');
 });
 
 test('terminal usage survives a read failure after receipt', async () => {

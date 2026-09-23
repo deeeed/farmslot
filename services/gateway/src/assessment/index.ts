@@ -168,11 +168,12 @@ export async function assess(
           }
         : {}),
       ...preparedIdentity,
-      error: signal.aborted
-        ? 'Assessment cancelled or timed out'
-        : error instanceof AssessmentResponseError && error.responseReceived
+      error:
+        error instanceof AssessmentResponseError && error.responseReceived
           ? ASSESSMENT_RESPONSE_VALIDATION_ERROR
-          : 'Assessment provider request failed',
+          : signal.aborted
+            ? 'Assessment cancelled or timed out'
+            : 'Assessment provider request failed',
     };
   }
 }

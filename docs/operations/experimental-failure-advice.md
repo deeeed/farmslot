@@ -84,9 +84,9 @@ reserved, not money spent. Each request reserves the
 full supported context cost, including uncertain charges. There is one attempt,
 a ten-second deadline, no hidden retry and no fallback model. Required text must
 fit the lower of the configured input limit and 12,000 bytes; it is never
-silently truncated. A completed reply without input-token usage rejects the response as
-`spend-bound-unverifiable`, retains any valid partial receipt, and blocks later requests
-under that price snapshot. A received reply above the input limit records
+silently truncated. Any received HTTP error or completed reply without input-token usage rejects
+the response as `spend-bound-unverifiable`, retains any valid partial receipt, and blocks later
+requests under that price snapshot. A received reply above the input limit records
 `spend-bound-exceeded`. A missing or different returned model rejects advice and leaves
 its charge unknown.
 
