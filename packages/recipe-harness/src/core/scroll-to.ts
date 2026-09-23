@@ -214,15 +214,19 @@ export async function runUiScrollTo(
   }
 
   // Unclamped: providers clamp to their scrollable range (which may be negative in RTL).
+  const deltaX = nearestDelta(initialFrame.proofBounds, initialFrame.safeViewport, 'x');
   const offset = {
-    x: initial.offset.x + nearestDelta(initialFrame.proofBounds, initialFrame.safeViewport, 'x'),
+    x: initial.offset.x + deltaX,
     y:
       initial.offset.y +
       clearCards(
-        initialFrame.proofBounds,
+        // Cards are checked where the horizontal move leaves the element.
+        { ...initialFrame.proofBounds, x: initialFrame.proofBounds.x - deltaX },
         initialFrame.safeViewport,
         alignDelta(initialFrame.proofBounds, initialFrame.safeViewport, request.align),
         cardOcclusions(initial, request.viewportPolicy),
+        // A vertical scroll offset is never negative, so moves below -offset.y are unreachable.
+        -initial.offset.y,
       ),
   };
   observation.offset = offset;
@@ -385,6 +389,7 @@ function clearCards(
   area: UiRect,
   deltaY: number,
   cards: readonly UiRect[],
+  minDelta: number,
 ): number {
   if (!cards.length) return deltaY;
   const bottom = bounds.y + bounds.height;
@@ -395,6 +400,7 @@ function clearCards(
     ...cards.flatMap((card) => [bottom - card.y, bounds.y - (card.y + card.height)]),
   ];
   const clear = candidates.filter((delta) => {
+    if (delta < minDelta) return false;
     const moved = { ...bounds, y: bounds.y - delta };
     return (
       axisVisible(moved.y, moved.height, area.y, area.height) &&

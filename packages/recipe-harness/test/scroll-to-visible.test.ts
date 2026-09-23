@@ -30,6 +30,8 @@ const VIEWPORT: UiRect = { x: 0, y: 100, width: 400, height: 500 };
 interface FakeElement {
   /** Position inside the scroll content. */
   top: number;
+  /** Horizontal position inside the content; defaults to 16. */
+  left?: number;
   height: number;
   /** False models a flattened Text node: present, but with no box. */
   measurable?: boolean;
@@ -62,7 +64,7 @@ class FakeSurface {
       return {
         present: true,
         bounds: {
-          x: VIEWPORT.x + 16,
+          x: VIEWPORT.x + (element.left ?? 16) - this.offset.x,
           y: VIEWPORT.y + element.top + shift - this.offset.y,
           width: 200,
           height: element.height,
@@ -90,7 +92,7 @@ class FakeSurface {
   scrollTo(offset: { x: number; y: number }): void {
     this.scrollCalls.push(offset);
     const max = Math.max(0, (this.options.contentHeight ?? 5_000) - VIEWPORT.height);
-    this.offset = { x: 0, y: Math.min(Math.max(0, offset.y), max) };
+    this.offset = { x: Math.max(0, offset.x), y: Math.min(Math.max(0, offset.y), max) };
   }
 }
 
@@ -414,6 +416,9 @@ test('card clearance stays inside the safe viewport and clears every card', asyn
       ],
       align: 'center',
     },
+    // Row 150-190 at offset 0 under a card at 140-170: resting below the card needs offset -20,
+    // which the surface cannot reach; resting above it (offset 50) can.
+    { label: 'top edge', top: 50, cards: [{ x: 100, y: 140, width: 100, height: 30 }] },
   ];
   for (const scenario of cases) {
     const surface = new FakeSurface({
@@ -435,6 +440,22 @@ test('card clearance stays inside the safe viewport and clears every card', asyn
       );
     }
   }
+});
+
+test('card clearance uses the position after the horizontal move', async () => {
+  // Row at x 450-650 is right of the 400px viewport; the horizontal move lands it at x 200-400,
+  // exactly under a card at x 250-400, y 240-300.
+  const card = { x: 250, y: 240, width: 150, height: 60 };
+  const surface = new FakeSurface({
+    elements: { filters: { top: 150, left: 450, height: 40 } },
+    occlusions: [card],
+  });
+  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { status, trace } = await runScrollRecipe(transport, [{ target_test_id: 'filters' }]);
+  assert.equal(status, 'pass', JSON.stringify(trace[0]));
+  const after = scrollOutput(trace[0]).after?.targetBounds;
+  assert.equal(after?.x, 200);
+  assert.ok(after && (after.y + after.height <= card.y || after.y >= card.y + card.height));
 });
 
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
