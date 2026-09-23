@@ -9,6 +9,7 @@ import {
   type AssessmentRecord,
   type AssessmentReport,
   type AssessmentSummary,
+  type RunGetResult,
   failureTriageCause,
   Methods,
 } from '@farmslot/protocol';
@@ -41,6 +42,7 @@ export class AssessmentPanel extends LitElement {
   };
   private reloadPending = false;
   private loadedPages = 1;
+  private readonly decisionOutcomes = new Map<string, string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
   private interval?: ReturnType<typeof setInterval>;
@@ -232,6 +234,29 @@ export class AssessmentPanel extends LitElement {
       this.busy = false;
     }
   }
+  private async loadDecisionOutcome(record: AssessmentRecord) {
+    const run = record.subject.run;
+    const decision = run?.decision;
+    if (!run || !decision || this.decisionOutcomes.has(record.id) || this.injectedHistory) return;
+    this.decisionOutcomes.set(record.id, 'Checking run outcome…');
+    this.requestUpdate();
+    try {
+      const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
+      const resolved = result.run?.decisions.find((item) => item.id === decision.id);
+      this.decisionOutcomes.set(
+        record.id,
+        resolved?.resolvedAction
+          ? (decision.actions.find((action) => action.id === resolved.resolvedAction)?.label ??
+              resolved.resolvedAction)
+          : resolved
+            ? 'Still pending'
+            : 'Decision no longer available in run',
+      );
+    } catch {
+      this.decisionOutcomes.set(record.id, 'Could not load run outcome');
+    }
+    this.requestUpdate();
+  }
   private get canExportSelected(): boolean {
     return (
       !this.selectedId ||
@@ -415,8 +440,40 @@ export class AssessmentPanel extends LitElement {
               'No model'}
               · ${record.result?.error ?? record.result?.monitoringError ?? ''}
             </p>
-            <details ?open=${Boolean(this.selectedId)}>
-              <summary>Answers, provenance and feedback</summary>
+            <details
+              ?open=${Boolean(this.selectedId)}
+              @toggle=${(event: Event) => {
+                if (
+                  (event.currentTarget as HTMLDetailsElement).open &&
+                  record.consumer === 'decision-advice'
+                )
+                  void this.loadDecisionOutcome(record);
+              }}
+            >
+              <summary>
+                ${record.consumer === 'decision-advice'
+                  ? 'Decision, outcome and feedback'
+                  : 'Answers, provenance and feedback'}
+              </summary>
+              ${record.consumer === 'decision-advice' && record.subject.run?.decision
+                ? html`<section>
+                    <h4>${record.subject.run.decision.type}</h4>
+                    <p>${record.subject.run.decision.description}</p>
+                    <ul>
+                      ${record.subject.run.decision.actions.map(
+                        (action) =>
+                          html`<li>${action.label}: ${action.description || 'Decline action'}</li>`,
+                      )}
+                    </ul>
+                    <p>
+                      Chosen action:
+                      ${this.decisionOutcomes.get(record.id) ??
+                      (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
+                    </p>
+                  </section>`
+                : record.consumer === 'decision-advice'
+                  ? html`<p>Decision context was not saved with this older assessment.</p>`
+                  : nothing}
               ${repeat(
                 Object.entries(record.result?.answers ?? {}),
                 ([question]) => question,

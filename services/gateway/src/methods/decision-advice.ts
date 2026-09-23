@@ -412,6 +412,12 @@ export async function decisionAdviceAnalyze(
           project,
           step: 'decision-advice',
           snapshotHash: selected.result.snapshotHash,
+          decision: {
+            id: params.decisionId,
+            type: selected.state.type,
+            description: selected.state.description,
+            actions: selected.state.actions,
+          },
         },
       },
       requestedIdentity: {

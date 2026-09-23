@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Filter assessment history to decision recommendations, link each one to its run, and show the operator rating and model used.
+- Show advice at every eligible run gate. Filter advice history and show the saved decision, options, provider, model, operator rating and chosen run action.
 
 - Offer the existing decision advice panel for any eligible pending run decision, regardless of its type.
 

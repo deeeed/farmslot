@@ -143,10 +143,7 @@ test('decision advice requires opt-in and an exact admitted snapshot, never reso
   decision.type = 'engine_prepare_profile_mismatch' as typeof decision.type;
   decision.description = 'Synthetic profile gate';
   updateRun(run.id, { decisions: [decision] });
-  assert.equal(
-    (await withPrincipal(() => decisionAdviceGet(params))).reason,
-    'not-admitted',
-  );
+  assert.equal((await withPrincipal(() => decisionAdviceGet(params))).reason, 'not-admitted');
   decision.actions = [decision.actions[0], decision.actions[2]];
   updateRun(run.id, { decisions: [decision] });
   assert.equal(
@@ -462,6 +459,16 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
     (record) => record.id === analyzed.assessment?.assessmentId,
   );
   assert.ok(saved);
+  assert.deepEqual(saved.subject.run?.decision, {
+    id: params.decisionId,
+    type: run.decisions[0]?.type,
+    description: run.decisions[0]?.description,
+    actions: run.decisions[0]?.actions.map(({ id, label, description }) => ({
+      id,
+      label,
+      description: description ?? '',
+    })),
+  });
   assert.equal(saved?.reservation?.price?.provider, 'typesafe');
   const repricedGet = await withPrincipal(() => decisionAdviceGet(params));
   assert.equal(repricedGet.recommendedActionId, 'continue');

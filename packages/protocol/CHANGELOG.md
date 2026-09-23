@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Allow admitted decision context on saved assessment records for later operator review.
+
 - Include the selected slot resource blocker in profile-fit suggestions.
 
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.

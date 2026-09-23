@@ -46,7 +46,7 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
     if (
       !record(r) ||
       Object.keys(r).some(
-        (k) => !['id', 'project', 'step', 'snapshotHash', 'sources'].includes(k),
+        (k) => !['id', 'project', 'step', 'snapshotHash', 'decision', 'sources'].includes(k),
       ) ||
       !bounded(r.id) ||
       !bounded(r.project) ||
@@ -55,6 +55,30 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
       !/^[a-f0-9]{64}$/.test(r.snapshotHash)
     )
       throw new Error('Invalid assessment run identity');
+    if (r.decision !== undefined) {
+      const decision = r.decision;
+      if (
+        !record(decision) ||
+        Object.keys(decision).some((k) => !['id', 'type', 'description', 'actions'].includes(k)) ||
+        !bounded(decision.id) ||
+        !bounded(decision.type, 100) ||
+        typeof decision.description !== 'string' ||
+        decision.description.length > 1200 ||
+        !Array.isArray(decision.actions) ||
+        decision.actions.length < 3 ||
+        decision.actions.length > 20 ||
+        !decision.actions.every(
+          (action) =>
+            record(action) &&
+            Object.keys(action).every((k) => ['id', 'label', 'description'].includes(k)) &&
+            bounded(action.id, 80) &&
+            bounded(action.label, 120) &&
+            typeof action.description === 'string' &&
+            action.description.length <= 240,
+        )
+      )
+        throw new Error('Invalid assessment decision context');
+    }
     if (
       r.sources !== undefined &&
       (!Array.isArray(r.sources) ||
