@@ -19,6 +19,7 @@ export interface StudyApproval {
   planHash: string;
   methodologyHash: string;
   reviewer: string;
+  journalPath: string;
   conclusion: 'approved';
 }
 export interface RunnerOptions {
@@ -34,7 +35,9 @@ export interface JournalEvent {
   caseId: string;
   arm: string;
   promptHash: string;
-  kind: 'approved' | 'started' | 'finished';
+  kind: 'approved' | 'started' | 'finished' | 'closed';
+  journalPath?: string;
+  stopReason?: string;
   approvalHash?: string;
   methodologyHash?: string;
   response?: MeasuredResponse;
@@ -57,6 +60,7 @@ export async function runStudy(
   assert(
     approval.conclusion === 'approved' &&
       approval.planHash === plan.planHash &&
+      approval.journalPath === options.journalPath &&
       /^[\w.-]{2,100}$/.test(approval.reviewer) &&
       approval.methodologyHash === createHash('sha256').update(methodBytes).digest('hex'),
     'Independent methodology approval does not match frozen study',
@@ -87,11 +91,13 @@ export async function runStudy(
         version: 1,
         kind: 'approved',
         planHash: plan.planHash,
+        journalPath: options.journalPath,
         approvalHash: createHash('sha256').update(approvalBytes).digest('hex'),
         methodologyHash: approval.methodologyHash,
       }) + '\n',
     );
     await journal.sync();
+    let stopReason = 'completed';
     for (const row of plan.rows) {
       const header = {
         version: 1 as const,
@@ -129,6 +135,7 @@ export async function runStudy(
           cacheWriteTokens: null,
           inputAccounting: 'includes-cache',
           durationMs: performance.now() - started,
+          responseReceived: false,
           error: 'transport-exception-unknown-charge',
         };
       }
@@ -148,9 +155,15 @@ export async function runStudy(
         (response.returnedModel && response.returnedModel !== plan.options.model) ||
         (response.inputTokens !== null && response.inputTokens > plan.options.maxInputTokens) ||
         (response.outputTokens !== null && response.outputTokens > plan.options.maxOutputTokens)
-      )
+      ) {
+        stopReason = 'uncertain-charge-or-response';
         break;
+      }
     }
+    await journal.writeFile(
+      JSON.stringify({ version: 1, kind: 'closed', planHash: plan.planHash, stopReason }) + '\n',
+    );
+    await journal.sync();
   } finally {
     await journal.close();
   }
@@ -179,6 +192,9 @@ export async function verifyJournalApproval(
       first.kind === 'approved' &&
       first.version === 1 &&
       first.planHash === plan.planHash &&
+      first.journalPath === approval.journalPath &&
+      /^\/.+/.test(approval.journalPath) &&
+      JSON.parse(text.trimEnd().split('\n').at(-1) ?? '{}').kind === 'closed' &&
       first.methodologyHash === approval.methodologyHash &&
       first.approvalHash === createHash('sha256').update(approvalBytes).digest('hex'),
     'Journal does not contain matching prior methodology approval',
@@ -192,7 +208,7 @@ export function materializeStudyJournal(
 ) {
   const lines = text.split('\n').filter(Boolean);
   assert(
-    Buffer.byteLength(text) <= 2 * 1024 * 1024 && lines.length <= 85,
+    Buffer.byteLength(text) <= 2 * 1024 * 1024 && lines.length <= 86,
     'Journal exceeds bounds',
   );
   const events: JournalEvent[] = lines.flatMap((line, index) => {
@@ -214,7 +230,7 @@ export function materializeStudyJournal(
     response: MeasuredResponse;
   }> = [];
   for (const row of plan.rows) {
-    if (events.length === 0) break;
+    if (events.length === 0 || events[0]?.kind === 'closed') break;
     const started = events.shift();
     assert(
       started?.kind === 'started' &&
@@ -253,6 +269,7 @@ export function materializeStudyJournal(
         cacheWriteTokens: null,
         inputAccounting: 'includes-cache',
         durationMs: 0,
+        responseReceived: false,
         error: 'interrupted-unknown-charge',
       },
     });
@@ -260,6 +277,15 @@ export function materializeStudyJournal(
       assert(events.length === 0, 'Unfinished request cannot have later events');
       break;
     }
+  }
+  if (events[0]?.kind === 'closed') {
+    const closing = events.shift();
+    assert(
+      closing?.planHash === plan.planHash &&
+        ['completed', 'uncertain-charge-or-response'].includes(closing.stopReason ?? '') &&
+        (closing.stopReason !== 'completed' || attempts.length === plan.rows.length),
+      'Invalid journal closing event',
+    );
   }
   assert(events.length === 0, 'Unexpected journal event beyond plan');
   return attempts;

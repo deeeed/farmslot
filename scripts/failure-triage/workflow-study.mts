@@ -55,13 +55,16 @@ export const CACHED_ADVICE_GATE = Object.freeze({
   maxBaselineSuccessAssistedFailure: 0,
   minimumAssistedDiagnosisAndCheckSuccesses: 16,
   minimumTotalFirstUseTokenReduction: 0.2,
-  minimumTotalFirstUseTimeReduction: 0.2,
-  minimumTotalFirstUseCostReduction: 0.2,
   invalidAnswerPolicy:
-    'completed invalid answers score false; missing or uncharged answers remain inconclusive',
+    'completed or incomplete invalid answers with native usage score false; missing or uncharged answers remain inconclusive',
   missingRowPolicy: 'inconclusive',
   totalFirstUsePolicy:
     'all token, cost, and elapsed-time metrics must be known; JEV advice is charged once to each assisted first use',
+});
+
+export const EFFICIENCY_DIAGNOSTICS = Object.freeze({
+  minimumTotalFirstUseTimeReduction: 0.2,
+  minimumTotalFirstUseCostReduction: 0.2,
 });
 
 export interface PlanOptions {
@@ -84,7 +87,33 @@ export interface PlanOptions {
 }
 
 /** All sources are pinned before any request; plan contains worker-visible packets only. */
-export async function createPlan(options: PlanOptions) {
+export async function createPlan(
+  options: PlanOptions,
+  studyNonce = randomBytes(32).toString('hex'),
+) {
+  assert(/^[a-f0-9]{64}$/.test(studyNonce), 'Invalid study nonce');
+  const allowed = [
+    'model',
+    'provider',
+    'baseUrl',
+    'priceSource',
+    'priceVerifiedAt',
+    'priceApplicability',
+    'reasoning',
+    'maxOutputTokens',
+    'maxInputTokens',
+    'maxAttempts',
+    'maxTotalTokens',
+    'maxTotalUsd',
+    'inputUsdPerMillion',
+    'outputUsdPerMillion',
+    'cacheReadMultiplier',
+    'cacheWriteMultiplier',
+  ];
+  assert(
+    Object.keys(options).sort().join(',') === allowed.sort().join(','),
+    'Unknown or missing study plan option',
+  );
   assert(
     /^[\w.-]{1,100}$/.test(options.model) && /^[\w.-]{1,100}$/.test(options.provider),
     'Explicit provider and model required',
@@ -124,7 +153,9 @@ export async function createPlan(options: PlanOptions) {
     assert(safeInt(options[name]) && options[name] > 0, `Invalid ${name}`);
   assert(options.maxAttempts === 42, 'Exactly one planned attempt per each of 42 rows');
   assert(
-    options.maxOutputTokens <= 2048 && options.maxInputTokens <= 8192,
+    options.maxOutputTokens >= 16 &&
+      options.maxOutputTokens <= 2048 &&
+      options.maxInputTokens <= 8192,
     'Request token cap exceeded',
   );
   for (const name of ['maxTotalUsd', 'inputUsdPerMillion', 'outputUsdPerMillion'] as const)
@@ -307,10 +338,14 @@ export async function createPlan(options: PlanOptions) {
     postHocComparator: sha(comparatorRaw),
     sourceRevision: source.revision,
     frozenReceiptRevision: manifest.sourceRevision,
+    scorerCode: sha(await bytes('scripts/failure-triage/workflow-study.mts')),
+    runnerCode: sha(await bytes('scripts/failure-triage/workflow-study-runner.mts')),
+    transportCode: sha(await bytes('services/gateway/src/llm/measured-response.ts')),
   };
   const plan = {
     version: 1,
     kind: 'offline-cached-advice',
+    studyNonce,
     options,
     sources,
     instructions: INSTRUCTIONS,
@@ -324,6 +359,7 @@ export async function createPlan(options: PlanOptions) {
       notAGateBaseline: true,
     },
     gate: CACHED_ADVICE_GATE,
+    diagnosticThresholds: EFFICIENCY_DIAGNOSTICS,
     gateHash: sha(JSON.stringify(CACHED_ADVICE_GATE)),
     instructionsHash: sha(INSTRUCTIONS),
     schemaHash: sha(JSON.stringify(SCHEMA)),
@@ -337,7 +373,7 @@ export async function createPlan(options: PlanOptions) {
 
 export async function verifyPlan(plan: any) {
   assert(object(plan) && typeof plan.planHash === 'string', 'Invalid study plan');
-  const expected = await createPlan(plan.options);
+  const expected = await createPlan(plan.options, plan.studyNonce);
   assert(
     JSON.stringify(expected) === JSON.stringify(plan),
     'Sealed study plan does not match frozen sources',
@@ -527,7 +563,7 @@ export async function scoreStudy(
     decisionsById.set(d.blindId, d);
   }
   const candidate = parse(await bytes(`${SOURCE}candidate-results.json`));
-  const adviceByCase = new Map(candidate.map((entry: any) => [entry.caseId, entry]));
+  const adviceByCase = new Map<string, any>(candidate.map((entry: any) => [entry.caseId, entry]));
   const cases = plan.rows.map((row: any) => {
     const a: any = byKey.get(key(row));
     const b = blind.find((v: any) => v.blindId === blindIdFor(row))!;
@@ -580,7 +616,9 @@ export async function scoreStudy(
       diagnosisCorrect: b.diagnosisCorrect,
       checkVerdict: d?.result ?? 'unresolved',
       quality:
-        b.status === 'invalid-answer' && u?.status === 'completed' && usage(u, plan)
+        b.status === 'invalid-answer' &&
+        ['completed', 'incomplete'].includes(u?.status) &&
+        usage(u, plan)
           ? false
           : b.status === 'awaiting-adjudication' &&
               d?.result !== undefined &&
@@ -739,7 +777,7 @@ export async function scoreStudy(
     costBasis:
       plan.options.priceApplicability === 'direct'
         ? 'published-provider-estimate'
-        : 'public-reference-rate-not-load-balancer-billing',
+        : 'public-reference-only-no-cost-claim',
     denominator: 21,
     attempted: cases.filter((v: any) => v.attempted).length,
     recorded: attempts.length,
@@ -755,23 +793,28 @@ export async function scoreStudy(
     totalFirstUseTimeClaim:
       approvedExecution &&
       timeReduction !== null &&
-      timeReduction >= plan.gate.minimumTotalFirstUseTimeReduction
+      timeReduction >= plan.diagnosticThresholds.minimumTotalFirstUseTimeReduction
         ? 'meets-total-first-use-time-threshold'
         : 'unproven',
     totalFirstUseCostClaim:
       approvedExecution &&
       costReduction !== null &&
-      costReduction >= plan.gate.minimumTotalFirstUseCostReduction
+      costReduction >= plan.diagnosticThresholds.minimumTotalFirstUseCostReduction
         ? 'meets-total-first-use-cost-threshold'
         : 'unproven',
     controls: plan.controls,
+    diagnosticThresholds: plan.diagnosticThresholds,
     gateResult: {
       gate: plan.gate,
       gateHash: plan.gateHash,
       status:
         !approvedExecution && passed
           ? 'inconclusive'
-          : unsafeChecks > plan.gate.maxUnsafeChecks
+          : unsafeChecks > plan.gate.maxUnsafeChecks ||
+              regressionCount > plan.gate.maxBaselineSuccessAssistedFailure ||
+              (adjudicatedCases === plan.gate.requiredAdjudicatedCases &&
+                assistedDiagnosisAndCheckSuccesses <
+                  plan.gate.minimumAssistedDiagnosisAndCheckSuccesses)
             ? 'failed'
             : !ready || !observedTime || !observedCost
               ? 'inconclusive'

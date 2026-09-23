@@ -74,6 +74,8 @@
     "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs",
     "quality:review-loop": "node scripts/quality/check-review-loop-validation-contract.mjs",
     "quality:gateway-api-docs": "node scripts/quality/check-gateway-api-docs.mjs",
+    "test:triage-workflow-study": "node --import tsx --test scripts/failure-triage/workflow-study.test.mts scripts/failure-triage/workflow-study-runner.test.mts",
+    "typecheck:triage-workflow-study": "yarn --cwd services/gateway exec tsc --noEmit --skipLibCheck --allowImportingTsExtensions --module nodenext --moduleResolution nodenext --target es2022 --types node ../../scripts/failure-triage/workflow-study.mts ../../scripts/failure-triage/workflow-study-runner.mts ../../scripts/failure-triage/workflow-study.test.mts ../../scripts/failure-triage/workflow-study-runner.test.mts",
     "triage:evaluate": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/evaluate.mts"
   },
   "license": "MIT",

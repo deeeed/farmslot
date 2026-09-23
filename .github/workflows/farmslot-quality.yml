@@ -220,6 +220,9 @@ jobs:
       - name: Project hook conformance tests
         run: yarn test:project-hooks
 
+      - name: Triage workflow study tests and types
+        run: yarn test:triage-workflow-study && yarn typecheck:triage-workflow-study
+
       - name: Runner observability installer tests
         run: node --test scripts/install-runner-observability.test.mjs
 

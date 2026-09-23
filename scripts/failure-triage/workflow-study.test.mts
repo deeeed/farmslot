@@ -89,6 +89,15 @@ test('a sealed 42-row plan pins reference/source hashes and excludes hidden answ
     assert(rows.find((r) => r.arm === 'B')!.prompt.includes('cachedAdvice'));
   }
   assert(await verifyPlan(plan));
+  assert.notEqual((await createPlan(options)).planHash, plan.planHash);
+  await assert.rejects(
+    () => createPlan({ ...options, apiKey: 'not-a-key' } as never),
+    /Unknown or missing study plan option/,
+  );
+  await assert.rejects(
+    () => createPlan({ ...options, maxOutputTokens: 15 }),
+    /Request token cap exceeded/,
+  );
   await assert.rejects(
     () => verifyPlan({ ...plan, rows: plan.rows.slice(1) }),
     /Sealed study plan/,
@@ -129,7 +138,7 @@ test('native receipts count cache once and a missing usage receipt remains unkno
     priceApplicability: 'public-reference-only',
   });
   const proxy = await scoreStudy(proxyPlan, [native(proxyPlan)]);
-  assert.equal(proxy.costBasis, 'public-reference-rate-not-load-balancer-billing');
+  assert.equal(proxy.costBasis, 'public-reference-only-no-cost-claim');
   assert.equal(proxy.cases[0].knownEstimatedUsd, null);
   assert.equal(proxy.unknownCharges, 1);
   assert.equal(proxy.totalFirstUseCostClaim, 'unproven');
@@ -177,7 +186,7 @@ test('native receipts count cache once and a missing usage receipt remains unkno
   assert(unknown.pairs.every((p) => p.workerTokenDelta === null));
 });
 
-test('duplicate native IDs, wrong prompts and mutating checks cannot enter paired comparisons', async () => {
+test('duplicate native IDs, wrong prompts and reviewer-unsafe checks cannot enter paired comparisons', async () => {
   const plan = await createPlan(options);
   const first = native(plan);
   const second = native(plan, plan.rows[1]);
@@ -344,6 +353,55 @@ test('invalid assisted answers count as quality regressions with native usage', 
     'model-mismatch',
   );
   assert.equal(modelMismatch.gateResult.status, 'inconclusive');
+});
+
+test('incomplete assisted reply with a native receipt is a failed-quality regression', async () => {
+  const plan = await createPlan(options);
+  const rows = plan.rows.filter((r) => r.caseId === unclearCaseId);
+  const baseline = native(plan, rows.find((r) => r.arm === 'A')!);
+  const assisted = native(plan, rows.find((r) => r.arm === 'B')!);
+  assisted.response.status = 'incomplete' as 'completed';
+  const provisional = await scoreStudy(plan, [baseline, assisted]);
+  const decision = {
+    blindId: provisional.cases.find((r) => r.caseId === unclearCaseId && r.arm === 'A')!.blindId,
+    result: 'accepted',
+    safe: true,
+    specific: true,
+    supported: true,
+    evidence: 'Read-only log inspection supported by recorded evidence.',
+  };
+  const result = await scoreStudy(plan, [baseline, assisted], [decision]);
+  assert.equal(result.gateResult.baselineSuccessAssistedFailure, 1);
+  assert.equal(result.gateResult.completeReceipts, 2);
+  assert.equal(result.pairs.find((p) => p.caseId === unclearCaseId)?.assisted.quality, false);
+});
+
+test('a proxy plan still fails on verified quality regression without cost receipts', async () => {
+  const plan = await createPlan({
+    ...options,
+    baseUrl: 'http://127.0.0.1:1',
+    priceApplicability: 'public-reference-only',
+  });
+  const attempts = plan.rows.map((r) =>
+    native(plan, r, {
+      label: r.arm === 'B' && r.caseId === unclearCaseId ? 'environment' : labels.get(r.caseId),
+      nextCheck: 'inspect recorded logs',
+      evidenceIds: ['e1'],
+    }),
+  );
+  const provisional = await scoreStudy(plan, attempts);
+  const decisions = provisional.graderExport.map((r) => ({
+    blindId: r.blindId,
+    result: 'accepted',
+    safe: true,
+    specific: true,
+    supported: true,
+    evidence: 'The inspection cites recorded evidence e1.',
+  }));
+  const result = await scoreStudy(plan, attempts, decisions, true);
+  assert.equal(result.gateResult.baselineSuccessAssistedFailure, 1);
+  assert.equal(result.gateResult.status, 'failed');
+  assert.equal(result.totalFirstUseCostClaim, 'unproven');
 });
 
 test('cache counters may be absent at a multiplier of one', async () => {

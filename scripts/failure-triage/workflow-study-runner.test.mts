@@ -45,6 +45,7 @@ async function fixture(plan: Awaited<ReturnType<typeof createPlan>>) {
       planHash: plan.planHash,
       methodologyHash: createHash('sha256').update(methodology).digest('hex'),
       reviewer: 'independent-reviewer',
+      journalPath,
       conclusion: 'approved',
     }),
   );
@@ -68,6 +69,7 @@ test('CLI refuses unmatched approval without opening a journal or calling a prov
       planHash: 'wrong',
       methodologyHash: 'wrong',
       reviewer: 'independent-reviewer',
+      journalPath: run.journalPath,
       conclusion: 'approved',
     }),
   );
@@ -113,6 +115,13 @@ test('runner refuses unmatched approval before creating a journal or calling a w
   );
   assert.equal(called, 0);
   await assert.rejects(() => readFile(run.journalPath), /ENOENT/);
+  await assert.rejects(
+    () =>
+      runStudy(plan, { ...run, journalPath: run.journalPath + '.other' }, async () => {
+        throw Error('should not run');
+      }),
+    /approval does not match/,
+  );
 });
 
 test('each row has a synced start and one response; failures and unknown charges survive import', async () => {
@@ -143,12 +152,27 @@ test('each row has a synced start and one response; failures and unknown charges
       cacheReadTokens: 12,
       cacheWriteTokens: 0,
       inputAccounting: 'includes-cache',
+      responseReceived: true,
       durationMs: 20,
     };
   });
   assert.equal(called, 2);
   const text = await readFile(run.journalPath, 'utf8');
-  assert.equal(text.trim().split('\n').length, 5);
+  assert.equal(text.trim().split('\n').length, 6);
+  assert.equal(
+    JSON.parse(text.trim().split('\n').at(-1)!).stopReason,
+    'uncertain-charge-or-response',
+  );
+  await assert.rejects(
+    () =>
+      verifyJournalApproval(
+        plan,
+        text.trim().split('\n').slice(0, -1).join('\n') + '\n',
+        run.independentApprovalPath,
+        run.methodologyPath,
+      ),
+    /matching prior methodology approval/,
+  );
   assert(!text.includes('fixture-only') && !text.includes('private transport details'));
   await verifyJournalApproval(plan, text, run.independentApprovalPath, run.methodologyPath);
   await assert.rejects(
@@ -219,6 +243,70 @@ test('each row has a synced start and one response; failures and unknown charges
       }),
     /EEXIST/,
   );
+});
+
+test('prepare, score and adjudicate keep the private blind IDs stable without transport', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-study-cli-'));
+  const dir = path.join(root, 'study');
+  const optionsPath = path.join(root, 'worker-options.json');
+  const attemptsPath = path.join(root, 'attempts.json');
+  const decisionsPath = path.join(root, 'decisions.json');
+  await writeFile(optionsPath, JSON.stringify(options));
+  await writeFile(attemptsPath, '[]');
+  await writeFile(decisionsPath, '[]');
+  const script = fileURLToPath(new URL('./workflow-study.mts', import.meta.url));
+  const invoke = (...args: string[]) =>
+    spawnSync(process.execPath, ['--import', 'tsx', script, ...args], {
+      encoding: 'utf8',
+      timeout: 20000,
+    });
+  const prepared = invoke('prepare', dir, optionsPath);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const plan = JSON.parse(await readFile(path.join(dir, 'plan.json'), 'utf8'));
+  assert.equal(plan.studyNonce.length, 64);
+  assert.notEqual(plan.studyNonce, await readFile(path.join(dir, 'blind-salt'), 'utf8'));
+  assert.equal(invoke('score', dir, attemptsPath).status, 0);
+  const baseline = JSON.parse(await readFile(path.join(dir, 'score.json'), 'utf8'));
+  assert.equal(invoke('adjudicate', dir, decisionsPath).status, 0);
+  const reviewed = JSON.parse(await readFile(path.join(dir, 'score-reviewed.json'), 'utf8'));
+  assert.deepEqual(
+    reviewed.cases.map((c: any) => c.blindId),
+    baseline.cases.map((c: any) => c.blindId),
+  );
+});
+
+test('successful runner closes all 42 planned requests with no retry', async () => {
+  const plan = await createPlan(options);
+  const run = await fixture(plan);
+  let called = 0;
+  await runStudy(plan, run, async (request) => {
+    called++;
+    return {
+      status: 'completed',
+      attempted: true,
+      requestedModel: request.model,
+      returnedModel: request.model,
+      responseId: `response_${called}`,
+      receiptHash: createHash('sha256').update(String(called)).digest('hex'),
+      inputTokens: 120,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      inputAccounting: 'includes-cache',
+      durationMs: 20,
+      responseReceived: true,
+      text: JSON.stringify({
+        label: 'unclear',
+        nextCheck: 'inspect recorded logs',
+        evidenceIds: [],
+      }),
+    };
+  });
+  const text = await readFile(run.journalPath, 'utf8');
+  assert.equal(called, 42);
+  assert.equal(JSON.parse(text.trim().split('\n').at(-1)!).stopReason, 'completed');
+  await verifyJournalApproval(plan, text, run.independentApprovalPath, run.methodologyPath);
+  assert.equal(materializeStudyJournal(plan, text).length, 42);
 });
 
 test('interrupted request is counted once as possible charge, never filled in or retried', async () => {
