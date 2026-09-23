@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import {
+  assessmentChoiceOptions,
   type AssessmentFeedbackVerdict,
   type AssessmentHistoryResult,
   type AssessmentRecord,
@@ -346,8 +347,17 @@ export class AssessmentPanel extends LitElement {
               Recommendation:
               ${record.consumer === 'failure-triage'
                 ? (failureTriageCause(record) ?? 'Unavailable')
-                : (record.recommendation?.route ?? 'Not assessed')}
-              · ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none
+                : record.consumer === 'decision-advice'
+                  ? record.result?.status === 'completed' &&
+                    record.result.answers?.action?.type === 'choice'
+                    ? record.result.answers.action.choice
+                    : record.status === 'started'
+                      ? 'Pending'
+                      : 'Unavailable'
+                  : (record.recommendation?.route ?? 'Not assessed')}
+              ${record.consumer === 'decision-advice'
+                ? '· Action: none'
+                : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
               ${record.result?.provider ?? 'No provider'} /
@@ -406,7 +416,7 @@ export class AssessmentPanel extends LitElement {
                           ${(answer.type === 'boolean'
                             ? ['true', 'false']
                             : answer.type === 'choice'
-                              ? Object.keys(answer.probabilities)
+                              ? assessmentChoiceOptions(answer)
                               : []
                           ).map((c) => html`<option value=${c}>${c}</option>`)}
                         </select>

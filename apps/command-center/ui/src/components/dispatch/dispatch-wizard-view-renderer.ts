@@ -57,6 +57,7 @@ interface DispatchWizardViewContext {
   autoProject: string;
   project: string;
   selectedSlotOverride: string;
+  explicitSlot: boolean;
   allowAutomaticSlot: boolean;
   selectedSlotPlatform: string;
   projectApps: readonly string[];
@@ -223,6 +224,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
                 ${renderProfileFitBanner({
                   profileFit: ctx.profileFitSuggestion,
                   prepareProfile: ctx.prepareProfile,
+                  explicitSlot: ctx.explicitSlot,
                   applySuggestedPrepareProfile: ctx.applySuggestedPrepareProfile,
                 })}
               `,

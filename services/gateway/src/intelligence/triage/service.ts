@@ -19,9 +19,14 @@ import {
 } from '../../assessment/failure-triage/packet.js';
 import { verifyTriagePilotEvidence } from '../../assessment/failure-triage/pilot-evidence.js';
 import { boundedAssessmentFetch } from '../../assessment/failure-triage/transport.js';
-import { CHECK_FOR_LABEL } from '../../assessment/failure-triage/types.js';
+import { CHECK_FOR_LABEL, type TriagePrice } from '../../assessment/failure-triage/types.js';
 import { assess } from '../../assessment/index.js';
 import { completeAssessment } from '../../assessment/monitor.js';
+import {
+  ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+  TRIAGE_SPEND_BOUND_EXCEEDED,
+  TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+} from '../../assessment/provider.js';
 import {
   assessmentRecord,
   assessmentRecords,
@@ -32,12 +37,64 @@ import {
 import { readTriagePolicy } from './policy.js';
 import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.js';
 
-const providers = defaultAssessmentProviders(boundedAssessmentFetch());
+const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
 const pending = new Map<string, Promise<FailureTriageView>>();
+
+/** Price known receipts and enforce the input bound even when the answer is rejected. */
+export function priceTriageResult(
+  result: AssessmentResult,
+  price: Pick<TriagePrice, 'inputUsdPerMillion' | 'maxRequestTokens'>,
+  modelMatched = true,
+): AssessmentResult {
+  const usage = result.usage;
+  if (!usage || usage.inputTokens === undefined) {
+    const receivedReply =
+      result.status === 'completed' || result.error === ASSESSMENT_RESPONSE_VALIDATION_ERROR;
+    return receivedReply
+      ? {
+          ...result,
+          status: 'unavailable',
+          answers: undefined,
+          // The provider has replied, but its receipt cannot prove the per-request token bound.
+          // Keep valid partial usage so the audit never treats that attempt as free.
+          error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+        }
+      : result;
+  }
+  const priced = modelMatched
+    ? {
+        ...usage,
+        costUsd: (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000,
+        costKind: 'estimated' as const,
+      }
+    : { ...usage, costUsd: undefined, costKind: undefined };
+  return usage.inputTokens > price.maxRequestTokens
+    ? {
+        ...result,
+        status: 'unavailable',
+        answers: undefined,
+        usage: priced,
+        error: TRIAGE_SPEND_BOUND_EXCEEDED,
+      }
+    : !modelMatched
+      ? {
+          ...result,
+          status: 'unavailable',
+          answers: undefined,
+          usage: priced,
+          // Input usage does not establish the configured model's price/bound when the identity
+          // is absent or different. Lock this snapshot instead of treating a reply as free.
+          error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+        }
+      : { ...result, usage: priced };
+}
 
 function canRetry(record: AssessmentRecord): boolean {
   return (
-    ['unavailable', 'interrupted'].includes(record.status) ||
+    (['unavailable', 'interrupted'].includes(record.status) &&
+      ![TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE].includes(
+        record.result?.error ?? '',
+      )) ||
     (['skipped', 'disabled'].includes(record.status) && record.result?.attempted === false)
   );
 }
@@ -268,7 +325,7 @@ export async function analyzeFailureTriage(
         availability: 'budget-blocked',
         reason:
           reserved.cause === 'spend-bound'
-            ? 'A previous response exceeded this price snapshot’s token bound. Verify a new price snapshot before requesting advice.'
+            ? 'A previous response exceeded or could not establish this price snapshot’s token bound. Verify a new price snapshot before requesting advice.'
             : 'The shared daily assessment budget is exhausted.',
       };
     if (reserved.status === 'reserved') {
@@ -315,45 +372,35 @@ export async function analyzeFailureTriage(
           },
           providers,
         );
-        if (result.status !== 'completed') return result;
-        if (result.returnedModel !== model)
-          return {
-            ...result,
-            status: 'unavailable',
-            answers: undefined,
-            usage: result.usage && { ...result.usage, costUsd: undefined, costKind: undefined },
-            error: 'Returned model does not match the evaluated model',
-          };
-        try {
-          triagePrediction(result.answers ?? {}, prepared.packet);
-          const usage = result.usage;
-          if (usage) {
-            for (const n of [usage.inputTokens, usage.outputTokens])
-              if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
-                throw new Error('Invalid usage');
-            if (
-              usage.inputTokens !== undefined &&
-              usage.inputTokens > policy.price.maxRequestTokens
-            )
+        const usage = result.usage;
+        if (usage) {
+          for (const n of [usage.inputTokens, usage.outputTokens])
+            if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
               return {
                 status: 'unavailable',
                 attempted: true,
                 provider,
                 requestedModel: model,
-                error: 'spend-bound-exceeded',
+                error: 'Triage response failed its bounded contract',
               };
-            if (usage.inputTokens !== undefined) {
-              usage.costUsd = (usage.inputTokens * policy.price.inputUsdPerMillion) / 1_000_000;
-              usage.costKind = 'estimated';
-            }
-          }
-          return result;
+        }
+        const priced = priceTriageResult(result, policy.price, result.returnedModel === model);
+        if (priced.status !== 'completed') return priced;
+        if (priced.returnedModel !== model)
+          return {
+            ...priced,
+            status: 'unavailable',
+            answers: undefined,
+            error: 'Returned model does not match the evaluated model',
+          };
+        try {
+          triagePrediction(priced.answers ?? {}, prepared.packet);
+          return priced;
         } catch {
           return {
+            ...priced,
             status: 'unavailable',
-            attempted: true,
-            provider,
-            requestedModel: model,
+            answers: undefined,
             error: 'Triage response failed its bounded contract',
           };
         }

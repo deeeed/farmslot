@@ -188,6 +188,33 @@ test('native signal freshness follows its task lease instead of replayed control
   );
 });
 
+test('blocked monitor validates the new attempt with the normal signal freshness floor', () => {
+  const run = {
+    status: 'blocked' as const,
+    steps: [
+      {
+        name: 'monitor',
+        status: 'done' as const,
+        completedAt: '2026-09-23T01:02:00Z',
+        outputs: { workerSignal: { status: 'blocked', timestamp: '2026-09-23T01:00:00Z' } },
+      },
+    ],
+    agentContexts: [{ id: 'worker', role: 'fix-bug' as const, signalAttemptId: 'blocked-attempt' }],
+  };
+  const newSignal: WorkerSignal = {
+    status: 'complete',
+    outcome: 'success',
+    attemptId: 'new-attempt',
+    timestamp: '2026-09-23T01:01:00Z',
+  };
+  assert.equal(isWorkerSignalFreshForRun(run, newSignal), true);
+  assert.equal(
+    isWorkerSignalFreshForRun(run, { ...newSignal, timestamp: '2026-09-23T00:59:00Z' }),
+    false,
+  );
+  assert.equal(isWorkerSignalFreshForRun({ ...run, status: 'monitoring' }, newSignal), false);
+});
+
 test('isWorkerSignalFreshForRun rejects terminal signals from an earlier monitor attempt', () => {
   const run = {
     steps: [{ name: 'monitor', status: 'running' as const, startedAt: '2026-04-25T08:09:45.730Z' }],

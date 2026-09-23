@@ -29,7 +29,9 @@ import {
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
+import './decision-advice-panel.js';
 import './step-inspector.js';
+import './blocked-run-recovery.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
 import '../shared/media-lightbox.js';
@@ -1149,6 +1151,7 @@ export class RunDetail extends RunDetailState {
           // The park record is the authority for where this run's slot went; the
           // posture read only says what the run is holding.
           liveGateParkView(run),
+          run.slotId,
         ),
       _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _renderAgentSessions: (run) =>

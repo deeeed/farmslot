@@ -13,6 +13,29 @@ test('view links preserve safe navigation state and round trip', () => {
   assert.equal(validViewRoute('#config/flows/fix-bug/interactive/phase/metamask-farm'), true);
 });
 
+test('selected backlog items and status filters are shareable', () => {
+  for (const route of [
+    '#backlog?projects=farmslot-farm&item=26100923-29a3-46a3-bf0d-8040f9daa80c',
+    '#backlog?backlogProject=farmslot-farm&backlogStatus=candidate&item=26100923-29a3-46a3-bf0d-8040f9daa80c&dispatchConfig=1',
+    '#backlog?item=26100923-29a3-46a3-bf0d-8040f9daa80c&mode=edit&dispatchConfig=1',
+    '#backlog?projects=farmslot-farm&item=26100923-29a3-46a3-bf0d-8040f9daa80c&spec=1',
+    '#backlog?item=26100923-29a3-46a3-bf0d-8040f9daa80c&runnerPicker=1&sort=activity&direction=asc',
+    '#backlog?create=1&slotSelector=1',
+  ]) {
+    const link = viewLinkFromRoute(route);
+    assert.equal(link, `farmslot://view/${route}`);
+    assert.equal(viewRouteFromLink(link), route);
+  }
+});
+
+test('selected work graph nodes and filters are shareable', () => {
+  const route =
+    '#work-graphs?workGraphProject=farmslot-farm&graph=wg_test&node=wn_test&wgSort=title&wgDirection=asc';
+  const link = viewLinkFromRoute(route);
+  assert.equal(link, `farmslot://view/${route}`);
+  assert.equal(viewRouteFromLink(link), route);
+});
+
 test('view links reject credentials, actions and unknown parameters', () => {
   for (const route of [
     '#runs?token=secret',
@@ -20,6 +43,7 @@ test('view links reject credentials, actions and unknown parameters', () => {
     '#runs?approve=1',
     '#not-a-route',
     '#runs?file=%00secret',
+    '#backlog?item=26100923-29a3-46a3-bf0d-8040f9daa80c&token=secret',
   ]) {
     assert.equal(validViewRoute(route), false, route);
     assert.equal(viewLinkFromRoute(route), null, route);

@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 
 import type { PRRulePredicate } from '@farmslot/protocol';
 import type {
+  AssessmentHistoryResult,
   BacklogItem,
   DispatchCandidatesResult,
   EvalExperimentCreateResult,
@@ -1225,10 +1226,44 @@ export class DevHarness extends LitElement {
         timestamp: iso(12 * 60 * 1000),
       },
     ];
+    const history: AssessmentHistoryResult = {
+      retentionDays: 30,
+      auditHealth: { status: 'ok', failedWritesSinceStart: 0 },
+      records: [
+        {
+          version: 1,
+          id: '00000000-0000-4000-8000-000000000123',
+          ownerId: 'dev-fixture',
+          consumer: 'decision-advice',
+          status: 'completed',
+          startedAt: iso(60000),
+          policyVersion: 'decision-advice-v1',
+          feedback: [],
+          subject: {
+            run: {
+              id: 'synthetic-run',
+              project: 'example-farm',
+              step: 'decision-advice',
+              snapshotHash: 'a'.repeat(64),
+            },
+          },
+          result: {
+            status: 'completed',
+            attempted: true,
+            provider: 'synthetic-provider',
+            returnedModel: 'fixture-model',
+            answers: {
+              action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
+            },
+          },
+        },
+      ],
+    };
     return html`
       <intelligence-incidents-panel
         .injectedSummary=${summary}
         .injectedSignals=${liveSignals}
+        .injectedHistory=${history}
       ></intelligence-incidents-panel>
     `;
   }
@@ -2364,6 +2399,47 @@ All checks passed.`;
       }
       throw new Error(`Missing mock artifact: ${path}`);
     };
+    const blockedRun: Run = {
+      ...runWithPacket,
+      id: 'dev-blocked-worker',
+      project: 'farmslot-farm',
+      status: 'blocked',
+      metrics: { ...runWithPacket.metrics, disposition: 'blocked' },
+      decisions: [],
+      steps: runWithPacket.steps.map((step) =>
+        step.name === 'monitor'
+          ? {
+              ...step,
+              status: 'done',
+              completedAt: '2026-09-23T01:00:00Z',
+              outputs: {
+                workerSignal: {
+                  status: 'blocked',
+                  attemptId: 'blocked',
+                  timestamp: '2026-09-23T01:00:00Z',
+                },
+              },
+            }
+          : step,
+      ),
+      agentContexts: runWithPacket.agentContexts?.map((context) => ({
+        ...context,
+        runId: 'dev-blocked-worker',
+        signalFile: '.sandbox/farmslot-farm/worker-task/fix/dev-blocked-worker/SIGNAL.json',
+      })),
+    };
+    const updateBranchRun: Run = {
+      ...blockedRun,
+      id: 'dev-blocked-update-branch',
+      flowType: 'update-branch',
+      steps: blockedRun.steps.filter(
+        (step) => step.name !== 'find-slot' && step.name !== 'prepare',
+      ),
+      agentContexts: blockedRun.agentContexts?.map((context) => ({
+        ...context,
+        runId: 'dev-blocked-update-branch',
+      })),
+    };
     return html`
       <p class="section-label">Run detail (repeat-review continuation + operator packet)</p>
       <div
@@ -2375,6 +2451,14 @@ All checks passed.`;
           .mockArtifactTextLoader=${artifactTextLoader}
           mock-data
         ></run-detail>
+      </div>
+      <p class="section-label">Blocked worker after slot release</p>
+      <div style="height: 620px; border: 1px solid ${colors.bgCard}; overflow: auto">
+        <run-detail .runId=${blockedRun.id} .mockRun=${blockedRun} mock-data></run-detail>
+      </div>
+      <p class="section-label">Blocked update-branch without worker selection</p>
+      <div style="height: 620px; border: 1px solid ${colors.bgCard}; overflow: auto">
+        <run-detail .runId=${updateBranchRun.id} .mockRun=${updateBranchRun} mock-data></run-detail>
       </div>
     `;
   }

@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "source": "synthetic",
+  "cases": [
+    {
+      "id": "collision-01",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-01: synthetic-01",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    },
+    {
+      "id": "collision-02",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-02: synthetic-02",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    },
+    {
+      "id": "collision-03",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-03: synthetic-03",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    },
+    {
+      "id": "collision-04",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-04: synthetic-04, synthetic-04-previous",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    },
+    {
+      "id": "collision-05",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-05: synthetic-05",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    },
+    {
+      "id": "collision-06",
+      "type": "engine_collision",
+      "description": "Task dir collision for synthetic-06: synthetic-06",
+      "actions": [
+        {
+          "id": "create-new",
+          "label": "Create new (append timestamp)",
+          "description": "Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch \u2014 does not link to existing runs."
+        },
+        {
+          "id": "start-comparison",
+          "label": "Start comparison lane",
+          "description": "Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug."
+        },
+        {
+          "id": "abort",
+          "label": "Abort run",
+          "description": "Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching."
+        }
+      ]
+    }
+  ]
+}

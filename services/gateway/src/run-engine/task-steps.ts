@@ -26,6 +26,7 @@ import {
 import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
+import { loadFleetStatus } from '../fleet/state.js';
 import {
   buildSmartBranch,
   computeOverrideRate,
@@ -33,7 +34,14 @@ import {
   gradeTicket,
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
-import { resolvePrepareProfile } from '../methods/slot/prepare-profile.js';
+import {
+  companionResourceBlocker,
+  slotHasCompanionResource,
+} from '../methods/dispatch/slot-scoring.js';
+import {
+  configuredPrepareProfileNames,
+  resolvePrepareProfile,
+} from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
@@ -51,7 +59,7 @@ import {
   handleRepeatReviewDecision,
 } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
-import { detectProfileFit } from './profile-fit-gate.js';
+import { detectProfileFit, FARMSLOT_PROJECT } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
@@ -234,7 +242,15 @@ export async function executeGradeStep(
   runId: string,
   run: Run,
   stepPartialIO: StepPartialIOMap,
+  dependencies: {
+    createEngineDecision?: typeof createEngineDecision;
+    loadProjectVarsOrNull?: typeof loadProjectVarsOrNull;
+    getFleetStatus?: typeof loadFleetStatus;
+  } = {},
 ): Promise<StepIO> {
+  const decide = dependencies.createEngineDecision ?? createEngineDecision;
+  const getFleetStatus = dependencies.getFleetStatus ?? loadFleetStatus;
+  const loadProjectVars = dependencies.loadProjectVarsOrNull ?? loadProjectVarsOrNull;
   const inputs: Record<string, unknown> = { ticketOrPr: run.ticketOrPr };
   // Fetch ticket data from Jira/GitHub unless the run was created with
   // explicit context, such as eval replay candidates.
@@ -263,7 +279,7 @@ export async function executeGradeStep(
   let profileFitOverride: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
-    const actionId = await createEngineDecision(
+    const actionId = await decide(
       runId,
       'project_mismatch',
       `Ticket "${projectMismatch.normalizedTicket ?? run.ticketOrPr}" appears to belong to project "${projectMismatch.suggestedProject}", but this run is on "${run.project}". ${projectMismatch.rationale} Continue anyway?`,
@@ -286,35 +302,53 @@ export async function executeGradeStep(
     projectMismatchOverride = { projectMismatch, overriddenBy: 'user' };
   }
 
-  let slotPlatform: string | null = null;
-  if (run.slotId) {
-    const { loadFleetStatus } = await import('../fleet/state.js');
-    const fleet = await loadFleetStatus();
-    slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
-  }
-  const resolvedProfileFit = detectProfileFit(run, ticketData, {
-    prepareProfile: run.prepareProfile,
-    app: run.app,
-    slotPlatform,
-  });
-  if (resolvedProfileFit) {
-    const profileProjectVars = await loadProjectVarsOrNull(
+  const boundSlot = run.slotId
+    ? (await getFleetStatus()).slots.find((slot) => slot.slot === run.slotId)
+    : undefined;
+  const slotPlatform = boundSlot?.platform ?? null;
+  let currentPrepareProfile: string | undefined;
+  let resolvedProfileFit: ReturnType<typeof detectProfileFit> = null;
+  // Profile-fit is Farmslot-only and explicit operator profiles always win.
+  // Avoid resolving a prepare profile for every other run: an unknown explicit
+  // profile remains PREPARE's error, as it was before this advisory gate.
+  if (run.project === FARMSLOT_PROJECT && !run.prepareProfile?.trim()) {
+    const profileProjectVars = await loadProjectVars(
       run.project,
       'prepare profile decision',
       run.id,
     );
-    const currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
-    const actionId = await createEngineDecision(
+    if (profileProjectVars?.projectJson) {
+      currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars.projectJson);
+      resolvedProfileFit = detectProfileFit(run, ticketData, {
+        app: run.app,
+        slotPlatform,
+        ...(boundSlot
+          ? { boundSlotHasCompanionResource: slotHasCompanionResource(boundSlot) }
+          : {}),
+        effectivePrepareProfile: currentPrepareProfile,
+        availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars.projectJson),
+      });
+    }
+  }
+  if (resolvedProfileFit && run.slotId) {
+    // FIND_SLOT has already claimed this slot. Advice cannot silently change the
+    // resource requirements of that binding; the operator must pick another slot
+    // in a new run if this one cannot support the suggested profile.
+    const resourceBlocker = boundSlot
+      ? companionResourceBlocker(boundSlot, resolvedProfileFit.suggestedPrepareProfile)
+      : 'Bound slot is unavailable in the fleet';
+    const actionId = await decide(
       runId,
       'prepare_profile_mismatch',
-      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${currentPrepareProfile}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
+      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}${resourceBlocker ? ` Slot ${run.slotId} cannot use the suggestion: ${resourceBlocker}. Start a new run on a compatible slot to use it.` : ''}`,
       [
         {
           id: 'continue',
           label: `Continue with ${currentPrepareProfile}`,
           style: 'primary',
+          description: 'Keep the current profile for this run.',
         },
-        { id: 'abort', label: 'Abort run', style: 'danger' },
+        { id: 'abort', label: 'Abort run', style: 'danger', description: 'Stop this run.' },
       ],
     );
     if (actionId === 'abort') {
@@ -335,7 +369,7 @@ export async function executeGradeStep(
         engineState: {
           ...current.engineState,
           profileFitSuggestion: resolvedProfileFit,
-          validationPlan: resolvedProfileFit.validationPlan,
+          ...(!resourceBlocker ? { validationPlan: resolvedProfileFit.validationPlan } : {}),
         },
       });
     }

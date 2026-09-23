@@ -80,7 +80,7 @@ export function acceptanceVerdictColor(verdict: string | null): string {
 }
 
 export interface AcceptanceLedgerView {
-  /** `1/3 proven`, the line the compact panel leads with. */
+  /** Assessment progress and proven criteria are separate counts. */
   counts: string;
   /** Long-form tally for the accessibility label. */
   countsLabel: string;
@@ -101,11 +101,12 @@ export function acceptanceLedgerView(
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
 ): AcceptanceLedgerView {
   const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const assessed = summary.total - summary.unrecorded;
   return {
-    counts: `${summary.proven}/${summary.total} proven`,
+    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
     countsLabel:
       `proven ${summary.proven}, weak ${summary.weak}, missing ${summary.missing}, ` +
-      `untestable ${summary.untestable}, no verdict ${summary.unrecorded}`,
+      `untestable ${summary.untestable}, not assessed ${summary.unrecorded}`,
     hasOpenCriteria: summary.proven + summary.untestable < summary.total,
     rows: acceptanceCriteriaView(criteria, ledger).map((criterion) => ({
       criterion,

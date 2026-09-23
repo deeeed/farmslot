@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   ASSESSMENT_CONSUMERS,
+  assessmentChoiceOptions,
   type AssessmentFeedbackParams,
   type AssessmentHistoryParams,
   type AssessmentHistoryResult,
@@ -16,6 +17,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 
+import { TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE } from './provider.js';
 import {
   assertAssessmentRecord,
   assertAssessmentSubject,
@@ -173,12 +175,17 @@ export async function reserveAssessment(
       records.some(
         (r) =>
           r.reservation?.priceHash === reservation.priceHash &&
-          r.result?.error === 'spend-bound-exceeded',
+          [TRIAGE_SPEND_BOUND_EXCEEDED, TRIAGE_SPEND_BOUND_UNVERIFIABLE].includes(
+            r.result?.error ?? '',
+          ),
       )
     )
       return { status: 'budget-blocked', cause: 'spend-bound' };
     const today = new Date().toISOString().slice(0, 10);
-    const attempts = records.filter((r) => r.reservation && r.startedAt.slice(0, 10) === today);
+    // Keep confirmed no-call records in history without charging the daily request budget.
+    const attempts = records.filter(
+      (r) => r.reservation && r.result?.attempted !== false && r.startedAt.slice(0, 10) === today,
+    );
     if (
       attempts.length >= limits.maxCalls ||
       attempts.reduce((sum, r) => sum + r.reservation!.maxUsd, 0) + reservation.maxUsd >
@@ -274,7 +281,7 @@ export async function recordAssessmentFeedback(
         ? typeof params.correctedAnswer !== 'boolean'
         : answer?.type !== 'choice' ||
           typeof params.correctedAnswer !== 'string' ||
-          !Object.hasOwn(answer.probabilities, params.correctedAnswer))
+          !assessmentChoiceOptions(answer).includes(params.correctedAnswer))
     )
       throw new Error('Correction must match the question choices');
     record.feedback.push({

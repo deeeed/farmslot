@@ -4,25 +4,36 @@ export function boundedAssessmentFetch(fetchImpl: typeof fetch = fetch): typeof 
     const response = await fetchImpl(input, { ...init, redirect: 'error' });
     const reader = response.body?.getReader();
     if (!reader) return response;
-    const chunks: Uint8Array[] = [];
     let size = 0;
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      size += next.value.byteLength;
-      if (size > 64 * 1024) {
-        await reader.cancel();
-        throw new Error('Assessment response exceeds byte limit');
-      }
-      chunks.push(next.value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return new Response(bytes, {
+    // Do not await the body before returning headers. The provider records a receipt
+    // before its SDK consumes the stream, even if reading later fails.
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            const next = await reader.read();
+            if (next.done) {
+              controller.close();
+              return;
+            }
+            size += next.value.byteLength;
+            if (size > 64 * 1024) {
+              await reader.cancel();
+              controller.error(new Error('Assessment response exceeds byte limit'));
+              return;
+            }
+            controller.enqueue(next.value);
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,

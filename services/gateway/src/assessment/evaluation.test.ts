@@ -457,3 +457,187 @@ test('legacy cost amounts are not relabeled as provider-reported', () => {
   assert.equal(result.knownEstimatedUsd, 0.02);
   assert.equal(result.knownUnclassifiedUsd, 0.01);
 });
+
+test('plain LLM booleans and choices are scored without inventing probabilities', () => {
+  const plain = row();
+  plain.result!.answers = {
+    visualReview: { type: 'boolean', value: true },
+    risk: { type: 'choice', choice: 'high', choices: ['low', 'high'] },
+  };
+  const saved = report([plain]);
+  const evaluated = evaluateAssessmentReport(saved, {
+    reportId: saved.reportId,
+    references: [
+      {
+        assessmentId: plain.id,
+        questionId: 'visualReview',
+        expected: false,
+        evidenceRef: 'fixture:known-no-visual-change',
+        source: 'human',
+        blinded: true,
+      },
+      {
+        assessmentId: plain.id,
+        questionId: 'risk',
+        expected: 'low',
+        evidenceRef: 'fixture:known-low-risk',
+        source: 'human',
+        blinded: true,
+      },
+    ],
+  });
+  const visual = evaluated.questions.find((q) => q.questionId === 'visualReview')!;
+  assert.equal(visual.falsePositives, 1);
+  assert.equal(visual.correct, 0);
+  assert.equal(visual.judged, 1);
+  assert.equal(evaluated.questions.find((q) => q.questionId === 'risk')?.judged, 1);
+});
+
+test('decision advice counts an admitted action and a deliberate abstention separately', () => {
+  const accepted = row();
+  accepted.consumer = 'decision-advice';
+  accepted.subject = {
+    run: {
+      id: 'synthetic-run-1',
+      project: 'fixture',
+      step: 'decision-advice',
+      snapshotHash: 'e'.repeat(64),
+    },
+  };
+  delete accepted.recommendation;
+  accepted.result!.answers = {
+    action: { type: 'choice', choice: 'prepare', probabilities: { prepare: 1, abstain: 0 } },
+  };
+  const abstained = {
+    ...accepted,
+    id: randomUUID(),
+    subject: { run: { ...accepted.subject.run!, id: 'synthetic-run-2' } },
+    result: {
+      ...accepted.result!,
+      answers: {
+        action: {
+          type: 'choice' as const,
+          choice: 'abstain',
+          probabilities: { prepare: 0, abstain: 1 },
+        },
+      },
+    },
+  };
+  const frozen = report([accepted, abstained]);
+  assert.equal(frozen.summary.calls, 2);
+  assert.equal(frozen.summary.uniqueCases, 2);
+  const result = evaluateAssessmentReport(frozen, {
+    reportId: frozen.reportId,
+    references: [
+      {
+        assessmentId: accepted.id,
+        questionId: 'action',
+        expected: 'prepare',
+        evidenceRef: 'fixture:case-1',
+        source: 'human',
+        blinded: true,
+      },
+      {
+        assessmentId: abstained.id,
+        questionId: 'action',
+        expected: 'prepare',
+        evidenceRef: 'fixture:case-2',
+        source: 'human',
+        blinded: true,
+      },
+    ],
+  });
+  assert.equal(result.questions[0].eligible, 2);
+  assert.equal(result.questions[0].judged, 2);
+  assert.equal(result.questions[0].abstained, 1);
+  assert.equal(result.questions[0].correct, 1);
+  assert.equal(result.comparison.status, 'inconclusive');
+});
+
+test('decision advice counts a reserved paid-output attempt with missing usage as unknown charge', () => {
+  const advice = row();
+  advice.consumer = 'decision-advice';
+  advice.subject = {
+    run: {
+      id: 'synthetic-unknown-usage',
+      project: 'fixture',
+      step: 'decision-advice',
+      snapshotHash: 'c'.repeat(64),
+    },
+  };
+  delete advice.recommendation;
+  advice.result!.answers = {
+    action: { type: 'choice', choice: 'prepare', probabilities: { prepare: 1, abstain: 0 } },
+  };
+  advice.result!.attempted = true;
+  advice.result!.usage = {
+    provider: 'fixture',
+    requestedModel: 'paid-output',
+    inputTokens: 80,
+    durationMs: 5,
+  };
+  advice.reservation = { key: 'd'.repeat(64), priceHash: 'e'.repeat(64), maxUsd: 0.01 };
+  const summary = summarizeAssessments([advice]);
+  assert.equal(summary.calls, 1);
+  assert.equal(summary.attemptedCalls, 1);
+  assert.equal(summary.unknownCharges, 1);
+  assert.equal(summary.reservedUsd, 0.01);
+  assert.equal(summary.knownEstimatedUsd, 0);
+});
+
+test('decision advice scores labeled abstentions without counting missing references', () => {
+  const make = (choice: string, hash: string) => {
+    const record = row();
+    record.consumer = 'decision-advice';
+    record.subject = {
+      run: { id: hash, project: 'fixture', step: 'decision-advice', snapshotHash: hash.repeat(64) },
+    };
+    delete record.recommendation;
+    record.result!.answers = {
+      action: { type: 'choice', choice, probabilities: { continue: 0.5, abstain: 0.5 } },
+    };
+    return record;
+  };
+  const correctAbstain = make('abstain', 'a');
+  const falseAbstain = make('abstain', 'b');
+  const mistakenAction = make('continue', 'c');
+  const missing = make('abstain', 'd');
+  const result = evaluateAssessmentReport(
+    report([correctAbstain, falseAbstain, mistakenAction, missing]),
+    {
+      reportId: 'd'.repeat(64),
+      references: [
+        {
+          assessmentId: correctAbstain.id,
+          questionId: 'action',
+          expected: 'abstain',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:unknown',
+        },
+        {
+          assessmentId: falseAbstain.id,
+          questionId: 'action',
+          expected: 'continue',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:clear',
+        },
+        {
+          assessmentId: mistakenAction.id,
+          questionId: 'action',
+          expected: 'abstain',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:unknown',
+        },
+      ],
+    },
+  );
+  assert.equal(result.questions.length, 1);
+  assert.equal(result.questions[0].eligible, 4);
+  assert.equal(result.questions[0].abstained, 3);
+  assert.equal(result.questions[0].judged, 3);
+  assert.equal(result.questions[0].correct, 1);
+  assert.equal(result.questions[0].unlabeled, 1);
+});

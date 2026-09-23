@@ -4,7 +4,9 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
-- Document opt-in failure advice, source approval and honest assessment monitoring.
+- Document structured-assessment provider selection and the distinction between provider support and evaluated consumer eligibility.
+
+- Document opt-in failure and pending-decision advice, source approval and honest assessment monitoring.
 
 - Separate experimental assessment monitoring from evaluation-gated workflow integrations; remove instructions to trigger inference through PR matching.
 

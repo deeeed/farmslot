@@ -76,25 +76,53 @@ function answer(value: unknown): value is AssessmentAnswer {
   if (!record(value)) return false;
   if (value.type === 'boolean')
     return (
-      probability(value.probability) &&
-      Object.keys(value).every((k) => ['type', 'probability'].includes(k))
+      (typeof value.value === 'boolean' || probability(value.probability)) &&
+      (value.value === undefined || typeof value.value === 'boolean') &&
+      (value.probability === undefined || probability(value.probability)) &&
+      Object.keys(value).every((k) => ['type', 'value', 'probability'].includes(k))
     );
   if (value.type !== 'choice' && value.type !== 'score') return false;
   if (value.confidence !== undefined && !probability(value.confidence)) return false;
   if (
-    !record(value.probabilities) ||
-    Object.keys(value.probabilities).length > 50 ||
-    !Object.values(value.probabilities).every(probability)
+    value.probabilities !== undefined &&
+    (!record(value.probabilities) ||
+      Object.keys(value.probabilities).length > 50 ||
+      !Object.values(value.probabilities).every(probability))
   )
     return false;
   if (
     Object.keys(value).some(
-      (k) => !['type', 'choice', 'score', 'confidence', 'probabilities', 'legend'].includes(k),
+      (k) =>
+        !['type', 'choice', 'choices', 'score', 'confidence', 'probabilities', 'legend'].includes(
+          k,
+        ),
     )
   )
     return false;
-  if (value.type === 'choice')
-    return bounded(value.choice, 80) && Object.hasOwn(value.probabilities, value.choice);
+  if (value.type === 'choice') {
+    if (
+      value.choices !== undefined &&
+      (!Array.isArray(value.choices) ||
+        value.choices.length < 1 ||
+        value.choices.length > 50 ||
+        !value.choices.every((c) => bounded(c, 80)) ||
+        new Set(value.choices).size !== value.choices.length)
+    )
+      return false;
+    const options = Array.isArray(value.choices)
+      ? value.choices
+      : record(value.probabilities)
+        ? Object.keys(value.probabilities)
+        : [];
+    return (
+      bounded(value.choice, 80) &&
+      options.includes(value.choice) &&
+      (value.probabilities === undefined ||
+        (record(value.probabilities) &&
+          Object.keys(value.probabilities).every((c) => options.includes(c)) &&
+          Object.hasOwn(value.probabilities, value.choice)))
+    );
+  }
   return (
     count(value.score) &&
     (!value.legend ||
@@ -164,6 +192,8 @@ function result(value: unknown): value is AssessmentResult {
             'requestId',
             'durationMs',
             'inputTokens',
+            'cacheReadTokens',
+            'cacheWriteTokens',
             'outputTokens',
             'costUsd',
             'costKind',
@@ -171,7 +201,13 @@ function result(value: unknown): value is AssessmentResult {
       )
     )
       return false;
-    for (const k of ['inputTokens', 'outputTokens', 'costUsd'])
+    for (const k of [
+      'inputTokens',
+      'outputTokens',
+      'cacheReadTokens',
+      'cacheWriteTokens',
+      'costUsd',
+    ])
       if (u[k] !== undefined && !count(u[k])) return false;
     if (u.costKind !== undefined && !['estimated', 'reported'].includes(String(u.costKind)))
       return false;
@@ -241,6 +277,8 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
               'inputUsdPerMillion',
               'outputUsdPerMillion',
               'maxRequestTokens',
+              'maxInputTokens',
+              'maxOutputTokens',
             ].includes(k),
         ) ||
         p.version !== 1 ||
@@ -251,7 +289,9 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
         !Number.isFinite(Date.parse(p.verifiedAt)) ||
         !count(p.inputUsdPerMillion) ||
         !count(p.outputUsdPerMillion) ||
-        !count(p.maxRequestTokens)
+        !count(p.maxRequestTokens) ||
+        (p.maxInputTokens !== undefined && !count(p.maxInputTokens)) ||
+        (p.maxOutputTokens !== undefined && !count(p.maxOutputTokens))
       )
         throw new Error('Invalid assessment price snapshot');
     }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentContext,
   DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
@@ -14,9 +15,11 @@ import {
   resolveRunSlotId,
   type Run,
   type RunEngineState,
+  type RunProbeWorkerSignalResult,
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
+  type RuntimeCapabilityStatusResult,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -29,7 +32,7 @@ import {
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
-import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
@@ -44,6 +47,10 @@ import {
   startRun,
 } from '../../run-engine/orchestrator.js';
 import {
+  probeWorkerSignalForRun,
+  signalMatchesMonitorContext,
+} from '../../run-engine/run-monitor.js';
+import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
@@ -54,6 +61,7 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
+import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
 
 import {
   isInternalArtifactOnlyEvalTicket,
@@ -63,9 +71,24 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
+/** A failed blocked replay must not terminally fence the run it will retry. */
+export function rollbackReclaimedSlotReleaseOptions(
+  status: Run['status'],
+  runId: string,
+): { restartRunId: string } | undefined {
+  return status === 'blocked' ? { restartRunId: runId } : undefined;
+}
+
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+}
+
+function shouldInjectReplayClaimFailure(runId: string): boolean {
+  return (
+    process.env.NODE_TEST_CONTEXT === '1' &&
+    (process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS?.split(',').includes(runId) ?? false)
+  );
 }
 
 export function freshDispatchEngineStateForReplay(
@@ -309,6 +332,68 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
 }
 
+export function freshBlockedMonitorAttempt(
+  run: Pick<Run, 'status' | 'steps'>,
+  probe: RunProbeWorkerSignalResult,
+  context?: Pick<AgentContext, 'id' | 'role'> | null,
+): WorkerSignal | null {
+  const monitor = run.steps.find((step) => step.name === PS.MONITOR);
+  const previous = monitor?.outputs?.workerSignal;
+  const previousSignal =
+    previous && typeof previous === 'object' ? (previous as Record<string, unknown>) : null;
+  const signal = probe.signal;
+  if (
+    run.status !== 'blocked' ||
+    monitor?.status !== 'done' ||
+    previousSignal?.status !== 'blocked' ||
+    !signal ||
+    !signal.attemptId ||
+    signal.attemptId === previousSignal.attemptId ||
+    !['ready', 'non_terminal'].includes(probe.code) ||
+    !['running', 'done', 'complete'].includes(signal.status) ||
+    !signalMatchesMonitorContext(signal, context)
+  )
+    return null;
+  const signalAt = parseStrictIsoMs(signal.timestamp);
+  const previousAt = parseStrictIsoMs(
+    typeof previousSignal.timestamp === 'string' ? previousSignal.timestamp : undefined,
+  );
+  if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
+  return signal;
+}
+
+export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
+  const plan = status.proofPlans[run.id];
+  if (
+    !plan &&
+    status.catalog?.length === 0 &&
+    !status.leases.some((lease) => lease.owner.runId === run.id)
+  )
+    return true;
+  const blockedAt = parseStrictIsoMs(
+    run.steps.find((step) => step.name === PS.MONITOR)?.completedAt,
+  );
+  return (
+    !!plan &&
+    plan.slotId === run.slotId &&
+    plan.ownerRunId === run.id &&
+    blockedAt !== null &&
+    plan.requirements.every((requirement) =>
+      status.leases.some((lease) => {
+        const checkedAt = parseStrictIsoMs(lease.health.checkedAt);
+        return (
+          lease.capabilityId === requirement.capabilityId &&
+          lease.owner.runId === run.id &&
+          lease.state === 'acquired' &&
+          lease.health.state === 'healthy' &&
+          checkedAt !== null &&
+          checkedAt > blockedAt
+        );
+      }),
+    )
+  );
+}
+
 /**
  * The adoption probe could not reach the slot, so replay cannot tell whether a
  * worker is already executing the prompt this replay would resend.
@@ -419,6 +504,18 @@ type SlotReclaimCheck =
   | { ok: true }
   | { ok: false; reason: 'owned-by-other'; owner: string }
   | { ok: false; reason: 'not-reclaimable'; lifecycle: string };
+
+export function blockedMonitorOwnsSlot(
+  slot: Readonly<Record<string, unknown>> | null,
+  runId: string,
+): boolean {
+  return Boolean(
+    slot &&
+    slot.current_run_id === runId &&
+    ['busy', 'held'].includes(String(slot.lifecycle)) &&
+    slot.phase !== SLOT_PHASE_RELEASING,
+  );
+}
 
 export function replaySlotReclaimCheck(
   slot: Readonly<Record<string, unknown>>,
@@ -594,10 +691,72 @@ export async function runReplayStep(
       `[run] replay from dispatch — adopted fresh task signal and resumed ${params.runId.slice(0, 8)} at monitor`,
     );
   }
+  const previousMonitorSignal = existing.steps.find((step) => step.name === PS.MONITOR)?.outputs
+    ?.workerSignal;
+  const needsBlockedAttempt =
+    params.stepName === PS.MONITOR &&
+    replayStepName === PS.MONITOR &&
+    existing.status === 'blocked' &&
+    previousMonitorSignal &&
+    typeof previousMonitorSignal === 'object' &&
+    'status' in previousMonitorSignal &&
+    previousMonitorSignal.status === 'blocked';
+  const evalCanRestartFromPrepare = shouldRerouteEvalReplayToPrepare({
+    evalExperiment: Boolean(existing.engineState?.evalExperiment),
+    adoptedLiveWorker: Boolean(adoptedTaskSignal),
+    targetIdx,
+    prepareIdx,
+    monitorIdx,
+  });
+  if (needsBlockedAttempt) {
+    const slotId = existing.slotId;
+    const nextAction =
+      findSlotIdx >= 0 ? 'Restart from find-slot' : `Start a new ${existing.flowType} run`;
+    const slot = slotId ? await readSlotRow(slotId) : null;
+    let blocker: string | null = null;
+    if (!slotId) blocker = `This run has no slot. ${nextAction} instead.`;
+    else if (!blockedMonitorOwnsSlot(slot, existing.id))
+      blocker = `This run no longer owns its slot. ${nextAction} instead.`;
+    else {
+      const status = await runtimeCapabilityStatus({ slotId });
+      if (!blockedMonitorProofReady(existing, status)) {
+        blocker =
+          status.catalog.length && !status.proofPlans[existing.id]
+            ? `No proof plan is recorded. ${nextAction} instead.`
+            : `Proof resources are not healthy after the block. ${nextAction} instead.`;
+      }
+    }
+    if (blocker) {
+      if (
+        !evalCanRestartFromPrepare ||
+        (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx < 0)
+      ) {
+        throw new Error(blocker);
+      }
+      if (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx >= 0) {
+        replayStepName = PS.FIND_SLOT;
+        targetIdx = findSlotIdx;
+      } else {
+        replayStepName = PS.PREPARE;
+        targetIdx = prepareIdx;
+      }
+    }
+  }
+  const probeBlockedMonitor = needsBlockedAttempt && replayStepName === PS.MONITOR;
+  const monitorContext = probeBlockedMonitor
+    ? (existing.agentContexts?.find(
+        (context) => context.role === primaryRoleForFlow(existing.flowType),
+      ) ?? existing.agentContexts?.[0])
+    : null;
+  const probe = probeBlockedMonitor
+    ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
+    : null;
+  const blockedAttempt = probe ? freshBlockedMonitorAttempt(existing, probe, monitorContext) : null;
   if (
+    replayStepName !== PS.FIND_SLOT &&
     shouldRerouteEvalReplayToPrepare({
       evalExperiment: Boolean(existing.engineState?.evalExperiment),
-      adoptedLiveWorker: Boolean(adoptedTaskSignal),
+      adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
       targetIdx,
       prepareIdx,
       monitorIdx,
@@ -607,6 +766,22 @@ export async function runReplayStep(
     targetIdx = prepareIdx;
     console.log(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
+    );
+  }
+  if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {
+    if (
+      probe?.signal?.attemptId &&
+      previousMonitorSignal &&
+      typeof previousMonitorSignal === 'object' &&
+      'attemptId' in previousMonitorSignal &&
+      probe.signal.attemptId === previousMonitorSignal.attemptId
+    ) {
+      throw new Error(
+        'This worker attempt is still blocked. Start a new attempt with ./mark start before resuming monitoring.',
+      );
+    }
+    throw new Error(
+      probe?.message || 'A newer worker signal is required before replaying this blocked monitor',
     );
   }
 
@@ -685,6 +860,8 @@ export async function runReplayStep(
   }
 
   let reclaimedSlotId: string | null = null;
+  let reclaimedSlotEpoch: number | null = null;
+  let priorOwnedSlotFields: Record<string, unknown> | null = null;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -745,6 +922,25 @@ export async function runReplayStep(
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
 
+    if (replayStepName === PS.FIND_SLOT && existing.status === 'blocked' && existing.slotId) {
+      const slot = await readSlotRow(existing.slotId);
+      if (slot?.current_run_id === params.runId) {
+        const { slotRelease } = await import('../slot.js');
+        const { released } = await slotRelease(
+          { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
+          emit,
+          { restartRunId: params.runId },
+        );
+        if (!released) {
+          throw new Error(
+            `Slot ${existing.slotId} could not be released before restarting this run`,
+          );
+        }
+        assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+        assertNativeReplayCurrent();
+      }
+    }
+
     if (nativeFreshRestart) {
       const { restartNativeWorkerContexts } =
         await import('../../runners/native/worker-restart.js');
@@ -790,19 +986,30 @@ export async function runReplayStep(
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
-          const { claimed } = await claimSlotStatusIf(
+          const { claimed, epoch } = await claimSlotStatusIf(
             replaySlotId,
             (slot) => {
               const live = getRun(params.runId);
               if (live?.engineState?.operatorForceCompleted) return false;
+              // A blocked monitor adopts a signal from the current worker. It may
+              // only claim that same worker; an intervening release or reassignment
+              // must not turn this into a generic free-slot reclaim.
+              if (probeBlockedMonitor && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
+              if (existing.status === 'blocked' && blockedMonitorOwnsSlot(slot, params.runId)) {
+                priorOwnedSlotFields = {
+                  lifecycle: slot.lifecycle,
+                  phase: slot.phase,
+                  agent: slot.agent,
+                };
+              }
               return replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
               }).ok;
             },
             {
               lifecycle: 'busy',
-              phase: adoptedTaskSignal ? 'working' : 'preparing',
-              agent: adoptedTaskSignal ? 'working' : 'orchestrator',
+              phase: adoptedTaskSignal || blockedAttempt ? 'working' : 'preparing',
+              agent: adoptedTaskSignal || blockedAttempt ? 'working' : 'orchestrator',
               current_run_id: params.runId,
               current_flow_type: existing.flowType || null,
               current_ticket_or_pr: existing.ticketOrPr,
@@ -818,10 +1025,26 @@ export async function runReplayStep(
             );
           }
           reclaimedSlotId = replaySlotId;
+          reclaimedSlotEpoch = epoch;
+          if (
+            blockedAttempt &&
+            !blockedMonitorProofReady(
+              existing,
+              await runtimeCapabilityStatus({ slotId: replaySlotId }),
+            )
+          ) {
+            throw new Error(
+              'Proof resources changed during replay. Refresh their health before resuming monitoring.',
+            );
+          }
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
+          // The disposable gateway recipe injects a failure after a real claim.
+          if (shouldInjectReplayClaimFailure(params.runId)) {
+            throw new Error('Injected replay failure after claim');
+          }
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
         } catch (err) {
           console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
@@ -1130,8 +1353,9 @@ export async function runReplayStep(
           model: replayModel ?? runnerDefaultModel(replayRunner),
         }
       : resetOutcomeMetrics;
+    const latestAgentContexts = getRun(params.runId)?.agentContexts ?? existing.agentContexts;
     const resetAgentContextsBase = hasRunnerOverride
-      ? existing.agentContexts?.map((context) =>
+      ? latestAgentContexts?.map((context) =>
           context.role === primaryRoleForFlow(existing.flowType)
             ? {
                 ...context,
@@ -1143,19 +1367,23 @@ export async function runReplayStep(
               }
             : context,
         )
-      : existing.agentContexts;
-    const resetAgentContexts = adoptedTaskSignal
-      ? resetAgentContextsBase?.map((context) =>
-          context.role === primaryRoleForFlow(existing.flowType)
-            ? {
-                ...context,
-                status: 'working' as const,
-                completedAt: undefined,
-                lastSignalAt: adoptedTaskSignal.timestamp,
-                signalAttemptId: adoptedTaskSignal.attemptId,
-              }
-            : context,
-        )
+      : latestAgentContexts;
+    const replaySignal = adoptedTaskSignal ?? blockedAttempt;
+    const resetAgentContexts = replaySignal
+      ? resetAgentContextsBase?.map((context) => {
+          if (context.role !== primaryRoleForFlow(existing.flowType)) return context;
+          const contextSignalAt = parseStrictIsoMs(context.lastSignalAt);
+          const replaySignalAt = parseStrictIsoMs(replaySignal.timestamp);
+          const newerContextSignal =
+            contextSignalAt !== null && replaySignalAt !== null && contextSignalAt > replaySignalAt;
+          return {
+            ...context,
+            status: 'working' as const,
+            completedAt: undefined,
+            lastSignalAt: newerContextSignal ? context.lastSignalAt : replaySignal.timestamp,
+            signalAttemptId: newerContextSignal ? context.signalAttemptId : replaySignal.attemptId,
+          };
+        })
       : resetAgentContextsBase;
     const attemptCount =
       (existing.recoveryAttempts ?? []).filter(
@@ -1309,11 +1537,22 @@ export async function runReplayStep(
           getRun(params.runId)?.status === initialNativeStatus))
     ) {
       try {
-        const { slotRelease } = await import('../slot.js');
-        await slotRelease(
-          { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
-          () => {},
-        );
+        if (priorOwnedSlotFields) {
+          const { markSlotStatusIf } = await import('../../core/index.js');
+          await markSlotStatusIf(
+            reclaimedSlotId,
+            (slot) =>
+              slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
+            priorOwnedSlotFields,
+          );
+        } else {
+          const { slotRelease } = await import('../slot.js');
+          await slotRelease(
+            { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
+            () => {},
+            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
+          );
+        }
       } catch (releaseErr) {
         console.warn(
           `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,

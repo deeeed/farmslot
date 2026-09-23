@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
@@ -154,9 +154,23 @@ function asyncRpc(method, params) {
     error = '';
   child.stdout.on('data', (b) => (data += b));
   child.stderr.on('data', (b) => (error += b));
-  return once(child, 'exit').then(([code]) => {
-    if (code !== 0) throw new Error(error);
-    return JSON.parse(data);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Gateway RPC did not terminate after gateway shutdown: ${method}`));
+    }, 25000);
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(new Error(error));
+        return;
+      }
+      try {
+        resolve(JSON.parse(data));
+      } catch (parseError) {
+        reject(parseError);
+      }
+    });
   });
 }
 let gateway, log;
@@ -175,17 +189,22 @@ async function start() {
     ],
     { env, stdio: ['ignore', log.fd, log.fd] },
   );
-  for (let i = 0; i < 150; i++) {
+  let lastHealth = 'not contacted';
+  // Allow the isolated gateway to boot when concurrent TypeScript jobs saturate the host.
+  for (let i = 0; i < 1800; i++) {
     if (gateway.exitCode !== null || gateway.signalCode !== null)
       throw new Error('Gateway fixture exited');
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return;
+      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      if (response.ok) return;
+      lastHealth = `HTTP ${response.status}`;
     } catch (e) {
       if (!(e instanceof TypeError)) throw e;
+      lastHealth = `Fetch failed: ${e.cause?.code ?? e.message}`;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('Gateway fixture failed readiness');
+  throw new Error(`Gateway fixture failed readiness: ${lastHealth}`);
 }
 async function stop(signal = 'SIGTERM') {
   if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
@@ -448,7 +467,7 @@ try {
     ),
   );
   assert.equal(await count(), 3);
-  for (const mode of ['wrong-model', 'missing-model', 'malformed']) {
+  for (const mode of ['wrong-model', 'missing-model', 'malformed', 'missing-usage']) {
     policy.price.verifiedAt = new Date(Date.parse(policy.price.verifiedAt) - 1000).toISOString();
     await savePolicy();
     await writeFile(path.join(out, 'mode'), mode);
@@ -460,10 +479,46 @@ try {
     });
     assert.equal(rejected.record.status, 'unavailable', mode);
     assert.equal(rejected.advice, undefined, mode);
-    assert.equal(rejected.record.result.usage?.costUsd, undefined, mode);
-    assert.equal(rejected.retryAllowed, true, mode);
+    assert.equal(
+      rejected.record.result.usage?.inputTokens,
+      mode === 'missing-usage' ? undefined : 321,
+      mode,
+    );
+    assert.equal(rejected.record.result.usage?.outputTokens, 30, mode);
+    if (mode === 'missing-usage')
+      assert.equal(rejected.record.result.error, 'spend-bound-unverifiable');
+    if (mode === 'malformed')
+      assert.equal(
+        rejected.record.result.usage?.costUsd,
+        (321 * policy.price.inputUsdPerMillion) / 1_000_000,
+      );
+    else assert.equal(rejected.record.result.usage?.costUsd, undefined, mode);
+    assert.equal(rejected.retryAllowed, mode === 'malformed', mode);
   }
   await writeFile(path.join(out, 'mode'), 'valid');
+  // A response without an input receipt must halt this exact price snapshot. It
+  // remains a no-action failure and changing the snapshot alone cannot bypass it.
+  await advanceSnapshot();
+  const missingUsageBound = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: missingUsageBound.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 7);
+  // A fresh price receipt explicitly opens a new accounting cohort.
+  policy.price.verifiedAt = new Date(Date.parse(policy.price.verifiedAt) + 1000).toISOString();
+  await savePolicy();
+  const refreshed = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(refreshed.availability, 'ready');
+  assert.equal(
+    rpc('intelligence.triage.analyze', { runId: id, snapshotHash: refreshed.snapshotHash }).record
+      .status,
+    'completed',
+  );
+  assert.equal(await count(), 8);
   // Historical no-call records are setup fixtures. Restart proves operator recovery
   // through production RPCs without injecting browser or live process state.
   await stop();
@@ -519,7 +574,7 @@ try {
   await stop();
   env.FARMSLOT_ASSESSMENT_MODEL = 'jev-1.13.0';
   await start();
-  assert.equal(await count(), 8);
+  assert.equal(await count(), 10);
   assert.equal(JSON.stringify(rpc('run.get', { runId: id }).run), authorityBefore);
   await stop();
   const secondRun = structuredClone(run);
@@ -547,38 +602,204 @@ try {
   assert.equal(secondStep.availability, 'ready');
   assert.equal(secondStep.step, 'second-failure');
   assert.equal(secondStep.record, undefined, 'Never display another failed step’s saved advice');
-  assert.equal(await count(), 8);
+  assert.equal(await count(), 10);
   await stop();
   policy.approvals.pop();
   await writeFile(runFile, JSON.stringify(run));
   await savePolicy();
   await start();
-  // A saved overspend incident blocks its price snapshot, not merely today's budget.
-  const prior = rpc('intelligence.triage.get', { runId: id }).record;
-  await stop();
-  const latch = {
-    ...prior,
-    id: randomUUID(),
-    startedAt: new Date(Date.now() - 86400000).toISOString(),
-    status: 'unavailable',
-    reservation: { ...prior.reservation, key: 'd'.repeat(64) },
-    result: { status: 'unavailable', attempted: true, error: 'spend-bound-exceeded' },
-    feedback: [],
-  };
-  await writeFile(path.join(home, 'assessments', latch.id + '.json'), JSON.stringify(latch));
+  // Exercise a real admitted RPC reply beyond the price envelope, then verify
+  // the retained receipt and that another snapshot cannot start a new request.
   await advanceSnapshot();
-  await start();
+  await writeFile(path.join(out, 'mode'), 'over-bound');
+  const beforeBound = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(beforeBound.availability, 'ready');
+  const overspend = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: beforeBound.snapshotHash,
+  });
+  assert.equal(overspend.record.status, 'unavailable');
+  assert.equal(overspend.record.result.error, 'spend-bound-exceeded');
+  assert.equal(overspend.record.result.attempted, true);
+  assert.equal(overspend.record.result.answers, undefined);
+  assert.equal(overspend.record.result.usage.inputTokens, 70000);
+  assert.equal(overspend.record.result.usage.outputTokens, 30);
+  assert.equal(overspend.record.result.usage.costKind, 'estimated');
+  assert.equal(
+    overspend.record.result.usage.costUsd,
+    (70000 * policy.price.inputUsdPerMillion) / 1_000_000,
+  );
+  assert.equal(await count(), 11);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
   const boundView = rpc('intelligence.triage.get', { runId: id });
   const bound = rpc('intelligence.triage.analyze', {
     runId: id,
     snapshotHash: boundView.snapshotHash,
   });
   assert.equal(bound.availability, 'budget-blocked');
-  assert.match(bound.reason, /exceeded this price snapshot/);
-  assert.equal(await count(), 8);
+  assert.match(bound.reason, /token bound/);
+  assert.equal(await count(), 11);
   await stop();
-  await rm(path.join(home, 'assessments', latch.id + '.json'));
-  source = source.slice(0, source.lastIndexOf('Observation sequence:'));
+  // A new price snapshot allows a second admitted call. Reject its answer while
+  // retaining native usage, then prove that over-bound usage still locks this snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) + 1000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'over-bound-invalid');
+  await start();
+  const rejectedView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(rejectedView.availability, 'ready');
+  const rejectedBound = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: rejectedView.snapshotHash,
+  });
+  assert.equal(rejectedBound.record.status, 'unavailable');
+  assert.equal(rejectedBound.record.result.error, 'spend-bound-exceeded');
+  assert.equal(rejectedBound.record.result.usage.inputTokens, 70000);
+  assert.equal(rejectedBound.record.result.usage.outputTokens, 30);
+  assert.equal(rejectedBound.record.result.usage.costKind, 'estimated');
+  assert.equal(await count(), 12);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const rejectedNext = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rejectedNext.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 12);
+  await stop();
+  // A mismatched returned model above the bound records both reasons and still
+  // locks out later requests under the same priced snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) + 2000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'over-bound-wrong-model');
+  await start();
+  const mismatchView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(mismatchView.availability, 'ready');
+  const mismatchedBound = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: mismatchView.snapshotHash,
+  });
+  assert.equal(mismatchedBound.record.status, 'unavailable');
+  assert.equal(mismatchedBound.record.result.error, 'spend-bound-exceeded');
+  assert.equal(mismatchedBound.record.result.usage.inputTokens, 70000);
+  assert.equal(mismatchedBound.record.result.usage.costUsd, undefined);
+  assert.equal(await count(), 13);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const mismatchedNext = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: mismatchedNext.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 13);
+  await stop();
+  // A received rate-limit without usage must not be classified as a free transport
+  // failure. It retains only safe receipt metadata and locks this price snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) + 3000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'native-http-429');
+  await start();
+  const rateLimitView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(rateLimitView.availability, 'ready');
+  const rateLimited = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: rateLimitView.snapshotHash,
+  });
+  assert.equal(rateLimited.record.status, 'unavailable');
+  assert.equal(rateLimited.record.result.error, 'spend-bound-unverifiable');
+  assert.equal(rateLimited.record.result.attempted, true);
+  assert.equal(rateLimited.record.result.answers, undefined);
+  assert.equal(rateLimited.record.result.usage.inputTokens, undefined);
+  assert.equal(rateLimited.record.result.usage.outputTokens, undefined);
+  assert.equal(rateLimited.record.result.usage.requestId, 'fixture-rate-limited');
+  assert.equal(rateLimited.record.result.usage.costUsd, undefined);
+  assert.equal(rateLimited.retryAllowed, false);
+  assert.throws(() =>
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rateLimitView.snapshotHash,
+      retryOf: rateLimited.record.id,
+    }),
+  );
+  assert.equal(await count(), 14);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const rateLimitLockView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rateLimitLockView.record.reservation.priceHash,
+    rateLimited.record.reservation.priceHash,
+  );
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rateLimitLockView.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 14);
+  await stop();
+  // A response can be charged even if its body exceeds the limit or fails to read.
+  // Each new price snapshot admits one simulated call, then forbids retry without usage.
+  for (const [mode, requestId] of [
+    ['native-oversized-body', 'fixture-oversized'],
+    ['native-body-read-failure', 'fixture-read-failure'],
+  ]) {
+    policy.price.verifiedAt = new Date(
+      Date.parse(now) + (mode === 'native-oversized-body' ? 4000 : 5000),
+    ).toISOString();
+    await savePolicy();
+    await advanceSnapshot();
+    await writeFile(path.join(out, 'mode'), mode);
+    await start();
+    const receivedView = rpc('intelligence.triage.get', { runId: id });
+    assert.equal(receivedView.availability, 'ready', mode);
+    const received = rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: receivedView.snapshotHash,
+    });
+    assert.equal(received.record.status, 'unavailable', mode);
+    assert.equal(received.record.result.error, 'spend-bound-unverifiable', mode);
+    assert.equal(received.record.result.usage.requestId, requestId, mode);
+    assert.equal(received.record.result.usage.inputTokens, undefined, mode);
+    assert.equal(received.record.result.usage.costUsd, undefined, mode);
+    assert.equal(received.retryAllowed, false, mode);
+    if (mode === 'native-body-read-failure')
+      assert.ok(
+        received.record.result.usage.durationMs >= 700,
+        'Duration includes body read after headers',
+      );
+    assert.throws(
+      () =>
+        rpc('intelligence.triage.analyze', {
+          runId: id,
+          snapshotHash: receivedView.snapshotHash,
+          retryOf: received.record.id,
+        }),
+      `Unknown spend cannot be retried: ${mode}`,
+    );
+    await writeFile(path.join(out, 'mode'), 'valid');
+    await advanceSnapshot();
+    const locked = rpc('intelligence.triage.get', { runId: id });
+    assert.equal(
+      rpc('intelligence.triage.analyze', { runId: id, snapshotHash: locked.snapshotHash })
+        .availability,
+      'budget-blocked',
+      mode,
+    );
+    await stop();
+  }
+  assert.equal(await count(), 16, 'Both body failures count as received provider calls');
+  source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
   await savePolicy();
@@ -586,7 +807,15 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 8,
+    providerCalls: 16,
+    receivedBodyFailuresLockPriceSnapshot: true,
+    durationIncludesBodyRead: true,
+    overBoundUsageRetained: true,
+    rejectedOverBoundUsageRetained: true,
+    mismatchedModelOverBoundLocked: true,
+    missingInputUsageRejectsAdvice: true,
+    receivedHttpErrorWithoutUsageLocksSnapshot: true,
+    unknownSpendRecordCannotRetry: true,
     modelIdentityEnforced: true,
     unrelatedBudgetEditPreservesCache: true,
     latestFailedStepDoesNotBorrowAdvice: true,

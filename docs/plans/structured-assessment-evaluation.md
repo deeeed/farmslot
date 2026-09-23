@@ -20,6 +20,7 @@ Implement these consumers in sequence, with separate evaluation gates:
 | Static-review checklist assessment | Accurate per-item findings and applicability                          | Known defects or an independent strong-reviewer reference     |
 | Copilot context support            | Less context and fewer diagnostic steps at equal task quality         | Matched unassisted copilot tasks                              |
 | Meaningful review-routing advice   | Correct review/validation path at lower total cost                    | Existing routing and matched review tasks                     |
+| Pending decision advice            | Better human choices among existing, meaningful actions               | Same decisions without advice; matched quality, time and cost |
 
 Exclude recipe planning, composition, parameterization, recipe/result quality
 scoring and mm-harness changes. A text-only provider cannot validate screenshot
@@ -96,6 +97,26 @@ The operator must be able to inspect:
 Experiment observability is needed to establish evidence. It does not authorize
 routine calls or bypass the failure-triage pilot gate. Keep each integration
 opt-in; company/provider approval does not itself demonstrate utility.
+
+## Pending decision advice pilot
+
+[Issue #719](https://github.com/deeeed/farmslot/issues/719) and the [pilot procedure](../operations/decision-advice-pilot.md) record the separately approved
+opt-in pilot for pending run-backed collision decisions. Profile-fit gates are
+excluded until they offer a second non-decline action and have a separate
+frozen fixture. For eligible collisions, ask on demand and only after the
+operator admits the exact public or synthetic input and sets a provider,
+model, verified price and spend limits.
+Treat a `manual` ticket label as neither source approval nor public evidence.
+The provider chooses only among current gateway action IDs or abstains. Advice
+never resolves the decision, selects an action in the UI or authorizes recovery.
+
+Freeze labeled cases and a no-advice baseline before candidate calls. Measure
+valid selections, correct abstentions and mistaken confident choices across
+collision cases. Compare matched operator decisions at equal independent quality and record
+assessment overhead, all calls and unknown charges in total token/cost/time
+results. No matched human decision timings means workflow efficiency remains
+unknown, even if the classification result is accurate. Keep this experiment
+separate from the recorded-failure and review-routing pilot gates.
 
 ## Delivery checks
 

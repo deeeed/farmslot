@@ -5,6 +5,11 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
+- Include the selected slot resource blocker in profile-fit suggestions.
+
+- Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
+- Define optional pending-decision advice RPC and assessment reporting contracts.
+- Allow per-flow terminal acceptance rules and carry the provider's last health-check time in run posture.
 
 - Support GPT-6 Sol reasoning efforts for Codex selections.
 

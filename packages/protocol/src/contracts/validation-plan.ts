@@ -17,5 +17,7 @@ export interface ProfileFitSuggestion {
   suggestedApp?: string;
   confidence: 'low' | 'medium' | 'high';
   rationale: string;
+  /** Resource incompatibility for the slot selected by dispatch preview. */
+  slotResourceBlocker?: string;
   validationPlan?: ValidationPlanStep[];
 }

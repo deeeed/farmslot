@@ -72,12 +72,13 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
 - [ ] **10. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
-- [ ] **11. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
+- [ ] **11. Acceptance verdicts + recipe coverage** — set `export TASK_DIR="{{TASK_DIR}}"` and use `{{REPO}}/node_modules/.bin/farmslot-agent ac list` to see the ACs registered in `inputs/handoff.json`. For each one, record an honest verdict with `{{REPO}}/node_modules/.bin/farmslot-agent ac set AC-N proven --proof-mode state --recipe-node <node-id> --evidence <task-relative-path>` (choose the actual `state`, `visual`, or `mixed` mode and existing evidence; omit `--recipe-node` if no recipe applies). Use `untestable --note <reason>` only when proof is genuinely unavailable. Check `ac list` again. When `recipe.json` exists, derive `artifacts/recipe-coverage.md` with `{{REPO}}/node_modules/.bin/farmslot-agent ac render > {{TASK_DIR}}/artifacts/recipe-coverage.md`, then run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe --require-acceptance-status`. Checklist completion alone does not prove an AC.
 - [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
   references what you changed; verify each and fix sibling instances in the same pass.
 - [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
   proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
+  Update affected AC verdicts and regenerate `recipe-coverage.md` from `ac render` after the final proof run.
 - [ ] **15. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **16. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **17. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.

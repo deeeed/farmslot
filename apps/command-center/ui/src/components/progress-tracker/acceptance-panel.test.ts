@@ -27,7 +27,7 @@ function ledger(criteria: AcceptanceCriterionStatus[]): AcceptanceStatusLedger {
   return { schemaVersion: 1, criteria };
 }
 
-test('the header counts proven against the total', () => {
+test('the header separates assessment progress from proven criteria', () => {
   const view = acceptancePanelPresentation(
     ledger([
       criterion({ id: 'AC-1', verdict: 'proven' }),
@@ -35,8 +35,8 @@ test('the header counts proven against the total', () => {
       criterion({ id: 'AC-3', verdict: 'untestable' }),
     ]),
   );
-  assert.equal(view.counts, '1/3 proven');
-  assert.equal(view.countsTooltip, 'proven 1 · weak 1 · missing 0 · untestable 1 · no verdict 0');
+  assert.equal(view.counts, '3/3 assessed · 1 proven');
+  assert.equal(view.countsTooltip, 'proven 1 · weak 1 · missing 0 · untestable 1 · not assessed 0');
   // A weak criterion is still open work, so the panel starts expanded.
   assert.equal(view.hasOpenCriteria, true);
 });
@@ -49,7 +49,7 @@ test('a run whose criteria are all settled starts collapsed', () => {
       criterion({ id: 'AC-2', verdict: 'untestable' }),
     ]),
   );
-  assert.equal(view.counts, '1/2 proven');
+  assert.equal(view.counts, '2/2 assessed · 1 proven');
   assert.equal(view.hasOpenCriteria, false);
 });
 
@@ -103,8 +103,8 @@ test('a registered criterion with no verdict still gets a row, and counts agains
     registered,
   );
   // The ledger holds one entry; the run has three criteria.
-  assert.equal(view.counts, '1/3 proven');
-  assert.match(view.countsTooltip, /no verdict 2$/);
+  assert.equal(view.counts, '1/3 assessed · 1 proven');
+  assert.match(view.countsTooltip, /not assessed 2$/);
   assert.equal(view.hasOpenCriteria, true);
 
   const text = litText(
@@ -114,7 +114,7 @@ test('a registered criterion with no verdict still gets a row, and counts agains
   );
   assert.match(text, /AC-2/);
   assert.match(text, /Not judged yet/);
-  assert.match(text, /no verdict/);
+  assert.match(text, /not assessed/);
   assert.match(text, /ac-row ac-none/);
   // Nothing invents a verdict for an unjudged criterion.
   assert.doesNotMatch(text, /ac-row ac-missing/);
@@ -129,7 +129,7 @@ test('with only criteria and no ledger the panel still lists them as unjudged', 
       ],
     }),
   );
-  assert.match(text, /0\/2 proven/);
+  assert.match(text, /0\/2 assessed/);
   assert.match(text, /First/);
   assert.match(text, /Second/);
 });

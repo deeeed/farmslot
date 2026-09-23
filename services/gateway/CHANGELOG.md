@@ -5,7 +5,18 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
+- Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.
+
+- Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
+
+- Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.
+- Add opt-in, source-admitted advice for pending run decisions, with bounded cost, saved assessments and human-only action selection.
+
 - Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.
+
+- Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
+
+- Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, and reroute blocked eval runs to prepare or find-slot as ownership requires.
 
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
@@ -22,6 +33,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Record optional assessments durably with owner-scoped feedback, retention and reproducible effectiveness reports scoped to full history or a selected case; uncertain advice requests review without changing admission.
 
 - Add an opt-in, provider-neutral structured-assessment boundary with TypeSafe SDK transport, bounded/redacted inputs, typed answers, provenance hashes, read-only status/smoke RPCs, and advisory review-intake routing. Assessment output never admits, publishes, retries, or proves visual review.
+- Accept equivalent Markdown formatting for static-review metadata and recover completed reports after checkout cleanup without rerunning the reviewer or changing report content.
 
 - Recover static reviews from unchanged support-bundle republishes, initialize reviewer trust, and recognize native prompt acceptance without timing out while waiting for the first task mark.
 - Offer Grok 4.7 in Grok and Cursor model selection while preserving existing defaults.

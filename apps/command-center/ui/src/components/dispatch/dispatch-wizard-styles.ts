@@ -613,6 +613,11 @@ export const dispatchWizardStyles = css`
     line-height: 1.4;
   }
 
+  .profile-fit-blocker {
+    margin-top: 4px;
+    color: ${unsafeCSS(colors.statusWarn)};
+  }
+
   .profile-fit-apply {
     align-self: flex-start;
     font-size: 10px;

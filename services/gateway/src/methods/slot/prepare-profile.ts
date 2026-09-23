@@ -51,7 +51,14 @@ export function expandPrepareProfileHook(
 }
 
 const IMPLICIT_FULL = 'full';
-const CORE_PROFILE = 'core';
+export const CORE_PROFILE = 'core';
+
+export function configuredPrepareProfileNames(projectJson: RawProjectJson): string[] {
+  return [
+    ...(projectJson.prepare?.core ? [CORE_PROFILE] : []),
+    ...Object.keys(projectJson.prepare?.profiles ?? {}),
+  ];
+}
 
 type RawProfiles = NonNullable<NonNullable<RawProjectJson['prepare']>['profiles']>;
 

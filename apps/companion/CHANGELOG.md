@@ -5,6 +5,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 ## Unreleased
 
 - Backlog review rounds are static; runtime validation runs separately with QA.
+- Show assessed and proven acceptance criteria separately, matching Command Center.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

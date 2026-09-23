@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { Events, type RunDecision } from '@farmslot/protocol';
+import {
+  Events,
+  type Run,
+  type RunDecision,
+  type RuntimeCapabilityStatusResult,
+} from '@farmslot/protocol';
 
 import {
   addItem,
@@ -18,13 +23,17 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runForceComplete } from './lifecycle-control.js';
 import {
+  blockedMonitorOwnsSlot,
+  blockedMonitorProofReady,
   canAdoptTaskSignalAfterUncertainDispatch,
+  freshBlockedMonitorAttempt,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
   readAdoptableTaskSignal,
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
+  rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
@@ -42,6 +51,13 @@ async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Prom
   updateRun(runId, { status, completedAt: new Date().toISOString() });
   await deleteRun(runId);
 }
+
+test('rollback release keeps a blocked replay eligible to acquire proof again', () => {
+  assert.deepEqual(rollbackReclaimedSlotReleaseOptions('blocked', 'run-1'), {
+    restartRunId: 'run-1',
+  });
+  assert.equal(rollbackReclaimedSlotReleaseOptions('failed', 'run-1'), undefined);
+});
 
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
@@ -95,6 +111,106 @@ test('uncertain dispatch accepts only a fresh task-local signal with an attempt 
     }),
     false,
   );
+});
+
+test('blocked monitor replay binds a fresh completed attempt before monitoring resumes', () => {
+  const oldSignal = { status: 'blocked', attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' };
+  const run = {
+    status: 'blocked' as const,
+    steps: [
+      { name: 'monitor', status: 'done', outputs: { workerSignal: oldSignal } },
+    ] as Run['steps'],
+  };
+  const signal = {
+    status: 'complete',
+    attemptId: 'new',
+    timestamp: '2026-09-23T01:01:00Z',
+  } as const;
+  const context = { id: 'worker', role: 'fix-bug' } as const;
+  assert.equal(
+    freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
+    null,
+  );
+  assert.deepEqual(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: 'old' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: undefined } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: false, code: 'stale', message: '', signal: { ...signal, contextId: 'other' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      {
+        ok: false,
+        code: 'stale',
+        message: '',
+        signal: { ...signal, timestamp: oldSignal.timestamp },
+      },
+      context,
+    ),
+    null,
+  );
+});
+
+test('blocked monitor replay needs the recorded proof plan and fresh healthy leases', () => {
+  const run = {
+    id: 'blocked-run',
+    slotId: 'slot-a',
+    steps: [{ name: 'monitor', status: 'done', completedAt: '2026-09-23T01:00:00Z' }],
+  } as Run;
+  const status = {
+    proofPlans: {
+      [run.id]: {
+        slotId: run.slotId,
+        ownerRunId: run.id,
+        requirements: [{ capabilityId: 'browser-cdp' }],
+      },
+    },
+    leases: [
+      {
+        capabilityId: 'browser-cdp',
+        owner: { runId: run.id },
+        state: 'acquired',
+        health: { state: 'healthy', checkedAt: '2026-09-23T01:01:00Z' },
+      },
+    ],
+  } as unknown as RuntimeCapabilityStatusResult;
+  assert.equal(blockedMonitorProofReady(run, status), true);
+  assert.equal(blockedMonitorProofReady(run, { ...status, proofPlans: {} }), false);
+  assert.equal(
+    blockedMonitorProofReady(run, { ...status, catalog: [], leases: [], proofPlans: {} }),
+    true,
+  );
+  assert.equal(
+    blockedMonitorProofReady(run, {
+      ...status,
+      proofPlans: { [run.id]: { ...status.proofPlans[run.id], slotId: 'other-slot' } },
+    }),
+    false,
+  );
+  status.leases[0].health.checkedAt = '2026-09-23T00:59:00Z';
+  assert.equal(blockedMonitorProofReady(run, status), false);
+  status.leases[0].health.checkedAt = '2026-09-23T01:01:00Z';
+  status.leases[0].health.state = 'unhealthy';
+  assert.equal(blockedMonitorProofReady(run, status), false);
 });
 
 test('uncertain dispatch requires the structured marker, never the failure prose', () => {
@@ -401,6 +517,32 @@ test('runReplayStep abandons a retained handoff and re-enters normal dispatch', 
   assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
   assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
   assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
+});
+
+test('blocked monitor only reclaims the same live worker at claim time', () => {
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-a', lifecycle: 'busy' }, 'run-a'),
+    true,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-a', lifecycle: 'held' }, 'run-a'),
+    true,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: null, lifecycle: 'ready' }, 'run-a'),
+    false,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-b', lifecycle: 'busy' }, 'run-a'),
+    false,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot(
+      { current_run_id: 'run-a', lifecycle: 'busy', phase: 'releasing' },
+      'run-a',
+    ),
+    false,
+  );
 });
 
 test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
@@ -1864,6 +2006,50 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
 });
 
+test('blocked eval monitor without a slot restarts at find-slot instead of requiring proof', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment-blocked',
+        experimentKey: 'experiment-key-blocked',
+        experimentManifestPath: '/tmp/experiment-manifest.json',
+        packagePath: '/tmp/candidate.result-package.json',
+        candidateStrategyFingerprint: 'fingerprint-blocked',
+        trialId: 'trial-blocked',
+      },
+    },
+    steps: run.steps.map((step) =>
+      step.name === 'monitor'
+        ? {
+            ...step,
+            status: 'done',
+            completedAt: '2026-09-23T01:01:00Z',
+            outputs: {
+              workerSignal: {
+                status: 'blocked',
+                attemptId: 'old',
+                timestamp: '2026-09-23T01:00:00Z',
+              },
+            },
+          }
+        : step,
+    ),
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {});
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.slotId, null);
+  assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'find-slot');
+});
+
 test('runReplayStep restores skipPrepare for chained follow-ups when the flag was already cleared', async (t) => {
   const parent = createRun({
     flowType: 'dev',
@@ -1948,6 +2134,33 @@ test('runReplayStep clears skipPrepare when chained follow-up replays from find-
   assert.ok(replayed);
   assert.equal(replayed.slotId, null);
   assert.equal(replayed.engineState?.flags?.skipPrepare, undefined);
+});
+
+test('find-slot replay preserves a blocked run while its old slot is still releasing', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const slotId = 'macwork-ff-releasing';
+  updateRun(run.id, { status: 'blocked', slotId });
+  await writeFile(
+    statusFile,
+    `${JSON.stringify({ slots: [{ slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: run.id }] })}\n`,
+  );
+  t.after(async () => {
+    if (priorStatus === null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {}),
+    /could not be released/,
+  );
+  assert.equal(getRun(run.id)?.slotId, slotId);
+  assert.equal(getRun(run.id)?.status, 'blocked');
 });
 
 test('runReplayStep preserves skipPrepare for review-pr chained follow-up replays', async (t) => {

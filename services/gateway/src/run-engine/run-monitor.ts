@@ -506,7 +506,11 @@ type FreshnessAgentContext = Pick<
 >;
 
 type FreshnessRunContext = {
-  steps: Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt' | 'outputs'>[];
+  status?: Run['status'];
+  steps: Array<
+    Pick<Run['steps'][number], 'name' | 'startedAt' | 'completedAt' | 'outputs'> &
+      Partial<Pick<Run['steps'][number], 'status'>>
+  >;
   monitorState?: Pick<RunMonitorState, 'startedAt'>;
   agentContexts?: FreshnessAgentContext[];
 };
@@ -548,8 +552,23 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
   if (context?.signalAttemptId) {
     // Continue/restart resets the monitor's timeout budget, not the worker task.
     // The bound attempt is authoritative even when gateway and worker clocks differ.
+    if (signal.attemptId === context.signalAttemptId)
+      return parseStrictIsoMs(signal.timestamp) !== null;
+    // An explicitly blocked attempt can be replaced in place. Validate the
+    // new signal through the normal artifact contract before replaying it.
+    const monitor = run.steps.find((step) => step.name === PipelineSteps.MONITOR);
+    const previous = normalizeWorkerSignal(monitor?.outputs?.workerSignal);
+    const blockedAt = previous.ok ? parseStrictIsoMs(previous.signal.timestamp) : null;
+    const signalAt = parseStrictIsoMs(signal.timestamp);
     return (
-      signal.attemptId === context.signalAttemptId && parseStrictIsoMs(signal.timestamp) !== null
+      run.status === 'blocked' &&
+      monitor?.status === 'done' &&
+      previous.ok &&
+      previous.signal.status === 'blocked' &&
+      Boolean(signal.attemptId) &&
+      blockedAt !== null &&
+      signalAt !== null &&
+      signalAt > blockedAt
     );
   }
   const dispatch = run.steps.find((s) => s.name === PipelineSteps.DISPATCH);

@@ -73,6 +73,8 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'credential.issue': { classification: 'admin' },
   'credential.list': { classification: 'admin' },
   'credential.revoke': { classification: 'admin' },
+  'decision.advice.analyze': { classification: 'admin' },
+  'decision.advice.get': { classification: 'admin' },
   'decision.list': {
     classification: 'admin',
     reason: 'scans task directories and reads decision artifacts',

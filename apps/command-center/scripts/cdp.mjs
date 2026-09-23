@@ -329,14 +329,19 @@ async function clickInTab(hash, selector, dialogChoice, expectedDialog) {
     await call('Page.bringToFront');
     const result = await call('Runtime.evaluate', {
       expression: `(() => {
-        function find(root) {
-          const element = root.querySelector(${JSON.stringify(selector)});
+        const parts = ${JSON.stringify(selector)}.split('>>>').map(part=>part.trim());
+        function find(root, part) {
+          const element = root.querySelector(part);
           if (element) return element;
           for (const child of root.querySelectorAll('*')) {
-            if (child.shadowRoot) { const found=find(child.shadowRoot); if(found)return found; }
+            if (child.shadowRoot) { const found=find(child.shadowRoot,part); if(found)return found; }
           }
         }
-        const element=find(document);
+        let root=document, element;
+        for (const [index,part] of parts.entries()) {
+          element=parts.length===1 ? find(root,part) : root?.querySelector(part);
+          if (index < parts.length-1) root=element?.shadowRoot;
+        }
         if(!element || element.disabled || !element.getClientRects().length) throw Error('Click target unavailable');
         element.scrollIntoView({block:'center'});
         const rect=element.getBoundingClientRect();
