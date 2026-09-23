@@ -34,8 +34,14 @@ const rollbackRunId = randomUUID();
 const freeRollbackRunId = randomUUID();
 const rollbackFailureRunId = randomUUID();
 const reservedRollbackRunId = randomUUID();
+const boundReservedRollbackRunId = randomUUID();
+const transferRollbackRunId = randomUUID();
+const releasingRollbackRunId = randomUUID();
 const freeRollbackSlotId = `free-rollback-${randomUUID()}`;
 const reservedRollbackSlotId = `reserved-rollback-${randomUUID()}`;
+const boundReservedRollbackSlotId = `bound-reserved-rollback-${randomUUID()}`;
+const transferRollbackSlotId = `transfer-rollback-${randomUUID()}`;
+const releasingRollbackSlotId = `releasing-rollback-${randomUUID()}`;
 const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
@@ -246,6 +252,17 @@ try {
         enabled: true,
         mode: 'dispatch',
       },
+      ...[boundReservedRollbackSlotId, transferRollbackSlotId, releasingRollbackSlotId].map(
+        (id) => ({
+          id,
+          project,
+          platform: 'cli',
+          repo,
+          session: id,
+          enabled: true,
+          mode: 'dispatch',
+        }),
+      ),
     ],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -312,6 +329,15 @@ try {
         current_run_id: null,
         handoff_run_id: reservedRollbackRunId,
       },
+      {
+        slot: boundReservedRollbackSlotId,
+        lifecycle: 'ready',
+        phase: 'idle',
+        current_run_id: null,
+        handoff_run_id: boundReservedRollbackRunId,
+      },
+      { slot: transferRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
+      { slot: releasingRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
@@ -365,6 +391,15 @@ try {
     selectedSlot: reservedRollbackSlotId,
   };
   writeJson(path.join(root, '.runs', `${reservedRollbackRunId}.json`), reservedRollbackRun);
+  for (const [runId, slotId, priorSlotId] of [
+    [boundReservedRollbackRunId, boundReservedRollbackSlotId, boundReservedRollbackSlotId],
+    [transferRollbackRunId, transferRollbackSlotId, null],
+    [releasingRollbackRunId, releasingRollbackSlotId, null],
+  ]) {
+    const run = blockedRun(runId, priorSlotId);
+    run.steps.find((step) => step.name === 'find-slot').outputs = { selectedSlot: slotId };
+    writeJson(path.join(root, '.runs', `${runId}.json`), run);
+  }
   writeJson(path.join(root, '.runs', `${rollbackRunId}.json`), rollbackRun);
   mkdirSync(path.dirname(rollbackRun.taskFile), { recursive: true });
   writeFileSync(rollbackRun.taskFile, '# Disposable blocked rollback worker\n');
@@ -420,7 +455,9 @@ try {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     NODE_TEST_CONTEXT: '1',
-    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS: `${rollbackRunId},${freeRollbackRunId},${rollbackFailureRunId},${reservedRollbackRunId}`,
+    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS: `${rollbackRunId},${freeRollbackRunId},${rollbackFailureRunId},${reservedRollbackRunId},${boundReservedRollbackRunId},${transferRollbackRunId},${releasingRollbackRunId}`,
+    FARMSLOT_TEST_REPLAY_TRANSFER_AFTER_CLAIM_RUN_IDS: transferRollbackRunId,
+    FARMSLOT_TEST_REPLAY_RELEASING_AFTER_CLAIM_RUN_IDS: releasingRollbackRunId,
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
@@ -598,6 +635,18 @@ try {
     if (symlinkCreated) unlinkSync(repo);
     renameSync(parkedRepo, repo);
   }
+  const boundReservedRollback = denied(
+    { runId: boundReservedRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(boundReservedRollback.slotId, null);
+  rpc('fleet.status', { forceRefresh: true });
+  const boundReservedStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === boundReservedRollbackSlotId);
+  assert.equal(boundReservedStatus?.current_run_id, null);
+  assert.equal(boundReservedStatus?.handoff_run_id, boundReservedRollbackRunId);
+  assert.equal(boundReservedStatus?.lifecycle, 'ready');
   const reservedRollback = denied(
     { runId: reservedRollbackRunId, stepName: 'prepare' },
     /Injected replay failure after claim/,
@@ -615,6 +664,30 @@ try {
   );
   assert.equal(refreshedReservedRow?.currentRunId, null);
   assert.equal(refreshedReservedRow?.lifecycle, 'ready');
+  const refreshedReservedStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === reservedRollbackSlotId);
+  assert.equal(refreshedReservedStatus?.handoff_run_id, reservedRollbackRunId);
+  const transferRollback = denied(
+    { runId: transferRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(transferRollback.slotId, null);
+  const transferredStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === transferRollbackSlotId);
+  assert.ok(transferredStatus?.current_run_id);
+  assert.notEqual(transferredStatus.current_run_id, transferRollbackRunId);
+  const releasingRollback = denied(
+    { runId: releasingRollbackRunId, stepName: 'prepare' },
+    /"message":"Injected replay failure after claim"/,
+  );
+  const releasingStatus = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === releasingRollbackSlotId);
+  assert.equal(releasingRollback.slotId, releasingRollbackSlotId);
+  assert.equal(releasingStatus?.phase, 'releasing');
+  assert.equal(releasingStatus?.current_run_id, releasingRollbackRunId);
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
@@ -844,6 +917,9 @@ try {
       freeRollbackRunId,
       rollbackFailureRunId,
       reservedRollbackRunId,
+      boundReservedRollbackRunId,
+      transferRollbackRunId,
+      releasingRollbackRunId,
       updateRunId,
       restart: restarted.status,
       slot: slot?.lifecycle,
