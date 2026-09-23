@@ -1,22 +1,13 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "title": "Resolve CI-watch abort after restart",
-  "description": "Resolve a persisted blocked CI decision through a running gateway after its original resolver is gone. Supply a blocked run ID and a decision ID from an isolated validation gateway.",
-  "paramsSchema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["run_id", "decision_id"],
-    "properties": {
-      "run_id": { "type": "string" },
-      "decision_id": { "type": "string" }
-    }
-  },
+  "title": "Resolve a persisted CI-watch abort",
+  "description": "Resolve a persisted blocked CI decision through a running gateway with no live resolver. Seed the run before gateway startup, then set FARMSLOT_RUN_ID and FARMSLOT_DECISION_ID in the recipe runner's environment.",
   "workflow": {
     "entry": "before",
     "nodes": {
       "before": {
         "action": "command",
-        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}'",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get \"$(node -e 'process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID}))')\"",
         "intent": "Read the persisted blocked run through the gateway before resolving its CI decision.",
         "next": "blocked"
       },
@@ -30,7 +21,7 @@
       },
       "abort": {
         "action": "command",
-        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.resolveDecision '{\"runId\":\"{{params.run_id}}\",\"decisionId\":\"{{params.decision_id}}\",\"actionId\":\"abort\"}'",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.resolveDecision \"$(node -e 'process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID,decisionId:process.env.FARMSLOT_DECISION_ID,actionId:\"abort\"}))')\"",
         "intent": "Choose Abort through the real gateway RPC after the in-memory CI resolver was lost.",
         "next": "resolved"
       },
@@ -44,7 +35,7 @@
       },
       "after": {
         "action": "command",
-        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}' | node -e 'const chunks = []; process.stdin.on(\"data\", chunk => chunks.push(chunk)); process.stdin.on(\"end\", () => { const run = JSON.parse(Buffer.concat(chunks).toString()).run; console.log(JSON.stringify({ runStatus: run.status, ciResult: run.steps.find(step => step.name === \"ci-watch\")?.outputs?.result })); })'",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get \"$(node -e 'process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID}))')\" | node -e 'const chunks = []; process.stdin.on(\"data\", chunk => chunks.push(chunk)); process.stdin.on(\"end\", () => { const run = JSON.parse(Buffer.concat(chunks).toString()).run; console.log(JSON.stringify({ runStatus: run.status, ciResult: run.steps.find(step => step.name === \"ci-watch\")?.outputs?.result })); })'",
         "intent": "Read the run after the gateway re-enters its CI-watch step.",
         "next": "done-status"
       },
