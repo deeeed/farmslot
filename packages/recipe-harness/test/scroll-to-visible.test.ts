@@ -101,6 +101,7 @@ class FakeSurface {
 interface FakeProviderOptions {
   /** 'retained' reuses one warm session and releases the device lock after each node. */
   sessions: 'retained' | 'leaks-lock';
+  measureDelayMs?: number;
 }
 
 /** Native-style provider: one device lock, a warm transport, identity per session. */
@@ -130,6 +131,9 @@ function fakeProvider(surface: FakeSurface, options: FakeProviderOptions) {
         backend: 'fake-native',
         sessionId,
         async measure() {
+          if (options.measureDelayMs) {
+            await new Promise((resolve) => setTimeout(resolve, options.measureDelayMs));
+          }
           return surface.measure(request.targetTestId, request.visibilityAnchorTestId);
         },
         async scrollTo(offset) {
@@ -538,9 +542,9 @@ test('layout that shifts once and then settles passes with the settled geometry'
   assert.deepEqual(output.after?.targetBounds, { x: 16, y: 330, width: 200, height: 40 });
 });
 
-test('settle timeout_ms 0 still takes stable_samples measurements before judging', async () => {
+test('settle timeout_ms 0 still takes stable_samples measurements after a slow measurement', async () => {
   const surface = new FakeSurface({ elements: { history: { top: 2_000, height: 40 } } });
-  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { transport } = fakeProvider(surface, { sessions: 'retained', measureDelayMs: 15 });
   const { status, trace } = await runScrollRecipe(transport, [
     { target_test_id: 'history', settle: { timeout_ms: 0, interval_ms: 1, stable_samples: 2 } },
   ]);

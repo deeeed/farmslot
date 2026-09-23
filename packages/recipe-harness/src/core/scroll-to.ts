@@ -455,13 +455,12 @@ async function settle(
   options: UiScrollToRequest['settle'],
 ): Promise<{ geometry: UiScrollGeometry; settlement: UiScrollSettlement }> {
   const startedAt = Date.now();
-  // The budget always fits stable_samples measurements, so timeout_ms 0 still gets one chance.
   const budgetMs = Math.max(options.timeoutMs, (options.stableSamples - 1) * options.intervalMs);
   let geometry = await session.measure();
   let samples = 1;
   let unchanged = 1;
   while (unchanged < options.stableSamples) {
-    if (Date.now() - startedAt >= budgetMs) {
+    if (samples >= options.stableSamples && Date.now() - startedAt >= budgetMs) {
       return {
         geometry,
         settlement: { status: 'timeout', samples, elapsedMs: Date.now() - startedAt },
