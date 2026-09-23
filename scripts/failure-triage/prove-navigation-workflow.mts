@@ -252,6 +252,38 @@ cli(
   file('changed-receipt-report.json'),
 );
 await assert.rejects(access(file('changed-receipt-report.json')));
+async function rejectChangedJournal(name: string, rows: object[]) {
+  const changedJournal = rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
+  await writeFile(file(`${name}-journal.jsonl`), changedJournal);
+  await writeFile(
+    file(`${name}-sessions.json`),
+    JSON.stringify({ ...result, journalSha256: sha(changedJournal) }),
+  );
+  cli(
+    false,
+    'score',
+    file('worker-plan.json'),
+    file(`${name}-sessions.json`),
+    file('reference.json'),
+    file('blind.json'),
+    file('judgment.json'),
+    file('method.md'),
+    file(`${name}-journal.jsonl`),
+    file(`${name}-report.json`),
+  );
+  await assert.rejects(access(file(`${name}-report.json`)));
+}
+const wrongPrompt = sha('wrong prompt');
+await rejectChangedJournal(
+  'wrong-prompt',
+  journal.map((row, index) =>
+    index === 1 || index === 2 ? { ...row, promptHash: wrongPrompt } : row,
+  ),
+);
+await rejectChangedJournal(
+  'wrong-status',
+  journal.map((row, index) => (index === 2 ? { ...row, status: 'answered' } : row)),
+);
 const swapped = [...sessions];
 [swapped[2], swapped[3]] = [swapped[3], swapped[2]];
 // Pair two has five journal rows per arm. Reorder those rows as well, so only
