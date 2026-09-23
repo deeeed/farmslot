@@ -6,7 +6,7 @@ import type { QueueItem, ReviewLoopRequest, SlotStatus } from '@farmslot/protoco
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
-import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
+import { dispatchQueueAdd, dispatchQueueUpdate } from '../methods/dispatch/queue.js';
 import {
   createRun,
   deleteRun,
@@ -2128,7 +2128,7 @@ test('tryDispatchNext holds a queued legacy full-live review loop for operator c
   );
 });
 
-test('updateItem repairs a held legacy review plan in place and refuses another full-live loop', async (t) => {
+test('dispatch.queue.update repairs a held legacy review plan in place and refuses another full-live loop', async (t) => {
   setCachedFleetForTests(readyFleetSlot('legacy-repair-slot') as any);
   const legacyPlan: ReviewLoopRequest[] = [
     { order: 1, runner: 'codex', validationDepth: 'full-live' },
@@ -2170,13 +2170,12 @@ test('updateItem repairs a held legacy review plan in place and refuses another 
   const staticPlan: ReviewLoopRequest[] = [
     { order: 1, runner: 'codex', validationDepth: 'static-code' },
   ];
-  const repaired = updateItem(
-    { itemId: item.id, pendingReviewPlan: staticPlan },
-    { kind: 'system' },
-  );
+  const { item: repaired } = await dispatchQueueUpdate({
+    itemId: item.id,
+    pendingReviewPlan: staticPlan,
+  });
   assert.equal(repaired.id, item.id, 'the receipt identity is kept');
   assert.deepEqual(repaired.pendingReviewPlan, staticPlan);
   assert.equal(repaired.waitingReason, undefined);
-  await tryDispatchNext();
-  assert.ok(launched.includes(item.id), 'the repaired row reaches dispatch');
+  assert.ok(launched.includes(item.id), 'the update RPC awaits the dispatch recheck');
 });

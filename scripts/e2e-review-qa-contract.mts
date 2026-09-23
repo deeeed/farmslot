@@ -1104,9 +1104,27 @@ try {
       ticketOrPr: 'FIXTURE-PLAN',
       pendingReviewPlan: staticPlan,
     });
+    // Queue persistence is asynchronous; stop only once the added row is durable.
+    const queuePath = path.join(fixture, 'queue.json');
+    const persistedIds = async () => {
+      const raw = await readFile(queuePath, 'utf8').catch((error) => {
+        if (error.code === 'ENOENT') return '[]';
+        throw error;
+      });
+      return (JSON.parse(raw) as Array<{ id: string }>).map((item) => item.id);
+    };
+    for (
+      let attempt = 0;
+      attempt < 50 && !(await persistedIds()).includes(added.item.id);
+      attempt++
+    )
+      await delay(100);
+    assert(
+      (await persistedIds()).includes(added.item.id),
+      'added row must be durable before restart',
+    );
     // Seed a pre-ADR-058 queued plan while its owning gateway is stopped.
     await stopGateway();
-    const queuePath = path.join(fixture, 'queue.json');
     const stored = JSON.parse(await readFile(queuePath, 'utf8'));
     const legacyPlan = [{ order: 1, runner: 'codex', validationDepth: 'full-live' }];
     stored.find((item: { id: string }) => item.id === added.item.id).pendingReviewPlan = legacyPlan;

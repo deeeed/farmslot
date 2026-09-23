@@ -19,6 +19,7 @@ import {
   queueRecordOriginator,
   removeItem,
   reorderItems,
+  recheckRepairedReviewPlan,
   updateItem,
 } from '../../backlog/dispatch-queue.js';
 import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';
@@ -196,10 +197,13 @@ export async function dispatchQueueRemoveOrphan(
   return removeOrphanBacklogQueueItem(params);
 }
 
-export function dispatchQueueUpdate(params: DispatchQueueUpdateParams): DispatchQueueUpdateResult {
+export async function dispatchQueueUpdate(
+  params: DispatchQueueUpdateParams,
+): Promise<DispatchQueueUpdateResult> {
   const previous = queueRecordOriginator(params.itemId);
   const originator = currentSessionOriginator();
   const item = updateItem(params, originator);
+  if (params.pendingReviewPlan !== undefined) await recheckRepairedReviewPlan();
   const authorshipNotice = workAuthorshipNotice(previous, originator);
   return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
 }

@@ -885,8 +885,7 @@ export function updateItem(
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
   }
   if (workflowExecution) item.workflowExecution = workflowExecution;
-  const replacesReviewPlan = params.pendingReviewPlan !== undefined;
-  if (replacesReviewPlan) {
+  if (params.pendingReviewPlan !== undefined) {
     if (params.pendingReviewPlan?.length)
       item.pendingReviewPlan = structuredClone(params.pendingReviewPlan);
     else delete item.pendingReviewPlan;
@@ -896,14 +895,16 @@ export function updateItem(
   setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();
-  if (replacesReviewPlan) {
-    tryDispatchNext().catch((err) => {
-      console.error(
-        `[dispatch-queue] auto-dispatch after plan repair failed: ${(err as Error).message}`,
-      );
-    });
-  }
   return publicQueueItem(item);
+}
+
+/**
+ * Make a repaired review plan durable, then run the dispatch checks it was held by.
+ * Awaited by the update RPC so a persistence or dispatch failure reaches the operator.
+ */
+export async function recheckRepairedReviewPlan(): Promise<void> {
+  await persistQueueNow();
+  await tryDispatchNext();
 }
 
 export function reorderItems(itemIds: string[], originator: WorkOriginator): QueueItem[] {
