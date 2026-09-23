@@ -1,6 +1,6 @@
 # Farmslot Implemented History
 
-This is the canonical shipped-history summary for Farmslot in pass one. Use it with [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [ROADMAP.md](ROADMAP.md), and the canonical PRD hierarchy as an operator-facing reconstruction of what has shipped, while treating ADRs, archived roadmaps, and git history as higher-authority raw evidence.
+**Historical snapshot, frozen September 23, 2026.** Do not append newly shipped work here. Use workspace changelogs and merged PRs for current shipped history. This summary reconstructs earlier work; ADRs, archived roadmaps, and git history remain the evidence for its claims.
 
 ## Purpose
 
@@ -18,6 +18,12 @@ This summary is reconstructed from:
 6. Pre-publication migration commits through `4ddedfd3` on 2026-06-02. If Farmslot is moved to a new public repository without full private git history, keep this file as the compact source-history bridge and preserve the source refs in this section.
 
 ## Shipped History Summary
+
+### Task documents, PI worker, and failure advice
+
+- PR #617 split execution checklists into `CHECKLIST.md`; `TASK.md` retains task context and acceptance criteria. The gateway enumerates only the checklist.
+- PR #659 shipped the PI TUI runner spike with live prompt and hook validation. Native PI RPC/ACP and eval-package comparisons remain separate work.
+- PR #713 completed the reviewed, frozen failure-triage comparison and passed its limited pilot gate. PR #714 shipped an opt-in, disabled-by-default failure advice pilot. Neither result establishes production accuracy or workflow savings.
 
 ### Sub-task observability through child checklist units
 

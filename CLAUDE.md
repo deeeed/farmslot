@@ -21,9 +21,9 @@ farmslot/
 
 **Never use `git commit --amend`.** Always create new commits. Follow-up fixes get their own commit — history matters more than a clean graph.
 
-### No Building Without Roadmap — HARD RULE
+### No Building Without Approved Scope — HARD RULE
 
-**STOP and ask before building anything not already in a PRD or roadmap.** Canonical roadmaps: [docs/ROADMAP.md](docs/ROADMAP.md) (whole-product) and [docs/ROADMAP-next.md](docs/ROADMAP-next.md) (near-term). If a task doesn't map to an existing milestone: (1) do NOT start coding, (2) capture it and propose where it belongs (new PRD entry, sub-item of existing milestone, or deferred), (3) get explicit approval before writing code. Bug fixes for code you just wrote are fine. New features, components, or protocol changes are not — unless already on a canonical roadmap.
+**STOP and ask before building unapproved work.** Product scope lives in the canonical PRDs. Track planned work in an approved Farmslot roadmap item or backlog item, or a public-safe GitHub issue linked to the plan. A public GitHub Project may present those issues, but it is not a second backlog. An issue or idea alone is not approval: if no approved scope covers the task, propose where it belongs and get Arthur's explicit approval before coding. Bug fixes for code you just wrote are fine. Do not add new features, components, or protocol changes just to fill out a planning document. `docs/ROADMAP.md`, `docs/ROADMAP-next.md`, and `docs/IMPLEMENTED-HISTORY.md` are frozen snapshots, not planning gates.
 
 ### Recipes Prove Protocol Actions, Not Just UI — HARD RULE
 
@@ -177,7 +177,7 @@ Do **not** use `tsc -b` for routine validation there. Some workspace packages do
 
 ### Docs Folder Hygiene
 
-Keep `docs/` clean. Before adding or moving docs, read `docs/DOCS-GOVERNANCE.md`. Root `docs/` is only for canonical PRDs, roadmaps, governance, and implemented history; put stable technical detail in `docs/reference/`, approved supporting plans in `docs/plans/`, operations guidance in `docs/operations/`, and reader-facing website pages in `apps/docs/docs/`. Do not add one-off audits, generated dumps, private release checklists, scratch notes, or project/private evidence to `docs/`; delete stale/private planning material or keep it outside the public repo.
+Keep `docs/` clean. Before adding or moving docs, read `docs/DOCS-GOVERNANCE.md`. Root `docs/` holds canonical PRDs and governance; the three roadmap/history files remain there as read-only snapshots. Record shipped changes in the affected workspace's `CHANGELOG.md` and use linked PRs/commits for evidence. Track new plans in approved Farmslot roadmap/backlog items or public-safe GitHub issues, not by extending the frozen files. Put stable technical detail in `docs/reference/`, approved supporting plans in `docs/plans/`, operations guidance in `docs/operations/`, and reader-facing website pages in `apps/docs/docs/`. Do not add one-off audits, generated dumps, private release checklists, scratch notes, or project/private evidence to `docs/`.
 
 ### No Project-Specific Logic in Scripts
 
@@ -235,7 +235,7 @@ When working on `apps/command-center/`, read [apps/command-center/CLAUDE.md](app
 - **Coexistence**: gateway is additive — never break existing bash scripts
 - **OpenClaw reference**: copy patterns from `~/dev/openclaw/`, don't add as dependency
 - **ADRs**: [docs/adr/](docs/adr/) — accepted architectural decisions
-- **Roadmap**: [docs/ROADMAP.md](docs/ROADMAP.md) and [docs/ROADMAP-next.md](docs/ROADMAP-next.md)
+- **Planning**: approved Farmslot roadmap and backlog items; public-safe GitHub issues when appropriate. The Markdown roadmaps are historical snapshots.
 
 ## Development Guidelines
 

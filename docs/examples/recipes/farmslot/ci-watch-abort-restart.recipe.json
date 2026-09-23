@@ -1,0 +1,61 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Resolve a persisted CI-watch abort",
+  "description": "Resolve a persisted blocked CI decision through a running gateway with no live resolver. Seed the run before gateway startup, then set FARMSLOT_RUN_ID and FARMSLOT_DECISION_ID in the recipe runner's environment.",
+  "workflow": {
+    "entry": "before",
+    "nodes": {
+      "before": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get \"$(node -e 'if (!process.env.FARMSLOT_RUN_ID) throw new Error(\"Set FARMSLOT_RUN_ID\"); process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID}))')\"",
+        "intent": "Read the persisted blocked run through the gateway before resolving its CI decision.",
+        "next": "blocked"
+      },
+      "blocked": {
+        "action": "assert_output",
+        "source": "before",
+        "stream": "stdout",
+        "contains": "\"status\": \"blocked\"",
+        "intent": "Require an operator-blocked run before testing the restart fallback.",
+        "next": "abort"
+      },
+      "abort": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.resolveDecision \"$(node -e 'if (!process.env.FARMSLOT_RUN_ID || !process.env.FARMSLOT_DECISION_ID) throw new Error(\"Set FARMSLOT_RUN_ID and FARMSLOT_DECISION_ID\"); process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID,decisionId:process.env.FARMSLOT_DECISION_ID,actionId:\"abort\"}))')\"",
+        "intent": "Choose Abort through the real gateway RPC after the in-memory CI resolver was lost.",
+        "next": "resolved"
+      },
+      "resolved": {
+        "action": "assert_output",
+        "source": "abort",
+        "stream": "stdout",
+        "contains": "\"resolvedAction\": \"abort\"",
+        "intent": "Confirm the gateway persisted the operator choice.",
+        "next": "after"
+      },
+      "after": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get \"$(node -e 'if (!process.env.FARMSLOT_RUN_ID) throw new Error(\"Set FARMSLOT_RUN_ID\"); process.stdout.write(JSON.stringify({runId:process.env.FARMSLOT_RUN_ID}))')\" | node -e 'const chunks = []; process.stdin.on(\"data\", chunk => chunks.push(chunk)); process.stdin.on(\"end\", () => { const run = JSON.parse(Buffer.concat(chunks).toString()).run; console.log(JSON.stringify({ runStatus: run.status, ciResult: run.steps.find(step => step.name === \"ci-watch\")?.outputs?.result })); })'",
+        "intent": "Read the run after the gateway re-enters its CI-watch step.",
+        "next": "done-status"
+      },
+      "done-status": {
+        "action": "assert_output",
+        "source": "after",
+        "stream": "stdout",
+        "contains": "\"runStatus\":\"done\"",
+        "intent": "Require the run to finish instead of remaining blocked.",
+        "next": "aborted-result"
+      },
+      "aborted-result": {
+        "action": "assert_output",
+        "source": "after",
+        "stream": "stdout",
+        "contains": "\"ciResult\":\"aborted\"",
+        "intent": "Require CI-watch to record Abort instead of starting another poll.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

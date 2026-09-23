@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run, SlotReleaseParams } from '@farmslot/protocol';
 
-import { createRun, deleteRun, updateRun } from '../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { type CIWatchStepContext, executeCIWatchStep } from './ci-watch-step.js';
 import {
@@ -134,4 +134,70 @@ test('ci-watch hands its slot release to the engine instead of running it', asyn
       expectedRunId: run.id,
     },
   ]);
+});
+
+test('ci-watch does not poll after an operator abort survives a gateway restart', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'CI-ABORT-RESTART',
+    slotId: 'ci-abort-restart-slot',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    prNumber: 123,
+    decisions: [
+      {
+        id: `earlier-ci-abort-${run.id}`,
+        type: 'ci_ci_timeout',
+        title: 'CI timed out',
+        description: 'CI did not finish',
+        actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
+        createdAt: new Date().toISOString(),
+        context: { failedChecks: ['Old check'] },
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'abort',
+      },
+      {
+        id: `ci-abort-${run.id}`,
+        type: 'ci_inline_fix_blocked',
+        title: 'CI fix blocked',
+        description: 'Fix did not advance HEAD',
+        actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
+        createdAt: new Date().toISOString(),
+        context: { failedChecks: ['Check changelog'] },
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'abort',
+      },
+    ],
+  });
+
+  let retrospectives = 0;
+  const context = ciWatchContext({
+    createRetrospectiveForRun: async () => {
+      assert.equal(
+        getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs?.result,
+        'aborted',
+      );
+      retrospectives++;
+    },
+    loadProjectVarsOrNull: async () => {
+      throw new Error('CI-watch must not reload the project after abort');
+    },
+  });
+  const result = await executeCIWatchStep(run.id, context);
+
+  assert.equal(result.outputs?.result, 'aborted');
+  assert.deepEqual(result.outputs?.failedChecks, ['Check changelog']);
+  assert.equal(result.outputs?.pollCount, undefined);
+  assert.deepEqual(
+    context.deferred.map((release) => release.slotId),
+    ['ci-abort-restart-slot'],
+  );
+  assert.equal(retrospectives, 1);
 });
