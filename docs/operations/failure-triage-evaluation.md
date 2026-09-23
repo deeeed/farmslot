@@ -179,3 +179,62 @@ including time queued for GitHub transport. `FARMSLOT_PR_SOURCE_BUDGET_MS` can l
 its 45-second default. Single-PR target/submission reads retain their prior behavior.
 Authentication, local validation and other RPC work are outside this budget; it is
 not an end-to-end RPC deadline.
+
+## Paired worker study
+
+`MANUAL-000128` still needs a matched worker study. The offline study tool seals the
+21 held-out v2 cases into two counterbalanced arms. Arm A receives the recorded
+failure packet. Arm B receives the same packet and the frozen JEV advice that the
+pilot would display. The worker never receives labels, rationale, provider
+receipts or the post-hoc component-owner comparator.
+
+The report keeps all 42 planned attempts in its denominator. It calculates equal-quality savings on pairs where both answers succeed, and reports spend across the full cohort separately. A blinded reviewer
+must accept both the diagnosis and a supported read-only next check before the
+pair contributes to a comparison. It reports worker-only figures and conservative
+first-use totals. The assisted first-use total adds the recorded JEV input tokens,
+output tokens, estimated cost and provider duration once per case. Cached advice is
+not free in this comparison.
+
+Give the independent reviewer only `blind-review.json`. Keep `plan.json`,
+`score.json`, the attempt journal and the frozen corpus separate until their
+adjudications are recorded; those files contain arm or answer-key information.
+
+Preparing, scoring and adjudicating remain offline. They do not call a provider:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/workflow-study.mts prepare /absolute/new-study /absolute/worker-plan.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/workflow-study.mts score /absolute/new-study /absolute/native-worker-attempts.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/workflow-study.mts score-journal /absolute/new-study /absolute/journal.jsonl /absolute/approval.json /absolute/frozen-methodology.md
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/workflow-study.mts adjudicate /absolute/new-study /absolute/decisions.json
+```
+
+`worker-plan.json` must name the worker provider and model, an exact HTTPS price
+source, its verification date, request limits, cache accounting and a dollar cap.
+It only creates a sealed plan. Before any paid worker request, an independent
+methodology review must approve that exact plan, including the source admission and
+price/spend policy. The offline `score` command cannot make a savings claim. `score-journal` verifies the runner's recorded methodology approval before marking a study as approved; adjudication rechecks the retained approval, method and journal snapshots. The gate requires at least 16 equally successful pairs and no baseline-success/assisted-failure regressions across all 21 cases. The score output marks missing receipts, unknown charges,
+unreviewed answers and any unavailable total metric as inconclusive. It also labels
+the component-owner comparator as post-hoc. It cannot establish Farmslot-wide
+workflow savings.
+
+Only the separate runner sends worker requests. Set `STUDY_API_KEY` in its process
+environment, then invoke it once with the frozen plan, a new absolute journal
+path, an independent approval JSON, and this methodology file:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
+  scripts/failure-triage/workflow-study-runner.mts run \
+  /absolute/new-study/plan.json /absolute/journal.jsonl \
+  /absolute/approval.json /absolute/frozen-methodology.md
+```
+
+The approval JSON must contain the reviewed `planHash`, the SHA-256 hash of the
+methodology file, a reviewer name, and `"conclusion":"approved"`. The runner
+journals and syncs a start before each request and records every native receipt.
+It cannot resume an existing journal, so interrupted requests retain unknown
+charges and never retry automatically. Run `score-journal` only once for that
+study directory, then give the reviewer the generated `blind-review.json` alone.
