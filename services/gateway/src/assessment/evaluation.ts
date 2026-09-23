@@ -103,7 +103,9 @@ export function evaluateAssessmentReport(
       const abstains =
         r.consumer === 'failure-triage'
           ? cause?.type !== 'choice' || cause.choice === 'unclear'
-          : r.recommendation?.route === 'needs-review' || !r.recommendation;
+          : r.consumer === 'decision-advice'
+            ? answer.type === 'choice' && answer.choice === 'abstain'
+            : r.recommendation?.route === 'needs-review' || !r.recommendation;
       if (abstains) entry.abstained++;
       const labelKey = JSON.stringify([r.id, questionId]);
       const reference = labels.get(labelKey);
@@ -114,7 +116,8 @@ export function evaluateAssessmentReport(
         if (reference) rejectedReferences++;
         continue;
       }
-      if (abstains) continue;
+      // Decision advice scores abstention only against an explicit reference.
+      if (abstains && r.consumer !== 'decision-advice') continue;
       let predicted: string | boolean;
       if (answer.type === 'choice') predicted = answer.choice;
       else if (answer.type === 'boolean') predicted = assessmentBooleanValue(answer);

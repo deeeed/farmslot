@@ -151,7 +151,12 @@ export interface AssessmentSubject {
   };
 }
 
-export const ASSESSMENT_CONSUMERS = ['review-intake', 'smoke-test', 'failure-triage'] as const;
+export const ASSESSMENT_CONSUMERS = [
+  'review-intake',
+  'smoke-test',
+  'failure-triage',
+  'decision-advice',
+] as const;
 
 export interface AssessmentReservation {
   /** Stable request identity; pending attempts are never silently replayed. */
@@ -167,6 +172,8 @@ export interface AssessmentReservation {
     inputUsdPerMillion: number;
     outputUsdPerMillion: number;
     maxRequestTokens: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
   };
 }
 

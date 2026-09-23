@@ -21,6 +21,7 @@ import { colors, fonts } from '../../styles/theme-tokens.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
+import { supportsDecisionAdvice } from './decision-advice-model.js';
 import {
   renderCollisionDescription,
   renderCollisionPriorRuns,
@@ -393,6 +394,22 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                           : isReviewContinuation
                             ? renderReviewContinuation(pending)
                             : nothing}
+                        ${supportsDecisionAdvice(pending) &&
+                        !context.actionsBlocked &&
+                        !recoveredTimeout
+                          ? html`<decision-advice-panel
+                              .runId=${run.id}
+                              .decision=${pending}
+                              .snapshotKey=${JSON.stringify([
+                                run.id,
+                                pending.id,
+                                pending.createdAt,
+                                pending.description,
+                                pending.resolvedAt,
+                                pending.actions.map((a) => [a.id, a.label, a.description]),
+                              ])}
+                            ></decision-advice-panel>`
+                          : nothing}
                         ${recoveredTimeout
                           ? html`
                               <div

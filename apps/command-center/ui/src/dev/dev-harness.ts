@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 
 import type { PRRulePredicate } from '@farmslot/protocol';
 import type {
+  AssessmentHistoryResult,
   BacklogItem,
   DispatchCandidatesResult,
   EvalExperimentCreateResult,
@@ -1225,10 +1226,44 @@ export class DevHarness extends LitElement {
         timestamp: iso(12 * 60 * 1000),
       },
     ];
+    const history: AssessmentHistoryResult = {
+      retentionDays: 30,
+      auditHealth: { status: 'ok', failedWritesSinceStart: 0 },
+      records: [
+        {
+          version: 1,
+          id: '00000000-0000-4000-8000-000000000123',
+          ownerId: 'dev-fixture',
+          consumer: 'decision-advice',
+          status: 'completed',
+          startedAt: iso(60000),
+          policyVersion: 'decision-advice-v1',
+          feedback: [],
+          subject: {
+            run: {
+              id: 'synthetic-run',
+              project: 'example-farm',
+              step: 'decision-advice',
+              snapshotHash: 'a'.repeat(64),
+            },
+          },
+          result: {
+            status: 'completed',
+            attempted: true,
+            provider: 'synthetic-provider',
+            returnedModel: 'fixture-model',
+            answers: {
+              action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
+            },
+          },
+        },
+      ],
+    };
     return html`
       <intelligence-incidents-panel
         .injectedSummary=${summary}
         .injectedSignals=${liveSignals}
+        .injectedHistory=${history}
       ></intelligence-incidents-panel>
     `;
   }

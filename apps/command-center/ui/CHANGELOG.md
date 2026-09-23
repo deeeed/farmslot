@@ -7,6 +7,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Explain when a chosen slot cannot use a suggested Companion profile, and hide its apply action until the operator changes slots; auto-picked slots can still search for a compatible slot.
 
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
+- Offer a read-only recommendation panel for eligible pending run decisions when explicitly requested.
 - Count assessed acceptance criteria separately from proven ones, and show unresolved cleanup with the last provider check instead of implying a fresh health result.
 
 - Show blocked workers how to restart on an available worker after slot release, or resume monitoring after a fresh signal and proof-resource check while they still own the slot. Update-branch runs without worker selection instead direct operators to start a new run.
