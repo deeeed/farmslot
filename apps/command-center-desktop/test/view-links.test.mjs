@@ -17,6 +17,7 @@ test('selected backlog items and status filters are shareable', () => {
   for (const route of [
     '#backlog?projects=farmslot-farm&item=26100923-29a3-46a3-bf0d-8040f9daa80c',
     '#backlog?backlogProject=farmslot-farm&backlogStatus=candidate&item=26100923-29a3-46a3-bf0d-8040f9daa80c&dispatchConfig=1',
+    '#backlog?item=26100923-29a3-46a3-bf0d-8040f9daa80c&mode=edit&dispatchConfig=1',
     '#backlog?projects=farmslot-farm&item=26100923-29a3-46a3-bf0d-8040f9daa80c&spec=1',
     '#backlog?create=1&slotSelector=1',
   ]) {

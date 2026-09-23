@@ -34,7 +34,7 @@ const parameters = new Set(
     'a b activity backlogProject backlogStatus create dispatchConfig file item resource runId contextId history historyRun recipeRun recipeDependency ' +
     'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair reviewDrawer ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview familyId flow focus gate intent lane ' +
-    'layout machines modal model panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
+    'layout machines modal mode model panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
     'prPane prScope prSection prSort prTab prTarget publicationReviews qaInputs qaProfileId repo reviewMachine ' +
     'reviewValidationDepth run runner slot sort start_ref startRef state tab ticket trajectory transport ' +
     'validationDepth variant view window worker group promote runnerPicker slotSelector spec'
