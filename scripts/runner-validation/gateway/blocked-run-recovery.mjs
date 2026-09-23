@@ -39,7 +39,13 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function blockedRun(id, ownedSlotId, flowType = 'fix-bug', readyForMonitor = false) {
+function blockedRun(
+  id,
+  ownedSlotId,
+  flowType = 'fix-bug',
+  readyForMonitor = false,
+  signalAt = blockedAt,
+) {
   const taskFile = path.join(repo, 'tasks', id, 'TASK.md');
   return {
     id,
@@ -65,7 +71,7 @@ function blockedRun(id, ownedSlotId, flowType = 'fix-bug', readyForMonitor = fal
               workerSignal: {
                 status: 'blocked',
                 attemptId: 'blocked-attempt',
-                timestamp: blockedAt,
+                timestamp: signalAt,
               },
             },
           }
@@ -317,7 +323,7 @@ try {
     /Start a new update-branch run/,
   );
   assert.equal(update.slotId, 'unavailable-worker');
-  const blocked = denied({ runId, stepName: 'monitor' }, /Proof resources are not healthy/);
+  const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
   rpc('run.replayStep', { runId, stepName: 'find-slot', triggeredBy: 'operator' });
@@ -325,13 +331,24 @@ try {
   const slot = rpc('fleet.status', {}).fleet.slots.find((candidate) => candidate.slot === slotId);
   assert.equal(restarted.status, 'slot-finding');
   assert.equal(restarted.slotId, null);
+  const capabilityStore = JSON.parse(readFileSync(env.FARMSLOT_CAPABILITY_STORE_FILE, 'utf8'));
+  assert.equal(
+    capabilityStore.terminalOwnerEntries?.some(({ id }) => id === runId),
+    false,
+  );
   assert.equal(slot?.currentRunId, null);
   assert.equal(slot?.lifecycle, 'ready');
   assert.equal(restarted.steps.find((step) => step.name === 'find-slot').status, 'pending');
   await stopGateway();
   writeJson(
     path.join(root, '.runs', `${successRunId}.json`),
-    blockedRun(successRunId, slotId, 'fix-bug', true),
+    blockedRun(
+      successRunId,
+      slotId,
+      'fix-bug',
+      true,
+      new Date(Date.parse(blockedAt) - 2000).toISOString(),
+    ),
   );
   writeJson(path.join(root, '.farm-status.json'), {
     slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId }],
@@ -383,6 +400,19 @@ try {
   const staleSignal = rpc('run.probeWorkerSignal', { runId: successRunId });
   assert.equal(staleSignal.code, 'stale', JSON.stringify(staleSignal));
   denied({ runId: successRunId, stepName: 'monitor' }, /older than this run/);
+
+  // A fresh attempt timestamped between the blocked signal and the gateway's
+  // monitor completion must reach artifact validation, even with worker clock skew.
+  writeJson(signalFile, {
+    status: 'complete',
+    outcome: 'success',
+    attemptId: randomUUID(),
+    timestamp: new Date(Date.parse(blockedAt) - 1000).toISOString(),
+  });
+  const skewed = rpc('run.probeWorkerSignal', { runId: successRunId });
+  assert.equal(skewed.code, 'artifact_contract', JSON.stringify(skewed));
+  assert.match(skewed.message, /acceptance-status.json|AC-1/);
+  denied({ runId: successRunId, stepName: 'monitor' }, /acceptance-status.json|AC-1/);
 
   const nextAttempt = randomUUID();
   writeJson(signalFile, {
