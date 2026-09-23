@@ -458,6 +458,21 @@ test('card clearance uses the position after the horizontal move', async () => {
   assert.ok(after && (after.y + after.height <= card.y || after.y >= card.y + card.height));
 });
 
+test('a full-height side panel trims the viewport edge and the target moves beside it', async () => {
+  // Panel covers x 300-400 for the whole viewport height; the row at x 250-450 runs under it.
+  const panel = { x: 300, y: 100, width: 100, height: 500 };
+  const surface = new FakeSurface({
+    elements: { filters: { top: 200, left: 250, height: 40 } },
+    occlusions: [panel],
+  });
+  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { status, trace } = await runScrollRecipe(transport, [{ target_test_id: 'filters' }]);
+  assert.equal(status, 'pass', JSON.stringify(trace[0]));
+  const output = scrollOutput(trace[0]);
+  assert.deepEqual(output.safeViewport, { x: 0, y: 100, width: 300, height: 500 });
+  assert.deepEqual(output.after?.targetBounds, { x: 100, y: 300, width: 200, height: 40 });
+});
+
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
   const surface = new FakeSurface({
     elements: { filters: { top: 450, height: 40 } },

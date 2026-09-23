@@ -73,6 +73,10 @@ offset, and `scrollTo({ x, y })` for the move. The target must already be mounte
 virtualized row outside the render window fails `SCROLL_TARGET_MISSING` rather than
 being searched for.
 
+Under `hud_safe`, an occlusion at least half the viewport wide (the recipe HUD) trims
+the top or bottom edge, one at least half as tall (a side panel) trims the left or
+right edge, and smaller cards only block the elements they cover.
+
 Settlement compares consecutive measurements `interval_ms` apart. Layout that
 oscillates with a period matching that interval can look settled; raise
 `stable_samples` or change `interval_ms` when a surface animates periodically.

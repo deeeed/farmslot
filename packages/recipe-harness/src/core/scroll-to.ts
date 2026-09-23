@@ -260,9 +260,9 @@ export async function runUiScrollTo(
 }
 
 /**
- * Remove bar-shaped occlusion (at least half the viewport wide, like the recipe HUD) from the
- * viewport: bars in the lower half trim the bottom edge, others the top. Narrower cards are
- * checked against the proof element instead; see cardOcclusions.
+ * Remove bar-shaped occlusion from the viewport. A bar at least half the viewport wide (like the
+ * recipe HUD) trims the top or bottom edge; one at least half as tall (a side panel) trims the
+ * left or right edge. Smaller cards are checked against the proof element; see cardOcclusions.
  */
 export function safeViewportFor(
   viewport: UiRect,
@@ -270,18 +270,30 @@ export function safeViewportFor(
   policy: UiScrollToRequest['viewportPolicy'],
 ): UiRect {
   if (policy === 'full' || !occlusions?.length) return viewport;
+  let left = viewport.x;
+  let right = viewport.x + viewport.width;
   let top = viewport.y;
   let bottom = viewport.y + viewport.height;
-  const center = viewport.y + viewport.height / 2;
   for (const occlusion of occlusions) {
-    const overlapsX =
-      occlusion.x < viewport.x + viewport.width && occlusion.x + occlusion.width > viewport.x;
-    const overlapsY = occlusion.y < bottom && occlusion.y + occlusion.height > top;
-    if (!overlapsX || !overlapsY || !isBar(occlusion, viewport)) continue;
-    if (occlusion.y + occlusion.height / 2 >= center) bottom = Math.min(bottom, occlusion.y);
-    else top = Math.max(top, occlusion.y + occlusion.height);
+    const current = { x: left, y: top, width: right - left, height: bottom - top };
+    if (!intersects(occlusion, current)) continue;
+    const bar = barAxis(occlusion, viewport);
+    if (bar === 'horizontal') {
+      if (occlusion.y + occlusion.height / 2 >= viewport.y + viewport.height / 2) {
+        bottom = Math.min(bottom, occlusion.y);
+      } else top = Math.max(top, occlusion.y + occlusion.height);
+    } else if (bar === 'vertical') {
+      if (occlusion.x + occlusion.width / 2 >= viewport.x + viewport.width / 2) {
+        right = Math.min(right, occlusion.x);
+      } else left = Math.max(left, occlusion.x + occlusion.width);
+    }
   }
-  return { x: viewport.x, y: top, width: viewport.width, height: Math.max(0, bottom - top) };
+  return {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
 }
 
 /**
@@ -301,8 +313,10 @@ export function isVisibleWithin(
   );
 }
 
-function isBar(occlusion: UiRect, viewport: UiRect): boolean {
-  return occlusion.width >= viewport.width / 2;
+function barAxis(occlusion: UiRect, viewport: UiRect): 'horizontal' | 'vertical' | undefined {
+  if (occlusion.width >= viewport.width / 2) return 'horizontal';
+  if (occlusion.height >= viewport.height / 2) return 'vertical';
+  return undefined;
 }
 
 function intersects(a: UiRect, b: UiRect): boolean {
@@ -312,7 +326,7 @@ function intersects(a: UiRect, b: UiRect): boolean {
 function cardOcclusions(geometry: UiScrollGeometry, policy: UiScrollToRequest['viewportPolicy']) {
   if (policy === 'full' || !geometry.viewport) return [];
   const viewport = geometry.viewport;
-  return (geometry.occlusions ?? []).filter((occlusion) => !isBar(occlusion, viewport));
+  return (geometry.occlusions ?? []).filter((occlusion) => !barAxis(occlusion, viewport));
 }
 
 function axisVisible(start: number, size: number, areaStart: number, areaSize: number): boolean {
