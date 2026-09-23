@@ -29,3 +29,5 @@ apps/command-center/scripts/git-hooks/*
 scripts/failure-triage/results/
 scripts/failure-triage/corpus.json
 scripts/failure-triage/corpus-v2.json
+# Frozen navigation reference bytes match the scored report hash.
+scripts/failure-triage/navigation-reference.v1.json
