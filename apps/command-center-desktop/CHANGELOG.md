@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Copy links to selected Backlog items and status-filtered views in Farmslot Dev and the desktop app.
+
 - Copy links to nested Config pages, including pool, project and flow selections.
 
 - Expose the current-view copy action to the Electron UI, with `farmslot://` or `farmslot-dev://` full-view links preserving URL navigation state.
