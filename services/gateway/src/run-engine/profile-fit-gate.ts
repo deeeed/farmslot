@@ -19,14 +19,7 @@ const COMPANION_TOKENS = [
   'metro',
 ];
 
-const GATEWAY_TOKENS = [
-  'gateway',
-  'protocol',
-  'rpc',
-  'run-engine',
-  'slot.prepare',
-  'services/gateway',
-];
+const GATEWAY_TOKENS = ['gateway', 'protocol', 'rpc', 'run-engine', 'slot.prepare', 'services/gateway'];
 
 const COMMAND_CENTER_TOKENS = [
   'command center',
@@ -182,9 +175,7 @@ export function detectProfileFit(
   if (currentProfile === 'core') return null;
 
   const gatewayOnlyMismatch =
-    surfaces.companion &&
-    GATEWAY_ONLY_PROFILES.has(currentProfile) &&
-    !context.prepareProfile?.trim();
+    surfaces.companion && GATEWAY_ONLY_PROFILES.has(currentProfile) && !context.prepareProfile?.trim();
   const companionMismatch =
     (surfaces.gateway || surfaces.commandCenter) &&
     COMPANION_PROFILES.has(currentProfile) &&
@@ -208,7 +199,10 @@ export function detectProfileFit(
   return null;
 }
 
-export function effectivePrepareProfile(run: Run, context: ProfileFitContext = {}): string {
+export function effectivePrepareProfile(
+  run: Run,
+  context: ProfileFitContext = {},
+): string {
   return (
     context.prepareProfile?.trim() ||
     run.prepareProfile?.trim() ||
