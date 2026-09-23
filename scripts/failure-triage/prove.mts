@@ -112,6 +112,8 @@ for (const scenario of [
   'valid',
   'invalid-label',
   'fabricated-evidence',
+  'adapter-invalid',
+  'adapter-preflight',
   'timeout',
   'rate-limit',
   'credential-echo',
@@ -126,8 +128,18 @@ for (const scenario of [
     '10',
   ]);
   assert.equal(report.liveStatus, 'fixture');
-  assert.equal(report.usage.attempts, 1);
+  assert.equal(report.usage.attempts, scenario === 'adapter-preflight' ? 0 : 1);
   assert.equal(records[0].status, scenario === 'valid' ? 'completed' : 'unavailable');
+  if (scenario === 'adapter-invalid') {
+    assert.equal(records[0].usage.inputTokens, 120);
+    assert.equal(records[0].usage.outputTokens, 20);
+  }
+  if (scenario === 'fabricated-evidence') assert.ok(records[0].usage.inputTokens > 0);
+  if (scenario === 'adapter-preflight') {
+    assert.equal(records[0].reason, 'provider-not-attempted');
+    assert.equal(records[0].reservedUsd, 0);
+    assert.equal(records[0].usage, undefined);
+  }
   if (scenario === 'timeout') assert.equal(records[0].reason, 'timeout');
   if (scenario === 'rate-limit') assert.equal(records[0].reason, 'rate-limit');
 }
@@ -186,7 +198,8 @@ assert.deepEqual(afterState, beforeState, 'Evaluation changed authoritative run/
 const proofFiles = {
   'contract-tests.json': {
     passed: true,
-    command: 'evaluation CLI --fixture invalid-label|fabricated-evidence|valid',
+    command:
+      'evaluation CLI --fixture invalid-label|fabricated-evidence|adapter-invalid|adapter-preflight|valid',
     receipts,
   },
   'opt-in-budget-proof.json': { passed: true, receipts },

@@ -31,7 +31,7 @@ export function createLlmAssessmentProvider(
             ? { type: 'string', enum: Object.keys(q.criteria) }
             : q.type === 'boolean'
               ? { type: 'boolean' }
-              : { type: 'number', minimum: 0, maximum: q.criteria.length - 1 },
+              : { type: 'integer', minimum: 0, maximum: q.criteria.length - 1 },
         ]),
       );
       let result: MeasuredResponse;
@@ -67,7 +67,7 @@ export function createLlmAssessmentProvider(
           fetchImpl,
         );
       } catch {
-        // Transport validates its configuration before fetch. No request was made.
+        // The transport returns failures after fetch; only its pre-fetch validation throws.
         throw new AssessmentResponseError('Invalid LLM provider configuration', false);
       }
       if (!result.attempted)
@@ -113,7 +113,7 @@ export function createLlmAssessmentProvider(
           }
           if (
             typeof value !== 'number' ||
-            !Number.isFinite(value) ||
+            !Number.isInteger(value) ||
             value < 0 ||
             value > q.criteria.length - 1
           )

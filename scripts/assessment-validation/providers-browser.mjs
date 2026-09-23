@@ -47,7 +47,7 @@ const evidence = `fixture:plain-choice-browser-${Date.now()}`;
 cdp('select', 'intelligence', prefix + ' select[name=verdict]', 'incorrect');
 cdp('select', 'intelligence', prefix + ' select[name=correction]', 'red');
 cdp('fill', 'intelligence', prefix + ' input[name=evidence]', evidence);
-cdp('click', 'intelligence', `article[id="${session.recordId}"] button[type=submit]`);
+cdp('click', 'intelligence', prefix + ' button[type=submit]');
 let saved;
 for (let i = 0; i < 40; i++) {
   saved = cdp('gateway', 'assessment.get', JSON.stringify({ id: session.recordId }));

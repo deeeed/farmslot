@@ -66,7 +66,9 @@ export interface TriageOptions {
     | 'timeout'
     | 'rate-limit'
     | 'credential-echo'
-    | 'control-action';
+    | 'control-action'
+    | 'adapter-invalid'
+    | 'adapter-preflight';
 }
 // Supported reservation envelope: the bundled snapshot documents input-only pricing
 // and a 64k request limit. Paid outputs need their own bound before admission.
@@ -100,6 +102,15 @@ function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): Assessmen
     credentialEnv: 'UNUSED_FIXTURE_KEY',
     capabilities: ['choice'],
     async assess({ state, questions, signal }) {
+      if (mode === 'adapter-invalid' || mode === 'adapter-preflight')
+        throw new AssessmentResponseError(
+          'Fixture rejected a provider answer',
+          mode === 'adapter-invalid',
+          mode === 'adapter-invalid'
+            ? { inputTokens: 120, outputTokens: 20, cacheReadTokens: 10, durationMs: 2 }
+            : undefined,
+          mode === 'adapter-invalid' ? 'fixed' : undefined,
+        );
       if (mode === 'timeout') {
         await new Promise<void>((_resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('fixture deadline')), 15000);
@@ -194,7 +205,9 @@ export async function evaluateTriage(options: TriageOptions) {
   );
   const provider = options.fixture
     ? fixtureProvider(options.fixture)
-    : defaultAssessmentProviders(boundedAssessmentFetch()).get(options.provider ?? '');
+    : // The native TypeSafe reply is bounded here. The Responses adapter streams and
+      // enforces its own byte cap while retaining received usage on later failures.
+      defaultAssessmentProviders(boundedAssessmentFetch(), fetch).get(options.provider ?? '');
   const key = options.fixture
     ? 'synthetic-only'
     : provider
@@ -322,31 +335,53 @@ export async function evaluateTriage(options: TriageOptions) {
             throw new TriageResponseError('usage');
         if (!Number.isFinite(usage.durationMs) || usage.durationMs < 0)
           throw new TriageResponseError('duration');
+        row.returnedModel = response.returnedModel;
+        row.usage = { ...usage, provider: provider.id, requestedModel: row.requestedModel! };
+        if (!options.fixture && usage.inputTokens !== undefined)
+          row.estimatedUsd = (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000;
         if (!options.fixture && (usage.inputTokens ?? 0) > price.maxRequestTokens) {
           overBound = true;
           throw new AssessmentSpendBoundError();
         }
         row.prediction = triagePrediction(response.answers, prepared.packet);
         row.status = 'completed';
-        row.returnedModel = response.returnedModel;
-        row.usage = { ...usage, provider: provider.id, requestedModel: row.requestedModel! };
-        if (!options.fixture && usage.inputTokens !== undefined)
-          row.estimatedUsd = (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000;
       } catch (error) {
         row.status = 'unavailable';
+        if (error instanceof AssessmentResponseError) {
+          if (!error.attempted) {
+            // No provider call occurred; release the reservation and call slot.
+            attempts--;
+            reservedUsd -= reservation;
+            row.reservedUsd = 0;
+          } else if (error.usage) {
+            row.returnedModel = error.returnedModel;
+            row.usage = {
+              ...error.usage,
+              provider: provider.id,
+              requestedModel: row.requestedModel!,
+              returnedModel: error.returnedModel,
+            };
+            if (!options.fixture && error.usage.inputTokens !== undefined) {
+              row.estimatedUsd = (error.usage.inputTokens * price.inputUsdPerMillion) / 1_000_000;
+              if (error.usage.inputTokens > price.maxRequestTokens) overBound = true;
+            }
+          }
+        }
         const status =
           error && typeof error === 'object' && 'status' in error ? error.status : undefined;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
         row.reason =
-          error instanceof AssessmentSpendBoundError
-            ? 'spend-bound-exceeded'
-            : signal.aborted
-              ? 'timeout'
-              : status === 429
-                ? 'rate-limit'
-                : receivedResponse || error instanceof AssessmentResponseError
-                  ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
-                  : 'provider-request-failed';
+          error instanceof AssessmentResponseError && !error.attempted
+            ? 'provider-not-attempted'
+            : error instanceof AssessmentSpendBoundError || overBound
+              ? 'spend-bound-exceeded'
+              : signal.aborted
+                ? 'timeout'
+                : status === 429
+                  ? 'rate-limit'
+                  : receivedResponse || error instanceof AssessmentResponseError
+                    ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
+                    : 'provider-request-failed';
       }
     }
     row.durationMs = Date.now() - caseStarted;

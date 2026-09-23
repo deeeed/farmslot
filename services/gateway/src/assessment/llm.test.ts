@@ -61,7 +61,8 @@ test('ordinary LLM judgments use the same service contract without fictional pro
       'environment',
       'implementation',
     ]);
-    return native({ cause: 'environment', needed: true, quality: 1.5 });
+    assert.equal(body.text.format.schema.properties.answers.properties.quality.type, 'integer');
+    return native({ cause: 'environment', needed: true, quality: 1 });
   });
   const result = await provider.assess({
     state: { error: 'Synthetic error' },
@@ -106,6 +107,7 @@ test('invalid judgments are rejected instead of being coerced into accepted answ
     { cause: 'publish', needed: true, quality: 1 },
     { cause: 'environment', needed: 'yes', quality: 1 },
     { cause: 'environment', needed: true, quality: 99 },
+    { cause: 'environment', needed: true, quality: 1.5 },
     { cause: 'environment', needed: true },
   ]) {
     const provider = createLlmAssessmentProvider(config, async () => native(answers));

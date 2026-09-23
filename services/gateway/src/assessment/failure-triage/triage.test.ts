@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { defaultAssessmentProviders } from '../default-providers.js';
+
 import { cueBaseline, existingBaseline } from './baselines.js';
 import { loadTriageCorpus } from './corpus.js';
 import { CORPUS_HASH } from './corpus-lock.js';
 import { evaluateTriage, validTriagePrice } from './evaluate.js';
 import { triageGate, triageMetrics } from './metrics.js';
 import { prepareTriage, textDigest, triagePrediction } from './packet.js';
+import { boundedAssessmentFetch } from './transport.js';
 import { CHECK_FOR_LABEL, type TriageCase, type TriagePrice, type TriageResult } from './types.js';
 
 const corpus = loadTriageCorpus();
@@ -187,6 +190,52 @@ test('offline is no-call despite global enable and fixtures cannot satisfy the l
   assert.ok(rows.slice(1).every((r: { reason: string }) => r.reason === 'budget-exhausted'));
   await assert.rejects(evaluateTriage({ out: path.join(root, 'offline') }), /EEXIST/);
 });
+test('failed adapter replies retain received usage and preflight rejections release the reservation', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'triage-adapter-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const caseId = corpus.cases.find((c) => c.split === 'held-out')!.id;
+  const failed = await evaluateTriage({
+    out: path.join(root, 'invalid'),
+    fixture: 'adapter-invalid',
+    caseId,
+    maxCalls: 1,
+  });
+  const [charged] = JSON.parse(
+    await readFile(path.join(root, 'invalid', 'candidate-results.json'), 'utf8'),
+  );
+  assert.equal(failed.usage.attempts, 1);
+  assert.equal(charged.status, 'unavailable');
+  assert.equal(charged.usage.inputTokens, 120);
+  assert.equal(charged.usage.outputTokens, 20);
+  assert.equal(charged.usage.cacheReadTokens, 10);
+  assert.equal(charged.returnedModel, 'fixed');
+  await evaluateTriage({
+    out: path.join(root, 'semantic-invalid'),
+    fixture: 'fabricated-evidence',
+    caseId,
+    maxCalls: 1,
+  });
+  const [semantic] = JSON.parse(
+    await readFile(path.join(root, 'semantic-invalid', 'candidate-results.json'), 'utf8'),
+  );
+  assert.equal(semantic.status, 'unavailable');
+  assert.ok(semantic.usage.inputTokens > 0);
+  assert.equal(semantic.usage.outputTokens, 30);
+  const preflight = await evaluateTriage({
+    out: path.join(root, 'preflight'),
+    fixture: 'adapter-preflight',
+    caseId,
+    maxCalls: 1,
+  });
+  const [notCharged] = JSON.parse(
+    await readFile(path.join(root, 'preflight', 'candidate-results.json'), 'utf8'),
+  );
+  assert.equal(preflight.usage.attempts, 0);
+  assert.equal(preflight.usage.reservedUsd, 0);
+  assert.equal(notCharged.reason, 'provider-not-attempted');
+  assert.equal(notCharged.reservedUsd, 0);
+  assert.equal(notCharged.usage, undefined);
+});
 test('price validation refuses unknown models, expired snapshots and paid outputs without bounds', () => {
   const price: TriagePrice = {
     version: 1,
@@ -208,7 +257,6 @@ test('price validation refuses unknown models, expired snapshots and paid output
 });
 
 test('transport forbids redirects and rejects oversized bodies before SDK parsing', async () => {
-  const { boundedAssessmentFetch } = await import('./transport.js');
   let redirected: string | undefined;
   const fake: typeof fetch = async (_input, init) => {
     redirected = init?.redirect;
@@ -220,6 +268,53 @@ test('transport forbids redirects and rejects oversized bodies before SDK parsin
   assert.deepEqual(await (await boundedAssessmentFetch(valid)('https://example.test')).json(), {
     ok: true,
   });
+});
+test('the LLM adapter reads large bounded SSE replies without the native provider body cap', async () => {
+  let calls = 0;
+  const fake: typeof fetch = async () => {
+    calls++;
+    const terminal = {
+      type: 'response.completed',
+      response: {
+        id: 'resp_fixture',
+        model: 'fixture-model',
+        status: 'completed',
+        usage: { input_tokens: 100, output_tokens: 20 },
+        output: [
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: '{"answers":{"cause":"environment"}}' }],
+          },
+        ],
+      },
+    };
+    return new Response(
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'x'.repeat(70 * 1024) })}\n\ndata: ${JSON.stringify(terminal)}\n\n`,
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+  };
+  const provider = defaultAssessmentProviders(boundedAssessmentFetch(fake), fake).get('codex-lb')!;
+  const result = await provider.assess({
+    state: { failure: 'synthetic' },
+    questions: {
+      cause: {
+        type: 'choice',
+        instructions: 'Cause?',
+        criteria: { environment: 'Environment', implementation: 'Code' },
+      },
+    },
+    model: 'fixture-model',
+    apiKey: 'fixture-key',
+    signal: new AbortController().signal,
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.answers.cause.type, 'choice');
+  assert.equal(
+    result.answers.cause.type === 'choice' && result.answers.cause.choice,
+    'environment',
+  );
+  assert.equal(result.usage.inputTokens, 100);
 });
 
 test('quarantined corpus cannot qualify even with perfect metrics', () => {

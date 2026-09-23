@@ -32,7 +32,7 @@ import {
 import { readTriagePolicy } from './policy.js';
 import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.js';
 
-const providers = defaultAssessmentProviders(boundedAssessmentFetch());
+const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
 const pending = new Map<string, Promise<FailureTriageView>>();
 
 function canRetry(record: AssessmentRecord): boolean {
