@@ -26,6 +26,7 @@ import {
 import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
+import { loadFleetStatus } from '../fleet/state.js';
 import {
   buildSmartBranch,
   computeOverrideRate,
@@ -33,6 +34,7 @@ import {
   gradeTicket,
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
+import { companionResourceBlocker } from '../methods/dispatch/slot-scoring.js';
 import {
   configuredPrepareProfileNames,
   resolvePrepareProfile,
@@ -240,9 +242,11 @@ export async function executeGradeStep(
   dependencies: {
     createEngineDecision?: typeof createEngineDecision;
     loadProjectVarsOrNull?: typeof loadProjectVarsOrNull;
+    getFleetStatus?: typeof loadFleetStatus;
   } = {},
 ): Promise<StepIO> {
   const decide = dependencies.createEngineDecision ?? createEngineDecision;
+  const getFleetStatus = dependencies.getFleetStatus ?? loadFleetStatus;
   const loadProjectVars = dependencies.loadProjectVarsOrNull ?? loadProjectVarsOrNull;
   const inputs: Record<string, unknown> = { ticketOrPr: run.ticketOrPr };
   // Fetch ticket data from Jira/GitHub unless the run was created with
@@ -295,12 +299,10 @@ export async function executeGradeStep(
     projectMismatchOverride = { projectMismatch, overriddenBy: 'user' };
   }
 
-  let slotPlatform: string | null = null;
-  if (run.slotId) {
-    const { loadFleetStatus } = await import('../fleet/state.js');
-    const fleet = await loadFleetStatus();
-    slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
-  }
+  const boundSlot = run.slotId
+    ? (await getFleetStatus()).slots.find((slot) => slot.slot === run.slotId)
+    : undefined;
+  const slotPlatform = boundSlot?.platform ?? null;
   let currentPrepareProfile: string | undefined;
   let resolvedProfileFit: ReturnType<typeof detectProfileFit> = null;
   // Profile-fit is Farmslot-only and explicit operator profiles always win.
@@ -323,17 +325,27 @@ export async function executeGradeStep(
     }
   }
   if (resolvedProfileFit) {
+    // FIND_SLOT has already claimed this slot. Advice cannot silently change the
+    // resource requirements of that binding; the operator must pick another slot
+    // in a new run if this one cannot support the suggested profile.
+    const resourceBlocker = boundSlot
+      ? companionResourceBlocker(boundSlot, resolvedProfileFit.suggestedPrepareProfile)
+      : 'Bound slot is unavailable in the fleet';
     const actionId = await decide(
       runId,
       'prepare_profile_mismatch',
-      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}`,
+      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}${resourceBlocker ? ` Slot ${run.slotId ?? '(unbound)'} cannot use the suggestion: ${resourceBlocker}. Start a new run on a compatible slot to use it.` : ''}`,
       [
-        {
-          id: 'use_suggested_profile',
-          label: `Use ${resolvedProfileFit.suggestedPrepareProfile}`,
-          style: 'primary',
-          description: 'Save the suggested profile on this run before prepare starts.',
-        },
+        ...(!resourceBlocker
+          ? [
+              {
+                id: 'use_suggested_profile',
+                label: `Use ${resolvedProfileFit.suggestedPrepareProfile}`,
+                style: 'primary' as const,
+                description: 'Save the suggested profile on this run before prepare starts.',
+              },
+            ]
+          : []),
         {
           id: 'continue',
           label: `Continue with ${currentPrepareProfile}`,
@@ -355,6 +367,18 @@ export async function executeGradeStep(
       throw new Error('Prepare profile mismatch: aborted by user');
     }
     if (actionId === 'use_suggested_profile') {
+      const selectedSlotId = getRun(runId)?.slotId;
+      const selectedSlot = (await getFleetStatus(true)).slots.find(
+        (slot) => slot.slot === selectedSlotId,
+      );
+      const selectedSlotBlocker = selectedSlot
+        ? companionResourceBlocker(selectedSlot, resolvedProfileFit.suggestedPrepareProfile)
+        : 'Bound slot is unavailable in the fleet';
+      if (selectedSlotId !== run.slotId || resourceBlocker || selectedSlotBlocker) {
+        throw new Error(
+          `Cannot use ${resolvedProfileFit.suggestedPrepareProfile} on slot ${selectedSlotId ?? '(unbound)'}: ${selectedSlotBlocker || resourceBlocker || 'binding changed during decision'}`,
+        );
+      }
       updateRun(runId, { prepareProfile: resolvedProfileFit.suggestedPrepareProfile });
       profileFitOverride = {
         profileFit: resolvedProfileFit,
@@ -370,7 +394,9 @@ export async function executeGradeStep(
         engineState: {
           ...current.engineState,
           profileFitSuggestion: resolvedProfileFit,
-          validationPlan: resolvedProfileFit.validationPlan,
+          ...(!resourceBlocker && actionId === 'use_suggested_profile'
+            ? { validationPlan: resolvedProfileFit.validationPlan }
+            : {}),
         },
       });
     }

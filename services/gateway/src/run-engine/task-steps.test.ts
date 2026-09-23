@@ -26,6 +26,16 @@ test('prepare profile decision label resolves the configured implicit profile', 
   assert.equal(prepareProfileDecisionLabel({ prepareProfile: 'sandbox' }), 'sandbox');
 });
 
+const profileFitSlotId = 'profile-fit-bound-cli-slot';
+
+const compatibleSlot = {
+  slot: profileFitSlotId,
+  platform: 'cli',
+  resources: { 'ios-sim': { device: 'simulator' } },
+};
+
+const cliSlot = { slot: profileFitSlotId, platform: 'cli', resources: {} };
+
 const profileFitTicket: RunTicketData = {
   source: 'manual',
   title: 'Companion gateway proof',
@@ -42,6 +52,7 @@ test('GRADE persists a suggested profile and does not re-open the gate on retry'
     project: 'farmslot-farm',
     flowType: 'fix-bug',
     ticketOrPr: 'PROFILE-FIT-GRADE',
+    slotId: profileFitSlotId,
     ticketData: profileFitTicket,
     mode: 'interactive',
     engineState: { evalExperiment: { experimentId: 'profile-fit-test' } } as Run['engineState'],
@@ -74,6 +85,7 @@ test('GRADE persists a suggested profile and does not re-open the gate on retry'
       return 'use_suggested_profile';
     },
     loadProjectVarsOrNull: async () => projectVars as never,
+    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
   };
 
   await executeGradeStep(run.id, run, new Map(), deps);
@@ -84,11 +96,99 @@ test('GRADE persists a suggested profile and does not re-open the gate on retry'
   assert.equal(actions.length, 1, 'persisted profile must suppress the retry gate');
 });
 
+test('GRADE does not offer a companion profile on a bound CLI slot without simulator resources', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-INCOMPATIBLE-BOUND-SLOT',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-incompatible' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+
+  let description = '';
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_runId, reason, text, choices) => {
+      assert.equal(reason, 'prepare_profile_mismatch');
+      description = text;
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
+          },
+        },
+      }) as never,
+  });
+  assert.match(description, /Slot profile-fit-bound-cli-slot cannot use the suggestion/);
+  assert.match(description, /ios-sim, android-emu, android-device/);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
+  assert.ok(result.outputs?.profileFitOverride);
+});
+
+test('GRADE rechecks a compatible bound slot before saving the suggested profile', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-SLOT-DRIFT',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: { evalExperiment: { experimentId: 'profile-fit-drift' } } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const refreshes: boolean[] = [];
+  await assert.rejects(
+    executeGradeStep(run.id, run, new Map(), {
+      createEngineDecision: async (_runId, _reason, _text, choices) => {
+        assert.ok(choices.some((choice) => choice.id === 'use_suggested_profile'));
+        return 'use_suggested_profile';
+      },
+      getFleetStatus: async (refresh = false) => {
+        refreshes.push(refresh);
+        return { slots: [refresh ? cliSlot : compatibleSlot] } as never;
+      },
+      loadProjectVarsOrNull: async () =>
+        ({
+          projectJson: {
+            prepare: {
+              default: 'sandbox',
+              profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
+            },
+          },
+        }) as never,
+    }),
+    /Cannot use sandbox-companion on slot profile-fit-bound-cli-slot/,
+  );
+  assert.deepEqual(refreshes, [false, true]);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+});
+
 test('GRADE leaves the configured core baseline unblocked', async (t) => {
   const run = createRun({
     project: 'farmslot-farm',
     flowType: 'fix-bug',
     ticketOrPr: 'PROFILE-FIT-CORE',
+    slotId: profileFitSlotId,
     ticketData: profileFitTicket,
     mode: 'interactive',
     engineState: {
@@ -106,6 +206,7 @@ test('GRADE leaves the configured core baseline unblocked', async (t) => {
       decisionCalls += 1;
       return 'continue';
     },
+    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
     loadProjectVarsOrNull: async () =>
       ({
         projectJson: {
