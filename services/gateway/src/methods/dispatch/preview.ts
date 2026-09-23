@@ -51,7 +51,7 @@ import {
 } from '../../tasks/execution-template-catalog.js';
 import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '../fleet.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
-import { resolvePrepareProfile } from '../slot/prepare-profile.js';
+import { configuredPrepareProfileNames, resolvePrepareProfile } from '../slot/prepare-profile.js';
 
 import {
   capturePressureAdmissionDecisions,
@@ -1156,10 +1156,7 @@ export async function dispatchPreview(
       app: params.app,
       slotPlatform: slotInfo?.platform ?? null,
       effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
-      availablePrepareProfiles: [
-        ...(profileJson.prepare?.core ? ['core'] : []),
-        ...Object.keys(profileJson.prepare?.profiles ?? {}),
-      ],
+      availablePrepareProfiles: configuredPrepareProfileNames(profileJson),
     });
   }
   if (profileFit) {

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run, RunTicketData } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+
 import {
   executeGradeStep,
   mergeInitialContextIntoTicketData,
@@ -63,7 +64,12 @@ test('GRADE persists a suggested profile and does not re-open the gate on retry'
     },
   };
   const deps = {
-    createEngineDecision: async (_runId: string, _reason: string, _description: string, choices: Run['decisions'][number]['actions']) => {
+    createEngineDecision: async (
+      _runId: string,
+      _reason: string,
+      _description: string,
+      choices: Run['decisions'][number]['actions'],
+    ) => {
       actions.push(choices.map((choice) => choice.id));
       return 'use_suggested_profile';
     },
@@ -85,7 +91,9 @@ test('GRADE leaves the configured core baseline unblocked', async (t) => {
     ticketOrPr: 'PROFILE-FIT-CORE',
     ticketData: profileFitTicket,
     mode: 'interactive',
-    engineState: { evalExperiment: { experimentId: 'profile-fit-core-test' } } as Run['engineState'],
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-core-test' },
+    } as Run['engineState'],
   });
   t.after(async () => {
     updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
@@ -99,7 +107,14 @@ test('GRADE leaves the configured core baseline unblocked', async (t) => {
       return 'continue';
     },
     loadProjectVarsOrNull: async () =>
-      ({ projectJson: { prepare: { core: { phases: ['git'] } } } }) as never,
+      ({
+        projectJson: {
+          prepare: {
+            core: { phases: ['git'] },
+            profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
+          },
+        },
+      }) as never,
   });
   assert.equal(decisionCalls, 0);
 });

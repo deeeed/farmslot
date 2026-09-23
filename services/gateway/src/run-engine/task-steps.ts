@@ -33,7 +33,10 @@ import {
   gradeTicket,
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
-import { resolvePrepareProfile } from '../methods/slot/prepare-profile.js';
+import {
+  configuredPrepareProfileNames,
+  resolvePrepareProfile,
+} from '../methods/slot/prepare-profile.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
 import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import {
@@ -114,16 +117,6 @@ export function prepareProfileDecisionLabel(
   return projectJson
     ? resolvePrepareProfile(projectJson, run.prepareProfile).name
     : run.prepareProfile?.trim() || 'full';
-}
-
-function configuredPrepareProfileNames(
-  projectJson: Parameters<typeof resolvePrepareProfile>[0] | undefined,
-): string[] | undefined {
-  if (!projectJson) return undefined;
-  return [
-    ...(projectJson.prepare?.core ? ['core'] : []),
-    ...Object.keys(projectJson.prepare?.profiles ?? {}),
-  ];
 }
 
 async function readTemplateProvenanceForTask(
@@ -319,13 +312,15 @@ export async function executeGradeStep(
       'prepare profile decision',
       run.id,
     );
-    currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
-    resolvedProfileFit = detectProfileFit(run, ticketData, {
-      app: run.app,
-      slotPlatform,
-      effectivePrepareProfile: currentPrepareProfile,
-      availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars?.projectJson),
-    });
+    if (profileProjectVars?.projectJson) {
+      currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars.projectJson);
+      resolvedProfileFit = detectProfileFit(run, ticketData, {
+        app: run.app,
+        slotPlatform,
+        effectivePrepareProfile: currentPrepareProfile,
+        availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars.projectJson),
+      });
+    }
   }
   if (resolvedProfileFit) {
     const actionId = await decide(
