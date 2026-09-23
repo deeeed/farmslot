@@ -463,21 +463,26 @@ try {
     ownerRunId: rollbackRunId,
   }).leases.find((lease) => lease.owner.runId === rollbackRunId);
   assert.equal(heldLease?.state, 'acquired');
+  const beforeRollback = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === rollbackSlotId);
+  assert.equal(beforeRollback?.current_run_id, rollbackRunId);
   const rolledBack = denied(
     { runId: rollbackRunId, stepName: 'monitor' },
     /Injected replay failure after claim/,
   );
   assert.equal(rolledBack.slotId, rollbackSlotId);
-  const rollbackSlot = rpc('fleet.status', {}).fleet.slots.find(
-    (candidate) => candidate.slot === rollbackSlotId,
-  );
-  assert.equal(rollbackSlot?.currentRunId, rollbackRunId);
   const restoredRow = JSON.parse(
     readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
   ).slots.find((candidate) => candidate.slot === rollbackSlotId);
   assert.equal(restoredRow?.current_run_id, rollbackRunId);
-  assert.equal(restoredRow?.lifecycle, 'held');
-  assert.equal(restoredRow?.phase, 'pr-watch');
+  assert.equal(restoredRow?.lifecycle, beforeRollback.lifecycle);
+  assert.equal(restoredRow?.phase, beforeRollback.phase);
+  assert.equal(restoredRow?.agent, beforeRollback.agent);
+  const rollbackSlot = rpc('fleet.status', {}).fleet.slots.find(
+    (candidate) => candidate.slot === rollbackSlotId,
+  );
+  assert.equal(rollbackSlot?.currentRunId, rollbackRunId);
   execFileSync('tmux', ['has-session', '-t', rollbackSlotId]);
   const restoredLease = rpc('runtime.capability.status', {
     slotId: rollbackSlotId,
