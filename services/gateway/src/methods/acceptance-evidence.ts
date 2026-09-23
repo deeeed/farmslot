@@ -439,7 +439,7 @@ export async function acceptanceEvidenceAnalyze(
   const enforcedOutput = selectedProvider?.maxOutputTokens;
   if (
     activePolicy.price.outputUsdPerMillion > 0 &&
-    (!enforcedOutput || activePolicy.price.maxOutputTokens > enforcedOutput)
+    (!enforcedOutput || activePolicy.price.maxOutputTokens < enforcedOutput)
   )
     return { ...selected.result, eligible: false, reason: 'price-unavailable' };
   const questions: AssessmentQuestions = {

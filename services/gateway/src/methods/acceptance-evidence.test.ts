@@ -207,7 +207,7 @@ test('a provider-enforced output cap admits paid output and records actual usage
   assert.equal(calls, 1);
 });
 
-test('paid output is refused when usage is missing or policy exceeds the provider cap', async (t) => {
+test('paid output is refused when usage is missing or policy under-reserves the provider cap', async (t) => {
   const { home, params, policy } = fixture(t);
   const hash = await policy();
   const file = path.join(home, 'acceptance-evidence-policy.json');
@@ -251,7 +251,7 @@ test('paid output is refused when usage is missing or policy exceeds the provide
   const secondFile = path.join(second.home, 'acceptance-evidence-policy.json');
   const secondPolicy = JSON.parse(readFileSync(secondFile, 'utf8'));
   secondPolicy.price.outputUsdPerMillion = 0.1;
-  secondPolicy.price.maxOutputTokens = 4096;
+  secondPolicy.price.maxOutputTokens = 500;
   writeFileSync(secondFile, JSON.stringify(secondPolicy));
   const tooHigh = await withPrincipal(() =>
     acceptanceEvidenceAnalyze(
