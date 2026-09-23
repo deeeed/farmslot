@@ -1148,18 +1148,20 @@ export async function dispatchPreview(
     if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
     else delete result.preview.domain;
   }
-  const profileProjectVars = await loadProjectVars(params.project);
-  const profileJson = profileProjectVars.projectJson;
-  const profileFit = detectProfileFit(previewRun, ticketData, {
-    prepareProfile: params.prepareProfile,
-    app: params.app,
-    slotPlatform: slotInfo?.platform ?? null,
-    effectivePrepareProfile: resolvePrepareProfile(profileJson, params.prepareProfile).name,
-    availablePrepareProfiles: [
-      ...(profileJson.prepare?.core ? ['core'] : []),
-      ...Object.keys(profileJson.prepare?.profiles ?? {}),
-    ],
-  });
+  let profileFit: ReturnType<typeof detectProfileFit> = null;
+  if (params.project === 'farmslot-farm' && !params.prepareProfile?.trim()) {
+    const profileProjectVars = await loadProjectVars(params.project);
+    const profileJson = profileProjectVars.projectJson;
+    profileFit = detectProfileFit(previewRun, ticketData, {
+      app: params.app,
+      slotPlatform: slotInfo?.platform ?? null,
+      effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
+      availablePrepareProfiles: [
+        ...(profileJson.prepare?.core ? ['core'] : []),
+        ...Object.keys(profileJson.prepare?.profiles ?? {}),
+      ],
+    });
+  }
   if (profileFit) {
     result.preview.profileFit = profileFit;
   }

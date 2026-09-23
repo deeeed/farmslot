@@ -119,10 +119,10 @@ export function prepareProfileDecisionLabel(
 function configuredPrepareProfileNames(
   projectJson: Parameters<typeof resolvePrepareProfile>[0] | undefined,
 ): string[] | undefined {
-  if (!projectJson?.prepare) return undefined;
+  if (!projectJson) return undefined;
   return [
-    ...(projectJson.prepare.core ? ['core'] : []),
-    ...Object.keys(projectJson.prepare.profiles ?? {}),
+    ...(projectJson.prepare?.core ? ['core'] : []),
+    ...Object.keys(projectJson.prepare?.profiles ?? {}),
   ];
 }
 
@@ -302,19 +302,25 @@ export async function executeGradeStep(
     const fleet = await loadFleetStatus();
     slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
   }
-  const profileProjectVars = await loadProjectVarsOrNull(
-    run.project,
-    'prepare profile decision',
-    run.id,
-  );
-  const currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
-  const resolvedProfileFit = detectProfileFit(run, ticketData, {
-    prepareProfile: run.prepareProfile,
-    app: run.app,
-    slotPlatform,
-    effectivePrepareProfile: currentPrepareProfile,
-    availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars?.projectJson),
-  });
+  let currentPrepareProfile: string | undefined;
+  let resolvedProfileFit: ReturnType<typeof detectProfileFit> = null;
+  // Profile-fit is Farmslot-only and explicit operator profiles always win.
+  // Avoid resolving a prepare profile for every other run: an unknown explicit
+  // profile remains PREPARE's error, as it was before this advisory gate.
+  if (run.project === 'farmslot-farm' && !run.prepareProfile?.trim()) {
+    const profileProjectVars = await loadProjectVarsOrNull(
+      run.project,
+      'prepare profile decision',
+      run.id,
+    );
+    currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
+    resolvedProfileFit = detectProfileFit(run, ticketData, {
+      app: run.app,
+      slotPlatform,
+      effectivePrepareProfile: currentPrepareProfile,
+      availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars?.projectJson),
+    });
+  }
   if (resolvedProfileFit) {
     const actionId = await createEngineDecision(
       runId,

@@ -198,14 +198,3 @@ export function detectProfileFit(
 
   return null;
 }
-
-export function effectivePrepareProfile(
-  run: Run,
-  context: ProfileFitContext = {},
-): string {
-  return (
-    context.prepareProfile?.trim() ||
-    run.prepareProfile?.trim() ||
-    defaultPrepareProfile(context.slotPlatform)
-  );
-}
