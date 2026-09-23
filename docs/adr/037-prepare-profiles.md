@@ -136,11 +136,11 @@ each follows only after operator-driven selection proves the model.
 dispatch, FIND_SLOT, and resource eligibility**, profile-fit is advisory-only:
 `detectProfileFit` never auto-stamps or applies `suggestedPrepareProfile`
 without an explicit operator/backlog `prepareProfile`. `dispatch.preview` may
-still attach a suggestion for UI hints only. Empty prepare resolves to
-`project.prepare.default` (or the platform fallback). This note does **not**
-cover the run-engine TASK step (`prepare_profile_mismatch` decision in
-`task-steps.ts`), which can still prompt when profile-fit disagrees with the
-effective profile — demoting that path is a separate follow-up.
+still attach a suggestion for UI hints only. Empty prepare resolves to `prepare.core` when configured, otherwise
+`project.prepare.default` (or the platform fallback). The GRADE step can
+raise a `prepare_profile_mismatch` decision on a bound slot, with Continue or
+Abort actions. Preview lets the operator select a compatible profile before
+dispatch; the GRADE decision explains why an already bound slot is incompatible.
 
 ## Addendum: core prepare and lazy proof capabilities (2026-08-11)
 

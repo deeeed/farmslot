@@ -3,7 +3,13 @@ import test from 'node:test';
 
 import type { Run, RunTicketData } from '@farmslot/protocol';
 
-import { mergeInitialContextIntoTicketData, prepareProfileDecisionLabel } from './task-steps.js';
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+
+import {
+  executeGradeStep,
+  mergeInitialContextIntoTicketData,
+  prepareProfileDecisionLabel,
+} from './task-steps.js';
 
 test('prepare profile decision label resolves the configured implicit profile', () => {
   const run = { prepareProfile: undefined } as Pick<Run, 'prepareProfile'>;
@@ -18,6 +24,235 @@ test('prepare profile decision label resolves the configured implicit profile', 
     'core',
   );
   assert.equal(prepareProfileDecisionLabel({ prepareProfile: 'sandbox' }), 'sandbox');
+});
+
+const profileFitSlotId = 'profile-fit-bound-cli-slot';
+
+const compatibleSlot = {
+  slot: profileFitSlotId,
+  platform: 'cli',
+  resources: { 'ios-sim': { device: 'simulator' } },
+};
+
+const cliSlot = { slot: profileFitSlotId, platform: 'cli', resources: {} };
+
+const profileFitTicket: RunTicketData = {
+  source: 'manual',
+  title: 'Companion gateway proof',
+  description: 'Update apps/companion pairing UI and gateway RPC.',
+  acceptanceCriteria: ['Companion updates'],
+  affectedArea: 'companion',
+  stepsToReproduce: [],
+  screenshots: [],
+  labels: ['companion'],
+};
+
+test('GRADE does not offer a companion profile on a bound CLI slot without simulator resources', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-INCOMPATIBLE-BOUND-SLOT',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-incompatible' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+
+  let description = '';
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_runId, reason, text, choices) => {
+      assert.equal(reason, 'prepare_profile_mismatch');
+      description = text;
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
+          },
+        },
+      }) as never,
+  });
+  assert.match(description, /Slot profile-fit-bound-cli-slot cannot use the suggestion/);
+  assert.match(description, /ios-sim, android-emu, android-device/);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
+  assert.ok(result.outputs?.profileFitOverride);
+});
+
+test('GRADE leaves the configured core baseline unblocked', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-CORE',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-core-test' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+
+  let decisionCalls = 0;
+  await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async () => {
+      decisionCalls += 1;
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            core: { phases: ['git'] },
+            profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
+          },
+        },
+      }) as never,
+  });
+  assert.equal(decisionCalls, 0);
+});
+
+test('GRADE advises on a core companion ticket when the bound slot cannot host a simulator', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-CORE-NO-SIM',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-core-no-sim' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_id, reason, text, choices) => {
+      assert.equal(reason, 'prepare_profile_mismatch');
+      assert.match(text, /Start a new run on a compatible slot/);
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            core: { phases: ['git'] },
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.ok(result.outputs?.profileFitOverride);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
+});
+
+test('GRADE keeps the validation plan when continuing with a compatible bound slot', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-CONTINUE-PLAN',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-continue-plan' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_id, _reason, _text, choices) => {
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.ok(getRun(run.id)?.engineState?.validationPlan?.length);
+  assert.ok(result.outputs?.profileFitOverride);
+});
+
+test('GRADE does not offer profile advice before a slot is bound', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-UNBOUND',
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: { evalExperiment: { experimentId: 'profile-fit-unbound' } } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async () => {
+      throw new Error('Unbound GRADE must not ask for profile advice');
+    },
+    getFleetStatus: async () => {
+      throw new Error('Unbound GRADE must not query fleet');
+    },
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.equal(result.outputs?.profileFitOverride, undefined);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
 });
 
 const trackerTicket: RunTicketData = {

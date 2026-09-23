@@ -49,7 +49,6 @@ test('profile fit gate ignores non-farmslot projects', () => {
 test('profile fit gate ignores explicit operator prepare profile', () => {
   assert.equal(
     detectProfileFit(run({ prepareProfile: 'sandbox' }), companionTicket, {
-      prepareProfile: 'sandbox',
       slotPlatform: 'cli',
     }),
     null,
@@ -89,6 +88,39 @@ test('profile fit gate warns when gateway-only sandbox is default for companion 
   assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
 });
 
+test('profile fit gate accepts the configured core baseline with lazy capabilities', () => {
+  assert.equal(
+    detectProfileFit(run(), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'core',
+      availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+    }),
+    null,
+  );
+});
+
+test('profile fit gate omits a suggestion that the project cannot prepare', () => {
+  assert.equal(
+    detectProfileFit(run(), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'sandbox',
+      availablePrepareProfiles: ['core', 'sandbox'],
+    }),
+    null,
+  );
+});
+
+test('profile fit gate does not reopen after the operator saves the suggested profile', () => {
+  assert.equal(
+    detectProfileFit(run({ prepareProfile: 'sandbox-companion' }), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'sandbox-companion',
+      availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+    }),
+    null,
+  );
+});
+
 test('profile fit validation plan keeps companion proof on dispatch slot', () => {
   const result = detectProfileFit(
     run(),
@@ -103,9 +135,7 @@ test('profile fit validation plan keeps companion proof on dispatch slot', () =>
   assert.equal(companionStep?.slot, undefined);
 });
 
-test('profile fit may false-positive on expo substring inside exposes (advisory only)', () => {
-  // Token match is substring-based; "exposes" contains "expo". Callers must not
-  // stamp suggestedPrepareProfile onto queue items — selection is explicit-only.
+test('profile fit does not treat exposes as Expo', () => {
   const result = detectProfileFit(
     run(),
     {
@@ -120,6 +150,70 @@ test('profile fit may false-positive on expo substring inside exposes (advisory 
     },
     { slotPlatform: 'cli' },
   );
-  // Advisory surface may still suggest companion; effective selection ignores this.
+  assert.equal(result, null);
+});
+
+test('profile fit ignores single-word hints inside unrelated words', () => {
+  for (const title of ['automobile repair', 'invite a reviewer', 'repairing an adapter']) {
+    assert.equal(
+      detectProfileFit(
+        run(),
+        {
+          ...companionTicket,
+          title,
+          description: '',
+          affectedArea: '',
+          acceptanceCriteria: [],
+          labels: [],
+        },
+        { slotPlatform: 'cli' },
+      ),
+      null,
+    );
+  }
+});
+
+test('profile fit recognizes plural surface hints', () => {
+  const result = detectProfileFit(
+    run(),
+    {
+      ...companionTicket,
+      title: 'simulators and gateways',
+      description: '',
+      affectedArea: '',
+      acceptanceCriteria: [],
+      labels: [],
+    },
+    { slotPlatform: 'cli' },
+  );
   assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
+});
+
+test('profile fit still recognizes Expo as an independent term', () => {
+  assert.equal(
+    detectProfileFit(
+      run(),
+      { ...companionTicket, description: 'Use Expo to build the app.' },
+      { slotPlatform: 'cli' },
+    )?.suggestedPrepareProfile,
+    'sandbox-companion',
+  );
+});
+
+test('profile fit advises core only when a bound Companion slot lacks a simulator', () => {
+  const context = {
+    slotPlatform: 'cli',
+    effectivePrepareProfile: 'core',
+    availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+  };
+  assert.equal(detectProfileFit(run(), companionTicket, context), null);
+  assert.equal(
+    detectProfileFit(run(), companionTicket, { ...context, boundSlotHasCompanionResource: true }),
+    null,
+  );
+  assert.equal(
+    detectProfileFit(run(), companionTicket, { ...context, boundSlotHasCompanionResource: false })
+      ?.suggestedPrepareProfile,
+    'sandbox-companion',
+  );
 });

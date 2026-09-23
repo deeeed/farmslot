@@ -32,7 +32,7 @@ import {
   inspectReviewWorkspaceTarget,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
-import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
+import { detectProfileFit, FARMSLOT_PROJECT } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
@@ -51,6 +51,7 @@ import {
 } from '../../tasks/execution-template-catalog.js';
 import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '../fleet.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
+import { configuredPrepareProfileNames, resolvePrepareProfile } from '../slot/prepare-profile.js';
 
 import {
   capturePressureAdmissionDecisions,
@@ -69,6 +70,7 @@ import {
   type ParkPreservedWorkspace,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
+  slotHasCompanionResource,
   slotScore,
   validateSlotForDispatch,
 } from './slot-scoring.js';
@@ -951,6 +953,8 @@ export async function dispatchPreview(
      * must leave this unset so the session originator is the only authority.
      */
     overridePrincipalId?: string;
+    /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
+    includeProfileFit?: boolean;
   } = {},
 ): Promise<DispatchPreviewResult> {
   if ('workflowExecution' in params)
@@ -1147,11 +1151,22 @@ export async function dispatchPreview(
     if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
     else delete result.preview.domain;
   }
-  const profileFit = detectProfileFit(previewRun, ticketData, {
-    prepareProfile: params.prepareProfile,
-    app: params.app,
-    slotPlatform: slotInfo?.platform ?? null,
-  });
+  let profileFit: ReturnType<typeof detectProfileFit> = null;
+  if (
+    internalOptions.includeProfileFit !== false &&
+    params.project === FARMSLOT_PROJECT &&
+    !params.prepareProfile?.trim()
+  ) {
+    const profileProjectVars = await loadProjectVars(params.project);
+    const profileJson = profileProjectVars.projectJson;
+    profileFit = detectProfileFit(previewRun, ticketData, {
+      app: params.app,
+      slotPlatform: slotInfo?.platform ?? null,
+      ...(slotInfo ? { boundSlotHasCompanionResource: slotHasCompanionResource(slotInfo) } : {}),
+      effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
+      availablePrepareProfiles: configuredPrepareProfileNames(profileJson),
+    });
+  }
   if (profileFit) {
     result.preview.profileFit = profileFit;
   }
