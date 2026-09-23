@@ -140,6 +140,13 @@ test('decision advice requires opt-in and an exact admitted snapshot, never reso
     (await withPrincipal(() => decisionAdviceGet(params))).reason,
     'insufficient-options',
   );
+  decision.type = 'engine_prepare_profile_mismatch' as typeof decision.type;
+  decision.description = 'Synthetic profile gate';
+  updateRun(run.id, { decisions: [decision] });
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceGet(params))).reason,
+    'insufficient-options',
+  );
 });
 
 test('saved invalid action choice stays unavailable on a fresh status read', async (t) => {

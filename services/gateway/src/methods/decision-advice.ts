@@ -114,7 +114,7 @@ async function snapshot(
     return { result: { eligible: false, reason: 'not-pending' } };
   const active = run.decisions.find((item) => item.id === decisionId && !item.resolvedAt);
   if (!active) return { result: { eligible: false, reason: 'not-pending' } };
-  if (active.type !== 'engine_collision' && active.type !== 'engine_prepare_profile_mismatch')
+  if (active.type !== 'engine_collision')
     return { result: { eligible: false, reason: 'insufficient-options' } };
   const decision = pendingDecisionForRun(run, active);
   const runId = run.id;

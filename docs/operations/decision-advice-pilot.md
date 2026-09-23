@@ -1,7 +1,7 @@
 # Run the pending-decision advice pilot
 
-This opt-in experiment covers pending run-backed `engine_collision` and genuine
-`engine_prepare_profile_mismatch` decisions with two distinct non-decline actions.
+This opt-in experiment covers pending run-backed `engine_collision` decisions
+with two distinct non-decline actions.
 The recommendation can only name an existing action or abstain. The operator
 still chooses and resolves the action. See [issue #719](https://github.com/deeeed/farmslot/issues/719)
 and the [evaluation plan](../plans/structured-assessment-evaluation.md).
@@ -60,7 +60,7 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    usage and cost in the panel and assessment history. Missing usage remains
    an unknown charge. Do not repeat a request to improve a weak answer.
 
-The current profile gate has two actions, so profile advice requires #720 and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
+The current profile gate still offers only Continue and Abort after #720, so it is excluded until it offers a second non-decline action and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
 are for the controlled classification study. Current collision packets lack operator
 intent and prior-run safety facts, so those cases call for abstention. A saved
 action ID proves display and validation, not decision quality. Freeze cases and
