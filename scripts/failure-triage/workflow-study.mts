@@ -366,9 +366,9 @@ const usage = (entry: any, plan: any) =>
 export async function scoreStudy(
   plan: any,
   attempts: any[],
+  blindSalt: string,
   decisions: any[] = [],
   approvedExecution = false,
-  blindSalt = randomBytes(32).toString('hex'),
 ) {
   assert(/^[a-f0-9]{64}$/.test(blindSalt), 'Invalid private blind salt');
   await verifyPlan(plan);
@@ -917,7 +917,7 @@ async function cli(args: string[]) {
     decisions = JSON.parse(decisionBytes.toString('utf8'));
   }
   const blindSalt = await readFile(path.join(dir, 'blind-salt'), 'utf8');
-  const result = await scoreStudy(plan, attempts, decisions, approvedExecution, blindSalt);
+  const result = await scoreStudy(plan, attempts, blindSalt, decisions, approvedExecution);
   if (action !== 'adjudicate') {
     await writeFile(
       path.join(dir, 'execution-provenance.json'),

@@ -164,7 +164,7 @@ test('each row has a synced start and one response; failures and unknown charges
   const receipts = materializeStudyJournal(plan, text);
   assert.equal(receipts.length, 2);
   assert.equal(receipts[1].response.error, 'transport-exception-unknown-charge');
-  const report = await scoreStudy(plan, receipts);
+  const report = await scoreStudy(plan, receipts, 'a'.repeat(64));
   assert.equal(report.unknownCharges, 1);
   const studyDir = path.join(path.dirname(run.journalPath), 'study');
   await mkdir(studyDir);
@@ -238,7 +238,7 @@ test('interrupted request is counted once as possible charge, never filled in or
   const attempts = materializeStudyJournal(plan, journal);
   assert.equal(attempts.length, 1);
   assert.equal(attempts[0].response.error, 'interrupted-unknown-charge');
-  const report = await scoreStudy(plan, attempts);
+  const report = await scoreStudy(plan, attempts, 'a'.repeat(64));
   assert.equal(report.attempted, 1);
   assert.equal(report.unknownCharges, 1);
   assert.equal(report.missing, 41);

@@ -35,7 +35,7 @@ const options: PlanOptions = {
   cacheWriteMultiplier: 1,
 };
 const scoreStudy = (plan: any, attempts: any[], decisions: any[] = [], approved = false) =>
-  scoreWithSalt(plan, attempts, decisions, approved, 'a'.repeat(64));
+  scoreWithSalt(plan, attempts, 'a'.repeat(64), decisions, approved);
 const native = (
   plan: Awaited<ReturnType<typeof createPlan>>,
   row = plan.rows[0],
