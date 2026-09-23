@@ -5,6 +5,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
+- Offer a read-only recommendation panel for eligible pending run decisions when explicitly requested.
+
 - Offer GPT-6 Sol in the Codex model picker and use Cursor's advertised Grok 4.7 model IDs.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.

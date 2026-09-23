@@ -114,7 +114,8 @@ export function evaluateAssessmentReport(
         if (reference) rejectedReferences++;
         continue;
       }
-      if (abstains) continue;
+      // Decision advice scores abstention only against an explicit reference.
+      if (abstains && r.consumer !== 'decision-advice') continue;
       let predicted: string | boolean;
       if (answer.type === 'choice') predicted = answer.choice;
       else if (answer.type === 'boolean') predicted = assessmentBooleanValue(answer);
@@ -126,6 +127,7 @@ export function evaluateAssessmentReport(
         throw new Error('Reference type does not match question');
       if (
         answer.type === 'choice' &&
+        !(r.consumer === 'decision-advice' && reference.expected === 'abstain') &&
         !assessmentChoiceOptions(answer).includes(String(reference.expected))
       )
         throw new Error('Reference choice does not match question');

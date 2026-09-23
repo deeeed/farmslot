@@ -277,6 +277,8 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
               'inputUsdPerMillion',
               'outputUsdPerMillion',
               'maxRequestTokens',
+              'maxInputTokens',
+              'maxOutputTokens',
             ].includes(k),
         ) ||
         p.version !== 1 ||
@@ -287,7 +289,9 @@ export function assertAssessmentRecord(value: unknown): asserts value is Assessm
         !Number.isFinite(Date.parse(p.verifiedAt)) ||
         !count(p.inputUsdPerMillion) ||
         !count(p.outputUsdPerMillion) ||
-        !count(p.maxRequestTokens)
+        !count(p.maxRequestTokens) ||
+        (p.maxInputTokens !== undefined && !count(p.maxInputTokens)) ||
+        (p.maxOutputTokens !== undefined && !count(p.maxOutputTokens))
       )
         throw new Error('Invalid assessment price snapshot');
     }

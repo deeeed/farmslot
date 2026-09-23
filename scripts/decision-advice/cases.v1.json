@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "source": "synthetic",
+  "cases": [
+    {
+      "id": "profile-01",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The task requires a simulator recipe during preparation. The selected sandbox profile starts only the gateway; the offered companion profile prepares the simulator on this slot.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "profile-02",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The current task validates gateway RPC only. The issue mentions a future mobile follow-up, but no simulator evidence is required in this run. The selected sandbox profile prepares the gateway.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "profile-03",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The proposed profile prepares Companion alongside the gateway. No acceptance criteria or proof plan are available for the task.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "profile-04",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The task requires validating Command Center and a mobile recipe against one checkout. The selected profile only starts the gateway and cannot start the mobile runtime; the offered profile prepares both.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "profile-05",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The task is a short API type change. Its mobile surface is documentation only; validation requires a typecheck. The selected profile runs typecheck and the offered profile would start unnecessary simulator services.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "profile-06",
+      "type": "engine_prepare_profile_mismatch",
+      "description": "The proposed profile name implies simulator setup, but this decision contains no available resource inventory and no statement of the required proof.",
+      "actions": ["use_suggested_profile", "continue", "abort"]
+    },
+    {
+      "id": "collision-01",
+      "type": "engine_collision",
+      "description": "A prior run for this synthetic task is complete and its workspace is abandoned with no owned changes. The operator requested a clean fresh attempt, not a comparison.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    },
+    {
+      "id": "collision-02",
+      "type": "engine_collision",
+      "description": "The operator explicitly requested a controlled A/B comparison with the previous run, using a second model and the same synthetic task.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    },
+    {
+      "id": "collision-03",
+      "type": "engine_collision",
+      "description": "The existing matching run is active and has uncommitted changes. No operator has checked whether its dispatch or task directory is safe to supersede.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    },
+    {
+      "id": "collision-04",
+      "type": "engine_collision",
+      "description": "The same task name exists, but this card omits whether the prior run is active, whether the workspace has changes, and whether the request is for a comparison.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    },
+    {
+      "id": "collision-05",
+      "type": "engine_collision",
+      "description": "The previous synthetic run was cancelled and its task folder is abandoned. The operator requested a new independent attempt with a clean task directory.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    },
+    {
+      "id": "collision-06",
+      "type": "engine_collision",
+      "description": "The operator wants to evaluate whether a modified worker template outperforms the old template on the same synthetic task, retaining both runs in one comparison family.",
+      "actions": ["create-new", "start-comparison", "abort"]
+    }
+  ]
+}

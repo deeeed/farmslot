@@ -5,6 +5,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
+- Define optional pending-decision advice RPC and assessment reporting contracts.
+
 - Support GPT-6 Sol reasoning efforts for Codex selections.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.

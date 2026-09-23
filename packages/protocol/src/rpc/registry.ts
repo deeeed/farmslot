@@ -188,6 +188,8 @@ export const Methods = {
 
   // Decisions
   DECISION_LIST: 'decision.list',
+  DECISION_ADVICE_GET: 'decision.advice.get',
+  DECISION_ADVICE_ANALYZE: 'decision.advice.analyze',
   DECISION_RESOLVE: 'decision.resolve',
 
   // Nodes (per-machine daemon)

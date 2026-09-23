@@ -29,6 +29,7 @@ import {
 
 import './native-worker-history.js';
 import './failure-triage-panel.js';
+import './decision-advice-panel.js';
 import './step-inspector.js';
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';

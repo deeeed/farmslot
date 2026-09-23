@@ -69,6 +69,8 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `credential.issue`                      | admin          |                                                          |
 | `credential.list`                       | admin          |                                                          |
 | `credential.revoke`                     | admin          |                                                          |
+| `decision.advice.analyze`               | admin          |                                                          |
+| `decision.advice.get`                   | admin          |                                                          |
 | `decision.list`                         | admin          | scans task directories and reads decision artifacts      |
 | `decision.resolve`                      | admin          |                                                          |
 | `diagnostics.fileTransfer.remoteE2e`    | admin          |                                                          |

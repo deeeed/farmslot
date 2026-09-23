@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "labels": {
+    "profile-01": "use_suggested_profile",
+    "profile-02": "continue",
+    "profile-03": null,
+    "profile-04": "use_suggested_profile",
+    "profile-05": "continue",
+    "profile-06": null,
+    "collision-01": "create-new",
+    "collision-02": "start-comparison",
+    "collision-03": "abort",
+    "collision-04": null,
+    "collision-05": "create-new",
+    "collision-06": "start-comparison"
+  }
+}
