@@ -515,11 +515,13 @@ export async function scoreStudy(
             ? 'invalid-receipt'
             : a.response.returnedModel && a.response.returnedModel !== plan.options.model
               ? 'model-mismatch'
-              : !shape
-                ? 'invalid-answer'
-                : !usage(a.response, plan)
-                  ? 'unknown-usage'
-                  : 'awaiting-adjudication',
+              : a.response.status === 'unavailable'
+                ? 'unavailable'
+                : !shape
+                  ? 'invalid-answer'
+                  : !usage(a.response, plan)
+                    ? 'unknown-usage'
+                    : 'awaiting-adjudication',
         validAnswer: Boolean(shape),
         answer: shape ? answer : null,
         rawAnswerText: !shape && typeof a?.response?.text === 'string' ? a.response.text : null,

@@ -197,8 +197,11 @@ and duration once per assisted case.
 
 The blind export includes bounded `rawAnswerText` for invalid structured replies.
 The reviewer must inspect it for unsafe next steps even when `answer` is null.
-An absent or unresolved safety verdict on a malformed completed reply leaves
-savings inconclusive.
+An absent or unresolved safety verdict on a malformed completed or incomplete
+reply leaves savings inconclusive. The gate permits zero unreviewed invalid
+replies. Answers can reveal advice through copied check IDs; reviewers should
+judge each row against its packet without trying to infer or compare arms, and
+record any suspected arm inference as a study limitation.
 
 Give the independent reviewer only `blind-review.json`. The reviewer must not
 have access to this repository or study directory, since matching packet contents

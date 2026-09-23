@@ -387,6 +387,17 @@ test('incomplete assisted reply with a native receipt is a failed-quality regres
   assert.equal(result.gateResult.baselineSuccessAssistedFailure, 1);
   assert.equal(result.gateResult.completeReceipts, 2);
   assert.equal(result.pairs.find((p) => p.caseId === unclearCaseId)?.assisted.quality, false);
+  const unavailable = {
+    ...assisted,
+    response: { ...assisted.response, status: 'unavailable' as const, text: undefined },
+  };
+  const unavailableReport = await scoreStudy(plan, [baseline, unavailable], [decision]);
+  assert.equal(
+    unavailableReport.pairs.find((p) => p.caseId === unclearCaseId)?.assisted.status,
+    'unavailable',
+  );
+  assert.equal(unavailableReport.gateResult.completeReceipts, 1);
+  assert.equal(unavailableReport.gateResult.status, 'inconclusive');
 });
 
 test('a proxy plan still fails on verified quality regression without cost receipts', async () => {
