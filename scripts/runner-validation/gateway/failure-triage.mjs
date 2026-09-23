@@ -464,7 +464,14 @@ try {
     });
     assert.equal(rejected.record.status, 'unavailable', mode);
     assert.equal(rejected.advice, undefined, mode);
-    assert.equal(rejected.record.result.usage?.costUsd, undefined, mode);
+    assert.equal(rejected.record.result.usage?.inputTokens, 321, mode);
+    assert.equal(rejected.record.result.usage?.outputTokens, 30, mode);
+    if (mode === 'malformed')
+      assert.equal(
+        rejected.record.result.usage?.costUsd,
+        (321 * policy.price.inputUsdPerMillion) / 1_000_000,
+      );
+    else assert.equal(rejected.record.result.usage?.costUsd, undefined, mode);
     assert.equal(rejected.retryAllowed, true, mode);
   }
   await writeFile(path.join(out, 'mode'), 'valid');
@@ -590,6 +597,37 @@ try {
   assert.match(bound.reason, /exceeded this price snapshot/);
   assert.equal(await count(), 9);
   await stop();
+  // A new price snapshot allows a second admitted call. Reject its answer while
+  // retaining native usage, then prove that over-bound usage still locks this snapshot.
+  policy.price.verifiedAt = new Date(Date.parse(now) - 1000).toISOString();
+  await savePolicy();
+  await advanceSnapshot();
+  await writeFile(path.join(out, 'mode'), 'over-bound-invalid');
+  await start();
+  const rejectedView = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(rejectedView.availability, 'ready');
+  const rejectedBound = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: rejectedView.snapshotHash,
+  });
+  assert.equal(rejectedBound.record.status, 'unavailable');
+  assert.equal(rejectedBound.record.result.error, 'spend-bound-exceeded');
+  assert.equal(rejectedBound.record.result.usage.inputTokens, 70000);
+  assert.equal(rejectedBound.record.result.usage.outputTokens, 30);
+  assert.equal(rejectedBound.record.result.usage.costKind, 'estimated');
+  assert.equal(await count(), 10);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
+  const rejectedNext = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(
+    rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: rejectedNext.snapshotHash,
+    }).availability,
+    'budget-blocked',
+  );
+  assert.equal(await count(), 10);
+  await stop();
   source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
@@ -598,8 +636,9 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 9,
+    providerCalls: 10,
     overBoundUsageRetained: true,
+    rejectedOverBoundUsageRetained: true,
     modelIdentityEnforced: true,
     unrelatedBudgetEditPreservesCache: true,
     latestFailedStepDoesNotBorrowAdvice: true,

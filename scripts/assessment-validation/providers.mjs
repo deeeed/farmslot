@@ -150,6 +150,17 @@ try {
   assert.equal(ordinary.answers.color.probabilities, undefined);
   assert.equal(ordinary.usage.cacheReadTokens, 10);
   assert.equal(await count(), 2);
+  await writeFile(path.join(out, 'mode'), 'native-invalid');
+  const nativeRejected = rpc('assessment.test', { provider: 'typesafe', model: 'jev-1.13.0' });
+  assert.equal(nativeRejected.status, 'unavailable');
+  assert.equal(nativeRejected.attempted, true);
+  assert.equal(nativeRejected.usage.inputTokens, 321);
+  assert.equal(nativeRejected.usage.outputTokens, 30);
+  assert.equal(
+    rpc('assessment.get', { id: nativeRejected.assessmentId }).result.usage.inputTokens,
+    321,
+  );
+  await writeFile(path.join(out, 'mode'), 'valid');
   const feedback = rpc('assessment.feedback', {
     id: ordinary.assessmentId,
     expectedRevision: 0,
@@ -166,8 +177,13 @@ try {
     const failed = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
     assert.equal(failed.status, 'unavailable', mode);
     assert.equal(failed.attempted, true);
+    if (mode === 'timeout') assert.equal(failed.usage?.inputTokens, undefined);
+    else {
+      assert.equal(failed.usage?.inputTokens, 120, mode);
+      assert.equal(failed.usage?.outputTokens, 20, mode);
+    }
   }
-  assert.equal(await count(), 6, 'No hidden retry or provider fallback');
+  assert.equal(await count(), 7, 'No hidden retry or provider fallback');
   const rejected = rpc('assessment.list', { limit: 10 });
   const rejectedRow = rejected.records.find(
     (record) =>
@@ -206,7 +222,7 @@ try {
     rpc('intelligence.triage.get', { runId: randomUUID() }).availability,
     'unsupported-model',
   );
-  assert.equal(await count(), 6, 'An adapter must not inherit another provider’s evaluation gate');
+  assert.equal(await count(), 7, 'An adapter must not inherit another provider’s evaluation gate');
   await stop();
   delete env.CODEX_LB_API_KEY;
   await start();
@@ -214,7 +230,7 @@ try {
   const missing = rpc('assessment.test', { provider: 'codex-lb', model: 'gpt-6-luna' });
   assert.equal(missing.status, 'skipped');
   assert.equal(missing.attempted, false);
-  assert.equal(await count(), 6);
+  assert.equal(await count(), 7);
   assert.equal(rpc('assessment.get', { id: ordinary.assessmentId }).feedback.length, 1);
   await stop();
   env.CODEX_LB_API_KEY = 'provider-fixture-lb-key';
@@ -222,7 +238,8 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 6,
+    providerCalls: 7,
+    nativeRejectedUsageRetained: true,
     externalProviderCalls: 0,
     nativeAndOrdinaryAnswers: true,
     plainChoiceFeedback: true,

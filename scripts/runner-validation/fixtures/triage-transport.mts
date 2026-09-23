@@ -50,8 +50,8 @@ globalThis.fetch = async (_url, init) => {
           : mode === 'missing-model'
             ? undefined
             : body.model,
-      answers: mode === 'malformed' ? {} : answers,
-      usage: { input_tokens: mode === 'over-bound' ? 70000 : 321, output_tokens: 30 },
+      answers: ['malformed', 'over-bound-invalid'].includes(mode) ? {} : answers,
+      usage: { input_tokens: mode.startsWith('over-bound') ? 70000 : 321, output_tokens: 30 },
     }),
     {
       headers: { 'content-type': 'application/json', 'x-request-id': 'fixture-request' },

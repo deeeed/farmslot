@@ -50,6 +50,28 @@ test('reply within the bound keeps its answer and known accounting', () => {
   assert.equal(priced.usage?.costUsd, 0.00012);
 });
 
+test('rejected reply still enforces the input bound and retains known cost', () => {
+  const rejected = { ...result, status: 'unavailable' as const, answers: undefined };
+  const priced = priceTriageResult(rejected, { inputUsdPerMillion: 1, maxRequestTokens: 100 });
+  assert.equal(priced.error, 'spend-bound-exceeded');
+  assert.equal(priced.usage?.inputTokens, 120);
+  assert.equal(priced.usage?.costUsd, 0.00012);
+});
+
+test('mismatched model retains tokens and the bound but leaves its charge unknown', () => {
+  const mismatch = { ...result, returnedModel: 'other-model', answers: undefined };
+  const bounded = priceTriageResult(
+    mismatch,
+    { inputUsdPerMillion: 1, maxRequestTokens: 100 },
+    false,
+  );
+  assert.equal(bounded.status, 'unavailable');
+  assert.equal(bounded.error, 'spend-bound-exceeded');
+  assert.equal(bounded.usage?.inputTokens, 120);
+  assert.equal(bounded.usage?.costUsd, undefined);
+  assert.equal(bounded.usage?.costKind, undefined);
+});
+
 test('persisted over-bound reply locks out later calls under the same price snapshot', async () => {
   const home = await mkdtemp(path.join(tmpdir(), 'triage-bound-'));
   const prior = process.env.FARMSLOT_HOME;

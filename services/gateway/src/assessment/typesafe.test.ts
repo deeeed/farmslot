@@ -54,6 +54,7 @@ test('TypeSafe adapter rejects an answer outside the declared choice set', async
   try {
     const provider = createTypeSafeProvider(async () =>
       response({
+        model: 'jev-latest',
         answers: {
           risk: {
             type: 'choice',
@@ -61,6 +62,7 @@ test('TypeSafe adapter rejects an answer outside the declared choice set', async
             probabilities: { low: 0.1, high: 0.9 },
           },
         },
+        usage: { input_tokens: 321, output_tokens: 30 },
       }),
     );
     await assert.rejects(
@@ -77,7 +79,14 @@ test('TypeSafe adapter rejects an answer outside the declared choice set', async
         apiKey: 'test-key',
         signal: new AbortController().signal,
       }),
-      AssessmentResponseError,
+      (error: unknown) => {
+        assert.ok(error instanceof AssessmentResponseError);
+        assert.equal(error.attempted, true);
+        assert.equal(error.usage?.inputTokens, 321);
+        assert.equal(error.usage?.outputTokens, 30);
+        assert.equal(error.returnedModel, 'jev-latest');
+        return true;
+      },
     );
   } finally {
     if (previous === undefined) delete process.env.TYPESAFE_API_KEY;

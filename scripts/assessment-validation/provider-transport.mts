@@ -82,12 +82,15 @@ globalThis.fetch = async (input, init) => {
       answers: {
         color: {
           type: 'choice',
-          choice: 'blue',
+          choice: mode === 'native-invalid' ? 'invalid-choice' : 'blue',
           confidence: 0.9,
           probabilities: { blue: 0.9, red: 0.1 },
         },
       },
-      usage: { input_tokens: 100, output_tokens: 20 },
+      usage: {
+        input_tokens: mode === 'native-invalid' ? 321 : 100,
+        output_tokens: mode === 'native-invalid' ? 30 : 20,
+      },
     }),
     { headers: { 'content-type': 'application/json' } },
   );

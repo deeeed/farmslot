@@ -77,7 +77,10 @@ seven days, unknown pricing and paid-output models without a supported bound
 block requests.
 
 The policy permits at most 60 reservations and USD 0.10 per UTC day across
-operators, with smaller configured limits respected. Each request reserves the
+operators, with smaller configured limits respected. Confirmed requests rejected
+before transport stay in the audit history but release their daily call and
+reservation allowance. The history’s reserved total is the gross amount ever
+reserved, not money spent. Each request reserves the
 full supported context cost, including uncertain charges. There is one attempt,
 a ten-second deadline, no hidden retry and no fallback model. Required text must
 fit the lower of the configured input limit and 12,000 bytes; it is never

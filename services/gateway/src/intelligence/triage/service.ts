@@ -35,18 +35,21 @@ import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.j
 const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
 const pending = new Map<string, Promise<FailureTriageView>>();
 
-/** Preserve received usage when a completed request exceeds its admitted price envelope. */
+/** Price known receipts and enforce the input bound even when the answer is rejected. */
 export function priceTriageResult(
   result: AssessmentResult,
   price: Pick<TriagePrice, 'inputUsdPerMillion' | 'maxRequestTokens'>,
+  modelMatched = true,
 ): AssessmentResult {
   const usage = result.usage;
   if (!usage || usage.inputTokens === undefined) return result;
-  const priced = {
-    ...usage,
-    costUsd: (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000,
-    costKind: 'estimated' as const,
-  };
+  const priced = modelMatched
+    ? {
+        ...usage,
+        costUsd: (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000,
+        costKind: 'estimated' as const,
+      }
+    : { ...usage, costUsd: undefined, costKind: undefined };
   return usage.inputTokens > price.maxRequestTokens
     ? {
         ...result,
@@ -338,15 +341,6 @@ export async function analyzeFailureTriage(
           },
           providers,
         );
-        if (result.status !== 'completed') return result;
-        if (result.returnedModel !== model)
-          return {
-            ...result,
-            status: 'unavailable',
-            answers: undefined,
-            usage: result.usage && { ...result.usage, costUsd: undefined, costKind: undefined },
-            error: 'Returned model does not match the evaluated model',
-          };
         const usage = result.usage;
         if (usage) {
           for (const n of [usage.inputTokens, usage.outputTokens])
@@ -359,8 +353,15 @@ export async function analyzeFailureTriage(
                 error: 'Triage response failed its bounded contract',
               };
         }
-        const priced = priceTriageResult(result, policy.price);
-        if (priced.status !== 'completed') return priced;
+        const priced = priceTriageResult(result, policy.price, result.returnedModel === model);
+        if (priced.error === 'spend-bound-exceeded' || priced.status !== 'completed') return priced;
+        if (priced.returnedModel !== model)
+          return {
+            ...priced,
+            status: 'unavailable',
+            answers: undefined,
+            error: 'Returned model does not match the evaluated model',
+          };
         try {
           triagePrediction(priced.answers ?? {}, prepared.packet);
           return priced;

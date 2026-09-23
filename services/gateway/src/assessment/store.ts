@@ -179,7 +179,10 @@ export async function reserveAssessment(
     )
       return { status: 'budget-blocked', cause: 'spend-bound' };
     const today = new Date().toISOString().slice(0, 10);
-    const attempts = records.filter((r) => r.reservation && r.startedAt.slice(0, 10) === today);
+    // Keep confirmed no-call records in history without charging the daily request budget.
+    const attempts = records.filter(
+      (r) => r.reservation && r.result?.attempted !== false && r.startedAt.slice(0, 10) === today,
+    );
     if (
       attempts.length >= limits.maxCalls ||
       attempts.reduce((sum, r) => sum + r.reservation!.maxUsd, 0) + reservation.maxUsd >

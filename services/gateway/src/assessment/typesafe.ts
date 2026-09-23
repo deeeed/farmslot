@@ -94,23 +94,38 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
           { signal, retry: { maxRetries: 0 } },
         )
         .withResponse();
+      const token = (value: unknown) =>
+        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+      const identity = (value: unknown) =>
+        typeof value === 'string' && /^[\w.-]{1,200}$/.test(value) && !value.includes(apiKey)
+          ? value
+          : undefined;
+      const inputTokens = token(result.data.usage?.input_tokens);
+      const outputTokens = token(result.data.usage?.output_tokens);
+      const usage = {
+        ...(inputTokens === undefined ? {} : { inputTokens }),
+        ...(outputTokens === undefined ? {} : { outputTokens }),
+        durationMs: Date.now() - started,
+        requestId: identity(result.requestId),
+      };
+      const returnedModel = identity(result.data.model);
       try {
         const answers: Record<string, AssessmentAnswer> = {};
         for (const [id, question] of Object.entries(questions))
           answers[id] = normalizeAnswer(question, result.data.answers[id]);
         return {
-          returnedModel: result.data.model,
+          returnedModel,
           answers,
-          usage: {
-            inputTokens: result.data.usage.input_tokens,
-            outputTokens: result.data.usage.output_tokens,
-            durationMs: Date.now() - started,
-            requestId: result.requestId,
-          },
+          usage,
         };
       } catch {
         // Never propagate response fragments in validation errors.
-        throw new AssessmentResponseError('Assessment provider response failed validation');
+        throw new AssessmentResponseError(
+          'Assessment provider response failed validation',
+          true,
+          usage,
+          returnedModel,
+        );
       }
     },
   };
