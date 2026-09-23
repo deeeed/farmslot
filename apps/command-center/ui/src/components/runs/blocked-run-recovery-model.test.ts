@@ -4,10 +4,9 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
-  blockedWorkerProofPlanPath,
+  blockedWorkerOwnsSlot,
   blockedWorkerSignalPath,
   canResumeBlockedWorkerMonitor,
-  parseBlockedWorkerProofPlan,
 } from './blocked-run-recovery-model.js';
 
 const run = {
@@ -27,12 +26,8 @@ const run = {
   ],
 } as unknown as Run;
 
-test('proof plan path stays inside the selected Farmslot worker task', () => {
-  assert.equal(
-    blockedWorkerProofPlanPath(run),
-    '.sandbox/farmslot-farm/worker-task/fix/manual-000110/artifacts/proof-plan.json',
-  );
-  assert.equal(blockedWorkerProofPlanPath({ ...run, project: 'other' }), null);
+test('signal path stays inside the selected Farmslot worker task', () => {
+  assert.equal(blockedWorkerSignalPath({ ...run, project: 'other' }), null);
   assert.equal(
     blockedWorkerSignalPath({
       ...run,
@@ -44,25 +39,11 @@ test('proof plan path stays inside the selected Farmslot worker task', () => {
   );
 });
 
-test('proof plan rejects another run or slot before acquiring capabilities', () => {
-  const content = JSON.stringify({
-    version: 1,
-    slotId: run.slotId,
-    ownerRunId: run.id,
-    requirements: [{ capabilityId: 'browser-cdp', reason: 'Browser proof', mode: 'visual' }],
-  });
-  assert.equal(
-    parseBlockedWorkerProofPlan(content, run).requirements[0]?.capabilityId,
-    'browser-cdp',
-  );
-  assert.throws(() => parseBlockedWorkerProofPlan(content, { ...run, id: 'other' }));
-  assert.throws(() => parseBlockedWorkerProofPlan(content, { ...run, slotId: 'other' }));
-});
-
 test('monitor replay requires a fresh non-blocked worker signal', () => {
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'old', status: 'running' }), false);
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'blocked' }), false);
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running' }), true);
+  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'complete' }), true);
   assert.equal(
     canResumeBlockedWorkerMonitor({ ...run, steps: [{ name: 'monitor', status: 'done' }] } as Run, {
       attemptId: 'new',
@@ -72,9 +53,33 @@ test('monitor replay requires a fresh non-blocked worker signal', () => {
   );
   assert.equal(
     canResumeBlockedWorkerMonitor(
+      {
+        ...run,
+        steps: [
+          {
+            name: 'monitor',
+            status: 'done',
+            outputs: { workerSignal: { timestamp: '2026-09-23T01:00:00Z' } },
+          },
+        ],
+      } as Run,
+      { timestamp: '2026-09-23T01:01:00Z', status: 'running' },
+    ),
+    true,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(
       { ...run, status: 'monitoring' },
       { attemptId: 'new', status: 'running' },
     ),
     false,
   );
+});
+
+test('recovery only acts while the run still owns a slot outside release', () => {
+  const slot = { currentRunId: run.id, lifecycle: 'busy', phase: 'working' } as const;
+  assert.equal(blockedWorkerOwnsSlot(run, slot), true);
+  assert.equal(blockedWorkerOwnsSlot(run, { ...slot, phase: 'releasing' }), false);
+  assert.equal(blockedWorkerOwnsSlot(run, { ...slot, currentRunId: 'other' }), false);
+  assert.equal(blockedWorkerOwnsSlot(run, { ...slot, lifecycle: 'ready' }), false);
 });

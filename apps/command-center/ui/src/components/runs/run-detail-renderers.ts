@@ -31,6 +31,7 @@ import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import { blockedWorkerSignalPath } from './blocked-run-recovery-model.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
@@ -1080,6 +1081,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
     ${r.status === 'blocked' &&
     r.metrics.disposition === 'blocked' &&
+    blockedWorkerSignalPath(r) &&
     !r.decisions.some((decision) => !decision.resolvedAt)
       ? html`<blocked-run-recovery
           .run=${r}

@@ -1,15 +1,14 @@
-import type { Run, RuntimeCapabilityProofRequirement } from '@farmslot/protocol';
+import type { Run, SlotStatus } from '@farmslot/protocol';
 
-export interface BlockedWorkerProofPlan {
-  version: 1;
-  slotId: string;
-  ownerRunId: string;
-  requirements: RuntimeCapabilityProofRequirement[];
-}
-
-export function blockedWorkerProofPlanPath(run: Run): string | null {
-  const signalFile = blockedWorkerSignalPath(run);
-  return signalFile ? signalFile.replace(/\/SIGNAL\.json$/, '/artifacts/proof-plan.json') : null;
+export function blockedWorkerOwnsSlot(
+  run: Run,
+  slot: Pick<SlotStatus, 'currentRunId' | 'lifecycle' | 'phase'> | undefined,
+): boolean {
+  return (
+    slot?.currentRunId === run.id &&
+    (slot.lifecycle === 'busy' || slot.lifecycle === 'held') &&
+    slot.phase !== 'releasing'
+  );
 }
 
 export function blockedWorkerSignalPath(run: Run): string | null {
@@ -21,32 +20,6 @@ export function blockedWorkerSignalPath(run: Run): string | null {
     return null;
   }
   return signalFile;
-}
-
-export function parseBlockedWorkerProofPlan(content: string, run: Run): BlockedWorkerProofPlan {
-  const plan: unknown = JSON.parse(content);
-  if (!plan || typeof plan !== 'object') throw new Error('Proof plan is not an object');
-  const value = plan as Record<string, unknown>;
-  if (value.version !== 1 || value.slotId !== run.slotId || value.ownerRunId !== run.id) {
-    throw new Error('Proof plan does not belong to this run and slot');
-  }
-  if (
-    !Array.isArray(value.requirements) ||
-    value.requirements.length === 0 ||
-    value.requirements.some(
-      (requirement: unknown) =>
-        !requirement ||
-        typeof requirement !== 'object' ||
-        typeof (requirement as Record<string, unknown>).capabilityId !== 'string' ||
-        typeof (requirement as Record<string, unknown>).reason !== 'string' ||
-        !['state', 'visual', 'mixed'].includes(
-          String((requirement as Record<string, unknown>).mode),
-        ),
-    )
-  ) {
-    throw new Error('Proof plan has no valid capability requirements');
-  }
-  return plan as BlockedWorkerProofPlan;
 }
 
 export function canResumeBlockedWorkerMonitor(run: Run, signal: unknown): boolean {
@@ -65,12 +38,17 @@ export function canResumeBlockedWorkerMonitor(run: Run, signal: unknown): boolea
     previous && typeof previous === 'object' && 'attemptId' in previous
       ? previous.attemptId
       : undefined;
+  if (current.status !== 'running' && current.status !== 'done' && current.status !== 'complete')
+    return false;
+  if (typeof previousAttemptId === 'string' && previousAttemptId.length > 0) {
+    return typeof current.attemptId === 'string' && current.attemptId !== previousAttemptId;
+  }
+  const previousTimestamp =
+    previous && typeof previous === 'object' && 'timestamp' in previous ? previous.timestamp : null;
   return (
-    typeof previousAttemptId === 'string' &&
-    previousAttemptId.length > 0 &&
-    typeof current.attemptId === 'string' &&
-    current.attemptId.length > 0 &&
-    current.attemptId !== previousAttemptId &&
-    (current.status === 'running' || current.status === 'done')
+    typeof previousTimestamp === 'string' &&
+    typeof current.timestamp === 'string' &&
+    Number.isFinite(Date.parse(previousTimestamp)) &&
+    Date.parse(current.timestamp) > Date.parse(previousTimestamp)
   );
 }
