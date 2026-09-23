@@ -24,9 +24,12 @@ const root = path.join(temporaryRoot, 'root');
 const slotId = `blocked-recovery-${randomUUID()}`;
 const runId = randomUUID();
 const lostRunId = randomUUID();
+const lostEvalRunId = randomUUID();
 const updateRunId = randomUUID();
 const successRunId = randomUUID();
 const evalRunId = randomUUID();
+const rollbackRunId = randomUUID();
+const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
 const repo = path.join(root, 'repo');
@@ -35,6 +38,7 @@ const blockedAt = new Date(Date.now() - 60000).toISOString();
 let gateway;
 let logFd;
 let workerSession = false;
+let rollbackWorkerSession = false;
 
 function writeJson(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
@@ -208,6 +212,15 @@ try {
         enabled: true,
         mode: 'dispatch',
       },
+      {
+        id: rollbackSlotId,
+        project,
+        platform: 'cli',
+        repo,
+        session: rollbackSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
     ],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -244,14 +257,28 @@ try {
     slots: [
       { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
       { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
+      { slot: rollbackSlotId, lifecycle: 'busy', phase: 'working', current_run_id: rollbackRunId },
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
     [runId, slotId, 'fix-bug'],
     [lostRunId, 'unavailable-worker', 'fix-bug'],
+    [lostEvalRunId, 'unavailable-worker', 'fix-bug'],
     [updateRunId, 'unavailable-worker', 'update-branch'],
   ]) {
     const run = blockedRun(id, ownedSlotId, flowType);
+    if (id === lostEvalRunId) {
+      run.engineState = {
+        evalExperiment: {
+          experimentId: 'experiment-lost-slot',
+          experimentKey: 'experiment-key-lost-slot',
+          experimentManifestPath: '/tmp/experiment-manifest.json',
+          packagePath: '/tmp/candidate.result-package.json',
+          candidateStrategyFingerprint: 'fingerprint-lost-slot',
+          trialId: 'trial-lost-slot',
+        },
+      };
+    }
     writeJson(path.join(root, '.runs', `${id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
@@ -267,6 +294,13 @@ try {
       trialId: 'trial-blocked',
     },
   };
+  const rollbackRun = blockedRun(rollbackRunId, rollbackSlotId, 'fix-bug', true);
+  rollbackRun.engineState = evalRun.engineState;
+  writeJson(path.join(root, '.runs', `${rollbackRunId}.json`), rollbackRun);
+  mkdirSync(path.dirname(rollbackRun.taskFile), { recursive: true });
+  writeFileSync(rollbackRun.taskFile, '# Disposable blocked rollback worker\n');
+  execFileSync('tmux', ['new-session', '-d', '-s', rollbackSlotId, '-c', repo, 'sleep 300']);
+  rollbackWorkerSession = true;
   writeJson(path.join(root, '.runs', `${evalRunId}.json`), evalRun);
   mkdirSync(path.dirname(evalRun.taskFile), { recursive: true });
   writeFileSync(evalRun.taskFile, '# Disposable blocked eval worker\n');
@@ -317,6 +351,7 @@ try {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     NODE_TEST_CONTEXT: '1',
+    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_ID: rollbackRunId,
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
@@ -346,6 +381,10 @@ try {
 
   const lost = denied({ runId: lostRunId, stepName: 'monitor' }, /no longer owns its slot/);
   assert.equal(lost.slotId, 'unavailable-worker');
+  const lostEval = rpc('run.replayStep', { runId: lostEvalRunId, stepName: 'monitor' });
+  assert.equal(lostEval.run.status, 'slot-finding');
+  assert.equal(lostEval.run.slotId, null);
+  assert.equal(lostEval.run.recoveryAttempts?.at(-1)?.stepName, 'find-slot');
   const update = denied(
     { runId: updateRunId, stepName: 'monitor' },
     /Start a new update-branch run/,
@@ -372,6 +411,39 @@ try {
     keepWarm: false,
   });
   assert.equal(evalRelease.ok, true, JSON.stringify(evalRelease));
+  const rolledBack = denied(
+    { runId: rollbackRunId, stepName: 'monitor' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(rolledBack.slotId, rollbackSlotId);
+  const rollbackSlot = rpc('fleet.status', {}).fleet.slots.find(
+    (candidate) => candidate.slot === rollbackSlotId,
+  );
+  assert.equal(rollbackSlot?.currentRunId, rollbackRunId);
+  const restoredRow = JSON.parse(
+    readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
+  ).slots.find((candidate) => candidate.slot === rollbackSlotId);
+  assert.equal(restoredRow?.current_run_id, rollbackRunId);
+  assert.notEqual(restoredRow?.lifecycle, 'ready');
+  execFileSync('tmux', ['has-session', '-t', rollbackSlotId]);
+  const rollbackAcquire = rpc('runtime.capability.acquire', {
+    slotId: rollbackSlotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: rollbackRunId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'rolled-back eval proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(rollbackAcquire.ok, true, JSON.stringify(rollbackAcquire));
+  const rollbackRelease = rpc('runtime.capability.release', {
+    slotId: rollbackSlotId,
+    ownerRunId: rollbackRunId,
+    capabilityId: 'proof-resource',
+    keepWarm: false,
+  });
+  assert.equal(rollbackRelease.ok, true, JSON.stringify(rollbackRelease));
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
@@ -553,6 +625,7 @@ try {
 } finally {
   await stopGateway();
   if (workerSession) execFileSync('tmux', ['kill-session', '-t', slotId]);
+  if (rollbackWorkerSession) execFileSync('tmux', ['kill-session', '-t', rollbackSlotId]);
   if (logFd !== undefined) closeSync(logFd);
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

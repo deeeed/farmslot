@@ -720,7 +720,7 @@ export async function runReplayStep(
       }
     }
     if (blocker) {
-      if (!evalCanRestartFromPrepare) throw new Error(blocker);
+      if (!evalCanRestartFromPrepare || (!slotId && findSlotIdx < 0)) throw new Error(blocker);
       if (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx >= 0) {
         replayStepName = PS.FIND_SLOT;
         targetIdx = findSlotIdx;
@@ -983,7 +983,7 @@ export async function runReplayStep(
               // only claim that same worker; an intervening release or reassignment
               // must not turn this into a generic free-slot reclaim.
               if (probeBlockedMonitor && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
-              if (probeBlockedMonitor) {
+              if (existing.status === 'blocked' && blockedMonitorOwnsSlot(slot, params.runId)) {
                 priorOwnedSlotFields = {
                   lifecycle: slot.lifecycle,
                   phase: slot.phase,
@@ -1029,6 +1029,13 @@ export async function runReplayStep(
           assertNativeReplayCurrent();
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
+          // The disposable gateway recipe injects a failure after a real claim.
+          if (
+            process.env.NODE_TEST_CONTEXT === '1' &&
+            process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_ID === params.runId
+          ) {
+            throw new Error('Injected replay failure after claim');
+          }
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
         } catch (err) {
           console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
