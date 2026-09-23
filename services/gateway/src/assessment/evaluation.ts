@@ -103,7 +103,9 @@ export function evaluateAssessmentReport(
       const abstains =
         r.consumer === 'failure-triage'
           ? cause?.type !== 'choice' || cause.choice === 'unclear'
-          : r.recommendation?.route === 'needs-review' || !r.recommendation;
+          : r.consumer === 'decision-advice'
+            ? answer.type === 'choice' && answer.choice === 'abstain'
+            : r.recommendation?.route === 'needs-review' || !r.recommendation;
       if (abstains) entry.abstained++;
       const labelKey = JSON.stringify([r.id, questionId]);
       const reference = labels.get(labelKey);
