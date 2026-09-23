@@ -101,18 +101,18 @@ opt-in; company/provider approval does not itself demonstrate utility.
 ## Pending decision advice pilot
 
 [Issue #719](https://github.com/deeeed/farmslot/issues/719) and the [pilot procedure](../operations/decision-advice-pilot.md) record the separately approved
-opt-in pilot for existing run-backed human decisions. Do not recommend anything
-for a profile-fit gate whose configured `core` profile already supports later
-proof-resource acquisition; first correct that false gate. For genuine pending
-gates, ask on demand and only after the operator admits the exact public or
-synthetic input and sets a provider, model, verified price and spend limits.
+opt-in pilot for pending run-backed collision decisions. Profile-fit gates are
+excluded until they offer a second non-decline action and have a separate
+frozen fixture. For eligible collisions, ask on demand and only after the
+operator admits the exact public or synthetic input and sets a provider,
+model, verified price and spend limits.
 Treat a `manual` ticket label as neither source approval nor public evidence.
 The provider chooses only among current gateway action IDs or abstains. Advice
 never resolves the decision, selects an action in the UI or authorizes recovery.
 
 Freeze labeled cases and a no-advice baseline before candidate calls. Measure
-valid selections, correct abstentions and mistaken confident choices by gate
-type. Compare matched operator decisions at equal independent quality and record
+valid selections, correct abstentions and mistaken confident choices across
+collision cases. Compare matched operator decisions at equal independent quality and record
 assessment overhead, all calls and unknown charges in total token/cost/time
 results. No matched human decision timings means workflow efficiency remains
 unknown, even if the classification result is accurate. Keep this experiment

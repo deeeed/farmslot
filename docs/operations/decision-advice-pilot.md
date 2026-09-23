@@ -59,6 +59,10 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    assessment. Inspect its saved answer, attempted call, provider/model,
    usage and cost in the panel and assessment history. Missing usage remains
    an unknown charge. Do not repeat a request to improve a weak answer.
+   Do not edit admission or price policy during an in-flight request: if the
+   policy changes before dispatch, the skipped reservation can make that
+   decision snapshot unavailable for later requests. Start a new decision
+   snapshot if this happens.
 
 The current profile gate still offers only Continue and Abort after #720, so it is excluded until it offers a second non-decline action and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
 are for the controlled classification study. Current collision packets lack operator

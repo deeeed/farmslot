@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import type {
   AssessmentQuestions,
+  AssessmentRecord,
   AssessmentRequest,
   AssessmentResult,
   DecisionAdviceAnalyzeParams,
@@ -289,6 +290,17 @@ function admitted(
   );
 }
 
+function reservedAdvicePrice(
+  record: AssessmentRecord,
+  current: AdvicePrice,
+): AdvicePrice | undefined {
+  // Historical records without a reservation predate the bounded advice path.
+  if (!record.reservation) return current;
+  const price = record.reservation.price;
+  if (price?.maxInputTokens === undefined || price.maxOutputTokens === undefined) return undefined;
+  return { ...price, maxInputTokens: price.maxInputTokens, maxOutputTokens: price.maxOutputTokens };
+}
+
 export async function decisionAdviceGet(
   params: DecisionAdviceGetParams,
 ): Promise<DecisionAdviceResult> {
@@ -314,7 +326,12 @@ export async function decisionAdviceGet(
     )
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
   return saved?.result && selected.state
-    ? outcome(selected.result, saved.result, selected.state.actions, advicePolicy.price)
+    ? outcome(
+        selected.result,
+        saved.result,
+        selected.state.actions,
+        reservedAdvicePrice(saved, advicePolicy.price),
+      )
     : selected.result;
 }
 
@@ -445,7 +462,12 @@ export async function decisionAdviceAnalyze(
   if (reserve.status === 'existing') {
     const result = reserve.record.result;
     return result
-      ? outcome(selected.result, result, selected.state.actions, price)
+      ? outcome(
+          selected.result,
+          result,
+          selected.state.actions,
+          reservedAdvicePrice(reserve.record, price),
+        )
       : {
           ...selected.result,
           eligible: false,
@@ -507,7 +529,12 @@ export async function decisionAdviceAnalyze(
       assessment: result as AssessmentResult,
     };
   const saved = await assessmentRecord(owner.principalId, reserve.record.id);
-  return outcome(selected.result, saved.result!, selected.state.actions, price);
+  return outcome(
+    selected.result,
+    saved.result!,
+    selected.state.actions,
+    reservedAdvicePrice(saved, price),
+  );
 }
 
 /** A response is usable only under the admitted model and observable token bound. */

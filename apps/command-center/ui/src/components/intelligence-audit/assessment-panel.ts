@@ -347,8 +347,14 @@ export class AssessmentPanel extends LitElement {
               Recommendation:
               ${record.consumer === 'failure-triage'
                 ? (failureTriageCause(record) ?? 'Unavailable')
-                : (record.recommendation?.route ?? 'Not assessed')}
-              · ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none
+                : record.consumer === 'decision-advice'
+                  ? record.result?.answers?.action?.type === 'choice'
+                    ? (record.result.answers.action.choice ?? 'Unavailable')
+                    : 'Not assessed'
+                  : (record.recommendation?.route ?? 'Not assessed')}
+              ${record.consumer === 'decision-advice'
+                ? nothing
+                : html`· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
               ${record.result?.provider ?? 'No provider'} /
