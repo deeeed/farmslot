@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "labels": [
+    {
+      "id": "dev-supported",
+      "expected": "supported",
+      "rationale": "The recorded status and output match the claim."
+    },
+    {
+      "id": "dev-contradicted",
+      "expected": "contradicted",
+      "rationale": "The response status directly conflicts with 201."
+    },
+    {
+      "id": "dev-insufficient",
+      "expected": "insufficient",
+      "rationale": "There is no evidence for worker C."
+    },
+    {
+      "id": "held-supported-retry",
+      "expected": "supported",
+      "rationale": "Two attempts after one timeout support one retry."
+    },
+    {
+      "id": "held-supported-persistence",
+      "expected": "supported",
+      "rationale": "The state is observed both before and after reopening."
+    },
+    {
+      "id": "held-supported-error",
+      "expected": "supported",
+      "rationale": "The exit status and stderr match both parts."
+    },
+    {
+      "id": "held-contradicted-persistence",
+      "expected": "contradicted",
+      "rationale": "The post-restart state contradicts persistence."
+    },
+    {
+      "id": "held-contradicted-latency",
+      "expected": "contradicted",
+      "rationale": "One recorded request took 321 ms."
+    },
+    {
+      "id": "held-contradicted-absence",
+      "expected": "contradicted",
+      "rationale": "An order was created despite validation failure."
+    },
+    {
+      "id": "held-insufficient-latency",
+      "expected": "insufficient",
+      "rationale": "No timings were supplied."
+    },
+    {
+      "id": "held-insufficient-negative",
+      "expected": "insufficient",
+      "rationale": "The evidence covers only one worker."
+    },
+    {
+      "id": "held-insufficient-instruction",
+      "expected": "insufficient",
+      "rationale": "The output is an untrusted instruction and omits the updated count."
+    }
+  ]
+}

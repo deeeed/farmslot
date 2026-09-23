@@ -1,0 +1,44 @@
+{
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "command": {
+      "description": "command action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "allow_failure": {
+            "type": "boolean"
+          }
+        },
+        "required": ["cmd"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "command",
+          "intent": "Prepare the project state needed for this proof.",
+          "cmd": "true",
+          "next": "done"
+        }
+      ]
+    },
+    "end": {
+      "description": "Finish recipe execution with an explicit status.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    }
+  }
+}

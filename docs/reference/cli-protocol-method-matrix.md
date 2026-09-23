@@ -9,6 +9,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 - **rpc-only** — Reachable via `farmslot rpc <method>`; no dedicated command yet.
 - **na** — Not a CLI target (web-UI-internal or transport-level); note explains why.
 
+## acceptance.\*
+
+| Method                        | Surface  | CLI command | TUI | Note                                                                                          |
+| ----------------------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------------------- |
+| `acceptance.evidence.get`     | rpc-only |             |     | Read-only criterion evidence and assessment preview via farmslot rpc acceptance.evidence.get. |
+| `acceptance.evidence.analyze` | rpc-only |             |     | Explicit source-admitted textual AC assessment via farmslot rpc acceptance.evidence.analyze.  |
+
 ## analytics.\*
 
 | Method               | Surface       | CLI command          | TUI | Note |
