@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Respect each project's effective prepare profile in profile-fit advice, keep the lazy `core` baseline unblocked, and let operators apply a valid suggested profile before prepare starts.
+
 - Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
 
 - Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.

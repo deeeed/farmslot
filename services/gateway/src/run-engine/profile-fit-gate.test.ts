@@ -89,6 +89,39 @@ test('profile fit gate warns when gateway-only sandbox is default for companion 
   assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
 });
 
+test('profile fit gate accepts the configured core baseline with lazy capabilities', () => {
+  assert.equal(
+    detectProfileFit(run(), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'core',
+      availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+    }),
+    null,
+  );
+});
+
+test('profile fit gate omits a suggestion that the project cannot prepare', () => {
+  assert.equal(
+    detectProfileFit(run(), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'sandbox',
+      availablePrepareProfiles: ['core', 'sandbox'],
+    }),
+    null,
+  );
+});
+
+test('profile fit gate does not reopen after the operator saves the suggested profile', () => {
+  assert.equal(
+    detectProfileFit(run({ prepareProfile: 'sandbox-companion' }), companionTicket, {
+      slotPlatform: 'cli',
+      effectivePrepareProfile: 'sandbox-companion',
+      availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+    }),
+    null,
+  );
+});
+
 test('profile fit validation plan keeps companion proof on dispatch slot', () => {
   const result = detectProfileFit(
     run(),

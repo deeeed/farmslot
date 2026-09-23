@@ -19,7 +19,14 @@ const COMPANION_TOKENS = [
   'metro',
 ];
 
-const GATEWAY_TOKENS = ['gateway', 'protocol', 'rpc', 'run-engine', 'slot.prepare', 'services/gateway'];
+const GATEWAY_TOKENS = [
+  'gateway',
+  'protocol',
+  'rpc',
+  'run-engine',
+  'slot.prepare',
+  'services/gateway',
+];
 
 const COMMAND_CENTER_TOKENS = [
   'command center',
@@ -36,6 +43,10 @@ const SANDBOX_COMPANION_PROFILE = 'sandbox-companion';
 
 export type ProfileFitContext = {
   slotPlatform?: string | null;
+  /** The profile the prepare resolver will use when the operator made no explicit choice. */
+  effectivePrepareProfile?: string | null;
+  /** Names present in the project's validated prepare catalog. */
+  availablePrepareProfiles?: readonly string[];
   prepareProfile?: string | null;
   app?: string | null;
 };
@@ -152,12 +163,28 @@ export function detectProfileFit(
 
   const suggestion = suggestPrepareProfile(surfaces, context.slotPlatform);
   if (!suggestion) return null;
+  if (
+    context.availablePrepareProfiles &&
+    !context.availablePrepareProfiles.includes(suggestion.profile)
+  ) {
+    return null;
+  }
 
   const currentProfile =
-    context.prepareProfile?.trim() || run.prepareProfile?.trim() || defaultPrepareProfile(context.slotPlatform);
+    context.effectivePrepareProfile?.trim() ||
+    context.prepareProfile?.trim() ||
+    run.prepareProfile?.trim() ||
+    defaultPrepareProfile(context.slotPlatform);
+
+  // `core` deliberately starts only checkout/dependency state. A worker can
+  // acquire browser and Companion capabilities when its validation needs them,
+  // so the project's configured lazy baseline is not a profile mismatch.
+  if (currentProfile === 'core') return null;
 
   const gatewayOnlyMismatch =
-    surfaces.companion && GATEWAY_ONLY_PROFILES.has(currentProfile) && !context.prepareProfile?.trim();
+    surfaces.companion &&
+    GATEWAY_ONLY_PROFILES.has(currentProfile) &&
+    !context.prepareProfile?.trim();
   const companionMismatch =
     (surfaces.gateway || surfaces.commandCenter) &&
     COMPANION_PROFILES.has(currentProfile) &&
@@ -181,14 +208,10 @@ export function detectProfileFit(
   return null;
 }
 
-export function effectivePrepareProfile(
-  run: Run,
-  context: ProfileFitContext = {},
-): string {
+export function effectivePrepareProfile(run: Run, context: ProfileFitContext = {}): string {
   return (
     context.prepareProfile?.trim() ||
     run.prepareProfile?.trim() ||
     defaultPrepareProfile(context.slotPlatform)
   );
 }
-

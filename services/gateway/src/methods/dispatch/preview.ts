@@ -51,6 +51,7 @@ import {
 } from '../../tasks/execution-template-catalog.js';
 import { gitHeadProbeCommand, parseGitHeadProbe, slotHeadRefreshUpdate } from '../fleet.js';
 import { normalizeRunCreateMode } from '../run-create-mode.js';
+import { resolvePrepareProfile } from '../slot/prepare-profile.js';
 
 import {
   capturePressureAdmissionDecisions,
@@ -1147,10 +1148,17 @@ export async function dispatchPreview(
     if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
     else delete result.preview.domain;
   }
+  const profileProjectVars = await loadProjectVars(params.project);
+  const profileJson = profileProjectVars.projectJson;
   const profileFit = detectProfileFit(previewRun, ticketData, {
     prepareProfile: params.prepareProfile,
     app: params.app,
     slotPlatform: slotInfo?.platform ?? null,
+    effectivePrepareProfile: resolvePrepareProfile(profileJson, params.prepareProfile).name,
+    availablePrepareProfiles: [
+      ...(profileJson.prepare?.core ? ['core'] : []),
+      ...Object.keys(profileJson.prepare?.profiles ?? {}),
+    ],
   });
   if (profileFit) {
     result.preview.profileFit = profileFit;

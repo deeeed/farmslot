@@ -116,6 +116,16 @@ export function prepareProfileDecisionLabel(
     : run.prepareProfile?.trim() || 'full';
 }
 
+function configuredPrepareProfileNames(
+  projectJson: Parameters<typeof resolvePrepareProfile>[0] | undefined,
+): string[] | undefined {
+  if (!projectJson?.prepare) return undefined;
+  return [
+    ...(projectJson.prepare.core ? ['core'] : []),
+    ...Object.keys(projectJson.prepare.profiles ?? {}),
+  ];
+}
+
 async function readTemplateProvenanceForTask(
   taskFilePath: string,
 ): Promise<TemplateProvenance | null> {
@@ -292,29 +302,38 @@ export async function executeGradeStep(
     const fleet = await loadFleetStatus();
     slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
   }
+  const profileProjectVars = await loadProjectVarsOrNull(
+    run.project,
+    'prepare profile decision',
+    run.id,
+  );
+  const currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
   const resolvedProfileFit = detectProfileFit(run, ticketData, {
     prepareProfile: run.prepareProfile,
     app: run.app,
     slotPlatform,
+    effectivePrepareProfile: currentPrepareProfile,
+    availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars?.projectJson),
   });
   if (resolvedProfileFit) {
-    const profileProjectVars = await loadProjectVarsOrNull(
-      run.project,
-      'prepare profile decision',
-      run.id,
-    );
-    const currentPrepareProfile = prepareProfileDecisionLabel(run, profileProjectVars?.projectJson);
     const actionId = await createEngineDecision(
       runId,
       'prepare_profile_mismatch',
-      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${currentPrepareProfile}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
+      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}`,
       [
+        {
+          id: 'use_suggested_profile',
+          label: `Use ${resolvedProfileFit.suggestedPrepareProfile}`,
+          style: 'primary',
+          description: 'Save the suggested profile on this run before prepare starts.',
+        },
         {
           id: 'continue',
           label: `Continue with ${currentPrepareProfile}`,
-          style: 'primary',
+          style: 'secondary',
+          description: 'Keep the current profile for this run.',
         },
-        { id: 'abort', label: 'Abort run', style: 'danger' },
+        { id: 'abort', label: 'Abort run', style: 'danger', description: 'Stop this run.' },
       ],
     );
     if (actionId === 'abort') {
@@ -328,7 +347,16 @@ export async function executeGradeStep(
       });
       throw new Error('Prepare profile mismatch: aborted by user');
     }
-    profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
+    if (actionId === 'use_suggested_profile') {
+      updateRun(runId, { prepareProfile: resolvedProfileFit.suggestedPrepareProfile });
+      profileFitOverride = {
+        profileFit: resolvedProfileFit,
+        selectedPrepareProfile: resolvedProfileFit.suggestedPrepareProfile,
+        selectedBy: 'user',
+      };
+    } else {
+      profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
+    }
     const current = getRun(runId);
     if (current) {
       updateRun(runId, {
