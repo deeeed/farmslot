@@ -77,6 +77,7 @@ test('a sealed 42-row plan pins reference/source hashes and excludes hidden answ
         /rationale|reference|controls|receiptHash|usage|confidence|estimatedUsd/.test(r.prompt),
       ),
     );
+    assert(rows.every((r) => !r.prompt.includes(id)));
     assert(!rows.find((r) => r.arm === 'A')!.prompt.includes('cachedAdvice'));
     assert(rows.find((r) => r.arm === 'B')!.prompt.includes('cachedAdvice'));
   }
@@ -198,10 +199,12 @@ test('duplicate native IDs, wrong prompts and mutating checks cannot enter paire
 
 test('blinded adjudication requires evidence; equal-quality comparisons remain worker-only', async () => {
   const plan = await createPlan(options);
-  const first = native(plan, plan.rows.find((r) => r.caseId === unclearCaseId)!);
+  const echoed = { label: 'unclear', nextCheck: 'inspect recorded-failure logs', evidenceIds: [] };
+  const first = native(plan, plan.rows.find((r) => r.caseId === unclearCaseId)!, echoed);
   const second = native(
     plan,
     plan.rows.find((r) => r.caseId === unclearCaseId && r.arm !== first.arm)!,
+    echoed,
   );
   const provisional = await scoreStudy(plan, [first, second]);
   assert(

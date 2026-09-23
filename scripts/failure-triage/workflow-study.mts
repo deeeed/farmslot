@@ -211,7 +211,7 @@ export async function createPlan(options: PlanOptions) {
     };
     return arms.map((arm: string) => {
       const prompt = JSON.stringify({
-        failure: c.packet.failure,
+        failure: { ...c.packet.failure, runId: 'recorded-failure' },
         evidence: c.packet.evidence.map((e: any) => ({ id: e.id, text: e.text })),
         ...(arm === 'B'
           ? {

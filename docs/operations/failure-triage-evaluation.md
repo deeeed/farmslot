@@ -216,7 +216,8 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
 source, its verification date, request limits, cache accounting and a dollar cap.
 It only creates a sealed plan. Before any paid worker request, an independent
 methodology review must approve that exact plan, including the source admission and
-price/spend policy. The offline `score` command cannot make a savings claim. `score-journal` verifies the runner's recorded methodology approval before marking a study as approved; adjudication rechecks the retained approval, method and journal snapshots. The gate requires at least 16 equally successful pairs and no baseline-success/assisted-failure regressions across all 21 cases. The score output marks missing receipts, unknown charges,
+price/spend policy. Confirm the selected worker provider returns cache-write token
+usage when relevant; otherwise cost stays unknown and the study cannot pass. The offline `score` command cannot make a savings claim. `score-journal` verifies the runner's recorded methodology approval before marking a study as approved; adjudication rechecks the retained approval, method and journal snapshots. The gate requires at least 16 equally successful pairs and no baseline-success/assisted-failure regressions across all 21 cases. The score output marks missing receipts, unknown charges,
 unreviewed answers and any unavailable total metric as inconclusive. It also labels
 the component-owner comparator as post-hoc. It cannot establish Farmslot-wide
 workflow savings.
