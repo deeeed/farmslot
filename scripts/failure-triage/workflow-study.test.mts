@@ -140,7 +140,7 @@ test('native receipts count cache once and a missing usage receipt remains unkno
   const proxy = await scoreStudy(proxyPlan, [native(proxyPlan)]);
   assert.equal(proxy.costBasis, 'public-reference-only-no-cost-claim');
   assert.equal(proxy.cases[0].knownEstimatedUsd, null);
-  assert.equal(proxy.unknownCharges, 1);
+  assert.equal(proxy.unknownCharges, 0);
   assert.equal(proxy.totalFirstUseCostClaim, 'unproven');
   await assert.rejects(
     () => createPlan({ ...options, priceApplicability: undefined as never }),
@@ -191,13 +191,21 @@ test('duplicate native IDs, wrong prompts and reviewer-unsafe checks cannot ente
   const first = native(plan);
   const second = native(plan, plan.rows[1]);
   await assert.rejects(() => scoreStudy(plan, [first, first]), /duplicate planned attempt/);
-  await assert.rejects(
-    () =>
-      scoreStudy(plan, [
-        first,
-        { ...second, response: { ...second.response, responseId: first.response.responseId } },
-      ]),
-    /Duplicate response ID/,
+  const duplicate = await scoreStudy(plan, [
+    first,
+    { ...second, response: { ...second.response, responseId: first.response.responseId } },
+  ]);
+  assert.equal(
+    duplicate.cases.find((r) => r.caseId === second.caseId && r.arm === second.arm)!.status,
+    'invalid-receipt',
+  );
+  assert.equal(duplicate.gateResult.status, 'inconclusive');
+  const missingId = await scoreStudy(plan, [
+    { ...first, response: { ...first.response, responseId: undefined } },
+  ]);
+  assert.equal(
+    missingId.cases.find((r) => r.caseId === first.caseId && r.arm === first.arm)!.status,
+    'invalid-receipt',
   );
   await assert.rejects(
     () => scoreStudy(plan, [{ ...first, promptHash: 'modified' }]),
@@ -294,6 +302,11 @@ test('blinded adjudication requires evidence; equal-quality comparisons remain w
   }));
   const reviewed = await scoreStudy(plan, [first, second], decisions);
   assert.equal(reviewed.adjudicated, 2);
+  assert(
+    reviewed.cases
+      .filter((c) => c.caseId === first.caseId)
+      .every((c) => c.status === 'adjudicated'),
+  );
   assert.equal(reviewed.equalQualityPairs, 1);
   assert.equal(reviewed.pairs.find((p) => p.caseId === first.caseId)!.workerTokenDelta, 0);
   assert.equal(
@@ -550,7 +563,7 @@ test('frozen gate charges each assisted first use for cached JEV advice', async 
     index === 0 ? { ...attempt, workerElapsedMs: null } : attempt,
   );
   const timeUnknown = await scoreStudy(plan, missingTime, decisions);
-  assert(timeUnknown.gateResult.aggregateFirstUseTokens.reduction > 0.2);
+  assert((timeUnknown.gateResult.aggregateFirstUseTokens.reduction ?? 0) > 0.2);
   assert.equal(timeUnknown.gateResult.status, 'inconclusive');
   assert.equal(timeUnknown.savingsClaim, 'unproven');
   const unknownCost = largeWorkerSavings.map((attempt, index) =>
@@ -559,7 +572,7 @@ test('frozen gate charges each assisted first use for cached JEV advice', async 
       : attempt,
   );
   const costUnknown = await scoreStudy(plan, unknownCost, decisions);
-  assert(costUnknown.gateResult.aggregateFirstUseTokens.reduction > 0.2);
+  assert((costUnknown.gateResult.aggregateFirstUseTokens.reduction ?? 0) > 0.2);
   assert.equal(costUnknown.gateResult.status, 'inconclusive');
   assert.equal(costUnknown.savingsClaim, 'unproven');
   const deficient = await scoreStudy(plan, attempts.slice(1), decisions);

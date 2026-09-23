@@ -234,6 +234,58 @@ test('each row has a synced start and one response; failures and unknown charges
   assert.notEqual(tampered.status, 0);
   assert.match(tampered.stderr, /Attempts snapshot differs from approved runner journal/);
   await writeFile(attemptsPath, originalAttempts);
+  const approvalSnapshotPath = path.join(studyDir, 'approval-snapshot.json');
+  const approvalSnapshot = await readFile(approvalSnapshotPath, 'utf8');
+  await writeFile(approvalSnapshotPath, approvalSnapshot.replace(plan.planHash, 'tampered'));
+  const invalidApproval = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('./workflow-study.mts', import.meta.url)),
+      'adjudicate',
+      studyDir,
+      decisionsPath,
+    ],
+    { encoding: 'utf8', timeout: 20000 },
+  );
+  assert.notEqual(invalidApproval.status, 0);
+  await writeFile(approvalSnapshotPath, approvalSnapshot);
+  const provenancePath = path.join(studyDir, 'execution-provenance.json');
+  await writeFile(provenancePath, JSON.stringify({ approvedExecution: false }));
+  const invalidProvenance = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('./workflow-study.mts', import.meta.url)),
+      'adjudicate',
+      studyDir,
+      decisionsPath,
+    ],
+    { encoding: 'utf8', timeout: 20000 },
+  );
+  assert.notEqual(invalidProvenance.status, 0);
+  assert.match(invalidProvenance.stderr, /Execution provenance disagrees/);
+  await writeFile(provenancePath, JSON.stringify({ approvedExecution: true }));
+  const validAdjudication = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('./workflow-study.mts', import.meta.url)),
+      'adjudicate',
+      studyDir,
+      decisionsPath,
+    ],
+    { encoding: 'utf8', timeout: 20000 },
+  );
+  assert.equal(validAdjudication.status, 0, validAdjudication.stderr);
+  assert.equal(
+    JSON.parse(await readFile(path.join(studyDir, 'score-reviewed.json'), 'utf8'))
+      .executionProvenance,
+    'approved-runner-journal',
+  );
 
   assert.equal(report.gateResult.status, 'inconclusive');
   await assert.rejects(
@@ -307,6 +359,43 @@ test('successful runner closes all 42 planned requests with no retry', async () 
   assert.equal(JSON.parse(text.trim().split('\n').at(-1)!).stopReason, 'completed');
   await verifyJournalApproval(plan, text, run.independentApprovalPath, run.methodologyPath);
   assert.equal(materializeStudyJournal(plan, text).length, 42);
+});
+
+test('a missing or duplicate response identity stops before the next charge', async () => {
+  const plan = await createPlan(options);
+  for (const missing of [true, false]) {
+    const run = await fixture(plan);
+    let called = 0;
+    await runStudy(plan, run, async (request) => {
+      called++;
+      return {
+        status: 'completed',
+        attempted: true,
+        requestedModel: request.model,
+        returnedModel: request.model,
+        ...(missing && called === 1 ? {} : { responseId: 'same-id' }),
+        receiptHash: createHash('sha256').update(String(called)).digest('hex'),
+        inputTokens: 120,
+        outputTokens: 20,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        inputAccounting: 'includes-cache',
+        durationMs: 20,
+        responseReceived: true,
+      };
+    });
+    assert.equal(called, missing ? 1 : 2);
+    const recorded = materializeStudyJournal(plan, await readFile(run.journalPath, 'utf8'));
+    assert.equal(recorded.length, called);
+    const scored = await scoreStudy(plan, recorded, 'a'.repeat(64));
+    assert.equal(
+      scored.cases.find(
+        (c) => c.caseId === recorded.at(-1)!.caseId && c.arm === recorded.at(-1)!.arm,
+      )!.status,
+      'invalid-receipt',
+    );
+    assert.equal(scored.gateResult.status, 'inconclusive');
+  }
 });
 
 test('interrupted request is counted once as possible charge, never filled in or retried', async () => {

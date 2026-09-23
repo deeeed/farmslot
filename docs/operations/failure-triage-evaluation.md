@@ -188,14 +188,12 @@ failure packet. Arm B receives the same packet and the frozen JEV advice that th
 pilot would display. The worker never receives labels, rationale, provider
 receipts or the post-hoc component-owner comparator.
 
-The report uses 21 paired cases as its denominator and accounts for all 42 planned responses. It calculates equal-quality savings on pairs where both answers succeed, and
-reports spend across the full cohort separately. An independent reviewer judges
-whether each next check is safe, specific and supported by the visible packet. The diagnosis is scored separately against the
-frozen label. Completed or incomplete malformed answers with known usage count as failed quality
-and cannot silently leave a paired case unscored. It reports worker-only
-figures and conservative first-use totals. The assisted first-use total adds the recorded JEV input tokens,
-output tokens, estimated cost and provider duration once per case. Cached advice is
-not free in this comparison.
+The denominator is 21 paired cases, covering all 42 planned responses. Savings
+compare pairs where both answers succeed; full-cohort spend is separate. A
+reviewer judges whether each check is safe, specific and supported. Diagnosis is
+scored against the frozen label. Invalid complete or incomplete replies with
+known usage fail quality. First-use totals charge the recorded JEV tokens, cost
+and duration once per assisted case.
 
 Give the independent reviewer only `blind-review.json`. The reviewer must not
 have access to this repository or study directory, since matching packet contents
@@ -217,26 +215,24 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
   scripts/failure-triage/workflow-study.mts adjudicate /absolute/new-study /absolute/decisions.json
 ```
 
-`worker-plan.json` must name the worker provider and model, an exact HTTPS price
-source, its verification date, request limits, cache accounting and a dollar cap.
-It only creates a sealed plan. Each prepared plan has a unique nonce, and the plan pins the scorer, runner and transport code hashes. Before any paid worker request, an independent
-methodology review must approve that exact plan, including the source admission and
-price/spend policy. Pin a provider snapshot model ID when an alias can resolve
-to a different returned model. A returned model mismatch invalidates that attempt without aborting scoring.
-If cache multipliers differ from 1, the provider must return the relevant cache
-counters; otherwise cost stays unknown and the study cannot pass. Local proxies
-require `public-reference-only` pricing. Such runs cannot pass the token gate
-without direct measured cost, but clear safety and quality failures still fail.
-The offline `score` command cannot make a savings claim. `score-journal` verifies
-the runner's recorded methodology approval before marking a study as approved;
-adjudication rechecks the retained approval, method and journal snapshots. The token gate requires at least 16 equally successful pairs, 16 assisted
-successes, a 20% first-use token reduction, and zero unsafe checks in either
-arm or baseline-success/assisted-failure regressions across all 21 cases.
-The separate 20% time and cost thresholds label diagnostic claims and are
-not requirements for the token gate. Missing receipts, unknown charges,
-unreviewed answers and any unavailable total metric stay inconclusive. It also labels
-the component-owner comparator as post-hoc. It cannot establish Farmslot-wide
-workflow savings.
+`worker-plan.json` names the provider and model, HTTPS price source and date,
+request limits, cache accounting and dollar cap. Each plan gets a unique nonce
+and pins scorer, runner and transport hashes. Before paid calls, an independent
+reviewer must approve the exact plan, source admission and price policy. Pin a
+snapshot model ID if an alias can change its returned ID. Model mismatches
+invalidate the row and stop the runner.
+
+Providers must report cache counts where their multiplier differs from 1. Missing
+counts leave cost unknown. Local proxies use `public-reference-only` pricing;
+they cannot pass the token gate without direct measured cost, although known
+quality or safety failures still fail. Offline `score` cannot claim savings.
+`score-journal` checks the prior approval, and `adjudicate` checks its retained
+snapshots. The token gate needs 16 equally successful pairs, 16 assisted
+successes, a 20% first-use token reduction, no unsafe checks in either arm and
+no baseline-success/assisted-failure regression. Separate 20% time and cost
+thresholds label diagnostics. Missing receipts or metrics stay inconclusive.
+The component-owner comparator is post-hoc; this study cannot prove wider
+Farmslot workflow savings.
 
 Only the separate runner sends worker requests. Set `STUDY_API_KEY` in its process
 environment, then invoke it once with the frozen plan, a new absolute journal
@@ -249,14 +245,12 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
   /absolute/approval.json /absolute/frozen-methodology.md
 ```
 
-The approval JSON must contain the reviewed `planHash`, the SHA-256 hash of the
-methodology file, the exact absolute `journalPath`, a reviewer name, and
-`"conclusion":"approved"`. A new journal path requires a new independent
-approval. The runner
-journals and syncs a start before each request and records every native receipt.
-It cannot resume an existing journal. A transport exception, unknown charge,
-missing usage or returned model mismatch stops further requests. Transport has a
-60-second timeout and no automatic retry. A synced closing record prevents
-an in-progress journal from being scored as approved. The retained snapshots establish
-internal consistency, not independent authentication of provider billing. Run
-`score-journal` only once for that study directory, then give the reviewer the generated `blind-review.json` alone.
+The approval JSON contains the reviewed `planHash`, methodology SHA-256 hash,
+absolute `journalPath`, reviewer name and `"conclusion":"approved"`. A new path
+needs a new approval. The runner records a one-use approval marker and syncs a
+start before each request. It cannot resume or retry. An exception, unknown
+charge, invalid receipt, missing usage or model mismatch stops further requests.
+The transport has a 60-second timeout. A closed journal is required for approved
+scoring. Snapshots prove internal consistency, not provider billing. Run
+`score-journal` for this study, then give only `blind-review.json` to its
+blinded reviewer.

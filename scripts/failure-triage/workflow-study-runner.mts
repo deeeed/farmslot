@@ -84,6 +84,16 @@ export async function runStudy(
     plan.rows.length === 42 && plan.maxPlannedRequests === 42 && plan.options.maxAttempts === 42,
     'Request cap changed',
   );
+  // Reserve this approved path before any charge. A repeated run must obtain a new approval.
+  const used = await open(options.independentApprovalPath + '.used', 'wx', 0o600);
+  try {
+    await used.writeFile(
+      JSON.stringify({ planHash: plan.planHash, journalPath: options.journalPath }),
+    );
+    await used.sync();
+  } finally {
+    await used.close();
+  }
   const journal = await open(options.journalPath, 'wx', 0o600);
   try {
     await journal.writeFile(
@@ -98,6 +108,8 @@ export async function runStudy(
     );
     await journal.sync();
     let stopReason = 'completed';
+    const responseIds = new Set<string>();
+    const receiptHashes = new Set<string>();
     for (const row of plan.rows) {
       const header = {
         version: 1 as const,
@@ -144,17 +156,25 @@ export async function runStudy(
         JSON.stringify({ ...header, kind: 'finished', response, workerElapsedMs }) + '\n',
       );
       await journal.sync();
-      // An unknown charge cannot be reserved reliably; stop before another request.
+      // Missing or repeated native identities cannot be scored. Stop before another charge.
+      const invalidIdentity =
+        !response.responseId ||
+        !response.receiptHash ||
+        responseIds.has(response.responseId) ||
+        receiptHashes.has(response.receiptHash);
+      if (response.responseId) responseIds.add(response.responseId);
+      if (response.receiptHash) receiptHashes.add(response.receiptHash);
       if (
         !response.attempted ||
         response.error ||
+        invalidIdentity ||
         response.inputTokens === null ||
         response.outputTokens === null ||
         (response.cacheReadTokens === null && plan.options.cacheReadMultiplier !== 1) ||
         (response.cacheWriteTokens === null && plan.options.cacheWriteMultiplier !== 1) ||
         (response.returnedModel && response.returnedModel !== plan.options.model) ||
-        (response.inputTokens !== null && response.inputTokens > plan.options.maxInputTokens) ||
-        (response.outputTokens !== null && response.outputTokens > plan.options.maxOutputTokens)
+        response.inputTokens > plan.options.maxInputTokens ||
+        response.outputTokens > plan.options.maxOutputTokens
       ) {
         stopReason = 'uncertain-charge-or-response';
         break;
@@ -175,7 +195,7 @@ export async function verifyJournalApproval(
   text: string,
   approvalPath: string,
   methodologyPath: string,
-): Promise<void> {
+): Promise<{ approvalBytes: Buffer; methodBytes: Buffer }> {
   await verifyPlan(plan);
   const [approvalBytes, methodBytes] = await Promise.all([
     readFile(approvalPath),
@@ -183,7 +203,14 @@ export async function verifyJournalApproval(
   ]);
   assert(approvalBytes.byteLength <= 4096, 'Approval file too large');
   const approval: StudyApproval = JSON.parse(approvalBytes.toString('utf8'));
-  const first = JSON.parse(text.split('\n')[0]);
+  let first: JournalEvent, last: JournalEvent;
+  try {
+    first = JSON.parse(text.split('\n')[0]);
+    last = JSON.parse(text.trimEnd().split('\n').at(-1) ?? '');
+  } catch {
+    // Empty and cut-off journals cannot prove a closed, approved execution.
+    throw new Error('Invalid or unfinished study journal');
+  }
   assert(
     approval.conclusion === 'approved' &&
       approval.planHash === plan.planHash &&
@@ -194,11 +221,12 @@ export async function verifyJournalApproval(
       first.planHash === plan.planHash &&
       first.journalPath === approval.journalPath &&
       /^\/.+/.test(approval.journalPath) &&
-      JSON.parse(text.trimEnd().split('\n').at(-1) ?? '{}').kind === 'closed' &&
+      last.kind === 'closed' &&
       first.methodologyHash === approval.methodologyHash &&
       first.approvalHash === createHash('sha256').update(approvalBytes).digest('hex'),
     'Journal does not contain matching prior methodology approval',
   );
+  return { approvalBytes, methodBytes };
 }
 
 /** Include every in-flight request as an unknown-charge attempt; no automatic resume. */
