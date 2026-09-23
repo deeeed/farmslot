@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Copy links to selected Backlog items and status-filtered views in Farmslot Dev and the desktop app.
+- Copy links to selected Backlog items and Work Graph nodes, preserving their filters and open panels.
 
 - Copy links to nested Config pages, including pool, project and flow selections.
 
