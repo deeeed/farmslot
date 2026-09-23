@@ -17,7 +17,7 @@ savings. Keep this ledger current when each consumer changes.
 saved after #726 is a separate UI/proof change. Neither is evidence that the
 five consumers above have a measured efficiency benefit.
 
-The recorded-failure panel stores assessment cost and optional accuracy feedback. A decision can reference a saved assessment and history shows the chosen action. That association cannot establish whether advice caused the choice or saved operator time. Local assessment storage may have no retained records; an empty cohort has no accuracy denominator.
+The recorded-failure panel stores assessment cost and optional accuracy feedback. PR #731 links a saved assessment to an explicitly chosen action and refreshes its history. Its synthetic gateway/browser proofs make no external provider calls. That association cannot establish whether advice caused the choice or saved operator time. Local assessment storage may have no retained records; an empty cohort has no accuracy denominator.
 
 For each new row result, retain the case and rubric versions, admitted source,
 model/provider, typed answer, abstention or failed call, known and unknown
