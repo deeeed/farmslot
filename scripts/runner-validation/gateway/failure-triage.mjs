@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 assert.equal(process.env.FARMSLOT_ASSESSMENT_VALIDATION, '1');
@@ -175,17 +175,21 @@ async function start() {
     ],
     { env, stdio: ['ignore', log.fd, log.fd] },
   );
+  let lastHealth = 'not contacted';
   for (let i = 0; i < 150; i++) {
     if (gateway.exitCode !== null || gateway.signalCode !== null)
       throw new Error('Gateway fixture exited');
     try {
-      if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return;
+      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      if (response.ok) return;
+      lastHealth = `HTTP ${response.status}`;
     } catch (e) {
       if (!(e instanceof TypeError)) throw e;
+      lastHealth = `Fetch failed: ${e.cause?.code ?? e.message}`;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('Gateway fixture failed readiness');
+  throw new Error(`Gateway fixture failed readiness: ${lastHealth}`);
 }
 async function stop(signal = 'SIGTERM') {
   if (gateway && gateway.exitCode === null && gateway.signalCode === null) {
@@ -553,21 +557,30 @@ try {
   await writeFile(runFile, JSON.stringify(run));
   await savePolicy();
   await start();
-  // A saved overspend incident blocks its price snapshot, not merely today's budget.
-  const prior = rpc('intelligence.triage.get', { runId: id }).record;
-  await stop();
-  const latch = {
-    ...prior,
-    id: randomUUID(),
-    startedAt: new Date(Date.now() - 86400000).toISOString(),
-    status: 'unavailable',
-    reservation: { ...prior.reservation, key: 'd'.repeat(64) },
-    result: { status: 'unavailable', attempted: true, error: 'spend-bound-exceeded' },
-    feedback: [],
-  };
-  await writeFile(path.join(home, 'assessments', latch.id + '.json'), JSON.stringify(latch));
+  // Exercise a real admitted RPC reply beyond the price envelope, then verify
+  // the retained receipt and that another snapshot cannot start a new request.
   await advanceSnapshot();
-  await start();
+  await writeFile(path.join(out, 'mode'), 'over-bound');
+  const beforeBound = rpc('intelligence.triage.get', { runId: id });
+  assert.equal(beforeBound.availability, 'ready');
+  const overspend = rpc('intelligence.triage.analyze', {
+    runId: id,
+    snapshotHash: beforeBound.snapshotHash,
+  });
+  assert.equal(overspend.record.status, 'unavailable');
+  assert.equal(overspend.record.result.error, 'spend-bound-exceeded');
+  assert.equal(overspend.record.result.attempted, true);
+  assert.equal(overspend.record.result.answers, undefined);
+  assert.equal(overspend.record.result.usage.inputTokens, 70000);
+  assert.equal(overspend.record.result.usage.outputTokens, 30);
+  assert.equal(overspend.record.result.usage.costKind, 'estimated');
+  assert.equal(
+    overspend.record.result.usage.costUsd,
+    (70000 * policy.price.inputUsdPerMillion) / 1_000_000,
+  );
+  assert.equal(await count(), 9);
+  await writeFile(path.join(out, 'mode'), 'valid');
+  await advanceSnapshot();
   const boundView = rpc('intelligence.triage.get', { runId: id });
   const bound = rpc('intelligence.triage.analyze', {
     runId: id,
@@ -575,10 +588,9 @@ try {
   });
   assert.equal(bound.availability, 'budget-blocked');
   assert.match(bound.reason, /exceeded this price snapshot/);
-  assert.equal(await count(), 8);
+  assert.equal(await count(), 9);
   await stop();
-  await rm(path.join(home, 'assessments', latch.id + '.json'));
-  source = source.slice(0, source.lastIndexOf('Observation sequence:'));
+  source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
   await savePolicy();
@@ -586,7 +598,8 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 8,
+    providerCalls: 9,
+    overBoundUsageRetained: true,
     modelIdentityEnforced: true,
     unrelatedBudgetEditPreservesCache: true,
     latestFailedStepDoesNotBorrowAdvice: true,

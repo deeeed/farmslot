@@ -19,7 +19,7 @@ import {
 } from '../../assessment/failure-triage/packet.js';
 import { verifyTriagePilotEvidence } from '../../assessment/failure-triage/pilot-evidence.js';
 import { boundedAssessmentFetch } from '../../assessment/failure-triage/transport.js';
-import { CHECK_FOR_LABEL } from '../../assessment/failure-triage/types.js';
+import { CHECK_FOR_LABEL, type TriagePrice } from '../../assessment/failure-triage/types.js';
 import { assess } from '../../assessment/index.js';
 import { completeAssessment } from '../../assessment/monitor.js';
 import {
@@ -34,6 +34,29 @@ import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.j
 
 const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
 const pending = new Map<string, Promise<FailureTriageView>>();
+
+/** Preserve received usage when a completed request exceeds its admitted price envelope. */
+export function priceTriageResult(
+  result: AssessmentResult,
+  price: Pick<TriagePrice, 'inputUsdPerMillion' | 'maxRequestTokens'>,
+): AssessmentResult {
+  const usage = result.usage;
+  if (!usage || usage.inputTokens === undefined) return result;
+  const priced = {
+    ...usage,
+    costUsd: (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000,
+    costKind: 'estimated' as const,
+  };
+  return usage.inputTokens > price.maxRequestTokens
+    ? {
+        ...result,
+        status: 'unavailable',
+        answers: undefined,
+        usage: priced,
+        error: 'spend-bound-exceeded',
+      }
+    : { ...result, usage: priced };
+}
 
 function canRetry(record: AssessmentRecord): boolean {
   return (
@@ -324,36 +347,28 @@ export async function analyzeFailureTriage(
             usage: result.usage && { ...result.usage, costUsd: undefined, costKind: undefined },
             error: 'Returned model does not match the evaluated model',
           };
-        try {
-          triagePrediction(result.answers ?? {}, prepared.packet);
-          const usage = result.usage;
-          if (usage) {
-            for (const n of [usage.inputTokens, usage.outputTokens])
-              if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
-                throw new Error('Invalid usage');
-            if (
-              usage.inputTokens !== undefined &&
-              usage.inputTokens > policy.price.maxRequestTokens
-            )
+        const usage = result.usage;
+        if (usage) {
+          for (const n of [usage.inputTokens, usage.outputTokens])
+            if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
               return {
                 status: 'unavailable',
                 attempted: true,
                 provider,
                 requestedModel: model,
-                error: 'spend-bound-exceeded',
+                error: 'Triage response failed its bounded contract',
               };
-            if (usage.inputTokens !== undefined) {
-              usage.costUsd = (usage.inputTokens * policy.price.inputUsdPerMillion) / 1_000_000;
-              usage.costKind = 'estimated';
-            }
-          }
-          return result;
+        }
+        const priced = priceTriageResult(result, policy.price);
+        if (priced.status !== 'completed') return priced;
+        try {
+          triagePrediction(priced.answers ?? {}, prepared.packet);
+          return priced;
         } catch {
           return {
+            ...priced,
             status: 'unavailable',
-            attempted: true,
-            provider,
-            requestedModel: model,
+            answers: undefined,
             error: 'Triage response failed its bounded contract',
           };
         }
