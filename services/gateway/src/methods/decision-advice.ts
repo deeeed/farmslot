@@ -12,6 +12,7 @@ import type {
   PendingDecision,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+import { isDecisionAdviceDeclineAction } from '@farmslot/protocol/rpc';
 
 import { saveAssessmentArtifact } from '../assessment/artifacts.js';
 import { getAssessmentConfig } from '../assessment/config.js';
@@ -89,10 +90,10 @@ function meaningful(actions: ReturnType<typeof packet>['actions']): boolean {
         ID.test(a.id) &&
         !['__proto__', 'prototype', 'constructor'].includes(a.id) &&
         a.label.trim() &&
-        (a.id === 'abort' || a.id === 'cancel' || a.description.trim()),
+        (isDecisionAdviceDeclineAction(a.id) || a.description.trim()),
     ) &&
     new Set(actions.map((a) => a.label.trim().toLowerCase())).size >= 3 &&
-    actions.filter((a) => !/^(abort|cancel)(?:[-_]|$)/i.test(a.id)).length >= 2
+    actions.filter((a) => !isDecisionAdviceDeclineAction(a.id)).length >= 2
   );
 }
 
@@ -250,7 +251,7 @@ function verifiedPrice(value: AdvicePrice, provider: string, model: string): boo
     Number.isFinite(value.outputUsdPerMillion) &&
     value.outputUsdPerMillion >= 0 &&
     Number.isSafeInteger(value.maxInputTokens) &&
-    value.maxInputTokens > 0 &&
+    value.maxInputTokens >= 8192 &&
     value.maxInputTokens <= 65536 &&
     Number.isSafeInteger(value.maxOutputTokens) &&
     value.maxOutputTokens > 0 &&
@@ -296,7 +297,10 @@ export async function decisionAdviceGet(
   if (!selected.result.eligible || !selected.run || !selected.result.snapshotHash)
     return selected.result;
   const advicePolicy = await policy();
-  if (!admitted(advicePolicy, selected.run.id, params.decisionId, selected.result.snapshotHash))
+  if (
+    !advicePolicy ||
+    !admitted(advicePolicy, selected.run.id, params.decisionId, selected.result.snapshotHash)
+  )
     return { ...selected.result, eligible: false, reason: 'not-admitted' };
   const origin = currentSessionOriginator();
   if (origin.kind !== 'principal') throw new Error('Authenticated principal required');
@@ -310,7 +314,7 @@ export async function decisionAdviceGet(
     )
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
   return saved?.result && selected.state
-    ? outcome(selected.result, saved.result, selected.state.actions, advicePolicy!.price)
+    ? outcome(selected.result, saved.result, selected.state.actions, advicePolicy.price)
     : selected.result;
 }
 
@@ -327,7 +331,10 @@ export async function decisionAdviceAnalyze(
   const { id: runId, project } = selected.run;
   const state = selected.state;
   const advicePolicy = await policy();
-  if (!admitted(advicePolicy, runId, params.decisionId, selected.result.snapshotHash))
+  if (
+    !advicePolicy ||
+    !admitted(advicePolicy, runId, params.decisionId, selected.result.snapshotHash)
+  )
     return { ...selected.result, eligible: false, reason: 'not-admitted' };
   const config = getAssessmentConfig();
   const providerStatus = assessmentProviderStatus();
@@ -349,7 +356,7 @@ export async function decisionAdviceAnalyze(
       ]),
     },
   };
-  const price = advicePolicy!.price;
+  const price = advicePolicy.price;
   // Until a provider-enforced output cap is available, paid output cannot
   // satisfy the reservation's hard spend bound.
   if (!verifiedPrice(price, provider, model) || price.outputUsdPerMillion > 0)
@@ -377,7 +384,7 @@ export async function decisionAdviceAnalyze(
     (price.maxInputTokens * price.inputUsdPerMillion +
       price.maxOutputTokens * price.outputUsdPerMillion) /
     1_000_000;
-  if (cost > advicePolicy!.limits.maxUsd)
+  if (cost > advicePolicy.limits.maxUsd)
     return { ...selected.result, eligible: false, reason: 'price-unavailable' };
   const owner = currentSessionOriginator();
   if (owner.kind !== 'principal') throw new Error('Authenticated principal required');
@@ -427,7 +434,7 @@ export async function decisionAdviceAnalyze(
         maxOutputTokens: price.maxOutputTokens,
       },
     },
-    advicePolicy!.limits,
+    advicePolicy.limits,
   );
   if (reserve.status === 'budget-blocked')
     return {
@@ -439,7 +446,12 @@ export async function decisionAdviceAnalyze(
     const result = reserve.record.result;
     return result
       ? outcome(selected.result, result, selected.state.actions, price)
-      : { ...selected.result, eligible: false, reason: 'assessment-pending' };
+      : {
+          ...selected.result,
+          eligible: false,
+          reason:
+            reserve.record.status === 'started' ? 'assessment-pending' : 'assessment-unavailable',
+        };
   }
   // No retry, fallback or implicit resolution. Persist a failed attempt too.
   const result = await completeAssessment(reserve.record, async () => {
@@ -526,7 +538,10 @@ export function validateDecisionAdviceResponse(
     estimated === undefined || assessment.returnedModel !== model
       ? { ...usage, costUsd: undefined, costKind: undefined }
       : { ...usage, costUsd: estimated, costKind: 'estimated' as const };
-  if (usage.inputTokens > price.maxInputTokens || (usage.outputTokens ?? 0) > price.maxOutputTokens)
+  if (
+    usage.inputTokens > price.maxInputTokens ||
+    (price.outputUsdPerMillion > 0 && (usage.outputTokens ?? 0) > price.maxOutputTokens)
+  )
     return {
       ...assessment,
       status: 'unavailable',

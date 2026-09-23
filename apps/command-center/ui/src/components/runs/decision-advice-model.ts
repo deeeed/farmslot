@@ -1,4 +1,4 @@
-import type { RunDecision } from '@farmslot/protocol';
+import { isDecisionAdviceDeclineAction, type RunDecision } from '@farmslot/protocol';
 
 /** The panel is only mounted for pending decisions with two actionable alternatives. */
 export function supportsDecisionAdvice(
@@ -11,9 +11,7 @@ export function supportsDecisionAdvice(
   )
     return false;
   const distinct = new Set(decision.actions.map((action) => action.id));
-  const meaningful = decision.actions.filter(
-    (action) => !/^(abort|cancel)(?:[-_]|$)/i.test(action.id),
-  );
+  const meaningful = decision.actions.filter((action) => !isDecisionAdviceDeclineAction(action.id));
   return (
     distinct.size >= 3 &&
     meaningful.length >= 2 &&

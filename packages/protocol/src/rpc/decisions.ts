@@ -34,3 +34,8 @@ export interface DecisionAdviceResult {
   recommendedActionId?: string;
   abstained?: boolean;
 }
+
+/** Stop actions are never the two alternatives a decision advisor compares. */
+export function isDecisionAdviceDeclineAction(id: string): boolean {
+  return /^(abort|cancel)(?:[-_]|$)/i.test(id);
+}

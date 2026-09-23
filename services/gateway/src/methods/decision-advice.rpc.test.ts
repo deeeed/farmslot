@@ -214,6 +214,7 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     });
     const invalid = await request(Methods.DECISION_ADVICE_GET, args);
     assert.equal(invalid.reason, 'assessment-unavailable');
+    assert.equal(invalid.assessment?.error, 'Invalid advisory choice');
     assert.equal(invalid.recommendedActionId, undefined);
     assert.equal(run.decisions[0]?.resolvedAt, undefined);
     resolveEngineDecision(decision.id, 'abort');

@@ -10,7 +10,7 @@ import { supportsDecisionAdvice } from './decision-advice-model.js';
 const unavailableReasons: Record<NonNullable<DecisionAdviceResult['reason']>, string> = {
   disabled: 'Optional decision advice is disabled.',
   'not-pending': 'This run decision is no longer pending or available.',
-  'insufficient-options': 'This decision has too few choices to compare.',
+  'insufficient-options': 'This decision cannot be assessed with its current evidence and choices.',
   'not-admitted': 'Decision evidence has not been admitted for assessment.',
   stale: 'The decision changed. Refresh its status.',
   'provider-unavailable': 'The configured assessment provider is unavailable.',

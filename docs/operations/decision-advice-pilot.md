@@ -30,8 +30,8 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
        "source": "https://provider.example/pricing",
        "inputUsdPerMillion": 1,
        "outputUsdPerMillion": 0,
-       "maxInputTokens": 4096,
-       "maxOutputTokens": 512
+       "maxInputTokens": 8192,
+       "maxOutputTokens": 2048
      },
      "limits": { "maxCalls": 1, "maxUsd": 0.01 },
      "entries": [

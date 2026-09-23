@@ -220,6 +220,7 @@ test('saved invalid action choice stays unavailable on a fresh status read', asy
   });
   const after = await withPrincipal(() => decisionAdviceGet(params));
   assert.equal(after.reason, 'assessment-unavailable');
+  assert.equal(after.assessment?.error, 'Invalid advisory choice');
   assert.equal(after.recommendedActionId, undefined);
 });
 
@@ -289,7 +290,7 @@ test('unverified identity, missing input usage and overspend never produce decis
   );
   assert.equal(
     checked({ ...base, usage: { ...base.usage!, outputTokens: 51 } }).status,
-    'unavailable',
+    'completed',
   );
 });
 
@@ -344,7 +345,7 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
     source: 'https://example.test/model',
     inputUsdPerMillion: 0.042,
     outputUsdPerMillion: 0,
-    maxInputTokens: 4096,
+    maxInputTokens: 8192,
     maxOutputTokens: 512,
   };
   writeFileSync(
@@ -537,7 +538,7 @@ test('failed provider validation locks the same price bound before another paid 
         source: 'https://example.test/model',
         inputUsdPerMillion: 0.042,
         outputUsdPerMillion: 0,
-        maxInputTokens: 4096,
+        maxInputTokens: 8192,
         maxOutputTokens: 512,
       },
       limits: { maxCalls: 2, maxUsd: 0.01 },
