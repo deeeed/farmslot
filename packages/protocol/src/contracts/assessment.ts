@@ -281,6 +281,24 @@ export interface AssessmentSummary {
   accuracy: number | null;
   unlabeledQuestions: number;
   savings: null;
+  /** Full retained history, grouped by consumer and model; no sampling from the visible page. */
+  modelTotals?: Array<{
+    consumer: AssessmentRecord['consumer'];
+    provider: string;
+    model: string;
+    calls: number;
+    completed: number;
+    attemptedCalls: number;
+    unknownAttemptCalls: number;
+    tokens: number;
+    callsWithUsage: number;
+    unknownCharges: number;
+    knownEstimatedUsd: number;
+    knownReportedUsd: number;
+    knownUnclassifiedUsd: number;
+    medianLatencyMs: number | null;
+    medianEndToEndMs: number | null;
+  }>;
   groups: Array<{
     consumer?: AssessmentRecord['consumer'];
     provider: string;

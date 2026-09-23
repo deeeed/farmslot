@@ -204,6 +204,54 @@ test('approval precedes all calls; approved synthetic advice has actual usage an
   }
 });
 
+test('provider abstentions retain paid receipts but give the worker no advice', async () => {
+  for (const choice of ['none', 'runner.stderr'] as const) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'navigation-abstention-'));
+    try {
+      const sealed = sealAdvicePlan(cases);
+      const paths = await approvedPaths(
+        directory,
+        sealed.hash,
+        adviceReservation(sealed, config).configHash,
+      );
+      const mock: AssessmentProvider = {
+        id: 'fixture',
+        defaultModel: config.model,
+        credentialEnv: 'MOCK_KEY',
+        capabilities: ['choice'],
+        async assess() {
+          return {
+            returnedModel: config.model,
+            answers: {
+              first_read: {
+                type: 'choice',
+                choice,
+                choices: ['runner.stderr', 'slot.health', 'none'],
+                confidence: choice === 'none' ? 0.9 : 0.1,
+              },
+            },
+            usage: {
+              requestId: `abstain-${choice}`,
+              inputTokens: 100,
+              outputTokens: 20,
+              durationMs: 2,
+            },
+          };
+        },
+      };
+      const result = await generateNavigationAdvice(sealed, config, paths, mock);
+      assert.equal(result.stopReason, 'completed');
+      assert.equal(result.advice[0].text, null);
+      assert.equal(result.advice[0].receipt.inputTokens, 100);
+      assert.equal(result.advice[0].receipt.outputTokens, 20);
+      assert.equal(result.advice[0].receipt.costUsd, 0.00012);
+      assert.equal(result.journalSha256, hash(await readFile(paths.journalPath, 'utf8')));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test('TypeSafe adapter sends a Choice to systemone and never transmits unread source text', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'navigation-typesafe-'));
   try {

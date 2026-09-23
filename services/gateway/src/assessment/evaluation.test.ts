@@ -428,6 +428,93 @@ test('triage cause display requires matched evidence in both clients', () => {
   assert.equal(failureTriageCause(r), undefined);
 });
 
+test('model totals keep failures, missing usage and cost provenance in separate cohorts', () => {
+  const jev = row(),
+    missingUsage = row(),
+    llm = row();
+  for (const record of [jev, missingUsage, llm]) {
+    record.consumer = 'decision-advice';
+    record.subject = {
+      run: { id: record.id, project: 'fixture', step: 'decision', snapshotHash: 'c'.repeat(64) },
+    };
+    delete record.recommendation;
+    record.result!.answers = {
+      action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
+    };
+  }
+  jev.result!.provider = 'typesafe';
+  jev.result!.requestedModel = 'jev-1.13.0';
+  jev.result!.attempted = true;
+  jev.result!.usage = {
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+    inputTokens: 100,
+    outputTokens: 20,
+    costUsd: 0.00002,
+    costKind: 'estimated',
+    durationMs: 40,
+  };
+  jev.completedAt = '2026-01-01T00:00:00.100Z';
+  missingUsage.status = 'unavailable';
+  missingUsage.result = {
+    status: 'unavailable',
+    attempted: true,
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+    error: 'Provider usage missing',
+  };
+  llm.result!.provider = 'llm-response';
+  llm.result!.requestedModel = 'model-b';
+  llm.result!.attempted = true;
+  llm.result!.usage = {
+    provider: 'llm-response',
+    requestedModel: 'model-b',
+    inputTokens: 80,
+    outputTokens: 20,
+    costUsd: 0.0002,
+    costKind: 'reported',
+    durationMs: 150,
+  };
+  llm.completedAt = '2026-01-01T00:00:00.300Z';
+  const summary = summarizeAssessments([llm, missingUsage, jev]);
+  assert.deepEqual(summary.modelTotals, [
+    {
+      consumer: 'decision-advice',
+      provider: 'llm-response',
+      model: 'model-b',
+      calls: 1,
+      completed: 1,
+      attemptedCalls: 1,
+      unknownAttemptCalls: 0,
+      tokens: 100,
+      callsWithUsage: 1,
+      unknownCharges: 0,
+      knownEstimatedUsd: 0,
+      knownReportedUsd: 0.0002,
+      knownUnclassifiedUsd: 0,
+      medianLatencyMs: 150,
+      medianEndToEndMs: 300,
+    },
+    {
+      consumer: 'decision-advice',
+      provider: 'typesafe',
+      model: 'jev-1.13.0',
+      calls: 2,
+      completed: 1,
+      attemptedCalls: 2,
+      unknownAttemptCalls: 0,
+      tokens: 120,
+      callsWithUsage: 1,
+      unknownCharges: 1,
+      knownEstimatedUsd: 0.00002,
+      knownReportedUsd: 0,
+      knownUnclassifiedUsd: 0,
+      medianLatencyMs: 40,
+      medianEndToEndMs: 100,
+    },
+  ]);
+});
+
 test('legacy cost amounts are not relabeled as provider-reported', () => {
   const legacy = row(),
     estimated = row(),

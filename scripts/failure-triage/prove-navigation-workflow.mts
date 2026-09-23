@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   advance,
   armOrder,
+  initialPrompt,
   nextPrompt,
   startSession,
   type Action,
@@ -61,7 +62,7 @@ cli(true, 'seal-advice', file('cases.json'), file('advice-plan.json'));
 const advicePlan = JSON.parse(await readFile(file('advice-plan.json'), 'utf8'));
 const advice = cases.map((item, index) => ({
   caseId: item.id,
-  text: 'Read runner.stderr first.',
+  text: index === 0 ? 'Read runner.stderr first.' : null,
   receipt: {
     responseId: `advice-${index}`,
     receiptHash: sha(`advice-${index}`),
@@ -113,6 +114,16 @@ cli(
   file('worker-plan.json'),
 );
 const plan = JSON.parse(await readFile(file('worker-plan.json'), 'utf8'));
+// Abstention must not add advice to the worker prompt, but its receipt stays charged.
+assert.equal(
+  initialPrompt(plan, cases[1].id, 'assisted'),
+  initialPrompt(plan, cases[1].id, 'baseline'),
+);
+assert.notEqual(
+  initialPrompt(plan, cases[0].id, 'assisted'),
+  initialPrompt(plan, cases[0].id, 'baseline'),
+);
+assert.equal(plan.advice[1].receipt.inputTokens, 12);
 const config = { provider: 'fixture', model: 'fixture-worker' },
   method = 'Offline fixture method.',
   methodHash = sha(method);

@@ -125,6 +125,70 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
       groups.set(key, group);
     }
   }
+  const modelRows = new Map<string, AssessmentRecord[]>();
+  for (const record of rows) {
+    const { consumer, provider, model } = assessmentCohort(record);
+    const key = JSON.stringify([consumer, provider, model]);
+    const cohort = modelRows.get(key) ?? [];
+    cohort.push(record);
+    modelRows.set(key, cohort);
+  }
+  const modelTotals: NonNullable<AssessmentSummary['modelTotals']> = [...modelRows.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, cohort]) => {
+      const [consumer, provider, model] = JSON.parse(key) as [
+        AssessmentRecord['consumer'],
+        string,
+        string,
+      ];
+      const latencies = cohort.flatMap((r) => (r.result?.usage ? [r.result.usage.durationMs] : []));
+      const durations = cohort.flatMap((r) =>
+        r.completedAt ? [Date.parse(r.completedAt) - Date.parse(r.startedAt)] : [],
+      );
+      return {
+        consumer,
+        provider,
+        model,
+        calls: cohort.length,
+        completed: cohort.filter((r) => r.status === 'completed').length,
+        attemptedCalls: cohort.filter((r) => r.result?.attempted === true).length,
+        unknownAttemptCalls: cohort.filter(
+          (r) => r.result?.attempted === undefined && !['disabled', 'skipped'].includes(r.status),
+        ).length,
+        tokens: cohort.reduce(
+          (sum, r) =>
+            sum + (r.result?.usage?.inputTokens ?? 0) + (r.result?.usage?.outputTokens ?? 0),
+          0,
+        ),
+        callsWithUsage: cohort.filter(
+          (r) =>
+            r.result?.usage?.inputTokens !== undefined && r.result.usage.outputTokens !== undefined,
+        ).length,
+        unknownCharges: cohort.filter(
+          (r) =>
+            r.result?.attempted !== false &&
+            !['disabled', 'skipped'].includes(r.status) &&
+            r.result?.usage?.costUsd === undefined,
+        ).length,
+        knownEstimatedUsd: cohort.reduce(
+          (sum, r) =>
+            sum + (r.result?.usage?.costKind === 'estimated' ? (r.result.usage.costUsd ?? 0) : 0),
+          0,
+        ),
+        knownReportedUsd: cohort.reduce(
+          (sum, r) =>
+            sum + (r.result?.usage?.costKind === 'reported' ? (r.result.usage.costUsd ?? 0) : 0),
+          0,
+        ),
+        knownUnclassifiedUsd: cohort.reduce(
+          (sum, r) =>
+            sum + (r.result?.usage?.costKind === undefined ? (r.result?.usage?.costUsd ?? 0) : 0),
+          0,
+        ),
+        medianLatencyMs: percentile(latencies, 0.5),
+        medianEndToEndMs: percentile(durations, 0.5),
+      };
+    });
   const representatives = representativeAssessments(rows);
   for (const record of representatives) {
     for (const questionId of Object.keys(record.result?.answers ?? {})) {
@@ -198,6 +262,7 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
     accuracy: values.length === 1 && correct + incorrect ? correct / (correct + incorrect) : null,
     unlabeledQuestions: total('unlabeled'),
     savings: null,
+    modelTotals,
     groups: values,
   };
 }

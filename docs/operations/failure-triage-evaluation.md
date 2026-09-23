@@ -240,6 +240,7 @@ rejected quality, so a study-wide efficiency total is deliberately absent.
 Do not rerun or retune this frozen corpus to seek a positive result. A new
 study would need to isolate named hints from the abstention-prompt effect and
 freeze new cases before further candidate calls.
+All five named hints matched the baseline first read. Seven of eight references require two reads, the study limit, so this corpus could not demonstrate fewer reads for those cases. For new results, a provider abstention is recorded as null advice: the assisted worker receives the same prompt as the baseline for that case, while the advice call remains in assisted token, cost and time totals. Old sealed results and their generic abstention text are unchanged. Before another live study, independently review and freeze fresh cases with enough optional evidence and read budget for a better first choice to save work. Report named-hint and abstention cases separately, and retain advice-inclusive totals.
 
 Private raw plans, approvals, journals, blind judgments and the scored report
 are retained at `temp/triage/navigation-v1-luna/` in the operator checkout.
