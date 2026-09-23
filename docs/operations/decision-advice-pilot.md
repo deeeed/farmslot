@@ -58,7 +58,11 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
 4. Refresh the decision panel. `decision.advice.get` shows admission without
    making a model call. Press **Get recommendation** once to request an
    assessment. Inspect its saved answer, attempted call, provider/model,
-   usage and cost in the panel and assessment history. Missing usage remains
+   usage and cost in the panel and assessment history. Open Intelligence >
+   Assessments and select Decision recommendations to see past answers, provider,
+   model and your rating. Use View decision in run to inspect the original
+   decision and the action you took. History is retained for 30 days. Missing
+   usage remains
    an unknown charge. Do not repeat a request to improve a weak answer.
    Do not edit the admitted entry or price during an in-flight request. If
    either changes before dispatch, the skipped reservation remains unavailable

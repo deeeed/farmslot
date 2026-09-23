@@ -17,11 +17,19 @@ import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { getHashParam } from '../../utils/url-state.js';
 
+function adviceRating(record: AssessmentRecord): string {
+  const feedback = record.feedback.filter((item) => item.questionId === 'action').at(-1);
+  return feedback
+    ? `Your rating: ${feedback.verdict} · Advice used: ${feedback.adviceUsed ? 'yes' : 'no'}`
+    : 'Not rated';
+}
+
 @customElement('assessment-panel')
 export class AssessmentPanel extends LitElement {
   @property({ attribute: false }) injectedHistory: AssessmentHistoryResult | null = null;
   @property({ attribute: false }) injectedSummary: AssessmentSummary | null = null;
   @state() private records: AssessmentRecord[] = [];
+  @state() private historyFilter: 'all' | 'decision-advice' = 'all';
   @state() private summary: AssessmentSummary | null = null;
   @state() private error = '';
   @state() private busy = false;
@@ -140,8 +148,11 @@ export class AssessmentPanel extends LitElement {
     if (this.busy || this.injectedHistory || !this.isConnected) return;
     this.busy = true;
     try {
+      const consumer =
+        this.historyFilter === 'decision-advice' ? { consumer: 'decision-advice' } : {};
       const [history, summary] = await Promise.all([
         gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
+          ...consumer,
           limit: 50,
           ...(more && this.cursor ? { before: this.cursor } : {}),
         }),
@@ -154,6 +165,7 @@ export class AssessmentPanel extends LitElement {
       if (!more && !selectedId) {
         for (let i = 1; i < this.loadedPages && page.nextCursor; i++) {
           page = await gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
+            ...consumer,
             limit: 50,
             before: page.nextCursor,
           });
@@ -265,6 +277,31 @@ export class AssessmentPanel extends LitElement {
         Advisory only. No review, dispatch or publication action is applied. History covers the last
         30 days.
       </p>
+      <label
+        >History
+        <select
+          data-action="history-filter"
+          .value=${this.historyFilter}
+          ?disabled=${Boolean(this.selectedId)}
+          @change=${(event: Event) => {
+            this.historyFilter = (event.target as HTMLSelectElement).value as
+              | 'all'
+              | 'decision-advice';
+            this.loadedPages = 1;
+            this.cursor = undefined;
+            this.records = this.injectedHistory
+              ? this.injectedHistory.records.filter(
+                  (record) => this.historyFilter === 'all' || record.consumer === 'decision-advice',
+                )
+              : [];
+            if (this.busy) this.reloadPending = true;
+            else void this.load();
+          }}
+        >
+          <option value="all">All assessments</option>
+          <option value="decision-advice">Decision recommendations</option>
+        </select>
+      </label>
       <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
         Refresh
       </button>
@@ -278,6 +315,9 @@ export class AssessmentPanel extends LitElement {
       >
         ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
+      ${this.selectedId
+        ? html`<a href="#intelligence?tab=assessments">Show all history</a>`
+        : nothing}
       ${this.auditError ? html`<p role="alert" class="error">${this.auditError}</p>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${s
@@ -326,7 +366,9 @@ export class AssessmentPanel extends LitElement {
       )}
       ${this.records.length === 0
         ? html`<p>
-            No assessments recorded. Ordinary run monitoring does not invoke this feature.
+            ${this.historyFilter === 'decision-advice'
+              ? 'No decision recommendations recorded.'
+              : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
           </p>`
         : nothing}
       ${repeat(
@@ -342,6 +384,12 @@ export class AssessmentPanel extends LitElement {
                   ? `${record.subject.run.project} · run ${record.subject.run.id} · ${record.subject.run.step} @ ${record.subject.run.snapshotHash.slice(0, 8)}`
                   : 'Synthetic connection test'}
               · ${record.startedAt}
+              ${record.consumer === 'decision-advice' && record.subject.run
+                ? html` ·
+                    <a href=${`#runs?run=${encodeURIComponent(record.subject.run.id)}`}
+                      >View decision in run</a
+                    >`
+                : nothing}
             </p>
             <p>
               Recommendation:
@@ -356,13 +404,16 @@ export class AssessmentPanel extends LitElement {
                       : 'Unavailable'
                   : (record.recommendation?.route ?? 'Not assessed')}
               ${record.consumer === 'decision-advice'
-                ? '· Action: none'
+                ? `· ${adviceRating(record)}`
                 : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
-              ${record.result?.provider ?? 'No provider'} /
-              ${record.result?.returnedModel ?? record.result?.requestedModel ?? 'No model'} ·
-              ${record.result?.error ?? record.result?.monitoringError ?? ''}
+              ${record.result?.provider ?? record.requestedIdentity?.provider ?? 'No provider'} /
+              ${record.result?.returnedModel ??
+              record.result?.requestedModel ??
+              record.requestedIdentity?.model ??
+              'No model'}
+              · ${record.result?.error ?? record.result?.monitoringError ?? ''}
             </p>
             <details ?open=${Boolean(this.selectedId)}>
               <summary>Answers, provenance and feedback</summary>
