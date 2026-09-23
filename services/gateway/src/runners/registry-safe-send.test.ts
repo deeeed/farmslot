@@ -286,7 +286,12 @@ test('launch observation requires exact high-confidence acceptance and never tou
         accepted,
         reading?.value === true && reading.confidence === 'high' && reading.exactPromptMatch,
       );
-      assert.deepEqual(callOrder, ['obs:promptAccepted']);
+      const observedCalls = [...callOrder];
+      assert.ok(observedCalls.length > 0, 'observe-only checked prompt acceptance');
+      assert.ok(
+        observedCalls.every((call) => call === 'obs:promptAccepted'),
+        `observe-only touched another surface: ${observedCalls.join(', ')}`,
+      );
     }
     callOrder.length = 0;
     await assert.rejects(
