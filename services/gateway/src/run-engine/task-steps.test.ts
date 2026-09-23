@@ -88,7 +88,13 @@ test('GRADE persists a suggested profile and does not re-open the gate on retry'
     getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
   };
 
-  await executeGradeStep(run.id, run, new Map(), deps);
+  const first = await executeGradeStep(run.id, run, new Map(), deps);
+  assert.equal(first.outputs?.profileFitOverride, undefined);
+  assert.deepEqual(
+    (first.outputs?.profileFitSelection as Record<string, unknown>)?.selectedBy,
+    'user',
+  );
+  assert.ok(getRun(run.id)?.engineState?.validationPlan?.length);
   assert.deepEqual(actions, [['use_suggested_profile', 'continue', 'abort']]);
   assert.equal(getRun(run.id)?.prepareProfile, 'sandbox-companion');
 
@@ -140,6 +146,7 @@ test('GRADE does not offer a companion profile on a bound CLI slot without simul
   assert.equal(getRun(run.id)?.prepareProfile, undefined);
   assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
   assert.ok(result.outputs?.profileFitOverride);
+  assert.equal(result.outputs?.profileFitSelection, undefined);
 });
 
 test('GRADE rechecks a compatible bound slot before saving the suggested profile', async (t) => {
@@ -206,7 +213,7 @@ test('GRADE leaves the configured core baseline unblocked', async (t) => {
       decisionCalls += 1;
       return 'continue';
     },
-    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
+    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
     loadProjectVarsOrNull: async () =>
       ({
         projectJson: {
@@ -218,6 +225,130 @@ test('GRADE leaves the configured core baseline unblocked', async (t) => {
       }) as never,
   });
   assert.equal(decisionCalls, 0);
+});
+
+test('GRADE advises on a core companion ticket when the bound slot cannot host a simulator', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-CORE-NO-SIM',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-core-no-sim' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_id, reason, text, choices) => {
+      assert.equal(reason, 'prepare_profile_mismatch');
+      assert.match(text, /Start a new run on a compatible slot/);
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [cliSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            core: { phases: ['git'] },
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.ok(result.outputs?.profileFitOverride);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
+});
+
+test('GRADE keeps the validation plan when continuing with a compatible bound slot', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-CONTINUE-PLAN',
+    slotId: profileFitSlotId,
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: {
+      evalExperiment: { experimentId: 'profile-fit-continue-plan' },
+    } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async (_id, _reason, _text, choices) => {
+      assert.ok(choices.some((choice) => choice.id === 'use_suggested_profile'));
+      return 'continue';
+    },
+    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
+  assert.ok(getRun(run.id)?.engineState?.validationPlan?.length);
+  assert.ok(result.outputs?.profileFitOverride);
+  assert.equal(result.outputs?.profileFitSelection, undefined);
+});
+
+test('GRADE does not offer profile advice before a slot is bound', async (t) => {
+  const run = createRun({
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    ticketOrPr: 'PROFILE-FIT-UNBOUND',
+    ticketData: profileFitTicket,
+    mode: 'interactive',
+    engineState: { evalExperiment: { experimentId: 'profile-fit-unbound' } } as Run['engineState'],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(run.id);
+  });
+  const result = await executeGradeStep(run.id, run, new Map(), {
+    createEngineDecision: async () => {
+      throw new Error('Unbound GRADE must not ask for profile advice');
+    },
+    getFleetStatus: async () => {
+      throw new Error('Unbound GRADE must not query fleet');
+    },
+    loadProjectVarsOrNull: async () =>
+      ({
+        projectJson: {
+          prepare: {
+            default: 'sandbox',
+            profiles: {
+              sandbox: { phases: ['git'] },
+              'sandbox-companion': { phases: ['git'] },
+            },
+          },
+        },
+      }) as never,
+  });
+  assert.equal(result.outputs?.profileFitOverride, undefined);
+  assert.equal(result.outputs?.profileFitSelection, undefined);
+  assert.equal(getRun(run.id)?.prepareProfile, undefined);
 });
 
 const trackerTicket: RunTicketData = {

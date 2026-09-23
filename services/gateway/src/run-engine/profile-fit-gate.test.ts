@@ -136,9 +136,7 @@ test('profile fit validation plan keeps companion proof on dispatch slot', () =>
   assert.equal(companionStep?.slot, undefined);
 });
 
-test('profile fit may false-positive on expo substring inside exposes (advisory only)', () => {
-  // Token match is substring-based; "exposes" contains "expo". Callers must not
-  // stamp suggestedPrepareProfile onto queue items — selection is explicit-only.
+test('profile fit does not treat exposes as Expo', () => {
   const result = detectProfileFit(
     run(),
     {
@@ -153,6 +151,34 @@ test('profile fit may false-positive on expo substring inside exposes (advisory 
     },
     { slotPlatform: 'cli' },
   );
-  // Advisory surface may still suggest companion; effective selection ignores this.
-  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
+  assert.equal(result, null);
+});
+
+test('profile fit still recognizes Expo as an independent term', () => {
+  assert.equal(
+    detectProfileFit(
+      run(),
+      { ...companionTicket, description: 'Use Expo to build the app.' },
+      { slotPlatform: 'cli' },
+    )?.suggestedPrepareProfile,
+    'sandbox-companion',
+  );
+});
+
+test('profile fit advises core only when a bound Companion slot lacks a simulator', () => {
+  const context = {
+    slotPlatform: 'cli',
+    effectivePrepareProfile: 'core',
+    availablePrepareProfiles: ['core', 'sandbox', 'sandbox-companion'],
+  };
+  assert.equal(detectProfileFit(run(), companionTicket, context), null);
+  assert.equal(
+    detectProfileFit(run(), companionTicket, { ...context, boundSlotHasCompanionResource: true }),
+    null,
+  );
+  assert.equal(
+    detectProfileFit(run(), companionTicket, { ...context, boundSlotHasCompanionResource: false })
+      ?.suggestedPrepareProfile,
+    'sandbox-companion',
+  );
 });

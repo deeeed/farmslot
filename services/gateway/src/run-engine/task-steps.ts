@@ -34,7 +34,10 @@ import {
   gradeTicket,
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
-import { companionResourceBlocker } from '../methods/dispatch/slot-scoring.js';
+import {
+  companionResourceBlocker,
+  slotHasCompanionResource,
+} from '../methods/dispatch/slot-scoring.js';
 import {
   configuredPrepareProfileNames,
   resolvePrepareProfile,
@@ -274,6 +277,7 @@ export async function executeGradeStep(
   }
   let projectMismatchOverride: Record<string, unknown> | null = null;
   let profileFitOverride: Record<string, unknown> | null = null;
+  let profileFitSelection: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
     const actionId = await decide(
@@ -319,12 +323,15 @@ export async function executeGradeStep(
       resolvedProfileFit = detectProfileFit(run, ticketData, {
         app: run.app,
         slotPlatform,
+        ...(boundSlot
+          ? { boundSlotHasCompanionResource: slotHasCompanionResource(boundSlot) }
+          : {}),
         effectivePrepareProfile: currentPrepareProfile,
         availablePrepareProfiles: configuredPrepareProfileNames(profileProjectVars.projectJson),
       });
     }
   }
-  if (resolvedProfileFit) {
+  if (resolvedProfileFit && run.slotId) {
     // FIND_SLOT has already claimed this slot. Advice cannot silently change the
     // resource requirements of that binding; the operator must pick another slot
     // in a new run if this one cannot support the suggested profile.
@@ -380,7 +387,7 @@ export async function executeGradeStep(
         );
       }
       updateRun(runId, { prepareProfile: resolvedProfileFit.suggestedPrepareProfile });
-      profileFitOverride = {
+      profileFitSelection = {
         profileFit: resolvedProfileFit,
         selectedPrepareProfile: resolvedProfileFit.suggestedPrepareProfile,
         selectedBy: 'user',
@@ -394,9 +401,7 @@ export async function executeGradeStep(
         engineState: {
           ...current.engineState,
           profileFitSuggestion: resolvedProfileFit,
-          ...(!resourceBlocker && actionId === 'use_suggested_profile'
-            ? { validationPlan: resolvedProfileFit.validationPlan }
-            : {}),
+          ...(!resourceBlocker ? { validationPlan: resolvedProfileFit.validationPlan } : {}),
         },
       });
     }
@@ -431,6 +436,7 @@ export async function executeGradeStep(
   const outputs: Record<string, unknown> = { flowTypeMismatch };
   if (projectMismatchOverride) outputs.projectMismatchOverride = projectMismatchOverride;
   if (profileFitOverride) outputs.profileFitOverride = profileFitOverride;
+  if (profileFitSelection) outputs.profileFitSelection = profileFitSelection;
   if (ticketData && run.engineState?.evalExperiment) {
     const grade = {
       difficulty: 'medium' as const,

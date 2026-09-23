@@ -19,7 +19,14 @@ const COMPANION_TOKENS = [
   'metro',
 ];
 
-const GATEWAY_TOKENS = ['gateway', 'protocol', 'rpc', 'run-engine', 'slot.prepare', 'services/gateway'];
+const GATEWAY_TOKENS = [
+  'gateway',
+  'protocol',
+  'rpc',
+  'run-engine',
+  'slot.prepare',
+  'services/gateway',
+];
 
 const COMMAND_CENTER_TOKENS = [
   'command center',
@@ -36,6 +43,8 @@ const SANDBOX_COMPANION_PROFILE = 'sandbox-companion';
 
 export type ProfileFitContext = {
   slotPlatform?: string | null;
+  /** False only for a bound slot that cannot host Companion. Unset for advisory previews. */
+  boundSlotHasCompanionResource?: boolean;
   /** The profile the prepare resolver will use when the operator made no explicit choice. */
   effectivePrepareProfile?: string | null;
   /** Names present in the project's validated prepare catalog. */
@@ -60,7 +69,9 @@ function buildHaystack(run: Run, ticketData: RunTicketData | null): string {
 }
 
 function haystackMatches(haystack: string, tokens: readonly string[]): boolean {
-  return tokens.some((token) => haystack.includes(token));
+  return tokens.some((token) =>
+    token === 'expo' ? /\bexpo\b/.test(haystack) : haystack.includes(token),
+  );
 }
 
 function detectSurfaces(haystack: string): {
@@ -169,13 +180,15 @@ export function detectProfileFit(
     run.prepareProfile?.trim() ||
     defaultPrepareProfile(context.slotPlatform);
 
-  // `core` deliberately starts only checkout/dependency state. A worker can
-  // acquire browser and Companion capabilities when its validation needs them,
-  // so the project's configured lazy baseline is not a profile mismatch.
-  if (currentProfile === 'core') return null;
+  // `core` starts only checkout/dependency state and workers can acquire
+  // capabilities later. But a bound slot with no simulator cannot acquire
+  // Companion, so the operator needs to know before continuing.
+  if (currentProfile === 'core' && context.boundSlotHasCompanionResource !== false) return null;
 
   const gatewayOnlyMismatch =
-    surfaces.companion && GATEWAY_ONLY_PROFILES.has(currentProfile) && !context.prepareProfile?.trim();
+    surfaces.companion &&
+    GATEWAY_ONLY_PROFILES.has(currentProfile) &&
+    !context.prepareProfile?.trim();
   const companionMismatch =
     (surfaces.gateway || surfaces.commandCenter) &&
     COMPANION_PROFILES.has(currentProfile) &&
