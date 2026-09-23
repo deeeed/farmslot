@@ -313,10 +313,12 @@ export function isVisibleWithin(
   );
 }
 
+/** A bar spans at least half of one viewport axis; when it spans both, the fuller axis wins. */
 function barAxis(occlusion: UiRect, viewport: UiRect): 'horizontal' | 'vertical' | undefined {
-  if (occlusion.width >= viewport.width / 2) return 'horizontal';
-  if (occlusion.height >= viewport.height / 2) return 'vertical';
-  return undefined;
+  const widthShare = occlusion.width / viewport.width;
+  const heightShare = occlusion.height / viewport.height;
+  if (widthShare < 0.5 && heightShare < 0.5) return undefined;
+  return widthShare >= heightShare ? 'horizontal' : 'vertical';
 }
 
 function intersects(a: UiRect, b: UiRect): boolean {

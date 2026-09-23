@@ -32,6 +32,8 @@ interface FakeElement {
   top: number;
   /** Horizontal position inside the content; defaults to 16. */
   left?: number;
+  /** Defaults to 200. */
+  width?: number;
   height: number;
   /** False models a flattened Text node: present, but with no box. */
   measurable?: boolean;
@@ -66,7 +68,7 @@ class FakeSurface {
         bounds: {
           x: VIEWPORT.x + (element.left ?? 16) - this.offset.x,
           y: VIEWPORT.y + element.top + shift - this.offset.y,
-          width: 200,
+          width: element.width ?? 200,
           height: element.height,
         },
       };
@@ -471,6 +473,20 @@ test('a full-height side panel trims the viewport edge and the target moves besi
   const output = scrollOutput(trace[0]);
   assert.deepEqual(output.safeViewport, { x: 0, y: 100, width: 300, height: 500 });
   assert.deepEqual(output.after?.targetBounds, { x: 100, y: 300, width: 200, height: 40 });
+});
+
+test('a wide full-height side panel trims the side, not the whole height', async () => {
+  // Panel covers x 190-400 (over half the width) for the full height; the row at x 20-120 is clear.
+  const surface = new FakeSurface({
+    elements: { filters: { top: 200, left: 20, width: 100, height: 40 } },
+    occlusions: [{ x: 190, y: 100, width: 210, height: 500 }],
+  });
+  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { status, trace } = await runScrollRecipe(transport, [{ target_test_id: 'filters' }]);
+  assert.equal(status, 'pass', JSON.stringify(trace[0]));
+  const output = scrollOutput(trace[0]);
+  assert.deepEqual(output.safeViewport, { x: 0, y: 100, width: 190, height: 500 });
+  assert.equal(output.alreadyVisible, true);
 });
 
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
