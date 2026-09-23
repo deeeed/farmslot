@@ -1009,6 +1009,20 @@ export async function runReplayStep(
                   agent: slot.agent,
                 };
               }
+              if (reclaim.ok && slot.handoff_run_id === params.runId) {
+                priorOwnedSlotFields = {
+                  lifecycle: slot.lifecycle,
+                  phase: slot.phase,
+                  agent: slot.agent,
+                  current_run_id: slot.current_run_id ?? null,
+                  current_flow_type: slot.current_flow_type,
+                  current_ticket_or_pr: slot.current_ticket_or_pr,
+                  current_mode: slot.current_mode,
+                  current_family_id: slot.current_family_id,
+                  current_lane: slot.current_lane,
+                  current_variant: slot.current_variant,
+                };
+              }
               return reclaim.ok;
             },
             {
@@ -1558,7 +1572,13 @@ export async function runReplayStep(
             rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
           );
           if (!release.released) {
-            throw new Error('slot release refused without releasing the reclaimed claim');
+            const current = await readSlotRow(reclaimedSlotId);
+            if (
+              current?.current_run_id === params.runId &&
+              current.slot_epoch === reclaimedSlotEpoch
+            ) {
+              throw new Error('slot release refused while replay still owns the reclaimed slot');
+            }
           }
         }
       } catch (releaseErr) {

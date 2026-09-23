@@ -600,14 +600,16 @@ try {
   }
   const reservedRollback = denied(
     { runId: reservedRollbackRunId, stepName: 'prepare' },
-    /Injected replay failure after claim.*rollback of reclaimed slot.*failed.*slot release refused/s,
+    /Injected replay failure after claim/,
   );
   assert.equal(reservedRollback.slotId, reservedRollbackSlotId);
   const reservedRow = JSON.parse(
     readFileSync(path.join(root, '.farm-status.json'), 'utf8'),
   ).slots.find((candidate) => candidate.slot === reservedRollbackSlotId);
-  assert.equal(reservedRow?.current_run_id, reservedRollbackRunId);
+  assert.equal(reservedRow?.current_run_id, null);
   assert.equal(reservedRow?.handoff_run_id, reservedRollbackRunId);
+  assert.equal(reservedRow?.lifecycle, 'ready');
+  assert.equal(reservedRow?.phase, 'idle');
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
