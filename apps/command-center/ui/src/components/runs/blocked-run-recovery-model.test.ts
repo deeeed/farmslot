@@ -5,8 +5,8 @@ import type { Run } from '@farmslot/protocol';
 
 import {
   blockedWorkerOwnsSlot,
-  blockedWorkerSignalPath,
   canResumeBlockedWorkerMonitor,
+  isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
 
 const run = {
@@ -26,17 +26,14 @@ const run = {
   ],
 } as unknown as Run;
 
-test('signal path stays inside the selected Farmslot worker task', () => {
-  assert.equal(blockedWorkerSignalPath({ ...run, project: 'other' }), null);
+test('recovery follows a blocked worker monitor regardless of project', () => {
+  assert.equal(isRecoverableBlockedWorkerRun(run), true);
+  assert.equal(isRecoverableBlockedWorkerRun({ ...run, project: 'other' }), true);
   assert.equal(
-    blockedWorkerSignalPath({
-      ...run,
-      agentContexts: [
-        { runId: 'run-1', signalFile: '.sandbox/farmslot-farm/worker-task/../private/SIGNAL.json' },
-      ],
-    } as Run),
-    null,
+    isRecoverableBlockedWorkerRun({ ...run, decisions: [{ id: 'pending' }] } as Run),
+    false,
   );
+  assert.equal(isRecoverableBlockedWorkerRun({ ...run, steps: [] }), false);
 });
 
 test('monitor replay requires a fresh non-blocked worker signal', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { Events, type RunDecision } from '@farmslot/protocol';
+import { Events, type Run, type RunDecision } from '@farmslot/protocol';
 
 import {
   addItem,
@@ -19,6 +19,7 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 import { runForceComplete } from './lifecycle-control.js';
 import {
   canAdoptTaskSignalAfterUncertainDispatch,
+  freshBlockedMonitorAttempt,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
   readAdoptableTaskSignal,
@@ -94,6 +95,55 @@ test('uncertain dispatch accepts only a fresh task-local signal with an attempt 
       timestamp: '2026-09-03T07:59:59.000Z',
     }),
     false,
+  );
+});
+
+test('blocked monitor replay binds a fresh completed attempt before monitoring resumes', () => {
+  const oldSignal = { status: 'blocked', attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' };
+  const run = {
+    status: 'blocked' as const,
+    steps: [
+      { name: 'monitor', status: 'done', outputs: { workerSignal: oldSignal } },
+    ] as Run['steps'],
+  };
+  const signal = {
+    status: 'complete',
+    attemptId: 'new',
+    timestamp: '2026-09-23T01:01:00Z',
+  } as const;
+  const context = { id: 'worker', role: 'fix-bug' } as const;
+  assert.deepEqual(
+    freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
+    signal,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: false, code: 'stale', message: '', signal: { ...signal, attemptId: 'old' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: false, code: 'stale', message: '', signal: { ...signal, contextId: 'other' } },
+      context,
+    ),
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      {
+        ok: false,
+        code: 'stale',
+        message: '',
+        signal: { ...signal, timestamp: oldSignal.timestamp },
+      },
+      context,
+    ),
+    null,
   );
 });
 

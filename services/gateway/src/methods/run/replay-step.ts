@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type AgentContext,
   DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
@@ -14,6 +15,7 @@ import {
   resolveRunSlotId,
   type Run,
   type RunEngineState,
+  type RunProbeWorkerSignalResult,
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
@@ -43,6 +45,7 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import { signalMatchesMonitorContext } from '../../run-engine/run-monitor.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -307,6 +310,37 @@ export function canAdoptTaskSignalAfterUncertainDispatch(
   const signalAt = parseStrictIsoMs(normalized.signal.timestamp);
   const dispatchStartedAt = parseStrictIsoMs(dispatch.startedAt);
   return signalAt !== null && dispatchStartedAt !== null && signalAt >= dispatchStartedAt;
+}
+
+export function freshBlockedMonitorAttempt(
+  run: Pick<Run, 'status' | 'steps'>,
+  probe: RunProbeWorkerSignalResult,
+  context?: Pick<AgentContext, 'id' | 'role'> | null,
+): WorkerSignal | null {
+  const monitor = run.steps.find((step) => step.name === PS.MONITOR);
+  const previous = monitor?.outputs?.workerSignal;
+  const previousSignal =
+    previous && typeof previous === 'object' ? (previous as Record<string, unknown>) : null;
+  const signal = probe.signal;
+  if (
+    run.status !== 'blocked' ||
+    monitor?.status !== 'done' ||
+    previousSignal?.status !== 'blocked' ||
+    !signal ||
+    !['ready', 'non_terminal', 'stale'].includes(probe.code) ||
+    !['running', 'done', 'complete'].includes(signal.status) ||
+    !signalMatchesMonitorContext(signal, context)
+  )
+    return null;
+  const signalAt = parseStrictIsoMs(signal.timestamp);
+  const previousAt = parseStrictIsoMs(
+    typeof previousSignal.timestamp === 'string' ? previousSignal.timestamp : undefined,
+  );
+  if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
+  if (typeof previousSignal.attemptId === 'string' && previousSignal.attemptId) {
+    return signal.attemptId && signal.attemptId !== previousSignal.attemptId ? signal : null;
+  }
+  return signal;
 }
 
 /**
@@ -593,6 +627,33 @@ export async function runReplayStep(
     console.log(
       `[run] replay from dispatch — adopted fresh task signal and resumed ${params.runId.slice(0, 8)} at monitor`,
     );
+  }
+  const previousMonitorSignal = existing.steps.find((step) => step.name === PS.MONITOR)?.outputs
+    ?.workerSignal;
+  const needsBlockedAttempt =
+    params.stepName === PS.MONITOR &&
+    replayStepName === PS.MONITOR &&
+    existing.status === 'blocked' &&
+    previousMonitorSignal &&
+    typeof previousMonitorSignal === 'object' &&
+    'status' in previousMonitorSignal &&
+    previousMonitorSignal.status === 'blocked';
+  const monitorContext = needsBlockedAttempt
+    ? (existing.agentContexts?.find(
+        (context) => context.role === primaryRoleForFlow(existing.flowType),
+      ) ?? existing.agentContexts?.[0])
+    : null;
+  const blockedAttempt = needsBlockedAttempt
+    ? freshBlockedMonitorAttempt(
+        existing,
+        await (
+          await import('../../run-engine/run-monitor.js')
+        ).probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext),
+        monitorContext,
+      )
+    : null;
+  if (needsBlockedAttempt && !blockedAttempt) {
+    throw new Error('A fresh worker signal is required before replaying this blocked monitor');
   }
   if (
     shouldRerouteEvalReplayToPrepare({
@@ -1144,15 +1205,16 @@ export async function runReplayStep(
             : context,
         )
       : existing.agentContexts;
-    const resetAgentContexts = adoptedTaskSignal
+    const replaySignal = adoptedTaskSignal ?? blockedAttempt;
+    const resetAgentContexts = replaySignal
       ? resetAgentContextsBase?.map((context) =>
           context.role === primaryRoleForFlow(existing.flowType)
             ? {
                 ...context,
                 status: 'working' as const,
                 completedAt: undefined,
-                lastSignalAt: adoptedTaskSignal.timestamp,
-                signalAttemptId: adoptedTaskSignal.attemptId,
+                lastSignalAt: replaySignal.timestamp,
+                signalAttemptId: replaySignal.attemptId,
               }
             : context,
         )

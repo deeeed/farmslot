@@ -3,9 +3,8 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   FleetStatusResult,
-  FsReadResult,
   Run,
-  RuntimeCapabilityAcquireResult,
+  RunProbeWorkerSignalResult,
   RuntimeCapabilityProofPlan,
   RuntimeCapabilityStatusResult,
   SlotStatus,
@@ -16,8 +15,8 @@ import { gateway } from '../../gateway-client.js';
 
 import {
   blockedWorkerOwnsSlot,
-  blockedWorkerSignalPath,
   canResumeBlockedWorkerMonitor,
+  isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
 
 @customElement('blocked-run-recovery')
@@ -86,7 +85,7 @@ export class BlockedRunRecovery extends LitElement {
     }
   }
 
-  private async refresh(): Promise<void> {
+  private async refresh(): Promise<boolean> {
     const run = this.run;
     const refreshSeq = ++this.refreshSeq;
     this.plan = null;
@@ -94,44 +93,51 @@ export class BlockedRunRecovery extends LitElement {
     this.status = null;
     this.ownedSlotStatus = null;
     this.error = '';
-    const signalPath = blockedWorkerSignalPath(run);
-    if (!signalPath || !run.slotId) return;
+    if (!isRecoverableBlockedWorkerRun(run) || !run.slotId) return false;
     try {
       const status = await gateway.request<RuntimeCapabilityStatusResult>(
         Methods.RUNTIME_CAPABILITY_STATUS,
         { slotId: run.slotId },
       );
-      if (refreshSeq !== this.refreshSeq) return;
+      if (refreshSeq !== this.refreshSeq) return false;
       this.status = status;
       this.plan = status.proofPlans[run.id] ?? null;
     } catch (error) {
-      if (refreshSeq !== this.refreshSeq) return;
+      if (refreshSeq !== this.refreshSeq) return false;
       this.error = error instanceof Error ? error.message : String(error);
     }
     try {
       const { fleet } = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
-      if (refreshSeq !== this.refreshSeq) return;
+      if (refreshSeq !== this.refreshSeq) return false;
       if (fleet.stale)
         throw new Error('Slot ownership is stale. Refresh the fleet before recovery.');
       this.ownedSlotStatus = fleet.slots.find((slot) => slot.slot === run.slotId) ?? null;
     } catch (error) {
-      if (refreshSeq !== this.refreshSeq) return;
+      if (refreshSeq !== this.refreshSeq) return false;
       this.error = [this.error, error instanceof Error ? error.message : String(error)]
         .filter(Boolean)
         .join('; ');
     }
     try {
-      const signal = await gateway.request<FsReadResult>(Methods.FS_READ, {
-        slotId: run.slotId,
-        path: signalPath,
-      });
-      if (refreshSeq === this.refreshSeq) this.signal = JSON.parse(signal.content);
+      const probe = await gateway.request<RunProbeWorkerSignalResult>(
+        Methods.RUN_PROBE_WORKER_SIGNAL,
+        {
+          runId: run.id,
+        },
+      );
+      if (refreshSeq !== this.refreshSeq) return false;
+      if (probe.code === 'ready' || probe.code === 'non_terminal' || probe.code === 'stale') {
+        this.signal = probe.signal ?? null;
+      } else {
+        this.error = [this.error, probe.message].filter(Boolean).join('; ');
+      }
     } catch (error) {
-      if (refreshSeq === this.refreshSeq)
-        this.error = [this.error, error instanceof Error ? error.message : String(error)]
-          .filter(Boolean)
-          .join('; ');
+      if (refreshSeq !== this.refreshSeq) return false;
+      this.error = [this.error, error instanceof Error ? error.message : String(error)]
+        .filter(Boolean)
+        .join('; ');
     }
+    return true;
   }
 
   private requirementsReady(): boolean {
@@ -145,51 +151,6 @@ export class BlockedRunRecovery extends LitElement {
           lease.health.state === 'healthy',
       ),
     );
-  }
-
-  private async acquireProof(): Promise<void> {
-    if (!this.plan || !this.run.slotId || this.busy) return;
-    const run = this.run;
-    this.busy = true;
-    this.error = '';
-    try {
-      const dependencyParameters = Object.fromEntries(
-        this.plan.requirements
-          .filter((requirement) => requirement.parameters)
-          .map((requirement) => [requirement.capabilityId, requirement.parameters!]),
-      );
-      for (const requirement of this.plan.requirements) {
-        await this.assertSlotOwned(run);
-        const result = await gateway.request<RuntimeCapabilityAcquireResult>(
-          Methods.RUNTIME_CAPABILITY_ACQUIRE,
-          {
-            slotId: run.slotId,
-            ownerRunId: run.id,
-            ownerFamilyId: run.familyId,
-            capabilityId: requirement.capabilityId,
-            proofRequirement: requirement,
-            parameters: requirement.parameters,
-            dependencyParameters,
-            revalidateHealth: true,
-          },
-          120_000,
-        );
-        if (!result.ok) throw new Error(result.conflict.reason);
-      }
-      const status = await gateway.request<RuntimeCapabilityStatusResult>(
-        Methods.RUNTIME_CAPABILITY_STATUS,
-        { slotId: run.slotId },
-      );
-      if (this.run.id === run.id) this.status = status;
-      if (!this.requirementsReady()) {
-        throw new Error('Proof providers are not healthy. Check the slot resource panel.');
-      }
-    } catch (error) {
-      if (this.run.id === run.id)
-        this.error = error instanceof Error ? error.message : String(error);
-    } finally {
-      this.busy = false;
-    }
   }
 
   private async assertSlotOwned(run: Run): Promise<void> {
@@ -207,10 +168,12 @@ export class BlockedRunRecovery extends LitElement {
     this.busy = true;
     this.error = '';
     try {
-      await this.refresh();
+      if (!(await this.refresh())) return;
       await this.assertSlotOwned(this.run);
       if (!this.requirementsReady() || !canResumeBlockedWorkerMonitor(this.run, this.signal)) {
-        throw new Error('Recovery is not ready. Check the worker signal and proof resources.');
+        throw new Error(
+          this.error || 'Recovery is not ready. Check the worker signal and proof resources.',
+        );
       }
       await this.replayMonitor();
     } catch (error) {
@@ -222,7 +185,7 @@ export class BlockedRunRecovery extends LitElement {
 
   protected render() {
     const run = this.run;
-    if (!run || run.status !== 'blocked' || run.metrics.disposition !== 'blocked') return nothing;
+    if (!run || !isRecoverableBlockedWorkerRun(run)) return nothing;
     const ready = this.requirementsReady();
     const unresolved =
       this.plan?.requirements.filter((requirement) =>
@@ -240,8 +203,8 @@ export class BlockedRunRecovery extends LitElement {
       <section data-testid="blocked-run-recovery" aria-label="Recover blocked worker">
         <h3>Recover this worker</h3>
         <p>
-          If this run still owns its slot, fix the blocker and have the worker run
-          <code>./mark start</code> before resuming monitoring.
+          If this run still owns its slot, fix the blocker and start a fresh worker attempt before
+          resuming monitoring. Farmslot workers can run <code>./mark start</code>.
         </p>
         ${!slotOwned
           ? html`<p>
@@ -254,24 +217,15 @@ export class BlockedRunRecovery extends LitElement {
               Proof resources:
               ${this.plan.requirements.map((requirement) => requirement.capabilityId).join(', ')}.
               ${ready
-                ? 'Leases are healthy.'
+                ? 'Leases were healthy at their last check.'
                 : unresolved.length
-                  ? 'Cleanup is unresolved. Retry stop in slot resources after the worker finishes using them, then acquire here.'
-                  : 'Acquire them from this authenticated view.'}
+                  ? 'Cleanup is unresolved. Retry stop in slot resources after the worker finishes using them.'
+                  : 'Acquire or recheck them from slot resources.'}
             </p>`
           : this.status
-            ? html`<p>No proof resources are required by this run.</p>`
+            ? html`<p>No proof resources are recorded for this run.</p>`
             : nothing}
         <div class="actions">
-          ${this.plan && !ready && !unresolved.length
-            ? html`<button
-                data-testid="blocked-run-acquire-proof"
-                ?disabled=${this.busy || this.disabled || !slotOwned}
-                @click=${this.acquireProof}
-              >
-                ${this.busy ? 'Acquiring…' : 'Acquire proof resources'}
-              </button>`
-            : nothing}
           ${run.slotId
             ? html`<a
                 href=${`#slot/${encodeURIComponent(run.slotId)}?activity=info&runId=${encodeURIComponent(run.id)}`}
@@ -279,7 +233,7 @@ export class BlockedRunRecovery extends LitElement {
               >`
             : nothing}
           <button data-testid="blocked-run-refresh" ?disabled=${this.busy} @click=${this.refresh}>
-            Check readiness
+            Refresh recorded status
           </button>
           <button
             data-testid="blocked-run-retry-monitor"
@@ -291,8 +245,8 @@ export class BlockedRunRecovery extends LitElement {
         </div>
         ${!freshSignal
           ? html`<p>
-              Waiting for a new worker signal. A retry before <code>./mark start</code> would
-              re-read the old blocked result.
+              Waiting for a new worker signal. A replay before the next attempt starts would re-read
+              the old blocked result.
             </p>`
           : nothing}
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}

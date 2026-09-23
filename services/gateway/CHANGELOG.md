@@ -12,6 +12,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
 
+- Bind a fresh worker attempt before replaying a blocked monitor so a fast completed signal remains valid.
+
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
