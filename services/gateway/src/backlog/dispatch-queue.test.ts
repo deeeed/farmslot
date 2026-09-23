@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { QueueItem, SlotStatus } from '@farmslot/protocol';
+import type { QueueItem, ReviewLoopRequest, SlotStatus } from '@farmslot/protocol';
 
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { setCachedFleetForTests } from '../fleet/state.js';
@@ -2126,4 +2126,57 @@ test('tryDispatchNext holds a queued legacy full-live review loop for operator c
     [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
     'the original request stays visible and unmodified',
   );
+});
+
+test('updateItem repairs a held legacy review plan in place and refuses another full-live loop', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('legacy-repair-slot') as any);
+  const legacyPlan: ReviewLoopRequest[] = [
+    { order: 1, runner: 'codex', validationDepth: 'full-live' },
+  ];
+  const item = addItem(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'PROJ-legacy-live-repair',
+      allowedSlots: ['legacy-repair-slot'],
+      pendingReviewPlan: legacyPlan,
+      autoDispatch: false,
+    },
+    { kind: 'system' },
+  );
+  t.after(() => removeItem(item.id));
+  const launched: string[] = [];
+  initDispatchQueue(
+    () => {},
+    async (queued) => {
+      launched.push(queued.id);
+      throw new Error('fixture stops before run creation');
+    },
+  );
+  await tryDispatchNext();
+  assert.match(
+    getQueueSnapshot().find((record) => record.id === item.id)?.waitingReason ?? '',
+    /^Review\/QA migration: /,
+  );
+
+  assert.throws(
+    () => updateItem({ itemId: item.id, pendingReviewPlan: legacyPlan }, { kind: 'system' }),
+    (error: Error & { code?: string }) => error.code === 'REVIEW_QA_NEEDS_CONFIGURATION',
+  );
+  const refused = getQueueSnapshot().find((record) => record.id === item.id);
+  assert.deepEqual(refused?.pendingReviewPlan, legacyPlan, 'a refused repair changes nothing');
+  assert.match(refused?.waitingReason ?? '', /^Review\/QA migration: /);
+
+  const staticPlan: ReviewLoopRequest[] = [
+    { order: 1, runner: 'codex', validationDepth: 'static-code' },
+  ];
+  const repaired = updateItem(
+    { itemId: item.id, pendingReviewPlan: staticPlan },
+    { kind: 'system' },
+  );
+  assert.equal(repaired.id, item.id, 'the receipt identity is kept');
+  assert.deepEqual(repaired.pendingReviewPlan, staticPlan);
+  assert.equal(repaired.waitingReason, undefined);
+  await tryDispatchNext();
+  assert.ok(launched.includes(item.id), 'the repaired row reaches dispatch');
 });

@@ -92,6 +92,8 @@ assert(
     'publication-direct',
     'publication-delivery',
     'legacy-queue',
+    'legacy-plan-repair',
+    'ready-gate-refusal',
     'conflicts',
     'legacy-completed',
     'legacy-pending',
@@ -140,6 +142,13 @@ for (const [name, profile] of [
     path.join(project, 'shared', 'review-pr', 'shared.md'),
     '---\nplatforms: [cli]\n---\n\n# Shared static review\n\n- [ ] Inspect the frozen changes.\n',
   );
+  if (scenario === 'legacy-plan-repair') {
+    await mkdir(path.join(project, 'shared', 'dev'));
+    await writeFile(
+      path.join(project, 'shared', 'dev', 'shared.md'),
+      '---\nplatforms: [cli]\n---\n\n# Shared development\n\n- [ ] Implement the change.\n',
+    );
+  }
   await json(path.join(project, 'project.json'), {
     name,
     default_branch: 'main',
@@ -386,6 +395,41 @@ if (scenario === 'automatic-qa') {
   await json(sourcePath, source);
   project.qa.after_review.enabled = false;
   await json(file, project);
+}
+const readyGateDecision = {
+  id: 'fixture-publication-gate',
+  type: 'engine_human_gate',
+  title: 'Publication gate',
+  description: 'Request another independent review',
+  actions: [
+    { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+  ],
+  createdAt: new Date().toISOString(),
+};
+if (scenario === 'ready-gate-refusal') {
+  const now = new Date().toISOString();
+  await json(path.join(fixture, 'runs', 'gated-run.json'), {
+    id: 'gated-run',
+    familyId: 'gated-run',
+    parentRunId: null,
+    familyRootTicketOrPr: 'FIXTURE-GATE',
+    lane: 'production',
+    variant: null,
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    status: 'blocked',
+    project: 'first',
+    ticketOrPr: 'FIXTURE-GATE',
+    slotId: 'first-disabled',
+    branch: 'fixture-gate',
+    taskFile: null,
+    createdByPrincipalId: 'legacy-env',
+    steps: [],
+    decisions: [readyGateDecision],
+    metrics: {},
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 let gateway = launchGateway();
 const terminateOwnedGateway = () => {
@@ -1050,6 +1094,107 @@ try {
       assert.deepEqual(persisted[field], result.item[field], field);
     assert.equal(persisted.runId, undefined, 'Disabled fixture slot must not launch work');
     await connection!.call('dispatch.queue.remove', { itemId: result.item.id });
+  } else if (scenario === 'legacy-plan-repair') {
+    const configurationError = (error: unknown) =>
+      error instanceof GatewayRpcError && error.code === 'REVIEW_QA_NEEDS_CONFIGURATION';
+    const staticPlan = [{ order: 1, runner: 'codex', validationDepth: 'static-code' }];
+    const added = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
+      ...base,
+      flowType: 'dev',
+      ticketOrPr: 'FIXTURE-PLAN',
+      pendingReviewPlan: staticPlan,
+    });
+    // Seed a pre-ADR-058 queued plan while its owning gateway is stopped.
+    await stopGateway();
+    const queuePath = path.join(fixture, 'queue.json');
+    const stored = JSON.parse(await readFile(queuePath, 'utf8'));
+    const legacyPlan = [{ order: 1, runner: 'codex', validationDepth: 'full-live' }];
+    stored.find((item: { id: string }) => item.id === added.item.id).pendingReviewPlan = legacyPlan;
+    await json(queuePath, stored);
+    gateway = launchGateway();
+    await connectGateway();
+    const queued = async () =>
+      (await connection!.call<DispatchQueueListResult>('dispatch.queue.list')).items.find(
+        (item) => item.id === added.item.id,
+      );
+    // Any intake runs a dispatch cycle over the whole queue, including the restored row.
+    const kick = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
+      ...base,
+      flowType: 'dev',
+      ticketOrPr: 'FIXTURE-KICK',
+    });
+    let held = await queued();
+    for (let attempt = 0; attempt < 50 && !held?.waitingReason; attempt++) {
+      await delay(100);
+      held = await queued();
+    }
+    const hold = {
+      id: held?.id,
+      waitingReason: held?.waitingReason,
+      plan: held?.pendingReviewPlan,
+    };
+    console.log(JSON.stringify({ hold }));
+    assert.match(held?.waitingReason ?? '', /^Review\/QA migration: .*full-live/);
+    assert.deepEqual(held?.pendingReviewPlan, legacyPlan, 'held plan stays visible and unchanged');
+    await assert.rejects(
+      connection!.call('dispatch.queue.update', {
+        itemId: added.item.id,
+        pendingReviewPlan: legacyPlan,
+      }),
+      configurationError,
+    );
+    assert.deepEqual((await queued())?.pendingReviewPlan, legacyPlan, 'refusal changes nothing');
+    const { item: repaired } = await connection!.call<{ item: DispatchQueueAddResult['item'] }>(
+      'dispatch.queue.update',
+      { itemId: added.item.id, pendingReviewPlan: staticPlan },
+    );
+    await delay(500);
+    const after = await queued();
+    console.log(
+      JSON.stringify({
+        repair: {
+          id: after?.id,
+          waitingReason: after?.waitingReason,
+          plan: after?.pendingReviewPlan,
+        },
+      }),
+    );
+    assert.equal(repaired.id, added.item.id, 'repair keeps the receipt identity');
+    assert.equal(after?.id, added.item.id);
+    assert.deepEqual(after?.pendingReviewPlan, staticPlan);
+    assert.doesNotMatch(after?.waitingReason ?? '', /^Review\/QA migration: /);
+    for (const itemId of [added.item.id, kick.item.id])
+      await connection!.call('dispatch.queue.remove', { itemId });
+  } else if (scenario === 'ready-gate-refusal') {
+    await assert.rejects(
+      connection!.call('run.resolveDecision', {
+        runId: 'gated-run',
+        decisionId: readyGateDecision.id,
+        actionId: 'request-extra-review',
+        selectionData: {
+          reviewRequest: { loops: [{ runner: 'codex', validationDepth: 'full-live' }] },
+        },
+      }),
+      (error: unknown) => {
+        assert(error instanceof GatewayRpcError);
+        assert.equal(error.code, 'REVIEW_QA_NEEDS_CONFIGURATION', error.message);
+        assert.match(error.message, /^reviewRequest\.loops\[0\]/);
+        return true;
+      },
+    );
+    const { run } = await connection!.call<{ run: any }>('run.get', { runId: 'gated-run' });
+    const gate = run.decisions.find(
+      (decision: { id: string }) => decision.id === readyGateDecision.id,
+    );
+    console.log(
+      JSON.stringify({
+        gate: { id: gate?.id, resolvedAt: gate?.resolvedAt ?? null, status: run.status },
+      }),
+    );
+    assert.equal(gate?.resolvedAt, undefined, 'the human gate stays pending');
+    assert.equal(gate?.selectionData, undefined);
+    assert.equal(run.status, 'blocked');
+    assert.equal(run.slotId, 'first-disabled', 'no restore or slot change');
   } else if (scenario === 'bare-pr') {
     const result = await connection!.call<DispatchQueueAddResult>('dispatch.queue.add', {
       ...base,

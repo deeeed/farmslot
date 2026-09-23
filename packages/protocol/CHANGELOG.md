@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action.
+- Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
 
 - Support GPT-6 Sol reasoning efforts for Codex selections.
 

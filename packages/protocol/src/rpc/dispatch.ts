@@ -246,6 +246,11 @@ export interface DispatchQueueUpdateParams {
   label?: string;
   slotId?: string | null;
   allowedSlots?: string[] | null;
+  /**
+   * Replace the queued publication-review plan in place, keeping the row's receipt identity.
+   * Loops must be static; `null` or `[]` drops the plan. Repairs a queued legacy full-live plan.
+   */
+  pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[] | null;
 }
 
 export interface DispatchQueueUpdateResult {
