@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,15 @@ import test from 'node:test';
 
 import type { AssessmentResult } from '@farmslot/protocol';
 
-import { beginAssessment, finishAssessment } from '../assessment/store.js';
+import { readAssessmentArtifact } from '../assessment/artifacts.js';
+import {
+  ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+  AssessmentResponseError,
+  createAssessmentProviderRegistry,
+  TRIAGE_SPEND_BOUND_EXCEEDED,
+  TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+} from '../assessment/provider.js';
+import { assessmentRecords, beginAssessment, finishAssessment } from '../assessment/store.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
@@ -118,6 +127,12 @@ test('decision advice requires opt-in and an exact admitted snapshot, never reso
     'stale',
   );
   assert.equal((await withPrincipal(() => decisionAdviceGet(params))).reason, 'not-admitted');
+  decision.description = 'x'.repeat(1201);
+  updateRun(run.id, { decisions: [decision] });
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceGet(params))).reason,
+    'insufficient-options',
+  );
   assert.equal(run.decisions[0]?.resolvedAt, undefined);
   decision.type = 'engine_review_posting' as typeof decision.type;
   updateRun(run.id, { decisions: [decision] });
@@ -192,6 +207,15 @@ test('saved invalid action choice stays unavailable on a fresh status read', asy
   await finishAssessment(record, {
     status: 'completed',
     attempted: true,
+    provider: 'synthetic-provider',
+    returnedModel: 'fixed',
+    usage: {
+      provider: 'synthetic-provider',
+      requestedModel: 'fixed',
+      inputTokens: 30,
+      outputTokens: 10,
+      durationMs: 1,
+    },
     answers: { action: { type: 'choice', choice: 'fabricated', probabilities: { fabricated: 1 } } },
   });
   const after = await withPrincipal(() => decisionAdviceGet(params));
@@ -234,6 +258,25 @@ test('unverified identity, missing input usage and overspend never produce decis
   const checked = (result: AssessmentResult) =>
     validateDecisionAdviceResponse(result, 'jev-1.13.0', price, ['continue']);
   assert.equal(checked(base).status, 'completed');
+  assert.equal(checked(base).usage?.costKind, 'estimated');
+  assert.equal(
+    checked({
+      ...base,
+      status: 'unavailable',
+      error: ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+      usage: undefined,
+    }).error,
+    TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+  );
+  assert.equal(
+    checked({
+      ...base,
+      status: 'unavailable',
+      error: ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+      usage: { ...base.usage!, inputTokens: 101 },
+    }).error,
+    TRIAGE_SPEND_BOUND_EXCEEDED,
+  );
   assert.equal(checked({ ...base, returnedModel: 'other-model' }).status, 'unavailable');
   assert.equal(checked({ ...base, returnedModel: undefined }).status, 'unavailable');
   assert.equal(
@@ -248,4 +291,299 @@ test('unverified identity, missing input usage and overspend never produce decis
     checked({ ...base, usage: { ...base.usage!, outputTokens: 51 } }).status,
     'unavailable',
   );
+});
+
+test('analyze reserves a single admitted request, saves input and answer, and never resolves the gate', async (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'decision-advice-analyze-'));
+  const previous = Object.fromEntries(
+    [
+      'FARMSLOT_HOME',
+      'FARMSLOT_DECISION_ADVICE_ENABLED',
+      'FARMSLOT_ASSESSMENT_ENABLED',
+      'FARMSLOT_ASSESSMENT_PROVIDER',
+      'FARMSLOT_ASSESSMENT_MODEL',
+      'TYPESAFE_API_KEY',
+    ].map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, {
+    FARMSLOT_HOME: home,
+    FARMSLOT_DECISION_ADVICE_ENABLED: 'true',
+    FARMSLOT_ASSESSMENT_ENABLED: 'true',
+    FARMSLOT_ASSESSMENT_PROVIDER: 'typesafe',
+    FARMSLOT_ASSESSMENT_MODEL: 'jev-1.13.0',
+    TYPESAFE_API_KEY: 'synthetic-test-credential',
+  });
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-farm',
+    ticketOrPr: 'SYNTH-PAID-PATH',
+  });
+  const decision = makeDecision();
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  let secondRun: ReturnType<typeof createRun> | undefined;
+  t.after(async () => {
+    if (secondRun) {
+      updateRun(secondRun.id, { status: 'failed' });
+      await deleteRun(secondRun.id);
+    }
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+    rmSync(home, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const params = { runId: run.id, decisionId: decision.id };
+  const initial = await withPrincipal(() => decisionAdviceGet(params));
+  const price = {
+    version: 1,
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    verifiedAt: new Date().toISOString(),
+    source: 'https://example.test/model',
+    inputUsdPerMillion: 0.042,
+    outputUsdPerMillion: 0,
+    maxInputTokens: 4096,
+    maxOutputTokens: 512,
+  };
+  writeFileSync(
+    path.join(home, 'decision-advice-policy.json'),
+    JSON.stringify({
+      version: 1,
+      price,
+      limits: { maxCalls: 1, maxUsd: 0.01 },
+      entries: [
+        {
+          ...params,
+          snapshotHash: initial.snapshotHash,
+          classification: 'synthetic',
+          sourceRef: 'synthetic:paid-path',
+        },
+      ],
+    }),
+  );
+  let calls = 0;
+  const registry = createAssessmentProviderRegistry([
+    {
+      id: 'typesafe',
+      defaultModel: 'jev-1.13.0',
+      credentialEnv: 'TYPESAFE_API_KEY',
+      capabilities: ['choice'],
+      async assess() {
+        calls++;
+        if (calls === 2 && secondRun) {
+          const pending = secondRun.decisions[0]!;
+          pending.description = 'A different work item while the provider responds';
+          updateRun(secondRun.id, { decisions: [pending] });
+        }
+        return {
+          returnedModel: 'jev-1.13.0',
+          answers: {
+            action: { type: 'choice' as const, choice: 'continue', probabilities: { continue: 1 } },
+          },
+          usage: { inputTokens: 80, outputTokens: 10, durationMs: 5 },
+        };
+      },
+    },
+  ]);
+  const request = { ...params, expectedSnapshotHash: initial.snapshotHash! };
+  process.env.FARMSLOT_ASSESSMENT_ENABLED = 'false';
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceAnalyze(request, registry))).reason,
+    'provider-unavailable',
+  );
+  assert.equal(calls, 0);
+  process.env.FARMSLOT_ASSESSMENT_ENABLED = 'true';
+  const analyzed = await withPrincipal(() => decisionAdviceAnalyze(request, registry));
+  assert.equal(analyzed.recommendedActionId, 'continue', JSON.stringify(analyzed));
+  assert.equal(analyzed.assessment?.usage?.costUsd, (80 * price.inputUsdPerMillion) / 1_000_000);
+  assert.equal(calls, 1);
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceAnalyze(request, registry))).recommendedActionId,
+    'continue',
+  );
+  assert.equal(calls, 1);
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceGet(params))).recommendedActionId,
+    'continue',
+  );
+  assert.equal(run.decisions[0]?.resolvedAt, undefined);
+  const saved = (await assessmentRecords(principal.id)).find(
+    (record) => record.id === analyzed.assessment?.assessmentId,
+  );
+  assert.ok(saved);
+  assert.equal(saved?.reservation?.price?.provider, 'typesafe');
+  assert.equal(
+    (
+      (await readAssessmentArtifact(
+        principal.id,
+        'inputs',
+        createHash('sha256').update(JSON.stringify(saved.id)).digest('hex'),
+      )) as { snapshotHash: string }
+    )?.snapshotHash,
+    initial.snapshotHash,
+  );
+  secondRun = createRun({
+    flowType: 'fix-bug',
+    project: 'example-farm',
+    ticketOrPr: 'SYNTH-STALE',
+  });
+  const secondDecision = makeDecision();
+  updateRun(secondRun.id, { status: 'blocked', decisions: [secondDecision] });
+  const secondParams = { runId: secondRun.id, decisionId: secondDecision.id };
+  const second = await withPrincipal(() => decisionAdviceGet(secondParams));
+  const nextPolicy = {
+    version: 1,
+    price,
+    limits: { maxCalls: 1, maxUsd: 0.01 },
+    entries: [
+      {
+        ...params,
+        snapshotHash: initial.snapshotHash,
+        classification: 'synthetic',
+        sourceRef: 'synthetic:paid-path',
+      },
+      {
+        ...secondParams,
+        snapshotHash: second.snapshotHash,
+        classification: 'synthetic',
+        sourceRef: 'synthetic:stale-path',
+      },
+    ],
+  };
+  writeFileSync(path.join(home, 'decision-advice-policy.json'), JSON.stringify(nextPolicy));
+  const nextRequest = { ...secondParams, expectedSnapshotHash: second.snapshotHash! };
+  assert.equal(
+    (await withPrincipal(() => decisionAdviceAnalyze(nextRequest, registry))).reason,
+    'budget-exhausted',
+  );
+  assert.equal(calls, 1);
+  nextPolicy.limits.maxCalls = 2;
+  writeFileSync(path.join(home, 'decision-advice-policy.json'), JSON.stringify(nextPolicy));
+  const stale = await withPrincipal(() =>
+    decisionAdviceAnalyze(
+      {
+        ...secondParams,
+        expectedSnapshotHash: second.snapshotHash!,
+      },
+      registry,
+    ),
+  );
+  assert.equal(calls, 2);
+  assert.equal(stale.reason, 'stale');
+  assert.equal(stale.recommendedActionId, undefined);
+  assert.equal(secondRun.decisions[0]?.resolvedAt, undefined);
+});
+
+test('failed provider validation locks the same price bound before another paid attempt', async (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'decision-advice-spend-lock-'));
+  const previous = Object.fromEntries(
+    [
+      'FARMSLOT_HOME',
+      'FARMSLOT_DECISION_ADVICE_ENABLED',
+      'FARMSLOT_ASSESSMENT_ENABLED',
+      'FARMSLOT_ASSESSMENT_PROVIDER',
+      'FARMSLOT_ASSESSMENT_MODEL',
+      'TYPESAFE_API_KEY',
+    ].map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, {
+    FARMSLOT_HOME: home,
+    FARMSLOT_DECISION_ADVICE_ENABLED: 'true',
+    FARMSLOT_ASSESSMENT_ENABLED: 'true',
+    FARMSLOT_ASSESSMENT_PROVIDER: 'typesafe',
+    FARMSLOT_ASSESSMENT_MODEL: 'jev-1.13.0',
+    TYPESAFE_API_KEY: 'synthetic-test-credential',
+  });
+  const runs = [0, 1].map(() =>
+    createRun({ flowType: 'fix-bug', project: 'example-farm', ticketOrPr: 'SYNTH-LOCK' }),
+  );
+  const decisions = runs.map(() => makeDecision());
+  runs.forEach((run, i) => updateRun(run.id, { status: 'blocked', decisions: [decisions[i]] }));
+  t.after(async () => {
+    for (const run of runs) {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    }
+    rmSync(home, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const entries = await Promise.all(
+    runs.map(async (run, index) => {
+      const decisionId = decisions[index].id;
+      const status = await withPrincipal(() => decisionAdviceGet({ runId: run.id, decisionId }));
+      return {
+        runId: run.id,
+        decisionId,
+        snapshotHash: status.snapshotHash,
+        classification: 'synthetic',
+        sourceRef: 'synthetic:price-lock',
+      };
+    }),
+  );
+  writeFileSync(
+    path.join(home, 'decision-advice-policy.json'),
+    JSON.stringify({
+      version: 1,
+      price: {
+        version: 1,
+        provider: 'typesafe',
+        model: 'jev-1.13.0',
+        verifiedAt: new Date().toISOString(),
+        source: 'https://example.test/model',
+        inputUsdPerMillion: 0.042,
+        outputUsdPerMillion: 0,
+        maxInputTokens: 4096,
+        maxOutputTokens: 512,
+      },
+      limits: { maxCalls: 2, maxUsd: 0.01 },
+      entries,
+    }),
+  );
+  let calls = 0;
+  const registry = createAssessmentProviderRegistry([
+    {
+      id: 'typesafe',
+      defaultModel: 'jev-1.13.0',
+      credentialEnv: 'TYPESAFE_API_KEY',
+      capabilities: ['choice'],
+      async assess() {
+        calls++;
+        throw new AssessmentResponseError(
+          ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+          true,
+          undefined,
+          undefined,
+          true,
+        );
+      },
+    },
+  ]);
+  const first = await withPrincipal(() =>
+    decisionAdviceAnalyze(
+      {
+        runId: entries[0].runId,
+        decisionId: entries[0].decisionId,
+        expectedSnapshotHash: entries[0].snapshotHash!,
+      },
+      registry,
+    ),
+  );
+  assert.equal(first.assessment?.error, TRIAGE_SPEND_BOUND_UNVERIFIABLE);
+  const next = await withPrincipal(() =>
+    decisionAdviceAnalyze(
+      {
+        runId: entries[1].runId,
+        decisionId: entries[1].decisionId,
+        expectedSnapshotHash: entries[1].snapshotHash!,
+      },
+      registry,
+    ),
+  );
+  assert.equal(next.reason, 'price-unavailable');
+  assert.equal(calls, 1);
 });

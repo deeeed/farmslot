@@ -9,8 +9,7 @@ import { supportsDecisionAdvice } from './decision-advice-model.js';
 
 const unavailableReasons: Record<NonNullable<DecisionAdviceResult['reason']>, string> = {
   disabled: 'Optional decision advice is disabled.',
-  'not-run-backed': 'This decision has no run context to assess.',
-  'not-pending': 'This decision has already been resolved.',
+  'not-pending': 'This run decision is no longer pending or available.',
   'insufficient-options': 'This decision has too few choices to compare.',
   'not-admitted': 'Decision evidence has not been admitted for assessment.',
   stale: 'The decision changed. Refresh its status.',
@@ -18,6 +17,7 @@ const unavailableReasons: Record<NonNullable<DecisionAdviceResult['reason']>, st
   'price-unavailable': 'The provider price is unavailable.',
   'budget-exhausted': 'The assessment budget is exhausted.',
   'assessment-unavailable': 'The assessment could not be completed.',
+  'assessment-pending': 'An assessment is already in progress. Refresh its status shortly.',
 };
 
 @customElement('decision-advice-panel')
@@ -75,7 +75,7 @@ export class DecisionAdvicePanel extends LitElement {
     }
   `;
 
-  protected override updated(changed: Map<string, unknown>) {
+  protected override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('runId') || changed.has('snapshotKey')) {
       this.view = undefined;
       this.error = '';

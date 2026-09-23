@@ -13,18 +13,26 @@ import type {
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { saveAssessmentArtifact } from '../assessment/artifacts.js';
 import { getAssessmentConfig } from '../assessment/config.js';
 import { defaultAssessmentProviders } from '../assessment/default-providers.js';
+import { boundedAssessmentFetch } from '../assessment/failure-triage/transport.js';
 import { assess, assessmentProviderStatus } from '../assessment/index.js';
 import { prepareAssessmentInput } from '../assessment/input.js';
 import { completeAssessment } from '../assessment/monitor.js';
-import { assessmentRecords, reserveAssessment } from '../assessment/store.js';
+import {
+  ASSESSMENT_RESPONSE_VALIDATION_ERROR,
+  type AssessmentProviderRegistry,
+  TRIAGE_SPEND_BOUND_EXCEEDED,
+  TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+} from '../assessment/provider.js';
+import { assessmentRecord, assessmentRecords, reserveAssessment } from '../assessment/store.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
-import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { getRun } from '../runs/store.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
 
 const POLICY_VERSION = 'decision-advice-v1';
+const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
 const HASH = /^[a-f0-9]{64}$/;
 const ID = /^[\w.-]{1,100}$/;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -84,7 +92,7 @@ function meaningful(actions: ReturnType<typeof packet>['actions']): boolean {
         (a.id === 'abort' || a.id === 'cancel' || a.description.trim()),
     ) &&
     new Set(actions.map((a) => a.label.trim().toLowerCase())).size >= 3 &&
-    actions.filter((a) => !/^(abort|cancel|stop|dismiss|skip)(?:[-_]|$)/i.test(a.id)).length >= 2
+    actions.filter((a) => !/^(abort|cancel)(?:[-_]|$)/i.test(a.id)).length >= 2
   );
 }
 
@@ -101,23 +109,23 @@ async function snapshot(
   // Read only the requested gateway-owned run. Neither the caller nor unrelated
   // file decisions can contribute model input.
   const run = getRun(requestedRunId);
-  if (
-    !run ||
-    run.status === 'cancelled' ||
-    run.status === 'failed' ||
-    (run.status === 'done' &&
-      (!run.completedAt || Date.now() - Date.parse(run.completedAt) >= 48 * 60 * 60 * 1000))
-  )
+  if (!run || run.status === 'cancelled' || run.status === 'failed' || run.status === 'done')
     return { result: { eligible: false, reason: 'not-pending' } };
-  const enrichedRun = enrichDecisionsWithGateSummary(run);
-  const active = enrichedRun.decisions.find((item) => item.id === decisionId && !item.resolvedAt);
+  const active = run.decisions.find((item) => item.id === decisionId && !item.resolvedAt);
   if (!active) return { result: { eligible: false, reason: 'not-pending' } };
   if (active.type !== 'engine_collision' && active.type !== 'engine_prepare_profile_mismatch')
     return { result: { eligible: false, reason: 'insufficient-options' } };
   const decision = pendingDecisionForRun(run, active);
   const runId = run.id;
-  // Invalid gateway-owned decision data is a programming error, never admitted input.
-  const state = packet(decision);
+  // Out-of-bounds gateway text cannot enter an admitted packet.
+  let state: ReturnType<typeof packet>;
+  try {
+    state = packet(decision);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Decision snapshot exceeds text bounds')
+      return { result: { eligible: false, reason: 'insufficient-options' } };
+    throw error;
+  }
   if (!meaningful(state.actions))
     return { result: { eligible: false, reason: 'insufficient-options' } };
   return {
@@ -308,6 +316,7 @@ export async function decisionAdviceGet(
 
 export async function decisionAdviceAnalyze(
   params: DecisionAdviceAnalyzeParams,
+  registry: AssessmentProviderRegistry = providers,
 ): Promise<DecisionAdviceResult> {
   assertParams(params, true);
   const selected = await snapshot(params.decisionId, params.runId);
@@ -320,12 +329,12 @@ export async function decisionAdviceAnalyze(
   const advicePolicy = await policy();
   if (!admitted(advicePolicy, runId, params.decisionId, selected.result.snapshotHash))
     return { ...selected.result, eligible: false, reason: 'not-admitted' };
+  const config = getAssessmentConfig();
   const providerStatus = assessmentProviderStatus();
   const provider = providerStatus.provider;
   const model = providerStatus.model;
-  if (!provider || !model || !providerStatus.keyAvailable)
+  if (!config.enabled || !provider || !model || !providerStatus.keyAvailable)
     return { ...selected.result, eligible: false, reason: 'provider-unavailable' };
-  const config = getAssessmentConfig();
   const questions: AssessmentQuestions = {
     action: {
       type: 'choice',
@@ -334,7 +343,7 @@ export async function decisionAdviceAnalyze(
       criteria: Object.fromEntries([
         ...selected.state.actions.map((action) => [
           action.id,
-          `${action.label}: ${action.description}`,
+          'Existing action. Use the matching ID in state.actions for its label and description.',
         ]),
         ['abstain', 'Not enough information to favor one supplied action'],
       ]),
@@ -351,7 +360,7 @@ export async function decisionAdviceAnalyze(
       selected.state,
       questions,
       Math.min(config.maxStateBytes, 4096),
-      process.env[defaultAssessmentProviders().get(provider)?.credentialEnv ?? ''] ?? '',
+      process.env[registry.get(provider)?.credentialEnv ?? ''] ?? '',
     );
   } catch (error) {
     // A rejected, bounded packet cannot be sent to a provider. Other errors surface.
@@ -421,30 +430,47 @@ export async function decisionAdviceAnalyze(
     advicePolicy!.limits,
   );
   if (reserve.status === 'budget-blocked')
-    return { ...selected.result, eligible: false, reason: 'budget-exhausted' };
+    return {
+      ...selected.result,
+      eligible: false,
+      reason: reserve.cause === 'spend-bound' ? 'price-unavailable' : 'budget-exhausted',
+    };
   if (reserve.status === 'existing') {
     const result = reserve.record.result;
     return result
       ? outcome(selected.result, result, selected.state.actions, price)
-      : { ...selected.result, eligible: false, reason: 'assessment-unavailable' };
+      : { ...selected.result, eligible: false, reason: 'assessment-pending' };
   }
   // No retry, fallback or implicit resolution. Persist a failed attempt too.
   const result = await completeAssessment(reserve.record, async () => {
     const again = await snapshot(params.decisionId, params.runId);
-    if (again.result.snapshotHash !== selected.result.snapshotHash)
+    const currentPolicy = await policy();
+    if (
+      again.result.snapshotHash !== selected.result.snapshotHash ||
+      !admitted(currentPolicy, runId, params.decisionId, selected.result.snapshotHash!) ||
+      digest(currentPolicy?.price) !== digest(price)
+    )
       return {
         status: 'skipped',
         attempted: false,
         error: 'Decision changed before provider call',
       };
-    const assessment = await assess({
+    await saveAssessmentArtifact(owner.principalId, 'inputs', digest(reserve.record.id), {
+      policyVersion: POLICY_VERSION,
+      snapshotHash: selected.result.snapshotHash,
       state: prepared.state,
       questions: prepared.questions,
-      provider,
-      model,
-      enabled: true,
-      timeoutMs: Math.min(config.timeoutMs, 10_000),
-    } satisfies AssessmentRequest);
+    });
+    const assessment = await assess(
+      {
+        state: prepared.state,
+        questions: prepared.questions,
+        provider,
+        model,
+        timeoutMs: Math.min(config.timeoutMs, 10_000),
+      } satisfies AssessmentRequest,
+      registry,
+    );
     // A run can resolve while the model works. Record the attempt, suppress stale advice.
     return validateDecisionAdviceResponse(
       assessment,
@@ -453,15 +479,23 @@ export async function decisionAdviceAnalyze(
       state.actions.map((action) => action.id),
     );
   });
+  if ((result as AssessmentResult).monitoringError)
+    return { ...selected.result, eligible: false, reason: 'assessment-unavailable' };
   const fresh = await snapshot(params.decisionId, params.runId);
-  if (fresh.result.snapshotHash !== selected.result.snapshotHash)
+  const finalPolicy = await policy();
+  if (
+    fresh.result.snapshotHash !== selected.result.snapshotHash ||
+    !admitted(finalPolicy, runId, params.decisionId, selected.result.snapshotHash) ||
+    digest(finalPolicy?.price) !== digest(price)
+  )
     return {
       eligible: false,
       reason: 'stale',
       snapshotHash: fresh.result.snapshotHash,
       assessment: result as AssessmentResult,
     };
-  return outcome(selected.result, result as AssessmentResult, selected.state.actions, price);
+  const saved = await assessmentRecord(owner.principalId, reserve.record.id);
+  return outcome(selected.result, saved.result!, selected.state.actions, price);
 }
 
 /** A response is usable only under the admitted model and observable token bound. */
@@ -474,30 +508,52 @@ export function validateDecisionAdviceResponse(
   >,
   actionIds: string[],
 ): AssessmentResult {
-  if (assessment.status !== 'completed') return assessment;
+  const usage = assessment.usage;
+  const receivedReply =
+    assessment.status === 'completed' || assessment.error === ASSESSMENT_RESPONSE_VALIDATION_ERROR;
+  if (!usage || usage.inputTokens === undefined) {
+    return receivedReply
+      ? {
+          ...assessment,
+          status: 'unavailable',
+          answers: undefined,
+          error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+        }
+      : assessment;
+  }
+  const estimated = estimateDecisionAdviceCost(usage, price);
+  const priced =
+    estimated === undefined || assessment.returnedModel !== model
+      ? { ...usage, costUsd: undefined, costKind: undefined }
+      : { ...usage, costUsd: estimated, costKind: 'estimated' as const };
+  if (usage.inputTokens > price.maxInputTokens || (usage.outputTokens ?? 0) > price.maxOutputTokens)
+    return {
+      ...assessment,
+      status: 'unavailable',
+      answers: undefined,
+      usage: priced,
+      error: TRIAGE_SPEND_BOUND_EXCEEDED,
+    };
+  if (receivedReply && assessment.returnedModel !== model)
+    return {
+      ...assessment,
+      status: 'unavailable',
+      answers: undefined,
+      usage: priced,
+      error: TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+    };
+  if (assessment.status !== 'completed') return { ...assessment, usage: priced };
   const rejected = (error: string): AssessmentResult => ({
     ...assessment,
     status: 'unavailable',
     answers: undefined,
+    usage: priced,
     error,
   });
-  if (assessment.returnedModel !== model || assessment.usage?.inputTokens === undefined)
-    return rejected('Provider identity or usage unavailable');
-  if (
-    assessment.usage.inputTokens > price.maxInputTokens ||
-    (assessment.usage.outputTokens ?? 0) > price.maxOutputTokens
-  )
-    return rejected('spend-bound-exceeded');
   const choice = assessment.answers?.action;
   if (!choice || choice.type !== 'choice' || ![...actionIds, 'abstain'].includes(choice.choice))
     return rejected('Invalid advisory choice');
-  const estimated = estimateDecisionAdviceCost(assessment.usage, price);
-  if (estimated !== undefined && assessment.usage.costUsd === undefined)
-    return {
-      ...assessment,
-      usage: { ...assessment.usage, costUsd: estimated, costKind: 'estimated' },
-    };
-  return assessment;
+  return { ...assessment, usage: priced };
 }
 
 function outcome(

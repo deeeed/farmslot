@@ -1,17 +1,11 @@
 {
   "version": 1,
   "labels": {
-    "profile-01": "use_suggested_profile",
-    "profile-02": "continue",
-    "profile-03": null,
-    "profile-04": "use_suggested_profile",
-    "profile-05": "continue",
-    "profile-06": null,
-    "collision-01": null,
-    "collision-02": null,
-    "collision-03": null,
-    "collision-04": null,
-    "collision-05": null,
-    "collision-06": null
+    "collision-01": "abstain",
+    "collision-02": "abstain",
+    "collision-03": "abstain",
+    "collision-04": "abstain",
+    "collision-05": "abstain",
+    "collision-06": "abstain"
   }
 }

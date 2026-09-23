@@ -9,7 +9,7 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
 1. Inspect the pending run decision and its action descriptions. Confirm the
    entire description and each non-decline action are safe to send to the
    chosen provider. A `manual` task label does not establish source approval.
-2. Set `FARMSLOT_DECISION_ADVICE_ENABLED=true`, select an assessment provider
+2. Set `FARMSLOT_DECISION_ADVICE_ENABLED=true` and `FARMSLOT_ASSESSMENT_ENABLED=true`, select an assessment provider
    and model using `FARMSLOT_ASSESSMENT_PROVIDER` and
    `FARMSLOT_ASSESSMENT_MODEL`, and configure that provider's credential in
    the gateway environment. An enabled provider alone does not request advice.
@@ -50,7 +50,8 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    date, source and identifier with independently verified values before use.
    Mark an actual public source `public` and provide its HTTPS reference;
    do not relabel private data as synthetic. Only zero-priced output is
-   eligible until a provider-enforced output limit is available. Pricing
+   eligible until a provider-enforced output limit is available. The daily assessment budget
+   is shared with failed-run triage. Pricing
    older than seven days is rejected.
 
 4. Refresh the decision panel. `decision.advice.get` shows admission without
@@ -59,7 +60,7 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    usage and cost in the panel and assessment history. Missing usage remains
    an unknown charge. Do not repeat a request to improve a weak answer.
 
-The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
+The current profile gate has two actions, so profile advice requires #720 and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
 are for the controlled classification study. Current collision packets lack operator
 intent and prior-run safety facts, so those cases call for abstention. A saved
 action ID proves display and validation, not decision quality. Freeze cases and

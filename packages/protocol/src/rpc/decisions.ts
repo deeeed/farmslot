@@ -20,7 +20,6 @@ export interface DecisionAdviceResult {
   eligible: boolean;
   reason?:
     | 'disabled'
-    | 'not-run-backed'
     | 'not-pending'
     | 'insufficient-options'
     | 'not-admitted'
@@ -28,7 +27,8 @@ export interface DecisionAdviceResult {
     | 'provider-unavailable'
     | 'price-unavailable'
     | 'budget-exhausted'
-    | 'assessment-unavailable';
+    | 'assessment-unavailable'
+    | 'assessment-pending';
   snapshotHash?: string;
   assessment?: AssessmentResult;
   recommendedActionId?: string;

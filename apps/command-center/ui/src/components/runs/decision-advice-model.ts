@@ -12,7 +12,7 @@ export function supportsDecisionAdvice(
     return false;
   const distinct = new Set(decision.actions.map((action) => action.id));
   const meaningful = decision.actions.filter(
-    (action) => !/^(abort|cancel|stop|dismiss|skip)(?:[-_]|$)/i.test(action.id),
+    (action) => !/^(abort|cancel)(?:[-_]|$)/i.test(action.id),
   );
   return (
     distinct.size >= 3 &&

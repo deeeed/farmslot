@@ -53,13 +53,13 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
   updateRun(prior.id, { status: 'done', taskFile: `/synthetic/${dir}/TASK.md` });
   // Exercise the same engine function that creates a pending collision in a live run.
   const collision = handleCollisionDecision(run.id, run, [dir], dir);
-  await new Promise<void>((resolve) => setImmediate(resolve));
   const decision = run.decisions.find((item) => item.type === 'engine_collision');
-  assert.ok(decision);
-  assert.equal(decision.description, `Task dir collision for ${dir}: ${dir}`);
-  assert.deepEqual(decision.actions, collisionDecisionActions(run));
-  assert.equal(decision.payload?.kind, 'collision');
   try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.ok(decision);
+    assert.equal(decision.description, `Task dir collision for ${dir}: ${dir}`);
+    assert.deepEqual(decision.actions, collisionDecisionActions(run));
+    assert.equal(decision.payload?.kind, 'collision');
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing gateway test address');
@@ -195,6 +195,15 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     await finishAssessment(record, {
       status: 'completed',
       attempted: true,
+      provider: 'typesafe',
+      returnedModel: 'jev-1.13.0',
+      usage: {
+        provider: 'typesafe',
+        requestedModel: 'jev-1.13.0',
+        inputTokens: 30,
+        outputTokens: 10,
+        durationMs: 1,
+      },
       answers: {
         action: {
           type: 'choice',
@@ -216,7 +225,7 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
-    if (!run.decisions[0]?.resolvedAt) {
+    if (decision && !run.decisions[0]?.resolvedAt) {
       resolveEngineDecision(decision.id, 'abort');
       await assert.rejects(collision, /Aborted: task dir collision/);
     }
@@ -255,7 +264,7 @@ test('synthetic collision cases match engine packet and abstain without operator
   const collisionCases = cases.cases.filter((item) => item.type === 'engine_collision');
   assert.equal(collisionCases.length, 6);
   for (const item of collisionCases) {
-    assert.equal(labels.labels[item.id], null, item.id);
+    assert.equal(labels.labels[item.id], 'abstain', item.id);
     assert.deepEqual(
       item.actions,
       collisionDecisionActions({ lane: 'production' }).map(({ id, label, description }) => ({

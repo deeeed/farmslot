@@ -129,7 +129,6 @@ export function evaluateAssessmentReport(
         throw new Error('Reference type does not match question');
       if (
         answer.type === 'choice' &&
-        !(r.consumer === 'decision-advice' && reference.expected === 'abstain') &&
         !assessmentChoiceOptions(answer).includes(String(reference.expected))
       )
         throw new Error('Reference choice does not match question');
