@@ -1432,10 +1432,20 @@ function scrollMeasureExpression(surface: string, target: string, anchor?: strin
     const rect = el.getBoundingClientRect();
     const isRoot = el === document.scrollingElement || el === document.body || el === document.documentElement;
     const scroller = isRoot ? document.scrollingElement || document.documentElement : el;
-    const left = isRoot ? 0 : Math.max(rect.x + el.clientLeft, 0);
-    const top = isRoot ? 0 : Math.max(rect.y + el.clientTop, 0);
-    const right = isRoot ? innerWidth : Math.min(rect.x + el.clientLeft + el.clientWidth, innerWidth);
-    const bottom = isRoot ? innerHeight : Math.min(rect.y + el.clientTop + el.clientHeight, innerHeight);
+    let left = isRoot ? 0 : Math.max(rect.x + el.clientLeft, 0);
+    let top = isRoot ? 0 : Math.max(rect.y + el.clientTop, 0);
+    let right = isRoot ? innerWidth : Math.min(rect.x + el.clientLeft + el.clientWidth, innerWidth);
+    let bottom = isRoot ? innerHeight : Math.min(rect.y + el.clientTop + el.clientHeight, innerHeight);
+    // An outer overflow container can clip part of the surface; only the unclipped part is visible.
+    for (let clip = isRoot ? null : el.parentElement || shadowHostFor(el.getRootNode()); clip && clip !== document.documentElement && clip !== document.body; clip = clip.parentElement || shadowHostFor(clip.getRootNode())) {
+      const style = getComputedStyle(clip);
+      if (!/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) continue;
+      const c = clip.getBoundingClientRect();
+      left = Math.max(left, c.x + clip.clientLeft);
+      top = Math.max(top, c.y + clip.clientTop);
+      right = Math.min(right, c.x + clip.clientLeft + clip.clientWidth);
+      bottom = Math.min(bottom, c.y + clip.clientTop + clip.clientHeight);
+    }
     return {
       surface: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       viewport: { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) },

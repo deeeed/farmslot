@@ -57,6 +57,15 @@
       <div class="row proof" data-testid="jitter-target">Target below a live-layout block</div>
       <div id="rows-tail"></div>
     </div>
+    <!-- The outer box clips its 300px scroll surface to 100px: a row at 150px is inside the
+         surface's own viewport but hidden by the clip. -->
+    <div style="height: 100px; overflow: hidden; margin: 8px 16px; border: 2px dashed #3f3f46">
+      <div data-testid="clipped-surface" style="height: 300px; overflow-y: auto; background: #fff">
+        <div style="height: 150px"></div>
+        <div class="row proof" data-testid="clipped-target">Row hidden by an outer clip</div>
+        <div style="height: 400px"></div>
+      </div>
+    </div>
     <script>
       function fill(id, prefix, count) {
         const host = document.getElementById(id);

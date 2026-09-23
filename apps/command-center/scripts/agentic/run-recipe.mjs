@@ -225,6 +225,7 @@ function parseArgs(argv) {
     }
     if (arg.startsWith('--stop-after-node=')) {
       options.stopAfterNode = arg.slice('--stop-after-node='.length);
+      if (!options.stopAfterNode) die('--stop-after-node requires a node id.');
       continue;
     }
     if (arg.startsWith('--input=')) {

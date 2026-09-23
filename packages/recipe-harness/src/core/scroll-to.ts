@@ -197,7 +197,13 @@ export async function runUiScrollTo(
   observation.measuredBy = initialFrame.measuredBy;
   observation.safeViewport = initialFrame.safeViewport;
 
-  if (isVisibleWithin(initialFrame.proofBounds, initialFrame.safeViewport)) {
+  if (
+    isVisibleWithin(
+      initialFrame.proofBounds,
+      initialFrame.safeViewport,
+      cardOcclusions(initial, request.viewportPolicy),
+    )
+  ) {
     return Object.assign(observation, {
       after: observation.before,
       offset: initial.offset,
@@ -230,7 +236,11 @@ export async function runUiScrollTo(
   }
   const finalFrame = frame(request, settled.geometry, fail);
   observation.safeViewport = finalFrame.safeViewport;
-  observation.finalVisible = isVisibleWithin(finalFrame.proofBounds, finalFrame.safeViewport);
+  observation.finalVisible = isVisibleWithin(
+    finalFrame.proofBounds,
+    finalFrame.safeViewport,
+    cardOcclusions(settled.geometry, request.viewportPolicy),
+  );
   if (request.verifyVisible && !observation.finalVisible) {
     fail(
       'SCROLL_TARGET_NOT_VISIBLE',
@@ -240,7 +250,11 @@ export async function runUiScrollTo(
   return observation;
 }
 
-/** Remove HUD/overlay occlusion from the viewport: bars in the lower half trim the bottom edge, others the top. */
+/**
+ * Remove bar-shaped occlusion (at least half the viewport wide, like the recipe HUD) from the
+ * viewport: bars in the lower half trim the bottom edge, others the top. Narrower cards are
+ * checked against the proof element instead; see cardOcclusions.
+ */
 export function safeViewportFor(
   viewport: UiRect,
   occlusions: readonly UiRect[] | undefined,
@@ -254,20 +268,42 @@ export function safeViewportFor(
     const overlapsX =
       occlusion.x < viewport.x + viewport.width && occlusion.x + occlusion.width > viewport.x;
     const overlapsY = occlusion.y < bottom && occlusion.y + occlusion.height > top;
-    if (!overlapsX || !overlapsY) continue;
+    if (!overlapsX || !overlapsY || !isBar(occlusion, viewport)) continue;
     if (occlusion.y + occlusion.height / 2 >= center) bottom = Math.min(bottom, occlusion.y);
     else top = Math.max(top, occlusion.y + occlusion.height);
   }
   return { x: viewport.x, y: top, width: viewport.width, height: Math.max(0, bottom - top) };
 }
 
-/** Fully inside, or covering the whole axis when the element is larger than the safe viewport. */
-export function isVisibleWithin(bounds: UiRect, area: UiRect): boolean {
+/**
+ * Fully inside (or covering the whole axis when larger than) the safe viewport, and not under a
+ * card-shaped occlusion.
+ */
+export function isVisibleWithin(
+  bounds: UiRect,
+  area: UiRect,
+  cards: readonly UiRect[] = [],
+): boolean {
   if (area.width <= 0 || area.height <= 0) return false;
   return (
     axisVisible(bounds.y, bounds.height, area.y, area.height) &&
-    axisVisible(bounds.x, bounds.width, area.x, area.width)
+    axisVisible(bounds.x, bounds.width, area.x, area.width) &&
+    !cards.some((card) => intersects(card, bounds))
   );
+}
+
+function isBar(occlusion: UiRect, viewport: UiRect): boolean {
+  return occlusion.width >= viewport.width / 2;
+}
+
+function intersects(a: UiRect, b: UiRect): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function cardOcclusions(geometry: UiScrollGeometry, policy: UiScrollToRequest['viewportPolicy']) {
+  if (policy === 'full' || !geometry.viewport) return [];
+  const viewport = geometry.viewport;
+  return (geometry.occlusions ?? []).filter((occlusion) => !isBar(occlusion, viewport));
 }
 
 function axisVisible(start: number, size: number, areaStart: number, areaSize: number): boolean {
@@ -348,12 +384,13 @@ async function settle(
   options: UiScrollToRequest['settle'],
 ): Promise<{ geometry: UiScrollGeometry; settlement: UiScrollSettlement }> {
   const startedAt = Date.now();
+  // The budget always fits stable_samples measurements, so timeout_ms 0 still gets one chance.
+  const budgetMs = Math.max(options.timeoutMs, (options.stableSamples - 1) * options.intervalMs);
   let geometry = await session.measure();
   let samples = 1;
   let unchanged = 1;
   while (unchanged < options.stableSamples) {
-    // Always take stable_samples measurements, so timeout_ms 0 means "settled right away or fail".
-    if (samples >= options.stableSamples && Date.now() - startedAt >= options.timeoutMs) {
+    if (Date.now() - startedAt >= budgetMs) {
       return {
         geometry,
         settlement: { status: 'timeout', samples, elapsedMs: Date.now() - startedAt },

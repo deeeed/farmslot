@@ -344,6 +344,32 @@ test('HUD occlusion shrinks the safe viewport so the target rests above the HUD'
   );
 });
 
+test('a corner card only blocks targets it covers; it does not shrink the whole viewport', async () => {
+  const card = { x: 300, y: 500, width: 100, height: 100 };
+  const surface = new FakeSurface({
+    elements: { filters: { top: 450, height: 40 }, badge: { top: 430, height: 40 } },
+    occlusions: [card],
+  });
+  const { transport } = fakeProvider(surface, { sessions: 'retained' });
+  const { trace } = await runScrollRecipe(transport, [{ target_test_id: 'filters' }]);
+  const output = scrollOutput(trace[0]);
+  // The 16-216px wide row at y 550-590 sits beside the card (x 300+), so it is already visible.
+  assert.deepEqual(output.safeViewport, VIEWPORT);
+  assert.equal(output.alreadyVisible, true);
+
+  const wide = new FakeSurface({
+    elements: { filters: { top: 450, height: 40 } },
+    occlusions: [{ x: 100, y: 500, width: 100, height: 100 }],
+  });
+  const narrowOverRow = fakeProvider(wide, { sessions: 'retained' });
+  const covered = await runScrollRecipe(narrowOverRow.transport, [
+    { target_test_id: 'filters', align: 'center' },
+  ]);
+  const moved = scrollOutput(covered.trace[0]);
+  assert.equal(moved.alreadyVisible, false, 'a card over the row forces a move');
+  assert.equal(moved.finalVisible, true);
+});
+
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
   const surface = new FakeSurface({
     elements: { filters: { top: 450, height: 40 } },

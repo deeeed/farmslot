@@ -161,7 +161,7 @@ function assertScrollMovement(node: Record<string, unknown>): void {
       'ui.scroll accepts offset_x/offset_y (absolute) or delta_x/delta_y (relative), not both.',
     );
   }
-  if ((absolute || relative) && node.scroll_into_view === true) {
+  if ((absolute || relative) && (node.scroll_into_view === true || node.into_view === true)) {
     throw new RecipeExecutionError(
       'harness',
       'ui.scroll cannot combine scroll_into_view with raw movement; use ui.scroll_to to reveal a target.',
