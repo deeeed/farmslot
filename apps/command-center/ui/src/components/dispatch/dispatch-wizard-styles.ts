@@ -909,7 +909,6 @@ export const dispatchWizardStyles = css`
   }
 
   .publication-review-runners,
-  .publication-review-depth,
   .publication-review-actions {
     display: flex;
     flex-wrap: wrap;

@@ -207,11 +207,6 @@ export function readyWorkspaceReviewModalStyles(): string {
         flex-wrap: wrap;
         min-width: 0;
       }
-      ready-workspace .rdy-review-depth-picker {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-      }
       ready-workspace .rdy-review-session-picker {
         display: flex;
         gap: 6px;

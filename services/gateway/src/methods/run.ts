@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  assertStaticReviewLoopRequests,
   captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   type DevInteractiveActionRecord,
@@ -352,6 +353,7 @@ export async function runCreate(
     throw new Error('Publication authority cannot be supplied in run parameters');
   if ('qaAfterReview' in params)
     throw new Error('Automatic QA snapshots cannot be supplied in run parameters');
+  assertStaticReviewLoopRequests(params.pendingReviewPlan);
 
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
@@ -1552,6 +1554,14 @@ async function resolveRunDecision(
       `Improvement decisions are applied via the improvement.apply method, not resolveDecision; ` +
         `resolving '${params.decisionId}' here would record it as applied without changing any file.`,
     );
+  }
+  if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
+    const reviewRequest = params.selectionData?.reviewRequest;
+    const loops =
+      reviewRequest && typeof reviewRequest === 'object'
+        ? (reviewRequest as { loops?: unknown }).loops
+        : undefined;
+    assertStaticReviewLoopRequests(Array.isArray(loops) ? loops : undefined, 'reviewRequest.loops');
   }
   // A park that LANDED and freed the slot is restored rather than refused — the
   // operator answering the gate is what asks for the run back. Still before

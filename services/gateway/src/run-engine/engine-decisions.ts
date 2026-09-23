@@ -328,15 +328,7 @@ export function repeatReviewDecisionActions(context: RepeatReviewContext): Decis
       description: 'Start a cold full review without inheriting prior findings or artifacts.',
     },
   ];
-  if (context.farmslotEvidenceRefs.length === 0) {
-    actions.push({
-      id: 'fresh-full-live',
-      label: 'Fresh context — full live',
-      style: 'secondary',
-      description:
-        'Escalate an external PR without Farmslot evidence to a full review with live project validation.',
-    });
-  }
+  // Runtime validation is a separate QA run (ADR-058); review continuation stays static.
   return actions;
 }
 
@@ -349,6 +341,7 @@ export function applyRepeatReviewSelection(
     ...context,
     contextMode: reuse ? 'reuse' : 'fresh',
     reviewScope: actionId === 'reuse-incremental-static' ? 'incremental' : 'full',
+    // Only a decision created before ADR-058 can still carry the live escalation action.
     validationDepth: actionId === 'fresh-full-live' ? 'full-live' : 'static-code',
     sessionIntent: actionId === 'reuse-incremental-static' ? 'resume' : 'reset',
     ...(!reuse ? { unresolvedFindings: [], artifactRefs: [] } : {}),
@@ -399,13 +392,12 @@ export async function handleRepeatReviewDecision(
   const actionId = await createEngineDecision(
     runId,
     'review_continuation',
-    `A prior terminal review exists for ${context.repository}#${context.prNumber}. Choose the context, scope, and validation depth for generation ${context.generation}.`,
+    `A prior terminal review exists for ${context.repository}#${context.prNumber}. Choose the context and scope for static review generation ${context.generation}.`,
     actions,
     {
       kind: 'review_continuation',
       recommendedActionId,
       prior: context,
-      fullLiveAvailable: context.farmslotEvidenceRefs.length === 0,
     },
     {
       canReplay: (existing) => {

@@ -99,7 +99,7 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           >
         </div>
         <div class="rdy-package-facts">
-          ${reviewSummary.fixLoopCertified ? html`<span>Full-live fix loop</span>` : nothing}
+          ${reviewSummary.fixLoopCertified ? html`<span>Fix loop certified</span>` : nothing}
           ${reviewSummary.staleIgnoredReviews
             ? html`<span>${reviewSummary.staleIgnoredReviews} stale ignored</span>`
             : nothing}

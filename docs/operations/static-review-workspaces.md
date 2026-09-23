@@ -72,7 +72,7 @@ Completion, failure and a worker-reported blocker retain task artifacts and rele
 
 ## Existing runtime reviews
 
-Unstarted `review-pr` requests with `reviewValidationDepth: full-live` normalize to QA using the configured farm profile. Their slot constraints and original settings remain recorded. Missing profiles or ambiguous legacy tier/recipe settings require configuration. New callers should send `flowType: qa` and a profile.
+Unstarted `review-pr` requests with `reviewValidationDepth: full-live` normalize to QA using the configured farm profile. Their slot constraints and original settings remain recorded. Missing profiles or ambiguous legacy tier/recipe settings require configuration. New callers should send `flowType: qa` and a profile. New independent review loops (dispatch, backlog, queue and ready-gate `pendingReviewPlan` / `reviewRequest.loops`) must be static; a `full-live` loop is refused with `REVIEW_QA_NEEDS_CONFIGURATION`. A queued legacy loop waits with a `Review/QA migration:` reason until the operator requeues it static or runs QA. Started and completed reviews keep their recorded depth.
 
 Already-running work and historical results retain their original contract. Migration does not relabel an old verdict as newly verified QA.
 

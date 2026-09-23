@@ -12,7 +12,6 @@ import type {
   PRStatus,
   QaInput,
   ReviewRunnerId,
-  ReviewValidationDepth,
   Run,
   RunCancelResult,
 } from '@farmslot/protocol';
@@ -1710,11 +1709,15 @@ export class DispatchWizard extends DispatchWizardState {
     this._syncPublicationReviewsToHash();
   }
 
-  private _setPublicationReviewDepth(id: number, validationDepth: ReviewValidationDepth): void {
-    this._publicationReviewLoops = this._publicationReviewLoops.map((loop) =>
-      loop.id === id ? { ...loop, validationDepth } : loop,
-    );
-    this._syncPublicationReviewsToHash();
+  /** Farm-default QA preset shown beside static review rounds; runtime QA is a separate flow. */
+  private _effectiveQaPresetTitle(): string | null | undefined {
+    const project = this._projectConfigs.find((entry) => entry.name === this._project);
+    // Unknown until the selected project's config has loaded.
+    if (!project) return undefined;
+    const config = project.qa;
+    if (!config?.profiles.length) return null;
+    const preset = config.profiles.find((profile) => profile.id === config.default_profile);
+    return preset?.title ?? config.default_profile;
   }
 
   static styles = [dispatchWizardStyles, qaInputFieldStyles];
@@ -1829,6 +1832,7 @@ export class DispatchWizard extends DispatchWizardState {
         RUNNER_OPTIONS,
         mode,
       ),
+      publicationReviewQaPreset: this._effectiveQaPresetTitle(),
       runnerOptions: RUNNER_OPTIONS,
       loadingCandidates: this._loadingCandidates,
       candidates: this._candidates,
@@ -1913,8 +1917,6 @@ export class DispatchWizard extends DispatchWizardState {
         this._variantInput = variantInput;
       },
       setPublicationReviewRunner: (id, runner) => this._setPublicationReviewRunner(id, runner),
-      setPublicationReviewDepth: (id, validationDepth) =>
-        this._setPublicationReviewDepth(id, validationDepth),
       removePublicationReviewLoop: (id) => this._removePublicationReviewLoop(id),
       addWorkerReviewLoop: () =>
         this._addPublicationReviewLoop(

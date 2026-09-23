@@ -7,7 +7,6 @@ import {
   readyReviewLoopRequestPayload,
   readyRunnerLabel,
   removeReadyReviewLoop,
-  setReadyReviewLoopDepth,
   setReadyReviewLoopModelEffort,
   setReadyReviewLoopRunner,
   setReadyReviewLoopSessionIntent,
@@ -59,15 +58,6 @@ test('ready workspace review request model mutates loops with max and minimum gu
   ]);
   const customized = setReadyReviewLoopModelEffort(state.loops, 2, 'sonnet', 'low');
   assert.deepEqual(setReadyReviewLoopRunner(customized, 2, 'claude'), customized);
-  assert.deepEqual(setReadyReviewLoopDepth(state.loops, 1, 'full-live'), [
-    {
-      id: 1,
-      runner: 'claude',
-      sessionIntent: 'reset',
-      validationDepth: 'full-live',
-    },
-    { id: 2, runner: 'claude', sessionIntent: 'reset', model: 'opus', effort: '' },
-  ]);
   assert.deepEqual(setReadyReviewLoopSessionIntent(state.loops, 2, 'resume'), [
     { id: 1, runner: 'claude', sessionIntent: 'reset' },
     { id: 2, runner: 'claude', sessionIntent: 'resume', model: 'opus', effort: '' },
@@ -97,7 +87,6 @@ test('ready workspace review request model builds ordered request payload', () =
       {
         id: 2,
         runner: 'codex',
-        validationDepth: 'full-live',
         sessionIntent: 'reset',
         model: 'gpt-6-astra',
         effort: 'low',
@@ -118,7 +107,7 @@ test('ready workspace review request model builds ordered request payload', () =
     ]),
     [
       [1, 'claude', undefined, undefined, 'static-code', 'resume'],
-      [2, 'codex', 'gpt-6-astra', 'low', 'full-live', 'reset'],
+      [2, 'codex', 'gpt-6-astra', 'low', 'static-code', 'reset'],
     ],
   );
 

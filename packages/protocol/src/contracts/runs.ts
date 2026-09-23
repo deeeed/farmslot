@@ -1091,7 +1091,6 @@ export interface ReviewContinuationPayload {
   kind: 'review_continuation';
   recommendedActionId: string;
   prior: RepeatReviewContext;
-  fullLiveAvailable: boolean;
 }
 
 /** One human-gated skill-antipattern draft routed from a DOMAIN learning entry.

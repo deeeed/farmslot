@@ -9,7 +9,6 @@ import type {
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewScope,
-  ReviewValidationDepth,
   ReviewWorkspaceTarget,
   RunCreateParams,
   TaskTemplateSelection,
@@ -47,7 +46,6 @@ export interface DispatchPayloadDraft {
   prepareProfile?: string;
   reviewTier?: string;
   reviewScope?: ReviewScope;
-  reviewValidationDepth?: ReviewValidationDepth;
   nudgeReuse?: boolean;
   freshReuse?: boolean;
   reviewDepth?: ReviewDepthPolicy;
@@ -104,7 +102,6 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     reviewScope: input.reviewScope,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     pressureAdmissionRef: input.pressureAdmissionRef,
@@ -142,7 +139,6 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     reviewScope: input.reviewScope,
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
-    reviewValidationDepth: input.reviewValidationDepth,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     ...input.comparison,

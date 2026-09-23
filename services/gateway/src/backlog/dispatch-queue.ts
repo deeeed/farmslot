@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import {
   assertPRExecutionProfile,
+  assertStaticReviewLoopRequests,
   type DispatchQueueUpdateParams,
   isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
@@ -1333,6 +1334,18 @@ function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   return true;
 }
 
+/** Keep refused migrations and all their constraints visible for operator repair. */
+async function holdForReviewQaMigration(
+  item: QueueItem,
+  error: ReviewQaConfigurationError,
+): Promise<void> {
+  const reason = `Review/QA migration: ${error.message}`;
+  if (item.waitingReason === reason) return;
+  item.waitingReason = reason;
+  await persistQueueNow();
+  broadcastQueue();
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
@@ -1348,6 +1361,14 @@ async function tryDispatchNextOnce(): Promise<void> {
   for (const pendingItem of pending) {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
+    try {
+      assertStaticReviewLoopRequests(item.pendingReviewPlan);
+    } catch (error) {
+      if (!(error instanceof ReviewQaConfigurationError)) throw error;
+      // A queued legacy live review loop needs an operator choice; the plan is not editable.
+      await holdForReviewQaMigration(item, error);
+      continue;
+    }
     if (item.flowType === 'review-pr' || item.flowType === 'qa') {
       const project = await loadProjectConfig(item.project);
       if (liveQueuedItem(item.id) !== item) continue;
@@ -1361,13 +1382,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
       } catch (error) {
         if (!(error instanceof ReviewQaConfigurationError)) throw error;
-        // Keep refused migrations and all their constraints visible for operator repair.
-        const reason = `Review/QA migration: ${error.message}`;
-        if (item.waitingReason !== reason) {
-          item.waitingReason = reason;
-          await persistQueueNow();
-          broadcastQueue();
-        }
+        await holdForReviewQaMigration(item, error);
         continue;
       }
       if (liveQueuedItem(item.id) !== item) continue;

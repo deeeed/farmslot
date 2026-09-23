@@ -6,6 +6,7 @@ import type { QueueItem, SlotStatus } from '@farmslot/protocol';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
+import { dispatchQueueAdd } from '../methods/dispatch/queue.js';
 import {
   createRun,
   deleteRun,
@@ -2072,4 +2073,57 @@ test('PR queue filters every disabled member of a mixed model group before scori
   }));
   assert.equal(await selectPRQueueExecution([cold, disabled], item, models), 'allowed-cold');
   assert.deepEqual(item.allowedSlots, ['allowed-cold']);
+});
+
+test('dispatch.queue.add refuses new full-live review loops before any project lookup', async () => {
+  await assert.rejects(
+    dispatchQueueAdd({
+      flowType: 'dev',
+      project: 'no-such-project-needed',
+      ticketOrPr: 'PROJ-live-loop',
+      pendingReviewPlan: [
+        { order: 1, runner: 'codex', validationDepth: 'static-code' },
+        { order: 2, runner: 'claude', validationDepth: 'full-live' },
+      ],
+    }),
+    (error: Error & { code?: string }) =>
+      error.code === 'REVIEW_QA_NEEDS_CONFIGURATION' &&
+      /pendingReviewPlan\[1\]/.test(error.message),
+  );
+  assert(!getQueueSnapshot().some((item) => item.ticketOrPr === 'PROJ-live-loop'));
+});
+
+test('tryDispatchNext holds a queued legacy full-live review loop for operator configuration', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('legacy-loop-slot') as any);
+  const item = addItem(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: 'PROJ-legacy-live-loop',
+      allowedSlots: ['legacy-loop-slot'],
+      // Internal materialization of a stored pre-ADR-058 plan (e.g. launch-plan reconcile).
+      pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+    },
+    { kind: 'system' },
+  );
+  t.after(() => removeItem(item.id));
+  let launched = false;
+  initDispatchQueue(
+    () => {},
+    async () => {
+      launched = true;
+      throw new Error('legacy live review loop must not launch');
+    },
+  );
+  await tryDispatchNext();
+  await tryDispatchNext();
+  assert.equal(launched, false);
+  const held = getQueueSnapshot().find((record) => record.id === item.id);
+  assert.equal(held?.status, 'queued');
+  assert.match(held?.waitingReason ?? '', /^Review\/QA migration: .*full-live/);
+  assert.deepEqual(
+    held?.pendingReviewPlan,
+    [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+    'the original request stays visible and unmodified',
+  );
 });

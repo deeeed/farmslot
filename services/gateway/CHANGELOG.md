@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, and review continuation offers only static choices. Started and completed reviews keep their original depth.
+
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.

@@ -244,7 +244,6 @@ export interface RunCreateCliOptions {
   task?: string;
   slot?: string;
   reviewMachine?: string;
-  reviewValidationDepth?: string;
   qaProfile?: string;
   qaInputs?: string;
   effort?: string;
@@ -334,25 +333,16 @@ function buildPressureAdmissionParams(opts: RunCreateCliOptions): Record<string,
 
 /** Typed flags share the same wire placement as preview and direct run creation. */
 export function buildReviewDispatchParams(
-  opts: Pick<RunCreateCliOptions, 'slot' | 'reviewMachine' | 'reviewValidationDepth'>,
+  opts: Pick<RunCreateCliOptions, 'slot' | 'reviewMachine'>,
 ) {
-  const depth = opts.reviewValidationDepth;
-  if (depth !== undefined && depth !== 'static-code' && depth !== 'full-live')
-    throw new Error('--review-validation-depth must be static-code or full-live');
-  if (opts.reviewMachine && (opts.slot || depth === 'full-live'))
-    throw new Error('--review-machine cannot be combined with --slot or full-live review');
-  return {
-    ...(opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {}),
-    ...(depth ? { reviewValidationDepth: depth } : {}),
-  };
+  if (opts.reviewMachine && opts.slot)
+    throw new Error('--review-machine cannot be combined with --slot');
+  return opts.reviewMachine ? { reviewWorkspaceTarget: { machine: opts.reviewMachine } } : {};
 }
 
 /** Farm selection stays on the gateway; the CLI validates and forwards explicit QA inputs. */
 export function buildQaDispatchParams(
-  opts: Pick<
-    RunCreateCliOptions,
-    'flowType' | 'qaProfile' | 'qaInputs' | 'reviewMachine' | 'reviewValidationDepth'
-  >,
+  opts: Pick<RunCreateCliOptions, 'flowType' | 'qaProfile' | 'qaInputs' | 'reviewMachine'>,
 ): Pick<RunCreateParams, 'qaProfileId' | 'qaInputs'> {
   if (opts.flowType !== 'qa') {
     if (opts.qaProfile !== undefined || opts.qaInputs !== undefined)
@@ -379,9 +369,6 @@ export function buildQaDispatchParams(
     sessionIntent: 'reset',
     scope: 'full',
     workflow: 'qa',
-    ...(opts.reviewValidationDepth !== undefined
-      ? { validationDepth: opts.reviewValidationDepth }
-      : {}),
     ...(opts.qaProfile !== undefined ? { qaProfileId: opts.qaProfile } : {}),
     ...(opts.qaInputs !== undefined ? { qaInputs: inputs } : {}),
   };
@@ -885,10 +872,6 @@ export function registerRunCommand(program: Command): void {
     .option('--no-publish-review', 'Keep this static review in Farmslot only')
     .option('--review-team <id>', 'PR team/account for publication; inferred when unique')
     .option('--team <id>', 'Alias for --review-team')
-    .option(
-      '--review-validation-depth <depth>',
-      'Legacy compatibility: static-code or full-live; use --flow-type qa for runtime QA',
-    )
     .option(
       '--qa-profile <id>',
       'Farm-owned QA profile for --flow-type qa (otherwise farm default)',

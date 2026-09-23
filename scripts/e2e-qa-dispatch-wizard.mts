@@ -122,7 +122,7 @@ try {
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
   for (const name of ['wizard-farm', 'workspace-only']) {
     const project = path.join(fixture, 'projects', name);
-    for (const flow of ['review-pr', 'validation', 'dev']) {
+    for (const flow of ['review-pr', 'validation', 'dev', 'fix-bug']) {
       await mkdir(path.join(project, 'shared', flow), { recursive: true });
       await writeFile(
         path.join(project, 'shared', flow, 'shared.md'),
@@ -314,6 +314,7 @@ process.stdout.write(JSON.stringify(body));
   assert(connection, 'Fixture gateway did not start');
   const cdpFile = path.join(root, 'apps/command-center/scripts/cdp.mjs');
   let activeRoute = 'dispatch';
+  let count = 0;
   const cdp = (...args: string[]) =>
     execFileSync(process.execPath, [cdpFile, ...args], {
       cwd: root,
@@ -451,7 +452,7 @@ process.stdout.write(JSON.stringify(body));
     evaluate(
       `return [...find('runner-model-effort-picker').element.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
     ),
-    ['claude', 'codex', 'cursor', 'grok'],
+    ['claude', 'codex', 'cursor', 'grok', 'pi'],
   );
   evaluate(
     `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();find('runner-model-effort-picker').element.shadowRoot.querySelector('details summary').click();return true;`,
@@ -650,6 +651,88 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('existing-dev-controls');
   checkpoints.push('qa-return-and-existing-dev-controls');
+
+  // ADR-058: independent review rounds are static; a legacy live link cannot re-enable live depth.
+  await navigate(
+    '#dispatch?flow=fix-bug&project=wizard-farm&ticket=PROJ-107&publicationReviews=codex%3Afull-live%2Cclaude',
+  );
+  await waitUI(`return find('.publication-review-panel')?.element.getClientRects().length > 0;`);
+  evaluate(
+    `find('.publication-review-panel').element.scrollIntoView({block:'center'});return true;`,
+  );
+  screenshot('after-static-publication-reviews');
+  const publicationPanel = evaluate(
+    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),statics:[...panel.querySelectorAll('[data-testid="publication-review-static"]')].map(e=>e.textContent.trim()),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
+  );
+  assert(publicationPanel.visible, 'Publication reviews panel must render');
+  assert.deepEqual(publicationPanel.statics, ['Static', 'Static']);
+  assert(
+    !publicationPanel.buttons.some((label: string) => /full.?live/i.test(label)),
+    `Publication reviews must not offer a full-live button: ${publicationPanel.buttons.join(', ')}`,
+  );
+  assert.match(publicationPanel.text, /Runtime validation runs separately with the QA flow/);
+  assert.match(publicationPanel.text, /Farm QA preset: Daily changes/);
+  assert(
+    !evaluate(`return /full.?live/i.test(find('dispatch-wizard').element.shadowRoot.textContent);`),
+    'No full-live review choice anywhere in Dispatch config',
+  );
+  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+  count = (await queue()).length;
+  click('dispatch-queue');
+  const staticItems = await waitQueue(count + 1);
+  const staticRequest = staticItems.find((item) => item.ticketOrPr === 'PROJ-107')!;
+  assert.equal(staticRequest.flowType, 'fix-bug');
+  assert.deepEqual(
+    staticRequest.pendingReviewPlan?.map((loop) => [loop.runner, loop.validationDepth]),
+    [
+      ['codex', 'static-code'],
+      ['claude', 'static-code'],
+    ],
+  );
+  await json(path.join(evidence, 'static-publication-review-item.json'), staticRequest);
+  checkpoints.push('dispatch-config-offers-only-static-review-rounds');
+
+  const liveLoopRequest = {
+    flowType: 'fix-bug',
+    project: 'wizard-farm',
+    ticketOrPr: 'PROJ-108',
+    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+  };
+  const refusals: Record<string, string> = {};
+  for (const method of ['dispatch.queue.add', 'run.create']) {
+    await assert.rejects(connection.call(method, liveLoopRequest), (error: Error) => {
+      refusals[method] = error.message;
+      return /independent reviews are static.*QA flow/.test(error.message);
+    });
+  }
+  await assert.rejects(
+    connection.call('backlog.create', {
+      project: 'wizard-farm',
+      title: 'Legacy live review loop',
+      sourceKind: 'manual',
+      flowType: 'fix-bug',
+      pendingReviewPlan: liveLoopRequest.pendingReviewPlan,
+    }),
+    (error: Error) => {
+      refusals['backlog.create'] = error.message;
+      return /independent reviews are static.*QA flow/.test(error.message);
+    },
+  );
+  assert(
+    !(await connection.call<{ items: Array<{ title: string }> }>('backlog.list', {})).items.some(
+      (item) => item.title === 'Legacy live review loop',
+    ),
+    'Refused live loops must not create a backlog item',
+  );
+  assert.equal((await queue()).length, count + 1, 'Refused live loops must not queue work');
+  assert(
+    !(await connection.call<{ runs: Array<{ ticketOrPr: string }> }>('run.list')).runs.some(
+      (run) => run.ticketOrPr === 'PROJ-108',
+    ),
+    'Refused live loops must not create a run',
+  );
+  await json(path.join(evidence, 'full-live-review-loop-refusals.json'), refusals);
+  checkpoints.push('gateway-refuses-new-full-live-review-loops');
   await navigate('#dispatch?flow=qa&project=wizard-farm&ticket=changes-since-yesterday');
   await waitUI(`return Boolean(find('[data-testid="dispatch-qa-domain"]'));`);
   await choose('dispatch-qa-domain', 'payments');
@@ -666,7 +749,7 @@ process.stdout.write(JSON.stringify(body));
     );
   };
   await chooseField('window', '48h');
-  let count = (await queue()).length;
+  count = (await queue()).length;
   await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
   click('dispatch-queue');
   let actionItems = await waitQueue(count + 1);

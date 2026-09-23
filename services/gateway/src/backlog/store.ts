@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   ARCHIVABLE_BACKLOG_STATUSES,
   assertBacklogLaunchPlan,
+  assertStaticReviewLoopRequests,
   type BacklogAutoDispatchTickParams,
   type BacklogAutoDispatchTickResult,
   type BacklogBlockedItem,
@@ -389,6 +390,12 @@ function normalizeReviewDepth(value: unknown): ReviewDepthPolicy | undefined {
     ...(value.countingVersion === 2 ? { countingVersion: 2 } : {}),
     requestedBy: value.requestedBy,
   };
+}
+
+/** New or edited plans are static; stored legacy plans stay readable for operator repair. */
+function normalizeRequestedReviewPlan(value: unknown): ReviewLoopRequest[] | undefined {
+  if (Array.isArray(value)) assertStaticReviewLoopRequests(value);
+  return normalizePendingReviewPlan(value);
 }
 
 function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undefined {
@@ -1309,7 +1316,7 @@ export async function createBacklogItem(
     const devInteractiveProfile = normalizeDevInteractiveProfile(params.devInteractiveProfile);
     const reviewDepth = normalizeReviewDepth(params.reviewDepth);
     const waitPolicy = normalizeWaitPolicy(params.waitPolicy);
-    const pendingReviewPlan = normalizePendingReviewPlan(params.pendingReviewPlan);
+    const pendingReviewPlan = normalizeRequestedReviewPlan(params.pendingReviewPlan);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
     const item: BacklogRecord = {
@@ -1640,7 +1647,7 @@ export async function updateBacklogItem(
         const pendingReviewPlan =
           params.pendingReviewPlan === null
             ? undefined
-            : normalizePendingReviewPlan(params.pendingReviewPlan);
+            : normalizeRequestedReviewPlan(params.pendingReviewPlan);
         if (pendingReviewPlan) item.pendingReviewPlan = pendingReviewPlan;
         else delete item.pendingReviewPlan;
       }
@@ -2057,6 +2064,8 @@ export async function enqueueBacklogItem(
     const dispatchOriginator =
       options.dispatchOriginator ?? originator ?? requireBacklogOriginator(item);
     try {
+      // Stored legacy live loops stay readable; queueing them needs an operator repair first.
+      assertStaticReviewLoopRequests(item.pendingReviewPlan);
       await assertAllowedSlotsBelongToProject(item);
       if (params.auto) await assertAutoDispatchEligible(item);
       item.sourceRef = await normalizeSourceFields(

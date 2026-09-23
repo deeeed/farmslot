@@ -235,7 +235,10 @@ export function BacklogCreateForm({
       setError(`${sourceKind === 'jira' ? 'Jira' : 'GitHub'} items require a source ref.`);
       return;
     }
-    const pendingReviewPlan = reviewPlan.length ? reviewPlan : undefined;
+    // Review rounds are static; saving converts a legacy full-live loop (ADR-058).
+    const pendingReviewPlan = reviewPlan.length
+      ? reviewPlan.map((loop) => ({ ...loop, validationDepth: 'static-code' as const }))
+      : undefined;
     setSubmitting(true);
     setError(null);
     try {
@@ -619,23 +622,11 @@ export function BacklogCreateForm({
                 )
               }
             />
-            <PlanningChoices
-              label="Depth"
-              options={
-                [
-                  { value: 'static-code', label: 'Static' },
-                  { value: 'full-live', label: 'Full live' },
-                ] as const
-              }
-              value={loop.validationDepth ?? 'static-code'}
-              onChange={(value) =>
-                setReviewPlan((current) =>
-                  current.map((entry, currentIndex) =>
-                    currentIndex === index ? { ...entry, validationDepth: value } : entry,
-                  ),
-                )
-              }
-            />
+            <Text style={styles.chipText}>
+              {loop.validationDepth === 'full-live'
+                ? 'Legacy full live: saving makes it static. Run runtime validation with QA.'
+                : 'Static review. Run runtime validation separately with QA.'}
+            </Text>
             <PlanningField
               label="Model override"
               value={loop.model ?? ''}

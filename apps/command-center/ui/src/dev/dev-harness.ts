@@ -2287,7 +2287,6 @@ All checks passed.`;
           payload: {
             kind: 'review_continuation',
             recommendedActionId: 'reuse-incremental-static',
-            fullLiveAvailable: false,
             prior: {
               version: 1,
               chainId: 'prior-review-run',

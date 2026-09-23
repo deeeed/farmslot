@@ -1,4 +1,5 @@
 import {
+  assertStaticReviewLoopRequests,
   type DispatchQueueAddParams,
   type DispatchQueueAddResult,
   type DispatchQueueListResult,
@@ -75,6 +76,7 @@ export async function dispatchQueueAdd(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );
   }
+  assertStaticReviewLoopRequests(params.pendingReviewPlan);
   const projectVars = await loadProjectVars(params.project);
   if (params.flowType === 'review-pr') {
     const repo = projectVars.projectJson.ci?.repo;

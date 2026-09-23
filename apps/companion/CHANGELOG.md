@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Backlog review rounds are static; runtime validation runs separately with QA.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-09-20

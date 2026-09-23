@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action.
+
 - Support GPT-6 Sol reasoning efforts for Codex selections.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
