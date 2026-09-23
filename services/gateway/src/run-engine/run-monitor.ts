@@ -557,9 +557,9 @@ export function isWorkerSignalFreshForRun(run: FreshnessRunContext, signal: Work
     // An explicitly blocked attempt can be replaced in place. Validate the
     // new signal through the normal artifact contract before replaying it.
     const monitor = run.steps.find((step) => step.name === PipelineSteps.MONITOR);
-    const blockedAt = parseStrictIsoMs(monitor?.completedAt);
-    const signalAt = parseStrictIsoMs(signal.timestamp);
     const previous = normalizeWorkerSignal(monitor?.outputs?.workerSignal);
+    const blockedAt = previous.ok ? parseStrictIsoMs(previous.signal.timestamp) : null;
+    const signalAt = parseStrictIsoMs(signal.timestamp);
     return (
       run.status === 'blocked' &&
       monitor?.status === 'done' &&

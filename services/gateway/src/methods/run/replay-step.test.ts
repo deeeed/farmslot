@@ -33,6 +33,7 @@ import {
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
+  rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
@@ -50,6 +51,13 @@ async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Prom
   updateRun(runId, { status, completedAt: new Date().toISOString() });
   await deleteRun(runId);
 }
+
+test('rollback release keeps a blocked replay eligible to acquire proof again', () => {
+  assert.deepEqual(rollbackReclaimedSlotReleaseOptions('blocked', 'run-1'), {
+    restartRunId: 'run-1',
+  });
+  assert.equal(rollbackReclaimedSlotReleaseOptions('failed', 'run-1'), undefined);
+});
 
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
@@ -119,9 +127,9 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     timestamp: '2026-09-23T01:01:00Z',
   } as const;
   const context = { id: 'worker', role: 'fix-bug' } as const;
-  assert.deepEqual(
+  assert.equal(
     freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
-    signal,
+    null,
   );
   assert.deepEqual(
     freshBlockedMonitorAttempt(
@@ -1996,6 +2004,50 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
   assert.equal(replayed.steps.find((step) => step.name === 'monitor')?.status, 'pending');
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+});
+
+test('blocked eval monitor without a slot restarts at find-slot instead of requiring proof', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    engineState: {
+      evalExperiment: {
+        experimentId: 'experiment-blocked',
+        experimentKey: 'experiment-key-blocked',
+        experimentManifestPath: '/tmp/experiment-manifest.json',
+        packagePath: '/tmp/candidate.result-package.json',
+        candidateStrategyFingerprint: 'fingerprint-blocked',
+        trialId: 'trial-blocked',
+      },
+    },
+    steps: run.steps.map((step) =>
+      step.name === 'monitor'
+        ? {
+            ...step,
+            status: 'done',
+            completedAt: '2026-09-23T01:01:00Z',
+            outputs: {
+              workerSignal: {
+                status: 'blocked',
+                attemptId: 'old',
+                timestamp: '2026-09-23T01:00:00Z',
+              },
+            },
+          }
+        : step,
+    ),
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {});
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.slotId, null);
+  assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'find-slot');
 });
 
 test('runReplayStep restores skipPrepare for chained follow-ups when the flag was already cleared', async (t) => {
