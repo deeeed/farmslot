@@ -91,15 +91,21 @@ export async function executeCIWatchStep(
   } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
-  if (
-    current.decisions.some(
-      (decision) =>
-        decision.type.startsWith('ci_') &&
-        decision.resolvedAt &&
-        decision.resolvedAction === 'abort',
-    )
-  ) {
-    const outputs = { result: 'aborted', phase: 'done', failedChecks: [], pollCount: 0 };
+  const abortedDecision = current.decisions.find(
+    (decision) =>
+      (decision.type === 'ci_inline_fix_blocked' ||
+        decision.type === 'ci_ci_failed' ||
+        decision.type === 'ci_ci_timeout') &&
+      decision.resolvedAt &&
+      decision.resolvedAction === 'abort',
+  );
+  if (abortedDecision) {
+    const failedChecks = Array.isArray(abortedDecision.context?.failedChecks)
+      ? abortedDecision.context.failedChecks.filter(
+          (name): name is string => typeof name === 'string',
+        )
+      : [];
+    const outputs = { result: 'aborted', phase: 'done', failedChecks };
     updateRunStep(runId, 'ci-watch', { outputs });
     await createRetrospective(runId);
     deferTerminalSlotRelease({

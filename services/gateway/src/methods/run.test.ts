@@ -1438,6 +1438,7 @@ test('resolving a CI abort without a live resolver re-enters the persisted CI-wa
 
   const after = getRun(run.id)!;
   assert.equal(after.decisions[0]?.resolvedAction, 'abort');
+  assert.equal(after.status, 'created');
   assert.equal(after.steps.find((step) => step.name === 'ci-watch')?.status, 'pending');
   assert.equal(after.steps.find((step) => step.name === 'ci-watch')?.outputs, undefined);
 });

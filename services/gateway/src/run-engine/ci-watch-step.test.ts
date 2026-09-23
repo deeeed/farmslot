@@ -159,6 +159,7 @@ test('ci-watch does not poll after an operator abort survives a gateway restart'
         description: 'Fix did not advance HEAD',
         actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
         createdAt: new Date().toISOString(),
+        context: { failedChecks: ['Check changelog'] },
         resolvedAt: new Date().toISOString(),
         resolvedAction: 'abort',
       },
@@ -181,6 +182,8 @@ test('ci-watch does not poll after an operator abort survives a gateway restart'
   const result = await executeCIWatchStep(run.id, context);
 
   assert.equal(result.outputs?.result, 'aborted');
+  assert.deepEqual(result.outputs?.failedChecks, ['Check changelog']);
+  assert.equal(result.outputs?.pollCount, undefined);
   assert.deepEqual(
     context.deferred.map((release) => release.slotId),
     ['ci-abort-restart-slot'],
