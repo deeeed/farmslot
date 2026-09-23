@@ -134,14 +134,20 @@ test('decision advice requires opt-in and an exact admitted snapshot, never reso
     'insufficient-options',
   );
   assert.equal(run.decisions[0]?.resolvedAt, undefined);
+  decision.description = 'Synthetic posting choice';
   decision.type = 'engine_review_posting' as typeof decision.type;
+  updateRun(run.id, { decisions: [decision] });
+  const posting = await withPrincipal(() => decisionAdviceGet(params));
+  assert.equal(posting.reason, 'not-admitted');
+  assert.notEqual(posting.snapshotHash, pending.snapshotHash);
+  decision.type = 'engine_prepare_profile_mismatch' as typeof decision.type;
+  decision.description = 'Synthetic profile gate';
   updateRun(run.id, { decisions: [decision] });
   assert.equal(
     (await withPrincipal(() => decisionAdviceGet(params))).reason,
-    'insufficient-options',
+    'not-admitted',
   );
-  decision.type = 'engine_prepare_profile_mismatch' as typeof decision.type;
-  decision.description = 'Synthetic profile gate';
+  decision.actions = [decision.actions[0], decision.actions[2]];
   updateRun(run.id, { decisions: [decision] });
   assert.equal(
     (await withPrincipal(() => decisionAdviceGet(params))).reason,
