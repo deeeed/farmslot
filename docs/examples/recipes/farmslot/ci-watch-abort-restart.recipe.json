@@ -44,7 +44,7 @@
       },
       "after": {
         "action": "command",
-        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}'",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}' | node -e 'const chunks = []; process.stdin.on(\"data\", chunk => chunks.push(chunk)); process.stdin.on(\"end\", () => { const run = JSON.parse(Buffer.concat(chunks).toString()).run; console.log(JSON.stringify({ runStatus: run.status, ciResult: run.steps.find(step => step.name === \"ci-watch\")?.outputs?.result })); })'",
         "intent": "Read the run after the gateway re-enters its CI-watch step.",
         "next": "done-status"
       },
@@ -52,7 +52,7 @@
         "action": "assert_output",
         "source": "after",
         "stream": "stdout",
-        "match": "\"status\": \"done\",\\s*\"project\"",
+        "contains": "\"runStatus\":\"done\"",
         "intent": "Require the run to finish instead of remaining blocked.",
         "next": "aborted-result"
       },
@@ -60,7 +60,7 @@
         "action": "assert_output",
         "source": "after",
         "stream": "stdout",
-        "contains": "\"result\": \"aborted\"",
+        "contains": "\"ciResult\":\"aborted\"",
         "intent": "Require CI-watch to record Abort instead of starting another poll.",
         "next": "done"
       },
