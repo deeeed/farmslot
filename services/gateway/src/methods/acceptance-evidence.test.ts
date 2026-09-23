@@ -382,6 +382,22 @@ test('disabled, malformed provider answer and reserved concurrent calls cannot p
   const { home, params, policy } = fixture(t);
   const hash = await policy();
   let calls = 0;
+  assert.equal(
+    (
+      await withPrincipal(() =>
+        acceptanceEvidenceAnalyze(
+          { ...params, expectedSnapshotHash: hash },
+          createAssessmentProviderRegistry([]),
+        ),
+      )
+    ).reason,
+    'provider-unavailable',
+  );
+  assert.equal(
+    (await assessmentRecords(principal.id)).filter((r) => r.consumer === 'acceptance-evidence')
+      .length,
+    0,
+  );
   const registry = createAssessmentProviderRegistry([
     {
       id: 'codex-lb',

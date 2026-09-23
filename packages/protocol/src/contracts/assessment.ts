@@ -147,7 +147,7 @@ export interface AssessmentSubject {
     project: string;
     step: string;
     snapshotHash: string;
-    /** Admitted decision packet, retained with the advice so resolved gates remain reviewable. */
+    /** Admitted source packet, retained with the advice so later review sees what was approved. */
     admission?: { classification: 'public' | 'synthetic'; sourceRef: string };
     criterion?: {
       id: string;

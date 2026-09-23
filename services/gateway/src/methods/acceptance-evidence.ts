@@ -434,6 +434,8 @@ export async function acceptanceEvidenceAnalyze(
   if (!config.enabled || !provider || !model || !status.keyAvailable)
     return { ...selected.result, eligible: false, reason: 'provider-unavailable' };
   const selectedProvider = registry.get(provider);
+  if (!selectedProvider)
+    return { ...selected.result, eligible: false, reason: 'provider-unavailable' };
   if (!activePolicy || !validPrice(activePolicy.price, provider, model))
     return { ...selected.result, eligible: false, reason: 'price-unavailable' };
   const enforcedOutput = selectedProvider?.maxOutputTokens;
