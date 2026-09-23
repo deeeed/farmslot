@@ -220,7 +220,10 @@ export class DecisionAdvicePanel extends LitElement {
       <button ?disabled=${this.loading} @click=${() => this.load()}>Refresh status</button>
       <button
         data-advice-action="analyze"
-        ?disabled=${this.loading || !view?.eligible || !view.snapshotHash}
+        ?disabled=${this.loading ||
+        !view?.eligible ||
+        !view.snapshotHash ||
+        Boolean(view.assessment)}
         @click=${this.analyze}
       >
         Get recommendation

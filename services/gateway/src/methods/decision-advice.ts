@@ -290,13 +290,8 @@ function admitted(
   );
 }
 
-function reservedAdvicePrice(
-  record: AssessmentRecord,
-  current: AdvicePrice,
-): AdvicePrice | undefined {
-  // Historical records without a reservation predate the bounded advice path.
-  if (!record.reservation) return current;
-  const price = record.reservation.price;
+function reservedAdvicePrice(record: AssessmentRecord): AdvicePrice | undefined {
+  const price = record.reservation?.price;
   if (price?.maxInputTokens === undefined || price.maxOutputTokens === undefined) return undefined;
   return { ...price, maxInputTokens: price.maxInputTokens, maxOutputTokens: price.maxOutputTokens };
 }
@@ -326,12 +321,7 @@ export async function decisionAdviceGet(
     )
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
   return saved?.result && selected.state
-    ? outcome(
-        selected.result,
-        saved.result,
-        selected.state.actions,
-        reservedAdvicePrice(saved, advicePolicy.price),
-      )
+    ? outcome(selected.result, saved.result, selected.state.actions, reservedAdvicePrice(saved))
     : selected.result;
 }
 
@@ -466,7 +456,7 @@ export async function decisionAdviceAnalyze(
           selected.result,
           result,
           selected.state.actions,
-          reservedAdvicePrice(reserve.record, price),
+          reservedAdvicePrice(reserve.record),
         )
       : {
           ...selected.result,
@@ -519,8 +509,7 @@ export async function decisionAdviceAnalyze(
   const finalPolicy = await policy();
   if (
     fresh.result.snapshotHash !== selected.result.snapshotHash ||
-    !admitted(finalPolicy, runId, params.decisionId, selected.result.snapshotHash) ||
-    digest(finalPolicy?.price) !== digest(price)
+    !admitted(finalPolicy, runId, params.decisionId, selected.result.snapshotHash)
   )
     return {
       eligible: false,
@@ -533,7 +522,7 @@ export async function decisionAdviceAnalyze(
     selected.result,
     saved.result!,
     selected.state.actions,
-    reservedAdvicePrice(saved, price),
+    reservedAdvicePrice(saved),
   );
 }
 

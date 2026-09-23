@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import {
+  type AssessmentHistoryResult,
   type IntelligenceAction,
   type IntelligenceActionsSummary,
   Methods,
@@ -137,6 +138,7 @@ export class IntelligenceIncidentsPanel extends LitElement {
   /** Inject data for dev-harness / tests; when null component fetches itself. */
   @property({ attribute: false }) injectedSummary: IntelligenceActionsSummary | null = null;
   @property({ attribute: false }) injectedSignals: MonitorViolation[] | null = null;
+  @property({ attribute: false }) injectedHistory: AssessmentHistoryResult | null = null;
 
   @state() private summary: IntelligenceActionsSummary | null = null;
   @state() private monitorSignals: MonitorViolation[] = [];
@@ -505,7 +507,10 @@ export class IntelligenceIncidentsPanel extends LitElement {
         Assessments
       </button>
     </nav>`;
-    if (this.assessmentTab) return html`${navigation}<assessment-panel></assessment-panel>`;
+    if (this.assessmentTab)
+      return html`${navigation}<assessment-panel
+          .injectedHistory=${this.injectedHistory}
+        ></assessment-panel>`;
     const summary = this.summary;
     const hasDrift =
       !!summary && (summary.metadata.parseFailures > 0 || summary.metadata.shapeDriftFailures > 0);

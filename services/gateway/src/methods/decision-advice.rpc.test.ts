@@ -136,6 +136,23 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
         },
       },
     });
+    validRecord.reservation = {
+      key: 'c'.repeat(64),
+      maxUsd: 0.01,
+      priceHash: 'd'.repeat(64),
+      price: {
+        version: 1,
+        provider: 'typesafe',
+        model: 'jev-1.13.0',
+        verifiedAt: new Date().toISOString(),
+        source: 'https://docs.typesafe.ai/models',
+        inputUsdPerMillion: 0.042,
+        outputUsdPerMillion: 0,
+        maxRequestTokens: 66048,
+        maxInputTokens: 65536,
+        maxOutputTokens: 512,
+      },
+    };
     // A stored action choice is displayed, but the engine gate remains pending.
     // This checks transport and validation, not the quality of a model recommendation.
     await finishAssessment(validRecord, {
@@ -192,6 +209,11 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
         },
       },
     });
+    record.reservation = {
+      ...validRecord.reservation!,
+      key: 'e'.repeat(64),
+      priceHash: 'f'.repeat(64),
+    };
     await finishAssessment(record, {
       status: 'completed',
       attempted: true,

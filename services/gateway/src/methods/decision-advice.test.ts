@@ -211,6 +211,23 @@ test('saved invalid action choice stays unavailable on a fresh status read', asy
       },
     },
   });
+  record.reservation = {
+    key: 'a'.repeat(64),
+    maxUsd: 0.01,
+    priceHash: 'b'.repeat(64),
+    price: {
+      version: 1,
+      provider: 'synthetic-provider',
+      model: 'fixed',
+      verifiedAt: new Date().toISOString(),
+      source: 'https://example.test/model',
+      inputUsdPerMillion: 0.1,
+      outputUsdPerMillion: 0.1,
+      maxRequestTokens: 2000,
+      maxInputTokens: 1000,
+      maxOutputTokens: 1000,
+    },
+  };
   await finishAssessment(record, {
     status: 'completed',
     attempted: true,
@@ -380,6 +397,24 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
       capabilities: ['choice'],
       async assess() {
         calls++;
+        if (calls === 1) {
+          writeFileSync(
+            path.join(home, 'decision-advice-policy.json'),
+            JSON.stringify({
+              version: 1,
+              price: { ...price, inputUsdPerMillion: price.inputUsdPerMillion * 2 },
+              limits: { maxCalls: 1, maxUsd: 0.01 },
+              entries: [
+                {
+                  ...params,
+                  snapshotHash: initial.snapshotHash,
+                  classification: 'synthetic',
+                  sourceRef: 'synthetic:paid-path',
+                },
+              ],
+            }),
+          );
+        }
         if (calls === 2 && secondRun) {
           const pending = secondRun.decisions[0]!;
           pending.description = 'A different work item while the provider responds';
