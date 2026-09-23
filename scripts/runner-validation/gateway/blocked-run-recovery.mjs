@@ -8,8 +8,10 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
@@ -284,7 +286,13 @@ try {
     slots: [
       { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
       { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
-      { slot: rollbackSlotId, lifecycle: 'busy', phase: 'working', current_run_id: rollbackRunId },
+      {
+        slot: rollbackSlotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: rollbackRunId,
+      },
       { slot: freeRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
     ],
   });
@@ -545,15 +553,13 @@ try {
     keepWarm: false,
   });
   assert.equal(freeRelease.ok, true, JSON.stringify(freeRelease));
-  const poolFile = path.join(root, 'pool', 'recovery.json');
-  const poolBeforeFailure = readFileSync(poolFile, 'utf8');
-  const poolWithoutSlot = JSON.parse(poolBeforeFailure);
-  poolWithoutSlot.slots = poolWithoutSlot.slots.filter((slot) => slot.id !== freeRollbackSlotId);
-  writeJson(poolFile, poolWithoutSlot);
+  const parkedRepo = path.join(root, 'repo-parked');
+  renameSync(repo, parkedRepo);
+  symlinkSync(root, repo, 'dir');
   try {
     const rollbackFailure = denied(
       { runId: rollbackFailureRunId, stepName: 'prepare' },
-      /Injected replay failure after claim.*rollback of reclaimed slot.*failed.*not found/s,
+      /Injected replay failure after claim.*rollback of reclaimed slot.*failed.*Refusing to release slot/s,
     );
     assert.equal(rollbackFailure.slotId, freeRollbackSlotId);
     const failedRollbackRow = JSON.parse(
@@ -561,14 +567,9 @@ try {
     ).slots.find((candidate) => candidate.slot === freeRollbackSlotId);
     assert.equal(failedRollbackRow?.current_run_id, rollbackFailureRunId);
   } finally {
-    writeFileSync(poolFile, poolBeforeFailure);
+    unlinkSync(repo);
+    renameSync(parkedRepo, repo);
   }
-  await new Promise((resolve) => setTimeout(resolve, 2_100));
-  assert.ok(
-    rpc('fleet.status', { forceRefresh: true }).fleet.slots.some(
-      (candidate) => candidate.slot === freeRollbackSlotId,
-    ),
-  );
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
