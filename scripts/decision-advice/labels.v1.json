@@ -7,11 +7,11 @@
     "profile-04": "use_suggested_profile",
     "profile-05": "continue",
     "profile-06": null,
-    "collision-01": "create-new",
-    "collision-02": "start-comparison",
-    "collision-03": "abort",
+    "collision-01": null,
+    "collision-02": null,
+    "collision-03": null,
     "collision-04": null,
-    "collision-05": "create-new",
-    "collision-06": "start-comparison"
+    "collision-05": null,
+    "collision-06": null
   }
 }

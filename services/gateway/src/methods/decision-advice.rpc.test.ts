@@ -13,6 +13,11 @@ import { promisify } from 'node:util';
 import { type DecisionAdviceResult, Methods } from '@farmslot/protocol';
 
 import { beginAssessment, finishAssessment } from '../assessment/store.js';
+import {
+  collisionDecisionActions,
+  handleCollisionDecision,
+  resolveEngineDecision,
+} from '../run-engine/engine-decisions.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
 import { createWebSocketServer } from '../server.js';
@@ -39,29 +44,21 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     project: 'example-farm',
     ticketOrPr: 'SYNTHETIC-RPC',
   });
-  const decision = {
-    id: `rpc-${run.id}`,
-    type: 'engine_collision' as const,
-    title: 'Synthetic collision',
-    description: 'Invented work conflicts with invented task folder.',
-    createdAt: new Date().toISOString(),
-    actions: [
-      {
-        id: 'create-new',
-        label: 'Create a fresh fixture',
-        description: 'Use an isolated new fixture',
-        style: 'primary' as const,
-      },
-      {
-        id: 'start-comparison',
-        label: 'Start comparison fixture',
-        description: 'Compare against the existing fixture',
-        style: 'secondary' as const,
-      },
-      { id: 'abort', label: 'Abort fixture', style: 'danger' as const },
-    ],
-  };
-  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  const dir = `synthetic-${run.id.slice(0, 8)}`;
+  const prior = createRun({
+    flowType: 'fix-bug',
+    project: 'example-farm',
+    ticketOrPr: 'SYNTHETIC-RPC',
+  });
+  updateRun(prior.id, { status: 'done', taskFile: `/synthetic/${dir}/TASK.md` });
+  // Exercise the same engine function that creates a pending collision in a live run.
+  const collision = handleCollisionDecision(run.id, run, [dir], dir);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const decision = run.decisions.find((item) => item.type === 'engine_collision');
+  assert.ok(decision);
+  assert.equal(decision.description, `Task dir collision for ${dir}: ${dir}`);
+  assert.deepEqual(decision.actions, collisionDecisionActions(run));
+  assert.equal(decision.payload?.kind, 'collision');
   try {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -124,6 +121,46 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
       }),
     );
     assert.equal((await request(Methods.DECISION_ADVICE_GET, args)).eligible, true);
+    const resolved = runtime.resolver.resolveSecret(token, 'token');
+    assert.equal(resolved.ok, true);
+    if (!resolved.ok) throw new Error('Synthetic gateway principal unavailable');
+    const validRecord = await beginAssessment({
+      ownerId: resolved.principal.id,
+      consumer: 'decision-advice',
+      subject: {
+        run: {
+          id: run.id,
+          project: run.project,
+          step: 'decision-advice',
+          snapshotHash: pending.snapshotHash!,
+        },
+      },
+    });
+    // A stored action choice is displayed, but the engine gate remains pending.
+    // This checks transport and validation, not the quality of a model recommendation.
+    await finishAssessment(validRecord, {
+      status: 'completed',
+      attempted: true,
+      provider: 'typesafe',
+      returnedModel: 'jev-1.13.0',
+      usage: {
+        provider: 'typesafe',
+        requestedModel: 'jev-1.13.0',
+        durationMs: 1,
+        inputTokens: 100,
+        outputTokens: 5,
+      },
+      answers: {
+        action: {
+          type: 'choice',
+          choice: 'start-comparison',
+          probabilities: { 'start-comparison': 1 },
+        },
+      },
+    });
+    const valid = await request(Methods.DECISION_ADVICE_GET, args);
+    assert.equal(valid.recommendedActionId, 'start-comparison');
+    assert.equal(run.decisions[0]?.resolvedAt, undefined);
     decision.description = 'Changed invented work.';
     updateRun(run.id, { decisions: [decision] });
     assert.equal(
@@ -143,9 +180,6 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     };
     policy.entries[0].snapshotHash = current.snapshotHash!;
     writeFileSync(policyPath, JSON.stringify(policy));
-    const resolved = runtime.resolver.resolveSecret(token, 'token');
-    assert.equal(resolved.ok, true);
-    if (!resolved.ok) throw new Error('Synthetic gateway principal unavailable');
     const record = await beginAssessment({
       ownerId: resolved.principal.id,
       consumer: 'decision-advice',
@@ -173,9 +207,8 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     assert.equal(invalid.reason, 'assessment-unavailable');
     assert.equal(invalid.recommendedActionId, undefined);
     assert.equal(run.decisions[0]?.resolvedAt, undefined);
-    updateRun(run.id, {
-      decisions: [{ ...decision, resolvedAt: new Date().toISOString(), resolvedAction: 'abort' }],
-    });
+    resolveEngineDecision(decision.id, 'abort');
+    await assert.rejects(collision, /Aborted: task dir collision/);
     assert.equal((await request(Methods.DECISION_ADVICE_GET, args)).reason, 'not-pending');
   } finally {
     for (const client of wss.clients) client.terminate();
@@ -183,12 +216,55 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    if (!run.decisions[0]?.resolvedAt) {
+      resolveEngineDecision(decision.id, 'abort');
+      await assert.rejects(collision, /Aborted: task dir collision/);
+    }
     updateRun(run.id, { status: 'failed' });
     await deleteRun(run.id);
+    await deleteRun(prior.id);
     rmSync(home, { recursive: true, force: true });
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
     if (previousEnabled === undefined) delete process.env.FARMSLOT_DECISION_ADVICE_ENABLED;
     else process.env.FARMSLOT_DECISION_ADVICE_ENABLED = previousEnabled;
+  }
+});
+
+/** The blinded reference must contain only facts available in the admitted packet. */
+test('synthetic collision cases match engine packet and abstain without operator intent', () => {
+  const cases = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL('../../../../scripts/decision-advice/cases.v1.json', import.meta.url)),
+      'utf8',
+    ),
+  ) as {
+    cases: Array<{
+      id: string;
+      type: string;
+      description: string;
+      actions: Array<{ id: string; label: string; description: string }>;
+    }>;
+  };
+  const labels = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL('../../../../scripts/decision-advice/labels.v1.json', import.meta.url)),
+      'utf8',
+    ),
+  ) as { labels: Record<string, string | null> };
+  const collisionCases = cases.cases.filter((item) => item.type === 'engine_collision');
+  assert.equal(collisionCases.length, 6);
+  for (const item of collisionCases) {
+    assert.equal(labels.labels[item.id], null, item.id);
+    assert.deepEqual(
+      item.actions,
+      collisionDecisionActions({ lane: 'production' }).map(({ id, label, description }) => ({
+        id,
+        label,
+        description,
+      })),
+      item.id,
+    );
+    assert.match(item.description, /^Task dir collision for ([\w-]+): [\w, -]+$/);
   }
 });

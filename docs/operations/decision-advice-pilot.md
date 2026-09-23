@@ -60,7 +60,9 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    an unknown charge. Do not repeat a request to improve a weak answer.
 
 The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
-are for the controlled classification study. Freeze both before candidate
-calls, then collect paired human decisions at equal adjudicated quality for
-an efficiency claim. Without paired time, total model tokens and cost, the
+are for the controlled classification study. Current collision packets lack operator
+intent and prior-run safety facts, so those cases call for abstention. A saved
+action ID proves display and validation, not decision quality. Freeze cases and
+labels before candidate calls, then collect paired human decisions at equal
+adjudicated quality for an efficiency claim. Without paired time, total model tokens and cost, the
 impact remains unknown.
