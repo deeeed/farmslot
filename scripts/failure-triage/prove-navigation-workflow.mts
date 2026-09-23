@@ -237,7 +237,16 @@ cli(
 await assert.rejects(access(file('rejected-report.json')));
 const swapped = [...sessions];
 [swapped[2], swapped[3]] = [swapped[3], swapped[2]];
-await writeFile(file('swapped-sessions.json'), JSON.stringify({ ...result, sessions: swapped }));
+// Pair two has five journal rows per arm. Reorder those rows as well, so only
+// the alternating arm-order guard can reject this otherwise consistent study.
+const swappedRows = [...journal];
+swappedRows.splice(11, 10, ...journal.slice(16, 21), ...journal.slice(11, 16));
+const swappedJournal = swappedRows.map((row) => JSON.stringify(row)).join('\n') + '\n';
+await writeFile(file('swapped-worker-journal.jsonl'), swappedJournal);
+await writeFile(
+  file('swapped-sessions.json'),
+  JSON.stringify({ ...result, sessions: swapped, journalSha256: sha(swappedJournal) }),
+);
 cli(
   false,
   'score',
@@ -247,7 +256,7 @@ cli(
   file('blind.json'),
   file('judgment.json'),
   file('method.md'),
-  file('worker-journal.jsonl'),
+  file('swapped-worker-journal.jsonl'),
   file('swapped-report.json'),
 );
 await assert.rejects(access(file('swapped-report.json')));
