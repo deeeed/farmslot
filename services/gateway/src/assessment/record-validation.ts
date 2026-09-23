@@ -19,6 +19,8 @@ const bounded = (value: unknown, max = 200): value is string =>
   value.length > 0 &&
   value.length <= max &&
   !/[\x00-\x1f]/.test(value);
+const admittedText = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b-\x1f]/.test(value);
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const probability = (value: unknown): value is number => count(value) && value <= 1;
@@ -62,8 +64,7 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
         Object.keys(decision).some((k) => !['id', 'type', 'description', 'actions'].includes(k)) ||
         !bounded(decision.id) ||
         !bounded(decision.type, 100) ||
-        typeof decision.description !== 'string' ||
-        decision.description.length > 1200 ||
+        !admittedText(decision.description, 4096) ||
         !Array.isArray(decision.actions) ||
         decision.actions.length < 3 ||
         decision.actions.length > 20 ||
@@ -72,9 +73,8 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
             record(action) &&
             Object.keys(action).every((k) => ['id', 'label', 'description'].includes(k)) &&
             bounded(action.id, 80) &&
-            bounded(action.label, 120) &&
-            typeof action.description === 'string' &&
-            action.description.length <= 240,
+            admittedText(action.label, 4096) &&
+            admittedText(action.description, 4096),
         )
       )
         throw new Error('Invalid assessment decision context');

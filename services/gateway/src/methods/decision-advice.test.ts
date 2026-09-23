@@ -347,6 +347,8 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
     ticketOrPr: 'SYNTH-PAID-PATH',
   });
   const decision = makeDecision();
+  decision.description = 'Synthetic decision synthetic-test-credential';
+  decision.actions[0].label = 'Prepare\nresource';
   updateRun(run.id, { status: 'blocked', decisions: [decision] });
   let secondRun: ReturnType<typeof createRun> | undefined;
   t.after(async () => {
@@ -462,7 +464,7 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
   assert.deepEqual(saved.subject.run?.decision, {
     id: params.decisionId,
     type: run.decisions[0]?.type,
-    description: run.decisions[0]?.description,
+    description: 'Synthetic decision [REDACTED]',
     actions: run.decisions[0]?.actions.map(({ id, label, description }) => ({
       id,
       label,

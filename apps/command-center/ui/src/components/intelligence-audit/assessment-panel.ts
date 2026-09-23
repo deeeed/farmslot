@@ -9,9 +9,9 @@ import {
   type AssessmentRecord,
   type AssessmentReport,
   type AssessmentSummary,
-  type RunGetResult,
   failureTriageCause,
   Methods,
+  type RunGetResult,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -42,7 +42,8 @@ export class AssessmentPanel extends LitElement {
   };
   private reloadPending = false;
   private loadedPages = 1;
-  private readonly decisionOutcomes = new Map<string, string>();
+  private readonly decisionOutcomes = new Map<string, { label: string; final: boolean }>();
+  private readonly outcomeRequests = new Set<string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
   private interval?: ReturnType<typeof setInterval>;
@@ -239,8 +240,16 @@ export class AssessmentPanel extends LitElement {
   private async loadDecisionOutcome(record: AssessmentRecord) {
     const run = record.subject.run;
     const decision = run?.decision;
-    if (!run || !decision || this.decisionOutcomes.has(record.id) || this.injectedHistory) return;
-    this.decisionOutcomes.set(record.id, 'Checking run outcome…');
+    if (
+      !run ||
+      !decision ||
+      this.decisionOutcomes.get(record.id)?.final ||
+      this.outcomeRequests.has(record.id) ||
+      this.injectedHistory
+    )
+      return;
+    this.outcomeRequests.add(record.id);
+    this.decisionOutcomes.set(record.id, { label: 'Checking run outcome…', final: false });
     this.requestUpdate();
     try {
       const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
@@ -248,16 +257,26 @@ export class AssessmentPanel extends LitElement {
       this.decisionOutcomes.set(
         record.id,
         resolved?.resolvedAction
-          ? (decision.actions.find((action) => action.id === resolved.resolvedAction)?.label ??
-              resolved.resolvedAction)
-          : resolved
-            ? 'Still pending'
-            : 'Decision no longer available in run',
+          ? {
+              label:
+                decision.actions.find((action) => action.id === resolved.resolvedAction)?.label ??
+                resolved.resolvedAction,
+              final: true,
+            }
+          : {
+              label: resolved ? 'Still pending' : 'Decision no longer available in run',
+              final: false,
+            },
       );
-    } catch {
-      this.decisionOutcomes.set(record.id, 'Could not load run outcome');
+    } catch (error) {
+      this.decisionOutcomes.set(record.id, {
+        label: `Could not load run outcome: ${error instanceof Error ? error.message : String(error)}`,
+        final: false,
+      });
+    } finally {
+      this.outcomeRequests.delete(record.id);
+      this.requestUpdate();
     }
-    this.requestUpdate();
   }
   private get canExportSelected(): boolean {
     return (
@@ -469,7 +488,7 @@ export class AssessmentPanel extends LitElement {
                     </ul>
                     <p>
                       Chosen action:
-                      ${this.decisionOutcomes.get(record.id) ??
+                      ${this.decisionOutcomes.get(record.id)?.label ??
                       (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
                     </p>
                   </section>`

@@ -385,6 +385,8 @@ export async function decisionAdviceAnalyze(
       return { ...selected.result, eligible: false, reason: 'not-admitted' };
     throw error;
   }
+  // Save the exact redacted text sent to the provider for later human review.
+  const reviewedState = prepared.state as ReturnType<typeof packet>;
   const cost =
     (price.maxInputTokens * price.inputUsdPerMillion +
       price.maxOutputTokens * price.outputUsdPerMillion) /
@@ -414,9 +416,9 @@ export async function decisionAdviceAnalyze(
           snapshotHash: selected.result.snapshotHash,
           decision: {
             id: params.decisionId,
-            type: selected.state.type,
-            description: selected.state.description,
-            actions: selected.state.actions,
+            type: reviewedState.type,
+            description: reviewedState.description,
+            actions: reviewedState.actions,
           },
         },
       },
