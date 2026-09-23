@@ -834,6 +834,7 @@ const baseArgs = {
   reviewRunner: 'claude',
   model: 'sonnet',
   reviewTimeoutMs: 15 * 60_000,
+  validationDepth: 'static-code' as const,
 };
 
 test('runSelfReviewRetryLoop: incomplete re-review surfaces as skipped, not a false pass', async () => {
@@ -1034,7 +1035,7 @@ test('runSelfReviewRetryLoop: relaunches a high-context worker before sending th
   const result = await runSelfReviewRetryLoop({
     ...baseArgs,
     maxRetries: 2,
-    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
     retryCount: 0,
     deps,
   });
@@ -1053,7 +1054,7 @@ test('runSelfReviewRetryLoop: low-context and unknown-context workers are not re
     const result = await runSelfReviewRetryLoop({
       ...baseArgs,
       maxRetries: 2,
-      reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+      reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
       retryCount: 0,
       deps,
     });
@@ -1071,7 +1072,7 @@ test('runSelfReviewRetryLoop: failed high-context relaunch skips feedback instea
   const result = await runSelfReviewRetryLoop({
     ...baseArgs,
     maxRetries: 2,
-    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
     retryCount: 0,
     deps,
   });
