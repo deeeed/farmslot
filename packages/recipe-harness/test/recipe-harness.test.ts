@@ -1738,6 +1738,20 @@ test('stopAfterNode runs the graph through the named node, then the declared tea
     );
     const summary = (await readJsonFile(result.summaryPath)) as Record<string, unknown>;
     assert.equal(summary.stopAfterNode, 'reveal');
+    const artifactsDir = path.dirname(result.summaryPath);
+    const packageResult = validateRecipeArtifactPackage({
+      recipe: await readJsonFile(result.recipePath),
+      trace,
+      summary,
+      manifest: await readJsonFile(result.artifactManifestPath),
+      recipeResolution: await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json')),
+      artifactPaths: await listRelativeFiles(artifactsDir),
+    });
+    assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
+    assert.deepEqual(
+      packageResult.findings.map((finding) => [finding.severity, finding.code]),
+      [['warning', 'artifact_package.partial_run']],
+    );
     // The graph is untouched: no edge rewrites, no probe parameters.
     assert.deepEqual(recipe, original);
     assert.deepEqual(await readJsonFile(result.recipePath), original);

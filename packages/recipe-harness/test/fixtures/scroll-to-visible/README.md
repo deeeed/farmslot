@@ -6,8 +6,7 @@ Two layers exercise the `ui.scroll_to` contract.
 
 `test/scroll-to-visible.test.ts` runs recipes through `createRecipeRunner` and
 `createStandardUiAdapters` against a fake native-style provider: one scroll surface in
-window coordinates, one device lock, and a retained session. Each case maps to a failure
-class seen while validating a large mobile recipe:
+window coordinates, one device lock, and a retained session:
 
 | Case                                         | Expectation                                                               |
 | -------------------------------------------- | ------------------------------------------------------------------------- |

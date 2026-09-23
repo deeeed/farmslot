@@ -73,9 +73,10 @@ offset, and `scrollTo({ x, y })` for the move. The target must already be mounte
 virtualized row outside the render window fails `SCROLL_TARGET_MISSING` rather than
 being searched for.
 
-Under `hud_safe`, an occlusion at least half the viewport wide (the recipe HUD) trims
-the top or bottom edge, one at least half as tall (a side panel) trims the left or
-right edge, and smaller cards only block the elements they cover.
+Under `hud_safe`, an occlusion spanning at least half of one viewport axis is a bar;
+when it spans both, the fuller axis decides. Wide bars (the recipe HUD) trim the top or
+bottom edge, tall bars (side panels) the left or right edge, and smaller cards only
+block the elements they cover.
 
 Settlement compares consecutive measurements `interval_ms` apart. Layout that
 oscillates with a period matching that interval can look settled; raise
@@ -88,11 +89,10 @@ Migration: `delta_y` always means relative movement. Adapters that forwarded
 `delta_y` as an absolute offset (for example to a `scrollTo({ y })` bridge) must read
 `offset_y` for that and move by `delta_y` from the current offset.
 
-Authoritative evidence is the node's trace output: `backend`, `sessionId`,
-`surfaceTestId`/`targetTestId`/`visibilityAnchorTestId`, `before`/`after`
-(`offset`, `targetBounds`, `visibilityAnchorBounds`), `viewport`, `safeViewport`,
-`offset`, `alreadyVisible`/`scrolled`, `settlement`, and `finalVisible`. A screenshot
-or Fiber presence alone does not prove the target was reviewable.
+Authoritative evidence is the node's trace output (`UiScrollToObservation` in
+`@farmslot/recipe-harness`). A screenshot or Fiber presence alone does not prove the
+target was reviewable. A package from a `--stop-after-node` run validates with an
+`artifact_package.partial_run` warning, and gateway QA refuses it as proof.
 
 Contract failures are `harness` failures with a stable `error_code` and the
 geometry observed at failure in `error_details`: `SCROLL_SURFACE_MISSING`,

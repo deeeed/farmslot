@@ -904,7 +904,7 @@ export class CdpWebPage {
       measure: () => this.evaluate<UiScrollGeometry>(measure),
       scrollTo: async (offset: UiScrollOffset) => {
         await this.evaluate(
-          `(() => { ${deepQueryHelpersExpression()} const found = querySelectorDeep(${JSON.stringify(surface)}); if (!found) throw new Error('Scroll surface not found: ${escapeForJsMessage(request.surfaceTestId)}'); const el = found === document.body || found === document.documentElement ? document.scrollingElement || document.documentElement : found; el.scrollTo({ left: ${JSON.stringify(offset.x)}, top: ${JSON.stringify(offset.y)}, behavior: 'instant' }); return true; })()`,
+          `(() => { ${deepQueryHelpersExpression()} const found = querySelectorDeep(${JSON.stringify(surface)}); if (!found) throw new Error('Scroll surface not found: ${escapeForJsMessage(request.surfaceTestId)}'); const bodyScrolls = found === document.body && /(auto|scroll)/.test(getComputedStyle(document.body).overflowY) && getComputedStyle(document.documentElement).overflowY !== 'visible'; const el = !bodyScrolls && (found === document.body || found === document.documentElement) ? document.scrollingElement || document.documentElement : found; el.scrollTo({ left: ${JSON.stringify(offset.x)}, top: ${JSON.stringify(offset.y)}, behavior: 'instant' }); return true; })()`,
         );
       },
     };
@@ -1430,12 +1430,17 @@ function scrollMeasureExpression(surface: string, target: string, anchor?: strin
     const el = querySelectorDeep(${JSON.stringify(surface)});
     if (!el) return { surface: null, viewport: null, offset: { x: 0, y: 0 }, ...measured };
     const rect = el.getBoundingClientRect();
-    const isRoot = el === document.scrollingElement || el === document.body || el === document.documentElement;
+    // <body> is its own scroller only when it scrolls and <html> does not pass overflow through.
+    const bodyScrolls = el === document.body && /(auto|scroll)/.test(getComputedStyle(el).overflowY) && getComputedStyle(document.documentElement).overflowY !== 'visible';
+    const isRoot = !bodyScrolls && (el === document.scrollingElement || el === document.body || el === document.documentElement);
     const scroller = isRoot ? document.scrollingElement || document.documentElement : el;
     let left = isRoot ? 0 : Math.max(rect.x + el.clientLeft, 0);
     let top = isRoot ? 0 : Math.max(rect.y + el.clientTop, 0);
-    let right = isRoot ? innerWidth : Math.min(rect.x + el.clientLeft + el.clientWidth, innerWidth);
-    let bottom = isRoot ? innerHeight : Math.min(rect.y + el.clientTop + el.clientHeight, innerHeight);
+    // clientWidth/clientHeight of <html> exclude the page scrollbars.
+    const windowWidth = document.documentElement.clientWidth || innerWidth;
+    const windowHeight = document.documentElement.clientHeight || innerHeight;
+    let right = isRoot ? windowWidth : Math.min(rect.x + el.clientLeft + el.clientWidth, windowWidth);
+    let bottom = isRoot ? windowHeight : Math.min(rect.y + el.clientTop + el.clientHeight, windowHeight);
     // An outer overflow container can clip part of the surface; only the unclipped part is visible.
     for (let clip = isRoot ? null : el.parentElement || shadowHostFor(el.getRootNode()); clip && clip !== document.documentElement && clip !== document.body; clip = clip.parentElement || shadowHostFor(clip.getRootNode())) {
       const style = getComputedStyle(clip);

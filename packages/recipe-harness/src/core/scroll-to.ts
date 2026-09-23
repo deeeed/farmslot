@@ -260,9 +260,10 @@ export async function runUiScrollTo(
 }
 
 /**
- * Remove bar-shaped occlusion from the viewport. A bar at least half the viewport wide (like the
- * recipe HUD) trims the top or bottom edge; one at least half as tall (a side panel) trims the
- * left or right edge. Smaller cards are checked against the proof element; see cardOcclusions.
+ * Remove bar-shaped occlusion from the viewport. A bar spans at least half of one viewport axis,
+ * and the fuller axis decides when it spans both: wide bars (the recipe HUD) trim the top or
+ * bottom edge, tall ones (side panels) the left or right. Smaller cards are checked against the
+ * proof element; see cardOcclusions.
  */
 export function safeViewportFor(
   viewport: UiRect,
@@ -355,7 +356,7 @@ function frame(
   if (geometry.viewport.width <= 0 || geometry.viewport.height <= 0) {
     return fail(
       'SCROLL_SURFACE_MISSING',
-      `surface ${request.surfaceTestId} has no visible viewport.`,
+      `surface ${request.surfaceTestId} is rendered but lies entirely outside the window.`,
     );
   }
   if (!geometry.targetPresent) {
