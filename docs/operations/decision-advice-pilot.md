@@ -61,8 +61,10 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    an unknown charge. Do not repeat a request to improve a weak answer.
    Do not edit the admitted entry or price during an in-flight request. If
    either changes before dispatch, the skipped reservation remains unavailable
-   for that decision and provider/model. Only a different provider/model or a
-   newly issued decision can proceed. Adding unrelated entries is harmless.
+   for that decision and provider/model. A different provider/model can proceed
+   only through the `decision.advice.analyze` gateway RPC with the admitted
+   snapshot; the panel remains disabled for the saved result. A newly issued
+   decision can also proceed. Adding unrelated entries is harmless.
 
 The current profile gate still offers only Continue and Abort after #720, so it is excluded until it offers a second non-decline action and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
 are for the controlled classification study. Current collision packets lack operator

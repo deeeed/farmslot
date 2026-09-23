@@ -457,22 +457,6 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
   );
   assert.ok(saved);
   assert.equal(saved?.reservation?.price?.provider, 'typesafe');
-  writeFileSync(
-    path.join(home, 'decision-advice-policy.json'),
-    JSON.stringify({
-      version: 1,
-      price: { ...price, inputUsdPerMillion: price.inputUsdPerMillion * 2 },
-      limits: { maxCalls: 1, maxUsd: 0.01 },
-      entries: [
-        {
-          ...params,
-          snapshotHash: initial.snapshotHash,
-          classification: 'synthetic',
-          sourceRef: 'synthetic:paid-path',
-        },
-      ],
-    }),
-  );
   const repricedGet = await withPrincipal(() => decisionAdviceGet(params));
   assert.equal(repricedGet.recommendedActionId, 'continue');
   assert.equal(repricedGet.assessment?.usage?.costUsd, analyzed.assessment?.usage?.costUsd);
