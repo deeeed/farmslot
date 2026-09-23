@@ -457,3 +457,38 @@ test('legacy cost amounts are not relabeled as provider-reported', () => {
   assert.equal(result.knownEstimatedUsd, 0.02);
   assert.equal(result.knownUnclassifiedUsd, 0.01);
 });
+
+test('plain LLM booleans and choices are scored without inventing probabilities', () => {
+  const plain = row();
+  plain.result!.answers = {
+    visualReview: { type: 'boolean', value: true },
+    risk: { type: 'choice', choice: 'high', choices: ['low', 'high'] },
+  };
+  const saved = report([plain]);
+  const evaluated = evaluateAssessmentReport(saved, {
+    reportId: saved.reportId,
+    references: [
+      {
+        assessmentId: plain.id,
+        questionId: 'visualReview',
+        expected: false,
+        evidenceRef: 'fixture:known-no-visual-change',
+        source: 'human',
+        blinded: true,
+      },
+      {
+        assessmentId: plain.id,
+        questionId: 'risk',
+        expected: 'low',
+        evidenceRef: 'fixture:known-low-risk',
+        source: 'human',
+        blinded: true,
+      },
+    ],
+  });
+  const visual = evaluated.questions.find((q) => q.questionId === 'visualReview')!;
+  assert.equal(visual.falsePositives, 1);
+  assert.equal(visual.correct, 0);
+  assert.equal(visual.judged, 1);
+  assert.equal(evaluated.questions.find((q) => q.questionId === 'risk')?.judged, 1);
+});

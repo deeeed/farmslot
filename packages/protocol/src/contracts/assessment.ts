@@ -35,24 +35,37 @@ export interface AssessmentRequest {
   timeoutMs?: number;
 }
 
-export interface AssessmentChoiceAnswer {
+export type AssessmentChoiceAnswer = {
   type: 'choice';
   choice: string;
-  probabilities: Record<string, number>;
   confidence?: number;
-}
+} & (
+  | { choices: string[]; probabilities?: Record<string, number> }
+  | { choices?: undefined; probabilities: Record<string, number> }
+);
 
 export interface AssessmentScoreAnswer {
   type: 'score';
   score: number;
-  probabilities: Record<string, number>;
+  /** Present only when the provider reports a distribution. */
+  probabilities?: Record<string, number>;
   confidence?: number;
   legend?: Record<string, string>;
 }
 
-export interface AssessmentBooleanAnswer {
-  type: 'boolean';
-  probability: number;
+export type AssessmentBooleanAnswer =
+  | { type: 'boolean'; value: boolean; probability?: number }
+  | { type: 'boolean'; value?: undefined; probability: number };
+
+/** Explicit vocabulary or legacy native probability keys; never synthesize probabilities. */
+export function assessmentChoiceOptions(answer: AssessmentChoiceAnswer): string[] {
+  return answer.choices ?? Object.keys(answer.probabilities ?? {});
+}
+
+/** Preserve the historical threshold for probability-only answers. */
+export function assessmentBooleanValue(answer: AssessmentBooleanAnswer, threshold = 0.65): boolean {
+  if (answer.value !== undefined) return answer.value;
+  return answer.probability >= threshold;
 }
 
 export type AssessmentAnswer =
@@ -64,7 +77,10 @@ export interface AssessmentUsage {
   provider: string;
   requestedModel: string;
   returnedModel?: string;
+  /** Total input tokens, including cache reads/writes when the provider reports them. */
   inputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   outputTokens?: number;
   costUsd?: number;
   costKind?: 'estimated' | 'reported';

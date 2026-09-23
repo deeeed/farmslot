@@ -10,7 +10,7 @@ import type {
 import { getAssessmentConfig } from './config.js';
 import { defaultAssessmentProviders } from './default-providers.js';
 import { prepareAssessmentInput } from './input.js';
-import type { AssessmentProviderRegistry } from './provider.js';
+import { type AssessmentProviderRegistry, AssessmentResponseError } from './provider.js';
 
 const providers = defaultAssessmentProviders();
 
@@ -145,13 +145,24 @@ export async function assess(
         returnedModel: response.returnedModel,
       },
     };
-  } catch {
+  } catch (error) {
     // Optional provider failures leave the workflow intact. Never persist upstream
     // exception text: SDK/network errors can include credentials or input excerpts.
     return {
       ...base,
       status: 'unavailable',
-      attempted: true,
+      attempted: error instanceof AssessmentResponseError ? error.attempted : true,
+      ...(error instanceof AssessmentResponseError && error.usage
+        ? {
+            returnedModel: error.returnedModel,
+            usage: {
+              ...error.usage,
+              provider: provider.id,
+              requestedModel: model,
+              returnedModel: error.returnedModel,
+            },
+          }
+        : {}),
       ...preparedIdentity,
       error: signal.aborted
         ? 'Assessment cancelled or timed out'

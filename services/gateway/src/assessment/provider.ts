@@ -40,4 +40,12 @@ export function createAssessmentProviderRegistry(
 /** A provider replied, but its output cannot satisfy the assessment contract. */
 export class AssessmentResponseError extends Error {
   override name = 'AssessmentResponseError';
+  constructor(
+    message: string,
+    readonly attempted = true,
+    readonly usage?: Omit<AssessmentUsage, 'provider' | 'requestedModel'>,
+    readonly returnedModel?: string,
+  ) {
+    super(message);
+  }
 }

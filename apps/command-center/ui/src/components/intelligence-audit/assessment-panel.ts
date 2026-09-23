@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import {
+  assessmentChoiceOptions,
   type AssessmentFeedbackVerdict,
   type AssessmentHistoryResult,
   type AssessmentRecord,
@@ -406,7 +407,7 @@ export class AssessmentPanel extends LitElement {
                           ${(answer.type === 'boolean'
                             ? ['true', 'false']
                             : answer.type === 'choice'
-                              ? Object.keys(answer.probabilities)
+                              ? assessmentChoiceOptions(answer)
                               : []
                           ).map((c) => html`<option value=${c}>${c}</option>`)}
                         </select>

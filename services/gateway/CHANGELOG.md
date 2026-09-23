@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.
+
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 
 - Add an offline-first, bounded failure-triage evaluation CLI with versioned, audited synthetic corpora, deterministic baselines, family-aware reporting and an explicit pilot/hold decision.

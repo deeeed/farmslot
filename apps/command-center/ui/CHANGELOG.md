@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Allow assessment feedback for plain model judgments that do not report probability distributions.
+
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 
 - Keep PR-rule previews deterministic, show loading feedback and report match counts explicitly.

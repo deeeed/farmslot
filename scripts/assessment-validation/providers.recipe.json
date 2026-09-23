@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Structured assessment provider compatibility",
+  "description": "Set a new ASSESSMENT_PROVIDER_PROOF_OUT and a free ASSESSMENT_PROVIDER_PROOF_PORT. Uses an owned gateway and simulated transport; no external inference.",
+  "workflow": {
+    "entry": "providers",
+    "nodes": {
+      "providers": {
+        "action": "command",
+        "cmd": "FARMSLOT_ASSESSMENT_VALIDATION=1 node scripts/assessment-validation/providers.mjs",
+        "timeout_ms": 120000,
+        "intent": "Verify native and regular-LLM answers through actual RPCs, feedback without probability distributions, malformed/model/stream-tail/timeout failures with retained received usage and no retries, missing-key skips, restart persistence and independent consumer qualification.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

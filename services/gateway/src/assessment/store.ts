@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   ASSESSMENT_CONSUMERS,
+  assessmentChoiceOptions,
   type AssessmentFeedbackParams,
   type AssessmentHistoryParams,
   type AssessmentHistoryResult,
@@ -274,7 +275,7 @@ export async function recordAssessmentFeedback(
         ? typeof params.correctedAnswer !== 'boolean'
         : answer?.type !== 'choice' ||
           typeof params.correctedAnswer !== 'string' ||
-          !Object.hasOwn(answer.probabilities, params.correctedAnswer))
+          !assessmentChoiceOptions(answer).includes(params.correctedAnswer))
     )
       throw new Error('Correction must match the question choices');
     record.feedback.push({
