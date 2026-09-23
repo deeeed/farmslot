@@ -26,6 +26,8 @@ const runId = randomUUID();
 const lostRunId = randomUUID();
 const updateRunId = randomUUID();
 const successRunId = randomUUID();
+const evalRunId = randomUUID();
+const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
 const repo = path.join(root, 'repo');
 const startedAt = new Date(Date.now() - 120000).toISOString();
@@ -197,6 +199,15 @@ try {
         enabled: true,
         mode: 'dispatch',
       },
+      {
+        id: evalSlotId,
+        project,
+        platform: 'cli',
+        repo,
+        session: evalSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
     ],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -230,7 +241,10 @@ try {
     },
   });
   writeJson(path.join(root, '.farm-status.json'), {
-    slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId }],
+    slots: [
+      { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
+      { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
+    ],
   });
   for (const [id, ownedSlotId, flowType] of [
     [runId, slotId, 'fix-bug'],
@@ -242,6 +256,20 @@ try {
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
   }
+  const evalRun = blockedRun(evalRunId, evalSlotId, 'fix-bug', true);
+  evalRun.engineState = {
+    evalExperiment: {
+      experimentId: 'experiment-blocked',
+      experimentKey: 'experiment-key-blocked',
+      experimentManifestPath: '/tmp/experiment-manifest.json',
+      packagePath: '/tmp/candidate.result-package.json',
+      candidateStrategyFingerprint: 'fingerprint-blocked',
+      trialId: 'trial-blocked',
+    },
+  };
+  writeJson(path.join(root, '.runs', `${evalRunId}.json`), evalRun);
+  mkdirSync(path.dirname(evalRun.taskFile), { recursive: true });
+  writeFileSync(evalRun.taskFile, '# Disposable blocked eval worker\n');
   const successTaskDir = path.join(repo, 'tasks', successRunId);
   const signalFile = path.join(successTaskDir, 'SIGNAL.json');
   writeJson(path.join(successTaskDir, 'inputs', 'handoff.json'), {
@@ -323,6 +351,27 @@ try {
     /Start a new update-branch run/,
   );
   assert.equal(update.slotId, 'unavailable-worker');
+  const evalReplay = rpc('run.replayStep', { runId: evalRunId, stepName: 'monitor' });
+  assert.equal(evalReplay.run.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+  assert.equal(evalReplay.run.status, 'preparing');
+  const evalAcquire = rpc('runtime.capability.acquire', {
+    slotId: evalSlotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: evalRunId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'restarted eval worker proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(evalAcquire.ok, true, JSON.stringify(evalAcquire));
+  const evalRelease = rpc('runtime.capability.release', {
+    slotId: evalSlotId,
+    ownerRunId: evalRunId,
+    capabilityId: 'proof-resource',
+    keepWarm: false,
+  });
+  assert.equal(evalRelease.ok, true, JSON.stringify(evalRelease));
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
@@ -333,12 +382,30 @@ try {
   assert.equal(restarted.slotId, null);
   const capabilityStore = JSON.parse(readFileSync(env.FARMSLOT_CAPABILITY_STORE_FILE, 'utf8'));
   assert.equal(
-    capabilityStore.terminalOwnerEntries?.some(({ id }) => id === runId),
+    (capabilityStore.terminalOwnerEntries ?? []).some(({ id }) => id === runId),
     false,
   );
   assert.equal(slot?.currentRunId, null);
   assert.equal(slot?.lifecycle, 'ready');
   assert.equal(restarted.steps.find((step) => step.name === 'find-slot').status, 'pending');
+  const restartAcquire = rpc('runtime.capability.acquire', {
+    slotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: runId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'restarted worker proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(restartAcquire.ok, true, JSON.stringify(restartAcquire));
+  const restartRelease = rpc('runtime.capability.release', {
+    slotId,
+    ownerRunId: runId,
+    capabilityId: 'proof-resource',
+    keepWarm: false,
+  });
+  assert.equal(restartRelease.ok, true, JSON.stringify(restartRelease));
   await stopGateway();
   writeJson(
     path.join(root, '.runs', `${successRunId}.json`),

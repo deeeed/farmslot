@@ -71,6 +71,14 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
+/** A failed blocked replay must not terminally fence the run it will retry. */
+export function rollbackReclaimedSlotReleaseOptions(
+  status: Run['status'],
+  runId: string,
+): { restartRunId: string } | undefined {
+  return status === 'blocked' ? { restartRunId: runId } : undefined;
+}
+
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
@@ -1526,6 +1534,7 @@ export async function runReplayStep(
           await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
+            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
           );
         }
       } catch (releaseErr) {

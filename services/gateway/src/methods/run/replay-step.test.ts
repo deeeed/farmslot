@@ -33,6 +33,7 @@ import {
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
+  rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
   shouldRerouteEvalReplayToPrepare,
 } from './replay-step.js';
@@ -50,6 +51,13 @@ async function evictTestRun(runId: string, status: 'cancelled' | 'failed'): Prom
   updateRun(runId, { status, completedAt: new Date().toISOString() });
   await deleteRun(runId);
 }
+
+test('rollback release keeps a blocked replay eligible to acquire proof again', () => {
+  assert.deepEqual(rollbackReclaimedSlotReleaseOptions('blocked', 'run-1'), {
+    restartRunId: 'run-1',
+  });
+  assert.equal(rollbackReclaimedSlotReleaseOptions('failed', 'run-1'), undefined);
+});
 
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
