@@ -16,11 +16,12 @@ import {
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
 import { writeFileWithinRoot } from '../core/path.js';
-import type {
-  UiScrollGeometry,
-  UiScrollOffset,
-  UiScrollSession,
-  UiScrollToRequest,
+import {
+  type UiScrollGeometry,
+  type UiScrollOffset,
+  type UiScrollSession,
+  UiScrollToError,
+  type UiScrollToRequest,
 } from '../core/scroll-to.js';
 import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
@@ -903,9 +904,15 @@ export class CdpWebPage {
       sessionId: targetInfo.targetId,
       measure: () => this.evaluate<UiScrollGeometry>(measure),
       scrollTo: async (offset: UiScrollOffset) => {
-        await this.evaluate(
-          `(() => { ${deepQueryHelpersExpression()} const found = querySelectorDeep(${JSON.stringify(surface)}); if (!found) throw new Error('Scroll surface not found: ${escapeForJsMessage(request.surfaceTestId)}'); const bodyScrolls = found === document.body && /(auto|scroll)/.test(getComputedStyle(document.body).overflowY) && getComputedStyle(document.documentElement).overflowY !== 'visible'; const el = !bodyScrolls && (found === document.body || found === document.documentElement) ? document.scrollingElement || document.documentElement : found; el.scrollTo({ left: ${JSON.stringify(offset.x)}, top: ${JSON.stringify(offset.y)}, behavior: 'instant' }); return true; })()`,
+        const moved = await this.evaluate<boolean>(
+          `(() => { ${deepQueryHelpersExpression()} const found = querySelectorDeep(${JSON.stringify(surface)}); if (!found) return false; const bodyScrolls = found === document.body && /(auto|scroll)/.test(getComputedStyle(document.body).overflowY) && getComputedStyle(document.documentElement).overflowY !== 'visible'; const el = !bodyScrolls && (found === document.body || found === document.documentElement) ? document.scrollingElement || document.documentElement : found; el.scrollTo({ left: ${JSON.stringify(offset.x)}, top: ${JSON.stringify(offset.y)}, behavior: 'instant' }); return true; })()`,
         );
+        if (!moved) {
+          throw new UiScrollToError(
+            'SCROLL_SURFACE_MISSING',
+            `surface ${request.surfaceTestId} unmounted before the move.`,
+          );
+        }
       },
     };
   }

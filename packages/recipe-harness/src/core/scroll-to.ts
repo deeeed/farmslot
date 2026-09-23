@@ -230,7 +230,18 @@ export async function runUiScrollTo(
       ),
   };
   observation.offset = offset;
-  await session.scrollTo(offset);
+  try {
+    await session.scrollTo(offset);
+  } catch (error) {
+    // A coded provider failure during the move keeps the geometry measured before it.
+    if (!(error instanceof UiScrollToError)) throw error;
+    throw new UiScrollToError(
+      error.code,
+      error.reason,
+      { ...observation, ...(isRecord(error.details) ? error.details : {}) },
+      { cause: error },
+    );
+  }
   observation.scrolled = true;
 
   const settled = await settle(session, request.settle);

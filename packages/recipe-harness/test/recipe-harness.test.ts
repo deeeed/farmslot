@@ -1927,6 +1927,63 @@ test('CDP ui.scroll maps offset_y to an absolute position and delta_y to relativ
   );
 });
 
+test('CDP ui.scroll_to reports a surface that unmounts before the move as SCROLL_SURFACE_MISSING', async () => {
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: 'target-1' } };
+      assert.equal(method, 'Runtime.evaluate');
+      const expression = String(params.expression);
+      // Measurement still finds the surface; the move's lookup does not (it unmounted).
+      if (expression.includes('const box = (el)')) {
+        return {
+          result: {
+            value: {
+              surface: { x: 0, y: 0, width: 400, height: 600 },
+              viewport: { x: 0, y: 0, width: 400, height: 600 },
+              offset: { x: 0, y: 0 },
+              targetPresent: true,
+              targetBounds: { x: 0, y: 1_000, width: 400, height: 40 },
+              occlusions: [],
+            },
+          },
+        };
+      }
+      return { result: { value: false } };
+    },
+  } as never);
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      return callback(page);
+    },
+  });
+  const [adapter] = createStandardUiAdapters({ transport, actions: ['ui.scroll_to'] });
+  await assert.rejects(
+    adapter!.execute(
+      { action: 'ui.scroll_to', surface_test_id: 'orders', target_test_id: 'history' },
+      {} as never,
+    ),
+    (error: unknown) => {
+      const coded = error as {
+        causeClass?: string;
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(coded.causeClass, 'harness');
+      assert.equal(coded.code, 'SCROLL_SURFACE_MISSING');
+      assert.equal(coded.details?.backend, 'cdp-web');
+      assert.equal(coded.details?.sessionId, 'target-1');
+      assert.equal(coded.details?.surfaceTestId, 'orders');
+      assert.deepEqual((coded.details?.before as Record<string, unknown>).targetBounds, {
+        x: 0,
+        y: 1_000,
+        width: 400,
+        height: 40,
+      });
+      return true;
+    },
+  );
+});
+
 test('standard UI adapters route ui.scroll_to through the CDP scroll session', async () => {
   assert.ok(STANDARD_UI_ACTIONS.includes('ui.scroll_to'));
   const offsets: Array<{ x: number; y: number }> = [];
