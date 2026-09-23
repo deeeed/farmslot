@@ -277,6 +277,44 @@ function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('restart restores a failed PR health overlay for a blocked inline CI fix', async () => {
+  const run = minimalActiveRun({
+    status: 'blocked',
+    ticketOrPr: 'CI-OVERLAY-RESTART',
+    familyRootTicketOrPr: 'CI-OVERLAY-RESTART',
+    taskFile: '/tmp/ci-overlay-restart/TASK.md',
+    prNumber: 123,
+    steps: [{ name: 'ci-watch', status: 'running' }],
+    decisions: [
+      {
+        id: 'blocked-inline-fix',
+        type: 'ci_inline_fix_blocked',
+        title: 'CI fix blocked',
+        description: 'Fix did not advance HEAD',
+        actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+  const overlays: Array<{ ciFailed: number }> = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'idle' }],
+    }),
+    getRun: () => run,
+    reconcileRunAgentRuntime: async () => {},
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: () => {},
+    setPrHealthOverlay: (_slot: string, overlay: { ciFailed: number }) => overlays.push(overlay),
+    quarantineLeakedRun: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+  assert.equal(overlays[0]?.ciFailed, 1);
+});
+
 test('recovery defers slot-bound runs when the whole fleet snapshot is empty', async () => {
   const run = minimalActiveRun({
     status: 'monitoring',

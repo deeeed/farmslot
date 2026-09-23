@@ -1399,6 +1399,49 @@ test('runResolveDecision rejects interactive PR-complete handoff resume without 
   assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
 });
 
+test('resolving a CI abort without a live resolver re-enters the persisted CI-watch step', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'CI-ABORT-RESTART',
+    slotId: 'ci-abort-restart-slot',
+  });
+  const decision: RunDecision = {
+    id: `ci-abort-${run.id}`,
+    type: 'ci_inline_fix_blocked',
+    title: 'CI fix blocked',
+    description: 'Fix did not advance HEAD',
+    actions: [{ id: 'abort', label: 'Abort', style: 'danger' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, {
+    status: 'blocked',
+    decisions: [decision],
+    steps: [{ name: 'ci-watch', status: 'running', outputs: { phase: 'blocked' } }],
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'done' });
+    await deleteRun(run.id);
+  });
+
+  let resumeRun: (() => void) | undefined;
+  const resumed = new Promise<void>((resolve) => {
+    resumeRun = resolve;
+  });
+  await runResolveDecision(
+    { runId: run.id, decisionId: decision.id, actionId: 'abort' },
+    () => {},
+    { resumeRun: async () => resumeRun?.() },
+  );
+  await resumed;
+
+  const after = getRun(run.id)!;
+  assert.equal(after.decisions[0]?.resolvedAction, 'abort');
+  assert.equal(after.steps.find((step) => step.name === 'ci-watch')?.status, 'pending');
+  assert.equal(after.steps.find((step) => step.name === 'ci-watch')?.outputs, undefined);
+});
+
 test('runResolveDecision extends a timed-out interactive handoff without SIGNAL.json', async (t) => {
   const run = createRun({
     flowType: 'dev',

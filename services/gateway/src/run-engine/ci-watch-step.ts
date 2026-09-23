@@ -16,7 +16,7 @@ import {
   isPublishedStatus,
   publicationStatusForRun,
 } from '../run-completion/orchestrator.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
@@ -41,6 +41,7 @@ interface CIWatchChainSpec {
 
 export interface CIWatchStepContext {
   activeMonitors: Map<string, AbortController>;
+  createRetrospectiveForRun?: typeof createRetrospectiveForRun;
   applyChainedRunEngineFlags: (
     runId: string,
     flags: { skipPrepare?: true; warmRecovery?: true; warmSessionReuse?: true },
@@ -78,6 +79,7 @@ export async function executeCIWatchStep(
 ): Promise<StepIO> {
   const {
     activeMonitors,
+    createRetrospectiveForRun: createRetrospective = createRetrospectiveForRun,
     applyChainedRunEngineFlags,
     broadcastFn,
     buildCIWatchChainedRunParams,
@@ -89,6 +91,29 @@ export async function executeCIWatchStep(
   } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
+  if (
+    current.decisions.some(
+      (decision) =>
+        decision.type.startsWith('ci_') &&
+        decision.resolvedAt &&
+        decision.resolvedAction === 'abort',
+    )
+  ) {
+    const outputs = { result: 'aborted', phase: 'done', failedChecks: [], pollCount: 0 };
+    updateRunStep(runId, 'ci-watch', { outputs });
+    await createRetrospective(runId);
+    deferTerminalSlotRelease({
+      slotId: current.slotId,
+      keepWork: true,
+      keepWarm: true,
+      detachRuns: false,
+      expectedRunId: current.id,
+    });
+    return {
+      inputs: { prNumber: current.prNumber },
+      outputs,
+    };
+  }
   // ADR-054: waiting on CI is a durable operator wait; the gate choice the
   // operator made for this wait still governs it.
   await reconcileRunPosture({ runId, boundary: 'operator-wait' });
@@ -367,7 +392,7 @@ export async function executeCIWatchStep(
     // Create the family-level retrospective here even when the flow had a
     // human-gate; the gate approved publication but did not capture CI,
     // review-comment follow-ups, update-branch friction, or final PR outcome.
-    await createRetrospectiveForRun(runId);
+    await createRetrospective(runId);
     // The slot release is the engine's to run, after the run publishes `done`.
     deferTerminalSlotRelease({
       slotId: current.slotId,
