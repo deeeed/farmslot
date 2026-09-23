@@ -139,6 +139,13 @@ export class DispatchWizard extends DispatchWizardState {
     if (changed.has('_flowType') && this._project && this._flowType) {
       this._applyVisibleCatalog();
     }
+    if (
+      ['_slotOverride', '_slotOverrideExplicit', '_transport', '_nativeProfileSelection'].some(
+        (key) => changed.has(key),
+      )
+    ) {
+      void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
+    }
     // Ticket identity can change target-branch scoring and nudge rows. Keep the
     // current snapshot on screen and rescore in the background.
     const scoringTickers = ['_ticketId', '_normalizedTicket'];
@@ -702,7 +709,8 @@ export class DispatchWizard extends DispatchWizardState {
       // operator clicked while this fetch was in flight (e.g. a pressure
       // Override pick) must survive the apply instead of being auto-replaced.
       this._applyVisibleCandidates(this._slotOverride || prevOverride);
-      void this._fetchProfileFitSuggestion(this._project, gen);
+      if (this._slotOverride === prevOverride)
+        void this._fetchProfileFitSuggestion(this._project, gen);
     } catch (err) {
       if (gen !== this._fetchGen) return;
       console.warn('[dispatch-wizard] dispatch.candidates failed:', err);
@@ -726,6 +734,10 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
+    const requestGen = ++this._profileFitRequestGen;
+    const selectionKey = `${this._slotOverride}|${this._slotOverrideExplicit}|${this._transport}|${this._nativeProfileSelection?.executionNodeId ?? ''}`;
+    if (selectionKey !== this._profileFitSelectionKey) this._profileFitSuggestion = null;
+    this._profileFitSelectionKey = selectionKey;
     if (
       this._flowType === 'review-pr' ||
       this._flowType === 'qa' ||
@@ -733,6 +745,7 @@ export class DispatchWizard extends DispatchWizardState {
       !this._flowType ||
       !this._ticketId.trim() ||
       this._prepareProfile.trim() ||
+      (this._transport === 'native' && this._nativeAutomaticSlot && !this._slotOverride) ||
       this.mockMode
     ) {
       this._profileFitSuggestion = null;
@@ -752,10 +765,10 @@ export class DispatchWizard extends DispatchWizardState {
           this._candidates.find((candidate) => candidate.slotId === this._slotOverride)
             ?.replaceableWarm === true || undefined,
       });
-      if (gen !== this._fetchGen) return;
+      if (gen !== this._fetchGen || requestGen !== this._profileFitRequestGen) return;
       this._profileFitSuggestion = suggestion;
     } catch (err) {
-      if (gen !== this._fetchGen) return;
+      if (gen !== this._fetchGen || requestGen !== this._profileFitRequestGen) return;
       console.warn('[dispatch-wizard] dispatch.preview profile fit failed:', err);
       this._profileFitSuggestion = null;
     }
@@ -1778,6 +1791,7 @@ export class DispatchWizard extends DispatchWizardState {
       autoProject: this._autoProject,
       project: this._project,
       selectedSlotOverride: this._slotOverride,
+      explicitSlot: this._slotOverrideExplicit,
       allowAutomaticSlot: this._transport === 'native',
       selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
       refreshSlots: () => this._refreshDispatchSnapshot(),

@@ -90,7 +90,7 @@ const inflightReleases = new Map<
   { key: string; promise: Promise<{ released: boolean }> }
 >();
 
-function releaseCoalesceKey(params: SlotReleaseParams): string {
+function releaseCoalesceKey(params: SlotReleaseParams, restartRunId?: string): string {
   // Only semantically identical requests may share one teardown; a request
   // with different options/owner must wait for the in-flight one and then run
   // itself (it may legitimately become a no-op via the owner/epoch guards).
@@ -102,14 +102,21 @@ function releaseCoalesceKey(params: SlotReleaseParams): string {
     forceReset: params.forceReset ?? false,
     preserveAgents: params.preserveAgents ?? false,
     detachRuns: params.detachRuns ?? true,
+    restartRunId: restartRunId ?? null,
   });
 }
 
 export async function slotRelease(
   params: SlotReleaseParams,
   emit: EventEmitter,
+  // A blocked-run restart keeps the same run ID. It must release the slot
+  // without fencing that run as terminal before the new attempt can acquire proof.
+  options?: { restartRunId: string },
 ): Promise<{ released: boolean }> {
-  const key = releaseCoalesceKey(params);
+  if (options && options.restartRunId !== params.expectedRunId) {
+    throw new Error('Restart release must be bound to its run owner');
+  }
+  const key = releaseCoalesceKey(params, options?.restartRunId);
   // Re-check the map after every wait: several differing waiters can be woken
   // by the same settled teardown, and only the first to register may run —
   // the rest must queue behind IT, not start parallel teardowns.
@@ -125,7 +132,7 @@ export async function slotRelease(
     console.log(`[release] queueing differing release for ${params.slotId} behind in-flight one`);
     await inflight.promise.catch(() => undefined);
   }
-  const teardown = slotReleaseImpl(params, emit).finally(() => {
+  const teardown = slotReleaseImpl(params, emit, options).finally(() => {
     if (inflightReleases.get(params.slotId)?.promise === teardown) {
       inflightReleases.delete(params.slotId);
     }
@@ -137,6 +144,7 @@ export async function slotRelease(
 async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
+  options?: { restartRunId: string },
 ): Promise<{ released: boolean }> {
   // Cheap early checks (authoritative validation happens atomically at the
   // releasing-marker CAS below, after the non-destructive preflight). A slot
@@ -262,8 +270,9 @@ async function slotReleaseImpl(
   try {
     // ADR-054: when this teardown belongs to a specific run, reconcile that run
     // to `terminal` first so the family's providers stop in dependency order and
-    // the effective posture is recorded before the slot-wide sweep.
-    if (params.expectedRunId) {
+    // the effective posture is recorded before the slot-wide sweep. A restart
+    // reuses the owner ID, so its slot-wide sweep must not terminally fence it.
+    if (params.expectedRunId && !options?.restartRunId) {
       const { reconcileRunPosture } = await import('../../run-engine/resource-posture.js');
       const outcome = await reconcileRunPosture({
         runId: params.expectedRunId,

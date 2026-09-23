@@ -178,7 +178,7 @@ test('profile fit recognizes plural surface hints', () => {
     run(),
     {
       ...companionTicket,
-      title: 'simulators and gateways',
+      title: 'simulators',
       description: '',
       affectedArea: '',
       acceptanceCriteria: [],
@@ -187,6 +187,19 @@ test('profile fit recognizes plural surface hints', () => {
     { slotPlatform: 'cli' },
   );
   assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
+  const gateway = detectProfileFit(
+    run(),
+    {
+      ...companionTicket,
+      title: 'Companion and gateways',
+      description: '',
+      affectedArea: '',
+      acceptanceCriteria: [],
+      labels: [],
+    },
+    { slotPlatform: 'cli' },
+  );
+  assert.ok(gateway?.validationPlan?.some((step) => step.surface === 'gateway'));
 });
 
 test('profile fit still recognizes Expo as an independent term', () => {

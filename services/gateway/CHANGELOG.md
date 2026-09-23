@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and warn before dispatch when a selected slot lacks Companion resources.
+- Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.
 
 - Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
 
@@ -15,7 +15,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
 
-- Bind a newer worker signal before replaying a blocked monitor, including completion by the new attempt; require current slot ownership and freshly checked proof resources, and release an owned slot before restarting from find-slot.
+- Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, and reroute blocked eval runs to prepare or find-slot as ownership requires.
 
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
