@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
+
 - Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.
 
 - Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.

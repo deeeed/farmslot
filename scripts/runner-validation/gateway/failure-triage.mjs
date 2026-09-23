@@ -774,7 +774,10 @@ try {
     assert.equal(received.record.result.usage.costUsd, undefined, mode);
     assert.equal(received.retryAllowed, false, mode);
     if (mode === 'native-body-read-failure')
-      assert.ok(received.record.result.usage.durationMs >= 200, 'Duration includes body read');
+      assert.ok(
+        received.record.result.usage.durationMs >= 700,
+        'Duration includes body read after headers',
+      );
     assert.throws(
       () =>
         rpc('intelligence.triage.analyze', {

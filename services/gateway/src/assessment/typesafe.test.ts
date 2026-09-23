@@ -286,16 +286,14 @@ test('bounded transport retains received HTTP receipt for unreadable or oversize
 });
 
 test('received-body failure duration includes time spent reading after headers', async () => {
-  const provider = createTypeSafeProvider(
-    boundedAssessmentFetch(async () => {
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          setTimeout(() => controller.error(new Error('delayed body read failure')), 230);
-        },
-      });
-      return new Response(body, { headers: { 'content-type': 'application/json' } });
-    }),
-  );
+  const provider = createTypeSafeProvider(async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        setTimeout(() => controller.error(new Error('delayed body read failure')), 230);
+      },
+    });
+    return new Response(body, { headers: { 'content-type': 'application/json' } });
+  });
   await assert.rejects(
     provider.assess({
       state: 'synthetic failure',
