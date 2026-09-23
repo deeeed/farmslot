@@ -417,7 +417,7 @@ export async function materializeReviewWorkspaceTask(
   }
   const current = ownedRun(runId, deps);
   if (
-    !isDeepStrictEqual(current.reviewWorkspace, snapshot.workspace) ||
+    !sameWorkspaceIdentity(current.reviewWorkspace, snapshot.workspace) ||
     !isDeepStrictEqual(current.reviewWorkspaceSubject, snapshot.subject) ||
     !isDeepStrictEqual(current.executionTemplate, snapshot.executionTemplate)
   )
