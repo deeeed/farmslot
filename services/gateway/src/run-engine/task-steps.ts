@@ -341,7 +341,7 @@ export async function executeGradeStep(
     const actionId = await decide(
       runId,
       'prepare_profile_mismatch',
-      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}${resourceBlocker ? ` Slot ${run.slotId ?? '(unbound)'} cannot use the suggestion: ${resourceBlocker}. Start a new run on a compatible slot to use it.` : ''}`,
+      `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}${resourceBlocker ? ` Slot ${run.slotId} cannot use the suggestion: ${resourceBlocker}. Start a new run on a compatible slot to use it.` : ''}`,
       [
         ...(!resourceBlocker
           ? [
@@ -381,9 +381,9 @@ export async function executeGradeStep(
       const selectedSlotBlocker = selectedSlot
         ? companionResourceBlocker(selectedSlot, resolvedProfileFit.suggestedPrepareProfile)
         : 'Bound slot is unavailable in the fleet';
-      if (selectedSlotId !== run.slotId || resourceBlocker || selectedSlotBlocker) {
+      if (selectedSlotId !== run.slotId || selectedSlotBlocker) {
         throw new Error(
-          `Cannot use ${resolvedProfileFit.suggestedPrepareProfile} on slot ${selectedSlotId ?? '(unbound)'}: ${selectedSlotBlocker || resourceBlocker || 'binding changed during decision'}`,
+          `Cannot use ${resolvedProfileFit.suggestedPrepareProfile} on slot ${selectedSlotId ?? '(unbound)'}: ${selectedSlotBlocker || 'binding changed during decision'}`,
         );
       }
       updateRun(runId, { prepareProfile: resolvedProfileFit.suggestedPrepareProfile });

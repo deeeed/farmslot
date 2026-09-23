@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Bound-slot profile-fit advice",
+  "description": "Requires an isolated local gateway with the real farmslot-farm project config and a synthetic CLI pr720-test-N slot without simulator resources. Set FARMSLOT_GATEWAY and FARMSLOT_PROFILE_FIT_TEST_SLOT. Creates a manual validation run, checks dispatch preview and the actual GRADE decision before PREPARE.",
+  "workflow": {
+    "entry": "verify-profile-fit",
+    "nodes": {
+      "verify-profile-fit": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/scenarios/profile-fit-gate.mjs",
+        "timeout_ms": 45000,
+        "intent": "Assert the gateway warns in preview and blocks an incompatible core run at GRADE.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

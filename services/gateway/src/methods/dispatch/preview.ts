@@ -70,6 +70,7 @@ import {
   type ParkPreservedWorkspace,
   prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
+  slotHasCompanionResource,
   slotScore,
   validateSlotForDispatch,
 } from './slot-scoring.js';
@@ -1155,6 +1156,7 @@ export async function dispatchPreview(
     profileFit = detectProfileFit(previewRun, ticketData, {
       app: params.app,
       slotPlatform: slotInfo?.platform ?? null,
+      ...(slotInfo ? { boundSlotHasCompanionResource: slotHasCompanionResource(slotInfo) } : {}),
       effectivePrepareProfile: resolvePrepareProfile(profileJson).name,
       availablePrepareProfiles: configuredPrepareProfileNames(profileJson),
     });

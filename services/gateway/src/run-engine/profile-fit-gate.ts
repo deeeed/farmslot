@@ -70,7 +70,9 @@ function buildHaystack(run: Run, ticketData: RunTicketData | null): string {
 
 function haystackMatches(haystack: string, tokens: readonly string[]): boolean {
   return tokens.some((token) =>
-    token === 'expo' ? /\bexpo\b/.test(haystack) : haystack.includes(token),
+    /^[a-z]+$/u.test(token)
+      ? new RegExp(`\\b${token}\\b`, 'u').test(haystack)
+      : haystack.includes(token),
   );
 }
 

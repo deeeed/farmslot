@@ -154,6 +154,26 @@ test('profile fit does not treat exposes as Expo', () => {
   assert.equal(result, null);
 });
 
+test('profile fit ignores single-word hints inside unrelated words', () => {
+  for (const title of ['automobile repair', 'invite a reviewer', 'repairing an adapter']) {
+    assert.equal(
+      detectProfileFit(
+        run(),
+        {
+          ...companionTicket,
+          title,
+          description: '',
+          affectedArea: '',
+          acceptanceCriteria: [],
+          labels: [],
+        },
+        { slotPlatform: 'cli' },
+      ),
+      null,
+    );
+  }
+});
+
 test('profile fit still recognizes Expo as an independent term', () => {
   assert.equal(
     detectProfileFit(
