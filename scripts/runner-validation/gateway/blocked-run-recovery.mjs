@@ -29,6 +29,8 @@ const updateRunId = randomUUID();
 const successRunId = randomUUID();
 const evalRunId = randomUUID();
 const rollbackRunId = randomUUID();
+const freeRollbackRunId = randomUUID();
+const freeRollbackSlotId = `free-rollback-${randomUUID()}`;
 const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
@@ -221,6 +223,15 @@ try {
         enabled: true,
         mode: 'dispatch',
       },
+      {
+        id: freeRollbackSlotId,
+        project,
+        platform: 'cli',
+        repo,
+        session: freeRollbackSlotId,
+        enabled: true,
+        mode: 'dispatch',
+      },
     ],
   });
   writeJson(path.join(root, 'projects', project, 'project.json'), {
@@ -258,6 +269,7 @@ try {
       { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: runId },
       { slot: evalSlotId, lifecycle: 'busy', phase: 'working', current_run_id: evalRunId },
       { slot: rollbackSlotId, lifecycle: 'busy', phase: 'working', current_run_id: rollbackRunId },
+      { slot: freeRollbackSlotId, lifecycle: 'ready', phase: 'idle', current_run_id: null },
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
@@ -296,6 +308,11 @@ try {
   };
   const rollbackRun = blockedRun(rollbackRunId, rollbackSlotId, 'fix-bug', true);
   rollbackRun.engineState = evalRun.engineState;
+  const freeRollbackRun = blockedRun(freeRollbackRunId, null);
+  freeRollbackRun.steps.find((step) => step.name === 'find-slot').outputs = {
+    selectedSlot: freeRollbackSlotId,
+  };
+  writeJson(path.join(root, '.runs', `${freeRollbackRunId}.json`), freeRollbackRun);
   writeJson(path.join(root, '.runs', `${rollbackRunId}.json`), rollbackRun);
   mkdirSync(path.dirname(rollbackRun.taskFile), { recursive: true });
   writeFileSync(rollbackRun.taskFile, '# Disposable blocked rollback worker\n');
@@ -351,7 +368,7 @@ try {
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
     FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
     NODE_TEST_CONTEXT: '1',
-    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_ID: rollbackRunId,
+    FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS: `${rollbackRunId},${freeRollbackRunId}`,
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
@@ -444,6 +461,40 @@ try {
     keepWarm: false,
   });
   assert.equal(rollbackRelease.ok, true, JSON.stringify(rollbackRelease));
+  // Reclaiming an unowned historical slot uses the release rollback path.
+  // Its terminal posture must remain open so another attempt can acquire proof.
+  const freeRollback = denied(
+    { runId: freeRollbackRunId, stepName: 'prepare' },
+    /Injected replay failure after claim/,
+  );
+  assert.equal(freeRollback.slotId, null);
+  const freedSlot = rpc('fleet.status', {}).fleet.slots.find(
+    (candidate) => candidate.slot === freeRollbackSlotId,
+  );
+  assert.equal(freedSlot?.currentRunId, null);
+  const freeCapabilityStore = JSON.parse(readFileSync(env.FARMSLOT_CAPABILITY_STORE_FILE, 'utf8'));
+  assert.equal(
+    (freeCapabilityStore.terminalOwnerEntries ?? []).some(({ id }) => id === freeRollbackRunId),
+    false,
+  );
+  const freeAcquire = rpc('runtime.capability.acquire', {
+    slotId: freeRollbackSlotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: freeRollbackRunId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'released rollback proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(freeAcquire.ok, true, JSON.stringify(freeAcquire));
+  const freeRelease = rpc('runtime.capability.release', {
+    slotId: freeRollbackSlotId,
+    ownerRunId: freeRollbackRunId,
+    capabilityId: 'proof-resource',
+    keepWarm: false,
+  });
+  assert.equal(freeRelease.ok, true, JSON.stringify(freeRelease));
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 

@@ -1032,7 +1032,9 @@ export async function runReplayStep(
           // The disposable gateway recipe injects a failure after a real claim.
           if (
             process.env.NODE_TEST_CONTEXT === '1' &&
-            process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_ID === params.runId
+            process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS?.split(',').includes(
+              params.runId,
+            )
           ) {
             throw new Error('Injected replay failure after claim');
           }
