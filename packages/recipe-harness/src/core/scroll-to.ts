@@ -220,6 +220,7 @@ export async function runUiScrollTo(
       initial.offset.y +
       clearCards(
         initialFrame.proofBounds,
+        initialFrame.safeViewport,
         alignDelta(initialFrame.proofBounds, initialFrame.safeViewport, request.align),
         cardOcclusions(initial, request.viewportPolicy),
       ),
@@ -374,16 +375,36 @@ function alignDelta(bounds: UiRect, area: UiRect, align: UiScrollToRequest['alig
   return nearestDelta(bounds, area, 'y');
 }
 
-/** Extend a vertical move so the element does not come to rest under a card-shaped occlusion. */
-function clearCards(bounds: UiRect, deltaY: number, cards: readonly UiRect[]): number {
-  let delta = deltaY;
-  for (const card of cards) {
+/**
+ * Pick the vertical move closest to the aligned one that leaves the element inside the safe
+ * viewport and clear of every card. Candidates rest the element flush against a card or a
+ * viewport edge; with no clear position the aligned move stands and verification reports it.
+ */
+function clearCards(
+  bounds: UiRect,
+  area: UiRect,
+  deltaY: number,
+  cards: readonly UiRect[],
+): number {
+  if (!cards.length) return deltaY;
+  const bottom = bounds.y + bounds.height;
+  const candidates = [
+    deltaY,
+    bounds.y - area.y,
+    bottom - (area.y + area.height),
+    ...cards.flatMap((card) => [bottom - card.y, bounds.y - (card.y + card.height)]),
+  ];
+  const clear = candidates.filter((delta) => {
     const moved = { ...bounds, y: bounds.y - delta };
-    if (!intersects(card, moved)) continue;
-    const cardBelow = card.y + card.height / 2 >= moved.y + moved.height / 2;
-    delta += cardBelow ? moved.y + moved.height - card.y : moved.y - (card.y + card.height);
-  }
-  return delta;
+    return (
+      axisVisible(moved.y, moved.height, area.y, area.height) &&
+      !cards.some((card) => intersects(card, moved))
+    );
+  });
+  if (!clear.length) return deltaY;
+  return clear.reduce((best, delta) =>
+    Math.abs(delta - deltaY) < Math.abs(best - deltaY) ? delta : best,
+  );
 }
 
 function nearestDelta(bounds: UiRect, area: UiRect, axis: 'x' | 'y'): number {

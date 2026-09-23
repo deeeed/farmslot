@@ -386,6 +386,57 @@ test('default nearest alignment moves a target out from under a corner card', as
   assert.equal(output.finalVisible, true);
 });
 
+test('card clearance stays inside the safe viewport and clears every card', async () => {
+  const cases: Array<{ label: string; top: number; cards: UiRect[]; align?: string }> = [
+    // Row 550-590 under a card at 540-580 near the bottom edge: moving down would leave the viewport.
+    { label: 'bottom edge', top: 450, cards: [{ x: 100, y: 540, width: 100, height: 40 }] },
+    {
+      label: 'bottom edge, align end',
+      top: 450,
+      cards: [{ x: 100, y: 540, width: 100, height: 40 }],
+      align: 'end',
+    },
+    // Row 400-440 between two cards (380-410, 430-460): a single nudge lands under the first.
+    {
+      label: 'two cards',
+      top: 300,
+      cards: [
+        { x: 100, y: 380, width: 100, height: 30 },
+        { x: 100, y: 430, width: 100, height: 30 },
+      ],
+    },
+    {
+      label: 'two cards, align center',
+      top: 1_200,
+      cards: [
+        { x: 100, y: 330, width: 100, height: 30 },
+        { x: 100, y: 360, width: 100, height: 30 },
+      ],
+      align: 'center',
+    },
+  ];
+  for (const scenario of cases) {
+    const surface = new FakeSurface({
+      elements: { filters: { top: scenario.top, height: 40 } },
+      occlusions: scenario.cards,
+    });
+    const { transport } = fakeProvider(surface, { sessions: 'retained' });
+    const { status, trace } = await runScrollRecipe(transport, [
+      { target_test_id: 'filters', ...(scenario.align ? { align: scenario.align } : {}) },
+    ]);
+    assert.equal(status, 'pass', `${scenario.label}: ${JSON.stringify(trace[0])}`);
+    const after = scrollOutput(trace[0]).after?.targetBounds;
+    assert.ok(after, scenario.label);
+    assert.ok(after.y >= VIEWPORT.y && after.y + after.height <= VIEWPORT.y + VIEWPORT.height);
+    for (const card of scenario.cards) {
+      assert.ok(
+        after.y + after.height <= card.y || after.y >= card.y + card.height,
+        `${scenario.label}: row ${JSON.stringify(after)} under card ${JSON.stringify(card)}`,
+      );
+    }
+  }
+});
+
 test('viewport_policy full keeps the raw viewport and treats the row under the HUD as visible', async () => {
   const surface = new FakeSurface({
     elements: { filters: { top: 450, height: 40 } },
