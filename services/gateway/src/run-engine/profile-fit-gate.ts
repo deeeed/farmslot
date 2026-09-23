@@ -5,7 +5,9 @@ import type {
   ValidationPlanStep,
 } from '@farmslot/protocol';
 
-const FARMSLOT_PROJECT = 'farmslot-farm';
+import { CORE_PROFILE } from '../methods/slot/prepare-profile.js';
+
+export const FARMSLOT_PROJECT = 'farmslot-farm';
 
 const COMPANION_TOKENS = [
   'companion',
@@ -43,13 +45,12 @@ const SANDBOX_COMPANION_PROFILE = 'sandbox-companion';
 
 export type ProfileFitContext = {
   slotPlatform?: string | null;
-  /** False only for a bound slot that cannot host Companion. Unset for advisory previews. */
+  /** False when the selected slot cannot host Companion; unset until a slot is selected. */
   boundSlotHasCompanionResource?: boolean;
   /** The profile the prepare resolver will use when the operator made no explicit choice. */
   effectivePrepareProfile?: string | null;
   /** Names present in the project's validated prepare catalog. */
   availablePrepareProfiles?: readonly string[];
-  prepareProfile?: string | null;
   app?: string | null;
 };
 
@@ -71,7 +72,7 @@ function buildHaystack(run: Run, ticketData: RunTicketData | null): string {
 function haystackMatches(haystack: string, tokens: readonly string[]): boolean {
   return tokens.some((token) =>
     /^[a-z]+$/u.test(token)
-      ? new RegExp(`\\b${token}\\b`, 'u').test(haystack)
+      ? new RegExp(`\\b${token}s?\\b`, 'u').test(haystack)
       : haystack.includes(token),
   );
 }
@@ -161,7 +162,7 @@ export function detectProfileFit(
   context: ProfileFitContext = {},
 ): ProfileFitSuggestion | null {
   if (run.project !== FARMSLOT_PROJECT) return null;
-  if (context.prepareProfile?.trim() || run.prepareProfile?.trim()) return null;
+  if (run.prepareProfile?.trim()) return null;
 
   const haystack = buildHaystack(run, ticketData);
   const surfaces = detectSurfaces(haystack);
@@ -177,20 +178,15 @@ export function detectProfileFit(
   }
 
   const currentProfile =
-    context.effectivePrepareProfile?.trim() ||
-    context.prepareProfile?.trim() ||
-    run.prepareProfile?.trim() ||
-    defaultPrepareProfile(context.slotPlatform);
+    context.effectivePrepareProfile?.trim() || defaultPrepareProfile(context.slotPlatform);
 
   // `core` starts only checkout/dependency state and workers can acquire
   // capabilities later. But a bound slot with no simulator cannot acquire
   // Companion, so the operator needs to know before continuing.
-  if (currentProfile === 'core' && context.boundSlotHasCompanionResource !== false) return null;
+  if (currentProfile === CORE_PROFILE && context.boundSlotHasCompanionResource !== false)
+    return null;
 
-  const gatewayOnlyMismatch =
-    surfaces.companion &&
-    GATEWAY_ONLY_PROFILES.has(currentProfile) &&
-    !context.prepareProfile?.trim();
+  const gatewayOnlyMismatch = surfaces.companion && GATEWAY_ONLY_PROFILES.has(currentProfile);
   const companionMismatch =
     (surfaces.gateway || surfaces.commandCenter) &&
     COMPANION_PROFILES.has(currentProfile) &&

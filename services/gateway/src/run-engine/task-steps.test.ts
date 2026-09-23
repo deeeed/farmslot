@@ -47,61 +47,6 @@ const profileFitTicket: RunTicketData = {
   labels: ['companion'],
 };
 
-test('GRADE persists a suggested profile and does not re-open the gate on retry', async (t) => {
-  const run = createRun({
-    project: 'farmslot-farm',
-    flowType: 'fix-bug',
-    ticketOrPr: 'PROFILE-FIT-GRADE',
-    slotId: profileFitSlotId,
-    ticketData: profileFitTicket,
-    mode: 'interactive',
-    engineState: { evalExperiment: { experimentId: 'profile-fit-test' } } as Run['engineState'],
-  });
-  t.after(async () => {
-    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
-    await deleteRun(run.id);
-  });
-
-  const actions: string[][] = [];
-  const projectVars = {
-    projectJson: {
-      prepare: {
-        default: 'sandbox',
-        profiles: {
-          sandbox: { phases: ['git'] },
-          'sandbox-companion': { phases: ['git'] },
-        },
-      },
-    },
-  };
-  const deps = {
-    createEngineDecision: async (
-      _runId: string,
-      _reason: string,
-      _description: string,
-      choices: Run['decisions'][number]['actions'],
-    ) => {
-      actions.push(choices.map((choice) => choice.id));
-      return 'use_suggested_profile';
-    },
-    loadProjectVarsOrNull: async () => projectVars as never,
-    getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
-  };
-
-  const first = await executeGradeStep(run.id, run, new Map(), deps);
-  assert.equal(first.outputs?.profileFitOverride, undefined);
-  assert.deepEqual(
-    (first.outputs?.profileFitSelection as Record<string, unknown>)?.selectedBy,
-    'user',
-  );
-  assert.ok(getRun(run.id)?.engineState?.validationPlan?.length);
-  assert.deepEqual(actions, [['use_suggested_profile', 'continue', 'abort']]);
-  assert.equal(getRun(run.id)?.prepareProfile, 'sandbox-companion');
-
-  await executeGradeStep(run.id, getRun(run.id)!, new Map(), deps);
-  assert.equal(actions.length, 1, 'persisted profile must suppress the retry gate');
-});
-
 test('GRADE does not offer a companion profile on a bound CLI slot without simulator resources', async (t) => {
   const run = createRun({
     project: 'farmslot-farm',
@@ -146,48 +91,6 @@ test('GRADE does not offer a companion profile on a bound CLI slot without simul
   assert.equal(getRun(run.id)?.prepareProfile, undefined);
   assert.equal(getRun(run.id)?.engineState?.validationPlan, undefined);
   assert.ok(result.outputs?.profileFitOverride);
-  assert.equal(result.outputs?.profileFitSelection, undefined);
-});
-
-test('GRADE rechecks a compatible bound slot before saving the suggested profile', async (t) => {
-  const run = createRun({
-    project: 'farmslot-farm',
-    flowType: 'fix-bug',
-    ticketOrPr: 'PROFILE-FIT-SLOT-DRIFT',
-    slotId: profileFitSlotId,
-    ticketData: profileFitTicket,
-    mode: 'interactive',
-    engineState: { evalExperiment: { experimentId: 'profile-fit-drift' } } as Run['engineState'],
-  });
-  t.after(async () => {
-    updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
-    await deleteRun(run.id);
-  });
-  const refreshes: boolean[] = [];
-  await assert.rejects(
-    executeGradeStep(run.id, run, new Map(), {
-      createEngineDecision: async (_runId, _reason, _text, choices) => {
-        assert.ok(choices.some((choice) => choice.id === 'use_suggested_profile'));
-        return 'use_suggested_profile';
-      },
-      getFleetStatus: async (refresh = false) => {
-        refreshes.push(refresh);
-        return { slots: [refresh ? cliSlot : compatibleSlot] } as never;
-      },
-      loadProjectVarsOrNull: async () =>
-        ({
-          projectJson: {
-            prepare: {
-              default: 'sandbox',
-              profiles: { sandbox: { phases: ['git'] }, 'sandbox-companion': { phases: ['git'] } },
-            },
-          },
-        }) as never,
-    }),
-    /Cannot use sandbox-companion on slot profile-fit-bound-cli-slot/,
-  );
-  assert.deepEqual(refreshes, [false, true]);
-  assert.equal(getRun(run.id)?.prepareProfile, undefined);
 });
 
 test('GRADE leaves the configured core baseline unblocked', async (t) => {
@@ -290,7 +193,10 @@ test('GRADE keeps the validation plan when continuing with a compatible bound sl
   });
   const result = await executeGradeStep(run.id, run, new Map(), {
     createEngineDecision: async (_id, _reason, _text, choices) => {
-      assert.ok(choices.some((choice) => choice.id === 'use_suggested_profile'));
+      assert.deepEqual(
+        choices.map((choice) => choice.id),
+        ['continue', 'abort'],
+      );
       return 'continue';
     },
     getFleetStatus: async () => ({ slots: [compatibleSlot] }) as never,
@@ -310,7 +216,6 @@ test('GRADE keeps the validation plan when continuing with a compatible bound sl
   assert.equal(getRun(run.id)?.prepareProfile, undefined);
   assert.ok(getRun(run.id)?.engineState?.validationPlan?.length);
   assert.ok(result.outputs?.profileFitOverride);
-  assert.equal(result.outputs?.profileFitSelection, undefined);
 });
 
 test('GRADE does not offer profile advice before a slot is bound', async (t) => {
@@ -347,7 +252,6 @@ test('GRADE does not offer profile advice before a slot is bound', async (t) => 
       }) as never,
   });
   assert.equal(result.outputs?.profileFitOverride, undefined);
-  assert.equal(result.outputs?.profileFitSelection, undefined);
   assert.equal(getRun(run.id)?.prepareProfile, undefined);
 });
 

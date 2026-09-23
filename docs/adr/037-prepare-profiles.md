@@ -138,9 +138,9 @@ dispatch, FIND_SLOT, and resource eligibility**, profile-fit is advisory-only:
 without an explicit operator/backlog `prepareProfile`. `dispatch.preview` may
 still attach a suggestion for UI hints only. Empty prepare resolves to `prepare.core` when configured, otherwise
 `project.prepare.default` (or the platform fallback). The GRADE step can
-raise a `prepare_profile_mismatch` decision on a bound slot. When the slot
-has the required resources, the operator can save the suggested profile
-before PREPARE; otherwise the decision explains why the slot is incompatible.
+raise a `prepare_profile_mismatch` decision on a bound slot, with Continue or
+Abort actions. Preview lets the operator select a compatible profile before
+dispatch; the GRADE decision explains why an already bound slot is incompatible.
 
 ## Addendum: core prepare and lazy proof capabilities (2026-08-11)
 

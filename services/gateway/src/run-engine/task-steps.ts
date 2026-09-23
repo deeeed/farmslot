@@ -59,7 +59,7 @@ import {
   handleRepeatReviewDecision,
 } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
-import { detectProfileFit } from './profile-fit-gate.js';
+import { detectProfileFit, FARMSLOT_PROJECT } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
@@ -277,7 +277,6 @@ export async function executeGradeStep(
   }
   let projectMismatchOverride: Record<string, unknown> | null = null;
   let profileFitOverride: Record<string, unknown> | null = null;
-  let profileFitSelection: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
     const actionId = await decide(
@@ -312,7 +311,7 @@ export async function executeGradeStep(
   // Profile-fit is Farmslot-only and explicit operator profiles always win.
   // Avoid resolving a prepare profile for every other run: an unknown explicit
   // profile remains PREPARE's error, as it was before this advisory gate.
-  if (run.project === 'farmslot-farm' && !run.prepareProfile?.trim()) {
+  if (run.project === FARMSLOT_PROJECT && !run.prepareProfile?.trim()) {
     const profileProjectVars = await loadProjectVars(
       run.project,
       'prepare profile decision',
@@ -343,16 +342,6 @@ export async function executeGradeStep(
       'prepare_profile_mismatch',
       `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}${resourceBlocker ? ` Slot ${run.slotId} cannot use the suggestion: ${resourceBlocker}. Start a new run on a compatible slot to use it.` : ''}`,
       [
-        ...(!resourceBlocker
-          ? [
-              {
-                id: 'use_suggested_profile',
-                label: `Use ${resolvedProfileFit.suggestedPrepareProfile}`,
-                style: 'primary' as const,
-                description: 'Save the suggested profile on this run before prepare starts.',
-              },
-            ]
-          : []),
         {
           id: 'continue',
           label: `Continue with ${currentPrepareProfile}`,
@@ -373,28 +362,7 @@ export async function executeGradeStep(
       });
       throw new Error('Prepare profile mismatch: aborted by user');
     }
-    if (actionId === 'use_suggested_profile') {
-      const selectedSlotId = getRun(runId)?.slotId;
-      const selectedSlot = (await getFleetStatus(true)).slots.find(
-        (slot) => slot.slot === selectedSlotId,
-      );
-      const selectedSlotBlocker = selectedSlot
-        ? companionResourceBlocker(selectedSlot, resolvedProfileFit.suggestedPrepareProfile)
-        : 'Bound slot is unavailable in the fleet';
-      if (selectedSlotId !== run.slotId || selectedSlotBlocker) {
-        throw new Error(
-          `Cannot use ${resolvedProfileFit.suggestedPrepareProfile} on slot ${selectedSlotId ?? '(unbound)'}: ${selectedSlotBlocker || 'binding changed during decision'}`,
-        );
-      }
-      updateRun(runId, { prepareProfile: resolvedProfileFit.suggestedPrepareProfile });
-      profileFitSelection = {
-        profileFit: resolvedProfileFit,
-        selectedPrepareProfile: resolvedProfileFit.suggestedPrepareProfile,
-        selectedBy: 'user',
-      };
-    } else {
-      profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
-    }
+    profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
     const current = getRun(runId);
     if (current) {
       updateRun(runId, {
@@ -436,7 +404,6 @@ export async function executeGradeStep(
   const outputs: Record<string, unknown> = { flowTypeMismatch };
   if (projectMismatchOverride) outputs.projectMismatchOverride = projectMismatchOverride;
   if (profileFitOverride) outputs.profileFitOverride = profileFitOverride;
-  if (profileFitSelection) outputs.profileFitSelection = profileFitSelection;
   if (ticketData && run.engineState?.evalExperiment) {
     const grade = {
       difficulty: 'medium' as const,

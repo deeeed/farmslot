@@ -51,7 +51,7 @@ export function expandPrepareProfileHook(
 }
 
 const IMPLICIT_FULL = 'full';
-const CORE_PROFILE = 'core';
+export const CORE_PROFILE = 'core';
 
 export function configuredPrepareProfileNames(projectJson: RawProjectJson): string[] {
   return [

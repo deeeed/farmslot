@@ -32,7 +32,7 @@ import {
   inspectReviewWorkspaceTarget,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
-import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
+import { detectProfileFit, FARMSLOT_PROJECT } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
@@ -953,6 +953,8 @@ export async function dispatchPreview(
      * must leave this unset so the session originator is the only authority.
      */
     overridePrincipalId?: string;
+    /** FIND_SLOT does not present profile-fit advice; skip its config lookup. */
+    includeProfileFit?: boolean;
   } = {},
 ): Promise<DispatchPreviewResult> {
   if ('workflowExecution' in params)
@@ -1150,7 +1152,11 @@ export async function dispatchPreview(
     else delete result.preview.domain;
   }
   let profileFit: ReturnType<typeof detectProfileFit> = null;
-  if (params.project === 'farmslot-farm' && !params.prepareProfile?.trim()) {
+  if (
+    internalOptions.includeProfileFit !== false &&
+    params.project === FARMSLOT_PROJECT &&
+    !params.prepareProfile?.trim()
+  ) {
     const profileProjectVars = await loadProjectVars(params.project);
     const profileJson = profileProjectVars.projectJson;
     profileFit = detectProfileFit(previewRun, ticketData, {

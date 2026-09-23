@@ -49,7 +49,6 @@ test('profile fit gate ignores non-farmslot projects', () => {
 test('profile fit gate ignores explicit operator prepare profile', () => {
   assert.equal(
     detectProfileFit(run({ prepareProfile: 'sandbox' }), companionTicket, {
-      prepareProfile: 'sandbox',
       slotPlatform: 'cli',
     }),
     null,
@@ -172,6 +171,22 @@ test('profile fit ignores single-word hints inside unrelated words', () => {
       null,
     );
   }
+});
+
+test('profile fit recognizes plural surface hints', () => {
+  const result = detectProfileFit(
+    run(),
+    {
+      ...companionTicket,
+      title: 'simulators and gateways',
+      description: '',
+      affectedArea: '',
+      acceptanceCriteria: [],
+      labels: [],
+    },
+    { slotPlatform: 'cli' },
+  );
+  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
 });
 
 test('profile fit still recognizes Expo as an independent term', () => {
