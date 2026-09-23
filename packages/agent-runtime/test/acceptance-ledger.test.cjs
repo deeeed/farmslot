@@ -30,6 +30,16 @@ const {
   validateAcceptanceStatusLedger,
   writeAcceptanceLedger,
 } = require('../scripts/acceptance-ledger.cjs');
+const { resolveWorkerTerminalContract } = require('../scripts/worker-terminal-contract.cjs');
+
+const scopedAcceptance = {
+  acceptance: { require: false },
+  flows: { 'fix-bug': { acceptance: { require: true } } },
+};
+assert.deepEqual(resolveWorkerTerminalContract(scopedAcceptance, 'fix-bug').acceptance, {
+  require: true,
+});
+assert.equal(resolveWorkerTerminalContract(scopedAcceptance, 'review-pr').acceptance, undefined);
 
 const CRITERIA = [
   'The run detail panel lists every acceptance criterion with its verdict.',

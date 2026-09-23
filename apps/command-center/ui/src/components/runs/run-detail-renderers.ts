@@ -1078,6 +1078,15 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
     ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
+    ${r.status === 'blocked' &&
+    r.metrics.disposition === 'blocked' &&
+    !r.decisions.some((decision) => !decision.resolvedAt)
+      ? html`<blocked-run-recovery
+          .run=${r}
+          .disabled=${actionsBlocked}
+          .replayMonitor=${() => ctx._onReplayStep('monitor')}
+        ></blocked-run-recovery>`
+      : nothing}
     ${r.error
       ? html`
           <div class="error-box">

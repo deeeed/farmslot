@@ -115,6 +115,7 @@ export interface RunPostureCapabilityRow {
   /** `simulator=…` for a provider that resolved to a device (ADR-054 item 3). */
   targetLabel?: string;
   warmUntil?: string;
+  lastCheckedAt?: string;
   cleanupFailure?: string;
   releaseEffects: string[];
 }
@@ -135,6 +136,7 @@ export function postureCapabilityRow(
     // the lease is the one that says which device is actually in use.
     ...(state.target ? { targetLabel: formatRuntimeCapabilityTarget(state.target) } : {}),
     ...(state.warmUntil ? { warmUntil: state.warmUntil } : {}),
+    ...(state.lastCheckedAt ? { lastCheckedAt: state.lastCheckedAt } : {}),
     ...(state.cleanupFailure ? { cleanupFailure: state.cleanupFailure } : {}),
     releaseEffects: state.releaseEffects,
   };
@@ -242,6 +244,10 @@ const POSTURE_STYLES = html`
       margin-top: 6px;
       color: ${colors.statusFail};
       font-size: ${fonts.sizeXs};
+    }
+    .posture-diagnostic summary {
+      color: ${colors.textMuted};
+      cursor: pointer;
     }
     .posture-row {
       display: flex;
@@ -435,6 +441,7 @@ export function renderRunPostureSummary(
   state: RunPostureStatusState,
   resolution: RunPostureResolutionState = {},
   gatePark: GateParkView | null = null,
+  slotId?: string | null,
 ): unknown {
   // A live park is worth a panel on its own: the posture read can be idle or
   // failed exactly when a run is parked, and hiding where its slot went because
@@ -477,6 +484,7 @@ export function renderRunPostureSummary(
   }
   const summary = summarizeRunPosture(state.state);
   const transition = summary.lastTransition;
+  const cleanupCount = summary.rows.filter((row) => row.cleanupFailure).length;
   return html`
     ${POSTURE_STYLES}
     <section
@@ -505,8 +513,13 @@ export function renderRunPostureSummary(
         >
         <span class="posture-counts" data-testid="run-posture-counts"
           >${summary.counts.retained} retained · ${summary.counts.warm} warm ·
-          ${summary.counts.stopped} stopped · ${summary.counts.failed}
-          failed${summary.counts.unresolved
+          ${summary.counts.stopped} stopped ·
+          ${cleanupCount
+            ? `${cleanupCount} need reconciliation`
+            : `${summary.counts.failed} failed`}${cleanupCount &&
+          summary.counts.failed > cleanupCount
+            ? ` · ${summary.counts.failed - cleanupCount} failed`
+            : ''}${summary.counts.unresolved
             ? ` · ${summary.counts.unresolved} unresolved`
             : ''}</span
         >
@@ -514,6 +527,15 @@ export function renderRunPostureSummary(
           >worker ${summary.workerRetained ? 'retained' : 'stopped'}</span
         >
       </div>
+      ${slotId && summary.rows.some((row) => row.cleanupFailure)
+        ? html`<div class="posture-transition" data-testid="run-posture-recovery">
+            Cleanup is unresolved.
+            <a href=${`#slot/${encodeURIComponent(slotId)}?activity=info`}
+              >Open slot resource controls</a
+            >
+            to retry stopping the affected provider when the worker is no longer using it.
+          </div>`
+        : nothing}
       ${summary.resourceWait
         ? html`<div
             class="posture-transition"
@@ -572,7 +594,9 @@ export function renderRunPostureSummary(
                 <span class="posture-cap">${row.capabilityId}</span>
                 <span class="posture-desired">wants ${row.desiredLabel}</span>
                 <span class="posture-observed" style="color:${rowStatusColor(row.rowStatus)}"
-                  >observed ${row.observedState} (${rowStatusLabel(row.rowStatus)})</span
+                  >${row.cleanupFailure
+                    ? 'provider state uncertain (cleanup unresolved)'
+                    : `observed ${row.observedState} (${rowStatusLabel(row.rowStatus)})`}</span
                 >
                 ${row.targetLabel
                   ? html`<span
@@ -584,11 +608,18 @@ export function renderRunPostureSummary(
                 ${row.warmUntil
                   ? html`<span class="posture-desired">warm until ${row.warmUntil}</span>`
                   : nothing}
+                ${row.lastCheckedAt
+                  ? html`<span class="posture-desired">last checked ${row.lastCheckedAt}</span>`
+                  : nothing}
                 <span class="posture-reason">${row.reason}</span>
                 ${row.cleanupFailure
-                  ? html`<span class="posture-failure" role="alert"
-                      >Cleanup failed: ${row.cleanupFailure}</span
-                    >`
+                  ? html`<details
+                      class="posture-diagnostic"
+                      data-testid="run-posture-diagnostic-${row.capabilityId}"
+                    >
+                      <summary>Cleanup details</summary>
+                      <span class="posture-failure">Cleanup failed: ${row.cleanupFailure}</span>
+                    </details>`
                   : nothing}
               </div>
             `,

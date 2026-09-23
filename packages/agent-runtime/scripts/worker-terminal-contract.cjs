@@ -31,7 +31,7 @@
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [complete]
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [no-change]
  * @property {Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>} [blocked]
- * @property {Record<string, Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>>} [flows]
+ * @property {Record<string, Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>> & {acceptance?: WorkerTerminalAcceptanceRules}>} [flows]
  * @property {WorkerTerminalWhenPresentRule[]} [whenPresent]
  */
 
@@ -236,11 +236,12 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
       }))
     : DEFAULT_WHEN_PRESENT.map((rule) => ({ ...rule, alsoRequire: [...rule.alsoRequire] }));
 
+  const acceptanceRules = flowLayer?.acceptance ?? projectConfig?.acceptance;
   const acceptance =
-    projectConfig?.acceptance && typeof projectConfig.acceptance === 'object'
+    acceptanceRules && typeof acceptanceRules === 'object'
       ? {
-          ...(projectConfig.acceptance.require ? { require: true } : {}),
-          ...(projectConfig.acceptance.allowWeak ? { allowWeak: true } : {}),
+          ...(acceptanceRules.require ? { require: true } : {}),
+          ...(acceptanceRules.allowWeak ? { allowWeak: true } : {}),
         }
       : null;
 

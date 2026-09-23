@@ -108,7 +108,7 @@ Never proof:
 
 ## Proof rules
 
-1. Cover every acceptance criterion in `recipe-coverage.md` with `state`, `visual`, or `mixed` proof mode.
+1. Cover every acceptance criterion with `state`, `visual`, or `mixed` proof mode. For fix-bug tasks, record the verdict and evidence with `farmslot-agent ac` and render `recipe-coverage.md` from that ledger.
 2. Identify the protocol action(s) the change touches, then the client endpoint(s) that reach them.
    Drive at least one end to end.
 3. UI changes require real navigation via `ui.navigate` / `ui.wait_for` / `ui.screenshot` — never inject store/DOM state.
@@ -183,7 +183,7 @@ Rules:
   reviewers must be able to evaluate media provenance.
 - `pr-description.md` **Screenshots/Recordings** section stays a placeholder — gateway replaces it from this manifest.
 
-Also write `{{TASK_DIR}}/artifacts/recipe-coverage.md`. Do **not** author `recipe-quality.json` — the gateway computes recipe quality from your `recipe.json` + coverage.
+Also write `{{TASK_DIR}}/artifacts/recipe-coverage.md` (for fix-bug, derive it with `farmslot-agent ac render`). Do **not** author `recipe-quality.json` — the gateway computes recipe quality from your `recipe.json` + coverage.
 
 Validate before done:
 

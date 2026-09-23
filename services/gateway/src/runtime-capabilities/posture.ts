@@ -1501,6 +1501,9 @@ export class RunResourcePostureReconciler {
         : {}),
       ...(warmUntil ? { warmUntil } : {}),
       ...(holder?.updatedAt ? { lastTransitionAt: holder.updatedAt } : {}),
+      ...(failed?.health.checkedAt || holder?.health.checkedAt
+        ? { lastCheckedAt: failed?.health.checkedAt ?? holder?.health.checkedAt }
+        : {}),
       releaseEffects: entry ? [...entry.releaseEffects] : [],
       ...(failed?.cleanupFailure ? { cleanupFailure: failed.cleanupFailure } : {}),
     };
