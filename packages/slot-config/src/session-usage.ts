@@ -34,8 +34,9 @@ const CLAUDE_PRICING: Record<string, ClaudePricing> = {
 };
 
 const OPENAI_PRICING: Record<string, OpenaiPricing> = {
-  // https://developers.openai.com/api/docs/models/gpt-6-astra (USD per 1M tokens).
+  // https://developers.openai.com/api/docs/pricing (GPT-6 standard rates per 1M tokens).
   'gpt-6-astra': { input: 10.0, output: 50.0 },
+  'gpt-6-sol': { input: 2.0, output: 10.0 },
   // GPT-5.6 family (preview GA pricing, USD per 1M tokens).
   'gpt-5.6-sol': { input: 5.0, output: 30.0 },
   'gpt-5.6-terra': { input: 2.5, output: 15.0 },

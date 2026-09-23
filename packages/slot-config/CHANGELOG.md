@@ -4,6 +4,8 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- Estimate GPT-6 Sol session cost using its published input and output token rates.
+
 - Share machine pool lookup with standalone review launchers so they can honor configured runner executables.
 
 - `project.json` accepts `diff_view.test_patterns` (extra test-file globs) and `diff_view.use_default_test_patterns` for Command Center diff views.
