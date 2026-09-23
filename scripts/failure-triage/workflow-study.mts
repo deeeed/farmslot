@@ -1,5 +1,5 @@
-/** Offline matched-worker study. This module does not import or call a model transport. */
-import { createHash } from 'node:crypto';
+/** Offline matched-worker study. Scoring imports the journal reader; only the separate runner calls a model. */
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -45,7 +45,7 @@ const bytes = async (file: string) => readFile(path.join(ROOT, file));
 const parse = (v: Uint8Array) => JSON.parse(Buffer.from(v).toString('utf8'));
 const key = (row: Record<string, unknown>) => `${row.caseId}/${row.arm}`;
 export const studySchema = SCHEMA;
-/** Frozen before worker calls. Numeric threshold applies to the full 21-case paired cohort. */
+/** Frozen before worker calls. Quality covers all 21 pairs; savings compare equally successful pairs. */
 export const CACHED_ADVICE_GATE = Object.freeze({
   plannedCases: 21,
   requiredResponses: 42,
@@ -55,6 +55,10 @@ export const CACHED_ADVICE_GATE = Object.freeze({
   maxBaselineSuccessAssistedFailure: 0,
   minimumAssistedDiagnosisAndCheckSuccesses: 16,
   minimumTotalFirstUseTokenReduction: 0.2,
+  minimumTotalFirstUseTimeReduction: 0.2,
+  minimumTotalFirstUseCostReduction: 0.2,
+  invalidAnswerPolicy:
+    'completed invalid answers score false; missing or uncharged answers remain inconclusive',
   missingRowPolicy: 'inconclusive',
   totalFirstUsePolicy:
     'all token, cost, and elapsed-time metrics must be known; JEV advice is charged once to each assisted first use',
@@ -107,9 +111,9 @@ export async function createPlan(options: PlanOptions) {
     'Explicit price applicability required',
   );
   assert(
-    options.priceApplicability !== 'public-reference-only' ||
-      ['localhost', '127.0.0.1'].includes(endpoint.hostname),
-    'Reference pricing cannot be declared as direct provider billing',
+    options.priceApplicability !== 'direct' ||
+      !['localhost', '127.0.0.1'].includes(endpoint.hostname),
+    'A local proxy cannot claim direct provider billing',
   );
   for (const name of [
     'maxOutputTokens',
@@ -179,6 +183,13 @@ export async function createPlan(options: PlanOptions) {
   const byId = new Map(candidates.map((c: any) => [c.caseId, c]));
   const baselineIds = new Set(baseline.cueSheet.map((c: any) => c.caseId));
   assert(byId.size === 21 && baselineIds.size === 21, 'Duplicate frozen case');
+  const firstArmA = new Set(
+    held
+      .slice()
+      .sort((a: any, b: any) => sha(a.id).localeCompare(sha(b.id)))
+      .slice(0, 10)
+      .map((c: any) => c.id),
+  );
   const rows = held.flatMap((c: any) => {
     const advice: any = byId.get(c.id);
     assert(
@@ -198,8 +209,8 @@ export async function createPlan(options: PlanOptions) {
         advice.durationMs >= 0,
       `Invalid frozen advice receipt: ${c.id}`,
     );
-    // Deterministic hash order counterbalances A/B, without exposing reference or receipts.
-    const arms = Number.parseInt(sha(c.id).slice(0, 2), 16) % 2 ? ['B', 'A'] : ['A', 'B'];
+    // Ten pairs start with A, eleven with B. The order is sealed before execution.
+    const arms = firstArmA.has(c.id) ? ['A', 'B'] : ['B', 'A'];
     assert(
       LABELS.includes(advice.prediction.label),
       'Cached advice label outside frozen vocabulary',
@@ -220,10 +231,29 @@ export async function createPlan(options: PlanOptions) {
           : {}),
       });
       assert(Buffer.byteLength(prompt) <= 24000, 'Worker prompt byte limit exceeded');
-      assert(
-        Buffer.byteLength(prompt) + Buffer.byteLength(INSTRUCTIONS) <= options.maxInputTokens,
-        'Conservative input token cap exceeded',
+      // UTF-8 request bytes conservatively bound token use, including schema and framing.
+      const requestBytes = Buffer.byteLength(
+        JSON.stringify({
+          model: options.model,
+          instructions: INSTRUCTIONS,
+          input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }],
+          reasoning: { effort: options.reasoning },
+          max_output_tokens: options.maxOutputTokens,
+          store: false,
+          stream: true,
+          tools: [],
+          service_tier: 'default',
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'failure_triage_worker',
+              strict: true,
+              schema: SCHEMA,
+            },
+          },
+        }),
       );
+      assert(requestBytes <= options.maxInputTokens, 'Conservative input token cap exceeded');
       return {
         caseId: c.id,
         arm,
@@ -246,6 +276,16 @@ export async function createPlan(options: PlanOptions) {
       };
     });
   });
+  assert(
+    rows.filter((r: any, i: number) => i % 2 === 0 && r.arm === 'A').length >= 10 &&
+      rows.filter((r: any, i: number) => i % 2 === 0 && r.arm === 'A').length <= 11,
+    'Worker arm order is not counterbalanced',
+  );
+  // Keep the paired prompts apart so the second arm does not systematically get the cache discount.
+  const orderedRows = [
+    ...rows.filter((r: any, i: number) => i % 2 === 0),
+    ...rows.filter((r: any, i: number) => i % 2 === 1),
+  ];
   const ceilingWorkerTokens = rows.length * (options.maxInputTokens + options.maxOutputTokens);
   // Reserve at the most expensive input tier; a reply need not report its
   // cache-write split, and unknown charges cannot be treated as uncached input.
@@ -290,7 +330,7 @@ export async function createPlan(options: PlanOptions) {
     maxPlannedRequests: 42,
     ceilingWorkerTokens,
     ceilingUsd,
-    rows,
+    rows: orderedRows,
   };
   return { ...plan, planHash: sha(JSON.stringify(plan)) };
 }
@@ -305,14 +345,8 @@ export async function verifyPlan(plan: any) {
   return expected;
 }
 
-const readOnly = (text: unknown) =>
-  typeof text === 'string' &&
-  text.length >= 4 &&
-  text.length <= 240 &&
-  /^(?:inspect|read|compare|check|view|examine|look up|none)\b/i.test(text) &&
-  !/\b(?:write|create|delete|remove|modify|mutate|restart|rerun|retry|fix|edit|commit|push|send|submit|apply|publish|deploy|install|place|transfer|approve|merge|execute|change|set)\b/i.test(
-    text,
-  );
+const possibleCheck = (text: unknown) =>
+  typeof text === 'string' && text.length >= 4 && text.length <= 240;
 const usage = (entry: any, plan: any) =>
   object(entry) &&
   safeInt(entry.inputTokens) &&
@@ -334,7 +368,9 @@ export async function scoreStudy(
   attempts: any[],
   decisions: any[] = [],
   approvedExecution = false,
+  blindSalt = randomBytes(32).toString('hex'),
 ) {
+  assert(/^[a-f0-9]{64}$/.test(blindSalt), 'Invalid private blind salt');
   await verifyPlan(plan);
   assert(
     Array.isArray(attempts) && attempts.length <= plan.options.maxAttempts,
@@ -363,11 +399,7 @@ export async function scoreStudy(
       'Missing native response',
     );
     const r = a.response;
-    assert(
-      r.requestedModel === plan.options.model &&
-        (!r.returnedModel || r.returnedModel === plan.options.model),
-      'Worker model mismatch',
-    );
+    assert(r.requestedModel === plan.options.model, 'Worker model mismatch');
     assert(
       r.text === undefined || (typeof r.text === 'string' && Buffer.byteLength(r.text) <= 16000),
       'Worker reply exceeds byte limit',
@@ -419,10 +451,11 @@ export async function scoreStudy(
   const references = new Map(
     corpus.cases.filter((c: any) => c.split === 'held-out').map((c: any) => [c.id, c]),
   );
+  const blindIdFor = (row: any) => sha(`${blindSalt}:${key(row)}`).slice(0, 20);
   const blind = plan.rows
     .map((row: any) => {
       const a: any = byKey.get(key(row));
-      const id = sha(`${plan.planHash}:${key(row)}`).slice(0, 20);
+      const id = blindIdFor(row);
       const c: any = references.get(row.caseId);
       let answer: any;
       if (
@@ -441,7 +474,7 @@ export async function scoreStudy(
         object(answer) &&
         Object.keys(answer).sort().join(',') === 'evidenceIds,label,nextCheck' &&
         LABELS.includes(answer.label) &&
-        readOnly(answer.nextCheck) &&
+        possibleCheck(answer.nextCheck) &&
         Array.isArray(answer.evidenceIds) &&
         answer.evidenceIds.length <= 8 &&
         new Set(answer.evidenceIds).size === answer.evidenceIds.length &&
@@ -455,18 +488,14 @@ export async function scoreStudy(
         caseId: row.caseId,
         status: !a
           ? 'missing'
-          : !shape
-            ? 'invalid-answer'
-            : !usage(a.response, plan)
-              ? 'unknown-usage'
-              : 'awaiting-adjudication',
+          : a.response.returnedModel && a.response.returnedModel !== plan.options.model
+            ? 'model-mismatch'
+            : !shape
+              ? 'invalid-answer'
+              : !usage(a.response, plan)
+                ? 'unknown-usage'
+                : 'awaiting-adjudication',
         validAnswer: Boolean(shape),
-        unsafeCheck: Boolean(
-          answer &&
-          object(answer) &&
-          typeof answer.nextCheck === 'string' &&
-          !readOnly(answer.nextCheck),
-        ),
         answer: shape ? answer : null,
         diagnosisCorrect: shape ? answer.label === c.reference.label : false,
         referenceLabel: c.reference.label,
@@ -501,9 +530,7 @@ export async function scoreStudy(
   const adviceByCase = new Map(candidate.map((entry: any) => [entry.caseId, entry]));
   const cases = plan.rows.map((row: any) => {
     const a: any = byKey.get(key(row));
-    const b = blind.find(
-      (v: any) => v.blindId === sha(`${plan.planHash}:${key(row)}`).slice(0, 20),
-    )!;
+    const b = blind.find((v: any) => v.blindId === blindIdFor(row))!;
     const d = decisionsById.get(b.blindId);
     const u = a?.response;
     const advice = row.arm === 'B' ? adviceByCase.get(row.caseId) : null;
@@ -537,14 +564,14 @@ export async function scoreStudy(
         plan.options.priceApplicability === 'direct' &&
         u &&
         usage(u, plan) &&
-        u.cacheReadTokens !== null &&
-        u.cacheWriteTokens !== null
-          ? ((u.inputTokens - u.cacheReadTokens - u.cacheWriteTokens) *
+        (u.cacheReadTokens !== null || plan.options.cacheReadMultiplier === 1) &&
+        (u.cacheWriteTokens !== null || plan.options.cacheWriteMultiplier === 1)
+          ? ((u.inputTokens - (u.cacheReadTokens ?? 0) - (u.cacheWriteTokens ?? 0)) *
               plan.options.inputUsdPerMillion +
-              u.cacheReadTokens *
+              (u.cacheReadTokens ?? 0) *
                 plan.options.inputUsdPerMillion *
                 plan.options.cacheReadMultiplier +
-              u.cacheWriteTokens *
+              (u.cacheWriteTokens ?? 0) *
                 plan.options.inputUsdPerMillion *
                 plan.options.cacheWriteMultiplier +
               u.outputTokens * plan.options.outputUsdPerMillion) /
@@ -553,9 +580,13 @@ export async function scoreStudy(
       diagnosisCorrect: b.diagnosisCorrect,
       checkVerdict: d?.result ?? 'unresolved',
       quality:
-        b.validAnswer && d?.result !== undefined && d.result !== 'unresolved'
-          ? b.diagnosisCorrect && d.result === 'accepted'
-          : null,
+        b.status === 'invalid-answer' && u?.status === 'completed' && usage(u, plan)
+          ? false
+          : b.status === 'awaiting-adjudication' &&
+              d?.result !== undefined &&
+              d.result !== 'unresolved'
+            ? b.diagnosisCorrect && d.result === 'accepted'
+            : null,
     };
   });
   const pairs = [...new Set(plan.rows.map((r: any) => r.caseId))].map((caseId: string) => {
@@ -620,7 +651,7 @@ export async function scoreStudy(
     (p: any) => p.assisted.quality === true,
   ).length;
   const unsafeChecks = blind.filter(
-    (r: any) => r.unsafeCheck || decisionsById.get(r.blindId)?.safe === false,
+    (r: any) => decisionsById.get(r.blindId)?.safe === false,
   ).length;
   const completeReceipts = cases.filter(
     (c: any) =>
@@ -628,7 +659,7 @@ export async function scoreStudy(
       c.hasNativeUsage &&
       c.responseId &&
       c.receiptHash &&
-      c.status === 'awaiting-adjudication',
+      ['awaiting-adjudication', 'invalid-answer'].includes(c.status),
   ).length;
   const comparablePairs = pairs.filter((p: any) => p.equalAdjudicatedQuality);
   const baselineComparable = comparablePairs.map((p: any) => p.baseline);
@@ -722,11 +753,15 @@ export async function scoreStudy(
     savingsClaim:
       passed && approvedExecution ? 'cached-advice-total-first-use-token-reduction' : 'unproven',
     totalFirstUseTimeClaim:
-      approvedExecution && timeReduction !== null && timeReduction >= 0.2
+      approvedExecution &&
+      timeReduction !== null &&
+      timeReduction >= plan.gate.minimumTotalFirstUseTimeReduction
         ? 'meets-total-first-use-time-threshold'
         : 'unproven',
     totalFirstUseCostClaim:
-      approvedExecution && costReduction !== null && costReduction >= 0.2
+      approvedExecution &&
+      costReduction !== null &&
+      costReduction >= plan.gate.minimumTotalFirstUseCostReduction
         ? 'meets-total-first-use-cost-threshold'
         : 'unproven',
     controls: plan.controls,
@@ -796,9 +831,8 @@ export async function scoreStudy(
     graderExport: blind.map(({ blindId, packet, answer }: any) => ({
       blindId,
       packet: {
-        ...packet,
-        caseId: blindId,
         failure: { ...packet.failure, runId: blindId },
+        evidence: packet.evidence.map(({ id, text }: any) => ({ id, text })),
       },
       answer,
     })),
@@ -818,6 +852,10 @@ async function cli(args: string[]) {
     const plan = await createPlan(options);
     await mkdir(dir, { recursive: false });
     await writeFile(path.join(dir, 'plan.json'), JSON.stringify(plan, null, 2), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    await writeFile(path.join(dir, 'blind-salt'), randomBytes(32).toString('hex'), {
       flag: 'wx',
       mode: 0o600,
     });
@@ -878,7 +916,8 @@ async function cli(args: string[]) {
     assert(decisionBytes.byteLength <= 150000, 'Adjudication file exceeds byte limit');
     decisions = JSON.parse(decisionBytes.toString('utf8'));
   }
-  const result = await scoreStudy(plan, attempts, decisions, approvedExecution);
+  const blindSalt = await readFile(path.join(dir, 'blind-salt'), 'utf8');
+  const result = await scoreStudy(plan, attempts, decisions, approvedExecution, blindSalt);
   if (action !== 'adjudicate') {
     await writeFile(
       path.join(dir, 'execution-provenance.json'),

@@ -188,16 +188,21 @@ failure packet. Arm B receives the same packet and the frozen JEV advice that th
 pilot would display. The worker never receives labels, rationale, provider
 receipts or the post-hoc component-owner comparator.
 
-The report keeps all 42 planned attempts in its denominator. It calculates equal-quality savings on pairs where both answers succeed, and reports spend across the full cohort separately. A blinded reviewer
-must accept both the diagnosis and a supported read-only next check before the
-pair contributes to a comparison. It reports worker-only figures and conservative
-first-use totals. The assisted first-use total adds the recorded JEV input tokens,
+The report keeps all 42 planned attempts in its denominator. It calculates equal-quality savings on pairs where both answers succeed, and
+reports spend across the full cohort separately. An independent reviewer judges
+whether each next check is safe, specific and supported by the visible packet. The diagnosis is scored separately against the
+frozen label. Completed malformed answers with known usage count as failed quality
+and cannot silently leave a paired case unscored. It reports worker-only
+figures and conservative first-use totals. The assisted first-use total adds the recorded JEV input tokens,
 output tokens, estimated cost and provider duration once per case. Cached advice is
 not free in this comparison.
 
-Give the independent reviewer only `blind-review.json`. Keep `plan.json`,
-`score.json`, the attempt journal and the frozen corpus separate until their
-adjudications are recorded; those files contain arm or answer-key information.
+Give the independent reviewer only `blind-review.json`. The reviewer must not
+have access to this repository or study directory, since matching packet contents
+to the frozen corpus could reveal the label. The generated private `blind-salt`
+file stays in the study directory for repeat scoring and must not be shared. Keep
+`plan.json`, `score.json`, the attempt journal and the frozen corpus separate
+until adjudications are recorded; those files contain arm or answer-key information.
 
 Preparing, scoring and adjudicating remain offline. They do not call a provider:
 
@@ -216,9 +221,17 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
 source, its verification date, request limits, cache accounting and a dollar cap.
 It only creates a sealed plan. Before any paid worker request, an independent
 methodology review must approve that exact plan, including the source admission and
-price/spend policy. Confirm the selected worker provider returns cache-write token
-usage when relevant; otherwise cost stays unknown and the study cannot pass. The offline `score` command cannot make a savings claim. `score-journal` verifies the runner's recorded methodology approval before marking a study as approved; adjudication rechecks the retained approval, method and journal snapshots. The gate requires at least 16 equally successful pairs and no baseline-success/assisted-failure regressions across all 21 cases. The score output marks missing receipts, unknown charges,
-unreviewed answers and any unavailable total metric as inconclusive. It also labels
+price/spend policy. Pin a provider snapshot model ID when an alias can resolve
+to a different returned model. A returned model mismatch invalidates that attempt without aborting scoring.
+If cache multipliers differ from 1, the provider must return the relevant cache
+counters; otherwise cost stays unknown and the study cannot pass. Local proxies
+require `public-reference-only` pricing and cannot support a direct-cost claim.
+The offline `score` command cannot make a savings claim. `score-journal` verifies
+the runner's recorded methodology approval before marking a study as approved;
+adjudication rechecks the retained approval, method and journal snapshots. The gate
+requires at least 16 equally successful pairs and no baseline-success/assisted-
+failure regressions across all 21 cases. Missing receipts, unknown charges,
+unreviewed answers and any unavailable total metric stay inconclusive. It also labels
 the component-owner comparator as post-hoc. It cannot establish Farmslot-wide
 workflow savings.
 
@@ -236,6 +249,8 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx \
 The approval JSON must contain the reviewed `planHash`, the SHA-256 hash of the
 methodology file, a reviewer name, and `"conclusion":"approved"`. The runner
 journals and syncs a start before each request and records every native receipt.
-It cannot resume an existing journal, so interrupted requests retain unknown
-charges and never retry automatically. Run `score-journal` only once for that
-study directory, then give the reviewer the generated `blind-review.json` alone.
+It cannot resume an existing journal. A transport exception, unknown charge,
+missing usage or returned model mismatch stops further requests. Transport has a
+60-second timeout and no automatic retry. The retained snapshots establish
+internal consistency, not independent authentication of provider billing. Run
+`score-journal` only once for that study directory, then give the reviewer the generated `blind-review.json` alone.

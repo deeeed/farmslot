@@ -137,8 +137,15 @@ export async function runStudy(
         JSON.stringify({ ...header, kind: 'finished', response, workerElapsedMs }) + '\n',
       );
       await journal.sync();
-      // A returned usage bound violation is retained, then execution stops without another call.
+      // An unknown charge cannot be reserved reliably; stop before another request.
       if (
+        !response.attempted ||
+        response.error ||
+        response.inputTokens === null ||
+        response.outputTokens === null ||
+        (response.cacheReadTokens === null && plan.options.cacheReadMultiplier !== 1) ||
+        (response.cacheWriteTokens === null && plan.options.cacheWriteMultiplier !== 1) ||
+        (response.returnedModel && response.returnedModel !== plan.options.model) ||
         (response.inputTokens !== null && response.inputTokens > plan.options.maxInputTokens) ||
         (response.outputTokens !== null && response.outputTokens > plan.options.maxOutputTokens)
       )

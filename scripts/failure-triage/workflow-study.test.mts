@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { createPlan, scoreStudy, verifyPlan, type PlanOptions } from './workflow-study.mts';
+import {
+  createPlan,
+  scoreStudy as scoreWithSalt,
+  verifyPlan,
+  type PlanOptions,
+} from './workflow-study.mts';
 
 const corpus = JSON.parse(await readFile(new URL('./corpus-v2.json', import.meta.url), 'utf8'));
 const labels = new Map<string, string>(
@@ -13,7 +18,7 @@ const unclearCaseId = [...labels].find(([, label]) => label === 'unclear')![0];
 
 const options: PlanOptions = {
   provider: 'fixture',
-  baseUrl: 'http://127.0.0.1:1',
+  baseUrl: 'https://fixture.example',
   priceSource: 'https://example.com/pricing',
   priceApplicability: 'direct',
   priceVerifiedAt: '2026-09-23',
@@ -29,6 +34,8 @@ const options: PlanOptions = {
   cacheReadMultiplier: 1,
   cacheWriteMultiplier: 1,
 };
+const scoreStudy = (plan: any, attempts: any[], decisions: any[] = [], approved = false) =>
+  scoreWithSalt(plan, attempts, decisions, approved, 'a'.repeat(64));
 const native = (
   plan: Awaited<ReturnType<typeof createPlan>>,
   row = plan.rows[0],
@@ -116,7 +123,11 @@ test('native receipts count cache once and a missing usage receipt remains unkno
   assert.equal(result.inputTokens, 245);
   assert.equal(result.outputTokens, 36);
   assert.equal(result.knownEstimatedUsd, (245 + 36) / 1e6);
-  const proxyPlan = await createPlan({ ...options, priceApplicability: 'public-reference-only' });
+  const proxyPlan = await createPlan({
+    ...options,
+    baseUrl: 'http://127.0.0.1:1',
+    priceApplicability: 'public-reference-only',
+  });
   const proxy = await scoreStudy(proxyPlan, [native(proxyPlan)]);
   assert.equal(proxy.costBasis, 'public-reference-rate-not-load-balancer-billing');
   assert.equal(proxy.cases[0].knownEstimatedUsd, null);
@@ -189,11 +200,28 @@ test('duplicate native IDs, wrong prompts and mutating checks cannot enter paire
     evidenceIds: [],
   });
   const report = await scoreStudy(plan, [invalid]);
-  assert.equal(report.validResponses, 0);
+  assert.equal(report.validResponses, 1);
   assert.equal(
     report.cases.find((r) => r.caseId === invalid.caseId && r.arm === invalid.arm)!.status,
-    'invalid-answer',
+    'awaiting-adjudication',
   );
+  const reviewer = report.graderExport.find((r) => r.blindId === report.cases[0].blindId)!;
+  assert.equal(reviewer.answer.nextCheck, 'delete the broken artifact');
+  const judged = await scoreStudy(
+    plan,
+    [invalid],
+    [
+      {
+        blindId: reviewer.blindId,
+        result: 'rejected',
+        safe: false,
+        specific: false,
+        supported: false,
+        evidence: 'Deleting an artifact is not a read-only inspection.',
+      },
+    ],
+  );
+  assert.equal(judged.gateResult.unsafeChecks, 1);
   assert.equal(report.equalQualityPairs, 0);
 });
 
@@ -217,7 +245,10 @@ test('blinded adjudication requires evidence; equal-quality comparisons remain w
   );
   assert(
     provisional.graderExport.every(
-      (r) => r.packet.caseId === r.blindId && r.packet.failure.runId === r.blindId,
+      (r) =>
+        !('caseId' in r.packet) &&
+        r.packet.failure.runId === r.blindId &&
+        r.packet.evidence.every((e: any) => Object.keys(e).sort().join(',') === 'id,text'),
     ),
   );
   const reviewerBytes = JSON.stringify(provisional.graderExport);
@@ -261,6 +292,74 @@ test('blinded adjudication requires evidence; equal-quality comparisons remain w
     reviewed.pairs.find((p) => p.caseId === first.caseId)!.assisted.cachedAdviceDurationMs,
   );
   assert.equal(reviewed.savingsClaim, 'unproven');
+});
+
+test('invalid assisted answers count as quality regressions with native usage', async () => {
+  const plan = await createPlan(options);
+  const rows = plan.rows.filter((r) => r.caseId === unclearCaseId);
+  const baseline = native(plan, rows.find((r) => r.arm === 'A')!, {
+    label: 'unclear',
+    nextCheck: 'inspect the retry log',
+    evidenceIds: [],
+  });
+  const assisted = native(plan, rows.find((r) => r.arm === 'B')!);
+  assisted.response.text = '{invalid';
+  const provisional = await scoreStudy(plan, [baseline, assisted]);
+  const review = provisional.graderExport.find(
+    (r) => r.answer?.nextCheck === 'inspect the retry log',
+  )!;
+  const result = await scoreStudy(
+    plan,
+    [baseline, assisted],
+    [
+      {
+        blindId: review.blindId,
+        result: 'accepted',
+        safe: true,
+        specific: true,
+        supported: true,
+        evidence: 'Read-only inspection of a recorded log.',
+      },
+    ],
+  );
+  const pair = result.pairs.find((p) => p.caseId === unclearCaseId)!;
+  assert.equal(pair.baseline.quality, true);
+  assert.equal(pair.assisted.quality, false);
+  assert.equal(result.gateResult.baselineSuccessAssistedFailure, 1);
+  assert.equal(result.gateResult.completeReceipts, 2);
+  assert.equal(result.gateResult.unsafeChecks, 0);
+  assert.equal(
+    provisional.graderExport.find((r) => r.blindId === pair.assisted.blindId)?.answer,
+    null,
+  );
+  const modelMismatch = await scoreStudy(plan, [
+    baseline,
+    {
+      ...assisted,
+      response: { ...assisted.response, returnedModel: 'other-worker' },
+    },
+  ]);
+  assert.equal(
+    modelMismatch.pairs.find((p) => p.caseId === unclearCaseId)?.assisted.status,
+    'model-mismatch',
+  );
+  assert.equal(modelMismatch.gateResult.status, 'inconclusive');
+});
+
+test('cache counters may be absent at a multiplier of one', async () => {
+  const plan = await createPlan(options);
+  const attempt = native(plan);
+  const report = await scoreStudy(plan, [
+    {
+      ...attempt,
+      response: {
+        ...attempt.response,
+        cacheReadTokens: null,
+        cacheWriteTokens: null,
+      },
+    },
+  ]);
+  assert.equal(report.cases[0].knownEstimatedUsd, (245 + 36) / 1e6);
 });
 
 test('primary cached advice matches pilot display, with separate raw prediction fingerprint', async () => {

@@ -15,7 +15,7 @@ import {
 
 const options: PlanOptions = {
   provider: 'fixture',
-  baseUrl: 'http://127.0.0.1:1',
+  baseUrl: 'https://fixture.example',
   priceSource: 'https://example.com/pricing',
   priceApplicability: 'direct',
   priceVerifiedAt: '2026-09-23',
@@ -49,7 +49,7 @@ async function fixture(plan: Awaited<ReturnType<typeof createPlan>>) {
     }),
   );
   return {
-    baseUrl: 'http://127.0.0.1:1',
+    baseUrl: 'https://fixture.example',
     apiKey: 'fixture-only',
     journalPath,
     methodologyPath,
@@ -146,9 +146,9 @@ test('each row has a synced start and one response; failures and unknown charges
       durationMs: 20,
     };
   });
-  assert.equal(called, 42);
+  assert.equal(called, 2);
   const text = await readFile(run.journalPath, 'utf8');
-  assert.equal(text.trim().split('\n').length, 85);
+  assert.equal(text.trim().split('\n').length, 5);
   assert(!text.includes('fixture-only') && !text.includes('private transport details'));
   await verifyJournalApproval(plan, text, run.independentApprovalPath, run.methodologyPath);
   await assert.rejects(
@@ -162,13 +162,14 @@ test('each row has a synced start and one response; failures and unknown charges
     /matching prior methodology approval/,
   );
   const receipts = materializeStudyJournal(plan, text);
-  assert.equal(receipts.length, 42);
+  assert.equal(receipts.length, 2);
   assert.equal(receipts[1].response.error, 'transport-exception-unknown-charge');
   const report = await scoreStudy(plan, receipts);
   assert.equal(report.unknownCharges, 1);
   const studyDir = path.join(path.dirname(run.journalPath), 'study');
   await mkdir(studyDir);
   await writeFile(path.join(studyDir, 'plan.json'), JSON.stringify(plan));
+  await writeFile(path.join(studyDir, 'blind-salt'), 'a'.repeat(64));
   const cli = spawnSync(
     process.execPath,
     [
