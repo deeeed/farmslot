@@ -15,6 +15,7 @@ import { gateway } from '../../gateway-client.js';
 
 import {
   blockedWorkerOwnsSlot,
+  blockedWorkerProofReady,
   canResumeBlockedWorkerMonitor,
   isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
@@ -23,6 +24,7 @@ import {
 export class BlockedRunRecovery extends LitElement {
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) replayMonitor!: () => void | Promise<void>;
+  @property({ attribute: false }) restartWorker!: () => void | Promise<void>;
   @property({ type: Boolean }) disabled = false;
 
   @state() private plan: RuntimeCapabilityProofPlan | null = null;
@@ -141,16 +143,7 @@ export class BlockedRunRecovery extends LitElement {
   }
 
   private requirementsReady(): boolean {
-    if (!this.status) return false;
-    return (this.plan?.requirements ?? []).every((requirement) =>
-      this.status?.leases.some(
-        (lease) =>
-          lease.capabilityId === requirement.capabilityId &&
-          lease.owner.runId === this.run.id &&
-          lease.state === 'acquired' &&
-          lease.health.state === 'healthy',
-      ),
-    );
+    return blockedWorkerProofReady(this.run, this.status);
   }
 
   private async assertSlotOwned(run: Run): Promise<void> {
@@ -208,8 +201,8 @@ export class BlockedRunRecovery extends LitElement {
         </p>
         ${!slotOwned
           ? html`<p>
-              The run does not currently own its slot. Replay from find-slot to choose a worker; do
-              not acquire resources on this slot.
+              The run does not currently own its slot. Restart on an available worker; do not
+              acquire resources on the old slot.
             </p>`
           : nothing}
         ${this.plan
@@ -217,13 +210,16 @@ export class BlockedRunRecovery extends LitElement {
               Proof resources:
               ${this.plan.requirements.map((requirement) => requirement.capabilityId).join(', ')}.
               ${ready
-                ? 'Leases were healthy at their last check.'
+                ? 'Leases were rechecked after this worker blocked.'
                 : unresolved.length
                   ? 'Cleanup is unresolved. Retry stop in slot resources after the worker finishes using them.'
-                  : 'Acquire or recheck them from slot resources.'}
+                  : 'Acquire or recheck them from slot resources after this worker blocked.'}
             </p>`
           : this.status
-            ? html`<p>No proof resources are recorded for this run.</p>`
+            ? html`<p>
+                No proof plan is recorded. Resource needs are unknown; restart on an available
+                worker.
+              </p>`
             : nothing}
         <div class="actions">
           ${run.slotId
@@ -235,6 +231,15 @@ export class BlockedRunRecovery extends LitElement {
           <button data-testid="blocked-run-refresh" ?disabled=${this.busy} @click=${this.refresh}>
             Refresh recorded status
           </button>
+          ${run.steps.some((step) => step.name === 'find-slot')
+            ? html`<button
+                data-testid="blocked-run-restart"
+                ?disabled=${this.disabled || this.busy}
+                @click=${this.restartWorker}
+              >
+                Restart on available worker
+              </button>`
+            : nothing}
           <button
             data-testid="blocked-run-retry-monitor"
             ?disabled=${this.disabled || this.busy || !slotOwned || !freshSignal || !ready}

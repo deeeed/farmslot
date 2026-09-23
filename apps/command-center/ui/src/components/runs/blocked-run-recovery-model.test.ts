@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { Run, RuntimeCapabilityStatusResult } from '@farmslot/protocol';
 
 import {
   blockedWorkerOwnsSlot,
+  blockedWorkerProofReady,
   canResumeBlockedWorkerMonitor,
   isRecoverableBlockedWorkerRun,
 } from './blocked-run-recovery-model.js';
@@ -20,6 +21,8 @@ const run = {
   taskFile: '/repo/.sandbox/farmslot-farm/tasks/fix/manual-000110/TASK.md',
   agentContexts: [
     {
+      id: 'worker',
+      role: 'fix-bug',
       runId: 'run-1',
       signalFile: '.sandbox/farmslot-farm/worker-task/fix/manual-000110/SIGNAL.json',
     },
@@ -41,6 +44,34 @@ test('monitor replay requires a fresh non-blocked worker signal', () => {
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'blocked' }), false);
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running' }), true);
   assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'complete' }), true);
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running', contextId: 'other' }),
+    false,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, {
+      attemptId: 'new',
+      status: 'running',
+      role: 'self-review',
+    }),
+    false,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(
+      {
+        ...run,
+        steps: [
+          {
+            name: 'monitor',
+            status: 'done',
+            outputs: { workerSignal: { attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' } },
+          },
+        ],
+      } as Run,
+      { attemptId: 'old', timestamp: '2026-09-23T01:01:00Z', status: 'complete' },
+    ),
+    true,
+  );
   assert.equal(
     canResumeBlockedWorkerMonitor({ ...run, steps: [{ name: 'monitor', status: 'done' }] } as Run, {
       attemptId: 'new',
@@ -79,4 +110,36 @@ test('recovery only acts while the run still owns a slot outside release', () =>
   assert.equal(blockedWorkerOwnsSlot(run, { ...slot, phase: 'releasing' }), false);
   assert.equal(blockedWorkerOwnsSlot(run, { ...slot, currentRunId: 'other' }), false);
   assert.equal(blockedWorkerOwnsSlot(run, { ...slot, lifecycle: 'ready' }), false);
+});
+
+test('proof readiness needs an explicit plan and a provider check after the block', () => {
+  const blockedRun = {
+    ...run,
+    steps: [{ ...run.steps[0], completedAt: '2026-09-23T01:00:00Z' }],
+  } as Run;
+  const status = {
+    proofPlans: {
+      [run.id]: {
+        version: 1,
+        slotId: run.slotId,
+        ownerRunId: run.id,
+        createdAt: '2026-09-23T00:00:00Z',
+        requirements: [{ capabilityId: 'browser-cdp', reason: 'proof', mode: 'visual' }],
+      },
+    },
+    leases: [
+      {
+        capabilityId: 'browser-cdp',
+        owner: { runId: run.id },
+        state: 'acquired',
+        health: { state: 'healthy', checkedAt: '2026-09-23T00:59:00Z' },
+      },
+    ],
+  } as unknown as RuntimeCapabilityStatusResult;
+  assert.equal(blockedWorkerProofReady(blockedRun, { ...status, proofPlans: {} }), false);
+  assert.equal(blockedWorkerProofReady(blockedRun, status), false);
+  status.leases[0].health.checkedAt = '2026-09-23T01:01:00Z';
+  assert.equal(blockedWorkerProofReady(blockedRun, status), true);
+  status.proofPlans[run.id].requirements = [];
+  assert.equal(blockedWorkerProofReady(blockedRun, status), true);
 });

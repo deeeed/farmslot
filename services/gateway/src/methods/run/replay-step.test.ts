@@ -116,13 +116,13 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
     freshBlockedMonitorAttempt(run, { ok: false, code: 'stale', message: '', signal }, context),
     signal,
   );
-  assert.equal(
+  assert.deepEqual(
     freshBlockedMonitorAttempt(
       run,
-      { ok: false, code: 'stale', message: '', signal: { ...signal, attemptId: 'old' } },
+      { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: 'old' } },
       context,
     ),
-    null,
+    { ...signal, attemptId: 'old' },
   );
   assert.equal(
     freshBlockedMonitorAttempt(

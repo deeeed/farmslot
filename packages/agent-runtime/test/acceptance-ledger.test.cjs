@@ -40,6 +40,23 @@ assert.deepEqual(resolveWorkerTerminalContract(scopedAcceptance, 'fix-bug').acce
   require: true,
 });
 assert.equal(resolveWorkerTerminalContract(scopedAcceptance, 'review-pr').acceptance, undefined);
+assert.deepEqual(
+  resolveWorkerTerminalContract(
+    {
+      acceptance: { require: true, allowWeak: true },
+      flows: { 'fix-bug': { acceptance: { require: false } } },
+    },
+    'fix-bug',
+  ).acceptance,
+  { allowWeak: true },
+);
+assert.deepEqual(
+  resolveWorkerTerminalContract(
+    { acceptance: { require: true, allowWeak: true }, flows: { 'fix-bug': { acceptance: {} } } },
+    'fix-bug',
+  ).acceptance,
+  { require: true, allowWeak: true },
+);
 
 const CRITERIA = [
   'The run detail panel lists every acceptance criterion with its verdict.',

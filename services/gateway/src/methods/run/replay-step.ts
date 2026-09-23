@@ -45,7 +45,10 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
-import { signalMatchesMonitorContext } from '../../run-engine/run-monitor.js';
+import {
+  probeWorkerSignalForRun,
+  signalMatchesMonitorContext,
+} from '../../run-engine/run-monitor.js';
 import {
   assertSupportedRunnerSpelling,
   normalizeRunner,
@@ -337,9 +340,6 @@ export function freshBlockedMonitorAttempt(
     typeof previousSignal.timestamp === 'string' ? previousSignal.timestamp : undefined,
   );
   if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
-  if (typeof previousSignal.attemptId === 'string' && previousSignal.attemptId) {
-    return signal.attemptId && signal.attemptId !== previousSignal.attemptId ? signal : null;
-  }
   return signal;
 }
 
@@ -643,22 +643,14 @@ export async function runReplayStep(
         (context) => context.role === primaryRoleForFlow(existing.flowType),
       ) ?? existing.agentContexts?.[0])
     : null;
-  const blockedAttempt = needsBlockedAttempt
-    ? freshBlockedMonitorAttempt(
-        existing,
-        await (
-          await import('../../run-engine/run-monitor.js')
-        ).probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext),
-        monitorContext,
-      )
+  const probe = needsBlockedAttempt
+    ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
     : null;
-  if (needsBlockedAttempt && !blockedAttempt) {
-    throw new Error('A fresh worker signal is required before replaying this blocked monitor');
-  }
+  const blockedAttempt = probe ? freshBlockedMonitorAttempt(existing, probe, monitorContext) : null;
   if (
     shouldRerouteEvalReplayToPrepare({
       evalExperiment: Boolean(existing.engineState?.evalExperiment),
-      adoptedLiveWorker: Boolean(adoptedTaskSignal),
+      adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
       targetIdx,
       prepareIdx,
       monitorIdx,
@@ -668,6 +660,11 @@ export async function runReplayStep(
     targetIdx = prepareIdx;
     console.log(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
+    );
+  }
+  if (needsBlockedAttempt && replayStepName === PS.MONITOR && !blockedAttempt) {
+    throw new Error(
+      probe?.message || 'A newer worker signal is required before replaying this blocked monitor',
     );
   }
 
@@ -1191,8 +1188,9 @@ export async function runReplayStep(
           model: replayModel ?? runnerDefaultModel(replayRunner),
         }
       : resetOutcomeMetrics;
+    const latestAgentContexts = getRun(params.runId)?.agentContexts ?? existing.agentContexts;
     const resetAgentContextsBase = hasRunnerOverride
-      ? existing.agentContexts?.map((context) =>
+      ? latestAgentContexts?.map((context) =>
           context.role === primaryRoleForFlow(existing.flowType)
             ? {
                 ...context,
@@ -1204,20 +1202,22 @@ export async function runReplayStep(
               }
             : context,
         )
-      : existing.agentContexts;
+      : latestAgentContexts;
     const replaySignal = adoptedTaskSignal ?? blockedAttempt;
     const resetAgentContexts = replaySignal
-      ? resetAgentContextsBase?.map((context) =>
-          context.role === primaryRoleForFlow(existing.flowType)
-            ? {
-                ...context,
-                status: 'working' as const,
-                completedAt: undefined,
-                lastSignalAt: replaySignal.timestamp,
-                signalAttemptId: replaySignal.attemptId,
-              }
-            : context,
-        )
+      ? resetAgentContextsBase?.map((context) => {
+          if (context.role !== primaryRoleForFlow(existing.flowType)) return context;
+          const newerContextSignal =
+            context.lastSignalAt &&
+            Date.parse(context.lastSignalAt) > Date.parse(replaySignal.timestamp);
+          return {
+            ...context,
+            status: 'working' as const,
+            completedAt: undefined,
+            lastSignalAt: newerContextSignal ? context.lastSignalAt : replaySignal.timestamp,
+            signalAttemptId: newerContextSignal ? context.signalAttemptId : replaySignal.attemptId,
+          };
+        })
       : resetAgentContextsBase;
     const attemptCount =
       (existing.recoveryAttempts ?? []).filter(

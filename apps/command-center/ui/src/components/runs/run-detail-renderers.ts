@@ -1084,6 +1084,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           .run=${r}
           .disabled=${actionsBlocked}
           .replayMonitor=${() => ctx._onReplayStep('monitor')}
+          .restartWorker=${() => ctx._onReplayStep('find-slot')}
         ></blocked-run-recovery>`
       : nothing}
     ${r.error

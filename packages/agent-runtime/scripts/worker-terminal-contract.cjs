@@ -236,7 +236,10 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
       }))
     : DEFAULT_WHEN_PRESENT.map((rule) => ({ ...rule, alsoRequire: [...rule.alsoRequire] }));
 
-  const acceptanceRules = flowLayer?.acceptance ?? projectConfig?.acceptance;
+  const acceptanceRules =
+    projectConfig?.acceptance || flowLayer?.acceptance
+      ? { ...projectConfig?.acceptance, ...flowLayer?.acceptance }
+      : undefined;
   const acceptance =
     acceptanceRules && typeof acceptanceRules === 'object'
       ? {
