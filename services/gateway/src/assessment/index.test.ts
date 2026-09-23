@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { assess } from './index.js';
-import { createAssessmentProviderRegistry } from './provider.js';
+import { createLlmAssessmentProvider } from './llm.js';
+import { AssessmentResponseError, createAssessmentProviderRegistry } from './provider.js';
+import { serializeAssessment } from './record-validation.js';
+import { summarizeAssessments } from './summary.js';
 
 const request = {
   state: { diff: 'changed button label' } as const,
@@ -119,6 +122,146 @@ test('attempt accounting distinguishes transport invocation from disabled reques
     assert.equal(failed.status, 'unavailable');
     assert.equal(failed.attempted, true);
     assert.equal(calls, 2);
+  } finally {
+    if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
+    else process.env.ASSESSMENT_TEST_KEY = previous;
+  }
+});
+
+test('a timeout after headers remains a received-response validation failure', async () => {
+  const previous = process.env.ASSESSMENT_TEST_KEY;
+  process.env.ASSESSMENT_TEST_KEY = 'fixture-key';
+  const providers = createAssessmentProviderRegistry([
+    {
+      id: 'fixture',
+      defaultModel: 'fixed',
+      credentialEnv: 'ASSESSMENT_TEST_KEY',
+      capabilities: ['boolean'],
+      async assess({ signal }) {
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+        throw new AssessmentResponseError(
+          'Synthetic body timeout after headers',
+          true,
+          { durationMs: 1 },
+          undefined,
+          true,
+          200,
+        );
+      },
+    },
+  ]);
+  try {
+    const result = await assess(
+      { ...request, provider: 'fixture', enabled: true, timeoutMs: 1 },
+      providers,
+    );
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.attempted, true);
+    assert.equal(result.error, 'Assessment provider response failed validation');
+  } finally {
+    if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
+    else process.env.ASSESSMENT_TEST_KEY = previous;
+  }
+});
+
+test('rejected LLM answers retain native tokens and latency as failed attempted calls', async () => {
+  const previous = process.env.ASSESSMENT_TEST_KEY;
+  process.env.ASSESSMENT_TEST_KEY = 'fixture-key';
+  let calls = 0;
+  const provider = createLlmAssessmentProvider(
+    {
+      id: 'fixture-llm',
+      defaultModel: 'fixture-model',
+      credentialEnv: 'ASSESSMENT_TEST_KEY',
+      baseUrl: 'https://example.invalid/v1',
+    },
+    async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          id: 'resp_fixture',
+          status: 'completed',
+          model: 'fixture-model',
+          usage: {
+            input_tokens: 120,
+            output_tokens: 20,
+            input_tokens_details: { cached_tokens: 10 },
+          },
+          output: [
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: '{"answers":{"visual":"invalid"}}' }],
+            },
+          ],
+        }),
+        { headers: { 'content-type': 'application/json' } },
+      );
+    },
+  );
+  try {
+    const result = await assess(
+      { ...request, provider: 'fixture-llm', enabled: true },
+      createAssessmentProviderRegistry([provider]),
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.attempted, true);
+    assert.equal(result.answers, undefined);
+    assert.equal(result.usage?.inputTokens, 120);
+    assert.equal(result.usage?.outputTokens, 20);
+    assert.equal(result.usage?.cacheReadTokens, 10);
+    const record = {
+      version: 1 as const,
+      id: 'fixture-rejected-answer',
+      ownerId: 'fixture-owner',
+      consumer: 'failure-triage' as const,
+      subject: {},
+      startedAt: new Date().toISOString(),
+      status: 'unavailable' as const,
+      policyVersion: 'fixture',
+      feedback: [],
+      result,
+    };
+    serializeAssessment(record);
+    const summary = summarizeAssessments([record]);
+    assert.equal(summary.attemptedCalls, 1);
+    assert.equal(summary.failed, 1);
+    assert.equal(summary.tokens, 140);
+    assert.equal(summary.callsWithUsage, 1);
+  } finally {
+    if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
+    else process.env.ASSESSMENT_TEST_KEY = previous;
+  }
+});
+
+test('an invalid LLM transport configuration does not count a provider call', async () => {
+  const previous = process.env.ASSESSMENT_TEST_KEY;
+  process.env.ASSESSMENT_TEST_KEY = 'fixture-key';
+  let calls = 0;
+  const provider = createLlmAssessmentProvider(
+    {
+      id: 'fixture-llm',
+      defaultModel: 'fixture-model',
+      credentialEnv: 'ASSESSMENT_TEST_KEY',
+      baseUrl: 'ftp://example.invalid/v1',
+    },
+    async () => {
+      calls++;
+      throw new Error('Transport must not be invoked');
+    },
+  );
+  try {
+    const result = await assess(
+      { ...request, provider: 'fixture-llm', enabled: true },
+      createAssessmentProviderRegistry([provider]),
+    );
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.attempted, false);
+    assert.equal(result.usage, undefined);
+    assert.equal(calls, 0);
   } finally {
     if (previous === undefined) delete process.env.ASSESSMENT_TEST_KEY;
     else process.env.ASSESSMENT_TEST_KEY = previous;

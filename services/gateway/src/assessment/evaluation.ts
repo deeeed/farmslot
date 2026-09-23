@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import {
+  assessmentBooleanValue,
+  assessmentChoiceOptions,
   type AssessmentEvaluation,
   type AssessmentEvaluationParams,
   type AssessmentReferenceLabel,
@@ -115,7 +117,7 @@ export function evaluateAssessmentReport(
       if (abstains) continue;
       let predicted: string | boolean;
       if (answer.type === 'choice') predicted = answer.choice;
-      else if (answer.type === 'boolean') predicted = answer.probability >= 0.65;
+      else if (answer.type === 'boolean') predicted = assessmentBooleanValue(answer);
       else {
         unsupportedQuestions++;
         continue;
@@ -124,7 +126,7 @@ export function evaluateAssessmentReport(
         throw new Error('Reference type does not match question');
       if (
         answer.type === 'choice' &&
-        !Object.hasOwn(answer.probabilities, String(reference.expected))
+        !assessmentChoiceOptions(answer).includes(String(reference.expected))
       )
         throw new Error('Reference choice does not match question');
       entry.judged++;

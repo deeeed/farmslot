@@ -33,8 +33,8 @@ vendor or model name:
 
 - `choice`: select one value from a closed set;
 - `score`: evaluate an ordered rubric;
-- `boolean`: estimate whether a statement is true, with a probability;
-- confidence and probabilities are advisory metadata, not calibrated authority.
+- `boolean`: return a true/false judgment or a native probability;
+- confidence and probabilities are optional native metadata, not calibrated authority. A regular language model must not fabricate them to satisfy the interface.
 
 The gateway contract has four parts:
 
@@ -49,10 +49,17 @@ The gateway contract has four parts:
    schema hash, state hash, confidence/probabilities, latency, usage, and
    request id. Raw state is not retained by default.
 
-The first implementation adapter will target TypeSafe's System One API and
-Jev, but those names stay out of the protocol, run semantics, and business
-rules. A future provider can implement the same interface without changing
-review, eval, or routing code.
+The TypeSafe adapter uses its native structured API. A Responses-compatible
+language-model adapter turns the same questions into a prompt and JSON schema,
+then validates and normalizes the answers. Provider implementations own their
+transport and credentials. Consumers use the common contract and configured
+provider/model identity. There is no implicit provider or model fallback.
+
+Choice vocabularies are independent of probability distributions. Plain boolean
+judgments carry a boolean value; existing probability-only records retain their
+threshold behavior. Native distributions remain available without being
+required from every model. Each consumer still needs an evaluation for the
+selected provider/model; interface compatibility does not establish accuracy.
 
 Assessment results are advisory. They cannot:
 
@@ -62,11 +69,11 @@ Assessment results are advisory. They cannot:
 - publish a review, request changes, merge, retry, or mutate a run by
   themselves.
 
-The first Farmslot-owned use is review intake and routing. The provider may
-classify risk, affected surfaces, checklist applicability, visual-review
-requirements, and whether a stronger reviewer should be launched. Farmslot
-may also use it for non-visual evidence triage, eval scoring, and recovery
-proposals after those consumers have explicit confidence and human gates.
+The initial PR-metadata intake experiment did not demonstrate value and its
+automatic invocation was removed. PR matching remains deterministic. The first
+shipped consumer is opt-in advice for recorded failures. Textual evidence,
+static checklists, copilot context and meaningful review routing require
+separate evaluations before rollout.
 
 `mm-harness` remains the owner of recipe planning. Farmslot forwards optional
 advisor configuration and stores/displays the harness's recipe-plan and

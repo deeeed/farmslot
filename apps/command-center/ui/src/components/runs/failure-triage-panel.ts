@@ -1,7 +1,12 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { type AssessmentRecord, type FailureTriageView, Methods } from '@farmslot/protocol';
+import {
+  assessmentChoiceOptions,
+  type AssessmentRecord,
+  type FailureTriageView,
+  Methods,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
@@ -194,7 +199,7 @@ export class FailureTriagePanel extends LitElement {
     const causeAnswer = record?.result?.answers?.cause;
     const corrections =
       causeAnswer?.type === 'choice'
-        ? Object.keys(causeAnswer.probabilities).filter((c) => c !== causeAnswer.choice)
+        ? assessmentChoiceOptions(causeAnswer).filter((c) => c !== causeAnswer.choice)
         : [];
     const input = v?.input;
     const excerpts =

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Let the CDP click helper follow explicit shadow-root selectors in assessment browser proofs.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.12.0 - 2026-09-17

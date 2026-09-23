@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/prove.mts \"$TRIAGE_PROOF_OUT\"",
         "timeout_ms": 60000,
-        "intent": "Exercise the real evaluation CLI's offline, key, price, budget, timeout, rate-limit and response rejection paths; assert no live provider calls or eligible fixture results.",
+        "intent": "Exercise the real evaluation CLI's offline, key, price, budget, timeout, rate-limit and response rejection paths; retain known usage on invalid replies, release pretransport reservations, and assert no live provider calls or eligible fixture results.",
         "next": "v2"
       },
       "done": {

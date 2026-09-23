@@ -13,6 +13,26 @@ correctness or lower workflow cost. Failure-triage evaluation and other consumer
 must pass their own baseline comparisons before operator rollout. Recipe/result
 assessment is outside the current implementation scope.
 
+## Select an assessment provider
+
+Consumers call the same structured-assessment service. The `typesafe` adapter
+uses its native API; `codex-lb` uses the configured local Responses endpoint and
+structured JSON output from a regular language model. The latter defaults to
+`gpt-6-luna` and reads `CODEX_LB_API_KEY` on the gateway host. Select both provider
+and model explicitly in `assessment-config.json`, or the existing assessment
+environment settings. A key alone does not enable a consumer.
+
+The adapter accepts choices, booleans and scores. Plain judgments do not invent
+probabilities. Feedback and evaluation use the question's valid choices even
+when a probability distribution is absent. Historical TypeSafe records keep
+working. Usage includes available cache counters; absent usage and charges stay
+unknown.
+
+Use `assessment.test` for an explicit synthetic connection test. Each click is
+one request; there is no automatic retry or expensive fallback. A successful
+connection test does **not** qualify that provider/model for failure triage or
+another consumer. Its own frozen evaluation must pass first.
+
 ## Request experimental failure advice
 
 A failed development run has an **Experimental failure advice** panel. It is off

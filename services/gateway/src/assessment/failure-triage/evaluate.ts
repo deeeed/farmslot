@@ -3,7 +3,12 @@ import path from 'node:path';
 
 import { writeAtomicJSON } from '../../core/atomic-json.js';
 import { defaultAssessmentProviders } from '../default-providers.js';
-import { type AssessmentProvider, AssessmentResponseError } from '../provider.js';
+import {
+  type AssessmentProvider,
+  AssessmentResponseError,
+  TRIAGE_SPEND_BOUND_EXCEEDED,
+  TRIAGE_SPEND_BOUND_UNVERIFIABLE,
+} from '../provider.js';
 import { assertNoCredentials } from '../record-validation.js';
 
 import { BASELINE_VERSION, cueBaseline, existingBaseline, PATTERN_MAPPING } from './baselines.js';
@@ -22,8 +27,8 @@ import { boundedAssessmentFetch } from './transport.js';
 import type { TriagePrice, TriageResult } from './types.js';
 
 class AssessmentSpendBoundError extends Error {
-  constructor() {
-    super('spend-bound-exceeded');
+  constructor(readonly kind: 'exceeded' | 'unverifiable') {
+    super(kind === 'exceeded' ? TRIAGE_SPEND_BOUND_EXCEEDED : TRIAGE_SPEND_BOUND_UNVERIFIABLE);
     this.name = 'AssessmentSpendBoundError';
   }
 }
@@ -66,7 +71,12 @@ export interface TriageOptions {
     | 'timeout'
     | 'rate-limit'
     | 'credential-echo'
-    | 'control-action';
+    | 'wrong-model'
+    | 'missing-model'
+    | 'control-action'
+    | 'adapter-invalid'
+    | 'adapter-http-rate-limit'
+    | 'adapter-preflight';
 }
 // Supported reservation envelope: the bundled snapshot documents input-only pricing
 // and a 64k request limit. Paid outputs need their own bound before admission.
@@ -93,6 +103,17 @@ export function validTriagePrice(
     value.maxRequestTokens <= 65536
   );
 }
+
+/** A snapshot price applies only to the exact requested model. */
+export function estimateTriageInputCost(
+  inputTokens: number | undefined,
+  price: Pick<TriagePrice, 'inputUsdPerMillion'>,
+  modelMatched: boolean,
+  fixture: boolean,
+): number | undefined {
+  if (fixture || !modelMatched || inputTokens === undefined) return undefined;
+  return (inputTokens * price.inputUsdPerMillion) / 1_000_000;
+}
 function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): AssessmentProvider {
   return {
     id: 'fixture',
@@ -100,6 +121,21 @@ function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): Assessmen
     credentialEnv: 'UNUSED_FIXTURE_KEY',
     capabilities: ['choice'],
     async assess({ state, questions, signal }) {
+      if (
+        mode === 'adapter-invalid' ||
+        mode === 'adapter-http-rate-limit' ||
+        mode === 'adapter-preflight'
+      )
+        throw new AssessmentResponseError(
+          'Fixture rejected a provider answer',
+          mode !== 'adapter-preflight',
+          mode === 'adapter-invalid'
+            ? { inputTokens: 120, outputTokens: 20, cacheReadTokens: 10, durationMs: 2 }
+            : undefined,
+          mode === 'adapter-invalid' ? 'fixed' : undefined,
+          mode === 'adapter-http-rate-limit',
+          mode === 'adapter-http-rate-limit' ? 429 : undefined,
+        );
       if (mode === 'timeout') {
         await new Promise<void>((_resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('fixture deadline')), 15000);
@@ -141,7 +177,14 @@ function fixtureProvider(mode: NonNullable<TriageOptions['fixture']>): Assessmen
         }),
       );
       return {
-        returnedModel: mode === 'credential-echo' ? process.env.TRIAGE_PROOF_API_KEY : 'fixed',
+        returnedModel:
+          mode === 'credential-echo'
+            ? process.env.TRIAGE_PROOF_API_KEY
+            : mode === 'wrong-model'
+              ? 'unpriced-model'
+              : mode === 'missing-model'
+                ? undefined
+                : 'fixed',
         answers,
         usage: {
           inputTokens: Buffer.byteLength(JSON.stringify(state)),
@@ -194,7 +237,9 @@ export async function evaluateTriage(options: TriageOptions) {
   );
   const provider = options.fixture
     ? fixtureProvider(options.fixture)
-    : defaultAssessmentProviders(boundedAssessmentFetch()).get(options.provider ?? '');
+    : // The native TypeSafe reply is bounded here. The Responses adapter streams and
+      // enforces its own byte cap while retaining received usage on later failures.
+      defaultAssessmentProviders(boundedAssessmentFetch(), fetch).get(options.provider ?? '');
   const key = options.fixture
     ? 'synthetic-only'
     : provider
@@ -208,8 +253,8 @@ export async function evaluateTriage(options: TriageOptions) {
   let attempts = 0,
     reservedUsd = 0,
     violations = 0,
-    admissionSkips = 0,
-    overBound = false;
+    admissionSkips = 0;
+  let boundFailure: 'exceeded' | 'unverifiable' | undefined;
   const candidate: TriageResult[] = [],
     baseline: TriageResult[] = [],
     cueSheet: TriageResult[] = [];
@@ -288,7 +333,9 @@ export async function evaluateTriage(options: TriageOptions) {
       keyAvailable: !!key,
       priceReady,
       budgetExhausted:
-        overBound || attempts >= maxCalls || reservedUsd + reservation > maxUsd + 1e-12,
+        boundFailure !== undefined ||
+        attempts >= maxCalls ||
+        reservedUsd + reservation > maxUsd + 1e-12,
     });
     if (!row.reason) {
       if (!provider || !key) throw new Error('Assessment policy admitted an unavailable provider');
@@ -322,31 +369,93 @@ export async function evaluateTriage(options: TriageOptions) {
             throw new TriageResponseError('usage');
         if (!Number.isFinite(usage.durationMs) || usage.durationMs < 0)
           throw new TriageResponseError('duration');
-        if (!options.fixture && (usage.inputTokens ?? 0) > price.maxRequestTokens) {
-          overBound = true;
-          throw new AssessmentSpendBoundError();
+        row.returnedModel = response.returnedModel;
+        row.usage = { ...usage, provider: provider.id, requestedModel: row.requestedModel! };
+        const modelMatched = response.returnedModel === row.requestedModel;
+        row.estimatedUsd = estimateTriageInputCost(
+          usage.inputTokens,
+          price,
+          modelMatched,
+          !!options.fixture,
+        );
+        if (usage.inputTokens === undefined) {
+          boundFailure = 'unverifiable';
+          throw new AssessmentSpendBoundError('unverifiable');
+        }
+        if (usage.inputTokens > price.maxRequestTokens) {
+          boundFailure = 'exceeded';
+          throw new AssessmentSpendBoundError('exceeded');
+        }
+        if (!modelMatched) {
+          boundFailure = 'unverifiable';
+          throw new TriageResponseError('model-identity');
         }
         row.prediction = triagePrediction(response.answers, prepared.packet);
         row.status = 'completed';
-        row.returnedModel = response.returnedModel;
-        row.usage = { ...usage, provider: provider.id, requestedModel: row.requestedModel! };
-        if (!options.fixture && usage.inputTokens !== undefined)
-          row.estimatedUsd = (usage.inputTokens * price.inputUsdPerMillion) / 1_000_000;
       } catch (error) {
         row.status = 'unavailable';
+        if (error instanceof AssessmentResponseError) {
+          if (error.httpStatus !== undefined) row.httpStatus = error.httpStatus;
+          if (!error.attempted) {
+            // No provider call occurred; release the reservation and call slot.
+            attempts--;
+            reservedUsd -= reservation;
+            row.reservedUsd = 0;
+          } else {
+            if (error.usage) {
+              row.returnedModel = error.returnedModel;
+              row.usage = {
+                ...error.usage,
+                provider: provider.id,
+                requestedModel: row.requestedModel!,
+                returnedModel: error.returnedModel,
+              };
+              const modelMatched = error.returnedModel === row.requestedModel;
+              row.estimatedUsd = estimateTriageInputCost(
+                error.usage.inputTokens,
+                price,
+                modelMatched,
+                !!options.fixture,
+              );
+              if (
+                error.usage.inputTokens !== undefined &&
+                error.usage.inputTokens > price.maxRequestTokens
+              )
+                boundFailure = 'exceeded';
+              else if (modelMatched === false) boundFailure = 'unverifiable';
+            }
+            if (error.responseReceived && error.usage?.inputTokens === undefined)
+              boundFailure = 'unverifiable';
+          }
+        }
         const status =
-          error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+          error instanceof AssessmentResponseError
+            ? error.httpStatus
+            : error && typeof error === 'object' && 'status' in error
+              ? error.status
+              : undefined;
+        if (
+          typeof status === 'number' &&
+          Number.isSafeInteger(status) &&
+          status >= 100 &&
+          status <= 599
+        )
+          row.httpStatus = status;
         // SDK exceptions may echo context or credentials. Only controlled reason codes persist.
         row.reason =
-          error instanceof AssessmentSpendBoundError
-            ? 'spend-bound-exceeded'
-            : signal.aborted
-              ? 'timeout'
-              : status === 429
-                ? 'rate-limit'
-                : receivedResponse || error instanceof AssessmentResponseError
-                  ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
-                  : 'provider-request-failed';
+          error instanceof AssessmentResponseError && !error.attempted
+            ? 'provider-not-attempted'
+            : error instanceof AssessmentSpendBoundError || boundFailure
+              ? boundFailure === 'exceeded'
+                ? TRIAGE_SPEND_BOUND_EXCEEDED
+                : TRIAGE_SPEND_BOUND_UNVERIFIABLE
+              : signal.aborted
+                ? 'timeout'
+                : status === 429
+                  ? 'rate-limit'
+                  : receivedResponse || error instanceof AssessmentResponseError
+                    ? `invalid-response:${error instanceof TriageResponseError ? error.code : error instanceof AssessmentResponseError ? 'adapter-validation' : 'unclassified'}`
+                    : 'provider-request-failed';
       }
     }
     row.durationMs = Date.now() - caseStarted;
@@ -377,7 +486,8 @@ export async function evaluateTriage(options: TriageOptions) {
     baseline: deterministic,
     cueSheet: diagnostic,
     violations,
-    withinBudget: !overBound && attempts <= maxCalls && reservedUsd <= maxUsd + 1e-12,
+    withinBudget:
+      boundFailure === undefined && attempts <= maxCalls && reservedUsd <= maxUsd + 1e-12,
   });
   const report = {
     version: 1,
@@ -416,6 +526,7 @@ export async function evaluateTriage(options: TriageOptions) {
       batchMs: Date.now() - started,
     },
     safetyViolations: violations,
+    spendBound: boundFailure ?? 'verified',
     admissionSkips,
     corpusIntegrity: corpusIntegrity(corpusHash),
     pilotGate,

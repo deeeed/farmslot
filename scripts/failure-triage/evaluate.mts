@@ -19,7 +19,7 @@ function parse(args: string[]): TriageOptions {
     }
     if (key === '--help') {
       console.log(
-        'Usage: yarn triage:evaluate --out <new-directory> [--live --provider typesafe --model jev-1.13.0] [--corpus v1|v2] [--split development|held-out] [--max-calls 1..60] [--max-usd <=0.10] [--timeout-ms <=10000] [--max-bytes <=24000] [--case <opaque-id>]\nDefault: offline baselines and hold. Test-only transport: --fixture valid|invalid-label|fabricated-evidence|timeout|rate-limit|credential-echo|control-action; cannot combine with --live.',
+        'Usage: yarn triage:evaluate --out <new-directory> [--live --provider typesafe --model jev-1.13.0] [--corpus v1|v2] [--split development|held-out] [--max-calls 1..60] [--max-usd <=0.10] [--timeout-ms <=10000] [--max-bytes <=24000] [--case <opaque-id>]\nDefault: offline baselines and hold. Test-only transport: --fixture valid|invalid-label|fabricated-evidence|adapter-invalid|adapter-preflight|timeout|rate-limit|credential-echo|control-action; cannot combine with --live.',
       );
       process.exit(0);
     }
@@ -66,6 +66,8 @@ function parse(args: string[]): TriageOptions {
             'valid',
             'invalid-label',
             'fabricated-evidence',
+            'adapter-invalid',
+            'adapter-preflight',
             'timeout',
             'rate-limit',
             'credential-echo',
@@ -105,6 +107,8 @@ try {
     'scripts/failure-triage/generate-v2.mjs',
     'scripts/failure-triage/corpus-v2-audit.md',
     'services/gateway/src/assessment/typesafe.ts',
+    'services/gateway/src/assessment/llm.ts',
+    'services/gateway/src/llm/measured-response.ts',
     'services/gateway/src/assessment/provider.ts',
     'services/gateway/src/assessment/default-providers.ts',
     'services/gateway/src/assessment/input.ts',
