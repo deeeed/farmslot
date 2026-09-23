@@ -428,6 +428,22 @@ try {
     keepWarm: false,
   });
   assert.equal(evalRelease.ok, true, JSON.stringify(evalRelease));
+  const rollbackHeld = rpc('runtime.capability.acquire', {
+    slotId: rollbackSlotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: rollbackRunId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'held rollback proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(rollbackHeld.ok, true, JSON.stringify(rollbackHeld));
+  const heldLease = rpc('runtime.capability.status', {
+    slotId: rollbackSlotId,
+    ownerRunId: rollbackRunId,
+  }).leases.find((lease) => lease.owner.runId === rollbackRunId);
+  assert.equal(heldLease?.state, 'acquired');
   const rolledBack = denied(
     { runId: rollbackRunId, stepName: 'monitor' },
     /Injected replay failure after claim/,
@@ -443,6 +459,12 @@ try {
   assert.equal(restoredRow?.current_run_id, rollbackRunId);
   assert.notEqual(restoredRow?.lifecycle, 'ready');
   execFileSync('tmux', ['has-session', '-t', rollbackSlotId]);
+  const restoredLease = rpc('runtime.capability.status', {
+    slotId: rollbackSlotId,
+    ownerRunId: rollbackRunId,
+  }).leases.find((lease) => lease.id === heldLease.id);
+  assert.equal(restoredLease?.state, 'acquired');
+
   const rollbackAcquire = rpc('runtime.capability.acquire', {
     slotId: rollbackSlotId,
     capabilityId: 'proof-resource',
@@ -498,11 +520,35 @@ try {
   const blocked = denied({ runId, stepName: 'monitor' }, /No proof plan is recorded/);
   assert.equal(blocked.slotId, slotId);
 
+  const beforeRestart = rpc('runtime.capability.acquire', {
+    slotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: runId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'held blocked proof before find-slot restart',
+      mode: 'state',
+    },
+  });
+  assert.equal(beforeRestart.ok, true, JSON.stringify(beforeRestart));
+  const heldBeforeRestart = rpc('runtime.capability.status', {
+    slotId,
+    ownerRunId: runId,
+  }).leases.find((lease) => lease.owner.runId === runId);
+  assert.equal(heldBeforeRestart?.state, 'acquired');
   rpc('run.replayStep', { runId, stepName: 'find-slot', triggeredBy: 'operator' });
   const restarted = rpc('run.get', { runId }).run;
   const slot = rpc('fleet.status', {}).fleet.slots.find((candidate) => candidate.slot === slotId);
   assert.equal(restarted.status, 'slot-finding');
   assert.equal(restarted.slotId, null);
+  const afterRestart = rpc('runtime.capability.status', { slotId, ownerRunId: runId });
+  // Released leases remain in the audit log (and may retain a warm provider).
+  // They must no longer hold a claim after the slot is freed for another run.
+  assert.equal(
+    afterRestart.leases.find((lease) => lease.id === heldBeforeRestart.id)?.state,
+    'released',
+  );
+
   const capabilityStore = JSON.parse(readFileSync(env.FARMSLOT_CAPABILITY_STORE_FILE, 'utf8'));
   assert.equal(
     (capabilityStore.terminalOwnerEntries ?? []).some(({ id }) => id === runId),
@@ -522,6 +568,12 @@ try {
     },
   });
   assert.equal(restartAcquire.ok, true, JSON.stringify(restartAcquire));
+  const reacquiredLease = rpc('runtime.capability.status', {
+    slotId,
+    ownerRunId: runId,
+  }).leases.find((lease) => lease.owner.runId === runId && lease.state === 'acquired');
+  assert.ok(reacquiredLease);
+  assert.notEqual(reacquiredLease.id, heldBeforeRestart.id);
   const restartRelease = rpc('runtime.capability.release', {
     slotId,
     ownerRunId: runId,
@@ -661,6 +713,10 @@ try {
     JSON.stringify({
       runId,
       lostRunId,
+      lostEvalRunId,
+      evalRunId,
+      rollbackRunId,
+      freeRollbackRunId,
       updateRunId,
       restart: restarted.status,
       slot: slot?.lifecycle,

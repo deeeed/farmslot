@@ -84,6 +84,13 @@ export interface RunReplayStepHooks {
   afterGenerationBump?(): Promise<void>;
 }
 
+function shouldInjectReplayClaimFailure(runId: string): boolean {
+  return (
+    process.env.NODE_TEST_CONTEXT === '1' &&
+    (process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS?.split(',').includes(runId) ?? false)
+  );
+}
+
 export function freshDispatchEngineStateForReplay(
   engineState: RunEngineState | undefined,
   freshDispatch: boolean | undefined,
@@ -720,7 +727,12 @@ export async function runReplayStep(
       }
     }
     if (blocker) {
-      if (!evalCanRestartFromPrepare || (!slotId && findSlotIdx < 0)) throw new Error(blocker);
+      if (
+        !evalCanRestartFromPrepare ||
+        (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx < 0)
+      ) {
+        throw new Error(blocker);
+      }
       if (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx >= 0) {
         replayStepName = PS.FIND_SLOT;
         targetIdx = findSlotIdx;
@@ -1030,12 +1042,7 @@ export async function runReplayStep(
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
           // The disposable gateway recipe injects a failure after a real claim.
-          if (
-            process.env.NODE_TEST_CONTEXT === '1' &&
-            process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS?.split(',').includes(
-              params.runId,
-            )
-          ) {
+          if (shouldInjectReplayClaimFailure(params.runId)) {
             throw new Error('Injected replay failure after claim');
           }
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
