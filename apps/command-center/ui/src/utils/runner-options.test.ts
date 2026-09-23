@@ -67,9 +67,8 @@ test('PI is a dispatch runner defaulting to Grok', () => {
   assert.deepEqual(effortsForRunner('pi', 'ollama/qwen2.5-coder'), [...PI_THINKING_LEVELS]);
 });
 
-test('Claude Opus 5.5 and fable are selectable without changing the default', () => {
+test('Claude fable is selectable but not the default model', () => {
   assert.equal(MODELS_BY_RUNNER.claude.includes('fable'), true);
-  assert.equal(MODELS_BY_RUNNER.claude.includes('claude-opus-5-5'), true);
   assert.notEqual(DEFAULT_MODEL.claude, 'fable');
 });
 
@@ -83,13 +82,7 @@ test('modelsForRunner returns only that runner allowlist — no cross-runner ble
     'gpt-5.5',
     'gpt-5.4',
   ]);
-  assert.deepEqual(modelsForRunner('claude'), [
-    'sonnet',
-    'opus',
-    'claude-opus-5-5',
-    'haiku',
-    'fable',
-  ]);
+  assert.deepEqual(modelsForRunner('claude'), ['sonnet', 'opus', 'haiku', 'fable']);
   assert.equal(modelsForRunner('codex').includes('opus'), false);
   assert.equal(modelsForRunner('codex').includes('grok-build'), false);
   assert.equal(modelsForRunner('claude').includes('gpt-5.5'), false);

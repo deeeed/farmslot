@@ -142,11 +142,6 @@ describe('claude runner', () => {
 
   it('accepts fable without making it the default model', () => {
     assert.equal(runnerSupportsModel('claude', 'fable'), true);
-    assert.equal(runnerSupportsModel('claude', 'claude-opus-5-5'), true);
-    assert.equal(
-      getRunnerDefinition('claude').nativeChoices?.models.includes('claude-opus-5-5'),
-      true,
-    );
     assert.notEqual(getRunnerDefinition('claude').defaultModel, 'fable');
     assert.equal(runnerSupportsModel('codex', 'fable'), false);
   });

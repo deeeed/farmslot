@@ -280,10 +280,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'claude',
     nativeTransport: 'claude-stream-json',
     supportsNativeTaskReuse: true,
-    nativeChoices: {
-      models: ['sonnet', 'opus', 'claude-opus-5-5', 'haiku', 'fable'],
-      modes: ['default'],
-    },
+    nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,

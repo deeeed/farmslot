@@ -28,7 +28,7 @@ export const PI_ANTHROPIC_MODELS = [
 ] as const;
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
-  claude: ['sonnet', 'opus', 'claude-opus-5-5', 'haiku', 'fable'],
+  claude: ['sonnet', 'opus', 'haiku', 'fable'],
   // Astra first; retain earlier Codex models for explicit selections.
   codex: [
     DEFAULT_CODEX_MODEL,

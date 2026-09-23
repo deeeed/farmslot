@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Offer GPT-6 Sol and Claude Opus 5.5 in native sessions and use Cursor's advertised Grok 4.7 model ID.
+- Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 

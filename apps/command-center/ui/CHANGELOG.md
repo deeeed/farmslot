@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Offer GPT-6 Sol and Claude Opus 5.5 in their model pickers and use Cursor's advertised Grok 4.7 model IDs.
+- Offer GPT-6 Sol in the Codex model picker and use Cursor's advertised Grok 4.7 model IDs.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
 
