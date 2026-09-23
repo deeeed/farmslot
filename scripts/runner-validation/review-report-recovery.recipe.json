@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Recover a completed static review",
+  "description": "Set FARMSLOT_GATEWAY, FARMSLOT_REVIEW_PROOF_RUN_ID and FARMSLOT_REVIEW_EXPECT_REPORT_SHA256 captured from the original report. Read-only verification through the production gateway; does not launch a reviewer or publish a review.",
+  "workflow": {
+    "entry": "saved-report",
+    "nodes": {
+      "saved-report": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/review-report-recovery.mjs",
+        "intent": "Verify recovery after checkout cleanup preserves the exact report hash and commit, completes monitor without another dispatch and presents the original report for a publication decision.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

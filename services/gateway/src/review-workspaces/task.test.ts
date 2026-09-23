@@ -337,6 +337,23 @@ test('the copied shared marker works offline; completion rejects wrong SHA, stal
       (await readReviewWorkspaceCompletion(f.run.id, f.deps))?.result?.recommendation,
       'REQUEST_CHANGES',
     );
+    const formattedReport = `# Review\n**VERDICT: REQUEST_CHANGES**\n- **COMMIT (head):** \`${f.subject.headSha}\`\n`;
+    await writeFile(path.join(f.task, 'artifacts/review.md'), formattedReport);
+    await writeFile(
+      path.join(f.task, 'artifacts/review-result.json'),
+      JSON.stringify({ ...findingsResult, reportSha256: digest(formattedReport) }),
+    );
+    // A failed validation can clean up the checkout before archiving completion.
+    // Recover from the original task bytes, preserving source and attempt identity.
+    f.run.reviewWorkspace!.cleanedAt = new Date().toISOString();
+    const view = path.join(f.deps.snapshotRoot(), f.run.id, 'view');
+    await rm(path.join(view, 'SIGNAL.json'));
+    await rm(path.join(view, 'artifacts'), { recursive: true });
+    const recovered = await readReviewWorkspaceCompletion(f.run.id, f.deps);
+    assert.equal(recovered?.result?.reviewMd, formattedReport);
+    assert.equal(await readFile(path.join(view, 'artifacts/review.md'), 'utf8'), formattedReport);
+    assert.equal(recovered?.signal.attemptId, started.attemptId);
+    delete f.run.reviewWorkspace!.cleanedAt;
     await writeFile(path.join(f.task, 'artifacts/review.md'), report);
     await writeFile(
       path.join(f.task, 'artifacts/review-result.json'),

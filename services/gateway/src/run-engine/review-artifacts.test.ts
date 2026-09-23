@@ -11,6 +11,7 @@ import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/pl
 import {
   buildIndependentReviewPlanningBrief,
   readFrozenPlanningContext,
+  reviewCommitFromMarkdown,
   reviewRecommendationFromMarkdown,
 } from './review-artifacts.js';
 
@@ -137,4 +138,18 @@ test('review recommendation accepts the emphasized field emitted by the review t
     reviewRecommendationFromMarkdown('## 10. Recommended Action\n\nREQUEST_CHANGES'),
     'REQUEST_CHANGES',
   );
+});
+
+test('review metadata accepts presentation formatting but rejects conflicting identities', () => {
+  const head = 'b5702bb4692906e155409d291a7709444ed13e23';
+  const report = `# Review\n**VERDICT: REQUEST_CHANGES**\n- **COMMIT (head):** \`${head}\`\n- **BASE:** \`${'a'.repeat(40)}\``;
+  assert.equal(reviewCommitFromMarkdown(report), head);
+  assert.equal(reviewRecommendationFromMarkdown(report), 'REQUEST_CHANGES');
+  for (const prefix of ['COMMIT:', '## Commit:', '- __Commit:__', '1. **COMMIT (head):**'])
+    assert.equal(reviewCommitFromMarkdown(`${prefix} \`${head}\``), head);
+  assert.equal(reviewCommitFromMarkdown(`${report}\nCOMMIT: ${'c'.repeat(40)}`), null);
+  assert.equal(reviewCommitFromMarkdown(`COMMIT: ${head.slice(0, 8)}`), null);
+  assert.equal(reviewRecommendationFromMarkdown(`${report}\nVERDICT: APPROVE`), null);
+  assert.equal(reviewCommitFromMarkdown(`\`\`\`\nCOMMIT: ${head}\n\`\`\``), null);
+  assert.equal(reviewRecommendationFromMarkdown('```\nVERDICT: APPROVE\n```'), null);
 });

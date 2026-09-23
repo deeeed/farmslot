@@ -421,6 +421,26 @@ export async function executeReviewWorkspaceStep(
       };
     }
     case PipelineSteps.MONITOR: {
+      if (run.reviewWorkspace?.cleanedAt) {
+        // Recovery of a completed report needs its frozen task and artifacts,
+        // not a checkout, skill installation or a new reviewer process.
+        const completion = await readReviewWorkspaceCompletion(runId);
+        check();
+        if (!completion?.result || completion.signal.outcome !== 'success')
+          throw new BlockedRunError(
+            'No complete saved review is available. Start a new review.',
+            'review-incomplete',
+          );
+        await recordWorkspaceReviewCompletion(runId, generation, completion.result);
+        emit(Events.RUN_UPDATED, { run: getRun(runId) });
+        return {
+          outputs: {
+            workerSignal: completion.signal,
+            headSha: run.reviewWorkspaceSubject?.headSha,
+            recovered: true,
+          },
+        };
+      }
       await ensureReviewWorkspaceSupport(runId, check);
       check();
       const project = await loadProjectVars(run.project);
