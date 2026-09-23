@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Bound-slot profile-fit advice",
-  "description": "Requires an isolated local gateway started with separate FARMSLOT_HOME, FARMSLOT_POOL_DIR and FARMSLOT_RUNS_DIR under a temporary directory. Set FARMSLOT_GATEWAY to its localhost port (above 10000) and FARMSLOT_POOL_DIR to its pool. Provisions disposable CLI slots, checks preview and GRADE for incompatible and compatible core runs, and cleans up.",
+  "description": "Requires an isolated local gateway started with separate FARMSLOT_HOME, FARMSLOT_POOL_DIR and FARMSLOT_RUNS_DIR under a temporary directory. Set FARMSLOT_GATEWAY to its localhost port (above 10000) and FARMSLOT_POOL_DIR to its pool. Provisions disposable CLI slots, checks automatic and bound preview resource blockers plus GRADE for incompatible and compatible core runs without proceeding into task creation, and cleans up.",
   "workflow": {
     "entry": "verify-profile-fit",
     "nodes": {
@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node scripts/runner-validation/gateway/profile-fit-gate.mjs",
         "timeout_ms": 45000,
-        "intent": "Assert incompatible slots warn in preview and block at GRADE, while compatible core slots proceed without profile advice.",
+        "intent": "Assert incompatible slots report a resource blocker in preview and pause at GRADE, while compatible core slots reach a separate flow decision without creating task files.",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

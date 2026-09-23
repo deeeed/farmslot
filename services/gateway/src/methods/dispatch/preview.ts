@@ -1168,6 +1168,9 @@ export async function dispatchPreview(
     });
   }
   if (profileFit) {
+    const blocker =
+      slotInfo && companionResourceBlocker(slotInfo, profileFit.suggestedPrepareProfile);
+    if (blocker) profileFit.slotResourceBlocker = blocker;
     result.preview.profileFit = profileFit;
   }
   return result;

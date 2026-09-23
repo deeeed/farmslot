@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and warn before dispatch when a selected slot lacks Companion resources.
+- Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.
 
 - Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
 

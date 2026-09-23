@@ -345,7 +345,7 @@ export async function executeGradeStep(
         {
           id: 'continue',
           label: `Continue with ${currentPrepareProfile}`,
-          style: 'secondary',
+          style: 'primary',
           description: 'Keep the current profile for this run.',
         },
         { id: 'abort', label: 'Abort run', style: 'danger', description: 'Stop this run.' },
