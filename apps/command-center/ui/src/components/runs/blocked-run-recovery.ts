@@ -97,7 +97,11 @@ export class BlockedRunRecovery extends LitElement {
     this.ownedSlotStatus = null;
     this.ownershipKnown = false;
     this.error = '';
-    if (!isRecoverableBlockedWorkerRun(run) || !run.slotId) return false;
+    if (!isRecoverableBlockedWorkerRun(run)) return false;
+    if (!run.slotId) {
+      this.ownershipKnown = true;
+      return true;
+    }
     try {
       const status = await gateway.request<RuntimeCapabilityStatusResult>(
         Methods.RUNTIME_CAPABILITY_STATUS,
@@ -132,7 +136,7 @@ export class BlockedRunRecovery extends LitElement {
         },
       );
       if (refreshSeq !== this.refreshSeq) return false;
-      if (probe.code === 'ready' || probe.code === 'non_terminal' || probe.code === 'stale') {
+      if (probe.code === 'ready' || probe.code === 'non_terminal') {
         this.signal = probe.signal ?? null;
       } else {
         this.error = [this.error, probe.message].filter(Boolean).join('; ');
@@ -255,14 +259,16 @@ export class BlockedRunRecovery extends LitElement {
             </p>`
           : this.status
             ? html`<p>
-                No proof plan is recorded. Resource needs are unknown.
+                ${this.status.catalog?.length
+                  ? 'No proof plan is recorded. Resource needs are unknown.'
+                  : 'No runtime proof resources are configured. A fresh worker attempt is still required.'}
                 ${canSelectWorker
                   ? 'Restart on an available worker.'
                   : `Start a new ${run.flowType} run.`}
               </p>`
             : nothing}
         <div class="actions">
-          ${run.slotId && slotOwned
+          ${run.slotId
             ? html`<a
                 href=${`#slot/${encodeURIComponent(run.slotId)}?activity=info&runId=${encodeURIComponent(run.id)}`}
                 >Open worker and resources</a
@@ -294,7 +300,7 @@ export class BlockedRunRecovery extends LitElement {
         ${slotOwned && !freshSignal
           ? html`<p>
               Waiting for a new worker signal. A replay before the next attempt starts would re-read
-              the old blocked result.
+              the old blocked result. Use Refresh recorded status after the worker starts.
             </p>`
           : nothing}
         ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}

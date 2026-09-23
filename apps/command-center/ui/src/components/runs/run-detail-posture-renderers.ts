@@ -528,12 +528,12 @@ export function renderRunPostureSummary(
         >
       </div>
       ${slotId && summary.rows.some((row) => row.cleanupFailure)
-        ? html`<div class="posture-transition" data-testid="run-posture-recovery" role="status">
+        ? html`<div class="posture-transition" data-testid="run-posture-recovery" role="alert">
             Cleanup is unresolved.
             <a href=${`#slot/${encodeURIComponent(slotId)}?activity=info`}
               >Open slot resource controls</a
             >
-            to retry stopping the affected provider when the worker is no longer using it.
+            Check the current slot owner before retrying stop on the affected provider.
           </div>`
         : nothing}
       ${summary.resourceWait

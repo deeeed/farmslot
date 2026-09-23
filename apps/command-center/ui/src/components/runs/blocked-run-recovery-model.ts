@@ -8,6 +8,13 @@ export function blockedWorkerProofReady(
   status: RuntimeCapabilityStatusResult | null,
 ): boolean {
   const plan = status?.proofPlans[run.id];
+  if (
+    !plan &&
+    status &&
+    status.catalog?.length === 0 &&
+    !status.leases.some((lease) => lease.owner.runId === run.id)
+  )
+    return true;
   if (!plan || plan.slotId !== run.slotId || plan.ownerRunId !== run.id) return false;
   const blockedAt = run.steps.find((step) => step.name === 'monitor')?.completedAt;
   if (!blockedAt || !strictIso.test(blockedAt) || !Number.isFinite(Date.parse(blockedAt)))

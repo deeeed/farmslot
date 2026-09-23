@@ -188,6 +188,10 @@ test('blocked monitor replay needs the recorded proof plan and fresh healthy lea
   assert.equal(blockedMonitorProofReady(run, status), true);
   assert.equal(blockedMonitorProofReady(run, { ...status, proofPlans: {} }), false);
   assert.equal(
+    blockedMonitorProofReady(run, { ...status, catalog: [], leases: [], proofPlans: {} }),
+    true,
+  );
+  assert.equal(
     blockedMonitorProofReady(run, {
       ...status,
       proofPlans: { [run.id]: { ...status.proofPlans[run.id], slotId: 'other-slot' } },

@@ -90,6 +90,7 @@ function blockedRun(id, ownedSlotId, flowType = 'fix-bug', readyForMonitor = fal
               slotId: ownedSlotId,
               taskFile,
               signalFile: path.join(path.dirname(taskFile), 'SIGNAL.json'),
+              signalAttemptId: 'blocked-attempt',
             },
           ],
         }
@@ -230,7 +231,7 @@ try {
     [lostRunId, 'unavailable-worker', 'fix-bug'],
     [updateRunId, 'unavailable-worker', 'update-branch'],
   ]) {
-    const run = blockedRun(id, ownedSlotId, flowType, id === successRunId);
+    const run = blockedRun(id, ownedSlotId, flowType);
     writeJson(path.join(root, '.runs', `${id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
@@ -353,6 +354,35 @@ try {
   const proof = rpc('runtime.capability.status', { slotId, ownerRunId: successRunId });
   assert.equal(proof.proofPlans[successRunId]?.requirements[0].capabilityId, 'proof-resource');
   assert.ok(Date.parse(proof.leases[0].health.checkedAt) > Date.parse(blockedAt));
+  const releasedProof = rpc('runtime.capability.release', {
+    slotId,
+    ownerRunId: successRunId,
+    capabilityId: 'proof-resource',
+    keepWarm: false,
+  });
+  assert.equal(releasedProof.ok, true, JSON.stringify(releasedProof));
+  denied({ runId: successRunId, stepName: 'monitor' }, /Proof resources are not healthy/);
+  const reacquiredProof = rpc('runtime.capability.acquire', {
+    slotId,
+    capabilityId: 'proof-resource',
+    ownerRunId: successRunId,
+    proofRequirement: {
+      capabilityId: 'proof-resource',
+      reason: 'blocked worker proof',
+      mode: 'state',
+    },
+  });
+  assert.equal(reacquiredProof.ok, true, JSON.stringify(reacquiredProof));
+
+  writeJson(signalFile, {
+    status: 'complete',
+    outcome: 'success',
+    attemptId: 'obsolete-attempt',
+    timestamp: new Date(Date.parse(startedAt) - 1000).toISOString(),
+  });
+  const staleSignal = rpc('run.probeWorkerSignal', { runId: successRunId });
+  assert.equal(staleSignal.code, 'stale', JSON.stringify(staleSignal));
+  denied({ runId: successRunId, stepName: 'monitor' }, /older than this run/);
 
   const nextAttempt = randomUUID();
   writeJson(signalFile, {
@@ -360,7 +390,7 @@ try {
     attemptId: 'blocked-attempt',
     timestamp: new Date().toISOString(),
   });
-  denied({ runId: successRunId, stepName: 'monitor' }, /status is/);
+  denied({ runId: successRunId, stepName: 'monitor' }, /Start a new attempt with \.\/mark start/);
   const signal = {
     status: 'complete',
     outcome: 'success',
@@ -389,11 +419,6 @@ try {
   );
   const assessed = rpc('run.probeWorkerSignal', { runId: successRunId });
   assert.equal(assessed.code, 'ready', JSON.stringify(assessed));
-  writeJson(signalFile, {
-    status: 'running',
-    attemptId: nextAttempt,
-    timestamp: new Date().toISOString(),
-  });
   const resumed = rpc('run.replayStep', {
     runId: successRunId,
     stepName: 'monitor',
@@ -405,7 +430,6 @@ try {
   );
   assert.equal(working.phase, 'working');
   assert.equal(working.agent, 'working');
-  writeJson(signalFile, { ...signal, timestamp: new Date().toISOString() });
   let monitored;
   for (let attempt = 0; attempt < 100; attempt++) {
     monitored = rpc('run.get', { runId: successRunId }).run;

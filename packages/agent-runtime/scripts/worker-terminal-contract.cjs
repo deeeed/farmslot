@@ -240,13 +240,12 @@ function resolveWorkerTerminalContract(projectConfig, flowType, options = {}) {
     projectConfig?.acceptance || flowLayer?.acceptance
       ? { ...projectConfig?.acceptance, ...flowLayer?.acceptance }
       : undefined;
-  const acceptance =
-    acceptanceRules && typeof acceptanceRules === 'object'
-      ? {
-          ...(acceptanceRules.require ? { require: true } : {}),
-          ...(acceptanceRules.allowWeak ? { allowWeak: true } : {}),
-        }
-      : null;
+  const acceptance = acceptanceRules
+    ? {
+        ...(acceptanceRules.require ? { require: true } : {}),
+        ...(acceptanceRules.allowWeak ? { allowWeak: true } : {}),
+      }
+    : null;
 
   return {
     schemaVersion: 1,

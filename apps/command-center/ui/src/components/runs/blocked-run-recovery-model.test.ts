@@ -168,6 +168,10 @@ test('proof readiness needs an explicit plan and a provider check after the bloc
   } as unknown as RuntimeCapabilityStatusResult;
   assert.equal(blockedWorkerProofReady(blockedRun, { ...status, proofPlans: {} }), false);
   assert.equal(
+    blockedWorkerProofReady(blockedRun, { ...status, catalog: [], leases: [], proofPlans: {} }),
+    true,
+  );
+  assert.equal(
     blockedWorkerProofReady(blockedRun, {
       ...status,
       proofPlans: { [run.id]: { ...status.proofPlans[run.id], slotId: 'other-slot' } },

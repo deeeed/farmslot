@@ -349,6 +349,12 @@ export function freshBlockedMonitorAttempt(
 
 export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
   const plan = status.proofPlans[run.id];
+  if (
+    !plan &&
+    status.catalog?.length === 0 &&
+    !status.leases.some((lease) => lease.owner.runId === run.id)
+  )
+    return true;
   const blockedAt = parseStrictIsoMs(
     run.steps.find((step) => step.name === PS.MONITOR)?.completedAt,
   );
@@ -682,13 +688,13 @@ export async function runReplayStep(
     previousMonitorSignal.status === 'blocked';
   if (needsBlockedAttempt) {
     const slotId = existing.slotId;
-    const slot = slotId ? await readSlotRow(slotId) : null;
     const nextAction =
-      findSlotIdx >= 0 ? 'Restart from find-slot' : 'Start a new update-branch run';
+      findSlotIdx >= 0 ? 'Restart from find-slot' : `Start a new ${existing.flowType} run`;
+    if (!slotId) throw new Error(`This run has no slot. ${nextAction} instead.`);
+    const slot = await readSlotRow(slotId);
     if (!blockedMonitorOwnsSlot(slot, existing.id)) {
       throw new Error(`This run no longer owns its slot. ${nextAction} instead.`);
     }
-    if (!slotId) throw new Error(`This run has no slot. ${nextAction} instead.`);
     const status = await runtimeCapabilityStatus({ slotId });
     if (!blockedMonitorProofReady(existing, status)) {
       throw new Error(`Proof resources are not healthy after the block. ${nextAction} instead.`);
@@ -719,6 +725,17 @@ export async function runReplayStep(
     );
   }
   if (needsBlockedAttempt && replayStepName === PS.MONITOR && !blockedAttempt) {
+    if (
+      probe?.signal?.attemptId &&
+      previousMonitorSignal &&
+      typeof previousMonitorSignal === 'object' &&
+      'attemptId' in previousMonitorSignal &&
+      probe.signal.attemptId === previousMonitorSignal.attemptId
+    ) {
+      throw new Error(
+        'This worker attempt is still blocked. Start a new attempt with ./mark start before resuming monitoring.',
+      );
+    }
     throw new Error(
       probe?.message || 'A newer worker signal is required before replaying this blocked monitor',
     );
@@ -799,6 +816,8 @@ export async function runReplayStep(
   }
 
   let reclaimedSlotId: string | null = null;
+  let reclaimedSlotEpoch: number | null = null;
+  let priorOwnedSlotFields: Record<string, unknown> | null = null;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -822,24 +841,6 @@ export async function runReplayStep(
     };
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
-
-    if (replayStepName === PS.FIND_SLOT && existing.slotId) {
-      const slot = await readSlotRow(existing.slotId);
-      if (slot?.current_run_id === params.runId) {
-        const { slotRelease } = await import('../slot.js');
-        const { released } = await slotRelease(
-          { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
-          emit,
-        );
-        if (!released) {
-          throw new Error(
-            `Slot ${existing.slotId} could not be released before restarting this run`,
-          );
-        }
-        assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
-        assertNativeReplayCurrent();
-      }
-    }
 
     const replaysCompletionOrGate =
       targetIdx >= 0 &&
@@ -876,6 +877,24 @@ export async function runReplayStep(
     if (hooks.afterGenerationBump) await hooks.afterGenerationBump();
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+
+    if (replayStepName === PS.FIND_SLOT && existing.status === 'blocked' && existing.slotId) {
+      const slot = await readSlotRow(existing.slotId);
+      if (slot?.current_run_id === params.runId) {
+        const { slotRelease } = await import('../slot.js');
+        const { released } = await slotRelease(
+          { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
+          emit,
+        );
+        if (!released) {
+          throw new Error(
+            `Slot ${existing.slotId} could not be released before restarting this run`,
+          );
+        }
+        assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+        assertNativeReplayCurrent();
+      }
+    }
 
     if (nativeFreshRestart) {
       const { restartNativeWorkerContexts } =
@@ -922,7 +941,7 @@ export async function runReplayStep(
           // Claim-type write: bumps the ownership epoch so a teardown racing this
           // reclaim aborts its remaining writes instead of clobbering it.
           const { claimSlotStatusIf } = await import('../../core/index.js');
-          const { claimed } = await claimSlotStatusIf(
+          const { claimed, epoch } = await claimSlotStatusIf(
             replaySlotId,
             (slot) => {
               const live = getRun(params.runId);
@@ -931,6 +950,13 @@ export async function runReplayStep(
               // only claim that same worker; an intervening release or reassignment
               // must not turn this into a generic free-slot reclaim.
               if (needsBlockedAttempt && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
+              if (needsBlockedAttempt) {
+                priorOwnedSlotFields = {
+                  lifecycle: slot.lifecycle,
+                  phase: slot.phase,
+                  agent: slot.agent,
+                };
+              }
               return replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
               }).ok;
@@ -954,6 +980,18 @@ export async function runReplayStep(
             );
           }
           reclaimedSlotId = replaySlotId;
+          reclaimedSlotEpoch = epoch;
+          if (
+            blockedAttempt &&
+            !blockedMonitorProofReady(
+              existing,
+              await runtimeCapabilityStatus({ slotId: replaySlotId }),
+            )
+          ) {
+            throw new Error(
+              'Proof resources changed during replay. Refresh their health before resuming monitoring.',
+            );
+          }
           assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
           assertNativeReplayCurrent();
           effectiveSlotId = replaySlotId;
@@ -1285,9 +1323,10 @@ export async function runReplayStep(
     const resetAgentContexts = replaySignal
       ? resetAgentContextsBase?.map((context) => {
           if (context.role !== primaryRoleForFlow(existing.flowType)) return context;
+          const contextSignalAt = parseStrictIsoMs(context.lastSignalAt);
+          const replaySignalAt = parseStrictIsoMs(replaySignal.timestamp);
           const newerContextSignal =
-            context.lastSignalAt &&
-            Date.parse(context.lastSignalAt) > Date.parse(replaySignal.timestamp);
+            contextSignalAt !== null && replaySignalAt !== null && contextSignalAt > replaySignalAt;
           return {
             ...context,
             status: 'working' as const,
@@ -1449,11 +1488,21 @@ export async function runReplayStep(
           getRun(params.runId)?.status === initialNativeStatus))
     ) {
       try {
-        const { slotRelease } = await import('../slot.js');
-        await slotRelease(
-          { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
-          () => {},
-        );
+        if (priorOwnedSlotFields) {
+          const { markSlotStatusIf } = await import('../../core/index.js');
+          await markSlotStatusIf(
+            reclaimedSlotId,
+            (slot) =>
+              slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
+            priorOwnedSlotFields,
+          );
+        } else {
+          const { slotRelease } = await import('../slot.js');
+          await slotRelease(
+            { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
+            () => {},
+          );
+        }
       } catch (releaseErr) {
         console.warn(
           `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
