@@ -4,8 +4,7 @@ import { isDecisionAdviceDeclineAction, type RunDecision } from '@farmslot/proto
 export function supportsDecisionAdvice(
   decision: Pick<RunDecision, 'actions' | 'resolvedAt' | 'type'>,
 ): boolean {
-  if (decision.resolvedAt || decision.type !== 'engine_collision' || decision.actions.length < 3)
-    return false;
+  if (decision.resolvedAt || decision.actions.length < 3) return false;
   const distinct = new Set(decision.actions.map((action) => action.id));
   const meaningful = decision.actions.filter((action) => !isDecisionAdviceDeclineAction(action.id));
   return (

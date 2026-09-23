@@ -147,6 +147,13 @@ export interface AssessmentSubject {
     project: string;
     step: string;
     snapshotHash: string;
+    /** Admitted decision packet, retained with the advice so resolved gates remain reviewable. */
+    decision?: {
+      id: string;
+      type: string;
+      description: string;
+      actions: Array<{ id: string; label: string; description: string }>;
+    };
     sources?: Array<{ id: string; sourceId: string; digest: string }>;
   };
 }

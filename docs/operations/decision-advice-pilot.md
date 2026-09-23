@@ -1,7 +1,8 @@
 # Run the pending-decision advice pilot
 
-This opt-in experiment covers pending run-backed `engine_collision` decisions
-with two distinct non-decline actions.
+This opt-in experiment covers pending run-backed decisions with two distinct,
+described non-decline actions and an explicit source admission. Eligibility
+depends on the available actions, not the decision type or assessment provider.
 The recommendation can only name an existing action or abstain. The operator
 still chooses and resolves the action. See [issue #719](https://github.com/deeeed/farmslot/issues/719)
 and the [evaluation plan](../plans/structured-assessment-evaluation.md).
@@ -57,8 +58,13 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
 4. Refresh the decision panel. `decision.advice.get` shows admission without
    making a model call. Press **Get recommendation** once to request an
    assessment. Inspect its saved answer, attempted call, provider/model,
-   usage and cost in the panel and assessment history. Missing usage remains
-   an unknown charge. Do not repeat a request to improve a weak answer.
+   usage and cost in the panel and assessment history. Open Intelligence >
+   Assessments and select Decision recommendations to see past answers, provider,
+   model and your rating. Expand a record to inspect the redacted decision text
+   sent to the provider and its actions; it fetches your chosen action from the
+   run when available. Older
+   records lack the saved decision context. History lasts 30 days. Missing
+   usage remains an unknown charge. Do not repeat a request to improve a weak answer.
    Do not edit the admitted entry or price during an in-flight request. If
    either changes before dispatch, the skipped reservation remains unavailable
    for that decision and provider/model. A different provider/model can proceed
@@ -66,9 +72,13 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    snapshot; the panel remains disabled for the saved result. A newly issued
    decision can also proceed. Adding unrelated entries is harmless.
 
-The current profile gate still offers only Continue and Abort after #720, so it is excluded until it offers a second non-decline action and a separate frozen fixture. The [synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
-are for the controlled classification study. Current collision packets lack operator
-intent and prior-run safety facts, so those cases call for abstention. A saved
+A profile gate that offers only Continue and Abort is still ineligible: there
+must be two meaningful non-decline actions. Newly eligible decision types need
+separate frozen fixtures before their recommendations can claim utility. The
+[synthetic cases and blinded labels](../../scripts/decision-advice/README.md)
+are for the controlled classification study. Packets containing only action
+descriptions may lack operator intent or prior-run safety facts, so the model
+should abstain in those cases. A saved
 action ID proves display and validation, not decision quality. Freeze cases and
 labels before candidate calls, then collect paired human decisions at equal
 adjudicated quality for an efficiency claim. Without paired time, total model tokens and cost, the

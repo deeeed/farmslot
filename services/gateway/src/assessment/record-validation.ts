@@ -19,6 +19,8 @@ const bounded = (value: unknown, max = 200): value is string =>
   value.length > 0 &&
   value.length <= max &&
   !/[\x00-\x1f]/.test(value);
+const admittedText = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length <= max && !/[\x00-\x08\x0b-\x1f]/.test(value);
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const probability = (value: unknown): value is number => count(value) && value <= 1;
@@ -46,7 +48,7 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
     if (
       !record(r) ||
       Object.keys(r).some(
-        (k) => !['id', 'project', 'step', 'snapshotHash', 'sources'].includes(k),
+        (k) => !['id', 'project', 'step', 'snapshotHash', 'decision', 'sources'].includes(k),
       ) ||
       !bounded(r.id) ||
       !bounded(r.project) ||
@@ -55,6 +57,28 @@ export function assertAssessmentSubject(value: unknown): asserts value is Assess
       !/^[a-f0-9]{64}$/.test(r.snapshotHash)
     )
       throw new Error('Invalid assessment run identity');
+    if (r.decision !== undefined) {
+      const decision = r.decision;
+      if (
+        !record(decision) ||
+        Object.keys(decision).some((k) => !['id', 'type', 'description', 'actions'].includes(k)) ||
+        !bounded(decision.id) ||
+        !bounded(decision.type, 100) ||
+        !admittedText(decision.description, 4096) ||
+        !Array.isArray(decision.actions) ||
+        decision.actions.length < 3 ||
+        decision.actions.length > 20 ||
+        !decision.actions.every(
+          (action) =>
+            record(action) &&
+            Object.keys(action).every((k) => ['id', 'label', 'description'].includes(k)) &&
+            bounded(action.id, 80) &&
+            admittedText(action.label, 4096) &&
+            admittedText(action.description, 4096),
+        )
+      )
+        throw new Error('Invalid assessment decision context');
+    }
     if (
       r.sources !== undefined &&
       (!Array.isArray(r.sources) ||

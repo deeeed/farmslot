@@ -134,14 +134,17 @@ test('decision advice requires opt-in and an exact admitted snapshot, never reso
     'insufficient-options',
   );
   assert.equal(run.decisions[0]?.resolvedAt, undefined);
+  decision.description = 'Synthetic posting choice';
   decision.type = 'engine_review_posting' as typeof decision.type;
   updateRun(run.id, { decisions: [decision] });
-  assert.equal(
-    (await withPrincipal(() => decisionAdviceGet(params))).reason,
-    'insufficient-options',
-  );
+  const posting = await withPrincipal(() => decisionAdviceGet(params));
+  assert.equal(posting.reason, 'not-admitted');
+  assert.notEqual(posting.snapshotHash, pending.snapshotHash);
   decision.type = 'engine_prepare_profile_mismatch' as typeof decision.type;
   decision.description = 'Synthetic profile gate';
+  updateRun(run.id, { decisions: [decision] });
+  assert.equal((await withPrincipal(() => decisionAdviceGet(params))).reason, 'not-admitted');
+  decision.actions = [decision.actions[0], decision.actions[2]];
   updateRun(run.id, { decisions: [decision] });
   assert.equal(
     (await withPrincipal(() => decisionAdviceGet(params))).reason,
@@ -344,6 +347,8 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
     ticketOrPr: 'SYNTH-PAID-PATH',
   });
   const decision = makeDecision();
+  decision.description = 'Synthetic decision synthetic-test-credential';
+  decision.actions[0].label = 'Prepare\nresource';
   updateRun(run.id, { status: 'blocked', decisions: [decision] });
   let secondRun: ReturnType<typeof createRun> | undefined;
   t.after(async () => {
@@ -456,6 +461,16 @@ test('analyze reserves a single admitted request, saves input and answer, and ne
     (record) => record.id === analyzed.assessment?.assessmentId,
   );
   assert.ok(saved);
+  assert.deepEqual(saved.subject.run?.decision, {
+    id: params.decisionId,
+    type: run.decisions[0]?.type,
+    description: 'Synthetic decision [REDACTED]',
+    actions: run.decisions[0]?.actions.map(({ id, label, description }) => ({
+      id,
+      label,
+      description: description ?? '',
+    })),
+  });
   assert.equal(saved?.reservation?.price?.provider, 'typesafe');
   const repricedGet = await withPrincipal(() => decisionAdviceGet(params));
   assert.equal(repricedGet.recommendedActionId, 'continue');

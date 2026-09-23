@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show advice at every eligible run gate. Filter advice history and show the saved decision, options, provider, model, operator rating and chosen run action.
+
+- Offer the existing decision advice panel for any eligible pending run decision, regardless of its type.
+
 - Explain when a chosen slot cannot use a suggested Companion profile, and hide its apply action until the operator changes slots; auto-picked slots can still search for a compatible slot.
 
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
