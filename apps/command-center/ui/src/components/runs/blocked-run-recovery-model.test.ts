@@ -17,7 +17,13 @@ const run = {
   status: 'blocked',
   metrics: { disposition: 'blocked' },
   decisions: [],
-  steps: [{ name: 'monitor', status: 'done', outputs: { workerSignal: { attemptId: 'old' } } }],
+  steps: [
+    {
+      name: 'monitor',
+      status: 'done',
+      outputs: { workerSignal: { attemptId: 'old', timestamp: '2026-09-23T01:00:00Z' } },
+    },
+  ],
   taskFile: '/repo/.sandbox/farmslot-farm/tasks/fix/manual-000110/TASK.md',
   agentContexts: [
     {
@@ -39,18 +45,42 @@ test('recovery follows a blocked worker monitor regardless of project', () => {
   assert.equal(isRecoverableBlockedWorkerRun({ ...run, steps: [] }), false);
 });
 
-test('monitor replay requires a fresh non-blocked worker signal', () => {
-  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'old', status: 'running' }), false);
-  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'blocked' }), false);
-  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running' }), true);
-  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'complete' }), true);
+test('monitor replay requires a fresh timestamped non-blocked worker signal', () => {
+  const timestamp = '2026-09-23T01:01:00Z';
+  assert.equal(canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running' }), false);
   assert.equal(
-    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', status: 'running', contextId: 'other' }),
+    canResumeBlockedWorkerMonitor(run, {
+      attemptId: 'new',
+      timestamp: '2026-09-23T01:00:00Z',
+      status: 'running',
+    }),
+    false,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'blocked' }),
+    false,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'running' }),
+    true,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, { attemptId: 'new', timestamp, status: 'complete' }),
+    true,
+  );
+  assert.equal(
+    canResumeBlockedWorkerMonitor(run, {
+      attemptId: 'new',
+      timestamp,
+      status: 'running',
+      contextId: 'other',
+    }),
     false,
   );
   assert.equal(
     canResumeBlockedWorkerMonitor(run, {
       attemptId: 'new',
+      timestamp,
       status: 'running',
       role: 'self-review',
     }),
@@ -137,6 +167,13 @@ test('proof readiness needs an explicit plan and a provider check after the bloc
     ],
   } as unknown as RuntimeCapabilityStatusResult;
   assert.equal(blockedWorkerProofReady(blockedRun, { ...status, proofPlans: {} }), false);
+  assert.equal(
+    blockedWorkerProofReady(blockedRun, {
+      ...status,
+      proofPlans: { [run.id]: { ...status.proofPlans[run.id], slotId: 'other-slot' } },
+    }),
+    false,
+  );
   assert.equal(blockedWorkerProofReady(blockedRun, status), false);
   status.leases[0].health.checkedAt = '2026-09-23T01:01:00Z';
   assert.equal(blockedWorkerProofReady(blockedRun, status), true);

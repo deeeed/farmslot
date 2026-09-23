@@ -2374,13 +2374,36 @@ All checks passed.`;
       decisions: [],
       steps: runWithPacket.steps.map((step) =>
         step.name === 'monitor'
-          ? { ...step, status: 'done', outputs: { workerSignal: { attemptId: 'blocked' } } }
+          ? {
+              ...step,
+              status: 'done',
+              completedAt: '2026-09-23T01:00:00Z',
+              outputs: {
+                workerSignal: {
+                  status: 'blocked',
+                  attemptId: 'blocked',
+                  timestamp: '2026-09-23T01:00:00Z',
+                },
+              },
+            }
           : step,
       ),
       agentContexts: runWithPacket.agentContexts?.map((context) => ({
         ...context,
         runId: 'dev-blocked-worker',
         signalFile: '.sandbox/farmslot-farm/worker-task/fix/dev-blocked-worker/SIGNAL.json',
+      })),
+    };
+    const updateBranchRun: Run = {
+      ...blockedRun,
+      id: 'dev-blocked-update-branch',
+      flowType: 'update-branch',
+      steps: blockedRun.steps.filter(
+        (step) => step.name !== 'find-slot' && step.name !== 'prepare',
+      ),
+      agentContexts: blockedRun.agentContexts?.map((context) => ({
+        ...context,
+        runId: 'dev-blocked-update-branch',
       })),
     };
     return html`
@@ -2398,6 +2421,10 @@ All checks passed.`;
       <p class="section-label">Blocked worker after slot release</p>
       <div style="height: 620px; border: 1px solid ${colors.bgCard}; overflow: auto">
         <run-detail .runId=${blockedRun.id} .mockRun=${blockedRun} mock-data></run-detail>
+      </div>
+      <p class="section-label">Blocked update-branch without worker selection</p>
+      <div style="height: 620px; border: 1px solid ${colors.bgCard}; overflow: auto">
+        <run-detail .runId=${updateBranchRun.id} .mockRun=${updateBranchRun} mock-data></run-detail>
       </div>
     `;
   }

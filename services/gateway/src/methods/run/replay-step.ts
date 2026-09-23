@@ -19,6 +19,7 @@ import {
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
+  type RuntimeCapabilityStatusResult,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -31,7 +32,7 @@ import {
   renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
-import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
@@ -60,6 +61,7 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
+import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
 
 import {
   isInternalArtifactOnlyEvalTicket,
@@ -341,6 +343,32 @@ export function freshBlockedMonitorAttempt(
   );
   if (signalAt === null || previousAt === null || signalAt <= previousAt) return null;
   return signal;
+}
+
+export function blockedMonitorProofReady(run: Run, status: RuntimeCapabilityStatusResult): boolean {
+  const plan = status.proofPlans[run.id];
+  const blockedAt = parseStrictIsoMs(
+    run.steps.find((step) => step.name === PS.MONITOR)?.completedAt,
+  );
+  return (
+    !!plan &&
+    plan.slotId === run.slotId &&
+    plan.ownerRunId === run.id &&
+    blockedAt !== null &&
+    plan.requirements.every((requirement) =>
+      status.leases.some((lease) => {
+        const checkedAt = parseStrictIsoMs(lease.health.checkedAt);
+        return (
+          lease.capabilityId === requirement.capabilityId &&
+          lease.owner.runId === run.id &&
+          lease.state === 'acquired' &&
+          lease.health.state === 'healthy' &&
+          checkedAt !== null &&
+          checkedAt > blockedAt
+        );
+      }),
+    )
+  );
 }
 
 /**
@@ -638,6 +666,24 @@ export async function runReplayStep(
     typeof previousMonitorSignal === 'object' &&
     'status' in previousMonitorSignal &&
     previousMonitorSignal.status === 'blocked';
+  if (needsBlockedAttempt) {
+    const slotId = existing.slotId;
+    const slot = slotId ? await readSlotRow(slotId) : null;
+    const nextAction =
+      findSlotIdx >= 0 ? 'Restart from find-slot' : 'Start a new update-branch run';
+    if (
+      slot?.current_run_id !== existing.id ||
+      !['busy', 'held'].includes(String(slot.lifecycle)) ||
+      slot.phase === SLOT_PHASE_RELEASING
+    ) {
+      throw new Error(`This run no longer owns its slot. ${nextAction} instead.`);
+    }
+    if (!slotId) throw new Error(`This run has no slot. ${nextAction} instead.`);
+    const status = await runtimeCapabilityStatus({ slotId });
+    if (!blockedMonitorProofReady(existing, status)) {
+      throw new Error(`Proof resources are not healthy after the block. ${nextAction} instead.`);
+    }
+  }
   const monitorContext = needsBlockedAttempt
     ? (existing.agentContexts?.find(
         (context) => context.role === primaryRoleForFlow(existing.flowType),
@@ -766,6 +812,24 @@ export async function runReplayStep(
     };
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+
+    if (replayStepName === PS.FIND_SLOT && existing.slotId) {
+      const slot = await readSlotRow(existing.slotId);
+      if (slot?.current_run_id === params.runId) {
+        const { slotRelease } = await import('../slot.js');
+        const { released } = await slotRelease(
+          { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
+          emit,
+        );
+        if (!released) {
+          throw new Error(
+            `Slot ${existing.slotId} could not be released before restarting this run`,
+          );
+        }
+        assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
+        assertNativeReplayCurrent();
+      }
+    }
 
     const replaysCompletionOrGate =
       targetIdx >= 0 &&

@@ -1,13 +1,17 @@
 import type { Run, RuntimeCapabilityStatusResult, SlotStatus } from '@farmslot/protocol';
 import { primaryRoleForFlow } from '@farmslot/protocol';
 
+const strictIso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
 export function blockedWorkerProofReady(
   run: Run,
   status: RuntimeCapabilityStatusResult | null,
 ): boolean {
   const plan = status?.proofPlans[run.id];
-  if (!plan) return false;
+  if (!plan || plan.slotId !== run.slotId || plan.ownerRunId !== run.id) return false;
   const blockedAt = run.steps.find((step) => step.name === 'monitor')?.completedAt;
+  if (!blockedAt || !strictIso.test(blockedAt) || !Number.isFinite(Date.parse(blockedAt)))
+    return false;
   return plan.requirements.every((requirement) =>
     status.leases.some(
       (lease) =>
@@ -17,6 +21,7 @@ export function blockedWorkerProofReady(
         lease.health.state === 'healthy' &&
         blockedAt &&
         lease.health.checkedAt &&
+        strictIso.test(lease.health.checkedAt) &&
         Date.parse(lease.health.checkedAt) > Date.parse(blockedAt),
     ),
   );
@@ -57,26 +62,18 @@ export function canResumeBlockedWorkerMonitor(run: Run, signal: unknown): boolea
   )
     return false;
   const previous = run.steps.find((step) => step.name === 'monitor')?.outputs?.workerSignal;
-  const previousAttemptId =
-    previous && typeof previous === 'object' && 'attemptId' in previous
-      ? previous.attemptId
-      : undefined;
   if (current.status !== 'running' && current.status !== 'done' && current.status !== 'complete')
     return false;
   const previousTimestamp =
     previous && typeof previous === 'object' && 'timestamp' in previous ? previous.timestamp : null;
   if (
-    typeof previousTimestamp === 'string' &&
-    (!Number.isFinite(Date.parse(previousTimestamp)) ||
-      typeof current.timestamp !== 'string' ||
-      Date.parse(current.timestamp) <= Date.parse(previousTimestamp))
+    typeof previousTimestamp !== 'string' ||
+    typeof current.timestamp !== 'string' ||
+    !strictIso.test(previousTimestamp) ||
+    !strictIso.test(current.timestamp)
   )
     return false;
-  if (typeof previousTimestamp === 'string') return true;
-  return (
-    typeof previousAttemptId === 'string' &&
-    previousAttemptId.length > 0 &&
-    typeof current.attemptId === 'string' &&
-    current.attemptId !== previousAttemptId
-  );
+  const previousAt = Date.parse(previousTimestamp);
+  const currentAt = Date.parse(current.timestamp);
+  return Number.isFinite(previousAt) && Number.isFinite(currentAt) && currentAt > previousAt;
 }
