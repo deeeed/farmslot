@@ -1018,7 +1018,10 @@ export async function executeFindSlotStep(
     },
     // Delayed engine preview: the audit principal was resolved and persisted
     // at run.create; never re-derive it from ambient context here.
-    run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {},
+    {
+      ...(run.pressureOverride ? { overridePrincipalId: run.pressureOverride.principalId } : {}),
+      includeProfileFit: false,
+    },
   );
   // Automatic selection already excluded pressure-rejected machines; a
   // rejection here means an explicit slot (or a pinned affinity slot) sits on
