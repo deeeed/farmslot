@@ -332,6 +332,8 @@ export function freshBlockedMonitorAttempt(
     monitor?.status !== 'done' ||
     previousSignal?.status !== 'blocked' ||
     !signal ||
+    !signal.attemptId ||
+    signal.attemptId === previousSignal.attemptId ||
     !['ready', 'non_terminal', 'stale'].includes(probe.code) ||
     !['running', 'done', 'complete'].includes(signal.status) ||
     !signalMatchesMonitorContext(signal, context)
@@ -481,6 +483,18 @@ type SlotReclaimCheck =
   | { ok: true }
   | { ok: false; reason: 'owned-by-other'; owner: string }
   | { ok: false; reason: 'not-reclaimable'; lifecycle: string };
+
+export function blockedMonitorOwnsSlot(
+  slot: Readonly<Record<string, unknown>> | null,
+  runId: string,
+): boolean {
+  return Boolean(
+    slot &&
+    slot.current_run_id === runId &&
+    ['busy', 'held'].includes(String(slot.lifecycle)) &&
+    slot.phase !== SLOT_PHASE_RELEASING,
+  );
+}
 
 export function replaySlotReclaimCheck(
   slot: Readonly<Record<string, unknown>>,
@@ -671,11 +685,7 @@ export async function runReplayStep(
     const slot = slotId ? await readSlotRow(slotId) : null;
     const nextAction =
       findSlotIdx >= 0 ? 'Restart from find-slot' : 'Start a new update-branch run';
-    if (
-      slot?.current_run_id !== existing.id ||
-      !['busy', 'held'].includes(String(slot.lifecycle)) ||
-      slot.phase === SLOT_PHASE_RELEASING
-    ) {
+    if (!blockedMonitorOwnsSlot(slot, existing.id)) {
       throw new Error(`This run no longer owns its slot. ${nextAction} instead.`);
     }
     if (!slotId) throw new Error(`This run has no slot. ${nextAction} instead.`);
@@ -917,14 +927,18 @@ export async function runReplayStep(
             (slot) => {
               const live = getRun(params.runId);
               if (live?.engineState?.operatorForceCompleted) return false;
+              // A blocked monitor adopts a signal from the current worker. It may
+              // only claim that same worker; an intervening release or reassignment
+              // must not turn this into a generic free-slot reclaim.
+              if (needsBlockedAttempt && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
               return replaySlotReclaimCheck(slot, params.runId, {
                 ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
               }).ok;
             },
             {
               lifecycle: 'busy',
-              phase: adoptedTaskSignal ? 'working' : 'preparing',
-              agent: adoptedTaskSignal ? 'working' : 'orchestrator',
+              phase: adoptedTaskSignal || blockedAttempt ? 'working' : 'preparing',
+              agent: adoptedTaskSignal || blockedAttempt ? 'working' : 'orchestrator',
               current_run_id: params.runId,
               current_flow_type: existing.flowType || null,
               current_ticket_or_pr: existing.ticketOrPr,

@@ -62,6 +62,14 @@ export function canResumeBlockedWorkerMonitor(run: Run, signal: unknown): boolea
   )
     return false;
   const previous = run.steps.find((step) => step.name === 'monitor')?.outputs?.workerSignal;
+  const previousAttemptId =
+    previous && typeof previous === 'object' && 'attemptId' in previous ? previous.attemptId : null;
+  if (
+    typeof current.attemptId !== 'string' ||
+    !current.attemptId ||
+    current.attemptId === previousAttemptId
+  )
+    return false;
   if (current.status !== 'running' && current.status !== 'done' && current.status !== 'complete')
     return false;
   const previousTimestamp =

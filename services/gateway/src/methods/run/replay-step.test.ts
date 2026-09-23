@@ -23,6 +23,7 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { runForceComplete } from './lifecycle-control.js';
 import {
+  blockedMonitorOwnsSlot,
   blockedMonitorProofReady,
   canAdoptTaskSignalAfterUncertainDispatch,
   freshBlockedMonitorAttempt,
@@ -128,7 +129,15 @@ test('blocked monitor replay binds a fresh completed attempt before monitoring r
       { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: 'old' } },
       context,
     ),
-    { ...signal, attemptId: 'old' },
+    null,
+  );
+  assert.equal(
+    freshBlockedMonitorAttempt(
+      run,
+      { ok: true, code: 'ready', message: '', signal: { ...signal, attemptId: undefined } },
+      context,
+    ),
+    null,
   );
   assert.equal(
     freshBlockedMonitorAttempt(
@@ -496,6 +505,32 @@ test('runReplayStep abandons a retained handoff and re-enters normal dispatch', 
   assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
   assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
   assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
+});
+
+test('blocked monitor only reclaims the same live worker at claim time', () => {
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-a', lifecycle: 'busy' }, 'run-a'),
+    true,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-a', lifecycle: 'held' }, 'run-a'),
+    true,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: null, lifecycle: 'ready' }, 'run-a'),
+    false,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot({ current_run_id: 'run-b', lifecycle: 'busy' }, 'run-a'),
+    false,
+  );
+  assert.equal(
+    blockedMonitorOwnsSlot(
+      { current_run_id: 'run-a', lifecycle: 'busy', phase: 'releasing' },
+      'run-a',
+    ),
+    false,
+  );
 });
 
 test('replaySlotReclaimCheck rejects slots owned by another active run', () => {

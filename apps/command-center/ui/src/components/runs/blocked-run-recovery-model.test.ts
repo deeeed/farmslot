@@ -100,7 +100,7 @@ test('monitor replay requires a fresh timestamped non-blocked worker signal', ()
       } as Run,
       { attemptId: 'old', timestamp: '2026-09-23T01:01:00Z', status: 'complete' },
     ),
-    true,
+    false,
   );
   assert.equal(
     canResumeBlockedWorkerMonitor({ ...run, steps: [{ name: 'monitor', status: 'done' }] } as Run, {
@@ -123,7 +123,7 @@ test('monitor replay requires a fresh timestamped non-blocked worker signal', ()
       } as Run,
       { timestamp: '2026-09-23T01:01:00Z', status: 'running' },
     ),
-    true,
+    false,
   );
   assert.equal(
     canResumeBlockedWorkerMonitor(

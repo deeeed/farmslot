@@ -31,6 +31,7 @@ export class BlockedRunRecovery extends LitElement {
   @state() private signal: unknown = null;
   @state() private status: RuntimeCapabilityStatusResult | null = null;
   @state() private ownedSlotStatus: SlotStatus | null = null;
+  @state() private ownershipKnown = false;
   @state() private error = '';
   @state() private busy = false;
   private refreshSeq = 0;
@@ -94,6 +95,7 @@ export class BlockedRunRecovery extends LitElement {
     this.signal = null;
     this.status = null;
     this.ownedSlotStatus = null;
+    this.ownershipKnown = false;
     this.error = '';
     if (!isRecoverableBlockedWorkerRun(run) || !run.slotId) return false;
     try {
@@ -114,6 +116,7 @@ export class BlockedRunRecovery extends LitElement {
       if (fleet.stale)
         throw new Error('Slot ownership is stale. Refresh the fleet before recovery.');
       this.ownedSlotStatus = fleet.slots.find((slot) => slot.slot === run.slotId) ?? null;
+      this.ownershipKnown = true;
     } catch (error) {
       if (refreshSeq !== this.refreshSeq) return false;
       this.error = [this.error, error instanceof Error ? error.message : String(error)]
@@ -149,13 +152,17 @@ export class BlockedRunRecovery extends LitElement {
 
   private async assertSlotOwned(run: Run): Promise<void> {
     const { fleet } = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+    if (fleet.stale) throw new Error('Slot ownership is stale. Refresh the fleet before recovery.');
     const slot = fleet.slots.find((entry) => entry.slot === run.slotId);
-    if (this.run.id === run.id) this.ownedSlotStatus = slot ?? null;
-    if (fleet.stale || !blockedWorkerOwnsSlot(run, slot)) {
+    if (this.run.id === run.id) {
+      this.ownedSlotStatus = slot ?? null;
+      this.ownershipKnown = true;
+    }
+    if (!blockedWorkerOwnsSlot(run, slot)) {
       throw new Error(
         run.steps.some((step) => step.name === 'find-slot')
           ? 'This run no longer owns its slot. Restart on an available worker.'
-          : 'This flow cannot select another slot. Start a new update-branch run.',
+          : `This flow cannot select another slot. Start a new ${run.flowType} run.`,
       );
     }
   }
@@ -180,6 +187,11 @@ export class BlockedRunRecovery extends LitElement {
   }
 
   private async restart(): Promise<void> {
+    if (
+      blockedWorkerOwnsSlot(this.run, this.ownedSlotStatus ?? undefined) &&
+      !window.confirm('Restart releases this run’s current slot and stops its worker. Continue?')
+    )
+      return;
     this.busy = true;
     this.error = '';
     try {
@@ -207,6 +219,7 @@ export class BlockedRunRecovery extends LitElement {
       ) ?? [];
     const freshSignal = canResumeBlockedWorkerMonitor(run, this.signal);
     const slotOwned = blockedWorkerOwnsSlot(run, this.ownedSlotStatus ?? undefined);
+    const canSelectWorker = run.steps.some((step) => step.name === 'find-slot');
     return html`
       <section data-testid="blocked-run-recovery" aria-label="Recover blocked worker">
         <h3>Recover this worker</h3>
@@ -214,27 +227,38 @@ export class BlockedRunRecovery extends LitElement {
           If this run still owns its slot, fix the blocker and start a fresh worker attempt before
           resuming monitoring. Farmslot workers can run <code>./mark start</code>.
         </p>
-        ${!slotOwned
-          ? html`<p>
-              ${run.steps.some((step) => step.name === 'find-slot')
-                ? 'The run does not currently own its slot. Restart on an available worker.'
-                : 'This flow has no worker-selection step. Start a new update-branch run to use another slot.'}
-            </p>`
-          : html`<p>Restart releases this run's current slot and selects an available worker.</p>`}
+        ${!this.ownershipKnown
+          ? html`<p>Slot ownership is unknown. Refresh recorded status before recovery.</p>`
+          : !slotOwned
+            ? html`<p>
+                ${canSelectWorker
+                  ? 'The run does not currently own its slot. Restart on an available worker.'
+                  : `This flow has no worker-selection step. Start a new ${run.flowType} run to use another slot.`}
+              </p>`
+            : canSelectWorker
+              ? html`<p>
+                  Restart releases this run's current slot and selects an available worker.
+                </p>`
+              : nothing}
         ${this.plan
           ? html`<p>
-              Proof resources:
-              ${this.plan.requirements.map((requirement) => requirement.capabilityId).join(', ')}.
-              ${ready
-                ? 'Leases were rechecked after this worker blocked.'
-                : unresolved.length
-                  ? 'Cleanup is unresolved. Retry stop in slot resources after the worker finishes using them.'
-                  : 'Acquire or recheck them from slot resources after this worker blocked.'}
+              ${this.plan.requirements.length
+                ? `Proof resources: ${this.plan.requirements.map((requirement) => requirement.capabilityId).join(', ')}.`
+                : 'No proof resources required.'}
+              ${!this.plan.requirements.length
+                ? 'A new worker attempt is still required.'
+                : ready
+                  ? 'Leases were rechecked after this worker blocked.'
+                  : unresolved.length
+                    ? 'Cleanup is unresolved. Retry stop in slot resources after the worker finishes using them.'
+                    : 'Acquire or recheck them from slot resources after this worker blocked.'}
             </p>`
           : this.status
             ? html`<p>
-                No proof plan is recorded. Resource needs are unknown; restart on an available
-                worker.
+                No proof plan is recorded. Resource needs are unknown.
+                ${canSelectWorker
+                  ? 'Restart on an available worker.'
+                  : `Start a new ${run.flowType} run.`}
               </p>`
             : nothing}
         <div class="actions">
@@ -247,10 +271,13 @@ export class BlockedRunRecovery extends LitElement {
           <button data-testid="blocked-run-refresh" ?disabled=${this.busy} @click=${this.refresh}>
             Refresh recorded status
           </button>
-          ${run.steps.some((step) => step.name === 'find-slot')
+          ${canSelectWorker
             ? html`<button
                 data-testid="blocked-run-restart"
-                ?disabled=${this.disabled || this.busy}
+                ?disabled=${this.disabled ||
+                this.busy ||
+                !this.ownershipKnown ||
+                unresolved.length > 0}
                 @click=${this.restart}
               >
                 Restart on available worker

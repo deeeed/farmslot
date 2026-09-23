@@ -528,7 +528,7 @@ export function renderRunPostureSummary(
         >
       </div>
       ${slotId && summary.rows.some((row) => row.cleanupFailure)
-        ? html`<div class="posture-transition" data-testid="run-posture-recovery">
+        ? html`<div class="posture-transition" data-testid="run-posture-recovery" role="status">
             Cleanup is unresolved.
             <a href=${`#slot/${encodeURIComponent(slotId)}?activity=info`}
               >Open slot resource controls</a

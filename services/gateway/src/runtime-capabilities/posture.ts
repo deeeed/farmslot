@@ -1486,6 +1486,9 @@ export class RunResourcePostureReconciler {
       .filter((value): value is string => Boolean(value && Date.parse(value) > nowMs))
       .sort()
       .at(-1);
+    const lastCheckedAt = [holder?.health.checkedAt, failed?.health.checkedAt]
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
     return {
       capabilityId,
       desiredDisposition: desired,
@@ -1501,9 +1504,7 @@ export class RunResourcePostureReconciler {
         : {}),
       ...(warmUntil ? { warmUntil } : {}),
       ...(holder?.updatedAt ? { lastTransitionAt: holder.updatedAt } : {}),
-      ...(failed?.health.checkedAt || holder?.health.checkedAt
-        ? { lastCheckedAt: failed?.health.checkedAt ?? holder?.health.checkedAt }
-        : {}),
+      ...(lastCheckedAt ? { lastCheckedAt } : {}),
       releaseEffects: entry ? [...entry.releaseEffects] : [],
       ...(failed?.cleanupFailure ? { cleanupFailure: failed.cleanupFailure } : {}),
     };
