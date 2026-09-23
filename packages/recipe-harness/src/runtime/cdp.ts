@@ -16,6 +16,12 @@ import {
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
 import { writeFileWithinRoot } from '../core/path.js';
+import type {
+  UiScrollGeometry,
+  UiScrollOffset,
+  UiScrollSession,
+  UiScrollToRequest,
+} from '../core/scroll-to.js';
 import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
 export function sleep(ms: number): Promise<void> {
@@ -851,27 +857,57 @@ export class CdpWebPage {
     );
   }
 
+  /**
+   * Raw ui.scroll movement. offsetX/offsetY set an absolute position; deltaX/deltaY move relative
+   * to the current one (default: one 600px step down). Callers never mix the two.
+   */
   async scroll(options: {
     selector?: string;
+    offsetX?: number;
+    offsetY?: number;
     deltaX?: number;
     deltaY?: number;
     intoView?: boolean;
   }): Promise<unknown> {
-    const deltaX = options.deltaX ?? 0;
-    const deltaY = options.deltaY ?? 600;
-    if (options.selector) {
-      if (options.intoView) {
-        return this.evaluate(
-          `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
-        );
-      }
+    if (options.selector && options.intoView) {
       return this.evaluate(
-        `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+        `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
       );
     }
+    const absolute = options.offsetX !== undefined || options.offsetY !== undefined;
+    const noDelta = options.deltaX === undefined && options.deltaY === undefined;
+    const move = absolute
+      ? `el.scrollTo({ left: ${JSON.stringify(options.offsetX ?? null)} ?? el.scrollLeft, top: ${JSON.stringify(options.offsetY ?? null)} ?? el.scrollTop, behavior: 'instant' })`
+      : `el.scrollBy({ left: ${JSON.stringify(options.deltaX ?? 0)}, top: ${JSON.stringify(noDelta ? 600 : (options.deltaY ?? 0))}, behavior: 'instant' })`;
+    const resolveElement = options.selector
+      ? `${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}');`
+      : 'const el = document.scrollingElement || document.documentElement;';
     return this.evaluate(
-      `(() => { const root = document.scrollingElement || document.documentElement; root.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+      `(() => { ${resolveElement} const before = { x: el.scrollLeft, y: el.scrollTop }; ${move}; return { scrolled: true, mode: ${JSON.stringify(absolute ? 'absolute' : 'relative')}, before, after: { x: el.scrollLeft, y: el.scrollTop } }; })()`,
     );
+  }
+
+  /** ui.scroll_to primitives for one surface; valid while this page connection stays open. */
+  async scrollSession(request: UiScrollToRequest): Promise<UiScrollSession> {
+    const { targetInfo } = await this.session.call<{ targetInfo: { targetId: string } }>(
+      'Target.getTargetInfo',
+    );
+    const surface = testIdSelector(request.surfaceTestId);
+    const measure = scrollMeasureExpression(
+      surface,
+      testIdSelector(request.targetTestId),
+      request.visibilityAnchorTestId ? testIdSelector(request.visibilityAnchorTestId) : undefined,
+    );
+    return {
+      backend: 'cdp-web',
+      sessionId: targetInfo.targetId,
+      measure: () => this.evaluate<UiScrollGeometry>(measure),
+      scrollTo: async (offset: UiScrollOffset) => {
+        await this.evaluate(
+          `(() => { ${deepQueryHelpersExpression()} const found = querySelectorDeep(${JSON.stringify(surface)}); if (!found) throw new Error('Scroll surface not found: ${escapeForJsMessage(request.surfaceTestId)}'); const el = found === document.body || found === document.documentElement ? document.scrollingElement || document.documentElement : found; el.scrollTo({ left: ${JSON.stringify(offset.x)}, top: ${JSON.stringify(offset.y)}, behavior: 'instant' }); return true; })()`,
+        );
+      },
+    };
   }
 
   async waitFor(options: {
@@ -1071,6 +1107,10 @@ export function createCdpWebUiTransport(
               page.scroll({
                 selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
                 intoView: node.scroll_into_view === true || node.into_view === true,
+                offsetX:
+                  node.offset_x == null ? undefined : asNumber(node.offset_x, 'ui.scroll.offset_x'),
+                offsetY:
+                  node.offset_y == null ? undefined : asNumber(node.offset_y, 'ui.scroll.offset_y'),
                 deltaX:
                   node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
                 deltaY:
@@ -1078,6 +1118,8 @@ export function createCdpWebUiTransport(
               }),
               node,
             );
+          case 'ui.scroll_to':
+            throw new Error('ui.scroll_to runs through withScrollSession, not execute.');
           case 'ui.swipe':
           case 'ui.pan':
           case 'ui.drag':
@@ -1117,6 +1159,10 @@ export function createCdpWebUiTransport(
     async observe(refs, node, context) {
       const input = { action: 'app.status' as StandardUiAction, node, context };
       return withCdpWebPage(options, input, async (page) => page.observe(refs));
+    },
+    async withScrollSession(request, node, context, use) {
+      const input = { action: 'ui.scroll_to' as StandardUiAction, node, context };
+      return withCdpWebPage(options, input, async (page) => use(await page.scrollSession(request)));
     },
   };
 }
@@ -1353,11 +1399,51 @@ export function selectorForUiInput(node: Record<string, unknown>): string | unde
   const selector = asOptionalString(node.selector, 'ui.selector');
   if (selector) return selector;
   const testId = asOptionalString(node.test_id ?? node.testID, 'ui.test_id');
-  if (testId) {
-    const escaped = escapeCssAttrValue(testId);
-    return `[data-testid="${escaped}"], [data-test-id="${escaped}"], [data-test="${escaped}"]`;
-  }
-  return undefined;
+  return testId ? testIdSelector(testId) : undefined;
+}
+
+function testIdSelector(testId: string): string {
+  const escaped = escapeCssAttrValue(testId);
+  return `[data-testid="${escaped}"], [data-test-id="${escaped}"], [data-test="${escaped}"]`;
+}
+
+// Geometry for ui.scroll_to in viewport CSS pixels. A box-less or unrendered element (display:
+// contents, zero size, visibility hidden, opacity 0) is present but not measurable. The recipe
+// HUD is the page's known occlusion.
+function scrollMeasureExpression(surface: string, target: string, anchor?: string): string {
+  return `(() => {
+    ${deepQueryHelpersExpression()}
+    const box = (el) => {
+      if (!isRenderedDeep(el)) return null;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+    };
+    const targetEl = querySelectorDeep(${JSON.stringify(target)});
+    const measured = { targetPresent: Boolean(targetEl), targetBounds: box(targetEl) };
+    ${
+      anchor
+        ? `const anchorEl = querySelectorDeep(${JSON.stringify(anchor)});
+    measured.visibilityAnchorPresent = Boolean(anchorEl);
+    measured.visibilityAnchorBounds = box(anchorEl);`
+        : ''
+    }
+    const el = querySelectorDeep(${JSON.stringify(surface)});
+    if (!el) return { surface: null, viewport: null, offset: { x: 0, y: 0 }, ...measured };
+    const rect = el.getBoundingClientRect();
+    const isRoot = el === document.scrollingElement || el === document.body || el === document.documentElement;
+    const scroller = isRoot ? document.scrollingElement || document.documentElement : el;
+    const left = isRoot ? 0 : Math.max(rect.x + el.clientLeft, 0);
+    const top = isRoot ? 0 : Math.max(rect.y + el.clientTop, 0);
+    const right = isRoot ? innerWidth : Math.min(rect.x + el.clientLeft + el.clientWidth, innerWidth);
+    const bottom = isRoot ? innerHeight : Math.min(rect.y + el.clientTop + el.clientHeight, innerHeight);
+    return {
+      surface: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      viewport: { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) },
+      offset: { x: scroller.scrollLeft, y: scroller.scrollTop },
+      occlusions: [document.getElementById('farmslot-recipe-hud')].map(box).filter(Boolean),
+      ...measured,
+    };
+  })()`;
 }
 
 async function captureCdpScreenshot(

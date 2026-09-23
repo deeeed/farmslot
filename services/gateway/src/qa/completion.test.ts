@@ -191,6 +191,9 @@ test('stale, failed, skipped, corrupted and missing-smoke packages fail closed',
   (skipped.trace as any[]).splice(1, 1);
   Object.assign(skipped.summary as object, { total: 2, passed: 2 });
   assert.throws(() => validateQaPackage(skipped, startedAt), /no executed runtime assertion/);
+  const partial = bundle();
+  Object.assign(partial.summary as object, { stopAfterNode: 'check' });
+  assert.throws(() => validateQaPackage(partial, startedAt), /ran partially/);
   const changed = bundle();
   (changed.recipe as any).title = 'Changed after execution';
   assert.throws(() => validateQaPackage(changed, startedAt), /digest/);

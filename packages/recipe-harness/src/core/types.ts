@@ -32,6 +32,11 @@ export interface RecipeRunRequest {
   adapter?: string;
   /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];
+  /**
+   * Partial execution: stop the root graph after this node succeeds, then run the recipe's
+   * declared teardown. The node must be reachable from workflow.entry.
+   */
+  stopAfterNode?: string;
 }
 
 export interface RecipeLibrarySource {
@@ -282,6 +287,10 @@ export interface TraceEntry {
   observationWarnings?: RecipeObservationWarning[];
   artifacts?: RecipeArtifactManifestEntry[];
   error?: string;
+  /** Stable failure code, for example SCROLL_TARGET_NOT_VISIBLE. */
+  error_code?: string;
+  /** Observation preserved from the failed node, such as ui.scroll_to geometry. */
+  error_details?: unknown;
 }
 
 export interface TraceWriter {
@@ -309,6 +318,8 @@ export interface SummaryDocument {
   runner?: RecipeRunnerProvenance;
   /** Present when recipe library sources were configured for the run. */
   recipeLibraries?: RecipeLibrarySummary;
+  /** Present when the run was partial; the root graph stopped after this node. */
+  stopAfterNode?: string;
 }
 
 export interface SummaryWriter {

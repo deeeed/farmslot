@@ -29,6 +29,7 @@ export const OFFICIAL_RECIPE_ACTIONS = [
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
+  'ui.scroll_to',
   'ui.swipe',
   'ui.pan',
   'ui.drag',
@@ -49,6 +50,71 @@ export const OFFICIAL_RECIPE_ACTIONS = [
 ] as const;
 
 export type OfficialActionName = (typeof OFFICIAL_RECIPE_ACTIONS)[number];
+
+/**
+ * Canonical parameters for `ui.scroll_to`. Runner action manifests declare this schema so every
+ * provider receives the same request: which surface moves, which semantic element must end up
+ * reviewable, and which measurable element proves it when the target has no box of its own.
+ */
+export const UI_SCROLL_TO_PARAMS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['surface_test_id', 'target_test_id'],
+  properties: {
+    surface_test_id: {
+      type: 'string',
+      description: 'Test id of the scroll container whose offset moves.',
+    },
+    target_test_id: {
+      type: 'string',
+      description: 'Semantic proof target. It must be present when the node ends.',
+    },
+    visibility_anchor_test_id: {
+      type: 'string',
+      description:
+        'Measurable element used for positioning and the visibility verdict when the target has no measurable box, such as a flattened Text node.',
+    },
+    align: {
+      type: 'string',
+      enum: ['start', 'center', 'end', 'nearest'],
+      default: 'nearest',
+      description:
+        'Where the measured element rests inside the safe viewport after a move. An element already inside it is left where it is.',
+    },
+    viewport_policy: {
+      type: 'string',
+      enum: ['hud_safe', 'full'],
+      default: 'hud_safe',
+      description:
+        'hud_safe removes HUD and overlay occlusion from the viewport before positioning and verifying; full uses the raw surface viewport.',
+    },
+    verify_visible: {
+      type: 'boolean',
+      default: true,
+      description:
+        'Fail with SCROLL_TARGET_NOT_VISIBLE when the settled element is outside the safe viewport.',
+    },
+    settle: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Geometry settlement after movement: consecutive identical measurements within a budget.',
+      properties: {
+        timeout_ms: {
+          type: 'number',
+          minimum: 0,
+          description: 'Settlement budget in milliseconds.',
+        },
+        interval_ms: { type: 'number', minimum: 1, description: 'Delay between measurements.' },
+        stable_samples: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Consecutive unchanged measurements required to call the layout settled.',
+        },
+      },
+    },
+  },
+} as const;
 export type RecipeActionName = OfficialActionName | (string & {});
 export const BUILT_IN_UI_OBSERVERS = ['ui.screen', 'ui.visible'] as const;
 export type BuiltInUiObserverRef = (typeof BUILT_IN_UI_OBSERVERS)[number];

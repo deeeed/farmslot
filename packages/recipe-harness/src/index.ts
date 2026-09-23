@@ -48,6 +48,23 @@ export {
 export { RecipeResolutionError } from './core/resolution-error.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export {
+  isVisibleWithin,
+  parseUiScrollToRequest,
+  runUiScrollTo,
+  safeViewportFor,
+  UI_SCROLL_TO_ERROR_CODES,
+  type UiRect,
+  type UiScrollGeometry,
+  type UiScrollOffset,
+  type UiScrollSession,
+  type UiScrollSettlement,
+  type UiScrollSnapshot,
+  UiScrollToError,
+  type UiScrollToErrorCode,
+  type UiScrollToObservation,
+  type UiScrollToRequest,
+} from './core/scroll-to.js';
+export {
   finalizeRecipeSuite,
   type FinalizeRecipeSuiteRequest,
   freezeRecipeSuiteScope,

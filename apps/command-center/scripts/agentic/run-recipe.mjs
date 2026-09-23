@@ -15,6 +15,7 @@
  *     [--recipe-run-id <id>] \
  *     [--slow <ms>] \
  *     [--record-video=full-run] \
+ *     [--stop-after-node <node-id>] \
  *     [--json]
  */
 import { execFile } from 'node:child_process';
@@ -82,6 +83,7 @@ function parseArgs(argv) {
     recordPid: 0,
     json: false,
     paramAssignments: [],
+    stopAfterNode: '',
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -212,6 +214,17 @@ function parseArgs(argv) {
     }
     if (arg === '--json') {
       options.json = true;
+      continue;
+    }
+    if (arg === '--stop-after-node') {
+      options.stopAfterNode = argv[++i] ?? '';
+      if (!options.stopAfterNode || options.stopAfterNode.startsWith('-')) {
+        die('--stop-after-node requires a node id.');
+      }
+      continue;
+    }
+    if (arg.startsWith('--stop-after-node=')) {
+      options.stopAfterNode = arg.slice('--stop-after-node='.length);
       continue;
     }
     if (arg.startsWith('--input=')) {
@@ -371,6 +384,15 @@ function wrapTransportWithSlow(transport, slowMs) {
     ...(transport.observe
       ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
       : {}),
+    ...(transport.withScrollSession
+      ? {
+          async withScrollSession(request, node, context, use) {
+            const result = await transport.withScrollSession(request, node, context, use);
+            await new Promise((resolve) => setTimeout(resolve, slowMs));
+            return result;
+          },
+        }
+      : {}),
   };
 }
 
@@ -389,6 +411,12 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
     },
     ...(transport.observe
       ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
+      : {}),
+    ...(transport.withScrollSession
+      ? {
+          withScrollSession: (request, node, context, use) =>
+            transport.withScrollSession(request, node, context, use),
+        }
       : {}),
   };
 }
@@ -707,6 +735,7 @@ async function main() {
     'ui.key_press',
     'ui.set_input',
     'ui.scroll',
+    'ui.scroll_to',
     'ui.swipe',
     'ui.pan',
     'ui.drag',
@@ -824,6 +853,7 @@ async function main() {
     adapter: 'web',
     params,
     ...(librarySources.length ? { librarySources } : {}),
+    ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
     artifactsDir,
     projectRoot: options.projectRoot,
     recordVideo: options.recordVideo

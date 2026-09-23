@@ -259,6 +259,11 @@ export function createAgentDeviceUiTransport(
             }),
           );
         case 'ui.scroll': {
+          if (node.offset_x !== undefined || node.offset_y !== undefined) {
+            throw new Error(
+              'ui.scroll offset_x/offset_y (absolute) is not supported by Agent Device; use direction with pixels or amount (relative).',
+            );
+          }
           const result = await client.interactions.scroll({
             ...selection,
             session: options.session,

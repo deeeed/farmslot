@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>scroll-to-visible conformance fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font:
+          16px/1.4 system-ui,
+          sans-serif;
+        background: #f4f4f5;
+      }
+      header {
+        padding: 12px 16px;
+        font-weight: 600;
+      }
+      [data-testid='scroll-surface'] {
+        height: 70vh;
+        overflow-y: auto;
+        margin: 0 16px;
+        border: 2px solid #3f3f46;
+        background: #fff;
+      }
+      .row {
+        height: 48px;
+        padding: 12px 16px;
+        box-sizing: border-box;
+        border-bottom: 1px solid #e4e4e7;
+      }
+      .proof {
+        background: #dcfce7;
+        font-weight: 600;
+      }
+      .flat {
+        display: contents;
+      }
+      [data-testid='jitter-box'] {
+        background: #fee2e2;
+      }
+    </style>
+  </head>
+  <body>
+    <header>Scroll-to-visible conformance fixture</header>
+    <div data-testid="scroll-surface">
+      <div class="row proof" data-testid="first-row">First row is visible on load</div>
+      <div id="rows-before"></div>
+      <div class="row proof" data-testid="history-proof">History proof row</div>
+      <div id="rows-middle"></div>
+      <div class="row proof" data-testid="flat-anchor">
+        <span class="flat" data-testid="flat-text"
+          >Validation copy rendered by a flattened text node</span
+        >
+      </div>
+      <div id="rows-after"></div>
+      <div class="row" data-testid="jitter-box">Continuously resizing block</div>
+      <div class="row proof" data-testid="jitter-target">Target below a live-layout block</div>
+      <div id="rows-tail"></div>
+    </div>
+    <script>
+      function fill(id, prefix, count) {
+        const host = document.getElementById(id);
+        for (let index = 1; index <= count; index += 1) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.textContent = `${prefix} filler ${index}`;
+          host.appendChild(row);
+        }
+      }
+      fill('rows-before', 'Active', 30);
+      fill('rows-middle', 'History', 30);
+      fill('rows-after', 'Filter', 30);
+      fill('rows-tail', 'Tail', 12);
+      // Live layout (?jitter=1): the block above jitter-target grows on every frame without
+      // repeating, like streamed rows, so its position never settles.
+      if (new URLSearchParams(location.search).get('jitter') === '1') {
+        const jitter = document.querySelector('[data-testid="jitter-box"]');
+        let frame = 0;
+        const grow = () => {
+          frame += 1;
+          jitter.style.height = `${48 + (frame % 600)}px`;
+          requestAnimationFrame(grow);
+        };
+        requestAnimationFrame(grow);
+      }
+    </script>
+  </body>
+</html>
