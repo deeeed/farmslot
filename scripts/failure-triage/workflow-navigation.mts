@@ -221,15 +221,14 @@ export function sealPlan(
 
 function validReceipt(receipt: AdviceReceipt | TurnReceipt): boolean {
   return (
-    (!('cacheReadTokens' in receipt) ||
-      (Number.isFinite(receipt.providerDurationMs) &&
-        receipt.providerDurationMs >= 0 &&
-        (receipt.cacheReadTokens === null ||
-          (Number.isSafeInteger(receipt.cacheReadTokens) && receipt.cacheReadTokens >= 0)) &&
-        (receipt.cacheWriteTokens === null ||
-          (Number.isSafeInteger(receipt.cacheWriteTokens) && receipt.cacheWriteTokens >= 0)) &&
-        receipt.inputTokens !== null &&
-        (receipt.cacheReadTokens ?? 0) + (receipt.cacheWriteTokens ?? 0) <= receipt.inputTokens)) &&
+    Number.isFinite(receipt.providerDurationMs) &&
+    receipt.providerDurationMs >= 0 &&
+    (receipt.cacheReadTokens === null ||
+      (Number.isSafeInteger(receipt.cacheReadTokens) && receipt.cacheReadTokens >= 0)) &&
+    (receipt.cacheWriteTokens === null ||
+      (Number.isSafeInteger(receipt.cacheWriteTokens) && receipt.cacheWriteTokens >= 0)) &&
+    receipt.inputTokens !== null &&
+    (receipt.cacheReadTokens ?? 0) + (receipt.cacheWriteTokens ?? 0) <= receipt.inputTokens &&
     /^(?!.*\s)[\w.-]{2,200}$/.test(receipt.responseId) &&
     /^[a-f0-9]{64}$/.test(receipt.receiptHash) &&
     Number.isSafeInteger(receipt.inputTokens) &&

@@ -146,7 +146,7 @@ export function reservation(plan: NavigationPlan, config: RunnerConfig) {
 export function priceResponse(response: MeasuredResponse, config: RunnerConfig): number | null {
   const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = response;
   const validCounter = (value: number | null): value is number =>
-    Number.isSafeInteger(value) && value !== null && value >= 0;
+    value !== null && Number.isSafeInteger(value) && value >= 0;
   if (
     !validCounter(inputTokens) ||
     !validCounter(outputTokens) ||

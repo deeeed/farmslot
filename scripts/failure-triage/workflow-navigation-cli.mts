@@ -235,13 +235,17 @@ export async function main([command, ...args]: string[]): Promise<void> {
     let failed = false;
     let journalMatchesSessions = true;
     for (const [index, session] of result.sessions.entries()) {
-      const item = plan.cases[Math.floor(index / 2)];
+      const pairIndex = Math.floor(index / 2);
+      const item = plan.cases[pairIndex];
+      // The runner alternates which arm starts each pair. Replay that order so a
+      // reordered result cannot turn an arm/order effect into a quality claim.
+      const baselineFirst = pairIndex % 2 === 0;
       const expectedArm =
-        Math.floor(index / 2) % 2
-          ? index % 2
+        index % 2 === 0
+          ? baselineFirst
             ? 'baseline'
             : 'assisted'
-          : index % 2
+          : baselineFirst
             ? 'assisted'
             : 'baseline';
       if (!item || session.caseId !== item.id || session.arm !== expectedArm || failed) {
