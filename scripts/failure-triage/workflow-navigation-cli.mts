@@ -18,6 +18,7 @@ import {
 } from './workflow-navigation-runner.mts';
 import {
   advance,
+  armOrder,
   blindReviewRows,
   nextPrompt,
   startSession,
@@ -237,17 +238,9 @@ export async function main([command, ...args]: string[]): Promise<void> {
     for (const [index, session] of result.sessions.entries()) {
       const pairIndex = Math.floor(index / 2);
       const item = plan.cases[pairIndex];
-      // The runner alternates which arm starts each pair. Replay that order so a
-      // reordered result cannot turn an arm/order effect into a quality claim.
-      const baselineFirst = pairIndex % 2 === 0;
-      const expectedArm =
-        index % 2 === 0
-          ? baselineFirst
-            ? 'baseline'
-            : 'assisted'
-          : baselineFirst
-            ? 'assisted'
-            : 'baseline';
+      // Replay the runner's shared order rule so a reordered result cannot turn
+      // an arm/order effect into a quality claim.
+      const expectedArm = armOrder(pairIndex)[index % 2];
       if (!item || session.caseId !== item.id || session.arm !== expectedArm || failed) {
         journalMatchesSessions = false;
         break;

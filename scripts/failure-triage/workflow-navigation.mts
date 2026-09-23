@@ -92,6 +92,12 @@ export type Action =
   | { type: 'read_evidence'; id: string }
   | { type: 'answer'; label: TriageLabel; nextCheck: string; evidenceIds: string[] };
 export type Arm = 'baseline' | 'assisted';
+
+/** Alternate the first arm by pair index so arm order cannot track case order. */
+export function armOrder(pairIndex: number): readonly [Arm, Arm] {
+  assert(Number.isSafeInteger(pairIndex) && pairIndex >= 0, 'Invalid pair index');
+  return pairIndex % 2 === 0 ? ['baseline', 'assisted'] : ['assisted', 'baseline'];
+}
 export interface TurnReceipt {
   responseId: string;
   receiptHash: string;

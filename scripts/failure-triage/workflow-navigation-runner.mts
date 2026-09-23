@@ -12,6 +12,7 @@ import {
 } from '../../services/gateway/src/assessment/failure-triage/types.js';
 import {
   advance,
+  armOrder,
   nextPrompt,
   startSession,
   verifyPlan,
@@ -267,9 +268,7 @@ export async function runNavigationStudy(
     let stopReason = 'completed';
     // Alternate order across cases to reduce an arm/order confound.
     for (const [index, item] of plan.cases.entries()) {
-      for (const arm of index % 2
-        ? (['assisted', 'baseline'] as const)
-        : (['baseline', 'assisted'] as const)) {
+      for (const arm of armOrder(index)) {
         let session = startSession(plan, item.id, arm);
         const sessionStarted = performance.now();
         while (session.status === 'active') {
