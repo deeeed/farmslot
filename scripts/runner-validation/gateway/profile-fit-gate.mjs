@@ -111,13 +111,26 @@ function cleanup() {
       cleanupErrors.push(error);
     }
   }
-  rmSync(poolFile, { force: true });
-  rmSync(repo, { recursive: true, force: true });
-  rpc('fleet.refresh');
+  for (const [path, options] of [
+    [poolFile, { force: true }],
+    [repo, { recursive: true, force: true }],
+  ]) {
+    try {
+      rmSync(path, options);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  try {
+    rpc('fleet.refresh');
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
   if (cleanupErrors.length)
     throw new AggregateError(cleanupErrors, 'Could not cancel synthetic runs');
 }
 
+const errors = [];
 try {
   writeFileSync(
     poolFile,
@@ -166,6 +179,13 @@ try {
       `${slotId}: ${decisionExpected ? 'incompatible profile decision' : 'compatible core reached flow decision'}`,
     );
   }
-} finally {
-  cleanup();
+} catch (error) {
+  errors.push(error);
 }
+try {
+  cleanup();
+} catch (error) {
+  errors.push(error);
+}
+if (errors.length === 1) throw errors[0];
+if (errors.length > 1) throw new AggregateError(errors, 'Profile-fit recipe and cleanup failed');

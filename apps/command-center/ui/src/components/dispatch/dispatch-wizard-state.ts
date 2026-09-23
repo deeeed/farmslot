@@ -94,6 +94,7 @@ export abstract class DispatchWizardState extends LitElement {
   /** Named prepare profile; '' = project default (ADR-037). */
   @state() _prepareProfile = '';
   @state() _profileFitSuggestion: ProfileFitSuggestion | null = null;
+  _profileFitRequestGen = 0;
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewMachine = '';
   @state() _legacyReviewPlacementError = '';

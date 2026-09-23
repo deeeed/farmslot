@@ -354,6 +354,7 @@ export interface VariantInputRenderContext {
 export interface ProfileFitBannerRenderContext {
   profileFit: ProfileFitSuggestion | null;
   prepareProfile: string;
+  explicitSlot: boolean;
   applySuggestedPrepareProfile: (profile: string) => void;
 }
 
@@ -371,13 +372,17 @@ export function renderProfileFitBanner(ctx: ProfileFitBannerRenderContext) {
           ? html` — validation plan: ${suggestion.validationPlan.length} step(s)`
           : nothing}
         ${suggestion.slotResourceBlocker
-          ? html`<div>
-              Selected slot cannot use this profile: ${suggestion.slotResourceBlocker}. Choose a
-              compatible slot first.
+          ? html`<div class="profile-fit-blocker" data-testid="profile-fit-blocker">
+              ${ctx.explicitSlot ? 'Selected' : 'Auto-picked'} slot is incompatible.
+              ${suggestion.slotResourceBlocker}.
+              ${ctx.explicitSlot
+                ? 'Choose a compatible slot first.'
+                : 'Applying the profile will search for a compatible slot.'}
             </div>`
           : nothing}
       </div>
-      ${suggestion.slotResourceBlocker || ctx.prepareProfile === suggestedProfile
+      ${(ctx.explicitSlot && suggestion.slotResourceBlocker) ||
+      ctx.prepareProfile === suggestedProfile
         ? nothing
         : html`
             <button

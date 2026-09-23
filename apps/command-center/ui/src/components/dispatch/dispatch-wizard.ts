@@ -726,6 +726,8 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
+    const requestGen = ++this._profileFitRequestGen;
+    this._profileFitSuggestion = null;
     if (
       this._flowType === 'review-pr' ||
       this._flowType === 'qa' ||
@@ -752,10 +754,10 @@ export class DispatchWizard extends DispatchWizardState {
           this._candidates.find((candidate) => candidate.slotId === this._slotOverride)
             ?.replaceableWarm === true || undefined,
       });
-      if (gen !== this._fetchGen) return;
+      if (gen !== this._fetchGen || requestGen !== this._profileFitRequestGen) return;
       this._profileFitSuggestion = suggestion;
     } catch (err) {
-      if (gen !== this._fetchGen) return;
+      if (gen !== this._fetchGen || requestGen !== this._profileFitRequestGen) return;
       console.warn('[dispatch-wizard] dispatch.preview profile fit failed:', err);
       this._profileFitSuggestion = null;
     }
@@ -1117,6 +1119,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._closeExecutionTemplatePreview(false);
     this._slotOverride = slotId;
     this._slotOverrideExplicit = true;
+    void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
     this._resetPressureOverrideDraft();
     // A rejected busy nudge candidate keeps its explicit reuse intent through
     // the override flow. The created run carries nudgeReuse/freshReuse, never
@@ -1142,6 +1145,7 @@ export class DispatchWizard extends DispatchWizardState {
     // active one and the next Dispatch click ignores it.
     this._slotOverride = slotId;
     this._slotOverrideExplicit = true;
+    void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
     this._applyVisibleCatalog();
   }
 
@@ -1778,6 +1782,7 @@ export class DispatchWizard extends DispatchWizardState {
       autoProject: this._autoProject,
       project: this._project,
       selectedSlotOverride: this._slotOverride,
+      explicitSlot: this._slotOverrideExplicit,
       allowAutomaticSlot: this._transport === 'native',
       selectedSlotPlatform: this._selectedSlotPlatform() ?? '',
       refreshSlots: () => this._refreshDispatchSnapshot(),
@@ -1932,6 +1937,7 @@ export class DispatchWizard extends DispatchWizardState {
         if (this._slotOverride !== slotId) this._resetPressureOverrideDraft();
         this._slotOverride = slotId;
         this._slotOverrideExplicit = Boolean(slotId);
+        void this._fetchProfileFitSuggestion(this._project, this._fetchGen);
         this._applyVisibleCandidates();
         this._applyVisibleCatalog();
       },
