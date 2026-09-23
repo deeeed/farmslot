@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Carry an optional failure-assessment reference with a run decision resolution and its saved result.
+
 - Define advisory acceptance-evidence RPCs and assessment records for a recorded criterion and named text evidence.
 
 - Allow admitted decision context on saved assessment records for later operator review.

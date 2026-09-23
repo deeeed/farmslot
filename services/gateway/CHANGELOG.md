@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Validate the owner, failed step and approved source before saving a failure-assessment reference alongside a chosen run action.
+
 - Add an opt-in, source-admitted textual acceptance-evidence assessment for recorded runs, with saved judgments, bounded spend and unchanged AC ledger authority.
 
 - Admit opt-in decision advice for any pending run decision with two described non-decline actions, keeping source admission and the human action gate. Retain the admitted decision packet with the assessment for later review.

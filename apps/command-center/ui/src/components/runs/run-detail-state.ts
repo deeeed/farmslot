@@ -47,6 +47,10 @@ export abstract class RunDetailState extends LitElement {
   @state() selectedStepProgress: TaskProgressStructured | null = null;
   _selectedStepProgressKey = '';
   @state() _pendingConfirm: string | null = null;
+  @state() _decisionResolveError: { runId: string; decisionId: string; message: string } | null =
+    null;
+  @state() _triageDecisionLink: { runId: string; decisionId: string; assessmentId: string } | null =
+    null;
   /** Per-agent-context state for the runner-session copy buttons, keyed by context id. */
   @state() _sessionStates: Record<string, RunSessionRowState | undefined> = {};
   /**

@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   type AssessmentRecord,
   type AssessmentResult,
@@ -33,8 +35,9 @@ import {
   recordAuditFailure,
   reserveAssessment,
 } from '../../assessment/store.js';
+import { getRunWithArchived } from '../../runs/store.js';
 
-import { readTriagePolicy } from './policy.js';
+import { readTriagePolicy, type TriagePolicy } from './policy.js';
 import { admittedFailureSnapshot, TriageSnapshotUnavailable } from './snapshot.js';
 
 const providers = defaultAssessmentProviders(boundedAssessmentFetch(), fetch);
@@ -109,6 +112,62 @@ function advice(record: AssessmentRecord): FailureTriageView['advice'] {
   return { cause: label, nextCheck: CHECK_FOR_LABEL[label], evidence: sources };
 }
 
+/** Preview the same saved-record and admitted-source checks as run.resolveDecision.
+ * The resolver remains authoritative and repeats them at the point of consumption. */
+async function linkableToDecision(
+  record: AssessmentRecord | undefined,
+  policy: TriagePolicy,
+): Promise<boolean> {
+  if (!record || !policy.enabled) return false;
+  const subject = record.subject.run;
+  const identity = record.requestedIdentity;
+  const price = record.reservation?.price;
+  if (
+    record.consumer !== 'failure-triage' ||
+    record.status !== 'completed' ||
+    record.result?.status !== 'completed' ||
+    !failureTriageCause(record) ||
+    !subject?.sources ||
+    !identity?.inputDigest ||
+    !identity.questionSchemaHash ||
+    !identity.provider ||
+    !identity.model ||
+    !price ||
+    identity.provider !== price.provider ||
+    identity.model !== price.model
+  )
+    return false;
+  const run = await getRunWithArchived(subject.id);
+  const step = run?.steps.filter((candidate) => candidate.status === 'failed').at(-1);
+  if (
+    run?.flowType !== 'dev' ||
+    !step ||
+    run.project !== subject.project ||
+    step.name !== subject.step
+  )
+    return false;
+  try {
+    // Use the saved price so changing model settings or price does not relabel
+    // approved advice as stale. The current approval and source bytes still gate it.
+    const snapshot = await admittedFailureSnapshot(run.id, step.name, { ...policy, price });
+    return (
+      isDeepStrictEqual(snapshot.sources, subject.sources) &&
+      subject.snapshotHash ===
+        digest({
+          source: snapshot.snapshotHash,
+          packet: identity.inputDigest,
+          questions: identity.questionSchemaHash,
+          provider: identity.provider,
+          model: identity.model,
+          rubric: RUBRIC_VERSION,
+        })
+    );
+  } catch (error) {
+    if (error instanceof TriageSnapshotUnavailable) return false;
+    throw error;
+  }
+}
+
 async function inspect(ownerId: string, params: FailureTriageGetParams) {
   const view: FailureTriageView = {
     runId: params.runId,
@@ -118,6 +177,7 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
     stale: true,
     efficiencyClaim: 'not_established',
     retryAllowed: false,
+    decisionLinkable: false,
   };
   let stage: 'history' | 'settings' | 'evaluation' | 'source' = 'history';
   try {
@@ -129,14 +189,20 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
           (!params.step || r.subject.run.step === params.step),
       )
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
-    view.record = records[0];
+    const currentRun = await getRunWithArchived(params.runId);
+    view.step =
+      params.step ?? currentRun?.steps.filter((step) => step.status === 'failed').at(-1)?.name;
+    view.record = records.find((record) => record.subject.run?.step === view.step) ?? records[0];
     if (view.record) view.advice = advice(view.record);
     stage = 'settings';
     const config = getAssessmentConfig();
     const policy = await readTriagePolicy();
     view.provider = config.provider;
     view.model = config.model;
+    const initialRecord = view.record;
+    view.decisionLinkable = await linkableToDecision(view.record, policy);
     if (!config.enabled || !policy.enabled) {
+      view.stale = !!view.record && !view.decisionLinkable;
       view.availability = 'disabled';
       view.reason = 'Experimental triage is disabled.';
       return { view };
@@ -192,6 +258,8 @@ async function inspect(ownerId: string, params: FailureTriageGetParams) {
       records.find((r) => r.subject.run?.step === snapshot.step);
     view.stale = !!view.record && view.record.subject.run?.snapshotHash !== snapshotHash;
     view.advice = view.record && advice(view.record);
+    if (view.record !== initialRecord)
+      view.decisionLinkable = await linkableToDecision(view.record, policy);
     view.retryAllowed = !view.stale && !!view.record && canRetry(view.record);
     view.availability = 'ready';
     view.reason =
