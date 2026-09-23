@@ -272,7 +272,6 @@ async function slotReleaseImpl(
     // to `terminal` first so the family's providers stop in dependency order and
     // the effective posture is recorded before the slot-wide sweep. A restart
     // reuses the owner ID, so its slot-wide sweep must not terminally fence it.
-    // Other family members' leases on other slots stay live during the restart.
     if (params.expectedRunId && !options?.restartRunId) {
       const { reconcileRunPosture } = await import('../../run-engine/resource-posture.js');
       const outcome = await reconcileRunPosture({

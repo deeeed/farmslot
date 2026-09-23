@@ -1552,11 +1552,14 @@ export async function runReplayStep(
           );
         } else {
           const { slotRelease } = await import('../slot.js');
-          await slotRelease(
+          const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
             rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
           );
+          if (!release.released) {
+            throw new Error('slot release refused without releasing the reclaimed claim');
+          }
         }
       } catch (releaseErr) {
         const replayMessage = err instanceof Error ? err.message : String(err);
