@@ -57,6 +57,18 @@ test('project schema restricts monitoring.flows keys to the known flow types', a
   );
 });
 
+test('project schema accepts per-flow worker terminal acceptance rules', async () => {
+  const schema = await readProjectSchema();
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const project = (rules: unknown) => ({
+    name: 'schema-test',
+    worker_terminal: { flows: { 'fix-bug': { acceptance: rules } } },
+  });
+  assert.equal(validate(project({ require: true, allowWeak: false })), true, JSON.stringify(validate.errors));
+  assert.equal(validate(project({ require: 'yes' })), false);
+  assert.equal(validate(project({ require: true, unknown: true })), false);
+});
+
 test('project schema declares Recipe v1 hooks as string commands', async () => {
   const schema = await readProjectSchema();
   for (const hookName of ['recipe_action_manifest', 'recipe_doctor', 'recipe_run']) {

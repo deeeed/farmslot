@@ -565,6 +565,11 @@
   },
   "worker_terminal": {
     "requireSignal": true,
+    "flows": {
+      "fix-bug": {
+        "acceptance": { "require": true }
+      }
+    },
     "whenPresent": [
       {
         "path": "artifacts/recipe.json",

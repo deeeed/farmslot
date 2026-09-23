@@ -287,6 +287,38 @@ test('a cleanup failure shown on its row is not repeated in the transition list'
   assert.deepEqual(postureTransitionFailuresToShow(summary), []);
 });
 
+test('a cleanup failure links directly to the slot resource controls', () => {
+  const failed = renderRunPostureSummary(
+    {
+      status: 'ready',
+      state: postureState({
+        capabilities: [
+          capability({
+            cleanupFailure: 'No node connected',
+            lastCheckedAt: '2026-09-23T03:00:14.000Z',
+          }),
+        ],
+      }),
+    },
+    {},
+    null,
+    'macpro-ff-2',
+  );
+  assert.match(JSON.stringify(failed), /#slot\/macpro-ff-2\?activity=info/);
+  assert.match(JSON.stringify(failed), /provider state uncertain \(cleanup unresolved\)/);
+  assert.match(JSON.stringify(failed), /last checked.*2026-09-23T03:00:14.000Z/);
+  assert.match(JSON.stringify(failed), /need reconciliation/);
+  assert.match(JSON.stringify(failed), /Cleanup details/);
+
+  const healthy = renderRunPostureSummary(
+    { status: 'ready', state: postureState() },
+    {},
+    null,
+    'macpro-ff-2',
+  );
+  assert.doesNotMatch(JSON.stringify(healthy), /Open slot resource controls/);
+});
+
 test('a transition failure with no row of its own is still shown', () => {
   // Losing it would hide the only report of that capability's failure.
   const summary = summarizeRunPosture(

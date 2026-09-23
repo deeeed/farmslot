@@ -1,0 +1,18 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Blocked worker recovery through the gateway",
+  "description": "Use a disposable gateway, run ledger, project, and slot to verify blocked-monitor refusals, find-slot restart, and an assessed new attempt that completes monitoring. No operator runs or slots are used.",
+  "workflow": {
+    "entry": "replay-gateway",
+    "nodes": {
+      "replay-gateway": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/blocked-run-recovery.mjs",
+        "timeout_ms": 120000,
+        "intent": "Send run.replayStep, runtime.capability.acquire and run.probeWorkerSignal to an isolated gateway; read run.get and fleet.status to prove stale attempts are refused, restart releases the slot, and an assessed fresh attempt completes monitoring.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

@@ -763,6 +763,12 @@ test('status never reports stopped while a sibling family lease still holds the 
     'the provider did not stop, so status must not say it did',
   );
   assert.equal(state?.cleanupFailure, 'shared-db shutdown exited 1');
+  assert.equal(
+    state?.lastCheckedAt,
+    (await registry.status({ slotId: SLOT })).leases.find(
+      (lease) => lease.capabilityId === 'shared-db' && lease.cleanupFailure,
+    )?.health.checkedAt,
+  );
 });
 
 test('a refused park keeps the posture the run actually had', async (t) => {

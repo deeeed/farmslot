@@ -115,6 +115,7 @@ export interface ResourcePostureCapabilityState {
   /** Deadline until which a released provider stays live. */
   warmUntil?: string;
   lastTransitionAt?: string;
+  lastCheckedAt?: string;
   releaseEffects: string[];
   cleanupFailure?: string;
 }

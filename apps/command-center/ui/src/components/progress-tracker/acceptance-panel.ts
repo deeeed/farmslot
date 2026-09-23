@@ -23,7 +23,7 @@ import { acceptanceCriteriaView, summarizeAcceptanceStatus } from '@farmslot/pro
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 export interface AcceptancePanelPresentation {
-  /** `2/3 proven`, the count every surface leads with. */
+  /** Assessment progress stays distinct from how many criteria are proven. */
   counts: string;
   /** Long-form tally for the header tooltip, including the zero buckets. */
   countsTooltip: string;
@@ -36,11 +36,12 @@ export function acceptancePanelPresentation(
   criteria: ReadonlyArray<AcceptanceCriterionRef> = ledger.criteria,
 ): AcceptancePanelPresentation {
   const summary = summarizeAcceptanceStatus(ledger, criteria);
+  const assessed = summary.total - summary.unrecorded;
   return {
-    counts: `${summary.proven}/${summary.total} proven`,
+    counts: `${assessed}/${summary.total} assessed${assessed ? ` · ${summary.proven} proven` : ''}`,
     countsTooltip:
       `proven ${summary.proven} · weak ${summary.weak} · missing ${summary.missing} · ` +
-      `untestable ${summary.untestable} · no verdict ${summary.unrecorded}`,
+      `untestable ${summary.untestable} · not assessed ${summary.unrecorded}`,
     hasOpenCriteria: summary.proven + summary.untestable < summary.total,
   };
 }
@@ -207,7 +208,7 @@ function renderRow(
       <span class="ac-id">${view.id}</span>
       <span class="ac-text">${view.text}</span>
       ${criterion?.proofMode ? html`<span class="ac-mode">${criterion.proofMode}</span>` : nothing}
-      <span class="ac-verdict">${criterion ? criterion.verdict : 'no verdict'}</span>
+      <span class="ac-verdict">${criterion ? criterion.verdict : 'not assessed'}</span>
     </div>
     ${criterion && (criterion.evidence.length > 0 || criterion.recipeNodes.length > 0)
       ? html`

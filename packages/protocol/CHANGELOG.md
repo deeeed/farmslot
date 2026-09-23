@@ -6,6 +6,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
 - Define optional pending-decision advice RPC and assessment reporting contracts.
+- Allow per-flow terminal acceptance rules and carry the provider's last health-check time in run posture.
 
 - Support GPT-6 Sol reasoning efforts for Codex selections.
 
