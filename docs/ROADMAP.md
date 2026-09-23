@@ -1,6 +1,6 @@
 # Farmslot Roadmap
 
-This is the canonical high-level product roadmap for Farmslot in pass one. Use it with [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), [ROADMAP-next.md](ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md) to understand whole-product sequencing without mixing in detailed subsystem history.
+**Historical snapshot, frozen September 23, 2026.** Do not update this file for current plans. Use approved Farmslot roadmap/backlog items or public-safe GitHub issues for planning, and workspace changelogs plus merged PRs for shipped work. This snapshot records the earlier whole-product sequence.
 
 ## Purpose and Scope
 
@@ -74,7 +74,7 @@ The approved native structured transport rollout is complete through PR #635 on 
 
 14. **Add a macOS Electron Command Center client** alongside the web app, sharing the UI and independent gateway. Package the existing UI as an installable macOS app and verify everyday operator workflows. See the [product contract](PRD-command-center-canonical.md#8-electron-desktop-client) and [near-term delivery stages](ROADMAP-next.md#electron-desktop-client), item 23.
 
-See [ROADMAP-next.md](ROADMAP-next.md) for the canonical near-term execution surface.
+See [ROADMAP-next.md](ROADMAP-next.md) for the near-term plan as it stood when these snapshots were frozen.
 
 ## Supporting Deep Dives
 

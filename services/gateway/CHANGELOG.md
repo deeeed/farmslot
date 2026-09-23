@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
+- Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.
 
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 

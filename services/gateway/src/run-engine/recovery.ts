@@ -662,12 +662,13 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           const hasConflict = unresolved.some((d) => d.type === 'ci_merge_conflict');
           const hasCIFail = unresolved.some((d) => d.type === 'ci_ci_failed');
           const hasCITimeout = unresolved.some((d) => d.type === 'ci_ci_timeout');
-          if (hasConflict || hasCIFail || hasCITimeout) {
+          const hasBlockedFix = unresolved.some((d) => d.type === 'ci_inline_fix_blocked');
+          if (hasConflict || hasCIFail || hasCITimeout || hasBlockedFix) {
             deps.setPrHealthOverlay(run.slotId, {
               pr: run.prNumber,
               conflict: hasConflict,
               ciPassed: 0,
-              ciFailed: hasCIFail ? 1 : 0,
+              ciFailed: hasCIFail || hasBlockedFix ? 1 : 0,
               ciPending: hasCITimeout ? 1 : 0,
               ciTotal: 0,
               updatedAt: new Date().toISOString(),

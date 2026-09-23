@@ -377,6 +377,57 @@ export async function monitorCI(
     } = pr;
     const headShaNow = run.slotId ? await getSlotHeadSha(run.slotId) : null;
     const checkFingerprint = buildCIWatchCheckFingerprint(pr.checks);
+    const recoverBlockedInlineFix = async (
+      inlineFix: InlineCIFix,
+      failedChecks: string[],
+    ): Promise<'refresh' | CIOutcome> => {
+      const reason = inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`;
+      lastInlineCIFix = inlineFix;
+      checkTimeline.push({
+        timestamp: new Date().toISOString(),
+        status: 'inline-ci-fix-blocked',
+        detail: reason,
+      });
+
+      let fresh: PRStatus;
+      try {
+        fresh = (await prStatus({ pr: prNumber, project: run.project, force: true })).pr;
+      } catch (error) {
+        checkTimeline.push({
+          timestamp: new Date().toISOString(),
+          status: 'poll-error',
+          detail: (error as Error).message,
+        });
+        forceNextRefresh = await waitForNextPoll('polling');
+        return 'refresh';
+      }
+      if (
+        fresh.merged ||
+        buildCIWatchCheckFingerprint(fresh.checks) !== checkFingerprint ||
+        buildCIBotCommentFingerprint(fresh.actionableBotComments) !==
+          buildCIBotCommentFingerprint(pr.actionableBotComments)
+      ) {
+        forceNextRefresh = true;
+        return 'refresh';
+      }
+
+      const actionId = await createCIDecision(
+        runId,
+        'inline_fix_blocked',
+        `CI fix could not be validated for PR #${prNumber}: ${reason}. The PR still needs attention.`,
+        [
+          { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' },
+          { id: 'wait', label: 'Keep watching CI', style: 'secondary' },
+          { id: 'abort', label: 'Abort', style: 'danger' },
+        ],
+        { checks: fresh.checks, failedChecks },
+      );
+      if (actionId === 'dispatch-pr-complete')
+        return buildOutcome('failed', failedChecks, actionId);
+      if (actionId === 'abort') return buildOutcome('aborted', failedChecks);
+      forceNextRefresh = await waitForNextPoll('polling');
+      return 'refresh';
+    };
     const progressReason = detectCIWatchProgress(
       { checkFingerprint: lastCheckFingerprint, headSha: lastHeadSha },
       { checkFingerprint, headSha: headShaNow },
@@ -603,12 +654,9 @@ export async function monitorCI(
         if (inlineFix) {
           lastInlineCIFix = inlineFix;
           if (inlineFix.blocked) {
-            checkTimeline.push({
-              timestamp: new Date().toISOString(),
-              status: 'inline-ci-fix-blocked',
-              detail: inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`,
-            });
-            return buildOutcome('blocked', ['INLINE_FIX_BLOCKED']);
+            const recovery = await recoverBlockedInlineFix(inlineFix, ['INLINE_FIX_BLOCKED']);
+            if (recovery !== 'refresh') return recovery;
+            continue;
           }
           if (inlineFix.retryScheduled) {
             checkTimeline.push({
@@ -712,12 +760,9 @@ export async function monitorCI(
       if (inlineFix) {
         lastInlineCIFix = inlineFix;
         if (inlineFix.blocked) {
-          checkTimeline.push({
-            timestamp: new Date().toISOString(),
-            status: 'inline-ci-fix-blocked',
-            detail: inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`,
-          });
-          return buildOutcome('blocked', failedNames);
+          const recovery = await recoverBlockedInlineFix(inlineFix, failedNames);
+          if (recovery !== 'refresh') return recovery;
+          continue;
         }
         if (inlineFix.retryScheduled) {
           checkTimeline.push({
@@ -828,12 +873,9 @@ export async function monitorCI(
       if (inlineFix) {
         lastInlineCIFix = inlineFix;
         if (inlineFix.blocked) {
-          checkTimeline.push({
-            timestamp: new Date().toISOString(),
-            status: 'inline-ci-fix-blocked',
-            detail: inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`,
-          });
-          return buildOutcome('blocked', ['INLINE_FIX_BLOCKED']);
+          const recovery = await recoverBlockedInlineFix(inlineFix, ['INLINE_FIX_BLOCKED']);
+          if (recovery !== 'refresh') return recovery;
+          continue;
         }
         if (inlineFix.retryScheduled) {
           checkTimeline.push({
@@ -954,6 +996,7 @@ async function createCIDecision(
     )
       return 'dispatch-pr-complete';
     if (reason === 'ci_timeout' && ids.has('skip')) return 'skip';
+    if (reason === 'inline_fix_blocked' && ids.has('abort')) return 'abort';
     if (ids.has('dismiss')) return 'dismiss';
     return null;
   })();

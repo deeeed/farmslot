@@ -1385,6 +1385,7 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
 }
 
 export interface RunResolveDecisionDependencies {
+  resumeRun?: (runId: string) => Promise<void>;
   assertReviewLaunchAllowed?: (
     reviews: readonly IndependentReviewStatus[],
     slotId: string,
@@ -1800,7 +1801,7 @@ async function resolveRunDecision(
             return;
           }
         }
-        startRun(params.runId).catch((err) => {
+        (dependencies.resumeRun ?? startRun)(params.runId).catch((err) => {
           console.error(
             `[run] resume after decision resolve failed for ${params.runId.slice(0, 8)}: ${(err as Error).message}`,
           );
