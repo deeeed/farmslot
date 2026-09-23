@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve acceptance requirements per worker flow, so fix-bug tasks can require verdicts without blocking review runs.
+
 - Bind terminal-review task marks to the launch attempt so repeated bootstrap by delegated workers preserves parent identity and checklist progress.
 
 - Static Claude reviews initialize workspace trust with the launch environment and keep tool-runner scratch files writable inside the review sandbox.

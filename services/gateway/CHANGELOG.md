@@ -10,6 +10,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.
 
+- Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
+
+- Bind a newer worker signal before replaying a blocked monitor, including completion by the new attempt; require current slot ownership and freshly checked proof resources, and release an owned slot before restarting from find-slot.
+
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.

@@ -1328,6 +1328,7 @@
         "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
         "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
         "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" },
+        "acceptance": { "$ref": "#/$defs/worker_terminal_acceptance_rules" },
         "flows": {
           "type": "object",
           "description": "Per-flow overrides keyed by flow type (dev, fix-bug, review-pr, …).",
@@ -1336,7 +1337,8 @@
             "properties": {
               "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
               "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
-              "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" }
+              "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" },
+              "acceptance": { "$ref": "#/$defs/worker_terminal_acceptance_rules" }
             },
             "additionalProperties": false
           }
@@ -1934,6 +1936,14 @@
         "operator-wait": { "type": "string", "enum": ["retain", "warm", "stop"] },
         "terminal": { "type": "string", "enum": ["stop"] }
       }
+    },
+    "worker_terminal_acceptance_rules": {
+      "type": "object",
+      "properties": {
+        "require": { "type": "boolean" },
+        "allowWeak": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
     "worker_terminal_command_spec": {
       "type": "object",

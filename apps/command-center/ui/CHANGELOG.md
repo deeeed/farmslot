@@ -5,6 +5,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
+- Count assessed acceptance criteria separately from proven ones, and show unresolved cleanup with the last provider check instead of implying a fresh health result.
+
+- Show blocked workers how to restart on an available worker after slot release, or resume monitoring after a fresh signal and proof-resource check while they still own the slot. Update-branch runs without worker selection instead direct operators to start a new run.
+
 - Offer GPT-6 Sol in the Codex model picker and use Cursor's advertised Grok 4.7 model IDs.
 
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.

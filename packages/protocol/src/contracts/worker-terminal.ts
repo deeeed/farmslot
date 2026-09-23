@@ -35,7 +35,12 @@ export interface WorkerTerminalProjectConfig {
   complete?: WorkerTerminalCommandSpec;
   'no-change'?: WorkerTerminalCommandSpec;
   blocked?: WorkerTerminalCommandSpec;
-  flows?: Record<string, Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>>>;
+  flows?: Record<
+    string,
+    Partial<Record<WorkerTerminalCommand, WorkerTerminalCommandSpec>> & {
+      acceptance?: WorkerTerminalAcceptanceRules;
+    }
+  >;
   whenPresent?: WorkerTerminalWhenPresentRule[];
 }
 

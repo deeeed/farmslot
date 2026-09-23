@@ -4,6 +4,8 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Show assessed and proven acceptance criteria separately, matching Command Center.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.0 - 2026-09-20

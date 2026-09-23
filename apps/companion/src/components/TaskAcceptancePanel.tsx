@@ -8,7 +8,7 @@ import { baseStyles, colors, fonts, radii, spacing } from '../lib/theme';
 
 /**
  * The run's acceptance ledger (ADR-060 phase 5), read-only and compact: the
- * proven count always visible, the per-criterion rows collapsed until tapped so a
+ * assessed count always visible, the per-criterion rows collapsed until tapped so a
  * long criteria list does not push the checklist off a phone screen.
  *
  * Evidence shows as basenames, not links: the Companion has no artifact viewer, so
@@ -51,7 +51,7 @@ export function TaskAcceptancePanel({
               <View style={styles.rowHeader}>
                 <Text style={styles.id}>{criterion.id}</Text>
                 <Text style={[styles.pill, { color, borderColor: color }]}>
-                  {verdict ?? 'no verdict'}
+                  {verdict ?? 'not assessed'}
                 </Text>
                 {criterion.status?.proofMode ? (
                   <Text style={baseStyles.textMuted}>{criterion.status.proofMode}</Text>
