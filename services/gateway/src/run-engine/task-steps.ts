@@ -244,7 +244,13 @@ export async function executeGradeStep(
   runId: string,
   run: Run,
   stepPartialIO: StepPartialIOMap,
+  dependencies: {
+    createEngineDecision?: typeof createEngineDecision;
+    loadProjectVarsOrNull?: typeof loadProjectVarsOrNull;
+  } = {},
 ): Promise<StepIO> {
+  const decide = dependencies.createEngineDecision ?? createEngineDecision;
+  const loadProjectVars = dependencies.loadProjectVarsOrNull ?? loadProjectVarsOrNull;
   const inputs: Record<string, unknown> = { ticketOrPr: run.ticketOrPr };
   // Fetch ticket data from Jira/GitHub unless the run was created with
   // explicit context, such as eval replay candidates.
@@ -273,7 +279,7 @@ export async function executeGradeStep(
   let profileFitOverride: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
-    const actionId = await createEngineDecision(
+    const actionId = await decide(
       runId,
       'project_mismatch',
       `Ticket "${projectMismatch.normalizedTicket ?? run.ticketOrPr}" appears to belong to project "${projectMismatch.suggestedProject}", but this run is on "${run.project}". ${projectMismatch.rationale} Continue anyway?`,
@@ -308,7 +314,7 @@ export async function executeGradeStep(
   // Avoid resolving a prepare profile for every other run: an unknown explicit
   // profile remains PREPARE's error, as it was before this advisory gate.
   if (run.project === 'farmslot-farm' && !run.prepareProfile?.trim()) {
-    const profileProjectVars = await loadProjectVarsOrNull(
+    const profileProjectVars = await loadProjectVars(
       run.project,
       'prepare profile decision',
       run.id,
@@ -322,7 +328,7 @@ export async function executeGradeStep(
     });
   }
   if (resolvedProfileFit) {
-    const actionId = await createEngineDecision(
+    const actionId = await decide(
       runId,
       'prepare_profile_mismatch',
       `This run will use "${currentPrepareProfile}", but the ticket points to "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}. ${resolvedProfileFit.rationale}`,
