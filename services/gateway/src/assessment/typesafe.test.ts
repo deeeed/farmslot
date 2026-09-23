@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { boundedAssessmentFetch } from './failure-triage/transport.js';
 import { AssessmentResponseError } from './provider.js';
 import { createTypeSafeProvider } from './typesafe.js';
 
@@ -236,6 +237,77 @@ test('TypeSafe adapter retains a receipt when a successful HTTP body fails to re
       assert.equal(error.responseReceived, true);
       assert.equal(error.httpStatus, 200);
       assert.equal(error.usage?.requestId, 'read-failure');
+      return true;
+    },
+  );
+});
+
+test('bounded transport retains received HTTP receipt for unreadable or oversized TypeSafe bodies', async () => {
+  for (const [mode, body] of [
+    ['oversized', 'x'.repeat(64 * 1024 + 1)],
+    [
+      'failed-read',
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error('synthetic body read failure'));
+        },
+      }),
+    ],
+  ] as const) {
+    const provider = createTypeSafeProvider(
+      boundedAssessmentFetch(
+        async () =>
+          new Response(body, {
+            headers: {
+              'content-type': 'application/json',
+              'x-typesafe-request-id': `fixture-${mode}`,
+            },
+          }),
+      ),
+    );
+    await assert.rejects(
+      provider.assess({
+        state: 'synthetic failure',
+        questions: { risk: { type: 'boolean', instructions: 'Is there risk?' } },
+        model: 'jev-1.13.0',
+        apiKey: 'fixture-key',
+        signal: new AbortController().signal,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof AssessmentResponseError);
+        assert.equal(error.responseReceived, true, mode);
+        assert.equal(error.httpStatus, 200, mode);
+        assert.equal(error.usage?.requestId, `fixture-${mode}`);
+        assert.equal(error.usage?.inputTokens, undefined);
+        return true;
+      },
+    );
+  }
+});
+
+test('received-body failure duration includes time spent reading after headers', async () => {
+  const provider = createTypeSafeProvider(
+    boundedAssessmentFetch(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          setTimeout(() => controller.error(new Error('delayed body read failure')), 230);
+        },
+      });
+      return new Response(body, { headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  await assert.rejects(
+    provider.assess({
+      state: 'synthetic failure',
+      questions: { risk: { type: 'boolean', instructions: 'Is there risk?' } },
+      model: 'jev-1.13.0',
+      apiKey: 'fixture-key',
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AssessmentResponseError);
+      assert.equal(error.responseReceived, true);
+      assert.ok(error.usage?.durationMs !== undefined && error.usage.durationMs >= 200);
       return true;
     },
   );

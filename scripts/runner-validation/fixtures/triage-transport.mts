@@ -24,6 +24,26 @@ globalThis.fetch = async (_url, init) => {
       }),
     );
   await new Promise((resolve) => setTimeout(resolve, 500));
+  if (mode === 'native-oversized-body')
+    return new Response('x'.repeat(64 * 1024 + 1), {
+      headers: {
+        'content-type': 'application/json',
+        'x-typesafe-request-id': 'fixture-oversized',
+      },
+    });
+  if (mode === 'native-body-read-failure') {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        setTimeout(() => controller.error(new Error('synthetic body read failure')), 250);
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        'content-type': 'application/json',
+        'x-typesafe-request-id': 'fixture-read-failure',
+      },
+    });
+  }
   if (mode === 'native-http-429')
     return new Response(null, {
       status: 429,

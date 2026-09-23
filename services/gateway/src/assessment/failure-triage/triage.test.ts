@@ -305,7 +305,8 @@ test('transport forbids redirects and rejects oversized bodies before SDK parsin
     redirected = init?.redirect;
     return new Response('x'.repeat(65537));
   };
-  await assert.rejects(boundedAssessmentFetch(fake)('https://example.test'), /byte limit/);
+  const oversized = await boundedAssessmentFetch(fake)('https://example.test');
+  await assert.rejects(oversized.text(), /byte limit/);
   assert.equal(redirected, 'error');
   const valid: typeof fetch = async () => new Response('{"ok":true}');
   assert.deepEqual(await (await boundedAssessmentFetch(valid)('https://example.test')).json(), {

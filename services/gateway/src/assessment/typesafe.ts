@@ -83,11 +83,10 @@ const httpStatus = (value: unknown) =>
     ? value
     : undefined;
 
-function responseReceipt(response: Response, apiKey: string, started: number) {
+function responseReceipt(response: Response, apiKey: string) {
   const safeRequestId = identity(response.headers.get('x-typesafe-request-id'), apiKey);
   return {
     usage: {
-      durationMs: Date.now() - started,
       ...(safeRequestId === undefined ? {} : { requestId: safeRequestId }),
     },
     httpStatus: httpStatus(response.status),
@@ -125,7 +124,7 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
       const transport = fetchImpl ?? fetch;
       const observedFetch: typeof fetch = async (input, init) => {
         const response = await transport(input, init);
-        receivedHttp = responseReceipt(response, apiKey, started);
+        receivedHttp = responseReceipt(response, apiKey);
         return response;
       };
       const client = new TypeSafeClient({
@@ -163,7 +162,7 @@ export function createTypeSafeProvider(fetchImpl?: typeof fetch): AssessmentProv
           throw new AssessmentResponseError(
             'Assessment provider response could not be read',
             true,
-            receivedHttp.usage,
+            { ...receivedHttp.usage, durationMs: Date.now() - started },
             undefined,
             true,
             receivedHttp.httpStatus,

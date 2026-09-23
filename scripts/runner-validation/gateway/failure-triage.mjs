@@ -748,6 +748,54 @@ try {
   );
   assert.equal(await count(), 14);
   await stop();
+  // A response can be charged even if its body exceeds the limit or fails to read.
+  // Each new price snapshot admits one simulated call, then forbids retry without usage.
+  for (const [mode, requestId] of [
+    ['native-oversized-body', 'fixture-oversized'],
+    ['native-body-read-failure', 'fixture-read-failure'],
+  ]) {
+    policy.price.verifiedAt = new Date(
+      Date.parse(now) + (mode === 'native-oversized-body' ? 4000 : 5000),
+    ).toISOString();
+    await savePolicy();
+    await advanceSnapshot();
+    await writeFile(path.join(out, 'mode'), mode);
+    await start();
+    const receivedView = rpc('intelligence.triage.get', { runId: id });
+    assert.equal(receivedView.availability, 'ready', mode);
+    const received = rpc('intelligence.triage.analyze', {
+      runId: id,
+      snapshotHash: receivedView.snapshotHash,
+    });
+    assert.equal(received.record.status, 'unavailable', mode);
+    assert.equal(received.record.result.error, 'spend-bound-unverifiable', mode);
+    assert.equal(received.record.result.usage.requestId, requestId, mode);
+    assert.equal(received.record.result.usage.inputTokens, undefined, mode);
+    assert.equal(received.record.result.usage.costUsd, undefined, mode);
+    assert.equal(received.retryAllowed, false, mode);
+    if (mode === 'native-body-read-failure')
+      assert.ok(received.record.result.usage.durationMs >= 200, 'Duration includes body read');
+    assert.throws(
+      () =>
+        rpc('intelligence.triage.analyze', {
+          runId: id,
+          snapshotHash: receivedView.snapshotHash,
+          retryOf: received.record.id,
+        }),
+      `Unknown spend cannot be retried: ${mode}`,
+    );
+    await writeFile(path.join(out, 'mode'), 'valid');
+    await advanceSnapshot();
+    const locked = rpc('intelligence.triage.get', { runId: id });
+    assert.equal(
+      rpc('intelligence.triage.analyze', { runId: id, snapshotHash: locked.snapshotHash })
+        .availability,
+      'budget-blocked',
+      mode,
+    );
+    await stop();
+  }
+  assert.equal(await count(), 16, 'Both body failures count as received provider calls');
   source = source.slice(0, source.indexOf('Observation sequence:'));
   await writeFile(sourcePath, source);
   policy.approvals[0].sources[0].digest = createHash('sha256').update(source).digest('hex');
@@ -756,7 +804,9 @@ try {
   const proof = {
     passed: true,
     mode: 'simulated',
-    providerCalls: 14,
+    providerCalls: 16,
+    receivedBodyFailuresLockPriceSnapshot: true,
+    durationIncludesBodyRead: true,
     overBoundUsageRetained: true,
     rejectedOverBoundUsageRetained: true,
     mismatchedModelOverBoundLocked: true,
