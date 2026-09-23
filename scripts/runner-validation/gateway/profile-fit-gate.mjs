@@ -40,6 +40,7 @@ const slot = (id, resources) => ({ id, repo, session: id, resources });
 const runs = [];
 const ticketData = {
   source: 'manual',
+  issueType: 'Task',
   title: 'Companion proof',
   description: 'Companion device validation',
   acceptanceCriteria: ['Companion connected'],
@@ -59,22 +60,36 @@ const request = (slotId, ticketOrPr) => ({
 async function waitForGrade(runId, expectedDecision) {
   for (let i = 0; i < 60; i++) {
     const run = rpc('run.get', { runId }).run;
-    const decision = run.decisions?.find(
+    const pending = run.decisions?.filter((entry) => !entry.resolvedAt) ?? [];
+    const profileDecision = pending.find(
       (entry) => entry.type === 'engine_prepare_profile_mismatch',
     );
     const grade = run.steps?.find((step) => step.name === 'grade');
-    if (expectedDecision && decision) {
+    assert.equal(run.taskFile, null, 'recipe must stop at GRADE before writing task files');
+    if (expectedDecision && profileDecision) {
       assert.equal(run.status, 'blocked');
-      assert.match(decision.description, /requires one of: ios-sim, android-emu, android-device/);
+      assert.match(
+        profileDecision.description,
+        /requires one of: ios-sim, android-emu, android-device/,
+      );
       assert.deepEqual(
-        decision.actions.map((action) => action.id),
+        profileDecision.actions.map((action) => action.id),
         ['continue', 'abort'],
+      );
+      assert.deepEqual(
+        pending.map((entry) => entry.type),
+        ['engine_prepare_profile_mismatch'],
       );
       assert.equal(run.prepareProfile, undefined);
       return;
     }
-    if (!expectedDecision && grade?.status === 'done') {
-      assert.equal(decision, undefined);
+    if (!expectedDecision && pending.length) {
+      assert.deepEqual(
+        pending.map((entry) => entry.type),
+        ['engine_flow_type_mismatch'],
+      );
+      assert.equal(run.status, 'blocked');
+      assert.equal(grade?.status, 'running');
       assert.equal(run.prepareProfile, undefined);
       return;
     }
@@ -84,6 +99,23 @@ async function waitForGrade(runId, expectedDecision) {
     await new Promise((done) => setTimeout(done, 250));
   }
   throw new Error(`run ${runId} did not reach expected GRADE state`);
+}
+
+function cleanup() {
+  const cleanupErrors = [];
+  for (const runId of runs) {
+    try {
+      const run = rpc('run.get', { runId }).run;
+      if (!['done', 'failed', 'cancelled'].includes(run.status)) rpc('run.cancel', { runId });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  rmSync(poolFile, { force: true });
+  rmSync(repo, { recursive: true, force: true });
+  rpc('fleet.refresh');
+  if (cleanupErrors.length)
+    throw new AggregateError(cleanupErrors, 'Could not cancel synthetic runs');
 }
 
 try {
@@ -114,6 +146,14 @@ try {
       preview.preview.profileFit?.suggestedPrepareProfile,
       decisionExpected ? 'sandbox-companion' : undefined,
     );
+    if (decisionExpected) {
+      assert.match(
+        preview.preview.profileFit?.slotResourceBlocker ?? '',
+        /ios-sim, android-emu, android-device/,
+      );
+      assert.match(preview.preview.profileFit?.rationale ?? '', /companion/i);
+      assert.equal(preview.preview.profileFit?.confidence, 'high');
+    }
     const { run } = rpc('run.create', {
       ...request(slotId, ticketOrPr),
       runner: 'claude',
@@ -123,18 +163,9 @@ try {
     runs.push(run.id);
     await waitForGrade(run.id, decisionExpected);
     console.log(
-      `${slotId}: ${decisionExpected ? 'incompatible decision' : 'core proceeded without decision'}`,
+      `${slotId}: ${decisionExpected ? 'incompatible profile decision' : 'compatible core reached flow decision'}`,
     );
   }
 } finally {
-  try {
-    for (const runId of runs) {
-      const run = rpc('run.get', { runId }).run;
-      if (!['done', 'failed', 'cancelled'].includes(run.status)) rpc('run.cancel', { runId });
-    }
-  } finally {
-    rmSync(poolFile, { force: true });
-    rmSync(repo, { recursive: true, force: true });
-    rpc('fleet.refresh');
-  }
+  cleanup();
 }

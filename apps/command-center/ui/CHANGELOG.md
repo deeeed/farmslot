@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Explain when a selected slot cannot use a suggested Companion profile, and hide the unusable apply action.
+
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
 - Count assessed acceptance criteria separately from proven ones, and show unresolved cleanup with the last provider check instead of implying a fresh health result.
 

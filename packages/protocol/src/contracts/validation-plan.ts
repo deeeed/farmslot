@@ -17,5 +17,6 @@ export interface ProfileFitSuggestion {
   suggestedApp?: string;
   confidence: 'low' | 'medium' | 'high';
   rationale: string;
+  slotResourceBlocker?: string;
   validationPlan?: ValidationPlanStep[];
 }

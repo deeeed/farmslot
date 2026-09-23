@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Include the selected slot resource blocker in profile-fit suggestions.
+
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
 - Allow per-flow terminal acceptance rules and carry the provider's last health-check time in run posture.
 

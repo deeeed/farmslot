@@ -370,8 +370,14 @@ export function renderProfileFitBanner(ctx: ProfileFitBannerRenderContext) {
         ${suggestion.validationPlan?.length
           ? html` — validation plan: ${suggestion.validationPlan.length} step(s)`
           : nothing}
+        ${suggestion.slotResourceBlocker
+          ? html`<div>
+              Selected slot cannot use this profile: ${suggestion.slotResourceBlocker}. Choose a
+              compatible slot first.
+            </div>`
+          : nothing}
       </div>
-      ${ctx.prepareProfile === suggestedProfile
+      ${suggestion.slotResourceBlocker || ctx.prepareProfile === suggestedProfile
         ? nothing
         : html`
             <button
