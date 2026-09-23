@@ -1586,7 +1586,9 @@ export async function runReplayStep(
           const restored = await markSlotStatusIf(
             reclaimedSlotId,
             (slot) =>
-              slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
+              slot.current_run_id === params.runId &&
+              slot.slot_epoch === reclaimedSlotEpoch &&
+              slot.phase !== SLOT_PHASE_RELEASING,
             priorOwnedSlotFields,
           );
           if (restored.applied) {
@@ -1597,16 +1599,6 @@ export async function runReplayStep(
                 : priorRunSlotId;
             if (getRun(params.runId)?.slotId !== restoredSlotId) {
               const run = updateRun(params.runId, { slotId: restoredSlotId });
-              await persistRunNow(run, 'replay-rollback-slot');
-              emit(Events.RUN_UPDATED, { run });
-            }
-          } else {
-            const current = await readSlotRow(reclaimedSlotId);
-            if (
-              current?.current_run_id !== params.runId &&
-              getRun(params.runId)?.slotId === reclaimedSlotId
-            ) {
-              const run = updateRun(params.runId, { slotId: null });
               await persistRunNow(run, 'replay-rollback-slot');
               emit(Events.RUN_UPDATED, { run });
             }
