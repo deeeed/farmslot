@@ -113,6 +113,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `credential.issue`                      | credential       | bounded-write | —      | —      | Credential Issue gateway method.                      |
 | `credential.list`                       | credential       | read-only     | —      | —      | Credential List gateway method.                       |
 | `credential.revoke`                     | credential       | bounded-write | —      | —      | Credential Revoke gateway method.                     |
+| `decision.advice.analyze`               | decision         | bounded-write | —      | —      | Decision Advice Analyze gateway method.               |
+| `decision.advice.get`                   | decision         | read-only     | —      | —      | Decision Advice Get gateway method.                   |
 | `decision.list`                         | decision         | read-only     | —      | —      | Decision List gateway method.                         |
 | `decision.resolve`                      | decision         | high-impact   | —      | —      | Decision Resolve gateway method.                      |
 | `diagnostics.fileTransfer.remoteE2e`    | diagnostics      | bounded-write | —      | —      | Diagnostics FileTransfer RemoteE2e gateway method.    |

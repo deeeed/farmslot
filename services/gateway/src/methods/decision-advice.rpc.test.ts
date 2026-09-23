@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { type DecisionAdviceResult, Methods } from '@farmslot/protocol';
@@ -65,7 +66,9 @@ test('decision advice gateway RPC gates on admission and refuses stale snapshots
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing gateway test address');
-    const cli = path.resolve('apps/command-center/scripts/cdp.mjs');
+    const cli = fileURLToPath(
+      new URL('../../../../apps/command-center/scripts/cdp.mjs', import.meta.url),
+    );
     const gatewayUrl = `ws://127.0.0.1:${address.port}`;
     const execute = promisify(execFile);
     const request = async (method: string, params: unknown): Promise<DecisionAdviceResult> => {
