@@ -150,12 +150,15 @@ equal-quality pairs only. Named advice and abstentions have separate cohorts and
 denominators. These diagnostics establish no token, cost or time saving.
 
 For a separately reviewed study that needs more room to observe saved reads,
-`seal-worker` accepts an optional seventh argument after its output path: a JSON
-file such as `{"maxTurns":4,"maxReads":3}`. Without it, the historical
-three-turn/two-read default remains. The limits enter the sealed plan hash and
-worker quote. At four turns, at most seven cases fit the 60-call worker cap
-(two arms per case). Freeze the limits and corpus before advice or worker calls;
-a case that needs all allowed reads cannot demonstrate fewer evidence reads.
+`seal-advice` accepts an optional third argument after its output path: a JSON
+file such as `{"maxTurns":4,"maxReads":3}`. The limits enter the advice plan
+hash _before_ the first provider call, then carry unchanged into the worker
+plan. Without them, the historical three-turn/two-read default remains.
+`quote-advice` and `quote-worker` show the limits alongside the reserved cost.
+The worker quote checks its worst-case evidence prompt against the input-byte cap
+before consuming worker approval. At four turns, at most seven cases fit the 60-call worker cap (two arms per
+case). Freeze the limits and corpus before advice or worker calls; a case that
+needs all allowed reads cannot demonstrate fewer evidence reads.
 
 A revised eight-case synthetic draft failed independent source-only review. One
 definite cause was unsupported, a next check assumed missing evidence, and a

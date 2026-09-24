@@ -118,11 +118,54 @@ export function validateConfig(config: RunnerConfig): string {
   return digest(JSON.stringify(config));
 }
 
+function maximumPromptBytes(plan: NavigationPlan, caseId: string, arm: 'baseline' | 'assisted') {
+  const item = plan.cases.find((entry) => entry.id === caseId)!;
+  // A read adds both its source and its action to every later prompt.
+  const sources = item.sources
+    .map((source) => ({
+      source,
+      bytes:
+        Buffer.byteLength(JSON.stringify(source)) +
+        Buffer.byteLength(JSON.stringify({ type: 'read_evidence', id: source.id })),
+    }))
+    .sort((left, right) => right.bytes - left.bytes)
+    .slice(0, plan.maxReads);
+  const session = startSession(plan, caseId, arm);
+  let maximum = 0;
+  for (const [index, entry] of sources.entries()) {
+    maximum = Math.max(maximum, Buffer.byteLength(nextPrompt(plan, session)));
+    session.turns.push({
+      number: index + 1,
+      promptHash: digest('preflight'),
+      action: { type: 'read_evidence', id: entry.source.id },
+      receipt: {
+        responseId: `preflight-${index}`,
+        receiptHash: digest(`preflight-${index}`),
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0,
+        providerDurationMs: 0,
+        elapsedMs: 0,
+      },
+    });
+  }
+  return Math.max(maximum, Buffer.byteLength(nextPrompt(plan, session)));
+}
+
 export function reservation(plan: NavigationPlan, config: RunnerConfig) {
   verifyPlan(plan);
   const calls = plan.cases.length * 2 * plan.maxTurns;
   assert(calls <= 60 && calls > 0, 'Study exceeds 60-call cap');
   const configHash = validateConfig(config);
+  for (const item of plan.cases)
+    for (const arm of ['baseline', 'assisted'] as const)
+      assert(
+        maximumPromptBytes(plan, item.id, arm) + Buffer.byteLength(INSTRUCTIONS) + 1024 <=
+          config.maxInputTokens,
+        'Study includes a request exceeding the reserved input-byte ceiling',
+      );
   const adviceTokens = plan.advice.reduce(
     (sum, entry) => sum + entry.receipt.inputTokens + entry.receipt.outputTokens,
     0,

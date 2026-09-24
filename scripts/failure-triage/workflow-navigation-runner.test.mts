@@ -169,6 +169,22 @@ test('invalid independent approval blocks transport and leaves no journal', asyn
       () => reservation(sealed, { ...config, maxTotalUsd: 0.00001 }),
       /reserved budget/,
     );
+    const oversized = sealPlan(
+      [
+        {
+          ...cases[0],
+          sources: [
+            { id: 'one', title: 'First observation', text: 'x'.repeat(1700) },
+            { id: 'two', title: 'Second observation', text: 'y'.repeat(1700) },
+            { id: 'three', title: 'Other observation', text: 'z'.repeat(1700) },
+          ],
+        },
+      ],
+      sealed.advice,
+      { maxTurns: 4, maxReads: 3 },
+      { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+    );
+    assert.throws(() => reservation(oversized, config), /input-byte ceiling/);
     assert.throws(
       () =>
         reservation(sealed, {

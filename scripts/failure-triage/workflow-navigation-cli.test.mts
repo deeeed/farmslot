@@ -113,14 +113,58 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     assert.deepEqual([worker.maxTurns, worker.maxReads], [3, 2]);
     await writeFile(file('limits.json'), JSON.stringify({ maxTurns: 4, maxReads: 3 }));
     await main([
+      'seal-advice',
+      file('cases.json'),
+      file('extended-advice-plan.json'),
+      file('limits.json'),
+    ]);
+    const extendedAdvicePlan = JSON.parse(
+      await readFile(file('extended-advice-plan.json'), 'utf8'),
+    );
+    assert.notEqual(extendedAdvicePlan.hash, sealed.hash);
+    assert.deepEqual(extendedAdvicePlan.workerLimits, { maxTurns: 4, maxReads: 3 });
+    const extendedJournal =
+      journalRows
+        .map((row) =>
+          JSON.stringify(
+            row.kind === 'approved' || row.kind === 'closed'
+              ? { ...row, planHash: extendedAdvicePlan.hash }
+              : row,
+          ),
+        )
+        .join('\n') + '\n';
+    await writeFile(file('extended-advice-journal.jsonl'), extendedJournal);
+    await writeFile(
+      file('extended-advice.json'),
+      JSON.stringify({
+        stopReason: 'completed',
+        advice,
+        ...provenance,
+        advicePlanHash: extendedAdvicePlan.hash,
+        journalSha256: sha(extendedJournal),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        main([
+          'seal-worker',
+          file('cases.json'),
+          file('extended-advice-plan.json'),
+          file('advice.json'),
+          file('advice-journal.jsonl'),
+          file('reference.json'),
+          file('late-budget-change.json'),
+        ]),
+      /Advice provenance/,
+    );
+    await main([
       'seal-worker',
       file('cases.json'),
-      file('advice-plan.json'),
-      file('advice.json'),
-      file('advice-journal.jsonl'),
+      file('extended-advice-plan.json'),
+      file('extended-advice.json'),
+      file('extended-advice-journal.jsonl'),
       file('reference.json'),
       file('extended-worker-plan.json'),
-      file('limits.json'),
     ]);
     const extended = JSON.parse(await readFile(file('extended-worker-plan.json'), 'utf8'));
     assert.deepEqual([extended.maxTurns, extended.maxReads], [4, 3]);
@@ -129,16 +173,12 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     await assert.rejects(
       () =>
         main([
-          'seal-worker',
+          'seal-advice',
           file('cases.json'),
-          file('advice-plan.json'),
-          file('advice.json'),
-          file('advice-journal.jsonl'),
-          file('reference.json'),
-          file('bad-worker-plan.json'),
+          file('bad-advice-plan.json'),
           file('bad-limits.json'),
         ]),
-      /Invalid evidence-read limit/,
+      /Invalid worker limits/,
     );
     const session = { ...startSession(worker, 'synthetic-one', 'baseline'), wallElapsedMs: 12 };
     const config: RunnerConfig = {
@@ -146,9 +186,9 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
       model: 'fixture-worker',
       provider: 'fixture',
       reasoning: 'low',
-      maxInputTokens: 1024,
+      maxInputTokens: 4096,
       maxOutputTokens: 64,
-      maxTotalTokens: 10000,
+      maxTotalTokens: 50000,
       maxTotalUsd: 0.01,
       price: {
         source: 'https://example.test/pricing',
