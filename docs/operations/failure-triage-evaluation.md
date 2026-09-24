@@ -149,6 +149,14 @@ even when another read is needed. Read/turn totals cover independently accepted
 equal-quality pairs only. Named advice and abstentions have separate cohorts and
 denominators. These diagnostics establish no token, cost or time saving.
 
+For a separately reviewed study that needs more room to observe saved reads,
+`seal-worker` accepts an optional seventh argument after its output path: a JSON
+file such as `{"maxTurns":4,"maxReads":3}`. Without it, the historical
+three-turn/two-read default remains. The limits enter the sealed plan hash and
+worker quote. At four turns, at most seven cases fit the 60-call worker cap
+(two arms per case). Freeze the limits and corpus before advice or worker calls;
+a case that needs all allowed reads cannot demonstrate fewer evidence reads.
+
 A revised eight-case synthetic draft failed independent source-only review. One
 definite cause was unsupported, a next check assumed missing evidence, and a
 Git checkout observation was titled as application state. A metadata-only

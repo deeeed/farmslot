@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { main } from './workflow-navigation-cli.mts';
-import { validateConfig, type RunnerConfig } from './workflow-navigation-runner.mts';
+import { reservation, validateConfig, type RunnerConfig } from './workflow-navigation-runner.mts';
 import { nextPrompt, startSession, type NavigationCase } from './workflow-navigation.mts';
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -110,6 +110,36 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     ]);
     const worker = JSON.parse(await readFile(file('worker-plan.json'), 'utf8'));
     assert.equal(worker.advice.length, 1);
+    assert.deepEqual([worker.maxTurns, worker.maxReads], [3, 2]);
+    await writeFile(file('limits.json'), JSON.stringify({ maxTurns: 4, maxReads: 3 }));
+    await main([
+      'seal-worker',
+      file('cases.json'),
+      file('advice-plan.json'),
+      file('advice.json'),
+      file('advice-journal.jsonl'),
+      file('reference.json'),
+      file('extended-worker-plan.json'),
+      file('limits.json'),
+    ]);
+    const extended = JSON.parse(await readFile(file('extended-worker-plan.json'), 'utf8'));
+    assert.deepEqual([extended.maxTurns, extended.maxReads], [4, 3]);
+    assert.notEqual(extended.hash, worker.hash);
+    await writeFile(file('bad-limits.json'), JSON.stringify({ maxTurns: 4, maxReads: 4 }));
+    await assert.rejects(
+      () =>
+        main([
+          'seal-worker',
+          file('cases.json'),
+          file('advice-plan.json'),
+          file('advice.json'),
+          file('advice-journal.jsonl'),
+          file('reference.json'),
+          file('bad-worker-plan.json'),
+          file('bad-limits.json'),
+        ]),
+      /Invalid evidence-read limit/,
+    );
     const session = { ...startSession(worker, 'synthetic-one', 'baseline'), wallElapsedMs: 12 };
     const config: RunnerConfig = {
       baseUrl: 'https://api.example.test/v1',
@@ -129,6 +159,7 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
         cacheWriteMultiplier: 1,
       },
     };
+    assert.equal(reservation(extended, config).calls, 8);
     const configHash = validateConfig(config);
     const writeSessions = async (provenance: object) =>
       writeFile(

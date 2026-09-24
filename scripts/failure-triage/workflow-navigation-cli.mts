@@ -55,8 +55,12 @@ export async function main([command, ...args]: string[]): Promise<void> {
     const [casesPath, output] = args;
     return save(output, sealAdvicePlan(await load<NavigationCase[]>(casesPath)));
   }
-  if (command === 'seal-worker' && args.length === 6) {
-    const [casesPath, advicePlanPath, advicePath, journalPath, referencePath, output] = args;
+  if (command === 'seal-worker' && (args.length === 6 || args.length === 7)) {
+    const [casesPath, advicePlanPath, advicePath, journalPath, referencePath, output, limitsPath] =
+      args;
+    const limits = limitsPath
+      ? await load<{ maxTurns: number; maxReads: number }>(limitsPath)
+      : { maxTurns: 3, maxReads: 2 };
     const cases = await load<NavigationCase[]>(casesPath);
     const advicePlan = await load<ReturnType<typeof sealAdvicePlan>>(advicePlanPath);
     const result = await load<NavigationAdviceResult>(advicePath);
@@ -106,22 +110,17 @@ export async function main([command, ...args]: string[]): Promise<void> {
     const reference = await load<NavigationReference>(referencePath);
     return save(
       output,
-      sealPlan(
-        cases,
-        result.advice,
-        { maxTurns: 3, maxReads: 2 },
-        {
-          referenceHash: navigationReferenceHash(reference),
-          adviceProvenance: {
-            advicePlanHash: result.advicePlanHash,
-            configHash: result.configHash,
-            provider: result.provider,
-            model: result.model,
-            journalSha256: result.journalSha256,
-            methodologyHash: first.methodologyHash,
-          },
+      sealPlan(cases, result.advice, limits, {
+        referenceHash: navigationReferenceHash(reference),
+        adviceProvenance: {
+          advicePlanHash: result.advicePlanHash,
+          configHash: result.configHash,
+          provider: result.provider,
+          model: result.model,
+          journalSha256: result.journalSha256,
+          methodologyHash: first.methodologyHash,
         },
-      ),
+      }),
     );
   }
   if (command === 'quote-advice' && args.length === 2) {
