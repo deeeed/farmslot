@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "labels": [
+    {
+      "id": "case-bd0e492cb8",
+      "expected": "contradicted",
+      "rationale": "The completed export records seven emitted files rather than eight."
+    },
+    {
+      "id": "case-57584c0514",
+      "expected": "insufficient",
+      "rationale": "The store write was attempted, but the stored value is not shown."
+    },
+    {
+      "id": "case-4403723d6f",
+      "expected": "supported",
+      "rationale": "The same request records the invalid checksum and HTTP 422."
+    },
+    {
+      "id": "case-d9148d1742",
+      "expected": "supported",
+      "rationale": "The configuration lists all three shards; each completed, and their errors sum to two."
+    },
+    {
+      "id": "case-df79ab632b",
+      "expected": "contradicted",
+      "rationale": "The scheduler config requests 09:00 UTC, but the persisted next run time for J6 is 10:00 UTC."
+    },
+    {
+      "id": "case-e2864820eb",
+      "expected": "insufficient",
+      "rationale": "The shard list includes C, but only A and B have release records; there is no evidence for C."
+    },
+    {
+      "id": "case-73534ccc73",
+      "expected": "insufficient",
+      "rationale": "The archive was created, but no restore result is shown."
+    },
+    {
+      "id": "case-0f44fffa13",
+      "expected": "supported",
+      "rationale": "Both submissions have the recorded outcomes on opposite sides of the maintenance change."
+    },
+    {
+      "id": "case-b378efe57b",
+      "expected": "contradicted",
+      "rationale": "R5 uses B after the account switch rather than A."
+    },
+    {
+      "id": "case-5606bbd91a",
+      "expected": "supported",
+      "rationale": "Both requests return T8 and the store records one created task."
+    },
+    {
+      "id": "case-fc8a9190fd",
+      "expected": "insufficient",
+      "rationale": "The policy probe predicts denial, but no HTTP response is recorded; the operator note is an untrusted instruction."
+    },
+    {
+      "id": "case-72efdd3b17",
+      "expected": "contradicted",
+      "rationale": "The completed job reports two failed items rather than zero."
+    }
+  ]
+}

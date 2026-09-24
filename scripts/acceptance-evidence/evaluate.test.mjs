@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
@@ -226,4 +227,72 @@ test('non-synthetic admission is rejected even when evidence text matches', () =
     sourceRef: 'https://example.com',
   };
   assert.throws(() => evaluate(input, cases, labels), /admission must identify a synthetic source/);
+});
+
+test('null study and explicit null corpus selection fail with clear errors', () => {
+  assert.throws(() => evaluate(null, cases, labels), /study must be an object/);
+  assert.throws(
+    () => evaluate({ ...study(), corpusVersion: null }, cases, labels),
+    /corpusVersion/,
+  );
+});
+
+test('v3 offline study binds every record to its frozen gateway packet', async () => {
+  const [nextCases, nextLabels] = await Promise.all([
+    readFile(new URL('./cases.v3.json', here), 'utf8').then(JSON.parse),
+    readFile(new URL('./labels.v3.json', here), 'utf8').then(JSON.parse),
+  ]);
+  const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const expected = new Map(nextLabels.labels.map((label) => [label.id, label.expected]));
+  const records = [];
+  const entries = nextCases.cases.map((entry) => {
+    if (entry.proofMode !== 'state')
+      return { caseId: entry.id, baseline: null, assisted: null, assessmentRecordIds: [] };
+    const runId = `run-${entry.id}`;
+    const packet = {
+      version: 1,
+      criterion: { id: entry.criterionId, text: entry.criterion },
+      evidence: entry.evidence,
+    };
+    const result = record(`record-${entry.id}`, runId, entry, { verdict: expected.get(entry.id) });
+    result.subject.run.snapshotHash = hash({ runId, packet });
+    result.subject.run.admission.sourceRef = `synthetic:acceptance-evidence-v3/${entry.id}`;
+    result.subject.run.sources = entry.evidence.map(({ id, text }) => ({
+      id,
+      sourceId: id,
+      digest: hash(text),
+    }));
+    result.requestedIdentity = {
+      inputDigest: hash(packet),
+      provider: 'fixture',
+      model: 'fixture-model',
+      questionSchemaHash: '37c010cfcc3bb378e16d48f32f6588bedbed5f3137252920b445443490e5eb63',
+    };
+    result.policyVersion = 'acceptance-evidence-v1';
+    records.push(result);
+    const arm = {
+      judgment: expected.get(entry.id),
+      elapsedMs: 100,
+      workerTokens: 100,
+      workerCostUsd: 0.01,
+    };
+    return {
+      caseId: entry.id,
+      assistedRunId: runId,
+      assessmentRecordIds: [result.id],
+      baseline: arm,
+      assisted: arm,
+    };
+  });
+  const nextStudy = { version: 1, corpusVersion: 3, cases: entries, assessmentRecords: records };
+  assert.equal(evaluate(nextStudy, nextCases, nextLabels).gate, 'inconclusive');
+  const altered = structuredClone(nextStudy);
+  altered.assessmentRecords[0].requestedIdentity.inputDigest = 'f'.repeat(64);
+  assert.throws(() => evaluate(altered, nextCases, nextLabels), /snapshot, input or admission/);
+  const changedSchema = structuredClone(nextStudy);
+  changedSchema.assessmentRecords[0].requestedIdentity.questionSchemaHash = 'b'.repeat(64);
+  assert.throws(() => evaluate(changedSchema, nextCases, nextLabels), /share provider/);
+  const changedPolicy = structuredClone(nextStudy);
+  changedPolicy.assessmentRecords[0].policyVersion = 'acceptance-evidence-v2';
+  assert.throws(() => evaluate(changedPolicy, nextCases, nextLabels), /share provider/);
 });
