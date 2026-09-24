@@ -115,8 +115,6 @@ async function snapshot(
     return { result: { eligible: false, reason: 'not-pending' } };
   const active = run.decisions.find((item) => item.id === decisionId && !item.resolvedAt);
   if (!active) return { result: { eligible: false, reason: 'not-pending' } };
-  if (active.type !== 'engine_collision')
-    return { result: { eligible: false, reason: 'insufficient-options' } };
   const decision = pendingDecisionForRun(run, active);
   const runId = run.id;
   // Out-of-bounds gateway text cannot enter an admitted packet.
@@ -387,6 +385,8 @@ export async function decisionAdviceAnalyze(
       return { ...selected.result, eligible: false, reason: 'not-admitted' };
     throw error;
   }
+  // Save the exact redacted text sent to the provider for later human review.
+  const reviewedState = prepared.state as ReturnType<typeof packet>;
   const cost =
     (price.maxInputTokens * price.inputUsdPerMillion +
       price.maxOutputTokens * price.outputUsdPerMillion) /
@@ -414,6 +414,12 @@ export async function decisionAdviceAnalyze(
           project,
           step: 'decision-advice',
           snapshotHash: selected.result.snapshotHash,
+          decision: {
+            id: params.decisionId,
+            type: reviewedState.type,
+            description: reviewedState.description,
+            actions: reviewedState.actions,
+          },
         },
       },
       requestedIdentity: {

@@ -405,6 +405,19 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     context,
   );
   await transport.execute('ui.scroll', { direction: 'down', timeout_ms: 2_000 }, context);
+  await assert.rejects(
+    transport.execute('ui.scroll', { offset_y: 0 }, context),
+    /offset_x\/offset_y \(absolute\) is not supported by Agent Device/,
+  );
+  const scrollsBefore = calls.filter((call) => call.method === 'scroll').length;
+  await transport.execute('ui.scroll', { delta_y: -240, settle: false }, context);
+  const deltaScroll = calls.filter((call) => call.method === 'scroll')[scrollsBefore];
+  assert.equal(deltaScroll?.options.direction, 'up');
+  assert.equal(deltaScroll?.options.pixels, 240);
+  await assert.rejects(
+    transport.execute('ui.scroll', { delta_x: 10, delta_y: 10 }, context),
+    /one axis at a time/,
+  );
   await transport.execute(
     'ui.wait_for',
     { text_contains: ['Settings', 'Gateway Connection'] },

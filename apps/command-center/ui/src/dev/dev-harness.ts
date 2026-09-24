@@ -81,6 +81,7 @@ import '../components/shared/slot-choice-list.js';
 import '../components/shared/slot-selector-modal.js';
 import '../components/runs/family-observability.js';
 import '../components/intelligence-audit/intelligence-audit-panel.js';
+import '../components/intelligence-audit/assessment-panel.js';
 import '../components/intelligence-audit/intelligence-incidents-panel.js';
 import '../components/interactive/interactive-operator-packets.js';
 import '../components/evals/eval-cockpit.js';
@@ -214,6 +215,7 @@ type DevRoute =
   | 'family-observability'
   | 'eval-cockpit'
   | 'intelligence-audit'
+  | 'assessment-panel'
   | 'intelligence-incidents'
   | 'update-banner'
   | 'index';
@@ -255,6 +257,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'family-observability', label: 'Retrospective', group: 'screens' },
   { route: 'eval-cockpit', label: 'Eval Cockpit', group: 'screens' },
   { route: 'intelligence-audit', label: 'Intelligence Audit', group: 'screens' },
+  { route: 'assessment-panel', label: 'Assessment Panel', group: 'components' },
   { route: 'intelligence-incidents', label: 'Intelligence Incidents (new)', group: 'screens' },
 
   { route: 'slot-card', label: 'Slot Cards', group: 'components' },
@@ -611,6 +614,10 @@ export class DevHarness extends LitElement {
         return this.renderFamilyObservability();
       case 'intelligence-audit':
         return html`<intelligence-audit-panel></intelligence-audit-panel>`;
+      case 'assessment-panel':
+        return html`<assessment-panel
+          .injectedHistory=${this.mockAssessmentHistory()}
+        ></assessment-panel>`;
       case 'intelligence-incidents':
         return this.renderIntelligenceIncidents();
       case 'eval-cockpit':
@@ -1101,6 +1108,81 @@ export class DevHarness extends LitElement {
     };
   }
 
+  private mockAssessmentHistory(): AssessmentHistoryResult {
+    const now = Date.now();
+    const iso = (offsetMs: number) => new Date(now - offsetMs).toISOString();
+    return {
+      retentionDays: 30,
+      auditHealth: { status: 'ok', failedWritesSinceStart: 0 },
+      records: [
+        {
+          version: 1,
+          id: '00000000-0000-4000-8000-000000000124',
+          ownerId: 'dev-fixture',
+          consumer: 'acceptance-evidence',
+          status: 'completed',
+          startedAt: iso(30000),
+          policyVersion: 'acceptance-evidence-v1',
+          feedback: [],
+          subject: {
+            run: {
+              id: 'synthetic-ac-run',
+              project: 'example-farm',
+              step: 'acceptance-evidence:AC-1',
+              snapshotHash: 'b'.repeat(64),
+              admission: { classification: 'synthetic', sourceRef: 'dev-fixture' },
+              criterion: {
+                id: 'AC-1',
+                text: 'The check reports success.',
+                evidence: [{ id: 'runner-log', text: 'The check completed successfully.' }],
+              },
+            },
+          },
+          result: {
+            status: 'completed',
+            attempted: true,
+            provider: 'synthetic-provider',
+            returnedModel: 'fixture-model',
+            answers: {
+              verdict: {
+                type: 'choice',
+                choice: 'supported',
+                choices: ['supported', 'contradicted', 'insufficient'],
+              },
+            },
+          },
+        },
+        {
+          version: 1,
+          id: '00000000-0000-4000-8000-000000000123',
+          ownerId: 'dev-fixture',
+          consumer: 'decision-advice',
+          status: 'completed',
+          startedAt: iso(60000),
+          policyVersion: 'decision-advice-v1',
+          feedback: [],
+          subject: {
+            run: {
+              id: 'synthetic-run',
+              project: 'example-farm',
+              step: 'decision-advice',
+              snapshotHash: 'a'.repeat(64),
+            },
+          },
+          result: {
+            status: 'completed',
+            attempted: true,
+            provider: 'synthetic-provider',
+            returnedModel: 'fixture-model',
+            answers: {
+              action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
+            },
+          },
+        },
+      ],
+    };
+  }
+
   private renderIntelligenceIncidents() {
     const now = Date.now();
     const iso = (offsetMs: number) => new Date(now - offsetMs).toISOString();
@@ -1226,44 +1308,11 @@ export class DevHarness extends LitElement {
         timestamp: iso(12 * 60 * 1000),
       },
     ];
-    const history: AssessmentHistoryResult = {
-      retentionDays: 30,
-      auditHealth: { status: 'ok', failedWritesSinceStart: 0 },
-      records: [
-        {
-          version: 1,
-          id: '00000000-0000-4000-8000-000000000123',
-          ownerId: 'dev-fixture',
-          consumer: 'decision-advice',
-          status: 'completed',
-          startedAt: iso(60000),
-          policyVersion: 'decision-advice-v1',
-          feedback: [],
-          subject: {
-            run: {
-              id: 'synthetic-run',
-              project: 'example-farm',
-              step: 'decision-advice',
-              snapshotHash: 'a'.repeat(64),
-            },
-          },
-          result: {
-            status: 'completed',
-            attempted: true,
-            provider: 'synthetic-provider',
-            returnedModel: 'fixture-model',
-            answers: {
-              action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
-            },
-          },
-        },
-      ],
-    };
     return html`
       <intelligence-incidents-panel
         .injectedSummary=${summary}
         .injectedSignals=${liveSignals}
-        .injectedHistory=${history}
+        .injectedHistory=${this.mockAssessmentHistory()}
       ></intelligence-incidents-panel>
     `;
   }

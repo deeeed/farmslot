@@ -35,6 +35,7 @@
               "ui.key_press",
               "ui.set_input",
               "ui.scroll",
+              "ui.scroll_to",
               "ui.swipe",
               "ui.pan",
               "ui.drag",
@@ -78,6 +79,7 @@
         "ui.key_press": { "$ref": "#/$defs/actionWithSchema" },
         "ui.set_input": { "$ref": "#/$defs/actionWithSchema" },
         "ui.scroll": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.scroll_to": { "$ref": "#/$defs/uiScrollToAction" },
         "ui.swipe": { "$ref": "#/$defs/actionWithSchema" },
         "ui.pan": { "$ref": "#/$defs/actionWithSchema" },
         "ui.drag": { "$ref": "#/$defs/actionWithSchema" },
@@ -121,6 +123,93 @@
         }
       ],
       "description": "Official adapter action with an explicit parameter schema."
+    },
+    "uiScrollToAction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/actionWithSchema"
+        },
+        {
+          "properties": {
+            "schema": {
+              "required": ["required", "properties"],
+              "properties": {
+                "required": {
+                  "allOf": [
+                    {
+                      "contains": {
+                        "const": "surface_test_id"
+                      }
+                    },
+                    {
+                      "contains": {
+                        "const": "target_test_id"
+                      }
+                    }
+                  ],
+                  "description": "surface_test_id and target_test_id are always required."
+                },
+                "properties": {
+                  "required": ["surface_test_id", "target_test_id"],
+                  "properties": {
+                    "surface_test_id": {
+                      "$ref": "#/$defs/stringParameter",
+                      "description": "Test id of the scroll container whose offset moves."
+                    },
+                    "target_test_id": {
+                      "$ref": "#/$defs/stringParameter",
+                      "description": "Semantic proof target that must be present when the node ends."
+                    },
+                    "visibility_anchor_test_id": {
+                      "$ref": "#/$defs/stringParameter",
+                      "description": "Measurable element used for positioning and the visibility verdict when the target has no box (flattened Text)."
+                    },
+                    "align": {
+                      "$ref": "#/$defs/stringParameter",
+                      "description": "start, center, end, or nearest placement inside the safe viewport."
+                    },
+                    "viewport_policy": {
+                      "$ref": "#/$defs/stringParameter",
+                      "description": "HUD-safe viewport policy: hud_safe removes HUD/overlay occlusion, full uses the raw surface viewport."
+                    },
+                    "verify_visible": {
+                      "properties": {
+                        "type": {
+                          "const": "boolean",
+                          "description": "The parameter must be declared as boolean."
+                        }
+                      },
+                      "description": "Whether the settled element must be inside the safe viewport."
+                    },
+                    "settle": {
+                      "properties": {
+                        "type": {
+                          "const": "object",
+                          "description": "The parameter must be declared as object."
+                        }
+                      },
+                      "description": "Settlement budget: timeout_ms, interval_ms, stable_samples."
+                    }
+                  },
+                  "description": "Declared ui.scroll_to parameters."
+                }
+              },
+              "description": "ui.scroll_to parameter schema; surface_test_id and target_test_id must be required strings. Copy UI_SCROLL_TO_PARAMS_SCHEMA from @farmslot/protocol."
+            }
+          },
+          "description": "ui.scroll_to parameter requirements."
+        }
+      ],
+      "description": "ui.scroll_to moves one named scroll surface until a semantic proof target rests inside the (HUD-safe) viewport. Its schema must require string surface_test_id and target_test_id, and may declare visibility_anchor_test_id, align, viewport_policy (HUD-safe viewport policy), verify_visible, and settle."
+    },
+    "stringParameter": {
+      "properties": {
+        "type": {
+          "const": "string",
+          "description": "The parameter must be declared as string."
+        }
+      },
+      "description": "Parameter declared as a single string."
     },
     "customAction": {
       "allOf": [

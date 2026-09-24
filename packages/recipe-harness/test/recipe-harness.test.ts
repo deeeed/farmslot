@@ -27,6 +27,7 @@ import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import {
   createStandardUiAdapters,
   normalizeUiTransportResult,
+  STANDARD_UI_ACTIONS,
   type UiActionTransport,
 } from '../src/adapters/ui.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
@@ -1666,6 +1667,377 @@ test('executes preparation, proof, and teardown through one explicit graph', asy
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+function stopAfterRecipe(): Record<string, unknown> {
+  const append = (line: string) =>
+    `node -e "require('fs').appendFileSync('order.txt','${line}\\n')"`;
+  return {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Proves one scroll-like node in isolation, then restores the environment.',
+    workflow: {
+      entry: 'prepare',
+      teardown: 'restore',
+      nodes: {
+        prepare: {
+          action: 'command',
+          intent: 'Prepare deterministic state before evaluating the claim.',
+          cmd: append('prepare'),
+          next: 'reveal',
+        },
+        reveal: {
+          action: 'command',
+          intent: 'Reveal the single node under investigation.',
+          cmd: append('reveal'),
+          next: 'compose',
+        },
+        compose: {
+          action: 'command',
+          intent: 'Continue into the larger composed flow.',
+          cmd: append('compose'),
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+        restore: {
+          action: 'command',
+          intent: 'Restore the environment after evidence collection.',
+          cmd: append('teardown'),
+          next: 'restored',
+        },
+        restored: { action: 'end', status: 'pass' },
+      },
+    },
+  };
+}
+
+test('stopAfterNode runs the graph through the named node, then the declared teardown', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = stopAfterRecipe();
+    const original = structuredClone(recipe);
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      stopAfterNode: 'reveal',
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.equal(
+      await readFile(path.join(tempRoot, 'order.txt'), 'utf-8'),
+      'prepare\nreveal\nteardown\n',
+    );
+    const trace = (await readJsonFile(result.tracePath)) as Array<{ nodeId: string }>;
+    assert.deepEqual(
+      trace.map((entry) => entry.nodeId),
+      ['prepare', 'reveal', 'restore', 'restored'],
+    );
+    const summary = (await readJsonFile(result.summaryPath)) as Record<string, unknown>;
+    assert.equal(summary.stopAfterNode, 'reveal');
+    const artifactsDir = path.dirname(result.summaryPath);
+    const packageResult = validateRecipeArtifactPackage({
+      recipe: await readJsonFile(result.recipePath),
+      trace,
+      summary,
+      manifest: await readJsonFile(result.artifactManifestPath),
+      recipeResolution: await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json')),
+      artifactPaths: await listRelativeFiles(artifactsDir),
+    });
+    assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
+    assert.deepEqual(
+      packageResult.findings.map((finding) => [finding.severity, finding.code]),
+      [['warning', 'artifact_package.partial_run']],
+    );
+    // The graph is untouched: no edge rewrites, no probe parameters.
+    assert.deepEqual(recipe, original);
+    assert.deepEqual(await readJsonFile(result.recipePath), original);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stopAfterNode rejects nodes outside the main graph before running anything', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    for (const stopAfterNode of ['restore', 'no-such-node', 'done']) {
+      await assert.rejects(
+        runner.run({
+          recipeDocument: stopAfterRecipe(),
+          artifactsDir: path.join(tempRoot, 'artifacts'),
+          projectRoot: tempRoot,
+          stopAfterNode,
+        }),
+        (error: unknown) =>
+          error instanceof Error &&
+          (error as { code?: string }).code === 'RECIPE_STOP_AFTER_NODE_INVALID' &&
+          error.message.includes(stopAfterNode),
+      );
+    }
+    await assert.rejects(readFile(path.join(tempRoot, 'order.txt'), 'utf-8'));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stopAfterNode fails as harness when a branch ends the graph before the node', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = stopAfterRecipe() as {
+      workflow: { nodes: Record<string, Record<string, unknown>> };
+    };
+    recipe.workflow.nodes.prepare = {
+      action: 'switch',
+      intent: 'Route to the reveal node only when the fixture asks for it.',
+      value: 'skip',
+      equals: 'reveal',
+      cases: { match: 'reveal' },
+      default: 'done',
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      stopAfterNode: 'reveal',
+    });
+    assert.equal(result.status, 'fail');
+    const trace = (await readJsonFile(result.tracePath)) as Array<Record<string, unknown>>;
+    const stop = trace.find((entry) => entry.nodeId === 'done');
+    assert.equal(stop?.ok, false);
+    assert.equal(stop?.cause_class, 'harness');
+    assert.match(String(stop?.error), /stop-after-node reveal was not reached/u);
+    assert.deepEqual(
+      trace.map((entry) => entry.nodeId),
+      ['prepare', 'done', 'restore', 'restored'],
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('ui.scroll keeps absolute and relative inputs apart', async () => {
+  const tempRoot = await createTempRoot();
+  const executed: Array<Record<string, unknown>> = [];
+  try {
+    const manifest = testManifest(['ui.scroll', 'end']);
+    manifest.actions['ui.scroll']!.schema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        test_id: stringParam,
+        offset_x: numberParam,
+        offset_y: numberParam,
+        delta_x: numberParam,
+        delta_y: numberParam,
+        scroll_into_view: { type: 'boolean' },
+      },
+    };
+    const transport: UiActionTransport = {
+      async execute(_action, node) {
+        executed.push(node);
+        return { scrolled: true };
+      },
+    };
+    const run = async (params: Record<string, unknown>) => {
+      const runner = createRecipeRunner({
+        actionManifest: manifest,
+        adapters: [
+          ...createStandardUiAdapters({ transport, actions: ['ui.scroll'] }),
+          ...createStandardCoreAdapters({ actions: ['end'] }),
+        ],
+      });
+      const result = await runner.run({
+        recipeDocument: recipeDocument({
+          move: {
+            action: 'ui.scroll',
+            intent: 'Move the list for review.',
+            test_id: 'orders',
+            ...params,
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        }),
+        artifactsDir: path.join(
+          tempRoot,
+          `artifacts-${executed.length}-${Object.keys(params).join('-')}`,
+        ),
+        projectRoot: tempRoot,
+      });
+      const trace = (await readJsonFile(result.tracePath)) as Array<Record<string, unknown>>;
+      return { status: result.status, move: trace[0]! };
+    };
+
+    assert.equal((await run({ offset_y: 240 })).status, 'pass');
+    assert.equal((await run({ delta_y: 120 })).status, 'pass');
+    const mixed = await run({ offset_y: 240, delta_y: 120 });
+    assert.equal(mixed.status, 'fail');
+    assert.equal(mixed.move.cause_class, 'harness');
+    assert.match(
+      String(mixed.move.error),
+      /offset_x\/offset_y \(absolute\) or delta_x\/delta_y \(relative\), not both/u,
+    );
+    const intoView = await run({ delta_y: 120, scroll_into_view: true });
+    assert.equal(intoView.status, 'fail');
+    assert.match(String(intoView.move.error), /use ui\.scroll_to/u);
+    assert.deepEqual(
+      executed.map((node) => [node.offset_y, node.delta_y]),
+      [
+        [240, undefined],
+        [undefined, 120],
+      ],
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('CDP ui.scroll maps offset_y to an absolute position and delta_y to relative movement', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      return callback({
+        async scroll(options: Record<string, unknown>) {
+          calls.push(options);
+          return { scrolled: true };
+        },
+        async waitForDomSettled() {},
+      } as never);
+    },
+  });
+  const context = {} as never;
+  await transport.execute('ui.scroll', { test_id: 'orders', offset_y: 240 }, context);
+  await transport.execute('ui.scroll', { test_id: 'orders', delta_y: 120 }, context);
+  assert.deepEqual(
+    calls.map((call) => [call.offsetY, call.deltaY]),
+    [
+      [240, undefined],
+      [undefined, 120],
+    ],
+  );
+});
+
+test('CDP ui.scroll_to reports a surface that unmounts before the move as SCROLL_SURFACE_MISSING', async () => {
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Target.getTargetInfo') return { targetInfo: { targetId: 'target-1' } };
+      assert.equal(method, 'Runtime.evaluate');
+      const expression = String(params.expression);
+      // Measurement still finds the surface; the move's lookup does not (it unmounted).
+      if (expression.includes('const box = (el)')) {
+        return {
+          result: {
+            value: {
+              surface: { x: 0, y: 0, width: 400, height: 600 },
+              viewport: { x: 0, y: 0, width: 400, height: 600 },
+              offset: { x: 0, y: 0 },
+              targetPresent: true,
+              targetBounds: { x: 0, y: 1_000, width: 400, height: 40 },
+              occlusions: [],
+            },
+          },
+        };
+      }
+      return { result: { value: false } };
+    },
+  } as never);
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      return callback(page);
+    },
+  });
+  const [adapter] = createStandardUiAdapters({ transport, actions: ['ui.scroll_to'] });
+  await assert.rejects(
+    adapter!.execute(
+      { action: 'ui.scroll_to', surface_test_id: 'orders', target_test_id: 'history' },
+      {} as never,
+    ),
+    (error: unknown) => {
+      const coded = error as {
+        causeClass?: string;
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(coded.causeClass, 'harness');
+      assert.equal(coded.code, 'SCROLL_SURFACE_MISSING');
+      assert.equal(coded.details?.backend, 'cdp-web');
+      assert.equal(coded.details?.sessionId, 'target-1');
+      assert.equal(coded.details?.surfaceTestId, 'orders');
+      assert.deepEqual((coded.details?.before as Record<string, unknown>).targetBounds, {
+        x: 0,
+        y: 1_000,
+        width: 400,
+        height: 40,
+      });
+      return true;
+    },
+  );
+});
+
+test('standard UI adapters route ui.scroll_to through the CDP scroll session', async () => {
+  assert.ok(STANDARD_UI_ACTIONS.includes('ui.scroll_to'));
+  const offsets: Array<{ x: number; y: number }> = [];
+  let offsetY = 0;
+  const geometry = () => ({
+    surface: { x: 0, y: 0, width: 400, height: 600 },
+    viewport: { x: 0, y: 0, width: 400, height: 600 },
+    offset: { x: 0, y: offsetY },
+    targetPresent: true,
+    targetBounds: { x: 0, y: 1_000 - offsetY, width: 400, height: 40 },
+    occlusions: [{ x: 0, y: 540, width: 400, height: 60 }],
+  });
+  const transport = createCdpWebUiTransport({
+    async withPage(input, callback) {
+      assert.equal(input.action, 'ui.scroll_to');
+      return callback({
+        async scrollSession() {
+          return {
+            backend: 'cdp-web',
+            sessionId: 'target-1',
+            measure: async () => geometry(),
+            scrollTo: async (offset: { x: number; y: number }) => {
+              offsets.push(offset);
+              offsetY = offset.y;
+            },
+          };
+        },
+      } as never);
+    },
+  });
+  const [adapter] = createStandardUiAdapters({ transport, actions: ['ui.scroll_to'] });
+  const result = await adapter!.execute(
+    {
+      action: 'ui.scroll_to',
+      surface_test_id: 'orders',
+      target_test_id: 'history',
+      align: 'end',
+      settle: { timeout_ms: 100, interval_ms: 1 },
+    },
+    {} as never,
+  );
+  const output = result.output as Record<string, unknown>;
+  // HUD at 540-600 trims the safe viewport to 0-540; align end puts the row bottom at 540.
+  assert.deepEqual(offsets, [{ x: 0, y: 500 }]);
+  assert.deepEqual(output.safeViewport, { x: 0, y: 0, width: 400, height: 540 });
+  assert.deepEqual((output.after as Record<string, unknown>).targetBounds, {
+    x: 0,
+    y: 500,
+    width: 400,
+    height: 40,
+  });
+  assert.equal(output.backend, 'cdp-web');
+  assert.equal(output.sessionId, 'target-1');
+  assert.equal(output.finalVisible, true);
 });
 
 test('runs teardown after a main graph action fails', async () => {
@@ -3308,6 +3680,8 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
     {
       selector: '[data-testid="target-row"], [data-test-id="target-row"], [data-test="target-row"]',
       intoView: true,
+      offsetX: undefined,
+      offsetY: undefined,
       deltaX: undefined,
       deltaY: undefined,
     },
@@ -3542,20 +3916,44 @@ test('CDP page scroll uses the document root when window globals are unavailable
       const context = vm.createContext({
         document: {
           scrollingElement: {
-            scrollBy(x: number, y: number) {
-              scrolls.push([x, y]);
+            scrollLeft: 0,
+            scrollTop: 0,
+            scrollBy(options: { left: number; top: number }) {
+              scrolls.push(['by', options.left, options.top]);
+              this.scrollLeft += options.left;
+              this.scrollTop += options.top;
+            },
+            scrollTo(options: { left: number; top: number }) {
+              scrolls.push(['to', options.left, options.top]);
+              this.scrollLeft = options.left;
+              this.scrollTop = options.top;
             },
           },
           documentElement: null,
         },
       });
-      return { result: { value: vm.runInContext(String(params.expression), context) } };
+      // Round-trip like CDP returnByValue so vm-realm objects compare structurally.
+      return {
+        result: {
+          value: JSON.parse(JSON.stringify(vm.runInContext(String(params.expression), context))),
+        },
+      };
     },
   } as never);
 
-  const result = (await page.scroll({ deltaX: 4, deltaY: 120 })) as { scrolled: boolean };
-  assert.equal(result.scrolled, true);
-  assert.deepEqual(scrolls, [[4, 120]]);
+  const relative = (await page.scroll({ deltaX: 4, deltaY: 120 })) as Record<string, unknown>;
+  assert.deepEqual(relative, {
+    scrolled: true,
+    mode: 'relative',
+    before: { x: 0, y: 0 },
+    after: { x: 4, y: 120 },
+  });
+  const absolute = (await page.scroll({ offsetY: 40 })) as Record<string, unknown>;
+  assert.equal(absolute.mode, 'absolute');
+  assert.deepEqual(scrolls, [
+    ['by', 4, 120],
+    ['to', 0, 40],
+  ]);
 });
 
 test('CDP full-surface screenshots use reported page dimensions and fail without them', async () => {

@@ -1163,6 +1163,8 @@ export interface RunDecision {
   createdAt: string;
   resolvedAt?: string;
   resolvedAction?: string;
+  /** Completed failure-triage assessment consulted at resolution, without implied causation. */
+  triageAssessmentId?: string;
   payload?: RunDecisionPayload;
   /**
    * Payload keys `run.list` left out because their values are large (review

@@ -8,7 +8,8 @@ export type RecipeResolutionErrorCode =
   | 'RECIPE_PARAMS_INVALID'
   | 'RECIPE_PRECONDITION_NOT_FOUND'
   | 'RECIPE_REFERENCE_NOT_FOUND'
-  | 'RECIPE_RESOLUTION_DIGEST_MISSING';
+  | 'RECIPE_RESOLUTION_DIGEST_MISSING'
+  | 'RECIPE_STOP_AFTER_NODE_INVALID';
 
 export class RecipeResolutionError extends Error {
   readonly code: RecipeResolutionErrorCode;

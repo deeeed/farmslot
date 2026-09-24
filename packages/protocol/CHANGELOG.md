@@ -5,6 +5,15 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
+- Add the official `ui.scroll_to` action with `UI_SCROLL_TO_PARAMS_SCHEMA` (surface, semantic target, measurable visibility anchor, alignment, HUD-safe viewport policy, visibility verification, settlement); action manifests must require string `surface_test_id` and `target_test_id`.
+- Group retained assessment usage, cost provenance and latency by consumer, provider and model for operator comparison.
+
+- Carry an optional failure-assessment reference with a run decision resolution and its saved result.
+
+- Define advisory acceptance-evidence RPCs and assessment records for a recorded criterion and named text evidence.
+
+- Allow admitted decision context on saved assessment records for later operator review.
+
 - Include the selected slot resource blocker in profile-fit suggestions.
 
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.

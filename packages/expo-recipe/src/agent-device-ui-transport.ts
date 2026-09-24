@@ -259,12 +259,18 @@ export function createAgentDeviceUiTransport(
             }),
           );
         case 'ui.scroll': {
+          if (node.offset_x !== undefined || node.offset_y !== undefined) {
+            throw new Error(
+              'ui.scroll offset_x/offset_y (absolute) is not supported by Agent Device; use direction with pixels or amount (relative).',
+            );
+          }
+          const delta = relativeScrollDelta(node);
           const result = await client.interactions.scroll({
             ...selection,
             session: options.session,
-            direction: scrollDirection(node),
+            direction: delta?.direction ?? scrollDirection(node),
             amount: positiveNumber(node.amount),
-            pixels: positiveNumber(node.pixels),
+            pixels: delta?.pixels ?? positiveNumber(node.pixels),
             durationMs: positiveNumber(node.duration_ms),
             responseLevel: 'digest',
           });
@@ -1644,6 +1650,29 @@ function selectorFromNode(node: Record<string, unknown>, action: string): string
   const label = optionalString(node.text ?? node.label);
   if (label) return `label=${JSON.stringify(label)}`;
   throw new Error(`${action} requires selector, test_id, text, or label.`);
+}
+
+/** Map one-axis delta_x/delta_y onto Agent Device's direction + pixels relative scroll. */
+function relativeScrollDelta(
+  node: Record<string, unknown>,
+): { direction: 'up' | 'down' | 'left' | 'right'; pixels: number } | undefined {
+  const dx = node.delta_x;
+  const dy = node.delta_y;
+  if (dx === undefined && dy === undefined) return undefined;
+  if (node.direction !== undefined || node.pixels !== undefined || node.amount !== undefined) {
+    throw new Error(
+      'ui.scroll delta_x/delta_y cannot be combined with direction, pixels, or amount.',
+    );
+  }
+  if (dx !== undefined && dy !== undefined) {
+    throw new Error('ui.scroll on Agent Device moves one axis at a time; pass delta_x or delta_y.');
+  }
+  const value = dx ?? dy;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value === 0) {
+    throw new Error('ui.scroll delta_x/delta_y must be a non-zero number.');
+  }
+  const direction = dy !== undefined ? (value > 0 ? 'down' : 'up') : value > 0 ? 'right' : 'left';
+  return { direction, pixels: Math.abs(value) };
 }
 
 function scrollDirection(node: Record<string, unknown>): 'up' | 'down' | 'left' | 'right' {

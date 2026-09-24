@@ -49,6 +49,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 
 | Method                                  | Category         | Safety        | Params | Result | Summary                                               |
 | --------------------------------------- | ---------------- | ------------- | ------ | ------ | ----------------------------------------------------- |
+| `acceptance.evidence.analyze`           | acceptance       | bounded-write | —      | —      | Acceptance Evidence Analyze gateway method.           |
+| `acceptance.evidence.get`               | acceptance       | read-only     | —      | —      | Acceptance Evidence Get gateway method.               |
 | `analytics.backfill`                    | analytics        | bounded-write | —      | —      | Analytics Backfill gateway method.                    |
 | `analytics.query`                       | analytics        | bounded-write | —      | —      | Analytics Query gateway method.                       |
 | `assessment.evaluate`                   | assessment       | bounded-write | —      | —      | Assessment Evaluate gateway method.                   |

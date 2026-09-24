@@ -12,6 +12,7 @@ import {
   OFFICIAL_RECIPE_ACTIONS,
   RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   RECIPE_PROTOCOL_SCHEMA_URL,
+  UI_SCROLL_TO_PARAMS_SCHEMA,
   validateArtifactManifestDocument,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
@@ -1025,7 +1026,11 @@ test('action-manifest JSON Schema and runtime validator agree on action names', 
   for (const action of OFFICIAL_RECIPE_ACTIONS) {
     assert.equal(
       schema.properties.actions.properties[action].$ref,
-      action === 'call' || action === 'end' ? '#/$defs/action' : '#/$defs/actionWithSchema',
+      action === 'call' || action === 'end'
+        ? '#/$defs/action'
+        : action === 'ui.scroll_to'
+          ? '#/$defs/uiScrollToAction'
+          : '#/$defs/actionWithSchema',
       action,
     );
   }
@@ -1072,17 +1077,28 @@ test('action-manifest JSON Schema and runtime validator agree on action names', 
               params: {},
               next: 'done',
             }
-          : {
-              action: name,
-              intent: 'Read the requested application state.',
-              next: 'done',
-            };
+          : name === 'ui.scroll_to'
+            ? {
+                action: name,
+                intent: 'The History row is reviewable.',
+                surface_test_id: 'orders-list',
+                target_test_id: 'history-row',
+                next: 'done',
+              }
+            : {
+                action: name,
+                intent: 'Read the requested application state.',
+                next: 'done',
+              };
     const document = {
       $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
       actions: {
         [name]: {
           description: 'Read state.',
-          schema: { type: 'object', additionalProperties: false },
+          schema:
+            name === 'ui.scroll_to'
+              ? UI_SCROLL_TO_PARAMS_SCHEMA
+              : { type: 'object', additionalProperties: false },
           execution_capabilities: [],
           examples: [example],
         },
@@ -1094,6 +1110,72 @@ test('action-manifest JSON Schema and runtime validator agree on action names', 
       name,
     );
   }
+});
+
+test('ui.scroll_to manifest schema accepts the canonical parameters and rejects a surface-less shape', async () => {
+  const publicSchema = await readJson('packages/protocol/schemas/action-manifest-v1.schema.json');
+  const validatePublicSchema = new Ajv2020({ allErrors: true, strict: false }).compile(
+    publicSchema,
+  );
+  assert.deepEqual(Object.keys(UI_SCROLL_TO_PARAMS_SCHEMA.properties), [
+    'surface_test_id',
+    'target_test_id',
+    'visibility_anchor_test_id',
+    'align',
+    'viewport_policy',
+    'verify_visible',
+    'settle',
+  ]);
+  const canonical = manifest('ui.scroll_to', UI_SCROLL_TO_PARAMS_SCHEMA);
+  assert.equal(validatePublicSchema(canonical), true, JSON.stringify(validatePublicSchema.errors));
+  assert.equal(validateRecipeActionManifestDocument(canonical).status, 'valid');
+
+  const { surface_test_id: _surface, ...withoutSurface } = UI_SCROLL_TO_PARAMS_SCHEMA.properties;
+  const surfaceLess = manifest('ui.scroll_to', {
+    ...UI_SCROLL_TO_PARAMS_SCHEMA,
+    required: ['target_test_id'],
+    properties: withoutSurface,
+  });
+  assert.equal(validatePublicSchema(surfaceLess), false);
+  const runtime = validateRecipeActionManifestDocument(surfaceLess);
+  assert.equal(runtime.status, 'invalid');
+  assert.ok(
+    runtime.findings.some(
+      (finding) =>
+        finding.code === 'action_manifest.invalid_scroll_to_schema' &&
+        finding.path.endsWith('surface_test_id'),
+    ),
+    JSON.stringify(runtime.findings),
+  );
+
+  const recipeDocument = recipe({
+    scroll: {
+      action: 'ui.scroll_to',
+      intent: 'The History row is reviewable.',
+      surface_test_id: 'orders-list',
+      target_test_id: 'history-text',
+      visibility_anchor_test_id: 'history-row',
+      align: 'center',
+      viewport_policy: 'hud_safe',
+      verify_visible: true,
+      settle: { timeout_ms: 1500, interval_ms: 50, stable_samples: 2 },
+      next: 'done',
+    },
+    done: { action: 'end', status: 'pass' },
+  });
+  assert.equal(
+    validateRecipeWithManifest(recipeDocument, canonical, { skipRecipeCallResolution: true })
+      .status,
+    'valid',
+  );
+  const badAlign = structuredClone(recipeDocument) as {
+    workflow: { nodes: Record<string, Record<string, unknown>> };
+  };
+  badAlign.workflow.nodes.scroll!.align = 'middle';
+  assert.equal(
+    validateRecipeWithManifest(badAlign, canonical, { skipRecipeCallResolution: true }).status,
+    'invalid',
+  );
 });
 
 test('action-manifest JSON Schema and runtime validator reject invalid parameter schemas', async () => {

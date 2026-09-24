@@ -190,6 +190,10 @@ export function validateQaPackage(
   );
   requireProof(record(bundle.summary) && bundle.summary.status === 'pass', 'recipe did not pass');
   requireProof(
+    bundle.summary.stopAfterNode === undefined,
+    `recipe ran partially (stop-after-node ${String(bundle.summary.stopAfterNode)}); rerun the full graph for proof`,
+  );
+  requireProof(
     typeof bundle.summary.startedAt === 'string' &&
       typeof bundle.summary.endedAt === 'string' &&
       Number.isFinite(Date.parse(bundle.summary.startedAt)) &&

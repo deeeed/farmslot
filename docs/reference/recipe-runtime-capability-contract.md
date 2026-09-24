@@ -31,7 +31,7 @@ Use for backend services, CLI projects, static checks, and artifact-only proof.
 Base package: `createStandardUiAdapters({ transport })`
 
 Actions: `ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`,
-`ui.scroll`, `ui.swipe`, `ui.pan`, `ui.drag`, `ui.long_press`, `ui.wait_for`,
+`ui.scroll`, `ui.scroll_to`, `ui.swipe`, `ui.pan`, `ui.drag`, `ui.long_press`, `ui.wait_for`,
 `ui.screenshot`, plus app-level helpers such as `app.status`, `app.lifecycle`,
 `app.hud`, and `app.trace` when the platform can expose them.
 
@@ -43,6 +43,67 @@ command/eval hooks, screenshot destination, and launch policy. A runner should
 implement custom `ui.*` transport methods only when the platform family is not
 yet covered by Farmslot. Transport results are treated as node output by default;
 graph control requires an explicit `{ control: ... }` wrapper.
+
+### Scrolling: `ui.scroll_to` vs `ui.scroll`
+
+Pick the action by the claim:
+
+| Claim                                     | Action         | Inputs                                                                                                                                                 |
+| ----------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "this element is reviewable on screen"    | `ui.scroll_to` | `surface_test_id`, `target_test_id`, optional `visibility_anchor_test_id`, `align`, `viewport_policy` (`hud_safe` default), `verify_visible`, `settle` |
+| "the list moves by / to this many pixels" | `ui.scroll`    | either `offset_x`/`offset_y` (absolute position) or `delta_x`/`delta_y` (relative movement), never both                                                |
+
+`ui.scroll_to` runs one algorithm in the harness for every provider: measure the
+surface, target, optional anchor, and HUD/overlay occlusion; do nothing when the
+proof element already rests in the safe viewport (`alreadyVisible: true`); otherwise
+move the surface once, wait until consecutive measurements match, and verify the
+final bounds. It never retries. The `visibility_anchor_test_id` positions and
+verifies a flattened Text target that has no box of its own; the target itself must
+still be present, so the anchor never stands in for a missing target.
+
+Providers implement `UiActionTransport.withScrollSession(request, node, context, use)`:
+open or reuse the backend session, hand `use` a session exposing `measure()` (rects
+in window coordinates, like DOM `getBoundingClientRect` or React Native
+`measureInWindow`) and `scrollTo(offset)` (absolute), and release the device lock
+before resolving. `createCdpWebUiTransport` implements it; a transport without it
+fails closed with `SCROLL_UNSUPPORTED`. A React Native provider can back it with the
+app bridge it already has: `measureInWindow` for the surface, target, anchor, and HUD
+rects, the content container's position relative to the surface for the current
+offset, and `scrollTo({ x, y })` for the move. The target must already be mounted; a
+virtualized row outside the render window fails `SCROLL_TARGET_MISSING` rather than
+being searched for.
+
+Under `hud_safe`, an occlusion spanning at least half of one viewport axis is a bar;
+when it spans both, the fuller axis decides. Wide bars (the recipe HUD) trim the top or
+bottom edge, tall bars (side panels) the left or right edge, and smaller cards only
+block the elements they cover.
+
+Settlement compares consecutive measurements `interval_ms` apart. Layout that
+oscillates with a period matching that interval can look settled; raise
+`stable_samples` or change `interval_ms` when a surface animates periodically.
+
+Visibility is stricter than a bridge's "intersects the window" check: the proof
+element must rest fully inside the safe viewport, or cover it when it is taller.
+
+Migration: `delta_y` always means relative movement. Adapters that forwarded
+`delta_y` as an absolute offset (for example to a `scrollTo({ y })` bridge) must read
+`offset_y` for that and move by `delta_y` from the current offset.
+
+Authoritative evidence is the node's trace output (`UiScrollToObservation` in
+`@farmslot/recipe-harness`). A screenshot or Fiber presence alone does not prove the
+target was reviewable. A package from a `--stop-after-node` run validates with an
+`artifact_package.partial_run` warning, and gateway QA refuses it as proof.
+
+Contract failures are `harness` failures with a stable `error_code` and the
+geometry observed at failure in `error_details`: `SCROLL_SURFACE_MISSING`,
+`SCROLL_TARGET_MISSING`, `SCROLL_TARGET_NOT_MEASURABLE`, `SCROLL_SESSION_CONFLICT`,
+`SCROLL_SETTLEMENT_TIMEOUT`, `SCROLL_TARGET_NOT_VISIBLE`, `SCROLL_UNSUPPORTED`.
+
+Prove one scroll node before composing a larger flow: run the canonical recipe with
+`--stop-after-node <node-id>` (`stopAfterNode` on `RecipeRunRequest`). The runner
+executes the graph through that node, then the declared `workflow.teardown`, with no
+edge rewrites or probe parameters. A plan pass is schema confidence only, not runtime proof:
+it never exercises the selected scroll backend.
 
 ### HUD / overlay visual proof
 
@@ -149,14 +210,14 @@ host, or a project-local app-control service.
 
 The generic bridge commands are:
 
-| Command      | Purpose                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------- |
-| `navigate`   | Move to route/screen/view.                                                                        |
-| `press`      | Press visible selector/testID/text.                                                               |
-| `setInput`   | Set text through a supported input path.                                                          |
-| `scroll`     | Scroll a view/window, or bring a selector/test id into view when `scroll_into_view` is requested. |
-| `waitFor`    | Wait for visible selector/text/condition.                                                         |
-| `screenshot` | Capture device/simulator evidence when implemented.                                               |
+| Command      | Purpose                                                                                                                                   |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate`   | Move to route/screen/view.                                                                                                                |
+| `press`      | Press visible selector/testID/text.                                                                                                       |
+| `setInput`   | Set text through a supported input path.                                                                                                  |
+| `scroll`     | Raw scroll movement: `offset_y` absolute or `delta_y` relative. Legacy `scroll_into_view` stays accepted; new recipes use `ui.scroll_to`. |
+| `waitFor`    | Wait for visible selector/text/condition.                                                                                                 |
+| `screenshot` | Capture device/simulator evidence when implemented.                                                                                       |
 
 The bridge must drive supported app/user or test-host paths. It must not mutate
 React/Redux/MobX state to fabricate proof.

@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   assertStaticReviewLoopRequests,
+  type AssessmentRecord,
   captureQaAfterReview,
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   type DevInteractiveActionRecord,
@@ -10,6 +11,7 @@ import {
   Events,
   type ExecutionTemplateReference,
   failedRunCancelEffects,
+  failureTriageCause,
   FLOW_STEPS,
   type IndependentReviewStatus,
   INTERACTIVE_HANDOFF_EXTEND_ACTION,
@@ -48,6 +50,8 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
+import { digest, RUBRIC_VERSION } from '../assessment/failure-triage/packet.js';
+import { assessmentRecord } from '../assessment/store.js';
 import {
   isValidManualBacklogRunHandoff,
   linkDirectRunToMatchingBacklog,
@@ -60,6 +64,8 @@ import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { readTriagePolicy } from '../intelligence/triage/policy.js';
+import { admittedFailureSnapshot } from '../intelligence/triage/snapshot.js';
 import type { MachineParkGateRestoreResult } from '../machine-parking/service.js';
 import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import { normalizeReviewDepthForRunCreate } from '../quality/review-policy.js';
@@ -135,6 +141,7 @@ import {
   assertNativeRunOwner,
   resolveReviewWorkspaceOwner,
 } from '../security/native-worker-owner.js';
+import { currentSessionOriginator } from '../security/work-originator.js';
 import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
@@ -1384,7 +1391,16 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
   if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
 }
 
+type TriageAssessmentPrice = NonNullable<NonNullable<AssessmentRecord['reservation']>['price']>;
+
 export interface RunResolveDecisionDependencies {
+  triageSnapshot?: (
+    runId: string,
+    step: string,
+    price: TriageAssessmentPrice,
+  ) => Promise<
+    Pick<Awaited<ReturnType<typeof admittedFailureSnapshot>>, 'snapshotHash' | 'sources'>
+  >;
   resumeRun?: (runId: string) => Promise<void>;
   assertReviewLaunchAllowed?: (
     reviews: readonly IndependentReviewStatus[],
@@ -1514,6 +1530,64 @@ export async function runResolveDecision(
   return resolveRunDecision(params, emit, dependencies);
 }
 
+async function currentTriageSnapshot(runId: string, step: string, price: TriageAssessmentPrice) {
+  const policy = await readTriagePolicy();
+  if (!policy.enabled)
+    throw new Error('Triage source approval is disabled; cannot verify saved advice');
+  // Reuse the original price to reconstruct the recorded source snapshot.
+  // Current model settings and credentials govern new calls, not past advice.
+  return admittedFailureSnapshot(runId, step, { ...policy, price });
+}
+
+async function assertTriageDecisionReference(
+  run: Run,
+  assessmentId: string,
+  getSnapshot: NonNullable<RunResolveDecisionDependencies['triageSnapshot']>,
+): Promise<void> {
+  const origin = currentSessionOriginator();
+  if (origin.kind !== 'principal') throw new Error('Authenticated principal required');
+  // The audit store checks the caller's owner and retention before returning a record.
+  const record = await assessmentRecord(origin.principalId, assessmentId);
+  const subject = record.subject.run;
+  const step = run.steps.filter((candidate) => candidate.status === 'failed').at(-1);
+  const identity = record.requestedIdentity;
+  const price = record.reservation?.price;
+  if (
+    run.flowType !== 'dev' ||
+    !step ||
+    record.consumer !== 'failure-triage' ||
+    record.status !== 'completed' ||
+    record.result?.status !== 'completed' ||
+    !failureTriageCause(record) ||
+    subject?.id !== run.id ||
+    subject.project !== run.project ||
+    subject.step !== step.name ||
+    !subject.sources ||
+    !price ||
+    !identity?.inputDigest ||
+    !identity.questionSchemaHash ||
+    !identity.provider ||
+    !identity.model ||
+    identity.provider !== price.provider ||
+    identity.model !== price.model
+  )
+    throw new Error('Select a completed failure-triage assessment of this run and failed step');
+  const snapshot = await getSnapshot(run.id, step.name, price);
+  if (
+    !isDeepStrictEqual(snapshot.sources, subject.sources) ||
+    subject.snapshotHash !==
+      digest({
+        source: snapshot.snapshotHash,
+        packet: identity.inputDigest,
+        questions: identity.questionSchemaHash,
+        provider: identity.provider,
+        model: identity.model,
+        rubric: RUBRIC_VERSION,
+      })
+  )
+    throw new Error('Triage assessment is stale; refresh this failed step before deciding');
+}
+
 async function resolveRunDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1547,6 +1621,15 @@ async function resolveRunDecision(
       needsGateParkRestore(existing))
   )
     throw new Error('Resume stopped worker requires an owned, unparked native monitor decision');
+  if (params.triageAssessmentId !== undefined) {
+    if (typeof params.triageAssessmentId !== 'string')
+      throw new Error('Invalid triage assessment ID');
+    await assertTriageDecisionReference(
+      existing,
+      params.triageAssessmentId,
+      dependencies.triageSnapshot ?? currentTriageSnapshot,
+    );
+  }
   if (decision.type === 'improvement' && params.actionId === 'apply') {
     // Resolving here would mark the card applied WITHOUT writing any file —
     // apply must go through improvement.apply, which writes, validates, and
@@ -1625,6 +1708,15 @@ async function resolveRunDecision(
     await resumeNativeWorkerDecision(existing.id, decision.id);
     assertDecisionStillUnresolved(params.runId, params.decisionId);
   }
+  if (params.triageAssessmentId !== undefined) {
+    await assertTriageDecisionReference(
+      getRun(params.runId)!,
+      params.triageAssessmentId,
+      dependencies.triageSnapshot ?? currentTriageSnapshot,
+    );
+    assertDecisionStillUnresolved(params.runId, params.decisionId);
+    assertNotGateParked(params.runId, getRun(params.runId)!);
+  }
   decision = getRun(params.runId)!.decisions.find(
     (candidate) => candidate.id === params.decisionId,
   )!;
@@ -1681,6 +1773,7 @@ async function resolveRunDecision(
   // Mark decision as resolved
   decision.resolvedAt = new Date().toISOString();
   decision.resolvedAction = params.actionId;
+  if (params.triageAssessmentId) decision.triageAssessmentId = params.triageAssessmentId;
   const extendMonitorWindow =
     params.actionId === INTERACTIVE_HANDOFF_EXTEND_ACTION &&
     (decision.type === 'monitor_timeout' || interactiveHandoffAllowsExtend(decision));

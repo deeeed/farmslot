@@ -3,6 +3,8 @@
 import { WebSocket } from 'ws';
 
 import {
+  type AcceptanceEvidenceAnalyzeParams,
+  type AcceptanceEvidenceGetParams,
   type AnalyticsQueryParams,
   type AssessmentEvaluationParams,
   type AssessmentFeedbackParams,
@@ -249,6 +251,10 @@ import {
   machinePauseRestore,
   machinePauseStatus,
 } from '../machine-parking/service.js';
+import {
+  acceptanceEvidenceAnalyze,
+  acceptanceEvidenceGet,
+} from '../methods/acceptance-evidence.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
   assessmentEvaluate,
@@ -1040,6 +1046,12 @@ async function routeAuthorizedMethod(
       return prResolveThread(p as PRResolveThreadParams);
     case Methods.PR_FOR_SLOT:
       return prForSlot(p as PRForSlotParams);
+
+    // Advisory acceptance-evidence assessment
+    case Methods.ACCEPTANCE_EVIDENCE_GET:
+      return acceptanceEvidenceGet(p as AcceptanceEvidenceGetParams);
+    case Methods.ACCEPTANCE_EVIDENCE_ANALYZE:
+      return acceptanceEvidenceAnalyze(p as AcceptanceEvidenceAnalyzeParams);
 
     // Decisions
     case Methods.DECISION_LIST:

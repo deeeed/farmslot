@@ -105,6 +105,7 @@ function validateActionCatalogEntry(
         path: `${path}.schema${finding.path === 'paramsSchema' ? '' : finding.path.replace(/^paramsSchema/u, '')}`,
       })),
     );
+    if (action === 'ui.scroll_to') validateScrollToSchema(ctx, entry.schema, `${path}.schema`);
   }
 
   if (Object.hasOwn(entry, 'adapters')) {
@@ -463,4 +464,27 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
     }
   }
   return finishResult(ctx);
+}
+
+const SCROLL_TO_REQUIRED_PARAMS = ['surface_test_id', 'target_test_id'] as const;
+
+function validateScrollToSchema(
+  ctx: MutableValidationContext,
+  schema: Record<string, unknown>,
+  path: string,
+): void {
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const properties = isRecord(schema.properties) ? schema.properties : {};
+  for (const param of SCROLL_TO_REQUIRED_PARAMS) {
+    const declared = properties[param];
+    if (!required.includes(param) || !isRecord(declared) || declared.type !== 'string') {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_scroll_to_schema',
+        `${path}.properties.${param}`,
+        `ui.scroll_to must require string ${param}; copy UI_SCROLL_TO_PARAMS_SCHEMA.`,
+      );
+    }
+  }
 }

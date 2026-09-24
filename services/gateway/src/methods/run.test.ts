@@ -6,15 +6,19 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  buildRunResolveDecisionParams,
   DEFAULT_CURSOR_MODEL,
   type ReadyGatePrPackage,
   type RunDecision,
 } from '@farmslot/protocol';
 
+import { digest } from '../assessment/failure-triage/packet.js';
+import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
 import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import { makeRun } from './run/test-fixtures.js';
 import {
@@ -2434,4 +2438,186 @@ test('the post-resolve resume timer does not restart a gate-parked run', async (
   // successor may already own.
   assert.equal(after.status, 'blocked');
   assert.equal(JSON.stringify(after.steps), beforeSteps, 'no step was reset for a resume');
+});
+
+test('runResolveDecision binds only an owned completed triage of the current failure', async (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'triage-decision-'));
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = home;
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-TRIAGE-DECISION',
+  });
+  const decision: RunDecision = {
+    id: 'triage-resolution',
+    type: 'blocked_alert',
+    title: 'Failed step',
+    description: 'Select a recovery action',
+    actions: [{ id: 'continue', label: 'Continue', style: 'primary' }],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, {
+    status: 'done',
+    decisions: [decision],
+    steps: [{ name: 'VALIDATE', status: 'failed', detail: 'fixture' }],
+  });
+  const alice = {
+    id: 'triage-operator',
+    subject: { type: 'person' as const, displayName: 'Triage operator' },
+    roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+  };
+  const sourceHash = 'a'.repeat(64);
+  const packetHash = 'd'.repeat(64);
+  const questionHash = 'e'.repeat(64);
+  const sources = [{ id: 'e1', sourceId: 'fixture-source', digest: 'f'.repeat(64) }];
+  const price = {
+    version: 1 as const,
+    provider: 'typesafe',
+    model: 'jev-fixture',
+    verifiedAt: new Date().toISOString(),
+    source: 'https://example.invalid/price',
+    inputUsdPerMillion: 0.01,
+    outputUsdPerMillion: 0,
+    maxRequestTokens: 1000,
+  };
+  const hash = digest({
+    source: sourceHash,
+    packet: packetHash,
+    questions: questionHash,
+    provider: price.provider,
+    model: price.model,
+    rubric: 'failure-triage-v1',
+  });
+  let counter = 0;
+  async function assessment(
+    ownerId: string,
+    subjectRunId = run.id,
+    step = 'VALIDATE',
+    withEvidence = true,
+  ) {
+    const reserved = await reserveAssessment(
+      {
+        ownerId,
+        consumer: 'failure-triage',
+        subject: {
+          run: { id: subjectRunId, project: run.project, step, snapshotHash: hash, sources },
+        },
+        requestedIdentity: {
+          provider: price.provider,
+          model: price.model,
+          inputDigest: packetHash,
+          questionSchemaHash: questionHash,
+        },
+        policyVersion: 'failure-triage-v1',
+      },
+      {
+        key: String(++counter).padStart(64, '0'),
+        priceHash: 'c'.repeat(64),
+        maxUsd: 0.01,
+        price,
+      },
+      { maxCalls: 10, maxUsd: 0.1 },
+    );
+    assert.equal(reserved.status, 'reserved');
+    if (reserved.status !== 'reserved') throw new Error('Fixture reservation refused');
+    await finishAssessment(reserved.record, {
+      status: 'completed',
+      answers: {
+        cause: { type: 'choice', choice: 'environment', choices: ['environment'] },
+        ...(withEvidence
+          ? { evidence: { type: 'choice' as const, choice: 'e1', choices: ['e1'] } }
+          : {}),
+      },
+    });
+    return reserved.record.id;
+  }
+  const own = await assessment(alice.id);
+  const noEvidence = await assessment(alice.id, run.id, 'VALIDATE', false);
+  const otherOwner = await assessment('other-operator');
+  const otherRun = await assessment(alice.id, 'other-run');
+  const otherStep = await assessment(alice.id, run.id, 'OTHER');
+  let snapshotHash = sourceHash;
+  let probes = 0;
+  const dependencies = {
+    triageSnapshot: async (runId: string, step: string, originalPrice: typeof price) => {
+      probes++;
+      assert.equal(runId, run.id);
+      assert.equal(step, 'VALIDATE');
+      assert.deepEqual(originalPrice, price);
+      return { snapshotHash, sources };
+    },
+  };
+  t.after(async () => {
+    if (getRun(run.id)) await deleteRun(run.id);
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  async function resolve(triageAssessmentId: string) {
+    return runWithSessionOriginator(alice, () =>
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'continue', triageAssessmentId },
+        () => {},
+        dependencies,
+      ),
+    );
+  }
+  await assert.rejects(resolve(noEvidence), /completed failure-triage assessment/);
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+  for (const [id, reason] of [
+    [otherOwner, /not found or expired/],
+    [otherRun, /this run and failed step/],
+    [otherStep, /this run and failed step/],
+  ] as const) {
+    await assert.rejects(resolve(id), reason);
+    assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+  }
+  const incomplete = await beginAssessment({
+    ownerId: alice.id,
+    consumer: 'failure-triage',
+    subject: { run: { id: run.id, project: run.project, step: 'VALIDATE', snapshotHash: hash } },
+  });
+  await assert.rejects(resolve(incomplete.id), /completed failure-triage assessment/);
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+  snapshotHash = 'b'.repeat(64);
+  await assert.rejects(resolve(own), /stale/);
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+  snapshotHash = sourceHash;
+  probes = 0;
+  const changing = {
+    ...dependencies,
+    triageSnapshot: async (runId: string, step: string, originalPrice: typeof price) => {
+      const snapshot = await dependencies.triageSnapshot(runId, step, originalPrice);
+      return { ...snapshot, snapshotHash: probes === 1 ? sourceHash : 'c'.repeat(64) };
+    },
+  };
+  await assert.rejects(
+    runWithSessionOriginator(alice, () =>
+      runResolveDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'continue', triageAssessmentId: own },
+        () => {},
+        changing,
+      ),
+    ),
+    /stale/,
+  );
+  assert.equal(probes, 2, 'second check observes a changed snapshot');
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+  probes = 0;
+  const accepted = await resolve(own);
+  assert.ok(probes >= 2, 'revalidates after awaited gate probes');
+  assert.equal(accepted.run.decisions[0]?.triageAssessmentId, own);
+  assert.equal(accepted.run.decisions[0]?.resolvedAction, 'continue');
+  assert.equal(getRun(run.id)?.decisions[0]?.triageAssessmentId, own);
+  assert.deepEqual(
+    buildRunResolveDecisionParams({
+      runId: run.id,
+      decision,
+      actionId: 'continue',
+      triageAssessmentId: own,
+    }),
+    { runId: run.id, decisionId: decision.id, actionId: 'continue', triageAssessmentId: own },
+  );
 });

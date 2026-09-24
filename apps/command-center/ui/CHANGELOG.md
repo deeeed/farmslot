@@ -5,6 +5,16 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Dispatch, dispatch-config and ready-gate review rounds are static only, and Dispatch names the farm QA preset used for separate runtime validation. Backlog and Work Graph editors label a stored legacy full-live round and convert it to static only when the operator asks.
+- Show provider/model usage, cost and latency beside assessment history so opt-in recommendations can be compared without implying measured workflow savings.
+
+- Let operators associate saved failure advice with a specific pending decision and inspect associated chosen actions in assessment history.
+
+- Show saved acceptance-evidence verdicts and their admitted text in assessment history, with a dedicated filter.
+
+- Show advice at every eligible run gate. Filter advice history and show the saved decision, options, provider, model, operator rating and chosen run action.
+
+- Offer the existing decision advice panel for any eligible pending run decision, regardless of its type.
+
 - Explain when a chosen slot cannot use a suggested Companion profile, and hide its apply action until the operator changes slots; auto-picked slots can still search for a compatible slot.
 
 - Allow assessment feedback for plain model judgments that do not report probability distributions.

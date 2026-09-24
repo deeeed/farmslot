@@ -15,6 +15,8 @@ export interface AssessmentProvider {
   readonly defaultModel: string;
   readonly credentialEnv: string;
   readonly capabilities: readonly ('choice' | 'score' | 'boolean')[];
+  /** Output-token cap enforced in the provider request, if available. */
+  readonly maxOutputTokens?: number;
   assess(request: AssessmentProviderRequest): Promise<{
     returnedModel?: string;
     answers: Record<string, AssessmentAnswer>;

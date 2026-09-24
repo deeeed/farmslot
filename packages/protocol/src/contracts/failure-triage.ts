@@ -48,6 +48,8 @@ export interface FailureTriageView {
   stale: boolean;
   /** Gateway-derived eligibility; retries always require an explicit request. */
   retryAllowed: boolean;
+  /** Current source approval and saved assessment permit linking this record to a decision. Rechecked on resolve. */
+  decisionLinkable: boolean;
   advice?: {
     cause: FailureTriageCause;
     /** Identifier for a fixed read-only diagnostic. Never an executable command. */

@@ -120,7 +120,7 @@
       ]
     },
     "ui.scroll": {
-      "description": "Scroll the assigned browser, simulator, or device and wait for UI stability.",
+      "description": "Raw scroll movement: offset_x/offset_y set an absolute position, delta_x/delta_y move relative to the current one; the two are never combined. To reveal a proof target use ui.scroll_to.",
       "schema": {
         "type": "object",
         "additionalProperties": false,
@@ -130,14 +130,118 @@
           },
           "scroll_into_view": {
             "type": "boolean"
+          },
+          "test_id": {
+            "type": "string",
+            "description": "Scroll container; omit to move the page root."
+          },
+          "offset_x": {
+            "type": "number",
+            "description": "Absolute horizontal offset in px."
+          },
+          "offset_y": {
+            "type": "number",
+            "description": "Absolute vertical offset in px."
+          },
+          "delta_x": {
+            "type": "number",
+            "description": "Relative horizontal movement in px."
+          },
+          "delta_y": {
+            "type": "number",
+            "description": "Relative vertical movement in px."
           }
         }
       },
       "examples": [
         {
           "action": "ui.scroll",
-          "intent": "Expose the requested content for visible review.",
+          "intent": "Return the list to its top before the next proof step.",
+          "test_id": "orders-list",
+          "offset_y": 0,
           "next": "done"
+        }
+      ]
+    },
+    "ui.scroll_to": {
+      "description": "Canonical scroll-to-visible: move one named scroll surface until the semantic proof target (or its measurable visibility anchor) rests inside the HUD-safe viewport, wait for geometry to settle, and verify it. The trace output is the evidence; failures are harness errors with stable SCROLL_* codes. Prove one scroll node with --stop-after-node before composing a larger flow: plan success is schema confidence only, not runtime proof.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["surface_test_id", "target_test_id"],
+        "properties": {
+          "surface_test_id": {
+            "type": "string",
+            "description": "Test id of the scroll container whose offset moves."
+          },
+          "target_test_id": {
+            "type": "string",
+            "description": "Semantic proof target. It must be present when the node ends."
+          },
+          "visibility_anchor_test_id": {
+            "type": "string",
+            "description": "Measurable element used for positioning and the visibility verdict when the target has no measurable box, such as a flattened Text node."
+          },
+          "align": {
+            "type": "string",
+            "enum": ["start", "center", "end", "nearest"],
+            "default": "nearest",
+            "description": "Where the measured element should rest inside the safe viewport."
+          },
+          "viewport_policy": {
+            "type": "string",
+            "enum": ["hud_safe", "full"],
+            "default": "hud_safe",
+            "description": "hud_safe removes HUD and overlay occlusion from the viewport before positioning and verifying; full uses the raw surface viewport."
+          },
+          "verify_visible": {
+            "type": "boolean",
+            "default": true,
+            "description": "Fail with SCROLL_TARGET_NOT_VISIBLE when the settled element is outside the safe viewport."
+          },
+          "settle": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Geometry settlement after movement: consecutive identical measurements within a budget.",
+            "properties": {
+              "timeout_ms": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Settlement budget in milliseconds."
+              },
+              "interval_ms": {
+                "type": "number",
+                "minimum": 1,
+                "description": "Delay between measurements."
+              },
+              "stable_samples": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Consecutive unchanged measurements required to call the layout settled."
+              }
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll_to",
+          "intent": "The History row is reviewable above the recipe HUD.",
+          "surface_test_id": "orders-list",
+          "target_test_id": "history-row",
+          "align": "center",
+          "next": "capture-history"
+        },
+        {
+          "action": "ui.scroll_to",
+          "intent": "The validation message is reviewable even though its text node has no box.",
+          "surface_test_id": "order-form",
+          "target_test_id": "validation-text",
+          "visibility_anchor_test_id": "validation-row",
+          "settle": {
+            "timeout_ms": 1500
+          },
+          "next": "capture-validation"
         }
       ]
     },

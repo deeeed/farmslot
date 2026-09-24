@@ -23,10 +23,10 @@ test('advice is limited to pending decisions with two non-decline choices', () =
     }),
     false,
   );
-  assert.equal(supportsDecisionAdvice({ ...eligible, type: 'engine_review_posting' }), false);
+  assert.equal(supportsDecisionAdvice({ ...eligible, type: 'engine_review_posting' }), true);
   assert.equal(
     supportsDecisionAdvice({ ...eligible, type: 'engine_prepare_profile_mismatch' }),
-    false,
+    true,
   );
   assert.equal(supportsDecisionAdvice({ ...eligible, resolvedAt: '2026-09-23T00:00:00Z' }), false);
   assert.equal(supportsDecisionAdvice({ ...eligible, actions: [actions[0], actions[2]] }), false);

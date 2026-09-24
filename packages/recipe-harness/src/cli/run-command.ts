@@ -39,6 +39,7 @@ interface RunCommandOptions {
   recordWindowName?: string;
   recordWindowId?: string;
   recordPid?: string;
+  stopAfterNode?: string;
   sourceTrust?: string;
   sourceKind?: string;
   sourceName?: string;
@@ -79,6 +80,10 @@ export function registerRunCommand(program: Command): void {
     .option('--adapter <name>', 'Select adapter-specific recipe variants')
     .option('--list', 'List runnable recipes from the active libraries')
     .option('--describe', 'Describe the selected recipe and its parameters without running it')
+    .option(
+      '--stop-after-node <node-id>',
+      'Run the graph through this node, then run the declared teardown (partial proof of one node)',
+    )
     .option('--json', 'Print run result as JSON')
     .action(
       async (recipeInput: string | undefined, params: string[], options: RunCommandOptions) => {
@@ -156,6 +161,7 @@ export function registerRunCommand(program: Command): void {
             recordVideo: parseRecordVideoOptions(options),
             params: parseRecipeParamAssignments(params),
             ...(options.adapter ? { adapter: options.adapter } : {}),
+            ...(options.stopAfterNode ? { stopAfterNode: options.stopAfterNode } : {}),
             ...trust,
             ...(!trust.source && selected ? { source: selected.provenance } : {}),
             ...(executionLibrarySources.length > 0

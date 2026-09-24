@@ -1,0 +1,210 @@
+[
+  {
+    "id": "worker-launch",
+    "failure": "The assigned worker exited before reporting its first task update.",
+    "sources": [
+      {
+        "id": "worker.stderr",
+        "title": "Worker stderr",
+        "text": "exec: command not found: agent-runner"
+      },
+      {
+        "id": "gateway.events",
+        "title": "Gateway events",
+        "text": "dispatch accepted; worker process exited with code 127"
+      },
+      {
+        "id": "slot.health",
+        "title": "Slot health",
+        "text": "app process healthy and ready"
+      },
+      {
+        "id": "workspace.status",
+        "title": "Workspace status",
+        "text": "clean at the selected revision"
+      }
+    ]
+  },
+  {
+    "id": "prepare-dependency",
+    "failure": "The preparation phase failed before the worker could start the app.",
+    "sources": [
+      {
+        "id": "prepare.output",
+        "title": "Preparation output",
+        "text": "install failed: peer dependency @sample/ui@3 conflicts with required @sample/ui@2"
+      },
+      {
+        "id": "lock.diff",
+        "title": "Lockfile diff",
+        "text": "@sample/ui changed from 2.8.0 to 3.0.0 in the lockfile"
+      },
+      {
+        "id": "slot.health",
+        "title": "Slot health",
+        "text": "device and application ready"
+      },
+      {
+        "id": "worker.stderr",
+        "title": "Worker stderr",
+        "text": "worker not started after prepare failure"
+      }
+    ]
+  },
+  {
+    "id": "banner-assertion",
+    "failure": "The app reached the target screen, but the validation step reported a missing banner.",
+    "sources": [
+      {
+        "id": "recipe.assertion",
+        "title": "Validation result",
+        "text": "getByTestId(margin-banner) found zero matches"
+      },
+      {
+        "id": "ui.tree",
+        "title": "Rendered UI tree",
+        "text": "visible margin banner has data-testid=perps-margin"
+      },
+      {
+        "id": "app.console",
+        "title": "App console",
+        "text": "no uncaught exceptions in the last step"
+      },
+      {
+        "id": "workspace.diff",
+        "title": "Workspace diff",
+        "text": "component test id changed from margin-banner to perps-margin"
+      }
+    ]
+  },
+  {
+    "id": "submit-handler",
+    "failure": "The UI rendered the form, but a submit action ended with an uncaught exception.",
+    "sources": [
+      {
+        "id": "app.console",
+        "title": "App console",
+        "text": "TypeError: cannot read properties of undefined (reading decimals) in submitPrice"
+      },
+      {
+        "id": "workspace.diff",
+        "title": "Workspace diff",
+        "text": "quote.price removed from adapter; new field quote.markPrice; submitPrice still reads quote.price.decimals"
+      },
+      {
+        "id": "service.reply",
+        "title": "Service reply",
+        "text": "valid quote with markPrice.decimals=18"
+      },
+      {
+        "id": "recipe.result",
+        "title": "Recipe result",
+        "text": "tap submit succeeded; expected confirmation never appeared"
+      }
+    ]
+  },
+  {
+    "id": "quote-timeout",
+    "failure": "A price lookup failed during validation while other UI actions still worked.",
+    "sources": [
+      {
+        "id": "http.trace",
+        "title": "HTTP trace",
+        "text": "GET /quotes returned 503; upstream_error=rate_limit at hosted service"
+      },
+      {
+        "id": "app.log",
+        "title": "App log",
+        "text": "quote fetch retried three times then exhausted the budget"
+      },
+      {
+        "id": "gateway.health",
+        "title": "Gateway health",
+        "text": "other gateway requests completed normally"
+      },
+      {
+        "id": "endpoint.config",
+        "title": "Endpoint config",
+        "text": "quote host points to the expected staging service"
+      }
+    ]
+  },
+  {
+    "id": "proof-missing",
+    "failure": "The runner ended with a failure state and the required screenshot proof was absent.",
+    "sources": [
+      {
+        "id": "evidence.manifest",
+        "title": "Evidence manifest",
+        "text": "screenshot step had no output file; capture worker stopped before artifact write"
+      },
+      {
+        "id": "gateway.events",
+        "title": "Gateway events",
+        "text": "run failed at visual proof step"
+      },
+      {
+        "id": "worker.stderr",
+        "title": "Worker stderr",
+        "text": "no saved stderr excerpt for screenshot worker"
+      },
+      {
+        "id": "app.log",
+        "title": "App log",
+        "text": "app log collection was disabled for this run"
+      }
+    ]
+  },
+  {
+    "id": "mixed-timeout",
+    "failure": "The worker reported a timeout, but the recorded logs did not identify its cause.",
+    "sources": [
+      {
+        "id": "worker.stderr",
+        "title": "Worker stderr",
+        "text": "operation exceeded deadline; no follow-up trace saved"
+      },
+      {
+        "id": "gateway.events",
+        "title": "Gateway events",
+        "text": "slot recycle and worker timeout observed in the same minute; order unknown"
+      },
+      {
+        "id": "http.trace",
+        "title": "HTTP trace",
+        "text": "no request timing trace was captured"
+      },
+      {
+        "id": "slot.health",
+        "title": "Slot health",
+        "text": "slot healthy at the later health check"
+      }
+    ]
+  },
+  {
+    "id": "local-resolver",
+    "failure": "A read-only request never reached its destination; the app otherwise responded.",
+    "sources": [
+      {
+        "id": "http.trace",
+        "title": "HTTP trace",
+        "text": "lookup api.example.test: DNS timeout; no TCP connection established"
+      },
+      {
+        "id": "net.resolver",
+        "title": "Network diagnostics",
+        "text": "local DNS resolver did not respond to lookups for unrelated hosts during the same minute"
+      },
+      {
+        "id": "slot.health",
+        "title": "Slot health",
+        "text": "device and application remained available locally"
+      },
+      {
+        "id": "endpoint.config",
+        "title": "Endpoint config",
+        "text": "request host api.example.test matches the expected synthetic endpoint"
+      }
+    ]
+  }
+]

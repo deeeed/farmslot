@@ -234,6 +234,8 @@ export class RunDetail extends RunDetailState {
       this._sessionRequestSeq = {};
       this._terminalContextId = '';
       this._terminalRole = '';
+      this._triageDecisionLink = null;
+      this._decisionResolveError = null;
       this._ciPoke.reset();
       this._missingRunFetchAttempted = false;
       this._directRunRefreshFailed = false;
@@ -1074,6 +1076,19 @@ export class RunDetail extends RunDetailState {
       _directRunUnavailable: this._directRunUnavailable,
       _rescueInProgress: this._rescueInProgress,
       _pendingConfirm: this._pendingConfirm,
+      linkedTriageAssessmentId:
+        this._triageDecisionLink?.runId === this.runId &&
+        this.run?.decisions.some(
+          (d) => d.id === this._triageDecisionLink?.decisionId && !d.resolvedAt,
+        )
+          ? this._triageDecisionLink.assessmentId
+          : '',
+      onTriageDecisionLink: (runId, assessmentId) => {
+        if (runId !== this.runId) return;
+        const pending = this.run?.decisions.find((d) => !d.resolvedAt);
+        this._triageDecisionLink =
+          assessmentId && pending ? { runId, decisionId: pending.id, assessmentId } : null;
+      },
       _showTerminal: this._showTerminal,
       _terminalContextId: this._terminalContextId,
       _terminalRole: this._terminalRole,
@@ -1320,6 +1335,11 @@ export class RunDetail extends RunDetailState {
       directRunRefreshFailed: this._directRunRefreshFailed,
       actionsBlocked: this._actionsBlocked(),
       pendingConfirm: this._pendingConfirm,
+      decisionResolveError:
+        this._decisionResolveError?.runId === run.id &&
+        this._decisionResolveError.decisionId === run.decisions.find((d) => !d.resolvedAt)?.id
+          ? this._decisionResolveError.message
+          : null,
       recipeRuns: this._recipeRuns,
       selectedRecipeRunId: this._selectedRecipeRunId,
       selectedSlotId: this._selectedSlotId,
@@ -1396,10 +1416,34 @@ export class RunDetail extends RunDetailState {
       // Only ever forwarded where the Gateway would honour it; a hidden panel
       // must not send a choice the operator cannot see or clear.
       resourcePosture: () => forwardedChoice,
+      triageAssessmentId: () =>
+        this._triageDecisionLink?.runId === runId &&
+        this._triageDecisionLink.decisionId === decision.id
+          ? this._triageDecisionLink.assessmentId
+          : undefined,
+      onDecisionAttempt: () => {
+        if (this.runId === runId) this._decisionResolveError = null;
+      },
+      onDecisionError: (error) => {
+        if (this.runId !== runId) return;
+        const selectedAdvice =
+          this._triageDecisionLink?.runId === runId &&
+          this._triageDecisionLink.decisionId === decision.id;
+        if (selectedAdvice) this._triageDecisionLink = null;
+        this._decisionResolveError = {
+          runId,
+          decisionId: decision.id,
+          message: `Decision was not saved: ${error.message} Review the error, then choose an action again.${selectedAdvice ? ' Advice selection was cleared.' : ''}`,
+        };
+      },
       onDecisionResolved: (run) => {
-        // A response that lands after the operator navigated belongs to the run
-        // it was requested for, not to whatever is on screen now.
+        // A response that lands after navigation must not clear another run's choice.
         if (this.runId !== run.id) return;
+        if (
+          this._triageDecisionLink?.decisionId === decision.id &&
+          run.decisions.some((item) => item.id === decision.id && item.resolvedAt)
+        )
+          this._triageDecisionLink = null;
         this._adoptResolvedPostureTransition(run, observation);
       },
     });

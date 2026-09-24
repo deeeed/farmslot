@@ -11,17 +11,30 @@ import {
   type AssessmentSummary,
   failureTriageCause,
   Methods,
+  type RunGetResult,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { getHashParam } from '../../utils/url-state.js';
 
+function adviceRating(record: AssessmentRecord): string {
+  const feedback = record.feedback.filter((item) => item.questionId === 'action').at(-1);
+  return feedback
+    ? `Your rating: ${feedback.verdict} · Advice used: ${feedback.adviceUsed ? 'yes' : 'no'}`
+    : 'Not rated';
+}
+
 @customElement('assessment-panel')
 export class AssessmentPanel extends LitElement {
   @property({ attribute: false }) injectedHistory: AssessmentHistoryResult | null = null;
   @property({ attribute: false }) injectedSummary: AssessmentSummary | null = null;
   @state() private records: AssessmentRecord[] = [];
+  @state() private historyFilter:
+    | 'all'
+    | 'decision-advice'
+    | 'acceptance-evidence'
+    | 'failure-triage' = 'all';
   @state() private summary: AssessmentSummary | null = null;
   @state() private error = '';
   @state() private busy = false;
@@ -33,6 +46,9 @@ export class AssessmentPanel extends LitElement {
   };
   private reloadPending = false;
   private loadedPages = 1;
+  private readonly decisionOutcomes = new Map<string, { label: string; final: boolean }>();
+  private readonly outcomeRequests = new Set<string>();
+  private readonly expandedOutcomeIds = new Set<string>();
   @state() private selectedId = getHashParam('assessment');
   @state() private cursor?: string;
   private interval?: ReturnType<typeof setInterval>;
@@ -140,8 +156,10 @@ export class AssessmentPanel extends LitElement {
     if (this.busy || this.injectedHistory || !this.isConnected) return;
     this.busy = true;
     try {
+      const consumer = this.historyFilter === 'all' ? {} : { consumer: this.historyFilter };
       const [history, summary] = await Promise.all([
         gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
+          ...consumer,
           limit: 50,
           ...(more && this.cursor ? { before: this.cursor } : {}),
         }),
@@ -154,6 +172,7 @@ export class AssessmentPanel extends LitElement {
       if (!more && !selectedId) {
         for (let i = 1; i < this.loadedPages && page.nextCursor; i++) {
           page = await gateway.request<AssessmentHistoryResult>(Methods.ASSESSMENT_LIST, {
+            ...consumer,
             limit: 50,
             before: page.nextCursor,
           });
@@ -174,6 +193,13 @@ export class AssessmentPanel extends LitElement {
       if (selectedId !== this.selectedId) {
         this.reloadPending = true;
         return;
+      }
+      for (const record of this.records) {
+        if (
+          (selectedId === record.id || this.expandedOutcomeIds.has(record.id)) &&
+          ['decision-advice', 'failure-triage'].includes(record.consumer)
+        )
+          void this.loadDecisionOutcome(record);
       }
       this.summary = summary;
       this.error = '';
@@ -218,6 +244,63 @@ export class AssessmentPanel extends LitElement {
       this.error = 'Feedback was not saved. Refresh the record before retrying.';
     } finally {
       this.busy = false;
+    }
+  }
+  private async loadDecisionOutcome(record: AssessmentRecord) {
+    const run = record.subject.run;
+    const decision = run?.decision;
+    if (
+      !run ||
+      (record.consumer !== 'failure-triage' && !decision) ||
+      this.outcomeRequests.has(record.id) ||
+      this.injectedHistory
+    )
+      return;
+    this.outcomeRequests.add(record.id);
+    this.decisionOutcomes.set(record.id, { label: 'Checking run outcome…', final: false });
+    this.requestUpdate();
+    try {
+      const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
+      const associated =
+        record.consumer === 'failure-triage'
+          ? (result.run?.decisions.filter((item) => item.triageAssessmentId === record.id) ?? [])
+          : [];
+      const resolved = result.run?.decisions.find((item) => item.id === decision?.id);
+      this.decisionOutcomes.set(
+        record.id,
+        record.consumer === 'failure-triage' && associated.length
+          ? {
+              label: associated
+                .map(
+                  (item) =>
+                    `${item.title}: ${item.actions.find((action) => action.id === item.resolvedAction)?.label ?? item.resolvedAction ?? 'Pending'}`,
+                )
+                .join(' · '),
+              final: false,
+            }
+          : resolved?.resolvedAction
+            ? {
+                label: `${resolved.title}: ${resolved.actions.find((action) => action.id === resolved.resolvedAction)?.label ?? resolved.resolvedAction}`,
+                final: true,
+              }
+            : {
+                label:
+                  record.consumer === 'failure-triage'
+                    ? 'No chosen action associated with this advice'
+                    : resolved
+                      ? 'Still pending'
+                      : 'Decision no longer available in run',
+                final: false,
+              },
+      );
+    } catch (error) {
+      this.decisionOutcomes.set(record.id, {
+        label: `Could not load run outcome: ${error instanceof Error ? error.message : String(error)}`,
+        final: false,
+      });
+    } finally {
+      this.outcomeRequests.delete(record.id);
+      this.requestUpdate();
     }
   }
   private get canExportSelected(): boolean {
@@ -265,6 +348,36 @@ export class AssessmentPanel extends LitElement {
         Advisory only. No review, dispatch or publication action is applied. History covers the last
         30 days.
       </p>
+      <label
+        >History
+        <select
+          data-action="history-filter"
+          .value=${this.historyFilter}
+          ?disabled=${Boolean(this.selectedId)}
+          @change=${(event: Event) => {
+            this.historyFilter = (event.target as HTMLSelectElement).value as
+              | 'all'
+              | 'decision-advice'
+              | 'acceptance-evidence'
+              | 'failure-triage';
+            this.loadedPages = 1;
+            this.cursor = undefined;
+            this.records = this.injectedHistory
+              ? this.injectedHistory.records.filter(
+                  (record) =>
+                    this.historyFilter === 'all' || record.consumer === this.historyFilter,
+                )
+              : [];
+            if (this.busy) this.reloadPending = true;
+            else void this.load();
+          }}
+        >
+          <option value="all">All assessments</option>
+          <option value="decision-advice">Decision recommendations</option>
+          <option value="failure-triage">Failure advice</option>
+          <option value="acceptance-evidence">AC evidence</option>
+        </select>
+      </label>
       <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
         Refresh
       </button>
@@ -278,6 +391,9 @@ export class AssessmentPanel extends LitElement {
       >
         ${this.selectedId ? 'Export selected case' : 'Export effectiveness snapshot'}
       </button>
+      ${this.selectedId
+        ? html`<a href="#intelligence?tab=assessments">Show all history</a>`
+        : nothing}
       ${this.auditError ? html`<p role="alert" class="error">${this.auditError}</p>` : nothing}
       ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
       ${s
@@ -313,7 +429,29 @@ export class AssessmentPanel extends LitElement {
               $${(s.reservedUsd ?? 0).toFixed(6)}. Completed snapshot cohorts:
               ${s.completedCases ?? 'unknown'}/${s.selectedCases ?? 'unknown'}. Workflow savings:
               not measured. Paired workflows at equal independently checked quality are required.
-            </p>`
+            </p>
+            ${s.modelTotals?.length
+              ? html`<details open data-model-totals>
+                  <summary>Usage by provider and model</summary>
+                  <ul>
+                    ${s.modelTotals.map(
+                      (model) =>
+                        html`<li>
+                          ${model.consumer} · ${model.provider}/${model.model}:
+                          ${model.completed}/${model.calls} completed, ${model.attemptedCalls}
+                          confirmed attempts, ${model.unknownAttemptCalls} attempts unknown ·
+                          ${model.tokens} reported tokens (${model.callsWithUsage}/${model.calls}
+                          records with complete usage) · $${model.knownEstimatedUsd.toFixed(6)}
+                          estimated, $${model.knownReportedUsd.toFixed(6)} reported,
+                          $${model.knownUnclassifiedUsd.toFixed(6)} unspecified ·
+                          ${model.unknownCharges} unknown charges · provider median
+                          ${model.medianLatencyMs ?? '—'} ms, assessment median
+                          ${model.medianEndToEndMs ?? '—'} ms
+                        </li>`,
+                    )}
+                  </ul>
+                </details>`
+              : nothing}`
         : nothing}
       ${s?.groups.map(
         (g) =>
@@ -326,7 +464,11 @@ export class AssessmentPanel extends LitElement {
       )}
       ${this.records.length === 0
         ? html`<p>
-            No assessments recorded. Ordinary run monitoring does not invoke this feature.
+            ${this.historyFilter === 'decision-advice'
+              ? 'No decision recommendations recorded.'
+              : this.historyFilter === 'acceptance-evidence'
+                ? 'No AC evidence assessments recorded.'
+                : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
           </p>`
         : nothing}
       ${repeat(
@@ -342,9 +484,20 @@ export class AssessmentPanel extends LitElement {
                   ? `${record.subject.run.project} · run ${record.subject.run.id} · ${record.subject.run.step} @ ${record.subject.run.snapshotHash.slice(0, 8)}`
                   : 'Synthetic connection test'}
               · ${record.startedAt}
+              ${(record.consumer === 'decision-advice' ||
+                record.consumer === 'failure-triage' ||
+                record.consumer === 'acceptance-evidence') &&
+              record.subject.run
+                ? html` ·
+                    <a href=${`#runs?run=${encodeURIComponent(record.subject.run.id)}`}
+                      >${record.consumer === 'decision-advice'
+                        ? 'View decision in run'
+                        : 'View run'}</a
+                    >`
+                : nothing}
             </p>
             <p>
-              Recommendation:
+              ${record.consumer === 'acceptance-evidence' ? 'Evidence verdict' : 'Recommendation'}:
               ${record.consumer === 'failure-triage'
                 ? (failureTriageCause(record) ?? 'Unavailable')
                 : record.consumer === 'decision-advice'
@@ -354,18 +507,93 @@ export class AssessmentPanel extends LitElement {
                     : record.status === 'started'
                       ? 'Pending'
                       : 'Unavailable'
-                  : (record.recommendation?.route ?? 'Not assessed')}
+                  : record.consumer === 'acceptance-evidence'
+                    ? record.result?.status === 'completed' &&
+                      record.result.answers?.verdict?.type === 'choice'
+                      ? record.result.answers.verdict.choice
+                      : record.status === 'started'
+                        ? 'Pending'
+                        : 'Unavailable'
+                    : (record.recommendation?.route ?? 'Not assessed')}
               ${record.consumer === 'decision-advice'
-                ? '· Action: none'
-                : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
+                ? `· ${adviceRating(record)}`
+                : record.consumer === 'failure-triage'
+                  ? '· Advice only; an operator may associate a chosen action'
+                  : record.consumer === 'acceptance-evidence'
+                    ? '· Advisory only; AC ledger unchanged'
+                    : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
-              ${record.result?.provider ?? 'No provider'} /
-              ${record.result?.returnedModel ?? record.result?.requestedModel ?? 'No model'} ·
-              ${record.result?.error ?? record.result?.monitoringError ?? ''}
+              ${record.result?.provider ?? record.requestedIdentity?.provider ?? 'No provider'} /
+              ${record.result?.returnedModel ??
+              record.result?.requestedModel ??
+              record.requestedIdentity?.model ??
+              'No model'}
+              · ${record.result?.error ?? record.result?.monitoringError ?? ''}
             </p>
-            <details ?open=${Boolean(this.selectedId)}>
-              <summary>Answers, provenance and feedback</summary>
+            <details
+              ?open=${Boolean(this.selectedId)}
+              @toggle=${(event: Event) => {
+                if (!['decision-advice', 'failure-triage'].includes(record.consumer)) return;
+                if ((event.currentTarget as HTMLDetailsElement).open) {
+                  this.expandedOutcomeIds.add(record.id);
+                  void this.loadDecisionOutcome(record);
+                } else this.expandedOutcomeIds.delete(record.id);
+              }}
+            >
+              <summary>
+                ${record.consumer === 'decision-advice' || record.consumer === 'failure-triage'
+                  ? 'Decision, outcome and feedback'
+                  : 'Answers, provenance and feedback'}
+              </summary>
+              ${record.consumer === 'decision-advice' && record.subject.run?.decision
+                ? html`<section>
+                    <h4>${record.subject.run.decision.type}</h4>
+                    <p>${record.subject.run.decision.description}</p>
+                    <ul>
+                      ${record.subject.run.decision.actions.map(
+                        (action) =>
+                          html`<li>${action.label}: ${action.description || 'Decline action'}</li>`,
+                      )}
+                    </ul>
+                    <p>
+                      Chosen action:
+                      ${this.decisionOutcomes.get(record.id)?.label ??
+                      (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
+                    </p>
+                  </section>`
+                : record.consumer === 'decision-advice'
+                  ? html`<p>Decision context was not saved with this older assessment.</p>`
+                  : nothing}
+              ${record.consumer === 'failure-triage' && record.subject.run
+                ? html`<section>
+                    <h4>Run decision association</h4>
+                    <p>
+                      ${this.decisionOutcomes.get(record.id)?.label ??
+                      (this.injectedHistory ? 'Unavailable in fixture' : 'Open to check')}
+                    </p>
+                    <small
+                      >Association records the operator's choice, not whether advice caused
+                      it.</small
+                    >
+                  </section>`
+                : nothing}
+              ${record.consumer === 'acceptance-evidence' && record.subject.run?.criterion
+                ? html`<section>
+                    <h4>
+                      ${record.subject.run.criterion.id}: ${record.subject.run.criterion.text}
+                    </h4>
+                    <p>
+                      Admitted as ${record.subject.run.admission?.classification ?? 'unknown'} ·
+                      ${record.subject.run.admission?.sourceRef ?? 'No source reference'}
+                    </p>
+                    ${record.subject.run.criterion.evidence.map(
+                      (source) =>
+                        html`<p>${source.id}</p>
+                          <pre>${source.text}</pre>`,
+                    )}
+                  </section>`
+                : nothing}
               ${repeat(
                 Object.entries(record.result?.answers ?? {}),
                 ([question]) => question,
