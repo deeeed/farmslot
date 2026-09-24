@@ -563,6 +563,7 @@ export function compareSessions(
       return (
         answer?.type === 'answer' &&
         answer.label === expected.label &&
+        Array.isArray(answer.evidenceIds) &&
         expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId))
       );
     };

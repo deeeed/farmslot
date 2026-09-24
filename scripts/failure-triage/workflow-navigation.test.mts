@@ -394,6 +394,22 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
       .map((row) => row.reads),
     [[]],
   );
+  const partialAnswer = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'answer', label: 'environment' } as unknown as Parameters<typeof advance>[2],
+    receipt('partial-answer'),
+  ).session;
+  const partialSessions = [partialAnswer, assisted];
+  const partialComparison = compareSessions(
+    sealed,
+    partialSessions,
+    reference,
+    judgment(sealed, partialSessions),
+  );
+  assert.equal(partialComparison.pairs[0].baseline.referenceMatch, false);
+  assert.equal(partialComparison.pairs[0].baseline.quality, 'rejected');
+  assert.deepEqual(partialComparison.navigation.named.interrupted, { baseline: 1, assisted: 0 });
   const activeRead = advance(
     sealed,
     startSession(sealed, 'case-one', 'baseline'),
