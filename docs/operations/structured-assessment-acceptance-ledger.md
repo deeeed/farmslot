@@ -72,14 +72,13 @@ that an opt-in gateway run retained every record. Do not enable routine AC
 calls or change the frozen label to chase a pass.
 
 PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a separately
-frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, a fresh independent reader assigned
-labels from the final 14-case revision without viewing the reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
-records agreement on all three development and nine held-out cases;
+frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, a fresh isolated reader assigned
+labels from the final 14-case revision without a reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
+retains its prompt and [raw response](../../scripts/acceptance-evidence/results/v3-blind-label-raw.json) and records agreement on all three development and nine held-out cases;
 visual and mixed cases were marked no-call. A previous draft reader rechecked Q7 after its identity was made explicit;
-the final blind read independently labeled it `contradicted`. The final held-out cases include a policy-probe instruction
-injection and avoid declaring missing result fields in the evidence. Final case hash:
-`6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14`;
-label hash: `288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c`.
+the final blind read independently labeled it `contradicted`. The final held-out cases include partial shard coverage, conflicting scheduler files, an aggregate threshold and a policy-probe instruction injection. Final case hash:
+`41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085`;
+label hash: `1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a`.
 The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
 runs [the parity proof](../../scripts/acceptance-evidence/gateway-parity.test.mts):
 14 temporary run snapshots, 12 persisted assessment receipts from a fake

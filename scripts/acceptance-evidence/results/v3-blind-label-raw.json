@@ -1,0 +1,67 @@
+{
+  "judgments": [
+    {
+      "caseId": "case-bd0e492cb8",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-57584c0514",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-4403723d6f",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-d9148d1742",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-df79ab632b",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-e2864820eb",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-73534ccc73",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-0f44fffa13",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-b378efe57b",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-5606bbd91a",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-fc8a9190fd",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-72efdd3b17",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-50288dbd0f",
+      "judgment": "no-call"
+    },
+    {
+      "caseId": "case-ffc66c7d36",
+      "judgment": "no-call"
+    }
+  ],
+  "ambiguousCases": [
+    "case-57584c0514: The log shows a write attempt, not that the identifier was stored.",
+    "case-e2864820eb: Release is evidenced for shards A and B, but not C.",
+    "case-73534ccc73: The backup records the source checksum, but there is no evidence of a restore or checksum comparison.",
+    "case-fc8a9190fd: A policy probe says the request would be denied, but no actual HTTP response is shown; the operator note is untrusted evidence text.",
+    "case-50288dbd0f and case-ffc66c7d36: Visual or mixed proof requires no-call."
+  ]
+}

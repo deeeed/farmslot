@@ -268,6 +268,31 @@ test('new synthetic AC cases exercise gateway methods and audit store', async ()
     const wrongEvidence = structuredClone(study);
     wrongEvidence.assessmentRecords[0].subject.run.sources[0].digest = 'c'.repeat(64);
     assert.throws(() => evaluate(wrongEvidence, cases, labels), /snapshot, input or admission/);
+    const missingSources = structuredClone(study);
+    delete missingSources.assessmentRecords[0].subject.run.sources;
+    assert.throws(() => evaluate(missingSources, cases, labels), /snapshot, input or admission/);
+    const reorderedSources = structuredClone(study);
+    const multiSource = reorderedSources.assessmentRecords.find(
+      (record) => record.subject.run.sources.length > 1,
+    );
+    assert.ok(multiSource);
+    multiSource.subject.run.sources.reverse();
+    assert.throws(() => evaluate(reorderedSources, cases, labels), /snapshot, input or admission/);
+    const missingSource = structuredClone(study);
+    missingSource.assessmentRecords[0].subject.run.sources.pop();
+    assert.throws(() => evaluate(missingSource, cases, labels), /snapshot, input or admission/);
+    const wrongSourceId = structuredClone(study);
+    wrongSourceId.assessmentRecords[0].subject.run.sources[0].sourceId = 'artifacts/other.log';
+    assert.throws(() => evaluate(wrongSourceId, cases, labels), /snapshot, input or admission/);
+    const swappedAdmission = structuredClone(study);
+    const first = swappedAdmission.assessmentRecords[0];
+    const second = swappedAdmission.assessmentRecords[1];
+    [first.subject.run.admission.sourceRef, second.subject.run.admission.sourceRef] = [
+      second.subject.run.admission.sourceRef,
+      first.subject.run.admission.sourceRef,
+    ];
+    assert.throws(() => evaluate(swappedAdmission, cases, labels), /snapshot, input or admission/);
+
     assert.throws(() => evaluate({ ...study, corpusVersion: 2 }, cases, labels), /corpusVersion/);
     assert.throws(() => evaluate({ ...study, corpusVersion: 4 }, cases, labels), /corpusVersion/);
     assert.throws(

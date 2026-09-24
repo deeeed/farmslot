@@ -44,16 +44,24 @@
       "id": "case-d9148d1742",
       "split": "held-out",
       "criterionId": "AC-1",
-      "criterion": "Reassigning task T19 to worker w2 updates its stored owner and emits an owner-changed event",
+      "criterion": "All three shards completed the export and their combined error count is at most two",
       "proofMode": "state",
       "evidence": [
         {
-          "id": "artifacts/state.json",
-          "text": "{\"taskId\":\"T19\",\"ownerBefore\":\"w1\",\"ownerAfter\":\"w2\",\"storedOwner\":\"w2\"}"
+          "id": "artifacts/shard-a.log",
+          "text": "export=E72 shard=A status=complete errors=1"
         },
         {
-          "id": "artifacts/events.log",
-          "text": "event=task.owner_changed task=T19 from=w1 to=w2"
+          "id": "artifacts/shard-b.log",
+          "text": "export=E72 shard=B status=complete errors=0"
+        },
+        {
+          "id": "artifacts/shard-c.log",
+          "text": "export=E72 shard=C status=complete errors=1"
+        },
+        {
+          "id": "artifacts/export-config.json",
+          "text": "{\"export\":\"E72\",\"shards\":[\"A\",\"B\",\"C\"],\"max_errors\":2}"
         }
       ]
     },
@@ -65,8 +73,12 @@
       "proofMode": "state",
       "evidence": [
         {
-          "id": "artifacts/schedule.json",
-          "text": "{\"job\":\"J6\",\"next_run_at\":\"10:00 UTC\",\"schedule_version\":3}"
+          "id": "artifacts/scheduler-config.json",
+          "text": "{\"job\":\"J6\",\"next_run_at\":\"09:00 UTC\",\"schedule_version\":3}"
+        },
+        {
+          "id": "artifacts/schedule-state.json",
+          "text": "{\"job\":\"J6\",\"stored_next_run_at\":\"10:00 UTC\",\"schedule_version\":3}"
         }
       ]
     },
@@ -74,12 +86,20 @@
       "id": "case-e2864820eb",
       "split": "held-out",
       "criterionId": "AC-1",
-      "criterion": "Canceling reservation V7 released its held quota",
+      "criterion": "All three quota shards released reservation V7 after it was canceled",
       "proofMode": "state",
       "evidence": [
         {
-          "id": "artifacts/quota.log",
-          "text": "reservation=V7 status=canceled\nquota_release=queued\nallocator_report=healthy"
+          "id": "artifacts/quota-config.json",
+          "text": "{\"reservation\":\"V7\",\"quota_shards\":[\"A\",\"B\",\"C\"]}"
+        },
+        {
+          "id": "artifacts/shard-a.log",
+          "text": "reservation=V7 shard=A status=canceled release=complete"
+        },
+        {
+          "id": "artifacts/shard-b.log",
+          "text": "reservation=V7 shard=B status=canceled release=complete"
         }
       ]
     },

@@ -1,6 +1,6 @@
 # Textual acceptance-evidence pilot
 
-Scope: the approved [structured-assessment evaluation plan](../../docs/plans/structured-assessment-evaluation.md), textual AC/evidence consumer. These invented cases do not contain company data. Their reference labels were authored before any provider calls. Do not send `labels.v1.json`, its rationales, split designation or IDs to a provider. A separate reader must check the reference labels against the input text before live evaluation; authorship alone is not independent adjudication.
+Scope: the approved [structured-assessment evaluation plan](../../docs/plans/structured-assessment-evaluation.md), textual AC/evidence consumer. These invented cases do not contain company data. Their reference labels were authored before any provider calls. Do not send any frozen label file, its rationales, split designation or IDs to a provider. A separate reader must check the reference labels against the input text before live evaluation; authorship alone is not independent adjudication.
 
 The hypothesis is that optional, provider-neutral text assessment helps an operator or agent find unsupported or contradicted AC claims with fewer total tokens or less time **at equal correctness**, without changing the authoritative acceptance ledger. An answer is `supported` only when the identified textual evidence proves the full claim. It is `contradicted` when the evidence directly conflicts with a material part. Otherwise it is `insufficient`, including absent records, unverifiable absence claims and untrusted instructions in output. Text cannot prove screenshot appearance. The two `excluded` cases test the no-call boundary for visual and mixed proof.
 
@@ -130,13 +130,13 @@ production assessment record could satisfy the v2 evaluator. Do not rename v2
 cases, make more candidate calls on them or reinterpret that result as gateway proof.
 
 Version 3 is a new synthetic corpus with gateway-readable artifact paths and
-opaque IDs. A fresh independent reader checked the final v3 cases without seeing
-the reference labels; [the dated blind audit](results/v3-blind-label-audit.json) records
-all first-pass judgments on that final hash without provider calls. The SHA-256 hashes are:
+opaque IDs. A fresh isolated reader checked the final v3 cases without a label file.
+[The dated blind audit](results/v3-blind-label-audit.json) retains its prompt digest,
+reader identity and [raw first-pass output](results/v3-blind-label-raw.json). The SHA-256 hashes are:
 
 ```
-6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14  cases.v3.json
-288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c  labels.v3.json
+41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085  cases.v3.json
+1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a  labels.v3.json
 ```
 
 `node scripts/acceptance-evidence/check.mjs` checks both frozen versions.

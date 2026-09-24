@@ -262,7 +262,13 @@ test('v3 offline study binds every record to its frozen gateway packet', async (
       sourceId: id,
       digest: hash(text),
     }));
-    result.requestedIdentity = { inputDigest: hash(packet) };
+    result.requestedIdentity = {
+      inputDigest: hash(packet),
+      provider: 'fixture',
+      model: 'fixture-model',
+      questionSchemaHash: 'a'.repeat(64),
+    };
+    result.policyVersion = 'acceptance-evidence-v1';
     records.push(result);
     const arm = {
       judgment: expected.get(entry.id),
@@ -283,4 +289,10 @@ test('v3 offline study binds every record to its frozen gateway packet', async (
   const altered = structuredClone(nextStudy);
   altered.assessmentRecords[0].requestedIdentity.inputDigest = 'f'.repeat(64);
   assert.throws(() => evaluate(altered, nextCases, nextLabels), /snapshot, input or admission/);
+  const changedSchema = structuredClone(nextStudy);
+  changedSchema.assessmentRecords[0].requestedIdentity.questionSchemaHash = 'b'.repeat(64);
+  assert.throws(() => evaluate(changedSchema, nextCases, nextLabels), /share provider/);
+  const changedPolicy = structuredClone(nextStudy);
+  changedPolicy.assessmentRecords[0].policyVersion = 'acceptance-evidence-v2';
+  assert.throws(() => evaluate(changedPolicy, nextCases, nextLabels), /share provider/);
 });

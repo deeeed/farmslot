@@ -11,8 +11,8 @@ const FROZEN_HASHES = {
     labels: 'f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9',
   },
   3: {
-    cases: '6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14',
-    labels: '288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c',
+    cases: '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
+    labels: '1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a',
   },
 };
 
@@ -117,6 +117,10 @@ function normalizeRecord(record, path) {
     snapshotHash: record.subject.run.snapshotHash,
     sourceRef: admission.sourceRef,
     inputDigest: record.requestedIdentity?.inputDigest,
+    provider: record.requestedIdentity?.provider,
+    model: record.requestedIdentity?.model,
+    questionSchemaHash: record.requestedIdentity?.questionSchemaHash,
+    policyVersion: record.policyVersion,
     sources: record.subject.run.sources,
     attempted: used,
     tokens,
@@ -168,6 +172,23 @@ export function evaluate(study, frozenCases, labels) {
   const records = study.assessmentRecords.map((record, index) =>
     normalizeRecord(record, `assessmentRecords[${index}]`),
   );
+  if (corpusVersion === 3) {
+    if (
+      records.some(
+        (record) =>
+          record.policyVersion !== 'acceptance-evidence-v1' ||
+          !record.provider ||
+          !record.model ||
+          !/^[a-f0-9]{64}$/.test(record.questionSchemaHash ?? ''),
+      ) ||
+      new Set(
+        records.map((record) =>
+          JSON.stringify([record.provider, record.model, record.questionSchemaHash]),
+        ),
+      ).size !== 1
+    )
+      fail('v3 assessment records must share provider, model, question schema and policy');
+  }
   const recordById = new Map();
   for (const record of records) {
     if (recordById.has(record.id)) fail(`duplicate assessment record ${record.id}`);

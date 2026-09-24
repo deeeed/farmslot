@@ -5,30 +5,24 @@ on:
     paths:
       - '.github/workflows/acceptance-evidence.yml'
       - 'scripts/acceptance-evidence/**'
-      - 'services/gateway/src/methods/acceptance-evidence.ts'
-      - 'services/gateway/src/methods/assessment.ts'
-      - 'services/gateway/src/tasks/acceptance-status.ts'
-      - 'services/gateway/src/assessment/**'
-      - 'services/gateway/src/runs/store.ts'
-      - 'services/gateway/src/security/work-originator.ts'
-      - 'services/gateway/src/core/slot-io.ts'
-      - 'services/gateway/src/core/config.ts'
-      - 'packages/protocol/src/contracts/assessment.ts'
+      - 'services/gateway/src/**'
+      - 'packages/protocol/src/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'services/gateway/package.json'
+      - 'services/gateway/tsconfig.json'
       - 'scripts/runner-validation/acceptance-evidence.recipe.json'
   push:
     branches: [main]
     paths:
       - '.github/workflows/acceptance-evidence.yml'
       - 'scripts/acceptance-evidence/**'
-      - 'services/gateway/src/methods/acceptance-evidence.ts'
-      - 'services/gateway/src/methods/assessment.ts'
-      - 'services/gateway/src/tasks/acceptance-status.ts'
-      - 'services/gateway/src/assessment/**'
-      - 'services/gateway/src/runs/store.ts'
-      - 'services/gateway/src/security/work-originator.ts'
-      - 'services/gateway/src/core/slot-io.ts'
-      - 'services/gateway/src/core/config.ts'
-      - 'packages/protocol/src/contracts/assessment.ts'
+      - 'services/gateway/src/**'
+      - 'packages/protocol/src/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'services/gateway/package.json'
+      - 'services/gateway/tsconfig.json'
       - 'scripts/runner-validation/acceptance-evidence.recipe.json'
 
 permissions:
@@ -49,3 +43,4 @@ jobs:
       - run: node scripts/acceptance-evidence/check.mjs
       - run: node --test scripts/acceptance-evidence/evaluate.test.mjs
       - run: TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts
+      - run: TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/methods/acceptance-evidence.rpc.test.ts services/gateway/src/methods/acceptance-evidence.test.ts

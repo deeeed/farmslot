@@ -19,17 +19,17 @@
     {
       "id": "case-d9148d1742",
       "expected": "supported",
-      "rationale": "The stored owner and owner-changed event both name w2."
+      "rationale": "The configuration lists all three shards; each completed, and their errors sum to two."
     },
     {
       "id": "case-df79ab632b",
       "expected": "contradicted",
-      "rationale": "The stored next run time is 10:00 UTC rather than 09:00 UTC."
+      "rationale": "The config says 09:00 UTC, but the persisted next run time for J6 is 10:00 UTC."
     },
     {
       "id": "case-e2864820eb",
       "expected": "insufficient",
-      "rationale": "The quota release is queued, but no completed release or resulting balance is shown."
+      "rationale": "The shard list includes C, but only A and B have release records; there is no evidence for C."
     },
     {
       "id": "case-73534ccc73",

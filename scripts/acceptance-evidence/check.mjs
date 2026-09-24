@@ -114,8 +114,8 @@ console.log(
 // v3 uses gateway-readable artifact paths and opaque IDs; v2 remains an
 // unchanged adapter-only result and is never treated as a gateway study.
 const v3Hashes = {
-  'cases.v3.json': '6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14',
-  'labels.v3.json': '288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c',
+  'cases.v3.json': '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
+  'labels.v3.json': '1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a',
 };
 for (const [name, hash] of Object.entries(v3Hashes)) {
   const bytes = readFileSync(new URL(name, import.meta.url));
@@ -164,6 +164,14 @@ const blindAudit = JSON.parse(
 );
 assert.equal(blindAudit.casesSha256, v3Hashes['cases.v3.json']);
 assert.equal(blindAudit.labelsSha256, v3Hashes['labels.v3.json']);
+const blindPrompt = Buffer.concat([
+  Buffer.from(blindAudit.promptPrefix),
+  readFileSync(new URL('cases.v3.json', import.meta.url)),
+]);
+assert.equal(createHash('sha256').update(blindPrompt).digest('hex'), blindAudit.promptSha256);
+const blindRaw = readFileSync(new URL('results/v3-blind-label-raw.json', import.meta.url));
+assert.equal(createHash('sha256').update(blindRaw).digest('hex'), blindAudit.rawOutputSha256);
+assert.deepEqual(blindAudit.judgments, JSON.parse(blindRaw).judgments);
 assert.equal(blindAudit.judgments.length, nextCases.cases.length);
 const blindJudgments = new Map(blindAudit.judgments.map((row) => [row.caseId, row.judgment]));
 assert.equal(blindJudgments.size, nextCases.cases.length, 'blind audit has duplicate case IDs');
