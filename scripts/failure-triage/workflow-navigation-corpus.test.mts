@@ -111,7 +111,7 @@ test('v2 draft has compatible references, independent families, and variable evi
   }
   assert.equal(twoReadCases, 3);
   assert.equal(oneReadPositions.size, 4);
-  assert(firstReadIsInsufficient >= 4);
+  assert.equal(firstReadIsInsufficient, 7);
   assert(requiredTitleCounts.has('Runtime output'));
   assert(requiredTitleCounts.has('Application output'));
   assert(requiredTitleCounts.has('Application state'));

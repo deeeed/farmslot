@@ -150,20 +150,26 @@ The first revision also failed independent review: semantic source IDs and
 overlapping mechanisms still cued the answer. The current draft uses per-case
 opaque source IDs and generic evidence-type titles; its dependency and remote
 certificate cases replace the overlapping resource and endpoint cases. It still
-requires independent review of its labels, families and evidence paths. Do not
-seal it or call a provider yet.
+failed a source-only independent label and evidence review. The reviewer found
+that `profile-request` does not establish its definite environment cause,
+`export-count-gap` asks for a missing first filter that its evidence never
+claims is missing, and `checkout-revision` calls slot Git state
+"Application state". Several next checks repeat already-read facts rather than
+request new diagnostics. Keep the reviewed draft and its feasibility result
+unchanged; a corrected corpus requires a new version, a new independent review
+and a predeclared comparison method. Do not seal it or call a provider.
 
-Five revised cases have a single decisive read and three require two reads. The
-required sources span all four positions. They require Runtime output,
-Application output, and Application state in separate cases. No required title
-appears more than three times. IDs carry no diagnosis.
+Five revised cases have a single listed required read and three require two.
+The required sources span all four positions. The title "Application state"
+is inaccurate for the checkout case, as noted above. No required title appears
+more than three times. IDs carry no diagnosis.
 
-The source titles are still synthetic evidence categories, so they can affect a
-reader's first choice. Titles and order alone must be tested in a fresh
-baseline-only feasibility pass after an independent reviewer accepts the labels,
-families, and evidence paths. Keep that pass outside the paired score. It cannot
-measure advice savings. Freeze the reviewed cases, reference, worker limits and
-comparison method before calling the advice provider.
+The source titles are synthetic evidence categories, so they can affect a
+reader's first choice. The metadata-only feasibility pass below tested titles
+and order. It stays outside any paired score and cannot measure advice savings.
+Freeze a new,
+independently reviewed corpus, reference, worker limits and comparison method
+before calling the advice provider.
 
 The revised case-file SHA-256 is `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`;
 the reference-file SHA-256 is `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`.
@@ -178,7 +184,9 @@ advice generation on this corpus. Do not change these cases based on the
 observed picks to seek a favorable result. A different, independently reviewed
 failure set needs its own version and a predeclared comparison method.
 
-The reference remains unsealed. Keep v1's frozen hashes and results unchanged.
+The reference remains unsealed. V1 is also quarantined: inspect its frozen
+results offline, but do not make new provider calls on either corpus. Keep v1's
+frozen hashes and results unchanged.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
