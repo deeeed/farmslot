@@ -167,8 +167,18 @@ comparison method before calling the advice provider.
 
 The revised case-file SHA-256 is `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`;
 the reference-file SHA-256 is `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`.
-The reference remains unsealed pending that review, feasibility check, frozen
-method, and approval. Keep v1's frozen hashes and results unchanged.
+A metadata-only first-read feasibility pass on September 24, 2026 gave a
+low-effort Luna worker the eight failure summaries and source IDs/titles in
+case-file order. It saw no case IDs, source text or references. Its first picks
+were `e1,e3,e2,e4,e2,e2,e3,e4`: 6/8 selected a required source, including
+4/5 single-read cases. There are no native usage receipts or paired answers;
+this pass cannot establish advice quality, cost or time savings. It does show
+that the current cases leave little room for fewer first reads. Hold live
+advice generation on this corpus. Do not change these cases based on the
+observed picks to seek a favorable result. A different, independently reviewed
+failure set needs its own version and a predeclared comparison method.
+
+The reference remains unsealed. Keep v1's frozen hashes and results unchanged.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
