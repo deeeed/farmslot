@@ -373,6 +373,7 @@ export function BacklogCreateForm({
         )}
         <PlanningField
           label="Title"
+          testID="companion-backlog-title"
           value={title}
           onChangeText={setTitle}
           placeholder="What needs to change?"
@@ -592,6 +593,7 @@ export function BacklogCreateForm({
 
       <PlanningSection
         title="Publication review"
+        testID="companion-backlog-review-section"
         summary={`${reviewPlan.length} additional review loop${reviewPlan.length === 1 ? '' : 's'}`}
       >
         {reviewPlan.map((loop, index) => (
@@ -622,7 +624,7 @@ export function BacklogCreateForm({
                 )
               }
             />
-            <Text style={styles.chipText}>
+            <Text style={styles.chipText} testID={`companion-backlog-review-depth-${index}`}>
               {loop.validationDepth === 'full-live'
                 ? 'Legacy full live: saving makes it static. Run runtime validation with QA.'
                 : 'Static review. Run runtime validation separately with QA.'}
@@ -661,7 +663,11 @@ export function BacklogCreateForm({
             />
           </View>
         ))}
-        <Pressable style={styles.addReview} onPress={addReview}>
+        <Pressable
+          testID="companion-backlog-review-add"
+          style={styles.addReview}
+          onPress={addReview}
+        >
           <Text style={styles.addReviewText}>+ Add independent review</Text>
         </Pressable>
       </PlanningSection>

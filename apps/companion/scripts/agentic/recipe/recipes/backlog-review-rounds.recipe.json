@@ -1,0 +1,198 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion backlog review rounds are static",
+  "description": "ADR-058 native proof. Run `node scripts/agentic/backlog-review-proof.mjs setup` first: it starts a private fixture gateway holding a pre-migration backlog item whose review round asks for full-live, and prints its port; pass that port and the token from temp/companion-backlog-review-proof/token as params. Run `cleanup` afterwards.",
+  "paramsSchema": {
+    "type": "object",
+    "required": ["gateway_port", "token"],
+    "properties": {
+      "gateway_port": {
+        "type": "integer"
+      },
+      "token": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "workflow": {
+    "entry": "open-connection",
+    "nodes": {
+      "open-connection": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-connection",
+        "intent": "Open Companion connection settings on the leased simulator.",
+        "next": "wait-connection"
+      },
+      "wait-connection": {
+        "action": "ui.wait_for",
+        "test_id": "companion-connection-manual-toggle",
+        "timeout_ms": 30000,
+        "intent": "The connection screen is ready for a manual gateway profile.",
+        "next": "open-manual"
+      },
+      "open-manual": {
+        "action": "ui.press",
+        "test_id": "companion-connection-manual-toggle",
+        "intent": "Open the manual gateway form.",
+        "next": "profile-url"
+      },
+      "profile-url": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-url",
+        "value": "ws://127.0.0.1:{{params.gateway_port}}",
+        "intent": "Point the profile at the private fixture gateway.",
+        "next": "auth-token"
+      },
+      "auth-token": {
+        "action": "ui.press",
+        "test_id": "companion-native-auth-token",
+        "intent": "Use token authentication.",
+        "next": "profile-secret"
+      },
+      "profile-secret": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-secret",
+        "value": "{{params.token}}",
+        "intent": "Enter the fixture gateway token.",
+        "next": "save-profile"
+      },
+      "save-profile": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-save",
+        "intent": "Save and connect to the fixture gateway.",
+        "next": "open-create"
+      },
+      "open-create": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-create",
+        "intent": "Open the Companion backlog create form.",
+        "next": "wait-create"
+      },
+      "wait-create": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-title",
+        "timeout_ms": 30000,
+        "intent": "The create form is visible.",
+        "next": "create-title"
+      },
+      "create-title": {
+        "action": "ui.set_input",
+        "test_id": "companion-backlog-title",
+        "value": "Companion static review round",
+        "intent": "Title the new backlog item.",
+        "next": "create-open-reviews"
+      },
+      "create-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review.",
+        "next": "create-add-review"
+      },
+      "create-add-review": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-add",
+        "intent": "Add one independent review round.",
+        "next": "create-static-label"
+      },
+      "create-static-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "timeout_ms": 15000,
+        "intent": "A new round is labelled static and offers no full-live choice.",
+        "next": "capture-create"
+      },
+      "capture-create": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-create-static-round.png",
+        "label": "New Companion review round is static",
+        "intent": "Record the static round before saving.",
+        "next": "create-submit"
+      },
+      "create-submit": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-submit",
+        "intent": "Create the backlog item.",
+        "next": "create-saved"
+      },
+      "create-saved": {
+        "action": "ui.wait_for",
+        "text_contains": ["Created"],
+        "timeout_ms": 20000,
+        "intent": "The gateway accepted the new item.",
+        "next": "verify-create"
+      },
+      "verify-create": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-create",
+        "intent": "backlog.list shows the new item with one static-code review round.",
+        "next": "open-edit"
+      },
+      "open-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
+        "intent": "Open the seeded legacy backlog item in the Companion edit form.",
+        "next": "wait-edit"
+      },
+      "wait-edit": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-section",
+        "timeout_ms": 30000,
+        "intent": "The edit form is visible.",
+        "next": "edit-open-reviews"
+      },
+      "edit-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review.",
+        "next": "edit-legacy-label"
+      },
+      "edit-legacy-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Legacy full live: saving makes it static."],
+        "timeout_ms": 15000,
+        "intent": "The stored full-live round is shown as legacy, not as a selectable depth.",
+        "next": "capture-legacy"
+      },
+      "capture-legacy": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-legacy-round.png",
+        "label": "Seeded legacy round shows the legacy wording",
+        "intent": "Record the legacy wording before saving.",
+        "next": "edit-submit"
+      },
+      "edit-submit": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-submit",
+        "intent": "Save the edited item.",
+        "next": "edit-saved"
+      },
+      "edit-saved": {
+        "action": "ui.wait_for",
+        "text_contains": ["Saved"],
+        "timeout_ms": 20000,
+        "intent": "The gateway accepted the save.",
+        "next": "capture-saved"
+      },
+      "capture-saved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-legacy-saved.png",
+        "label": "Legacy round saved",
+        "intent": "Record the saved state.",
+        "next": "verify-edit"
+      },
+      "verify-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-edit",
+        "intent": "backlog.list shows the seeded item's round persisted as static-code with its runner.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
