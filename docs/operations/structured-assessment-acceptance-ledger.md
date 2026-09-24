@@ -6,13 +6,13 @@ transport fixture or synthetic classification gate cannot establish workflow
 savings. Keep this ledger current when each consumer changes.
 Assessment history shows individual outcomes, operator feedback, associated chosen actions, and per-consumer/provider/model usage, cost provenance and latency across retained records. Missing usage stays unknown; these descriptive totals do not establish accuracy or workflow savings.
 
-| Consumer                               | Implemented path                                                                                                 | Quality evidence                                                                                                                                                           | Matched workflow evidence                                                                                                                                                           | Next gate                                                                                                                                      |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recorded-failure triage                | Opt-in pilot shipped in #714; v2 classifier result                                                               | [v2 held-out report](../../scripts/failure-triage/results/v2-held-out/report.md): 17/21 correct on synthetic cases                                                         | Eight paired navigation cases: two assisted-better on abstentions, four both rejected, two equal accepted; the assisted arm used 48% more tokens and took 10.6% longer on those two | Hold any efficiency claim; freeze cases where a first read can save work, and compare named hints apart from abstentions                       |
-| Textual acceptance criteria / evidence | Opt-in advisory text-only assessment shipped in #730; visual/mixed proof refused; authoritative ledger unchanged | Independent labels agreed on 12 v2 text cases; preliminary Jev adapter probe was 8/9 on held-out cases with a wrong definite `supported` verdict for insufficient evidence | None                                                                                                                                                                                | Hold Jev for this consumer; do not retune frozen cases or claim savings. An LLM comparator needs a separate frozen study and paired validation |
-| Static-review checklist                | No evaluated consumer                                                                                            | None                                                                                                                                                                       | None                                                                                                                                                                                | Freeze checklist applicability and known defects or independent strong-review reference before candidate calls                                 |
-| Copilot context support                | No evaluated consumer                                                                                            | None                                                                                                                                                                       | None                                                                                                                                                                                | Compare matched diagnostic tasks, including evidence reads and all context/advice overhead                                                     |
-| Review-routing advice                  | No evaluated consumer                                                                                            | None                                                                                                                                                                       | None                                                                                                                                                                                | Compare routing decisions against the existing route and matched review tasks                                                                  |
+| Consumer                               | Implemented path                                                                                                 | Quality evidence                                                                                                                                                            | Matched workflow evidence                                                                                                                                                           | Next gate                                                                                                                                  |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Recorded-failure triage                | Opt-in pilot shipped in #714; v2 classifier result                                                               | [v2 held-out report](../../scripts/failure-triage/results/v2-held-out/report.md): 17/21 correct on synthetic cases                                                          | Eight paired navigation cases: two assisted-better on abstentions, four both rejected, two equal accepted; the assisted arm used 48% more tokens and took 10.6% longer on those two | Hold any efficiency claim; #736 excludes the failed draft, reports offline read diagnostics and seals optional worker limits before advice |
+| Textual acceptance criteria / evidence | Opt-in advisory text-only assessment shipped in #730; visual/mixed proof refused; authoritative ledger unchanged | v2 Jev adapter: 8/9 held-out with a wrong definite verdict; v3 gateway Jev: 9/9 held-out, 11/12 overall with a development error; operator label-read provenance unverified | None                                                                                                                                                                                | Keep routine Jev calls off; the small v3 classification pass and development error need paired validation before any benefit claim         |
+| Static-review checklist                | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Freeze checklist applicability and known defects or independent strong-review reference before candidate calls                             |
+| Copilot context support                | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Compare matched diagnostic tasks, including evidence reads and all context/advice overhead                                                 |
+| Review-routing advice                  | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Compare routing decisions against the existing route and matched review tasks                                                              |
 
 #723 added opt-in advice for pending run decisions; #728 added decision history visibility. This is distinct from review routing and has no paired outcome study yet. The profile-preview follow-up
 saved after #726 is a separate UI/proof change. Neither is evidence that the
@@ -31,6 +31,11 @@ API-equivalent rates, not a verified load-balancer bill. Keep full judgments
 and journals in the private operator artifacts described in the evaluation guide.
 This sample is evidence against an efficiency claim, not a population estimate.
 All five named hints matched the baseline worker's first read; none changed the first evidence choice. Seven of eight cases require two reads, the study maximum, so the accepted answers could not save a read under this design. Future runs represent a provider abstention as null advice in the worker prompt while retaining the paid receipt. The frozen run above used an abstention message and remains unchanged. A new independently reviewed corpus must allow a useful hint to change the work before any further candidate calls.
+PR #736 adds offline first-read and read/turn diagnostics. Its revised corpus
+failed a source-only label review and is excluded from the shipped case files.
+A metadata-only first-read check chose a required source in 6/8 draft cases. No
+new advice calls or paired workflow results were produced; the efficiency
+claim remains on hold.
 
 The recorded-failure panel stores assessment cost and optional accuracy feedback. PR #731 links a saved assessment to an explicitly chosen action and refreshes its history. Its synthetic gateway/browser proofs make no external provider calls. That association cannot establish whether advice caused the choice or saved operator time. Local assessment storage may have no retained records; an empty cohort has no accuracy denominator.
 
@@ -65,3 +70,52 @@ paired baseline/assisted worker sessions were collected in this probe. The
 receipts are adapter-level observations, not an efficiency result or a proof
 that an opt-in gateway run retained every record. Do not enable routine AC
 calls or change the frozen label to chase a pass.
+
+PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a frozen,
+gateway-compatible AC v3 synthetic corpus. On September 24, 2026, an operator
+recorded a separate model read of the final 14-case revision. [The audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
+retains a prompt digest and [saved response JSON](../../scripts/acceptance-evidence/results/v3-blind-label-raw.json).
+The committed files agree with the reference labels on all 12 text cases and mark
+both visual/mixed cases no-call. They do not independently prove what the model
+received. A previous draft read revisited reconciliation case `case-72efdd3b17`
+after the job identity was made explicit; the final recorded read labeled it
+`contradicted`.
+
+The held-out cases include partial shard coverage, conflicting scheduler files,
+an aggregate threshold and a policy-probe instruction injection. Final case hash:
+`ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4`;
+label hash: `31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1`.
+The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
+runs [the parity proof](../../scripts/acceptance-evidence/gateway-parity.test.mts):
+14 temporary run snapshots, 12 persisted assessment receipts from a fake
+in-process provider, two visual/mixed no-call checks, and offline packet and
+admission binding. The fake provider has the reference answers, so its 9/9
+held-out result is a transport check, not evidence of provider accuracy. Equal
+validator arms remain inconclusive. The frozen v2 adapter-only pilot remains **hold**.
+
+The v3 cases are small synthetic checks; several labels depend on one field or
+missing outcome. A high score on them cannot establish production accuracy or
+repair the wrong definite v2 verdict. The gateway-method test checks retained
+record consistency, not export authenticity, provider quality or efficiency.
+
+On September 24, 2026, an operator-reported [label read](../../scripts/acceptance-evidence/results/v3-independent-label-read.json)
+agreed with all 12 frozen text labels and both no-call decisions. The record
+does not attest what the reader had seen before answering. The
+[TypeSafe gateway receipt export](../../scripts/acceptance-evidence/results/v3-typesafe-gateway-receipts.json)
+contains 12 completed calls against pinned `jev-1.13.0` as 12 retained
+gateway assessment records. The operator script reports two visual/mixed
+`non-textual` refusals before transport, with no records for those cases. Jev matched
+9/9 held-out cases and 11/12 text cases overall. It incorrectly marked the
+**development** case "store write attempted" as proof that the write completed,
+with recorded confidence 0.83. The gateway recorded 6,132 input and 561 output
+tokens, 7,096 ms summed call duration, and USD 0.000257544 estimated cost;
+the batch reservation ceiling was USD 0.004128768, under the policy cap of USD
+0.01. The operator reports checking the price against
+[TypeSafe's model page](https://docs.typesafe.ai/models) before the run;
+the recorded timestamp cannot verify that page visit.
+The operator exported all records for the isolated synthetic owner before removing
+the temporary run home. The committed export cannot independently authenticate
+the provider traffic or prove that a separate background call did not occur.
+No paired worker arms were run. The v3 held-out classification threshold is
+met on this small corpus; workflow benefit and production accuracy remain
+**unknown**. Do not use the v3 result to overturn the v2 hold for routine calls.

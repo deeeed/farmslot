@@ -64,6 +64,27 @@ async function approvedPaths(directory: string, planHash: string, configHash: st
 
 test('advice input cannot contain full evidence or a hidden reference answer', () => {
   const sealed = sealAdvicePlan(cases);
+  const extended = sealAdvicePlan(cases, { maxTurns: 4, maxReads: 3 });
+  assert.notEqual(sealed.hash, extended.hash);
+  assert.deepEqual(extended.workerLimits, { maxTurns: 4, maxReads: 3 });
+  assert.doesNotThrow(() => adviceReservation(extended, config));
+  assert.throws(
+    () => adviceReservation({ ...extended, workerLimits: { maxTurns: 3, maxReads: 2 } }, config),
+    /Advice plan changed after sealing/,
+  );
+  assert.throws(
+    () => sealAdvicePlan(cases, { maxTurns: 4, maxReads: 3, surprise: true } as never),
+    /Invalid worker limits/,
+  );
+  assert.throws(() => sealAdvicePlan(cases, null as never), /Invalid worker limits/);
+  assert.throws(
+    () =>
+      sealAdvicePlan(
+        Array.from({ length: 8 }, (_, index) => ({ ...cases[0], id: `case-${index}` })),
+        { maxTurns: 4, maxReads: 3 },
+      ),
+    /60-call cap/,
+  );
   assert(!JSON.stringify(adviceState(sealed.cases[0])).includes('command not found'));
   assert.throws(
     () => sealAdvicePlan([{ ...cases[0], reference: { label: 'environment' } } as never]),

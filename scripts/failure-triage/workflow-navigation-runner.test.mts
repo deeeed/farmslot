@@ -169,6 +169,22 @@ test('invalid independent approval blocks transport and leaves no journal', asyn
       () => reservation(sealed, { ...config, maxTotalUsd: 0.00001 }),
       /reserved budget/,
     );
+    const oversized = sealPlan(
+      [
+        {
+          ...cases[0],
+          sources: [
+            { id: 'one', title: 'First observation', text: 'x'.repeat(1700) },
+            { id: 'two', title: 'Second observation', text: 'y'.repeat(1700) },
+            { id: 'three', title: 'Other observation', text: 'z'.repeat(1700) },
+          ],
+        },
+      ],
+      sealed.advice,
+      { maxTurns: 4, maxReads: 3 },
+      { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+    );
+    assert.throws(() => reservation(oversized, config), /input-byte ceiling/);
     assert.throws(
       () =>
         reservation(sealed, {
@@ -180,6 +196,71 @@ test('invalid independent approval blocks transport and leaves no journal', asyn
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('reservation rejects later requests over the transport byte limit, including escaped text', () => {
+  const sealed = plan();
+  for (const text of ['中'.repeat(8000), '\\'.repeat(8000)]) {
+    const oversized = sealPlan(
+      [
+        {
+          ...cases[0],
+          sources: [
+            { id: 'one', title: 'First observation', text },
+            { id: 'two', title: 'Second observation', text },
+            { id: 'three', title: 'Third observation', text },
+          ],
+        },
+      ],
+      sealed.advice,
+      { maxTurns: 4, maxReads: 3 },
+      { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+    );
+    assert.throws(
+      () =>
+        reservation(oversized, {
+          ...config,
+          maxInputTokens: 100000,
+          maxTotalTokens: 1000000,
+          price: {
+            ...config.price,
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+        }),
+      /transport byte limit/,
+    );
+  }
+});
+
+test('reservation selects the worst escaped pair when only two of four sources can be read', () => {
+  const sealed = plan();
+  const escaped = sealPlan(
+    [
+      {
+        ...cases[0],
+        sources: [
+          { id: 'unicode', title: 'Large UTF-8 source', text: '中'.repeat(8000) },
+          { id: 'slashes-one', title: 'First escaped source', text: '\\'.repeat(8000) },
+          { id: 'slashes-two', title: 'Second escaped source', text: '\\'.repeat(8000) },
+          { id: 'plain', title: 'Unescaped source', text: 'a'.repeat(8000) },
+        ],
+      },
+    ],
+    sealed.advice,
+    { maxTurns: 3, maxReads: 2 },
+    { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+  );
+  assert.throws(
+    () =>
+      reservation(escaped, {
+        ...config,
+        maxInputTokens: 100000,
+        maxTotalTokens: 1000000,
+        price: { ...config.price, inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      }),
+    /transport byte limit/,
+  );
 });
 
 test('approved fixture alternates evidence reads and answers with native receipts in a journal', async () => {

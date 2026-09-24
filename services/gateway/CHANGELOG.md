@@ -5,6 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
+- Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.
+
 - QA completion rejects recipe packages from a partial `stop-after-node` run.
 - Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.
 

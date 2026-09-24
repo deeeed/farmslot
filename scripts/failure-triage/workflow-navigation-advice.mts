@@ -29,6 +29,7 @@ export interface AdvicePlan {
   source: 'synthetic';
   cases: NavigationCase[];
   caseHash: string;
+  workerLimits?: { maxTurns: number; maxReads: number };
   hash: string;
 }
 export interface NavigationAdviceResult {
@@ -40,13 +41,34 @@ export interface NavigationAdviceResult {
   model: string;
   journalSha256: string;
 }
-export function sealAdvicePlan(cases: NavigationCase[]): AdvicePlan {
+export function sealAdvicePlan(
+  cases: NavigationCase[],
+  workerLimits?: { maxTurns: number; maxReads: number },
+): AdvicePlan {
   const frozen = sealCases(cases);
+  if (workerLimits !== undefined) {
+    assert(
+      workerLimits !== null &&
+        typeof workerLimits === 'object' &&
+        Object.keys(workerLimits).sort().join(',') === 'maxReads,maxTurns' &&
+        Number.isSafeInteger(workerLimits.maxTurns) &&
+        workerLimits.maxTurns >= 2 &&
+        workerLimits.maxTurns <= 12 &&
+        Number.isSafeInteger(workerLimits.maxReads) &&
+        workerLimits.maxReads > 0 &&
+        workerLimits.maxReads < workerLimits.maxTurns,
+      'Invalid worker limits',
+    );
+    assert(cases.length * 2 * workerLimits.maxTurns <= 60, 'Study exceeds 60-call cap');
+  }
   const body = {
     version: 1 as const,
     source: 'synthetic' as const,
     cases: frozen.cases,
     caseHash: frozen.hash,
+    ...(workerLimits !== undefined && {
+      workerLimits: { maxTurns: workerLimits.maxTurns, maxReads: workerLimits.maxReads },
+    }),
   };
   return { ...body, hash: hash(JSON.stringify(body)) };
 }
@@ -67,7 +89,7 @@ export function adviceQuestions(item: NavigationCase) {
 }
 export function adviceReservation(plan: AdvicePlan, config: AdviceConfig) {
   assert(
-    JSON.stringify(sealAdvicePlan(plan.cases)) === JSON.stringify(plan),
+    JSON.stringify(sealAdvicePlan(plan.cases, plan.workerLimits)) === JSON.stringify(plan),
     'Advice plan changed after sealing',
   );
   assert(plan.cases.length <= 10, 'Advice batch exceeds ten-case cap');

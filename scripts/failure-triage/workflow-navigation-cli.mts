@@ -51,9 +51,15 @@ function fail(message: string): never {
 }
 
 export async function main([command, ...args]: string[]): Promise<void> {
-  if (command === 'seal-advice' && args.length === 2) {
-    const [casesPath, output] = args;
-    return save(output, sealAdvicePlan(await load<NavigationCase[]>(casesPath)));
+  if (command === 'seal-advice' && (args.length === 2 || args.length === 3)) {
+    const [casesPath, output, limitsPath] = args;
+    return save(
+      output,
+      sealAdvicePlan(
+        await load<NavigationCase[]>(casesPath),
+        limitsPath ? await load<{ maxTurns: number; maxReads: number }>(limitsPath) : undefined,
+      ),
+    );
   }
   if (command === 'seal-worker' && args.length === 6) {
     const [casesPath, advicePlanPath, advicePath, journalPath, referencePath, output] = args;
@@ -71,7 +77,8 @@ export async function main([command, ...args]: string[]): Promise<void> {
     if (
       result.stopReason !== 'completed' ||
       result.advicePlanHash !== advicePlan.hash ||
-      JSON.stringify(sealAdvicePlan(cases)) !== JSON.stringify(advicePlan) ||
+      JSON.stringify(sealAdvicePlan(cases, advicePlan.workerLimits)) !==
+        JSON.stringify(advicePlan) ||
       result.journalSha256 !== sha(journalBytes) ||
       first?.kind !== 'approved' ||
       first.planHash !== advicePlan.hash ||
@@ -106,36 +113,47 @@ export async function main([command, ...args]: string[]): Promise<void> {
     const reference = await load<NavigationReference>(referencePath);
     return save(
       output,
-      sealPlan(
-        cases,
-        result.advice,
-        { maxTurns: 3, maxReads: 2 },
-        {
-          referenceHash: navigationReferenceHash(reference),
-          adviceProvenance: {
-            advicePlanHash: result.advicePlanHash,
-            configHash: result.configHash,
-            provider: result.provider,
-            model: result.model,
-            journalSha256: result.journalSha256,
-            methodologyHash: first.methodologyHash,
-          },
+      sealPlan(cases, result.advice, advicePlan.workerLimits ?? { maxTurns: 3, maxReads: 2 }, {
+        referenceHash: navigationReferenceHash(reference),
+        adviceProvenance: {
+          advicePlanHash: result.advicePlanHash,
+          configHash: result.configHash,
+          provider: result.provider,
+          model: result.model,
+          journalSha256: result.journalSha256,
+          methodologyHash: first.methodologyHash,
         },
-      ),
+      }),
     );
   }
   if (command === 'quote-advice' && args.length === 2) {
     const [planPath, configPath] = args;
     const plan = await load<ReturnType<typeof sealAdvicePlan>>(planPath);
     const quote = adviceReservation(plan, await load<AdviceConfig>(configPath));
-    console.log(JSON.stringify({ planHash: plan.hash, ...quote }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          planHash: plan.hash,
+          workerLimits: plan.workerLimits ?? { maxTurns: 3, maxReads: 2 },
+          ...quote,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
   if (command === 'quote-worker' && args.length === 2) {
     const [planPath, configPath] = args;
     const plan = await load<NavigationPlan>(planPath);
     const quote = reservation(plan, await load<RunnerConfig>(configPath));
-    console.log(JSON.stringify({ planHash: plan.hash, ...quote }, null, 2));
+    console.log(
+      JSON.stringify(
+        { planHash: plan.hash, maxTurns: plan.maxTurns, maxReads: plan.maxReads, ...quote },
+        null,
+        2,
+      ),
+    );
     return;
   }
   if (command === 'advice' && args.length === 6) {
@@ -394,7 +412,7 @@ export async function main([command, ...args]: string[]): Promise<void> {
     });
   }
   fail(
-    'Usage: seal-advice cases out | quote-advice plan config | advice plan config method approval journal out | seal-worker cases advice-plan advice-result advice-journal reference out | quote-worker plan config | worker plan config method approval journal out | blind plan sessions out | score plan sessions reference blind judgment method worker-journal out',
+    'Usage: seal-advice cases out [limits] | quote-advice plan config | advice plan config method approval journal out | seal-worker cases advice-plan advice-result advice-journal reference out | quote-worker plan config | worker plan config method approval journal out | blind plan sessions out | score plan sessions reference blind judgment method worker-journal out',
   );
 }
 
