@@ -138,11 +138,53 @@ budgets. Otherwise the decision is `hold`. Transport fixtures always report
 `efficiencyClaim` stays `not_established`. Correct diagnostic classification is
 a proxy; operator time and whole-workflow token savings need matched trials.
 
-## Draft multi-turn navigation pilot
+## Navigation metrics and rejected draft
+
+The scorer reports missing, interrupted and completed zero-read arms separately.
+The live runner discards invalid actions before saving a session, leaving the
+arm `active` with no attempted answer in blind review. Direct library callers
+can also submit `invalid` sessions, which the scorer counts as interrupted.
+It counts completed arms whose first delivered read names a required source,
+even when another read is needed. Read/turn totals cover independently accepted
+equal-quality pairs only. Named advice and abstentions have separate cohorts and
+denominators. These diagnostics establish no token, cost or time saving.
+
+For a separately reviewed study that needs more room to observe saved reads,
+`seal-advice` accepts an optional third argument after its output path: a JSON
+file such as `{"maxTurns":4,"maxReads":3}`. The limits enter the advice plan
+hash _before_ the first provider call, then carry unchanged into the worker
+plan. Without them, the historical three-turn/two-read default remains.
+`quote-advice` and `quote-worker` show the limits alongside the reserved cost.
+The worker quote checks its worst-case evidence prompt against the input-byte cap
+before consuming worker approval. At four turns, at most seven cases fit the 60-call worker cap (two arms per
+case). Freeze the limits and corpus before advice or worker calls; a case that
+needs all allowed reads cannot demonstrate fewer evidence reads.
+
+A revised eight-case synthetic draft failed independent source-only review. One
+definite cause was unsupported, a next check assumed missing evidence, and a
+Git checkout observation was titled as application state. A metadata-only
+first-read check chose a required source in 6/8 cases, including 4/5 cases
+with one required read, leaving little room for fewer reads. There were no
+provider calls, usage receipts or paired worker answers on that draft. Its
+exact case and reference files are excluded from the shipped corpus; the
+reviewed bytes are recoverable from PR #736's `refs/pull/736/head` at commit
+`f72e6d55d2788f9b24cd85da163765ab612703d7` and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
+directory. Their SHA-256 hashes are
+`b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
+for cases and `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`
+for references. Do not tune this draft against its observed picks. A new,
+independently reviewed corpus needs a predeclared comparison method before any
+live advice call.
+
+V1 is quarantined too: inspect its frozen results offline and do not make new
+provider calls. Keep its hashes and results unchanged. This is an operator
+policy; the CLI requires a separate approval for paid calls but does not
+identify a case file as quarantined.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
-provider request loads that file. Its reference status is `frozen`; this still permits only a small exploratory study.
+provider request loads that file. Its frozen status records the completed exploratory study; it does not
+permit another paid run.
 The case-file SHA-256 is `48caa3a48f03e26dda23ecdd7fcdaff90194f5a52127910d8da321a615e84e69`;
 the reference-file SHA-256 is `9a864f676cd188f2ec7e5ffc82c2730a6badce53e70c5dd416d286c5033febcc`.
 They cover overlapping incident families, so treat the eight pairs as an
@@ -156,40 +198,32 @@ A separately configured text-generating worker sees the same sources and
 instructions in both arms, with the source suggestion added only to the
 assisted arm. Each session can read at most two named sources in three turns;
 case order alternates arms. Unread source text and reference labels stay out
-of the advice request. Both live stages stop on unknown charges and never retry.
+of the advice request.
 
-Run the offline checks and seal the advice input first:
+The v1 corpus is frozen. Run only its offline checks and inspect existing
+receipts; do not use its sealed plans in `advice` or `worker`. For any future
+corpus, first freeze a new reviewed case file and method. The CLI's `quote-advice`
+and `quote-worker` commands make no provider calls. Both estimates need
+verified price snapshots. `quote-advice` checks a 1024-byte envelope reserve;
+the worker checks its request size before each paid call.
+A separate independent reviewer must approve each paid stage's plan, config,
+method hash and journal path. Future approved TypeSafe advice needs
+`TYPESAFE_API_KEY`; if it is unset, the CLI falls back to `STUDY_API_KEY`.
+Use a dedicated TypeSafe key when the worker has a separate credential. The
+worker (or LLM advice provider) needs `STUDY_API_KEY`. Both paid stages consume
+approval once and stop on unknown charges. Keep plans, approvals, journals and results outside the
+tracked tree.
+
+Offline checks for v1:
 
 ```bash
 ./node_modules/.bin/tsc -p scripts/failure-triage/tsconfig.json
 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/failure-triage/workflow-navigation*.test.mts
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts seal-advice scripts/failure-triage/navigation-cases.v1.json /tmp/navigation-advice-plan.json
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts quote-advice /tmp/navigation-advice-plan.json /tmp/navigation-advice-config.json
 ```
 
-The price snapshot in each config needs its own verified source and timestamp.
-`quote-advice` and `quote-worker` print plan and config hashes, conservative
-request/token/USD estimates; neither makes a call. Each preflight reserves 1024
-bytes for the request envelope and schema beyond the visible content, then
-stops on unexpected measured usage. Provider-side hidden tokens mean the quote
-is a spend estimate, not a provider-enforced account limit. An independent reviewer must check the
-methodology, case hash, provider and verified price, then create a JSON approval
-with `planHash`, `configHash`, `methodologyHash` (SHA-256 of the method file),
-`journalPath`, `reviewer` and `conclusion: "approved"`. Both live commands require
-`TYPESAFE_API_KEY` for TypeSafe advice and `STUDY_API_KEY` for the worker
-(or an LLM advice provider). Both commands consume their approval exactly once. Keep plans, approvals, journals and results outside the tracked tree.
-
-After advice generation, inspect each chosen source and receipt for label
-leakage, then seal and quote the paired worker plan. Review its separate method,
-price and approval before running it:
-
-```bash
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts advice /tmp/navigation-advice-plan.json /tmp/navigation-advice-config.json /tmp/navigation-advice-method.md /tmp/navigation-advice-approval.json /tmp/navigation-advice-journal.jsonl /tmp/navigation-advice.json
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts seal-worker scripts/failure-triage/navigation-cases.v1.json /tmp/navigation-advice-plan.json /tmp/navigation-advice.json /tmp/navigation-advice-journal.jsonl scripts/failure-triage/navigation-reference.v1.json /tmp/navigation-worker-plan.json
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts quote-worker /tmp/navigation-worker-plan.json /tmp/navigation-worker-config.json
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts worker /tmp/navigation-worker-plan.json /tmp/navigation-worker-config.json /tmp/navigation-worker-method.md /tmp/navigation-worker-approval.json /tmp/navigation-worker-journal.jsonl /tmp/navigation-sessions.json
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts blind /tmp/navigation-worker-plan.json /tmp/navigation-sessions.json /tmp/navigation-blind.json
-```
+The historical study generated advice before sealing a paired worker plan. It
+checked chosen sources and receipts for label leakage, quoted the worker plan,
+and obtained a separate approval before running worker sessions.
 
 A reviewer judges the blind rows before looking at arms, advice or costs.
 The export omits case IDs because their names can reveal the intended diagnosis;
@@ -211,10 +245,20 @@ wall time, unresolved judgments or unknown charges are inconclusive. The current
 blind export accepts one independent rater per answer. Record that reviewer,
 retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
+Direct library callers can submit invalid answers to blind review, but the
+scorer rejects those arms regardless of the reviewer's judgment.
+
+Inspect the retained v1 judgments and report offline. Replace the paths below
+with the saved private artifacts. `score` makes no provider call:
 
 ```bash
-TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts score /tmp/navigation-worker-plan.json /tmp/navigation-sessions.json scripts/failure-triage/navigation-reference.v1.json /tmp/navigation-blind.json /tmp/navigation-judgment.json /tmp/navigation-worker-method.md /tmp/navigation-worker-journal.jsonl /tmp/navigation-report.json
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts score /path/to/worker-plan.json /path/to/sessions.json scripts/failure-triage/navigation-reference.v1.json /path/to/blind.json /path/to/judgment.json /path/to/worker-method.md /path/to/worker-journal.jsonl /path/to/report.json
 ```
+
+A completed arm with no read enters `zeroRead` and
+cannot register a first-read hit. Interrupted arms enter their own count and
+cannot register first-read hits. Compare advice-inclusive tokens, time and
+independently judged quality before claiming efficiency.
 
 Compare results by incident family and do not infer a population-wide gain from
 eight synthetic cases.
@@ -240,7 +284,16 @@ rejected quality, so a study-wide efficiency total is deliberately absent.
 Do not rerun or retune this frozen corpus to seek a positive result. A new
 study would need to isolate named hints from the abstention-prompt effect and
 freeze new cases before further candidate calls.
-All five named hints matched the baseline first read. Seven of eight references require two reads, the study limit, so this corpus could not demonstrate fewer reads for those cases. For new results, a provider abstention is recorded as null advice: the assisted worker receives the same prompt as the baseline for that case, while the advice call remains in assisted token, cost and time totals. Old sealed results and their generic abstention text are unchanged. Before another live study, independently review and freeze fresh cases with enough optional evidence and read budget for a better first choice to save work. Report named-hint and abstention cases separately, and retain advice-inclusive totals.
+
+All five named hints matched the baseline first read. Seven of eight references
+require two reads, the study limit, so this corpus could not demonstrate fewer
+reads for those cases. For new results, a provider abstention is null advice:
+the assisted worker receives the baseline prompt, while the advice call stays
+in its token, cost and time totals. Old sealed results and their generic
+abstention text remain unchanged. Those text abstentions enter the `named`
+cohort when rescored; use the original result to judge abstention. Before
+another live study, independently review fresh cases with enough optional
+evidence and read budget for a better first choice to save work.
 
 Private raw plans, approvals, journals, blind judgments and the scored report
 are retained at `temp/triage/navigation-v1-luna/` in the operator checkout.

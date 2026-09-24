@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Default Codex runs to GPT-6 Sol and offer GPT-6 Luna while accepting existing GPT-5.4/5.5 selections.
+- Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.
 
 - QA completion rejects recipe packages from a partial `stop-after-node` run.
 - Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.

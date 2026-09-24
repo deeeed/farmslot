@@ -249,6 +249,191 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
   assert.match(comparison.provenance.judgmentHash, /^[a-f0-9]{64}$/);
   assert.equal(comparison.pairs[0].recommendation, advice[0].text);
   assert.deepEqual(comparison.pairs[0].baseline.readIds, ['runner.stderr']);
+  assert.equal(comparison.pairs[0].baseline.firstReadIncludesRequired, true);
+  assert.deepEqual(comparison.navigation.named, {
+    cases: 1,
+    missing: { baseline: 0, assisted: 0 },
+    interrupted: { baseline: 0, assisted: 0 },
+    zeroRead: { baseline: 0, assisted: 0 },
+    firstReadHits: { baseline: 1, assisted: 1 },
+    equalQualityPairs: 1,
+    matchedReads: { baseline: 1, assisted: 1 },
+    matchedTurns: { baseline: 2, assisted: 2 },
+  });
+  assert.equal(comparison.navigation.abstention.cases, 0);
+  const detour = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'slot.health' },
+    receipt('detour'),
+  );
+  const correct = advance(
+    sealed,
+    detour.session,
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('detour-correct'),
+  );
+  const delayed = advance(
+    sealed,
+    correct.session,
+    {
+      type: 'answer',
+      label: 'environment',
+      nextCheck: 'inspect config',
+      evidenceIds: ['runner.stderr'],
+    },
+    receipt('detour-answer'),
+  ).session;
+  const differentReads = [delayed, assisted];
+  const detourComparison = compareSessions(
+    sealed,
+    differentReads,
+    reference,
+    judgment(sealed, differentReads),
+  );
+  assert.deepEqual(detourComparison.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
+  assert.deepEqual(detourComparison.navigation.named.matchedReads, { baseline: 2, assisted: 1 });
+  assert.deepEqual(detourComparison.navigation.named.matchedTurns, { baseline: 3, assisted: 2 });
+  const skippedRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'answer', label: 'unclear', nextCheck: 'inspect more context', evidenceIds: [] },
+    receipt('skipped-read'),
+  ).session;
+  const incompleteNavigation = compareSessions(
+    sealed,
+    [skippedRead, assisted],
+    reference,
+    judgment(sealed, [skippedRead, assisted]),
+  );
+  assert.deepEqual(incompleteNavigation.navigation.named.missing, { baseline: 0, assisted: 0 });
+  assert.deepEqual(incompleteNavigation.navigation.named.zeroRead, { baseline: 1, assisted: 0 });
+  assert.deepEqual(incompleteNavigation.navigation.named.firstReadHits, {
+    baseline: 0,
+    assisted: 1,
+  });
+  const invalidRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('invalid-read', -1),
+  ).session;
+  const invalidSessions = [invalidRead, assisted];
+  const invalidNavigation = compareSessions(
+    sealed,
+    invalidSessions,
+    reference,
+    judgment(sealed, invalidSessions),
+  );
+  assert.deepEqual(invalidNavigation.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(invalidNavigation.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
+  assert.deepEqual(invalidNavigation.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
+  assert.deepEqual(invalidNavigation.pairs[0].baseline.readIds, []);
+  assert.deepEqual(
+    blindReviewRows(sealed, invalidSessions)
+      .filter((row) => row.answer === null)
+      .map((row) => row.reads),
+    [[]],
+  );
+  assert.equal(invalidNavigation.pairs[0].baseline.firstReadIncludesRequired, null);
+  const validRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('valid-before-invalid-answer'),
+  ).session;
+  const invalidAnswer = advance(
+    sealed,
+    validRead,
+    {
+      type: 'answer',
+      label: 'environment',
+      nextCheck: 'inspect invalid answer',
+      evidenceIds: ['runner.stderr'],
+    },
+    receipt('invalid-answer', -1),
+  ).session;
+  const invalidAnswerSessions = [invalidAnswer, assisted];
+  const invalidAnswerComparison = compareSessions(
+    sealed,
+    invalidAnswerSessions,
+    reference,
+    judgment(sealed, invalidAnswerSessions),
+  );
+  assert.equal(invalidAnswerComparison.pairs[0].baseline.referenceMatch, false);
+  assert.equal(invalidAnswerComparison.pairs[0].baseline.quality, 'rejected');
+  assert.deepEqual(invalidAnswerComparison.pairs[0].baseline.readIds, ['runner.stderr']);
+  assert.deepEqual(invalidAnswerComparison.navigation.named.interrupted, {
+    baseline: 1,
+    assisted: 0,
+  });
+  assert.equal(
+    blindReviewRows(sealed, invalidAnswerSessions).find(
+      (row) => row.answer?.type === 'answer' && row.answer.nextCheck === 'inspect invalid answer',
+    )?.reads.length,
+    1,
+  );
+  const nullAction = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    null as unknown as Parameters<typeof advance>[2],
+    receipt('null-action'),
+  ).session;
+  const nullActionSessions = [nullAction, assisted];
+  const nullActionComparison = compareSessions(
+    sealed,
+    nullActionSessions,
+    reference,
+    judgment(sealed, nullActionSessions),
+  );
+  assert.equal(nullActionComparison.pairs[0].baseline.referenceMatch, false);
+  assert.deepEqual(nullActionComparison.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(
+    blindReviewRows(sealed, nullActionSessions)
+      .filter((row) => row.answer === null)
+      .map((row) => row.reads),
+    [[]],
+  );
+  const partialAnswer = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'answer', label: 'environment' } as unknown as Parameters<typeof advance>[2],
+    receipt('partial-answer'),
+  ).session;
+  const partialSessions = [partialAnswer, assisted];
+  const partialComparison = compareSessions(
+    sealed,
+    partialSessions,
+    reference,
+    judgment(sealed, partialSessions),
+  );
+  assert.equal(partialComparison.pairs[0].baseline.referenceMatch, false);
+  assert.equal(partialComparison.pairs[0].baseline.quality, 'rejected');
+  assert.deepEqual(partialComparison.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  const activeRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('active-read'),
+  ).session;
+  const activeSessions = [activeRead, assisted];
+  const activeNavigation = compareSessions(
+    sealed,
+    activeSessions,
+    reference,
+    judgment(sealed, activeSessions),
+  );
+  assert.deepEqual(activeNavigation.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(activeNavigation.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
+  const missingNavigation = compareSessions(
+    sealed,
+    [assisted],
+    reference,
+    judgment(sealed, [assisted]),
+  );
+  assert.deepEqual(missingNavigation.navigation.named.missing, { baseline: 1, assisted: 0 });
+  assert.deepEqual(missingNavigation.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
+  assert.equal(incompleteNavigation.navigation.named.equalQualityPairs, 0);
   assert.equal(comparison.pairs[0].assisted.answer?.label, 'environment');
   assert.match(comparison.pairs[0].assisted.judgment!.reason, /^Reviewed /);
   assert.deepEqual(comparison.totals?.tokens, { baseline: 30, assisted: 38 });

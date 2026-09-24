@@ -128,6 +128,11 @@ export interface Session {
   status: 'active' | 'answered' | 'exhausted' | 'invalid';
 }
 
+/** An invalid last turn is recorded but cannot deliver evidence to the worker. */
+function deliveredTurns(session: Session): Turn[] {
+  return session.status === 'invalid' ? session.turns.slice(0, -1) : session.turns;
+}
+
 /** Only these fields enter model-visible case input. Reference answers live elsewhere. */
 export function sealCases(cases: NavigationCase[]): { cases: NavigationCase[]; hash: string } {
   assert(cases.length > 0 && cases.length <= 40, 'Invalid case count');
@@ -390,10 +395,11 @@ export function blindReviewRows(plan: NavigationPlan, sessions: Session[]) {
         blindId: digest(`${plan.hash}:${session.caseId}:${session.arm}`),
         failure: item.failure,
         sources: item.sources,
-        reads: session.turns
+        reads: deliveredTurns(session)
           .filter((turn) => turn.action.type === 'read_evidence')
           .map((turn) => turn.action),
-        answer: session.turns.find((turn) => turn.action.type === 'answer')?.action ?? null,
+        // The live runner discards invalid turns; direct callers may still supply an attempted answer.
+        answer: session.turns.find((turn) => turn.action?.type === 'answer')?.action ?? null,
       };
     })
     .sort((a, b) => a.blindId.localeCompare(b.blindId));
@@ -548,23 +554,32 @@ export function compareSessions(
           total === null || turn.receipt[field] === null ? null : total + turn.receipt[field]!,
         0,
       );
-    const result = (session: Session | undefined, arm: Arm) => {
-      const review = decisions.get(digest(`${plan.hash}:${id}:${arm}`));
-      const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
-      const matchesReference =
+    const reviews = {
+      baseline: decisions.get(digest(`${plan.hash}:${id}:baseline`)),
+      assisted: decisions.get(digest(`${plan.hash}:${id}:assisted`)),
+    };
+    const matchesReference = (session: Session | undefined) => {
+      const answer = session?.turns.find((turn) => turn.action?.type === 'answer')?.action;
+      return (
         answer?.type === 'answer' &&
         answer.label === expected.label &&
-        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId));
+        Array.isArray(answer.evidenceIds) &&
+        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId))
+      );
+    };
+    const result = (session: Session | undefined, arm: Arm) => {
+      const review = reviews[arm];
+      const referenceMatch = matchesReference(session);
       if (
         session?.status === 'invalid' ||
         session?.status === 'exhausted' ||
         review?.decision === 'rejected' ||
-        (session?.status === 'answered' && !matchesReference)
+        (session?.status === 'answered' && !referenceMatch)
       )
         return 'rejected';
       if (
         session?.status === 'answered' &&
-        matchesReference &&
+        referenceMatch &&
         review?.decision === 'accepted' &&
         session.turns.every((turn) => validReceipt(turn.receipt))
       )
@@ -584,20 +599,27 @@ export function compareSessions(
             ? 'both-rejected'
             : 'inconclusive';
     const armReport = (session: Session | undefined, arm: Arm) => {
-      const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
-      const review = decisions.get(digest(`${plan.hash}:${id}:${arm}`))!;
-      const referenceMatch =
-        answer?.type === 'answer' &&
-        answer.label === expected.label &&
-        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId));
+      const answer = session?.turns.find((turn) => turn.action?.type === 'answer')?.action;
+      const review = reviews[arm];
+      const referenceMatch = session?.status === 'answered' && matchesReference(session);
+      const readIds = session
+        ? deliveredTurns(session)
+            .filter((turn) => turn.action.type === 'read_evidence')
+            .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id)
+        : [];
+      // maxReads < maxTurns makes exhausted unreachable today; keep the terminal case explicit.
       return {
         status: session?.status ?? 'missing',
         quality: result(session, arm),
         referenceMatch,
-        readIds:
-          session?.turns
-            .filter((turn) => turn.action.type === 'read_evidence')
-            .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id) ?? [],
+        readIds,
+        firstReadIncludesRequired:
+          (session?.status === 'answered' || session?.status === 'exhausted') && readIds.length
+            ? expected.requiredReadIds.includes(readIds[0])
+            : null,
+        readCount: readIds.length,
+        // Count attempted turns, including an invalid final turn with no delivered evidence.
+        turnCount: session?.turns.length ?? 0,
         answer:
           answer?.type === 'answer'
             ? { label: answer.label, nextCheck: answer.nextCheck, evidenceIds: answer.evidenceIds }
@@ -637,6 +659,54 @@ export function compareSessions(
           : null,
     };
   });
+  const navigationStats = (kind: 'named' | 'abstention') => {
+    const group = pairs.filter(
+      (pair) => (pair.recommendation === null) === (kind === 'abstention'),
+    );
+    const matched = group.filter((pair) => pair.quality === 'equal-accepted');
+    return {
+      cases: group.length,
+      missing: {
+        baseline: group.filter((pair) => pair.baseline.status === 'missing').length,
+        assisted: group.filter((pair) => pair.assisted.status === 'missing').length,
+      },
+      interrupted: {
+        baseline: group.filter((pair) => ['active', 'invalid'].includes(pair.baseline.status))
+          .length,
+        assisted: group.filter((pair) => ['active', 'invalid'].includes(pair.assisted.status))
+          .length,
+      },
+      zeroRead: {
+        baseline: group.filter(
+          (pair) =>
+            ['answered', 'exhausted'].includes(pair.baseline.status) &&
+            pair.baseline.readCount === 0,
+        ).length,
+        assisted: group.filter(
+          (pair) =>
+            ['answered', 'exhausted'].includes(pair.assisted.status) &&
+            pair.assisted.readCount === 0,
+        ).length,
+      },
+      firstReadHits: {
+        baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired).length,
+        assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired).length,
+      },
+      equalQualityPairs: matched.length,
+      matchedReads: {
+        baseline: matched.reduce((total, pair) => total + pair.baseline.readCount, 0),
+        assisted: matched.reduce((total, pair) => total + pair.assisted.readCount, 0),
+      },
+      matchedTurns: {
+        baseline: matched.reduce((total, pair) => total + pair.baseline.turnCount, 0),
+        assisted: matched.reduce((total, pair) => total + pair.assisted.turnCount, 0),
+      },
+    };
+  };
+  const navigation = {
+    named: navigationStats('named'),
+    abstention: navigationStats('abstention'),
+  };
   const complete = pairs.filter((pair) => pair.tokens && pair.costUsd && pair.elapsedMs);
   const totals = (field: 'tokens' | 'costUsd' | 'elapsedMs') =>
     complete.reduce(
@@ -659,6 +729,7 @@ export function compareSessions(
     equalQualityPairs: pairs.filter((pair) => pair.quality === 'equal-accepted').length,
     completeMetricsPairs: complete.length,
     regressions: pairs.filter((pair) => pair.quality === 'baseline-better').length,
+    navigation,
     totals:
       complete.length === plan.cases.length
         ? { tokens: totals('tokens'), costUsd: totals('costUsd'), elapsedMs: totals('elapsedMs') }
