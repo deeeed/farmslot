@@ -110,3 +110,52 @@ assert.ok(estimatedUsd <= probe.maxUsd);
 console.log(
   `Recorded AC adapter probe: ${heldCorrect}/9 held-out; hold on ${wrongInsufficient.join(', ')}`,
 );
+
+// v3 uses gateway-readable artifact paths and opaque IDs; v2 remains an
+// unchanged adapter-only result and is never treated as a gateway study.
+const v3Hashes = {
+  'cases.v3.json': '9ba8089b23b827b8474f9735f89167ebbef6c645fa4a718ebfdaad2e2899d910',
+  'labels.v3.json': 'c860b4c699145d7093abd04d01274a84fa47e6f40ca91437c28906b7663c4fff',
+};
+for (const [name, hash] of Object.entries(v3Hashes)) {
+  const bytes = readFileSync(new URL(name, import.meta.url));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), hash, `${name} changed`);
+}
+const nextCases = JSON.parse(readFileSync(new URL('cases.v3.json', import.meta.url)));
+const nextLabels = JSON.parse(readFileSync(new URL('labels.v3.json', import.meta.url)));
+assert.equal(nextCases.version, 3);
+assert.equal(nextLabels.version, 3);
+assert.equal(nextCases.cases.length, 14);
+assert.equal(nextLabels.labels.length, 12);
+assert.equal(new Set(nextCases.cases.map((row) => row.id)).size, 14);
+assert.equal(new Set(nextLabels.labels.map((row) => row.id)).size, 12);
+const reference = new Map(nextLabels.labels.map((row) => [row.id, row.expected]));
+for (const row of nextCases.cases) {
+  assert.match(row.id, /^case-[a-f\d]{10}$/);
+  assert.equal(row.criterionId, 'AC-1');
+  assert.ok(row.criterion && row.evidence.length >= 1 && row.evidence.length <= 4);
+  if (row.split === 'excluded') {
+    assert.ok(['visual', 'mixed'].includes(row.proofMode));
+    assert.equal(reference.has(row.id), false);
+  } else {
+    assert.equal(row.proofMode, 'state');
+    assert.ok(['development', 'held-out'].includes(row.split));
+    assert.ok(['supported', 'contradicted', 'insufficient'].includes(reference.get(row.id)));
+    for (const item of row.evidence) {
+      assert.match(item.id, /^artifacts\/(?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|log)$/);
+      assert.ok(item.text && Buffer.byteLength(item.text, 'utf8') <= 4096);
+    }
+  }
+}
+for (const label of nextLabels.labels)
+  assert.ok(nextCases.cases.some((row) => row.id === label.id));
+for (const split of ['development', 'held-out']) {
+  for (const verdict of ['supported', 'contradicted', 'insufficient']) {
+    assert.equal(
+      nextCases.cases.filter((row) => row.split === split && reference.get(row.id) === verdict)
+        .length,
+      split === 'development' ? 1 : 3,
+    );
+  }
+}
+console.log('Frozen gateway AC corpus v3: 3 development, 9 held-out, 2 excluded');

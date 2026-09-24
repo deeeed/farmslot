@@ -1,4 +1,4 @@
-# Textual acceptance-evidence pilot v2
+# Textual acceptance-evidence pilot
 
 Scope: the approved [structured-assessment evaluation plan](../../docs/plans/structured-assessment-evaluation.md), textual AC/evidence consumer. These invented cases do not contain company data. Their reference labels were authored before any provider calls. Do not send `labels.v1.json`, its rationales, split designation or IDs to a provider. A separate reader must check the reference labels against the input text before live evaluation; authorship alone is not independent adjudication.
 
@@ -121,3 +121,40 @@ Run the offline checks with:
 ```bash
 node --test scripts/acceptance-evidence/evaluate.test.mjs
 ```
+
+## Gateway-backed corpus v3
+
+The frozen v2 adapter-only result remains a **hold**. Its evidence identifiers
+(`stdout`, `response`, etc.) cannot be read by the production gateway, so no
+production assessment record could satisfy the v2 evaluator. Do not rename v2
+cases, make more candidate calls on them or reinterpret that result as gateway proof.
+
+Version 3 is a new synthetic corpus with gateway-readable artifact paths and
+opaque IDs. An independent blind reader checked its reference judgments before
+freezing it. The SHA-256 hashes are:
+
+```
+9ba8089b23b827b8474f9735f89167ebbef6c645fa4a718ebfdaad2e2899d910  cases.v3.json
+c860b4c699145d7093abd04d01274a84fa47e6f40ca91437c28906b7663c4fff  labels.v3.json
+```
+
+`node scripts/acceptance-evidence/check.mjs` checks both frozen versions.
+`TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts`
+creates temporary runs from all v3 cases and tests gateway eligibility and the
+visual/mixed no-call boundary. It also uses a **fake in-process provider** to
+generate 12 real gateway records and checks that the offline evaluator accepts
+their snapshots, admissions and usage, rejects a changed snapshot, and holds a
+provider that gives poor answers. This test spends nothing and proves no model
+quality or workflow savings.
+
+A v3 study must set `corpusVersion: 3` alongside `version: 1` when passed to
+`node scripts/acceptance-evidence/evaluate.mjs <study.json>`. Every text record
+must come from the gateway snapshot for the recorded run and carry the exact
+synthetic admission `synthetic:acceptance-evidence-v3/<caseId>`. The older study
+format without `corpusVersion` continues to select frozen v2. Never send IDs,
+splits or reference labels to the provider. Visual and mixed cases stay no-call.
+
+A live experiment still needs a separately verified current price and spend
+cap, exact synthetic admission, complete assessment records and an independent
+paired baseline/assisted validator study at equal quality. Keep each attempt
+and its cost in the study. Until those results exist, **impact is unknown**.

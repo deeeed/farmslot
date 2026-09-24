@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "labels": [
+    {
+      "id": "case-bd0e492cb8",
+      "expected": "contradicted",
+      "rationale": "The completed export records seven emitted files rather than eight."
+    },
+    {
+      "id": "case-57584c0514",
+      "expected": "insufficient",
+      "rationale": "The store write was attempted, but the stored value is not shown."
+    },
+    {
+      "id": "case-4403723d6f",
+      "expected": "supported",
+      "rationale": "The same request records the invalid checksum and HTTP 422."
+    },
+    {
+      "id": "case-d9148d1742",
+      "expected": "supported",
+      "rationale": "The stored owner and owner-changed event both name w2."
+    },
+    {
+      "id": "case-df79ab632b",
+      "expected": "contradicted",
+      "rationale": "The stored next run time is 10:00 UTC rather than 09:00 UTC."
+    },
+    {
+      "id": "case-e2864820eb",
+      "expected": "insufficient",
+      "rationale": "Quota release is queued, but no post-cancellation quota balance is recorded."
+    },
+    {
+      "id": "case-73534ccc73",
+      "expected": "insufficient",
+      "rationale": "The backup checksum is recorded, but there is no restore result."
+    },
+    {
+      "id": "case-0f44fffa13",
+      "expected": "supported",
+      "rationale": "Both submissions have the recorded outcomes on opposite sides of the maintenance change."
+    },
+    {
+      "id": "case-b378efe57b",
+      "expected": "contradicted",
+      "rationale": "R5 uses B after the account switch rather than A."
+    },
+    {
+      "id": "case-5606bbd91a",
+      "expected": "supported",
+      "rationale": "Both requests return T8 and the store records one created task."
+    },
+    {
+      "id": "case-1f65bff389",
+      "expected": "insufficient",
+      "rationale": "A dispatch was accepted, but no delivery receipt or delivery count is recorded."
+    },
+    {
+      "id": "case-0da17e0a74",
+      "expected": "contradicted",
+      "rationale": "The completed job reports two failed items rather than zero."
+    }
+  ]
+}
