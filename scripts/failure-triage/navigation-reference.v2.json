@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "status": "draft-unsealed",
+  "references": [
+    {
+      "caseId": "device-deployment",
+      "label": "environment",
+      "requiredReadIds": ["e4"],
+      "nextCheck": "Inspect simulator free space before retrying installation.",
+      "family": "device-capacity",
+      "rationale": "The installer and device agree on insufficient storage; the build succeeded."
+    },
+    {
+      "caseId": "checkout-revision",
+      "label": "environment",
+      "requiredReadIds": ["e1"],
+      "nextCheck": "Inspect checkout depth and fetch the missing object.",
+      "family": "checkout-depth",
+      "rationale": "The checkout has an absent object; dispatch and slot state are consequences or context."
+    },
+    {
+      "caseId": "profile-request",
+      "label": "environment",
+      "requiredReadIds": ["e2", "e3"],
+      "nextCheck": "Compare the outgoing host with the selected profile host.",
+      "family": "profile-host-selection",
+      "rationale": "The trace and selected profile disagree on the request host; a 403 alone cannot establish why."
+    },
+    {
+      "caseId": "remote-state-assertion",
+      "label": "test_harness",
+      "requiredReadIds": ["e2", "e4"],
+      "nextCheck": "Compare the completion predicate with the authoritative state read.",
+      "family": "receipt-predicate",
+      "rationale": "The recipe stops at a local acknowledgement, while the remote state is still pending."
+    },
+    {
+      "caseId": "native-package",
+      "label": "dependencies",
+      "requiredReadIds": ["e1"],
+      "nextCheck": "Inspect the installed native package variant for the current platform.",
+      "family": "native-binary-variant",
+      "rationale": "The installed dependency lacks a binary for the assigned platform; worker load failure is a consequence."
+    },
+    {
+      "caseId": "account-cache-key",
+      "label": "implementation",
+      "requiredReadIds": ["e2"],
+      "nextCheck": "Inspect whether the balance cache key includes the selected account.",
+      "family": "account-key-isolation",
+      "rationale": "The changed cache key omits account identity; UI and network observations corroborate the impact."
+    },
+    {
+      "caseId": "remote-certificate",
+      "label": "external_service",
+      "requiredReadIds": ["e3"],
+      "nextCheck": "Inspect the remote endpoint certificate and its expiry.",
+      "family": "remote-certificate-expiry",
+      "rationale": "The remote endpoint presented an expired certificate; configuration remained unchanged."
+    },
+    {
+      "caseId": "export-count-gap",
+      "label": "unclear",
+      "requiredReadIds": ["e2", "e4"],
+      "nextCheck": "Recover both query filters and source snapshot identifiers before assigning a cause.",
+      "family": "export-query-provenance",
+      "rationale": "Both exports completed with different counts, but missing filters and snapshot IDs prevent deciding whether the requests or results differed."
+    }
+  ]
+}

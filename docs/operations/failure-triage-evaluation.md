@@ -140,6 +140,38 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 
 ## Draft multi-turn navigation pilot
 
+`navigation-cases.v2.json` and `navigation-reference.v2.json` are revised,
+`draft-unsealed` synthetic cases. Corpus revision v2 uses the existing reference
+schema version 1; `navigationReferenceHash` accepts it, but the scoring CLI
+requires `status: frozen` before a live comparison. The original v2 draft failed
+independent review on September 24, 2026 because source names and order exposed
+the intended answer, some families overlapped, and some labels were debatable.
+The first revision also failed independent review: semantic source IDs and
+overlapping mechanisms still cued the answer. The current draft uses per-case
+opaque source IDs and generic evidence-type titles; its dependency and remote
+certificate cases replace the overlapping resource and endpoint cases. It still
+requires independent review of its labels, families and evidence paths. Do not
+seal it or call a provider yet.
+
+Five revised cases have a single decisive read and three require two reads. The
+single-read source appears in different positions. Source titles describe only
+the evidence type, and the IDs carry no diagnosis. A reader may still choose a
+correct source without advice. The runner records baseline sessions in a paired
+run after advice generation. Before freezing, an independent worker may do a
+baseline-only feasibility pass using the same failure summaries, source index
+and read limit.
+Keep that pass outside the paired score: it cannot measure advice savings. If
+those first reads already select the same sources, this corpus is a poor test of
+navigation benefit. Freeze reviewed cases, reference, worker limits and
+comparison method before calling the advice provider. An exploratory
+metadata-only first-read pass on September 24, 2026 used a cheap worker with
+case IDs, reference answers and source text hidden. It selected a required
+source in 3/8 cases, including 1/5 single-read cases. This is a feasibility
+check without receipts or paired quality; it does not establish savings.
+The independent mechanism review found no remaining overlap with v1, but the
+reference stays unsealed pending a complete frozen study method and approval.
+Keep v1's frozen hashes and results unchanged.
+
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
 provider request loads that file. Its reference status is `frozen`; this still permits only a small exploratory study.
@@ -215,6 +247,13 @@ retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 ```bash
 TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts score /tmp/navigation-worker-plan.json /tmp/navigation-sessions.json scripts/failure-triage/navigation-reference.v1.json /tmp/navigation-blind.json /tmp/navigation-judgment.json /tmp/navigation-worker-method.md /tmp/navigation-worker-journal.jsonl /tmp/navigation-report.json
 ```
+
+The scorer counts the first read of a required source, even when a case needs
+another read. A zero-read arm counts as a miss; no-read counts remain visible.
+Read/turn totals cover only equal-quality accepted pairs, with that conditional
+denominator reported separately for named advice and abstentions. Those totals
+do not establish overall savings. Compare advice-inclusive tokens, time and
+independently judged quality before claiming efficiency.
 
 Compare results by incident family and do not infer a population-wide gain from
 eight synthetic cases.

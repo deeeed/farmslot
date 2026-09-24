@@ -1,0 +1,210 @@
+[
+  {
+    "id": "device-deployment",
+    "failure": "A mobile build completed, but installation on the assigned simulator failed.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Runtime output",
+        "text": "Build completed; device installation returned a generic failure."
+      },
+      {
+        "id": "e2",
+        "title": "Run events",
+        "text": "Deployment stopped before launching the application."
+      },
+      {
+        "id": "e3",
+        "title": "Application output",
+        "text": "No application process started during this attempt."
+      },
+      {
+        "id": "e4",
+        "title": "Environment snapshot",
+        "text": "Simulator has 0 MB free; installer reports insufficient storage."
+      }
+    ]
+  },
+  {
+    "id": "checkout-revision",
+    "failure": "Preparation stopped while checking out the selected task revision.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Environment snapshot",
+        "text": "Checkout is shallow; the requested revision references an object absent from the local object store."
+      },
+      {
+        "id": "e2",
+        "title": "Run events",
+        "text": "Preparation process exited before dispatch."
+      },
+      {
+        "id": "e3",
+        "title": "Runtime output",
+        "text": "No worker process started for this run."
+      },
+      {
+        "id": "e4",
+        "title": "Application state",
+        "text": "Assigned slot remains available."
+      }
+    ]
+  },
+  {
+    "id": "profile-request",
+    "failure": "A read-only account request failed after the runtime profile was changed.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Application output",
+        "text": "Request was rejected by the server with status 403."
+      },
+      {
+        "id": "e2",
+        "title": "Request trace",
+        "text": "Failed request used host api-west.example.test."
+      },
+      {
+        "id": "e3",
+        "title": "Environment snapshot",
+        "text": "Selected profile declares host api-east.example.test for this account."
+      },
+      {
+        "id": "e4",
+        "title": "Run events",
+        "text": "No dispatch or gateway transport error was recorded."
+      }
+    ]
+  },
+  {
+    "id": "remote-state-assertion",
+    "failure": "Validation marked a state-changing step complete, but the target still showed a pending state.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Run events",
+        "text": "Step finished after the client received an acknowledgement."
+      },
+      {
+        "id": "e2",
+        "title": "Configuration snapshot",
+        "text": "Completion condition checks the local acknowledgement and does not query the remote state."
+      },
+      {
+        "id": "e3",
+        "title": "Application output",
+        "text": "Target screen still shows a pending operation."
+      },
+      {
+        "id": "e4",
+        "title": "Request trace",
+        "text": "Authoritative state read returns pending; no completed operation was recorded."
+      }
+    ]
+  },
+  {
+    "id": "native-package",
+    "failure": "Worker setup finished, but the first task invocation failed while loading a dependency.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Environment snapshot",
+        "text": "Installed package lacks the native binary for the current platform architecture."
+      },
+      {
+        "id": "e2",
+        "title": "Runtime output",
+        "text": "Task exited while resolving a platform-specific module."
+      },
+      {
+        "id": "e3",
+        "title": "Run events",
+        "text": "Dispatch began after dependency installation completed."
+      },
+      {
+        "id": "e4",
+        "title": "Application state",
+        "text": "Assigned application remains healthy."
+      }
+    ]
+  },
+  {
+    "id": "account-cache-key",
+    "failure": "The app displayed an older account balance after switching to a different account.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Request trace",
+        "text": "Request for the newly selected account returned a current balance."
+      },
+      {
+        "id": "e2",
+        "title": "Configuration snapshot",
+        "text": "Balance cache key uses the network ID but omits account ID."
+      },
+      {
+        "id": "e3",
+        "title": "Application state",
+        "text": "Application process is running normally."
+      },
+      {
+        "id": "e4",
+        "title": "Application output",
+        "text": "UI read the cached balance from the previously selected account."
+      }
+    ]
+  },
+  {
+    "id": "remote-certificate",
+    "failure": "A remote status request failed after a previously working run; other reads completed.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Run events",
+        "text": "Remote status read failed; unrelated gateway methods completed normally."
+      },
+      {
+        "id": "e2",
+        "title": "Application output",
+        "text": "The status read stopped before receiving an HTTP response."
+      },
+      {
+        "id": "e3",
+        "title": "Request trace",
+        "text": "TLS handshake rejected the remote endpoint certificate because it expired yesterday."
+      },
+      {
+        "id": "e4",
+        "title": "Environment snapshot",
+        "text": "The configured endpoint is unchanged from earlier successful status reads."
+      }
+    ]
+  },
+  {
+    "id": "export-count-gap",
+    "failure": "Two completed exports for the same request reported different row counts.",
+    "sources": [
+      {
+        "id": "e1",
+        "title": "Runtime output",
+        "text": "Both export operations exited normally."
+      },
+      {
+        "id": "e2",
+        "title": "Run events",
+        "text": "First export reported 12 rows; its source snapshot identifier was not retained."
+      },
+      {
+        "id": "e3",
+        "title": "Environment snapshot",
+        "text": "The service and worker remained available throughout both exports."
+      },
+      {
+        "id": "e4",
+        "title": "Request trace",
+        "text": "Second export reported 13 rows; its query filter and snapshot identifier were not retained."
+      }
+    ]
+  }
+]

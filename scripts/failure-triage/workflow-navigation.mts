@@ -590,14 +590,20 @@ export function compareSessions(
         answer?.type === 'answer' &&
         answer.label === expected.label &&
         expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId));
+      const readIds =
+        session?.turns
+          .filter((turn) => turn.action.type === 'read_evidence')
+          .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id) ?? [];
       return {
         status: session?.status ?? 'missing',
         quality: result(session, arm),
         referenceMatch,
-        readIds:
-          session?.turns
-            .filter((turn) => turn.action.type === 'read_evidence')
-            .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id) ?? [],
+        readIds,
+        firstReadIncludesRequired: readIds.length
+          ? expected.requiredReadIds.includes(readIds[0])
+          : null,
+        readCount: readIds.length,
+        turnCount: session?.turns.length ?? 0,
         answer:
           answer?.type === 'answer'
             ? { label: answer.label, nextCheck: answer.nextCheck, evidenceIds: answer.evidenceIds }
@@ -637,6 +643,40 @@ export function compareSessions(
           : null,
     };
   });
+  const navigation = Object.fromEntries(
+    (['named', 'abstention'] as const).map((kind) => {
+      const group = pairs.filter(
+        (pair) => (pair.recommendation === null) === (kind === 'abstention'),
+      );
+      const matched = group.filter((pair) => pair.quality === 'equal-accepted');
+      return [
+        kind,
+        {
+          cases: group.length,
+          firstReadPairs: group.length,
+          noRead: {
+            baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired === null)
+              .length,
+            assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired === null)
+              .length,
+          },
+          firstReadHits: {
+            baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired).length,
+            assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired).length,
+          },
+          equalQualityPairs: matched.length,
+          matchedReads: {
+            baseline: matched.reduce((total, pair) => total + pair.baseline.readCount, 0),
+            assisted: matched.reduce((total, pair) => total + pair.assisted.readCount, 0),
+          },
+          matchedTurns: {
+            baseline: matched.reduce((total, pair) => total + pair.baseline.turnCount, 0),
+            assisted: matched.reduce((total, pair) => total + pair.assisted.turnCount, 0),
+          },
+        },
+      ];
+    }),
+  );
   const complete = pairs.filter((pair) => pair.tokens && pair.costUsd && pair.elapsedMs);
   const totals = (field: 'tokens' | 'costUsd' | 'elapsedMs') =>
     complete.reduce(
@@ -659,6 +699,7 @@ export function compareSessions(
     equalQualityPairs: pairs.filter((pair) => pair.quality === 'equal-accepted').length,
     completeMetricsPairs: complete.length,
     regressions: pairs.filter((pair) => pair.quality === 'baseline-better').length,
+    navigation,
     totals:
       complete.length === plan.cases.length
         ? { tokens: totals('tokens'), costUsd: totals('costUsd'), elapsedMs: totals('elapsedMs') }
