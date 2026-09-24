@@ -351,6 +351,7 @@ for (const kind of ['named', 'abstention'] as const) {
   assert.deepEqual(report.navigation[kind], {
     cases: 1,
     missing: { baseline: 0, assisted: 0 },
+    interrupted: { baseline: 0, assisted: 0 },
     zeroRead: { baseline: 0, assisted: 0 },
     firstReadHits: { baseline: 1, assisted: 1 },
     equalQualityPairs: 1,

@@ -253,6 +253,7 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
   assert.deepEqual(comparison.navigation.named, {
     cases: 1,
     missing: { baseline: 0, assisted: 0 },
+    interrupted: { baseline: 0, assisted: 0 },
     zeroRead: { baseline: 0, assisted: 0 },
     firstReadHits: { baseline: 1, assisted: 1 },
     equalQualityPairs: 1,

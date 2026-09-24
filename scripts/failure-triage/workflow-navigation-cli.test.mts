@@ -225,6 +225,10 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     assert.equal(report.denominator, 1);
     assert.equal(report.completeMetricsPairs, 0);
     assert.equal(report.totals, null);
+    assert.deepEqual(report.navigation.named.missing, { baseline: 0, assisted: 1 });
+    assert.deepEqual(report.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+    assert.deepEqual(report.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
+    assert.deepEqual(report.navigation.named.firstReadHits, { baseline: 0, assisted: 0 });
     for (const [name, rows] of [
       ['missing failure', workerRows.filter((row) => row.kind !== 'failed')],
       [

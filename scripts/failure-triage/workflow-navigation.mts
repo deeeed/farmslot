@@ -548,23 +548,31 @@ export function compareSessions(
           total === null || turn.receipt[field] === null ? null : total + turn.receipt[field]!,
         0,
       );
-    const result = (session: Session | undefined, arm: Arm) => {
-      const review = decisions.get(digest(`${plan.hash}:${id}:${arm}`));
+    const reviews = {
+      baseline: decisions.get(digest(`${plan.hash}:${id}:baseline`)),
+      assisted: decisions.get(digest(`${plan.hash}:${id}:assisted`)),
+    };
+    const matchesReference = (session: Session | undefined) => {
       const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
-      const matchesReference =
+      return (
         answer?.type === 'answer' &&
         answer.label === expected.label &&
-        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId));
+        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId))
+      );
+    };
+    const result = (session: Session | undefined, arm: Arm) => {
+      const review = reviews[arm];
+      const referenceMatch = matchesReference(session);
       if (
         session?.status === 'invalid' ||
         session?.status === 'exhausted' ||
         review?.decision === 'rejected' ||
-        (session?.status === 'answered' && !matchesReference)
+        (session?.status === 'answered' && !referenceMatch)
       )
         return 'rejected';
       if (
         session?.status === 'answered' &&
-        matchesReference &&
+        referenceMatch &&
         review?.decision === 'accepted' &&
         session.turns.every((turn) => validReceipt(turn.receipt))
       )
@@ -585,11 +593,8 @@ export function compareSessions(
             : 'inconclusive';
     const armReport = (session: Session | undefined, arm: Arm) => {
       const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
-      const review = decisions.get(digest(`${plan.hash}:${id}:${arm}`))!;
-      const referenceMatch =
-        answer?.type === 'answer' &&
-        answer.label === expected.label &&
-        expected.requiredReadIds.every((sourceId) => answer.evidenceIds.includes(sourceId));
+      const review = reviews[arm];
+      const referenceMatch = matchesReference(session);
       const readIds =
         session?.turns
           .filter((turn) => turn.action.type === 'read_evidence')
@@ -657,12 +662,22 @@ export function compareSessions(
             baseline: group.filter((pair) => pair.baseline.status === 'missing').length,
             assisted: group.filter((pair) => pair.assisted.status === 'missing').length,
           },
+          interrupted: {
+            baseline: group.filter((pair) => ['active', 'invalid'].includes(pair.baseline.status))
+              .length,
+            assisted: group.filter((pair) => ['active', 'invalid'].includes(pair.assisted.status))
+              .length,
+          },
           zeroRead: {
             baseline: group.filter(
-              (pair) => pair.baseline.status !== 'missing' && pair.baseline.readCount === 0,
+              (pair) =>
+                ['answered', 'exhausted'].includes(pair.baseline.status) &&
+                pair.baseline.readCount === 0,
             ).length,
             assisted: group.filter(
-              (pair) => pair.assisted.status !== 'missing' && pair.assisted.readCount === 0,
+              (pair) =>
+                ['answered', 'exhausted'].includes(pair.assisted.status) &&
+                pair.assisted.readCount === 0,
             ).length,
           },
           firstReadHits: {
