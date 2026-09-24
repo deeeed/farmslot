@@ -431,8 +431,10 @@ test('triage cause display requires matched evidence in both clients', () => {
 test('model totals keep failures, missing usage and cost provenance in separate cohorts', () => {
   const jev = row(),
     missingUsage = row(),
+    skipped = row(),
+    disabled = row(),
     llm = row();
-  for (const record of [jev, missingUsage, llm]) {
+  for (const record of [jev, missingUsage, skipped, disabled, llm]) {
     record.consumer = 'decision-advice';
     record.subject = {
       run: { id: record.id, project: 'fixture', step: 'decision', snapshotHash: 'c'.repeat(64) },
@@ -444,6 +446,8 @@ test('model totals keep failures, missing usage and cost provenance in separate 
   }
   jev.result!.provider = 'typesafe';
   jev.result!.requestedModel = 'jev-1.13.0';
+  jev.result!.returnedModel = 'jev-1.13.1';
+  jev.requestedIdentity = { provider: 'typesafe', model: 'jev-1.13.0' };
   jev.result!.attempted = true;
   jev.result!.usage = {
     provider: 'typesafe',
@@ -463,6 +467,16 @@ test('model totals keep failures, missing usage and cost provenance in separate 
     requestedModel: 'jev-1.13.0',
     error: 'Provider usage missing',
   };
+  skipped.status = 'skipped';
+  skipped.result = {
+    status: 'skipped',
+    attempted: false,
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+  };
+  disabled.status = 'disabled';
+  disabled.result = undefined;
+  disabled.requestedIdentity = { provider: 'typesafe', model: 'jev-1.13.0' };
   llm.result!.provider = 'llm-response';
   llm.result!.requestedModel = 'model-b';
   llm.result!.attempted = true;
@@ -476,7 +490,7 @@ test('model totals keep failures, missing usage and cost provenance in separate 
     durationMs: 150,
   };
   llm.completedAt = '2026-01-01T00:00:00.300Z';
-  const summary = summarizeAssessments([llm, missingUsage, jev]);
+  const summary = summarizeAssessments([llm, missingUsage, jev, skipped, disabled]);
   assert.deepEqual(summary.modelTotals, [
     {
       consumer: 'decision-advice',
@@ -499,7 +513,7 @@ test('model totals keep failures, missing usage and cost provenance in separate 
       consumer: 'decision-advice',
       provider: 'typesafe',
       model: 'jev-1.13.0',
-      calls: 2,
+      calls: 4,
       completed: 1,
       attemptedCalls: 2,
       unknownAttemptCalls: 0,
@@ -513,6 +527,16 @@ test('model totals keep failures, missing usage and cost provenance in separate 
       medianEndToEndMs: 100,
     },
   ]);
+  assert.equal(summary.calls, 5);
+  assert.equal(summary.skipped, 2);
+  assert.equal(
+    summary.tokens,
+    summary.modelTotals!.reduce((sum, item) => sum + item.tokens, 0),
+  );
+  assert.equal(
+    summary.unknownCharges,
+    summary.modelTotals!.reduce((sum, item) => sum + item.unknownCharges, 0),
+  );
 });
 
 test('legacy cost amounts are not relabeled as provider-reported', () => {
