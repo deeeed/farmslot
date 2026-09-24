@@ -96,6 +96,46 @@ has_explicit_expo_device_arg() {
   return 1
 }
 
+# Expo CLI resolves `--device` against `xcrun devicectl` first, and devicectl lists booted
+# simulators as connected devices, so a simulator target gets the physical-device path and
+# fails on code signing. Simulator targets therefore build, install and open here instead.
+companion_resolve_simulator_udid() {
+  local target="$1"
+  xcrun simctl list devices available -j | node -e '
+    const target = process.argv[1];
+    const devices = Object.values(JSON.parse(require("fs").readFileSync(0, "utf8")).devices).flat();
+    const matches = devices.filter((d) => d.udid === target || d.name === target);
+    if (matches.length !== 1) {
+      console.error(`ERROR: expected one available simulator named or identified by "${target}", found ${matches.length}.`);
+      process.exit(1);
+    }
+    process.stdout.write(matches[0].udid);
+  ' "${target}"
+}
+
+companion_run_ios_simulator() {
+  local udid workspace scheme derived app_path metro_url
+  udid="$(companion_resolve_simulator_udid "$1")"
+  workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print)"
+  if [[ -z "${workspace}" || "$(printf '%s\n' "${workspace}" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "ERROR: expected exactly one ios/*.xcworkspace; run expo prebuild first." >&2
+    exit 1
+  fi
+  scheme="$(basename "${workspace}" .xcworkspace)"
+  derived="ios/build/simulator-${udid}"
+  echo "[run-ios] Building ${scheme} for simulator ${udid}"
+  env "${RUN_ENV[@]}" RCT_NO_LAUNCH_PACKAGER=true xcodebuild \
+    -workspace "${workspace}" -scheme "${scheme}" -configuration Debug \
+    -destination "id=${udid}" -derivedDataPath "${derived}" \
+    COMPILER_INDEX_STORE_ENABLE=NO build
+  app_path="${derived}/Build/Products/Debug-iphonesimulator/${scheme}.app"
+  xcrun simctl install "${udid}" "${app_path}"
+  metro_url="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
+  xcrun simctl openurl "${udid}" \
+    "${SCHEME}://expo-development-client/?url=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${metro_url}")"
+  echo "[run-ios] Installed ${BUNDLE_ID} on ${udid}; dev client opened on ${metro_url}"
+}
+
 parse_ios_cli_args "$@"
 companion_apply_farmslot_slot_context ios
 IOS_TARGET="${IOS_DEVICE_UDID:-${IOS_SIMULATOR:-${SIMULATOR:-}}}"
@@ -154,6 +194,13 @@ if [[ "${doctor_status}" -eq 10 ]]; then
   bash scripts/doctor/ios-build.sh
 elif [[ "${doctor_status}" -ne 0 ]]; then
   exit "${doctor_status}"
+fi
+
+if [[ "${DEVICE_MODE}" == "simulator" && -n "${IOS_TARGET}" && "${#EXPO_ARGS[@]}" -eq 0 ]]; then
+  echo "[run-ios] App variant: ${APP_VARIANT} (${BUNDLE_ID}, ${SCHEME}://)"
+  echo "[run-ios] Metro port: ${METRO_PORT}"
+  companion_run_ios_simulator "${IOS_TARGET}"
+  exit 0
 fi
 
 args=(expo run:ios --port "${METRO_PORT}")
