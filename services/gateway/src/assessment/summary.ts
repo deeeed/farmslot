@@ -95,6 +95,45 @@ const percentile = (values: number[], q: number) => {
   return sorted.length ? sorted[Math.max(0, Math.ceil(sorted.length * q) - 1)] : null;
 };
 
+function usageTotals(rows: AssessmentRecord[]) {
+  return {
+    completed: rows.filter((r) => r.status === 'completed').length,
+    attemptedCalls: rows.filter((r) => r.result?.attempted === true).length,
+    unknownAttemptCalls: rows.filter(
+      (r) => r.result?.attempted === undefined && !['disabled', 'skipped'].includes(r.status),
+    ).length,
+    tokens: rows.reduce(
+      (sum, r) => sum + (r.result?.usage?.inputTokens ?? 0) + (r.result?.usage?.outputTokens ?? 0),
+      0,
+    ),
+    callsWithUsage: rows.filter(
+      (r) =>
+        r.result?.usage?.inputTokens !== undefined && r.result.usage.outputTokens !== undefined,
+    ).length,
+    unknownCharges: rows.filter(
+      (r) =>
+        r.result?.attempted !== false &&
+        !['disabled', 'skipped'].includes(r.status) &&
+        r.result?.usage?.costUsd === undefined,
+    ).length,
+    knownEstimatedUsd: rows.reduce(
+      (sum, r) =>
+        sum + (r.result?.usage?.costKind === 'estimated' ? (r.result.usage.costUsd ?? 0) : 0),
+      0,
+    ),
+    knownReportedUsd: rows.reduce(
+      (sum, r) =>
+        sum + (r.result?.usage?.costKind === 'reported' ? (r.result.usage.costUsd ?? 0) : 0),
+      0,
+    ),
+    knownUnclassifiedUsd: rows.reduce(
+      (sum, r) =>
+        sum + (r.result?.usage?.costKind === undefined ? (r.result?.usage?.costUsd ?? 0) : 0),
+      0,
+    ),
+  };
+}
+
 export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary {
   const rows = all.filter((r) => r.consumer !== 'smoke-test');
   const selectedCases = new Set(rows.map(assessmentAccountingCase).filter(Boolean));
@@ -125,6 +164,41 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
       groups.set(key, group);
     }
   }
+  const modelRows = new Map<
+    string,
+    {
+      consumer: AssessmentRecord['consumer'];
+      provider: string;
+      model: string;
+      rows: AssessmentRecord[];
+    }
+  >();
+  for (const record of rows) {
+    const consumer = record.consumer;
+    const provider = record.requestedIdentity?.provider ?? record.result?.provider ?? 'unknown';
+    const model = record.requestedIdentity?.model ?? record.result?.requestedModel ?? 'unknown';
+    const key = JSON.stringify([consumer, provider, model]);
+    const cohort = modelRows.get(key) ?? { consumer, provider, model, rows: [] };
+    cohort.rows.push(record);
+    modelRows.set(key, cohort);
+  }
+  const modelTotals: NonNullable<AssessmentSummary['modelTotals']> = [...modelRows.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, { consumer, provider, model, rows: cohort }]) => {
+      const latencies = cohort.flatMap((r) => (r.result?.usage ? [r.result.usage.durationMs] : []));
+      const durations = cohort.flatMap((r) =>
+        r.completedAt ? [Date.parse(r.completedAt) - Date.parse(r.startedAt)] : [],
+      );
+      return {
+        consumer,
+        provider,
+        model,
+        calls: cohort.length,
+        ...usageTotals(cohort),
+        medianLatencyMs: percentile(latencies, 0.5),
+        medianEndToEndMs: percentile(durations, 0.5),
+      };
+    });
   const representatives = representativeAssessments(rows);
   for (const record of representatives) {
     for (const questionId of Object.keys(record.result?.answers ?? {})) {
@@ -150,41 +224,10 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
     selectedCases: selectedCases.size,
     completedCases: completedCases.size,
     reservedUsd: rows.reduce((n, r) => n + (r.reservation?.maxUsd ?? 0), 0),
-    knownEstimatedUsd: rows.reduce(
-      (n, r) => n + (r.result?.usage?.costKind === 'estimated' ? (r.result.usage.costUsd ?? 0) : 0),
-      0,
-    ),
-    knownReportedUsd: rows.reduce(
-      (n, r) =>
-        n + (r.result?.usage?.costKind === 'reported' ? (r.result?.usage?.costUsd ?? 0) : 0),
-      0,
-    ),
-    knownUnclassifiedUsd: rows.reduce(
-      (n, r) => n + (r.result?.usage?.costKind === undefined ? (r.result?.usage?.costUsd ?? 0) : 0),
-      0,
-    ),
-    unknownCharges: rows.filter(
-      (r) =>
-        r.result?.attempted !== false &&
-        !['disabled', 'skipped'].includes(r.status) &&
-        r.result?.usage?.costUsd === undefined,
-    ).length,
-    attemptedCalls: rows.filter((r) => r.result?.attempted === true).length,
-    unknownAttemptCalls: rows.filter(
-      (r) => r.result?.attempted === undefined && !['disabled', 'skipped'].includes(r.status),
-    ).length,
-    completed: rows.filter((r) => r.status === 'completed').length,
+    ...usageTotals(rows),
     failed: rows.filter((r) => r.status === 'unavailable').length,
     skipped: rows.filter((r) => r.status === 'skipped' || r.status === 'disabled').length,
     interrupted: rows.filter((r) => r.status === 'interrupted').length,
-    tokens: rows.reduce(
-      (sum, r) => sum + (r.result?.usage?.inputTokens ?? 0) + (r.result?.usage?.outputTokens ?? 0),
-      0,
-    ),
-    callsWithUsage: rows.filter(
-      (r) =>
-        r.result?.usage?.inputTokens !== undefined && r.result.usage.outputTokens !== undefined,
-    ).length,
     callsWithLatency: timings.length,
     medianLatencyMs: percentile(timings, 0.5),
     p95LatencyMs: percentile(timings, 0.95),
@@ -198,6 +241,7 @@ export function summarizeAssessments(all: AssessmentRecord[]): AssessmentSummary
     accuracy: values.length === 1 && correct + incorrect ? correct / (correct + incorrect) : null,
     unlabeledQuestions: total('unlabeled'),
     savings: null,
+    modelTotals,
     groups: values,
   };
 }

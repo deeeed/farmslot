@@ -63,8 +63,7 @@ and the [evaluation plan](../plans/structured-assessment-evaluation.md).
    model and your rating. Expand a record to inspect the redacted decision text
    sent to the provider and its actions; it fetches your chosen action from the
    run when available. Older
-   records lack the saved decision context. History lasts 30 days. Missing
-   usage remains an unknown charge. Do not repeat a request to improve a weak answer.
+   records lack the saved decision context. History lasts 30 days. The Usage by provider and model section separates retained attempts, reported tokens, estimated versus provider-reported costs, unknown charges and latency for each consumer and model. This does not include offline CLI study artifacts or prove workflow savings. Missing usage remains an unknown charge. Do not repeat a request to improve a weak answer.
    Do not edit the admitted entry or price during an in-flight request. If
    either changes before dispatch, the skipped reservation remains unavailable
    for that decision and provider/model. A different provider/model can proceed

@@ -305,7 +305,7 @@ export async function generateNavigationAdvice(
       const sourceId = confidence !== null && confidence < config.minimumConfidence ? 'none' : read;
       const text =
         sourceId === 'none'
-          ? 'No recommended first read; inspect the evidence yourself.'
+          ? null
           : `Suggested first read: ${sourceId}. Inspect it before drawing a conclusion.`;
       const entry: NavigationAdvice = {
         caseId: item.id,

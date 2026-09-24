@@ -44,7 +44,8 @@ export interface AdviceReceipt {
 }
 export interface NavigationAdvice {
   caseId: string;
-  text: string;
+  /** Null means the provider abstained; the attempt and its receipt still count. */
+  text: string | null;
   receipt: AdviceReceipt;
 }
 export interface AdviceProvenance {
@@ -179,7 +180,11 @@ export function sealPlan(
       'Unexpected advice field',
     );
     assert(caseIds.has(entry.caseId) && !adviceIds.has(entry.caseId), 'Invalid advice case');
-    assert(entry.text.length > 0 && entry.text.length <= 2000, 'Invalid advice');
+    assert(
+      entry.text === null ||
+        (typeof entry.text === 'string' && entry.text.length > 0 && entry.text.length <= 2000),
+      'Invalid advice',
+    );
     assert(
       Object.keys(entry.receipt).sort().join(',') ===
         'cacheReadTokens,cacheWriteTokens,costUsd,elapsedMs,inputTokens,outputTokens,providerDurationMs,receiptHash,responseId',

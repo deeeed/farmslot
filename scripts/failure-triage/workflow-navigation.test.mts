@@ -100,6 +100,32 @@ const judgment = (
   })),
 });
 
+test('provider abstention adds no worker instruction, including after an evidence read', () => {
+  const sealed = sealPlan(
+    cases,
+    [{ ...advice[0], text: null }],
+    { maxTurns: 3, maxReads: 2 },
+    { referenceHash: navigationReferenceHash(reference), adviceProvenance: provenance },
+  );
+  assert.equal(
+    initialPrompt(sealed, 'case-one', 'assisted'),
+    initialPrompt(sealed, 'case-one', 'baseline'),
+  );
+  const baseline = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('shared-read'),
+  ).session;
+  const assisted = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'assisted'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('shared-read'),
+  ).session;
+  assert.equal(nextPrompt(sealed, assisted), nextPrompt(sealed, baseline));
+});
+
 test('the worker sees a source index but receives evidence text only after a named read', () => {
   const sealed = plan();
   const prompt = initialPrompt(sealed, 'case-one', 'baseline');

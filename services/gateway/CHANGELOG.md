@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.
+
 - Validate the owner, failed step and approved source before saving a failure-assessment reference alongside a chosen run action.
 
 - Add an opt-in, source-admitted textual acceptance-evidence assessment for recorded runs, with saved judgments, bounded spend and unchanged AC ledger authority.

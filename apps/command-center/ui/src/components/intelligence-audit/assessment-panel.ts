@@ -429,7 +429,29 @@ export class AssessmentPanel extends LitElement {
               $${(s.reservedUsd ?? 0).toFixed(6)}. Completed snapshot cohorts:
               ${s.completedCases ?? 'unknown'}/${s.selectedCases ?? 'unknown'}. Workflow savings:
               not measured. Paired workflows at equal independently checked quality are required.
-            </p>`
+            </p>
+            ${s.modelTotals?.length
+              ? html`<details open data-model-totals>
+                  <summary>Usage by provider and model</summary>
+                  <ul>
+                    ${s.modelTotals.map(
+                      (model) =>
+                        html`<li>
+                          ${model.consumer} · ${model.provider}/${model.model}:
+                          ${model.completed}/${model.calls} completed, ${model.attemptedCalls}
+                          confirmed attempts, ${model.unknownAttemptCalls} attempts unknown ·
+                          ${model.tokens} reported tokens (${model.callsWithUsage}/${model.calls}
+                          records with complete usage) · $${model.knownEstimatedUsd.toFixed(6)}
+                          estimated, $${model.knownReportedUsd.toFixed(6)} reported,
+                          $${model.knownUnclassifiedUsd.toFixed(6)} unspecified ·
+                          ${model.unknownCharges} unknown charges · provider median
+                          ${model.medianLatencyMs ?? '—'} ms, assessment median
+                          ${model.medianEndToEndMs ?? '—'} ms
+                        </li>`,
+                    )}
+                  </ul>
+                </details>`
+              : nothing}`
         : nothing}
       ${s?.groups.map(
         (g) =>
