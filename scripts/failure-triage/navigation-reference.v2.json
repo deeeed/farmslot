@@ -32,7 +32,7 @@
       "requiredReadIds": ["e2", "e3"],
       "nextCheck": "Compare the completion predicate with the pending target state.",
       "family": "receipt-predicate",
-      "rationale": "The completion condition accepts a local acknowledgement while the target screen remains pending."
+      "rationale": "The completion condition accepts a local acknowledgement; the application output confirms that the target remains pending afterward."
     },
     {
       "caseId": "native-package",

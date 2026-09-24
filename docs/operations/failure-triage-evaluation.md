@@ -166,7 +166,7 @@ measure advice savings. Freeze the reviewed cases, reference, worker limits and
 comparison method before calling the advice provider.
 
 The revised case-file SHA-256 is `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`;
-the reference-file SHA-256 is `f27ab14c88b50c9ac637fe7c97fbbf5dfde1bc982e4118c877558de7ff53f7a2`.
+the reference-file SHA-256 is `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`.
 The reference remains unsealed pending that review, feasibility check, frozen
 method, and approval. Keep v1's frozen hashes and results unchanged.
 

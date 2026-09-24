@@ -57,7 +57,7 @@ test('v2 draft has compatible references, independent families, and variable evi
   );
   assert.equal(
     sha256(referenceSource),
-    'f27ab14c88b50c9ac637fe7c97fbbf5dfde1bc982e4118c877558de7ff53f7a2',
+    '962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f',
   );
   assert.equal(reference.references.length, cases.length);
   const oldFamilies = new Set(v1.references.map((row) => row.family));
