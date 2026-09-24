@@ -336,6 +336,43 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
     [[]],
   );
   assert.equal(invalidNavigation.pairs[0].baseline.firstReadIncludesRequired, null);
+  const validRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('valid-before-invalid-answer'),
+  ).session;
+  const invalidAnswer = advance(
+    sealed,
+    validRead,
+    {
+      type: 'answer',
+      label: 'environment',
+      nextCheck: 'inspect invalid answer',
+      evidenceIds: ['runner.stderr'],
+    },
+    receipt('invalid-answer', -1),
+  ).session;
+  const invalidAnswerSessions = [invalidAnswer, assisted];
+  const invalidAnswerComparison = compareSessions(
+    sealed,
+    invalidAnswerSessions,
+    reference,
+    judgment(sealed, invalidAnswerSessions),
+  );
+  assert.equal(invalidAnswerComparison.pairs[0].baseline.referenceMatch, false);
+  assert.equal(invalidAnswerComparison.pairs[0].baseline.quality, 'rejected');
+  assert.deepEqual(invalidAnswerComparison.pairs[0].baseline.readIds, ['runner.stderr']);
+  assert.deepEqual(invalidAnswerComparison.navigation.named.interrupted, {
+    baseline: 1,
+    assisted: 0,
+  });
+  assert.equal(
+    blindReviewRows(sealed, invalidAnswerSessions).find(
+      (row) => row.answer?.type === 'answer' && row.answer.nextCheck === 'inspect invalid answer',
+    )?.reads.length,
+    1,
+  );
   const activeRead = advance(
     sealed,
     startSession(sealed, 'case-one', 'baseline'),

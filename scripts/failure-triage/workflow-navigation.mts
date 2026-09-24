@@ -600,7 +600,7 @@ export function compareSessions(
     const armReport = (session: Session | undefined, arm: Arm) => {
       const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
       const review = reviews[arm];
-      const referenceMatch = matchesReference(session);
+      const referenceMatch = session?.status === 'answered' && matchesReference(session);
       const readIds = session
         ? deliveredTurns(session)
             .filter((turn) => turn.action.type === 'read_evidence')

@@ -192,8 +192,9 @@ of the advice request.
 The v1 corpus is frozen. Run only its offline checks and inspect existing
 receipts; do not use its sealed plans in `advice` or `worker`. For any future
 corpus, first freeze a new reviewed case file and method. The CLI's `quote-advice`
-and `quote-worker` commands make no provider calls, but their estimates require
-verified price snapshots and account for a 1024-byte request-envelope reserve.
+and `quote-worker` commands make no provider calls. Both estimates need
+verified price snapshots. `quote-advice` checks a 1024-byte envelope reserve;
+the worker checks its request size before each paid call.
 A separate independent reviewer must approve each paid stage's plan, config,
 method hash and journal path. Both paid stages consume approval once and stop
 on unknown charges. Keep plans, approvals, journals and results outside the
