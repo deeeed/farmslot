@@ -653,12 +653,17 @@ export function compareSessions(
         kind,
         {
           cases: group.length,
-          firstReadPairs: group.length,
-          noRead: {
-            baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired === null)
-              .length,
-            assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired === null)
-              .length,
+          missing: {
+            baseline: group.filter((pair) => pair.baseline.status === 'missing').length,
+            assisted: group.filter((pair) => pair.assisted.status === 'missing').length,
+          },
+          zeroRead: {
+            baseline: group.filter(
+              (pair) => pair.baseline.status !== 'missing' && pair.baseline.readCount === 0,
+            ).length,
+            assisted: group.filter(
+              (pair) => pair.assisted.status !== 'missing' && pair.assisted.readCount === 0,
+            ).length,
           },
           firstReadHits: {
             baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired).length,

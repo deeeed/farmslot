@@ -154,27 +154,21 @@ requires independent review of its labels, families and evidence paths. Do not
 seal it or call a provider yet.
 
 Five revised cases have a single decisive read and three require two reads. The
-single-read source appears in different positions. Source titles describe only
-the evidence type, and the IDs carry no diagnosis. A reader may still choose a
-correct source without advice. The runner records baseline sessions in a paired
-run after advice generation. Before freezing, an independent worker may do a
-baseline-only feasibility pass using the same failure summaries, source index
-and read limit.
-Keep that pass outside the paired score: it cannot measure advice savings. If
-those first reads already select the same sources, this corpus is a poor test of
-navigation benefit. Freeze reviewed cases, reference, worker limits and
-comparison method before calling the advice provider. An exploratory
-metadata-only first-read pass on September 24, 2026 used a cheap worker with
-case IDs, reference answers and source text hidden. It selected a required
-source in 3/8 cases, including 1/5 single-read cases. This is a feasibility
-check without receipts or paired quality; it does not establish savings.
-The recorded first picks in case-file order were `e1,e2,e2,e3,e2,e3,e3,e4`.
-A discarded earlier pass exposed case IDs and cannot count as a blind check.
-The revised case-file SHA-256 is `3936d025685e2bc7953d114166b2a1f201e2b6ae4a36fbb247a3b5f32cbe637e`;
-the reference-file SHA-256 is `594bba87093dcee61b1ffb98a16fbf50caff837203ba47c8ecfb13aebaf4b43c`.
-The independent mechanism review found no remaining overlap with v1, but the
-reference stays unsealed pending a complete frozen study method and approval.
-Keep v1's frozen hashes and results unchanged.
+required sources span all four positions. They require Runtime output,
+Application output, and Application state in separate cases. No required title
+appears more than three times. IDs carry no diagnosis.
+
+The source titles are still synthetic evidence categories, so they can affect a
+reader's first choice. Titles and order alone must be tested in a fresh
+baseline-only feasibility pass after an independent reviewer accepts the labels,
+families, and evidence paths. Keep that pass outside the paired score. It cannot
+measure advice savings. Freeze the reviewed cases, reference, worker limits and
+comparison method before calling the advice provider.
+
+The revised case-file SHA-256 is `2ffd28345d5481dc183d1bca46ca21e423e6bac76128fcdaa7b4f8387a64348a`;
+the reference-file SHA-256 is `f27ab14c88b50c9ac637fe7c97fbbf5dfde1bc982e4118c877558de7ff53f7a2`.
+The reference remains unsealed pending that review, feasibility check, frozen
+method, and approval. Keep v1's frozen hashes and results unchanged.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no

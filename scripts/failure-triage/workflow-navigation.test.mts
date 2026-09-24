@@ -252,8 +252,8 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
   assert.equal(comparison.pairs[0].baseline.firstReadIncludesRequired, true);
   assert.deepEqual(comparison.navigation.named, {
     cases: 1,
-    firstReadPairs: 1,
-    noRead: { baseline: 0, assisted: 0 },
+    missing: { baseline: 0, assisted: 0 },
+    zeroRead: { baseline: 0, assisted: 0 },
     firstReadHits: { baseline: 1, assisted: 1 },
     equalQualityPairs: 1,
     matchedReads: { baseline: 1, assisted: 1 },
@@ -305,12 +305,20 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
     reference,
     judgment(sealed, [skippedRead, assisted]),
   );
-  assert.deepEqual(incompleteNavigation.navigation.named.noRead, { baseline: 1, assisted: 0 });
+  assert.deepEqual(incompleteNavigation.navigation.named.missing, { baseline: 0, assisted: 0 });
+  assert.deepEqual(incompleteNavigation.navigation.named.zeroRead, { baseline: 1, assisted: 0 });
   assert.deepEqual(incompleteNavigation.navigation.named.firstReadHits, {
     baseline: 0,
     assisted: 1,
   });
-  assert.equal(incompleteNavigation.navigation.named.firstReadPairs, 1);
+  const missingNavigation = compareSessions(
+    sealed,
+    [assisted],
+    reference,
+    judgment(sealed, [assisted]),
+  );
+  assert.deepEqual(missingNavigation.navigation.named.missing, { baseline: 1, assisted: 0 });
+  assert.deepEqual(missingNavigation.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
   assert.equal(incompleteNavigation.navigation.named.equalQualityPairs, 0);
   assert.equal(comparison.pairs[0].assisted.answer?.label, 'environment');
   assert.match(comparison.pairs[0].assisted.judgment!.reason, /^Reviewed /);

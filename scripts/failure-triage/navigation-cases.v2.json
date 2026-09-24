@@ -6,7 +6,7 @@
       {
         "id": "e1",
         "title": "Runtime output",
-        "text": "Build completed; device installation returned a generic failure."
+        "text": "Build completed; installer returned ENOSPC while writing the application bundle."
       },
       {
         "id": "e2",
@@ -21,7 +21,7 @@
       {
         "id": "e4",
         "title": "Environment snapshot",
-        "text": "Simulator has 0 MB free; installer reports insufficient storage."
+        "text": "Simulator is reachable and has its normal storage allocation."
       }
     ]
   },
@@ -32,7 +32,7 @@
       {
         "id": "e1",
         "title": "Environment snapshot",
-        "text": "Checkout is shallow; the requested revision references an object absent from the local object store."
+        "text": "Checkout is shallow; preparation stopped before dispatch."
       },
       {
         "id": "e2",
@@ -47,7 +47,7 @@
       {
         "id": "e4",
         "title": "Application state",
-        "text": "Assigned slot remains available."
+        "text": "Assigned slot reports the selected revision is absent from its local object store."
       }
     ]
   },
@@ -94,12 +94,12 @@
       {
         "id": "e3",
         "title": "Application output",
-        "text": "Target screen still shows a pending operation."
+        "text": "Target screen still shows a pending operation after the local acknowledgement."
       },
       {
         "id": "e4",
         "title": "Request trace",
-        "text": "Authoritative state read returns pending; no completed operation was recorded."
+        "text": "Authoritative state remains pending; no completed operation was recorded."
       }
     ]
   },
@@ -110,12 +110,12 @@
       {
         "id": "e1",
         "title": "Environment snapshot",
-        "text": "Installed package lacks the native binary for the current platform architecture."
+        "text": "Installed package lists a platform-specific native dependency for this task."
       },
       {
         "id": "e2",
         "title": "Runtime output",
-        "text": "Task exited while resolving a platform-specific module."
+        "text": "Module loader reports that the installed native binary targets a different platform architecture."
       },
       {
         "id": "e3",
@@ -140,12 +140,12 @@
       },
       {
         "id": "e2",
-        "title": "Configuration snapshot",
-        "text": "Balance cache key uses the network ID but omits account ID."
+        "title": "Application state",
+        "text": "Balance cache state is keyed by network ID and omits the selected account ID."
       },
       {
         "id": "e3",
-        "title": "Application state",
+        "title": "Runtime output",
         "text": "Application process is running normally."
       },
       {

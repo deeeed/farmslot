@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import {
@@ -9,6 +10,7 @@ import {
 } from './workflow-navigation.mts';
 
 const root = new URL('./', import.meta.url);
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 test('draft synthetic navigation cases and hidden reference require at most two reads per case', async () => {
   const cases: NavigationCase[] = JSON.parse(
     await readFile(new URL('navigation-cases.v1.json', root), 'utf8'),
@@ -38,12 +40,10 @@ test('draft synthetic navigation cases and hidden reference require at most two 
 });
 
 test('v2 draft has compatible references, independent families, and variable evidence paths', async () => {
-  const cases: NavigationCase[] = JSON.parse(
-    await readFile(new URL('navigation-cases.v2.json', root), 'utf8'),
-  );
-  const reference: NavigationReference = JSON.parse(
-    await readFile(new URL('navigation-reference.v2.json', root), 'utf8'),
-  );
+  const caseSource = await readFile(new URL('navigation-cases.v2.json', root), 'utf8');
+  const referenceSource = await readFile(new URL('navigation-reference.v2.json', root), 'utf8');
+  const cases: NavigationCase[] = JSON.parse(caseSource);
+  const reference: NavigationReference = JSON.parse(referenceSource);
   const v1: NavigationReference = JSON.parse(
     await readFile(new URL('navigation-reference.v1.json', root), 'utf8'),
   );
@@ -51,6 +51,14 @@ test('v2 draft has compatible references, independent families, and variable evi
   assert.match(navigationReferenceHash(reference), /^[a-f0-9]{64}$/);
   assert.equal(reference.version, 1); // Corpus revision 2 uses the existing reference schema.
   assert.equal(reference.status, 'draft-unsealed');
+  assert.equal(
+    sha256(caseSource),
+    '2ffd28345d5481dc183d1bca46ca21e423e6bac76128fcdaa7b4f8387a64348a',
+  );
+  assert.equal(
+    sha256(referenceSource),
+    'f27ab14c88b50c9ac637fe7c97fbbf5dfde1bc982e4118c877558de7ff53f7a2',
+  );
   assert.equal(reference.references.length, cases.length);
   const oldFamilies = new Set(v1.references.map((row) => row.family));
   const families = reference.references.map((row) => row.family);
@@ -61,6 +69,7 @@ test('v2 draft has compatible references, independent families, and variable evi
   const oneReadPositions = new Set<number>();
   let twoReadCases = 0;
   let firstReadIsInsufficient = 0;
+  const requiredTitleCounts = new Map<string, number>();
   for (const item of cases) {
     const row = references.get(item.id);
     assert(row);
@@ -75,6 +84,10 @@ test('v2 draft has compatible references, independent families, and variable evi
       twoReadCases += 1;
     }
     if (!row.requiredReadIds.includes(item.sources[0].id)) firstReadIsInsufficient += 1;
+    for (const id of row.requiredReadIds) {
+      const title = item.sources.find((source) => source.id === id)!.title;
+      requiredTitleCounts.set(title, (requiredTitleCounts.get(title) ?? 0) + 1);
+    }
     assert.deepEqual(
       item.sources.map((source) => source.id),
       ['e1', 'e2', 'e3', 'e4'],
@@ -99,4 +112,8 @@ test('v2 draft has compatible references, independent families, and variable evi
   assert.equal(twoReadCases, 3);
   assert.equal(oneReadPositions.size, 4);
   assert(firstReadIsInsufficient >= 4);
+  assert(requiredTitleCounts.has('Runtime output'));
+  assert(requiredTitleCounts.has('Application output'));
+  assert(requiredTitleCounts.has('Application state'));
+  assert([...requiredTitleCounts.values()].every((count) => count <= 3));
 });

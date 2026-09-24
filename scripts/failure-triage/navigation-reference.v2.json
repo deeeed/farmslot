@@ -5,18 +5,18 @@
     {
       "caseId": "device-deployment",
       "label": "environment",
-      "requiredReadIds": ["e4"],
-      "nextCheck": "Inspect simulator free space before retrying installation.",
+      "requiredReadIds": ["e1"],
+      "nextCheck": "Inspect the installer error and free simulator storage before retrying.",
       "family": "device-capacity",
-      "rationale": "The installer and device agree on insufficient storage; the build succeeded."
+      "rationale": "The installer reports ENOSPC while writing the application bundle; the build itself completed."
     },
     {
       "caseId": "checkout-revision",
       "label": "environment",
-      "requiredReadIds": ["e1"],
-      "nextCheck": "Inspect checkout depth and fetch the missing object.",
+      "requiredReadIds": ["e4"],
+      "nextCheck": "Inspect the assigned slot revision and fetch the missing object.",
       "family": "checkout-depth",
-      "rationale": "The checkout has an absent object; dispatch and slot state are consequences or context."
+      "rationale": "The assigned slot reports that the selected revision is absent; preparation and dispatch events are consequences."
     },
     {
       "caseId": "profile-request",
@@ -29,18 +29,18 @@
     {
       "caseId": "remote-state-assertion",
       "label": "test_harness",
-      "requiredReadIds": ["e2", "e4"],
-      "nextCheck": "Compare the completion predicate with the authoritative state read.",
+      "requiredReadIds": ["e2", "e3"],
+      "nextCheck": "Compare the completion predicate with the pending target state.",
       "family": "receipt-predicate",
-      "rationale": "The recipe stops at a local acknowledgement, while the remote state is still pending."
+      "rationale": "The completion condition accepts a local acknowledgement while the target screen remains pending."
     },
     {
       "caseId": "native-package",
       "label": "dependencies",
-      "requiredReadIds": ["e1"],
-      "nextCheck": "Inspect the installed native package variant for the current platform.",
+      "requiredReadIds": ["e2"],
+      "nextCheck": "Inspect the native binary architecture selected by the module loader.",
       "family": "native-binary-variant",
-      "rationale": "The installed dependency lacks a binary for the assigned platform; worker load failure is a consequence."
+      "rationale": "The module loader identifies an architecture mismatch; setup completion is only context."
     },
     {
       "caseId": "account-cache-key",
@@ -48,7 +48,7 @@
       "requiredReadIds": ["e2"],
       "nextCheck": "Inspect whether the balance cache key includes the selected account.",
       "family": "account-key-isolation",
-      "rationale": "The changed cache key omits account identity; UI and network observations corroborate the impact."
+      "rationale": "The balance cache state omits account identity; UI and network observations corroborate the impact."
     },
     {
       "caseId": "remote-certificate",
