@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Default Codex dispatches to GPT-6 Sol, offer GPT-6 Luna, and hide GPT-5.4/5.5 from model pickers while accepting existing selections.
 - Add the official `ui.scroll_to` action with `UI_SCROLL_TO_PARAMS_SCHEMA` (surface, semantic target, measurable visibility anchor, alignment, HUD-safe viewport policy, visibility verification, settlement); action manifests must require string `surface_test_id` and `target_test_id`.
 - Group retained assessment usage, cost provenance and latency by consumer, provider and model for operator comparison.
 

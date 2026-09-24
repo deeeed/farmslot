@@ -29,15 +29,14 @@ export const PI_ANTHROPIC_MODELS = [
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
-  // Astra first; retain earlier Codex models for explicit selections.
+  // Keep Astra selectable when Sol is the default.
   codex: [
     DEFAULT_CODEX_MODEL,
-    'gpt-6-sol',
+    'gpt-6-astra',
+    'gpt-6-luna',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
-    'gpt-5.5',
-    'gpt-5.4',
   ],
   // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
   // shared protocol default used by every client.
