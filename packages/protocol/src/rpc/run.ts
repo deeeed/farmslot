@@ -517,6 +517,8 @@ export interface RunResolveDecisionParams {
   runId: string;
   decisionId: string;
   actionId: string;
+  /** Optional completed failure-triage assessment consulted for this choice. */
+  triageAssessmentId?: string;
   selectionData?: Record<string, unknown>;
   /**
    * Operator resource-posture choice for the wait this decision ends (ADR-054).

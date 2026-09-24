@@ -7,6 +7,14 @@
     "na": "Not a CLI target (web-UI-internal or transport-level); note explains why."
   },
   "methods": {
+    "acceptance.evidence.analyze": {
+      "surface": "rpc-only",
+      "note": "Explicit source-admitted textual AC assessment via farmslot rpc acceptance.evidence.analyze."
+    },
+    "acceptance.evidence.get": {
+      "surface": "rpc-only",
+      "note": "Read-only criterion evidence and assessment preview via farmslot rpc acceptance.evidence.get."
+    },
     "analytics.backfill": {
       "surface": "typed-command",
       "command": "farmslot analytics"
@@ -237,6 +245,14 @@
     "credential.revoke": {
       "surface": "typed-command",
       "command": "farmslot credential revoke"
+    },
+    "decision.advice.analyze": {
+      "surface": "rpc-only",
+      "note": "Admitted pending-decision assessment via farmslot rpc decision.advice.analyze."
+    },
+    "decision.advice.get": {
+      "surface": "rpc-only",
+      "note": "Pending-decision advice eligibility and results via farmslot rpc decision.advice.get."
     },
     "decision.list": {
       "surface": "typed-command",

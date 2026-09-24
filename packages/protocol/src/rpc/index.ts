@@ -1,4 +1,5 @@
 // RPC owner barrel. Keep logic in the focused RPC modules.
+export * from './acceptance-evidence.js';
 export * from './auth.js';
 export * from './backlog.js';
 export * from './chat.js';

@@ -195,8 +195,8 @@ test('blocked monitor validates the new attempt with the normal signal freshness
       {
         name: 'monitor',
         status: 'done' as const,
-        completedAt: '2026-09-23T01:00:00Z',
-        outputs: { workerSignal: { status: 'blocked' } },
+        completedAt: '2026-09-23T01:02:00Z',
+        outputs: { workerSignal: { status: 'blocked', timestamp: '2026-09-23T01:00:00Z' } },
       },
     ],
     agentContexts: [{ id: 'worker', role: 'fix-bug' as const, signalAttemptId: 'blocked-attempt' }],

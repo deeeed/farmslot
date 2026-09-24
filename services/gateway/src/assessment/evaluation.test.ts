@@ -428,6 +428,117 @@ test('triage cause display requires matched evidence in both clients', () => {
   assert.equal(failureTriageCause(r), undefined);
 });
 
+test('model totals keep failures, missing usage and cost provenance in separate cohorts', () => {
+  const jev = row(),
+    missingUsage = row(),
+    skipped = row(),
+    disabled = row(),
+    llm = row();
+  for (const record of [jev, missingUsage, skipped, disabled, llm]) {
+    record.consumer = 'decision-advice';
+    record.subject = {
+      run: { id: record.id, project: 'fixture', step: 'decision', snapshotHash: 'c'.repeat(64) },
+    };
+    delete record.recommendation;
+    record.result!.answers = {
+      action: { type: 'choice', choice: 'continue', choices: ['continue', 'abstain'] },
+    };
+  }
+  jev.result!.provider = 'typesafe';
+  jev.result!.requestedModel = 'jev-1.13.0';
+  jev.result!.returnedModel = 'jev-1.13.1';
+  jev.requestedIdentity = { provider: 'typesafe', model: 'jev-1.13.0' };
+  jev.result!.attempted = true;
+  jev.result!.usage = {
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+    inputTokens: 100,
+    outputTokens: 20,
+    costUsd: 0.00002,
+    costKind: 'estimated',
+    durationMs: 40,
+  };
+  jev.completedAt = '2026-01-01T00:00:00.100Z';
+  missingUsage.status = 'unavailable';
+  missingUsage.result = {
+    status: 'unavailable',
+    attempted: true,
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+    error: 'Provider usage missing',
+  };
+  skipped.status = 'skipped';
+  skipped.result = {
+    status: 'skipped',
+    attempted: false,
+    provider: 'typesafe',
+    requestedModel: 'jev-1.13.0',
+  };
+  disabled.status = 'disabled';
+  disabled.result = undefined;
+  disabled.requestedIdentity = { provider: 'typesafe', model: 'jev-1.13.0' };
+  llm.result!.provider = 'llm-response';
+  llm.result!.requestedModel = 'model-b';
+  llm.result!.attempted = true;
+  llm.result!.usage = {
+    provider: 'llm-response',
+    requestedModel: 'model-b',
+    inputTokens: 80,
+    outputTokens: 20,
+    costUsd: 0.0002,
+    costKind: 'reported',
+    durationMs: 150,
+  };
+  llm.completedAt = '2026-01-01T00:00:00.300Z';
+  const summary = summarizeAssessments([llm, missingUsage, jev, skipped, disabled]);
+  assert.deepEqual(summary.modelTotals, [
+    {
+      consumer: 'decision-advice',
+      provider: 'llm-response',
+      model: 'model-b',
+      calls: 1,
+      completed: 1,
+      attemptedCalls: 1,
+      unknownAttemptCalls: 0,
+      tokens: 100,
+      callsWithUsage: 1,
+      unknownCharges: 0,
+      knownEstimatedUsd: 0,
+      knownReportedUsd: 0.0002,
+      knownUnclassifiedUsd: 0,
+      medianLatencyMs: 150,
+      medianEndToEndMs: 300,
+    },
+    {
+      consumer: 'decision-advice',
+      provider: 'typesafe',
+      model: 'jev-1.13.0',
+      calls: 4,
+      completed: 1,
+      attemptedCalls: 2,
+      unknownAttemptCalls: 0,
+      tokens: 120,
+      callsWithUsage: 1,
+      unknownCharges: 1,
+      knownEstimatedUsd: 0.00002,
+      knownReportedUsd: 0,
+      knownUnclassifiedUsd: 0,
+      medianLatencyMs: 40,
+      medianEndToEndMs: 100,
+    },
+  ]);
+  assert.equal(summary.calls, 5);
+  assert.equal(summary.skipped, 2);
+  assert.equal(
+    summary.tokens,
+    summary.modelTotals!.reduce((sum, item) => sum + item.tokens, 0),
+  );
+  assert.equal(
+    summary.unknownCharges,
+    summary.modelTotals!.reduce((sum, item) => sum + item.unknownCharges, 0),
+  );
+});
+
 test('legacy cost amounts are not relabeled as provider-reported', () => {
   const legacy = row(),
     estimated = row(),
@@ -491,4 +602,207 @@ test('plain LLM booleans and choices are scored without inventing probabilities'
   assert.equal(visual.correct, 0);
   assert.equal(visual.judged, 1);
   assert.equal(evaluated.questions.find((q) => q.questionId === 'risk')?.judged, 1);
+});
+
+test('decision advice counts an admitted action and a deliberate abstention separately', () => {
+  const accepted = row();
+  accepted.consumer = 'decision-advice';
+  accepted.subject = {
+    run: {
+      id: 'synthetic-run-1',
+      project: 'fixture',
+      step: 'decision-advice',
+      snapshotHash: 'e'.repeat(64),
+    },
+  };
+  delete accepted.recommendation;
+  accepted.result!.answers = {
+    action: { type: 'choice', choice: 'prepare', probabilities: { prepare: 1, abstain: 0 } },
+  };
+  const abstained = {
+    ...accepted,
+    id: randomUUID(),
+    subject: { run: { ...accepted.subject.run!, id: 'synthetic-run-2' } },
+    result: {
+      ...accepted.result!,
+      answers: {
+        action: {
+          type: 'choice' as const,
+          choice: 'abstain',
+          probabilities: { prepare: 0, abstain: 1 },
+        },
+      },
+    },
+  };
+  const frozen = report([accepted, abstained]);
+  assert.equal(frozen.summary.calls, 2);
+  assert.equal(frozen.summary.uniqueCases, 2);
+  const result = evaluateAssessmentReport(frozen, {
+    reportId: frozen.reportId,
+    references: [
+      {
+        assessmentId: accepted.id,
+        questionId: 'action',
+        expected: 'prepare',
+        evidenceRef: 'fixture:case-1',
+        source: 'human',
+        blinded: true,
+      },
+      {
+        assessmentId: abstained.id,
+        questionId: 'action',
+        expected: 'prepare',
+        evidenceRef: 'fixture:case-2',
+        source: 'human',
+        blinded: true,
+      },
+    ],
+  });
+  assert.equal(result.questions[0].eligible, 2);
+  assert.equal(result.questions[0].judged, 2);
+  assert.equal(result.questions[0].abstained, 1);
+  assert.equal(result.questions[0].correct, 1);
+  assert.equal(result.comparison.status, 'inconclusive');
+});
+
+test('decision advice counts a reserved paid-output attempt with missing usage as unknown charge', () => {
+  const advice = row();
+  advice.consumer = 'decision-advice';
+  advice.subject = {
+    run: {
+      id: 'synthetic-unknown-usage',
+      project: 'fixture',
+      step: 'decision-advice',
+      snapshotHash: 'c'.repeat(64),
+    },
+  };
+  delete advice.recommendation;
+  advice.result!.answers = {
+    action: { type: 'choice', choice: 'prepare', probabilities: { prepare: 1, abstain: 0 } },
+  };
+  advice.result!.attempted = true;
+  advice.result!.usage = {
+    provider: 'fixture',
+    requestedModel: 'paid-output',
+    inputTokens: 80,
+    durationMs: 5,
+  };
+  advice.reservation = { key: 'd'.repeat(64), priceHash: 'e'.repeat(64), maxUsd: 0.01 };
+  const summary = summarizeAssessments([advice]);
+  assert.equal(summary.calls, 1);
+  assert.equal(summary.attemptedCalls, 1);
+  assert.equal(summary.unknownCharges, 1);
+  assert.equal(summary.reservedUsd, 0.01);
+  assert.equal(summary.knownEstimatedUsd, 0);
+});
+
+test('decision advice scores labeled abstentions without counting missing references', () => {
+  const make = (choice: string, hash: string) => {
+    const record = row();
+    record.consumer = 'decision-advice';
+    record.subject = {
+      run: { id: hash, project: 'fixture', step: 'decision-advice', snapshotHash: hash.repeat(64) },
+    };
+    delete record.recommendation;
+    record.result!.answers = {
+      action: { type: 'choice', choice, probabilities: { continue: 0.5, abstain: 0.5 } },
+    };
+    return record;
+  };
+  const correctAbstain = make('abstain', 'a');
+  const falseAbstain = make('abstain', 'b');
+  const mistakenAction = make('continue', 'c');
+  const missing = make('abstain', 'd');
+  const result = evaluateAssessmentReport(
+    report([correctAbstain, falseAbstain, mistakenAction, missing]),
+    {
+      reportId: 'd'.repeat(64),
+      references: [
+        {
+          assessmentId: correctAbstain.id,
+          questionId: 'action',
+          expected: 'abstain',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:unknown',
+        },
+        {
+          assessmentId: falseAbstain.id,
+          questionId: 'action',
+          expected: 'continue',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:clear',
+        },
+        {
+          assessmentId: mistakenAction.id,
+          questionId: 'action',
+          expected: 'abstain',
+          source: 'human',
+          blinded: true,
+          evidenceRef: 'synthetic:unknown',
+        },
+      ],
+    },
+  );
+  assert.equal(result.questions.length, 1);
+  assert.equal(result.questions[0].eligible, 4);
+  assert.equal(result.questions[0].abstained, 3);
+  assert.equal(result.questions[0].judged, 3);
+  assert.equal(result.questions[0].correct, 1);
+  assert.equal(result.questions[0].unlabeled, 1);
+});
+
+test('acceptance evidence scores explicit insufficient and separates changed criterion snapshots', () => {
+  const first = row();
+  first.consumer = 'acceptance-evidence';
+  first.subject = {
+    run: {
+      id: 'synthetic-ac-run',
+      project: 'fixture',
+      step: 'acceptance-evidence:AC-1',
+      snapshotHash: 'c'.repeat(64),
+    },
+  };
+  delete first.recommendation;
+  first.result!.answers = {
+    verdict: {
+      type: 'choice',
+      choice: 'supported',
+      probabilities: { supported: 1, contradicted: 0, insufficient: 0 },
+    },
+  };
+  const second: AssessmentRecord = {
+    ...first,
+    id: randomUUID(),
+    subject: { run: { ...first.subject.run!, snapshotHash: 'd'.repeat(64) } },
+    result: {
+      ...first.result!,
+      answers: {
+        verdict: {
+          type: 'choice',
+          choice: 'insufficient',
+          probabilities: { supported: 0, contradicted: 0, insufficient: 1 },
+        },
+      },
+    },
+  };
+  const frozen = report([first, second]);
+  assert.equal(frozen.summary.uniqueCases, 2);
+  const evaluated = evaluateAssessmentReport(frozen, {
+    reportId: frozen.reportId,
+    references: [first, second].map((item) => ({
+      assessmentId: item.id,
+      questionId: 'verdict',
+      expected: item === second ? 'insufficient' : 'supported',
+      evidenceRef: 'fixture:synthetic-ac-reference',
+      source: 'human' as const,
+      blinded: true,
+    })),
+  });
+  const verdict = evaluated.questions.find((question) => question.questionId === 'verdict')!;
+  assert.equal(verdict.eligible, 2);
+  assert.equal(verdict.judged, 2);
+  assert.equal(verdict.correct, 2);
+  assert.equal(verdict.abstained, 1);
 });

@@ -9,6 +9,13 @@ CI fails when a registry method is missing from the matrix or this file is stale
 - **rpc-only** — Reachable via `farmslot rpc <method>`; no dedicated command yet.
 - **na** — Not a CLI target (web-UI-internal or transport-level); note explains why.
 
+## acceptance.\*
+
+| Method                        | Surface  | CLI command | TUI | Note                                                                                          |
+| ----------------------------- | -------- | ----------- | --- | --------------------------------------------------------------------------------------------- |
+| `acceptance.evidence.get`     | rpc-only |             |     | Read-only criterion evidence and assessment preview via farmslot rpc acceptance.evidence.get. |
+| `acceptance.evidence.analyze` | rpc-only |             |     | Explicit source-admitted textual AC assessment via farmslot rpc acceptance.evidence.analyze.  |
+
 ## analytics.\*
 
 | Method               | Surface       | CLI command          | TUI | Note |
@@ -115,10 +122,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## decision.\*
 
-| Method             | Surface       | CLI command                 | TUI | Note |
-| ------------------ | ------------- | --------------------------- | --- | ---- |
-| `decision.list`    | typed-command | `farmslot decision list`    | yes |      |
-| `decision.resolve` | typed-command | `farmslot decision resolve` |     |      |
+| Method                    | Surface       | CLI command                 | TUI | Note                                                                                  |
+| ------------------------- | ------------- | --------------------------- | --- | ------------------------------------------------------------------------------------- |
+| `decision.list`           | typed-command | `farmslot decision list`    | yes |                                                                                       |
+| `decision.advice.get`     | rpc-only      |                             |     | Pending-decision advice eligibility and results via farmslot rpc decision.advice.get. |
+| `decision.advice.analyze` | rpc-only      |                             |     | Admitted pending-decision assessment via farmslot rpc decision.advice.analyze.        |
+| `decision.resolve`        | typed-command | `farmslot decision resolve` |     |                                                                                       |
 
 ## diagnostics.\*
 

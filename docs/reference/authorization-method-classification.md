@@ -5,6 +5,8 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 
 | Method                                  | Classification | Admin reason                                             |
 | --------------------------------------- | -------------- | -------------------------------------------------------- |
+| `acceptance.evidence.analyze`           | admin          |                                                          |
+| `acceptance.evidence.get`               | admin          |                                                          |
 | `analytics.backfill`                    | admin          | writes analytics records and updates runs                |
 | `analytics.query`                       | admin          | enumerates and reads analytics paths directly            |
 | `assessment.evaluate`                   | admin          |                                                          |
@@ -69,6 +71,8 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `credential.issue`                      | admin          |                                                          |
 | `credential.list`                       | admin          |                                                          |
 | `credential.revoke`                     | admin          |                                                          |
+| `decision.advice.analyze`               | admin          |                                                          |
+| `decision.advice.get`                   | admin          |                                                          |
 | `decision.list`                         | admin          | scans task directories and reads decision artifacts      |
 | `decision.resolve`                      | admin          |                                                          |
 | `diagnostics.fileTransfer.remoteE2e`    | admin          |                                                          |

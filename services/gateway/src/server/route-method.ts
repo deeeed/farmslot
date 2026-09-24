@@ -3,6 +3,8 @@
 import { WebSocket } from 'ws';
 
 import {
+  type AcceptanceEvidenceAnalyzeParams,
+  type AcceptanceEvidenceGetParams,
   type AnalyticsQueryParams,
   type AssessmentEvaluationParams,
   type AssessmentFeedbackParams,
@@ -56,6 +58,8 @@ import {
   type CredentialIssueParams,
   type CredentialListParams,
   type CredentialRevokeParams,
+  type DecisionAdviceAnalyzeParams,
+  type DecisionAdviceGetParams,
   type DecisionResolveParams,
   type DeviceInventoryParams,
   type DiagnosticsRunParams,
@@ -247,6 +251,10 @@ import {
   machinePauseRestore,
   machinePauseStatus,
 } from '../machine-parking/service.js';
+import {
+  acceptanceEvidenceAnalyze,
+  acceptanceEvidenceGet,
+} from '../methods/acceptance-evidence.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
   assessmentEvaluate,
@@ -316,6 +324,7 @@ import {
   copilotStatus,
   copilotStop,
 } from '../methods/copilot-runtime.js';
+import { decisionAdviceAnalyze, decisionAdviceGet } from '../methods/decision-advice.js';
 import { decisionList, decisionResolve } from '../methods/decisions.js';
 import { diagnosticsRun } from '../methods/diagnostics.js';
 import {
@@ -1038,9 +1047,19 @@ async function routeAuthorizedMethod(
     case Methods.PR_FOR_SLOT:
       return prForSlot(p as PRForSlotParams);
 
+    // Advisory acceptance-evidence assessment
+    case Methods.ACCEPTANCE_EVIDENCE_GET:
+      return acceptanceEvidenceGet(p as AcceptanceEvidenceGetParams);
+    case Methods.ACCEPTANCE_EVIDENCE_ANALYZE:
+      return acceptanceEvidenceAnalyze(p as AcceptanceEvidenceAnalyzeParams);
+
     // Decisions
     case Methods.DECISION_LIST:
       return decisionList();
+    case Methods.DECISION_ADVICE_GET:
+      return decisionAdviceGet(p as DecisionAdviceGetParams);
+    case Methods.DECISION_ADVICE_ANALYZE:
+      return decisionAdviceAnalyze(p as DecisionAdviceAnalyzeParams);
     case Methods.DECISION_RESOLVE: {
       // Forward all per-request emits as broadcasts so RUN_DECISION_RESOLVED
       // and RUN_UPDATED reach every connected client (family page, slot card,

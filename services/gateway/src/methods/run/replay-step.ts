@@ -71,9 +71,24 @@ import {
 
 type Emit = (event: string, payload: unknown) => void;
 
+/** A failed blocked replay must not terminally fence the run it will retry. */
+export function rollbackReclaimedSlotReleaseOptions(
+  status: Run['status'],
+  runId: string,
+): { restartRunId: string } | undefined {
+  return status === 'blocked' ? { restartRunId: runId } : undefined;
+}
+
 export interface RunReplayStepHooks {
   /** Test-only: pause after the replay-owned generation bump. */
   afterGenerationBump?(): Promise<void>;
+}
+
+function shouldInjectReplayClaimFailure(runId: string): boolean {
+  return (
+    process.env.NODE_TEST_CONTEXT === '1' &&
+    (process.env.FARMSLOT_TEST_REPLAY_FAIL_AFTER_CLAIM_RUN_IDS?.split(',').includes(runId) ?? false)
+  );
 }
 
 export function freshDispatchEngineStateForReplay(
@@ -334,7 +349,7 @@ export function freshBlockedMonitorAttempt(
     !signal ||
     !signal.attemptId ||
     signal.attemptId === previousSignal.attemptId ||
-    !['ready', 'non_terminal', 'stale'].includes(probe.code) ||
+    !['ready', 'non_terminal'].includes(probe.code) ||
     !['running', 'done', 'complete'].includes(signal.status) ||
     !signalMatchesMonitorContext(signal, context)
   )
@@ -686,30 +701,59 @@ export async function runReplayStep(
     typeof previousMonitorSignal === 'object' &&
     'status' in previousMonitorSignal &&
     previousMonitorSignal.status === 'blocked';
+  const evalCanRestartFromPrepare = shouldRerouteEvalReplayToPrepare({
+    evalExperiment: Boolean(existing.engineState?.evalExperiment),
+    adoptedLiveWorker: Boolean(adoptedTaskSignal),
+    targetIdx,
+    prepareIdx,
+    monitorIdx,
+  });
   if (needsBlockedAttempt) {
     const slotId = existing.slotId;
     const nextAction =
       findSlotIdx >= 0 ? 'Restart from find-slot' : `Start a new ${existing.flowType} run`;
-    if (!slotId) throw new Error(`This run has no slot. ${nextAction} instead.`);
-    const slot = await readSlotRow(slotId);
-    if (!blockedMonitorOwnsSlot(slot, existing.id)) {
-      throw new Error(`This run no longer owns its slot. ${nextAction} instead.`);
+    const slot = slotId ? await readSlotRow(slotId) : null;
+    let blocker: string | null = null;
+    if (!slotId) blocker = `This run has no slot. ${nextAction} instead.`;
+    else if (!blockedMonitorOwnsSlot(slot, existing.id))
+      blocker = `This run no longer owns its slot. ${nextAction} instead.`;
+    else {
+      const status = await runtimeCapabilityStatus({ slotId });
+      if (!blockedMonitorProofReady(existing, status)) {
+        blocker =
+          status.catalog?.length && !status.proofPlans[existing.id]
+            ? `No proof plan is recorded. ${nextAction} instead.`
+            : `Proof resources are not healthy after the block. ${nextAction} instead.`;
+      }
     }
-    const status = await runtimeCapabilityStatus({ slotId });
-    if (!blockedMonitorProofReady(existing, status)) {
-      throw new Error(`Proof resources are not healthy after the block. ${nextAction} instead.`);
+    if (blocker) {
+      if (
+        !evalCanRestartFromPrepare ||
+        (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx < 0)
+      ) {
+        throw new Error(blocker);
+      }
+      if (!blockedMonitorOwnsSlot(slot, existing.id) && findSlotIdx >= 0) {
+        replayStepName = PS.FIND_SLOT;
+        targetIdx = findSlotIdx;
+      } else {
+        replayStepName = PS.PREPARE;
+        targetIdx = prepareIdx;
+      }
     }
   }
-  const monitorContext = needsBlockedAttempt
+  const probeBlockedMonitor = needsBlockedAttempt && replayStepName === PS.MONITOR;
+  const monitorContext = probeBlockedMonitor
     ? (existing.agentContexts?.find(
         (context) => context.role === primaryRoleForFlow(existing.flowType),
       ) ?? existing.agentContexts?.[0])
     : null;
-  const probe = needsBlockedAttempt
+  const probe = probeBlockedMonitor
     ? await probeWorkerSignalForRun(existing.id, existing.slotId, monitorContext)
     : null;
   const blockedAttempt = probe ? freshBlockedMonitorAttempt(existing, probe, monitorContext) : null;
   if (
+    replayStepName !== PS.FIND_SLOT &&
     shouldRerouteEvalReplayToPrepare({
       evalExperiment: Boolean(existing.engineState?.evalExperiment),
       adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
@@ -724,7 +768,7 @@ export async function runReplayStep(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
     );
   }
-  if (needsBlockedAttempt && replayStepName === PS.MONITOR && !blockedAttempt) {
+  if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {
     if (
       probe?.signal?.attemptId &&
       previousMonitorSignal &&
@@ -818,6 +862,7 @@ export async function runReplayStep(
   let reclaimedSlotId: string | null = null;
   let reclaimedSlotEpoch: number | null = null;
   let priorOwnedSlotFields: Record<string, unknown> | null = null;
+  const priorRunSlotId = existing.slotId ?? null;
   let revived = false;
   let nativeReplayGeneration: number | undefined;
   try {
@@ -885,6 +930,7 @@ export async function runReplayStep(
         const { released } = await slotRelease(
           { slotId: existing.slotId, keepWork: true, expectedRunId: params.runId },
           emit,
+          { restartRunId: params.runId },
         );
         if (!released) {
           throw new Error(
@@ -949,17 +995,37 @@ export async function runReplayStep(
               // A blocked monitor adopts a signal from the current worker. It may
               // only claim that same worker; an intervening release or reassignment
               // must not turn this into a generic free-slot reclaim.
-              if (needsBlockedAttempt && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
-              if (needsBlockedAttempt) {
+              if (probeBlockedMonitor && !blockedMonitorOwnsSlot(slot, params.runId)) return false;
+              const reclaim = replaySlotReclaimCheck(slot, params.runId, {
+                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
+              });
+              if (
+                reclaim.ok &&
+                existing.status === 'blocked' &&
+                blockedMonitorOwnsSlot(slot, params.runId)
+              ) {
                 priorOwnedSlotFields = {
                   lifecycle: slot.lifecycle,
                   phase: slot.phase,
                   agent: slot.agent,
+                  current_run_id: slot.current_run_id,
                 };
               }
-              return replaySlotReclaimCheck(slot, params.runId, {
-                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-              }).ok;
+              if (reclaim.ok && slot.handoff_run_id === params.runId) {
+                priorOwnedSlotFields = {
+                  lifecycle: slot.lifecycle,
+                  phase: slot.phase,
+                  agent: slot.agent,
+                  current_run_id: slot.current_run_id ?? null,
+                  current_flow_type: slot.current_flow_type,
+                  current_ticket_or_pr: slot.current_ticket_or_pr,
+                  current_mode: slot.current_mode,
+                  current_family_id: slot.current_family_id,
+                  current_lane: slot.current_lane,
+                  current_variant: slot.current_variant,
+                };
+              }
+              return reclaim.ok;
             },
             {
               lifecycle: 'busy',
@@ -996,6 +1062,33 @@ export async function runReplayStep(
           assertNativeReplayCurrent();
           effectiveSlotId = replaySlotId;
           updateRun(params.runId, { slotId: replaySlotId });
+          // The disposable gateway recipe injects a failure after a real claim.
+          if (shouldInjectReplayClaimFailure(params.runId)) {
+            if (
+              process.env.FARMSLOT_TEST_REPLAY_TRANSFER_AFTER_CLAIM_RUN_IDS?.split(',').includes(
+                params.runId,
+              )
+            ) {
+              await claimSlotStatusIf(
+                replaySlotId,
+                (slot) => slot.current_run_id === params.runId && slot.slot_epoch === epoch,
+                { current_run_id: randomUUID() },
+              );
+            }
+            if (
+              process.env.FARMSLOT_TEST_REPLAY_RELEASING_AFTER_CLAIM_RUN_IDS?.split(',').includes(
+                params.runId,
+              )
+            ) {
+              const { markSlotStatusIf } = await import('../../core/index.js');
+              await markSlotStatusIf(
+                replaySlotId,
+                (slot) => slot.current_run_id === params.runId && slot.slot_epoch === epoch,
+                { phase: SLOT_PHASE_RELEASING },
+              );
+            }
+            throw new Error('Injected replay failure after claim');
+          }
           console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
         } catch (err) {
           console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
@@ -1490,22 +1583,59 @@ export async function runReplayStep(
       try {
         if (priorOwnedSlotFields) {
           const { markSlotStatusIf } = await import('../../core/index.js');
-          await markSlotStatusIf(
+          const restored = await markSlotStatusIf(
             reclaimedSlotId,
             (slot) =>
-              slot.current_run_id === params.runId && slot.slot_epoch === reclaimedSlotEpoch,
+              slot.current_run_id === params.runId &&
+              slot.slot_epoch === reclaimedSlotEpoch &&
+              slot.phase !== SLOT_PHASE_RELEASING,
             priorOwnedSlotFields,
           );
+          if (restored.applied) {
+            const restoredSlotId =
+              priorRunSlotId === reclaimedSlotId &&
+              (priorOwnedSlotFields as Record<string, unknown>).current_run_id !== params.runId
+                ? null
+                : priorRunSlotId;
+            if (getRun(params.runId)?.slotId !== restoredSlotId) {
+              const run = updateRun(params.runId, { slotId: restoredSlotId });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
         } else {
           const { slotRelease } = await import('../slot.js');
-          await slotRelease(
+          const release = await slotRelease(
             { slotId: reclaimedSlotId, keepWork: true, expectedRunId: params.runId },
             () => {},
+            rollbackReclaimedSlotReleaseOptions(existing.status, params.runId),
           );
+          if (!release.released) {
+            const current = await readSlotRow(reclaimedSlotId);
+            if (
+              current?.current_run_id === params.runId &&
+              current.slot_epoch === reclaimedSlotEpoch &&
+              current.phase !== SLOT_PHASE_RELEASING
+            ) {
+              throw new Error('slot release refused while replay still owns the reclaimed slot');
+            }
+            if (
+              current?.current_run_id !== params.runId &&
+              getRun(params.runId)?.slotId === reclaimedSlotId
+            ) {
+              const run = updateRun(params.runId, { slotId: null });
+              await persistRunNow(run, 'replay-rollback-slot');
+              emit(Events.RUN_UPDATED, { run });
+            }
+          }
         }
       } catch (releaseErr) {
-        console.warn(
-          `[run] replay rollback of reclaimed slot ${reclaimedSlotId} failed: ${(releaseErr as Error).message}`,
+        const replayMessage = err instanceof Error ? err.message : String(err);
+        const rollbackMessage =
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
+        throw new AggregateError(
+          [err, releaseErr],
+          `Replay failed: ${replayMessage}; rollback of reclaimed slot ${reclaimedSlotId} failed: ${rollbackMessage}`,
         );
       }
     }

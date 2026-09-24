@@ -29,6 +29,7 @@ import '../shared/workspace-pin.js';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { isRecoverableBlockedWorkerRun } from './blocked-run-recovery-model.js';
@@ -90,6 +91,8 @@ export interface RunDetailViewContext {
   _directRunUnavailable: boolean;
   _rescueInProgress: boolean;
   _pendingConfirm: string | null;
+  linkedTriageAssessmentId: string;
+  onTriageDecisionLink: (runId: string, assessmentId: string | null) => void;
   _showTerminal: boolean;
   _terminalContextId: string;
   _terminalRole: string;
@@ -995,6 +998,22 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${r.flowType === 'dev' && r.steps.some((s) => s.status === 'failed')
       ? html`<failure-triage-panel
           .runId=${r.id}
+          .canLinkDecision=${(() => {
+            const pending = r.decisions.find((d) => !d.resolvedAt);
+            const kind = decisionPayloadKind(pending?.payload);
+            return Boolean(
+              pending &&
+              kind !== 'slot_picker' &&
+              kind !== 'branch_affinity_nudge' &&
+              kind !== 'retrospective' &&
+              pending.type !== 'monitor_interactive_handoff' &&
+              pending.type !== 'retrospective',
+            );
+          })()}
+          .linkedAssessmentId=${ctx.linkedTriageAssessmentId}
+          @triage-decision-link=${(
+            e: CustomEvent<{ runId: string; assessmentId: string | null }>,
+          ) => ctx.onTriageDecisionLink(e.detail.runId, e.detail.assessmentId)}
           .runVersion=${JSON.stringify([
             r.status,
             r.steps

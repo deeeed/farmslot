@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "status": "frozen",
+  "references": [
+    {
+      "caseId": "worker-launch",
+      "label": "environment",
+      "requiredReadIds": [
+        "worker.stderr",
+        "gateway.events"
+      ],
+      "nextCheck": "Inspect the configured runner executable and worker stderr.",
+      "family": "runner-start"
+    },
+    {
+      "caseId": "prepare-dependency",
+      "label": "dependencies",
+      "requiredReadIds": [
+        "prepare.output",
+        "lock.diff"
+      ],
+      "nextCheck": "Inspect the dependency resolution and lockfile change.",
+      "family": "dependency-prepare"
+    },
+    {
+      "caseId": "banner-assertion",
+      "label": "test_harness",
+      "requiredReadIds": [
+        "recipe.assertion",
+        "ui.tree"
+      ],
+      "nextCheck": "Inspect the validation selector against the rendered UI tree.",
+      "family": "ui-assertion"
+    },
+    {
+      "caseId": "submit-handler",
+      "label": "implementation",
+      "requiredReadIds": [
+        "app.console",
+        "workspace.diff"
+      ],
+      "nextCheck": "Inspect submitPrice and the changed quote mapping.",
+      "family": "app-submit"
+    },
+    {
+      "caseId": "quote-timeout",
+      "label": "external_service",
+      "requiredReadIds": [
+        "http.trace",
+        "app.log"
+      ],
+      "nextCheck": "Inspect the service response and request retry log.",
+      "rationale": "The upstream HTTP 503 precedes and causes local retry exhaustion; the latter is a consequence.",
+      "family": "upstream-503"
+    },
+    {
+      "caseId": "proof-missing",
+      "label": "missing_evidence",
+      "requiredReadIds": [
+        "evidence.manifest"
+      ],
+      "nextCheck": "Inspect why the screenshot capture did not write an artifact.",
+      "rationale": "The missing screenshot is the observed evidence deficiency; the capture-worker root cause is not established.",
+      "family": "missing-visual-proof"
+    },
+    {
+      "caseId": "mixed-timeout",
+      "label": "unclear",
+      "requiredReadIds": [
+        "worker.stderr",
+        "gateway.events"
+      ],
+      "nextCheck": "Inspect the missing timing trace before attributing a cause.",
+      "rationale": "These observations conflict on ordering; do not guess a cause when the timing trace is absent.",
+      "family": "incomplete-timing"
+    },
+    {
+      "caseId": "local-resolver",
+      "label": "environment",
+      "requiredReadIds": [
+        "http.trace",
+        "net.resolver"
+      ],
+      "nextCheck": "Inspect the local resolver health and request DNS trace.",
+      "rationale": "DNS failed across unrelated hosts at the local resolver; no service connection was made.",
+      "family": "local-dns"
+    }
+  ]
+}

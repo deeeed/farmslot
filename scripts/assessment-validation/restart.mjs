@@ -86,6 +86,15 @@ try {
   const accounting = rpc('assessment.report', { assessmentId: alias.id });
   assert.equal(accounting.records.length, 3);
   assert.equal(accounting.summary.callsWithUsage, 2);
+  assert.deepEqual(
+    accounting.summary.modelTotals.map(({ consumer, provider, model, calls }) => ({
+      consumer,
+      provider,
+      model,
+      calls,
+    })),
+    [{ consumer: 'review-intake', provider: 'fixture', model: 'latest', calls: 3 }],
+  );
   assert.equal(accounting.summary.uniqueCases, 2);
   assert.ok(accounting.records.some((r) => r.status === 'unavailable'));
   const paired = execFileSync(

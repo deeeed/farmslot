@@ -5,10 +5,18 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add the official `ui.scroll_to` action with `UI_SCROLL_TO_PARAMS_SCHEMA` (surface, semantic target, measurable visibility anchor, alignment, HUD-safe viewport policy, visibility verification, settlement); action manifests must require string `surface_test_id` and `target_test_id`.
+- Group retained assessment usage, cost provenance and latency by consumer, provider and model for operator comparison.
+
+- Carry an optional failure-assessment reference with a run decision resolution and its saved result.
+
+- Define advisory acceptance-evidence RPCs and assessment records for a recorded criterion and named text evidence.
+
+- Allow admitted decision context on saved assessment records for later operator review.
 
 - Include the selected slot resource blocker in profile-fit suggestions.
 
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
+- Define optional pending-decision advice RPC and assessment reporting contracts.
 - Allow per-flow terminal acceptance rules and carry the provider's last health-check time in run posture.
 
 - Support GPT-6 Sol reasoning efforts for Codex selections.

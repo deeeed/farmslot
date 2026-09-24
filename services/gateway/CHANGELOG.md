@@ -5,18 +5,26 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - QA completion rejects recipe packages from a partial `stop-after-node` run.
+- Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.
+
+- Validate the owner, failed step and approved source before saving a failure-assessment reference alongside a chosen run action.
+
+- Add an opt-in, source-admitted textual acceptance-evidence assessment for recorded runs, with saved judgments, bounded spend and unchanged AC ledger authority.
+
+- Admit opt-in decision advice for any pending run decision with two described non-decline actions, keeping source admission and the human action gate. Retain the admitted decision packet with the assessment for later review.
 
 - Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.
 
 - Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
 
 - Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.
+- Add opt-in, source-admitted advice for pending run decisions, with bounded cost, saved assessments and human-only action selection.
 
 - Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.
 
 - Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
 
-- Bind a newer worker signal before replaying a blocked monitor, including completion by the new attempt; require current slot ownership and freshly checked proof resources, and release an owned slot before restarting from find-slot.
+- Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, report rollback failures alongside the original replay error, and reroute blocked eval runs to prepare or find-slot as ownership requires.
 
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
 

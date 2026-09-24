@@ -1,0 +1,32 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Acceptance evidence remains advisory",
+  "description": "From this checkout, validate the frozen synthetic cases and exercise the real gateway RPC with a temporary synthetic run. No external assessment calls.",
+  "workflow": {
+    "entry": "corpus",
+    "nodes": {
+      "corpus": {
+        "action": "command",
+        "cmd": "node scripts/acceptance-evidence/check.mjs",
+        "timeout_ms": 10000,
+        "intent": "Verify frozen case and label hashes, balanced splits, and excluded visual and mixed cases before any candidate calls.",
+        "next": "gateway"
+      },
+      "gateway": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/methods/acceptance-evidence.rpc.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Call the real acceptance-evidence RPC, check admission and stale refusals, confirm no call for mixed proof, and prove the authoritative AC ledger is unchanged.",
+        "next": "bounded-text"
+      },
+      "bounded-text": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/methods/acceptance-evidence.test.ts",
+        "timeout_ms": 60000,
+        "intent": "Prove an admitted multi-file text packet works and does not change the AC ledger; exercise stale, visual, disabled, malformed and duplicate-call boundaries.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

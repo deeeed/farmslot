@@ -147,11 +147,30 @@ export interface AssessmentSubject {
     project: string;
     step: string;
     snapshotHash: string;
+    /** Admitted source packet, retained with the advice so later review sees what was approved. */
+    admission?: { classification: 'public' | 'synthetic'; sourceRef: string };
+    criterion?: {
+      id: string;
+      text: string;
+      evidence: Array<{ id: string; text: string }>;
+    };
+    decision?: {
+      id: string;
+      type: string;
+      description: string;
+      actions: Array<{ id: string; label: string; description: string }>;
+    };
     sources?: Array<{ id: string; sourceId: string; digest: string }>;
   };
 }
 
-export const ASSESSMENT_CONSUMERS = ['review-intake', 'smoke-test', 'failure-triage'] as const;
+export const ASSESSMENT_CONSUMERS = [
+  'review-intake',
+  'smoke-test',
+  'failure-triage',
+  'decision-advice',
+  'acceptance-evidence',
+] as const;
 
 export interface AssessmentReservation {
   /** Stable request identity; pending attempts are never silently replayed. */
@@ -167,6 +186,8 @@ export interface AssessmentReservation {
     inputUsdPerMillion: number;
     outputUsdPerMillion: number;
     maxRequestTokens: number;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
   };
 }
 
@@ -260,6 +281,24 @@ export interface AssessmentSummary {
   accuracy: number | null;
   unlabeledQuestions: number;
   savings: null;
+  /** Full retained history, grouped by consumer and model; no sampling from the visible page. */
+  modelTotals?: Array<{
+    consumer: AssessmentRecord['consumer'];
+    provider: string;
+    model: string;
+    calls: number;
+    completed: number;
+    attemptedCalls: number;
+    unknownAttemptCalls: number;
+    tokens: number;
+    callsWithUsage: number;
+    unknownCharges: number;
+    knownEstimatedUsd: number;
+    knownReportedUsd: number;
+    knownUnclassifiedUsd: number;
+    medianLatencyMs: number | null;
+    medianEndToEndMs: number | null;
+  }>;
   groups: Array<{
     consumer?: AssessmentRecord['consumer'];
     provider: string;
