@@ -153,12 +153,12 @@ first-read check chose a required source in 6/8 cases, including 4/5 cases
 with one required read, leaving little room for fewer reads. There were no
 provider calls, usage receipts or paired worker answers on that draft. Its
 exact case and reference files are excluded from the shipped corpus; the
-reviewed bytes remain in the PR's earlier commits and the operator's ignored
-`temp/navigation-v2-rejected/` directory. Their SHA-256 hashes are
+reviewed bytes are recoverable from commit `f72e6d55d2788f9b24cd85da163765ab612703d7`
+and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
+directory. Their SHA-256 hashes are
 `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
 for cases and `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`
-for references. Do not tune that
-draft against its observed picks. A new, independently reviewed and versioned
+for references. Do not tune this draft against its observed picks. A new, independently reviewed and versioned
 corpus needs a predeclared comparison method before any live advice call.
 
 V1 is quarantined too: inspect its frozen results offline and do not make new
@@ -228,10 +228,10 @@ retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
 
 Inspect the retained v1 judgments and report offline. The `score` command
-makes no provider call. A terminal arm with no read counts as a miss;
-interrupted arms do not count as zero-read choices or first-read hits. Compare
-advice-inclusive tokens, time and independently judged quality before claiming
-efficiency.
+makes no provider call. A terminal arm with no read enters `zeroRead` and
+cannot register a first-read hit. Interrupted arms enter their own count and
+cannot register first-read hits. Compare advice-inclusive tokens, time and
+independently judged quality before claiming efficiency.
 
 Compare results by incident family and do not infer a population-wide gain from
 eight synthetic cases.

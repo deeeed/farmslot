@@ -612,6 +612,7 @@ export function compareSessions(
             ? expected.requiredReadIds.includes(readIds[0])
             : null,
         readCount: readIds.length,
+        // Count attempted turns, including an invalid final turn with no delivered evidence.
         turnCount: session?.turns.length ?? 0,
         answer:
           answer?.type === 'answer'
@@ -652,55 +653,54 @@ export function compareSessions(
           : null,
     };
   });
-  const navigation = Object.fromEntries(
-    (['named', 'abstention'] as const).map((kind) => {
-      const group = pairs.filter(
-        (pair) => (pair.recommendation === null) === (kind === 'abstention'),
-      );
-      const matched = group.filter((pair) => pair.quality === 'equal-accepted');
-      return [
-        kind,
-        {
-          cases: group.length,
-          missing: {
-            baseline: group.filter((pair) => pair.baseline.status === 'missing').length,
-            assisted: group.filter((pair) => pair.assisted.status === 'missing').length,
-          },
-          interrupted: {
-            baseline: group.filter((pair) => ['active', 'invalid'].includes(pair.baseline.status))
-              .length,
-            assisted: group.filter((pair) => ['active', 'invalid'].includes(pair.assisted.status))
-              .length,
-          },
-          zeroRead: {
-            baseline: group.filter(
-              (pair) =>
-                ['answered', 'exhausted'].includes(pair.baseline.status) &&
-                pair.baseline.readCount === 0,
-            ).length,
-            assisted: group.filter(
-              (pair) =>
-                ['answered', 'exhausted'].includes(pair.assisted.status) &&
-                pair.assisted.readCount === 0,
-            ).length,
-          },
-          firstReadHits: {
-            baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired).length,
-            assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired).length,
-          },
-          equalQualityPairs: matched.length,
-          matchedReads: {
-            baseline: matched.reduce((total, pair) => total + pair.baseline.readCount, 0),
-            assisted: matched.reduce((total, pair) => total + pair.assisted.readCount, 0),
-          },
-          matchedTurns: {
-            baseline: matched.reduce((total, pair) => total + pair.baseline.turnCount, 0),
-            assisted: matched.reduce((total, pair) => total + pair.assisted.turnCount, 0),
-          },
-        },
-      ];
-    }),
-  );
+  const navigationStats = (kind: 'named' | 'abstention') => {
+    const group = pairs.filter(
+      (pair) => (pair.recommendation === null) === (kind === 'abstention'),
+    );
+    const matched = group.filter((pair) => pair.quality === 'equal-accepted');
+    return {
+      cases: group.length,
+      missing: {
+        baseline: group.filter((pair) => pair.baseline.status === 'missing').length,
+        assisted: group.filter((pair) => pair.assisted.status === 'missing').length,
+      },
+      interrupted: {
+        baseline: group.filter((pair) => ['active', 'invalid'].includes(pair.baseline.status))
+          .length,
+        assisted: group.filter((pair) => ['active', 'invalid'].includes(pair.assisted.status))
+          .length,
+      },
+      zeroRead: {
+        baseline: group.filter(
+          (pair) =>
+            ['answered', 'exhausted'].includes(pair.baseline.status) &&
+            pair.baseline.readCount === 0,
+        ).length,
+        assisted: group.filter(
+          (pair) =>
+            ['answered', 'exhausted'].includes(pair.assisted.status) &&
+            pair.assisted.readCount === 0,
+        ).length,
+      },
+      firstReadHits: {
+        baseline: group.filter((pair) => pair.baseline.firstReadIncludesRequired).length,
+        assisted: group.filter((pair) => pair.assisted.firstReadIncludesRequired).length,
+      },
+      equalQualityPairs: matched.length,
+      matchedReads: {
+        baseline: matched.reduce((total, pair) => total + pair.baseline.readCount, 0),
+        assisted: matched.reduce((total, pair) => total + pair.assisted.readCount, 0),
+      },
+      matchedTurns: {
+        baseline: matched.reduce((total, pair) => total + pair.baseline.turnCount, 0),
+        assisted: matched.reduce((total, pair) => total + pair.assisted.turnCount, 0),
+      },
+    };
+  };
+  const navigation = {
+    named: navigationStats('named'),
+    abstention: navigationStats('abstention'),
+  };
   const complete = pairs.filter((pair) => pair.tokens && pair.costUsd && pair.elapsedMs);
   const totals = (field: 'tokens' | 'costUsd' | 'elapsedMs') =>
     complete.reduce(
