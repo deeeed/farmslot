@@ -25,7 +25,7 @@ Pilot decision: hold if any visual/mixed case reaches a provider, any unadmitted
 
 `node scripts/acceptance-evidence/evaluate.mjs <study.json>` compares one frozen
 study without starting a gateway or calling a provider. It verifies the pinned
-SHA-256 hashes, then reads `cases.v2.json` and `labels.v2.json` locally. Its input is an artifact, not a source-admission
+SHA-256 hashes, then reads the selected v2 or v3 case and label files locally. Its input is an artifact, not a source-admission
 mechanism: only use the synthetic corpus here unless a separately approved study
 defines another source policy. Company logs are never safe to export by default.
 
@@ -130,9 +130,12 @@ production assessment record could satisfy the v2 evaluator. Do not rename v2
 cases, make more candidate calls on them or reinterpret that result as gateway proof.
 
 Version 3 is a new synthetic corpus with gateway-readable artifact paths and
-opaque IDs. A fresh isolated reader checked the final v3 cases without a label file.
-[The dated blind audit](results/v3-blind-label-audit.json) retains its prompt digest,
-reader identity and [raw first-pass output](results/v3-blind-label-raw.json). The SHA-256 hashes are:
+opaque IDs. An operator recorded a separate model read of the final v3 cases.
+[The dated audit](results/v3-blind-label-audit.json) retains the prompt digest,
+local session ID and [saved response JSON](results/v3-blind-label-raw.json).
+The hashes check agreement between committed files, not whether the model received
+the prompt or lacked access to labels. Confirm that provenance independently
+before interpreting a live provider comparison. The SHA-256 hashes are:
 
 ```
 ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4  cases.v3.json

@@ -185,5 +185,5 @@ for (const row of nextCases.cases) {
     if (judgment === reference.get(row.id)) agreement++;
   }
 }
-assert.ok(agreement >= 11, `independent blind agreement ${agreement}/12 is below 11/12`);
-console.log(`Frozen gateway AC corpus v3: ${agreement}/12 blind agreement; 2 exclusions`);
+assert.ok(agreement >= 11, `recorded read agreement ${agreement}/12 is below 11/12`);
+console.log(`Frozen gateway AC corpus v3: ${agreement}/12 recorded read agreement; 2 exclusions`);

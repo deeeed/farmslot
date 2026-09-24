@@ -71,12 +71,18 @@ receipts are adapter-level observations, not an efficiency result or a proof
 that an opt-in gateway run retained every record. Do not enable routine AC
 calls or change the frozen label to chase a pass.
 
-PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a separately
-frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, a fresh isolated reader assigned
-labels from the final 14-case revision without a reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
-retains its prompt and [raw response](../../scripts/acceptance-evidence/results/v3-blind-label-raw.json) and records agreement on all three development and nine held-out cases;
-visual and mixed cases were marked no-call. A previous draft reader rechecked Q7 after its identity was made explicit;
-the final blind read independently labeled it `contradicted`. The final held-out cases include partial shard coverage, conflicting scheduler files, an aggregate threshold and a policy-probe instruction injection. Final case hash:
+PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a frozen,
+gateway-compatible AC v3 synthetic corpus. On September 24, 2026, an operator
+recorded a separate model read of the final 14-case revision. [The audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
+retains a prompt digest and [saved response JSON](../../scripts/acceptance-evidence/results/v3-blind-label-raw.json).
+The committed files agree with the reference labels on all 12 text cases and mark
+both visual/mixed cases no-call. They do not independently prove what the model
+received. A previous draft read revisited reconciliation case `case-72efdd3b17`
+after the job identity was made explicit; the final recorded read labeled it
+`contradicted`.
+
+The held-out cases include partial shard coverage, conflicting scheduler files,
+an aggregate threshold and a policy-probe instruction injection. Final case hash:
 `ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4`;
 label hash: `31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1`.
 The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
