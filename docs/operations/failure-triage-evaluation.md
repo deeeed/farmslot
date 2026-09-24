@@ -158,8 +158,9 @@ and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
 directory. Their SHA-256 hashes are
 `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
 for cases and `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`
-for references. Do not tune this draft against its observed picks. A new, independently reviewed and versioned
-corpus needs a predeclared comparison method before any live advice call.
+for references. Do not tune this draft against its observed picks. A new,
+independently reviewed corpus needs a predeclared comparison method before any
+live advice call.
 
 V1 is quarantined too: inspect its frozen results offline and do not make new
 provider calls. Keep its hashes and results unchanged. This is an operator

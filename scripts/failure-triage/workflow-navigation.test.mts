@@ -329,6 +329,12 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
   assert.deepEqual(invalidNavigation.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
   assert.deepEqual(invalidNavigation.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
   assert.deepEqual(invalidNavigation.pairs[0].baseline.readIds, []);
+  assert.deepEqual(
+    blindReviewRows(sealed, invalidSessions)
+      .filter((row) => row.answer === null)
+      .map((row) => row.reads),
+    [[]],
+  );
   assert.equal(invalidNavigation.pairs[0].baseline.firstReadIncludesRequired, null);
   const activeRead = advance(
     sealed,

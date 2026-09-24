@@ -128,6 +128,11 @@ export interface Session {
   status: 'active' | 'answered' | 'exhausted' | 'invalid';
 }
 
+/** An invalid last turn is recorded but cannot deliver evidence to the worker. */
+function deliveredTurns(session: Session): Turn[] {
+  return session.status === 'invalid' ? session.turns.slice(0, -1) : session.turns;
+}
+
 /** Only these fields enter model-visible case input. Reference answers live elsewhere. */
 export function sealCases(cases: NavigationCase[]): { cases: NavigationCase[]; hash: string } {
   assert(cases.length > 0 && cases.length <= 40, 'Invalid case count');
@@ -390,7 +395,7 @@ export function blindReviewRows(plan: NavigationPlan, sessions: Session[]) {
         blindId: digest(`${plan.hash}:${session.caseId}:${session.arm}`),
         failure: item.failure,
         sources: item.sources,
-        reads: session.turns
+        reads: deliveredTurns(session)
           .filter((turn) => turn.action.type === 'read_evidence')
           .map((turn) => turn.action),
         answer: session.turns.find((turn) => turn.action.type === 'answer')?.action ?? null,
@@ -595,13 +600,11 @@ export function compareSessions(
       const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
       const review = reviews[arm];
       const referenceMatch = matchesReference(session);
-      // An invalid last turn never delivered its evidence to the worker.
-      const deliveredTurns =
-        session?.status === 'invalid' ? session.turns.slice(0, -1) : session?.turns;
-      const readIds =
-        deliveredTurns
-          ?.filter((turn) => turn.action.type === 'read_evidence')
-          .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id) ?? [];
+      const readIds = session
+        ? deliveredTurns(session)
+            .filter((turn) => turn.action.type === 'read_evidence')
+            .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id)
+        : [];
       return {
         status: session?.status ?? 'missing',
         quality: result(session, arm),
