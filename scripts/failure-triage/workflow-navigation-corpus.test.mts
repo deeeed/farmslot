@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { sealCases, type NavigationCase } from './workflow-navigation.mts';
 
 const root = new URL('./', import.meta.url);
-test('draft synthetic navigation cases and hidden reference require at most two reads per case', async () => {
+test('frozen synthetic navigation cases and hidden reference require at most two reads per case', async () => {
   const cases: NavigationCase[] = JSON.parse(
     await readFile(new URL('navigation-cases.v1.json', root), 'utf8'),
   );

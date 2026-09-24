@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { main } from './workflow-navigation-cli.mts';
-import { validateConfig, type RunnerConfig } from './workflow-navigation-runner.mts';
+import { reservation, validateConfig, type RunnerConfig } from './workflow-navigation-runner.mts';
 import { nextPrompt, startSession, type NavigationCase } from './workflow-navigation.mts';
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -110,15 +110,85 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     ]);
     const worker = JSON.parse(await readFile(file('worker-plan.json'), 'utf8'));
     assert.equal(worker.advice.length, 1);
+    assert.deepEqual([worker.maxTurns, worker.maxReads], [3, 2]);
+    await writeFile(file('limits.json'), JSON.stringify({ maxTurns: 4, maxReads: 3 }));
+    await main([
+      'seal-advice',
+      file('cases.json'),
+      file('extended-advice-plan.json'),
+      file('limits.json'),
+    ]);
+    const extendedAdvicePlan = JSON.parse(
+      await readFile(file('extended-advice-plan.json'), 'utf8'),
+    );
+    assert.notEqual(extendedAdvicePlan.hash, sealed.hash);
+    assert.deepEqual(extendedAdvicePlan.workerLimits, { maxTurns: 4, maxReads: 3 });
+    const extendedJournal =
+      journalRows
+        .map((row) =>
+          JSON.stringify(
+            row.kind === 'approved' || row.kind === 'closed'
+              ? { ...row, planHash: extendedAdvicePlan.hash }
+              : row,
+          ),
+        )
+        .join('\n') + '\n';
+    await writeFile(file('extended-advice-journal.jsonl'), extendedJournal);
+    await writeFile(
+      file('extended-advice.json'),
+      JSON.stringify({
+        stopReason: 'completed',
+        advice,
+        ...provenance,
+        advicePlanHash: extendedAdvicePlan.hash,
+        journalSha256: sha(extendedJournal),
+      }),
+    );
+    await assert.rejects(
+      () =>
+        main([
+          'seal-worker',
+          file('cases.json'),
+          file('extended-advice-plan.json'),
+          file('advice.json'),
+          file('advice-journal.jsonl'),
+          file('reference.json'),
+          file('late-budget-change.json'),
+        ]),
+      /Advice provenance/,
+    );
+    await main([
+      'seal-worker',
+      file('cases.json'),
+      file('extended-advice-plan.json'),
+      file('extended-advice.json'),
+      file('extended-advice-journal.jsonl'),
+      file('reference.json'),
+      file('extended-worker-plan.json'),
+    ]);
+    const extended = JSON.parse(await readFile(file('extended-worker-plan.json'), 'utf8'));
+    assert.deepEqual([extended.maxTurns, extended.maxReads], [4, 3]);
+    assert.notEqual(extended.hash, worker.hash);
+    await writeFile(file('bad-limits.json'), JSON.stringify({ maxTurns: 4, maxReads: 4 }));
+    await assert.rejects(
+      () =>
+        main([
+          'seal-advice',
+          file('cases.json'),
+          file('bad-advice-plan.json'),
+          file('bad-limits.json'),
+        ]),
+      /Invalid worker limits/,
+    );
     const session = { ...startSession(worker, 'synthetic-one', 'baseline'), wallElapsedMs: 12 };
     const config: RunnerConfig = {
       baseUrl: 'https://api.example.test/v1',
       model: 'fixture-worker',
       provider: 'fixture',
       reasoning: 'low',
-      maxInputTokens: 1024,
+      maxInputTokens: 4096,
       maxOutputTokens: 64,
-      maxTotalTokens: 10000,
+      maxTotalTokens: 50000,
       maxTotalUsd: 0.01,
       price: {
         source: 'https://example.test/pricing',
@@ -129,6 +199,7 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
         cacheWriteMultiplier: 1,
       },
     };
+    assert.equal(reservation(extended, config).calls, 8);
     const configHash = validateConfig(config);
     const writeSessions = async (provenance: object) =>
       writeFile(
@@ -225,6 +296,10 @@ test('offline CLI seals both plans and reports an incomplete comparison as incon
     assert.equal(report.denominator, 1);
     assert.equal(report.completeMetricsPairs, 0);
     assert.equal(report.totals, null);
+    assert.deepEqual(report.navigation.named.missing, { baseline: 0, assisted: 1 });
+    assert.deepEqual(report.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+    assert.deepEqual(report.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
+    assert.deepEqual(report.navigation.named.firstReadHits, { baseline: 0, assisted: 0 });
     for (const [name, rows] of [
       ['missing failure', workerRows.filter((row) => row.kind !== 'failed')],
       [

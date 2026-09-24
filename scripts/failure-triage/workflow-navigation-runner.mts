@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import {
+  MAX_MEASURED_REQUEST_BYTES,
+  measuredResponseRequestBody,
   measuredResponsesCall,
   type MeasuredResponse,
   type MeasuredResponseOptions,
@@ -118,11 +120,90 @@ export function validateConfig(config: RunnerConfig): string {
   return digest(JSON.stringify(config));
 }
 
+function requestBytes(prompt: string, config: RunnerConfig): number {
+  return Buffer.byteLength(
+    measuredResponseRequestBody({
+      model: config.model,
+      instructions: INSTRUCTIONS,
+      prompt,
+      reasoning: config.reasoning,
+      maxOutputTokens: config.maxOutputTokens,
+      outputSchema: { name: 'failure_navigation_action', schema: ACTION_SCHEMA },
+    }),
+  );
+}
+
+function maximumPromptBytes(
+  plan: NavigationPlan,
+  caseId: string,
+  arm: 'baseline' | 'assisted',
+  config: RunnerConfig,
+) {
+  const item = plan.cases.find((entry) => entry.id === caseId)!;
+  // A read adds both its source and its action to every later prompt.
+  const sources = item.sources.map((source) => ({
+    source,
+    bytes:
+      Buffer.byteLength(JSON.stringify(source)) +
+      Buffer.byteLength(JSON.stringify({ type: 'read_evidence', id: source.id })),
+    transportBytes:
+      Buffer.byteLength(JSON.stringify(JSON.stringify(source))) +
+      Buffer.byteLength(JSON.stringify(JSON.stringify({ type: 'read_evidence', id: source.id }))),
+  }));
+  let maximum = 0;
+  let maximumRequest = 0;
+  // Rank separately: the transport escapes the already serialized prompt a second time.
+  for (const weight of ['bytes', 'transportBytes'] as const) {
+    const session = startSession(plan, caseId, arm);
+    const record = () => {
+      const prompt = nextPrompt(plan, session);
+      maximum = Math.max(maximum, Buffer.byteLength(prompt));
+      maximumRequest = Math.max(maximumRequest, requestBytes(prompt, config));
+    };
+    const ordered = [...sources]
+      .sort((left, right) => right[weight] - left[weight])
+      .slice(0, plan.maxReads);
+    for (const [index, entry] of ordered.entries()) {
+      record();
+      session.turns.push({
+        number: index + 1,
+        promptHash: digest('preflight'),
+        action: { type: 'read_evidence', id: entry.source.id },
+        receipt: {
+          responseId: `preflight-${index}`,
+          receiptHash: digest(`preflight-${index}`),
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
+          providerDurationMs: 0,
+          elapsedMs: 0,
+        },
+      });
+    }
+    record();
+  }
+  return { maximum, maximumRequest };
+}
+
 export function reservation(plan: NavigationPlan, config: RunnerConfig) {
   verifyPlan(plan);
   const calls = plan.cases.length * 2 * plan.maxTurns;
   assert(calls <= 60 && calls > 0, 'Study exceeds 60-call cap');
   const configHash = validateConfig(config);
+  for (const item of plan.cases)
+    for (const arm of ['baseline', 'assisted'] as const) {
+      const { maximum, maximumRequest } = maximumPromptBytes(plan, item.id, arm, config);
+      assert(
+        maximum + Buffer.byteLength(INSTRUCTIONS) + 1024 <= config.maxInputTokens,
+        'Study includes a request exceeding the reserved input-byte ceiling',
+      );
+      assert(
+        maximumRequest <= MAX_MEASURED_REQUEST_BYTES,
+        'Study includes a request exceeding the transport byte limit',
+      );
+    }
   const adviceTokens = plan.advice.reduce(
     (sum, entry) => sum + entry.receipt.inputTokens + entry.receipt.outputTokens,
     0,
@@ -279,6 +360,10 @@ export async function runNavigationStudy(
             Buffer.byteLength(prompt) + Buffer.byteLength(INSTRUCTIONS) + 1024 <=
               config.maxInputTokens,
             'Request exceeds reserved input-byte ceiling',
+          );
+          assert(
+            requestBytes(prompt, config) <= MAX_MEASURED_REQUEST_BYTES,
+            'Request exceeds transport byte limit',
           );
           const turn = session.turns.length + 1;
           await write({ kind: 'started', caseId: item.id, arm, turn, promptHash: digest(prompt) });
