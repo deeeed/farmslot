@@ -100,10 +100,10 @@ record consistency, not export authenticity, provider quality or efficiency.
 
 On September 24, 2026, an operator-reported [label read](../../scripts/acceptance-evidence/results/v3-independent-label-read.json)
 agreed with all 12 frozen text labels and both no-call decisions. The record
-does not attest what the reader had seen before answering. The dated
+does not attest what the reader had seen before answering. The
 [TypeSafe gateway receipt export](../../scripts/acceptance-evidence/results/v3-typesafe-gateway-receipts.json)
-contains 12 completed calls against pinned `jev-1.13.0`, 12 retained gateway
-assessment records. The operator script reports two visual/mixed
+contains 12 completed calls against pinned `jev-1.13.0` as 12 retained
+gateway assessment records. The operator script reports two visual/mixed
 `non-textual` refusals before transport, with no records for those cases. Jev matched
 9/9 held-out cases and 11/12 text cases overall. It incorrectly marked the
 **development** case "store write attempted" as proof that the write completed,

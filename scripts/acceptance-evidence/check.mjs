@@ -238,6 +238,9 @@ for (const entry of nextCases.cases) {
     criterion: { id: entry.criterionId, text: entry.criterion },
     evidence: entry.evidence,
   };
+  assert.equal(row.ownerId, 'ac-v3-live-probe');
+  assert.ok(row.startedAt.startsWith('2026-09-24T'));
+  assert.ok(row.completedAt.startsWith('2026-09-24T'));
   assert.equal(row.consumer, 'acceptance-evidence');
   assert.equal(row.policyVersion, 'acceptance-evidence-v1');
   assert.equal(row.status, 'completed');
