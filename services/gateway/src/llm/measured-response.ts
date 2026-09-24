@@ -61,6 +61,40 @@ async function readChunk(
   });
 }
 
+export const MAX_MEASURED_REQUEST_BYTES = 64000;
+
+/** The exact request body used for both preflight and transport. */
+export function measuredResponseRequestBody(
+  options: Pick<
+    MeasuredResponseOptions,
+    'model' | 'instructions' | 'prompt' | 'reasoning' | 'maxOutputTokens' | 'outputSchema'
+  >,
+): string {
+  return JSON.stringify({
+    model: options.model,
+    instructions: options.instructions,
+    input: [{ role: 'user', content: [{ type: 'input_text', text: options.prompt }] }],
+    reasoning: { effort: options.reasoning },
+    max_output_tokens: options.maxOutputTokens,
+    store: false,
+    stream: true,
+    tools: [],
+    service_tier: 'default',
+    ...(options.outputSchema
+      ? {
+          text: {
+            format: {
+              type: 'json_schema',
+              name: options.outputSchema.name,
+              strict: true,
+              schema: options.outputSchema.schema,
+            },
+          },
+        }
+      : {}),
+  });
+}
+
 /** One bounded Responses request. No SDK retries, CLI fallback, or tool execution. */
 export async function measuredResponsesCall(
   options: MeasuredResponseOptions,
@@ -84,29 +118,7 @@ export async function measuredResponsesCall(
       !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))
   )
     throw new Error('Invalid measured provider URL');
-  const body = JSON.stringify({
-    model: options.model,
-    instructions: options.instructions,
-    input: [{ role: 'user', content: [{ type: 'input_text', text: options.prompt }] }],
-    reasoning: { effort: options.reasoning },
-    max_output_tokens: options.maxOutputTokens,
-    store: false,
-    stream: true,
-    tools: [],
-    service_tier: 'default',
-    ...(options.outputSchema
-      ? {
-          text: {
-            format: {
-              type: 'json_schema',
-              name: options.outputSchema.name,
-              strict: true,
-              schema: options.outputSchema.schema,
-            },
-          },
-        }
-      : {}),
-  });
+  const body = measuredResponseRequestBody(options);
 
   const start = performance.now();
   const base: MeasuredResponse = {
@@ -135,7 +147,8 @@ export async function measuredResponsesCall(
     base.cacheReadTokens = counter(details?.cached_tokens);
     base.cacheWriteTokens = counter(details?.cache_write_tokens);
   };
-  if (Buffer.byteLength(body) > 64000) return { ...base, error: 'request-byte-limit' };
+  if (Buffer.byteLength(body) > MAX_MEASURED_REQUEST_BYTES)
+    return { ...base, error: 'request-byte-limit' };
   const signal = AbortSignal.any([
     AbortSignal.timeout(60000),
     ...(options.signal ? [options.signal] : []),

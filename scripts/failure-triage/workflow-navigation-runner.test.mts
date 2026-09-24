@@ -198,6 +198,41 @@ test('invalid independent approval blocks transport and leaves no journal', asyn
   }
 });
 
+test('reservation rejects later requests over the transport byte limit, including escaped text', () => {
+  const sealed = plan();
+  for (const text of ['中'.repeat(8000), '\\'.repeat(8000)]) {
+    const oversized = sealPlan(
+      [
+        {
+          ...cases[0],
+          sources: [
+            { id: 'one', title: 'First observation', text },
+            { id: 'two', title: 'Second observation', text },
+            { id: 'three', title: 'Third observation', text },
+          ],
+        },
+      ],
+      sealed.advice,
+      { maxTurns: 4, maxReads: 3 },
+      { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+    );
+    assert.throws(
+      () =>
+        reservation(oversized, {
+          ...config,
+          maxInputTokens: 100000,
+          maxTotalTokens: 1000000,
+          price: {
+            ...config.price,
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+        }),
+      /transport byte limit/,
+    );
+  }
+});
+
 test('approved fixture alternates evidence reads and answers with native receipts in a journal', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'navigation-approved-'));
   try {

@@ -412,7 +412,7 @@ export async function main([command, ...args]: string[]): Promise<void> {
     });
   }
   fail(
-    'Usage: seal-advice cases out | quote-advice plan config | advice plan config method approval journal out | seal-worker cases advice-plan advice-result advice-journal reference out | quote-worker plan config | worker plan config method approval journal out | blind plan sessions out | score plan sessions reference blind judgment method worker-journal out',
+    'Usage: seal-advice cases out [limits] | quote-advice plan config | advice plan config method approval journal out | seal-worker cases advice-plan advice-result advice-journal reference out | quote-worker plan config | worker plan config method approval journal out | blind plan sessions out | score plan sessions reference blind judgment method worker-journal out',
   );
 }
 
