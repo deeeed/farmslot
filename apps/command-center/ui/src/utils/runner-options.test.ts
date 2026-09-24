@@ -88,6 +88,15 @@ test('modelsForRunner returns only that runner allowlist — no cross-runner ble
   assert.deepEqual(modelsForRunner('unknown-runner'), []);
 });
 
+test('saved legacy Codex models stay selectable without appearing in new model lists', () => {
+  assert.equal(modelsForRunner('codex').includes('gpt-5.5'), false);
+  assert.equal(modelsForRunner('codex').includes('gpt-5.4'), false);
+  assert.equal(modelsForRunner('codex', 'gpt-5.5').at(-1), 'gpt-5.5');
+  assert.equal(modelsForRunner('codex', 'gpt-5.4').at(-1), 'gpt-5.4');
+  assert.deepEqual(modelsForRunner('codex', 'unsupported'), modelsForRunner('codex'));
+  assert.deepEqual(modelsForRunner('claude', 'gpt-5.4'), modelsForRunner('claude'));
+});
+
 test('Codex defaults to GPT-6 Sol and retains Astra alongside the 5.6 family', () => {
   assert.equal(DEFAULT_MODEL.codex, DEFAULT_CODEX_MODEL);
   assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-sol');

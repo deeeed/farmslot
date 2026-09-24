@@ -69,8 +69,12 @@ export const DEFAULT_MODEL: Record<string, string> = {
 };
 
 /** Canonical selectable models for a runner. Never mixes models across runners. */
-export function modelsForRunner(runner: string): string[] {
-  return [...(MODELS_BY_RUNNER[runner] ?? [])];
+export function modelsForRunner(runner: string, selectedModel?: string): string[] {
+  const models = [...(MODELS_BY_RUNNER[runner] ?? [])];
+  if (runner === 'codex' && (selectedModel === 'gpt-5.5' || selectedModel === 'gpt-5.4')) {
+    models.push(selectedModel);
+  }
+  return models;
 }
 
 /** Keep a selected model when still valid; otherwise fall back to the runner default. */

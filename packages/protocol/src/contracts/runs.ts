@@ -2948,7 +2948,7 @@ export const DEFAULT_CLAUDE_MODEL = 'opus';
 /** Default Codex model used when no slot/task/project/user override is set. */
 export const DEFAULT_CODEX_MODEL = 'gpt-6-sol';
 
-/** Reasoning efforts exposed by the Codex CLI, including Astra's max and ultra. */
+/** Reasoning efforts exposed by the Codex CLI, including max and ultra. */
 export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number];
 
