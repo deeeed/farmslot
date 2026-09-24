@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const VERDICTS = new Set(['supported', 'contradicted', 'insufficient']);
+const V3_QUESTION_SCHEMA_HASH = '37c010cfcc3bb378e16d48f32f6588bedbed5f3137252920b445443490e5eb63';
 const EXCLUDED_MODES = new Set(['visual', 'mixed']);
 const FROZEN_HASHES = {
   2: {
@@ -12,7 +13,7 @@ const FROZEN_HASHES = {
   },
   3: {
     cases: '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
-    labels: '1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a',
+    labels: '4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986',
   },
 };
 
@@ -179,7 +180,7 @@ export function evaluate(study, frozenCases, labels) {
           record.policyVersion !== 'acceptance-evidence-v1' ||
           !record.provider ||
           !record.model ||
-          !/^[a-f0-9]{64}$/.test(record.questionSchemaHash ?? ''),
+          record.questionSchemaHash !== V3_QUESTION_SCHEMA_HASH,
       ) ||
       new Set(
         records.map((record) =>

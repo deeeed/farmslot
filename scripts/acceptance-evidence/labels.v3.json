@@ -24,7 +24,7 @@
     {
       "id": "case-df79ab632b",
       "expected": "contradicted",
-      "rationale": "The config says 09:00 UTC, but the persisted next run time for J6 is 10:00 UTC."
+      "rationale": "The config requests 09:00 UTC, but persisted scheduler state for J6 has next_run_at at 10:00 UTC; the stored runtime value determines the job’s current schedule."
     },
     {
       "id": "case-e2864820eb",

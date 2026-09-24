@@ -266,7 +266,7 @@ test('v3 offline study binds every record to its frozen gateway packet', async (
       inputDigest: hash(packet),
       provider: 'fixture',
       model: 'fixture-model',
-      questionSchemaHash: 'a'.repeat(64),
+      questionSchemaHash: '37c010cfcc3bb378e16d48f32f6588bedbed5f3137252920b445443490e5eb63',
     };
     result.policyVersion = 'acceptance-evidence-v1';
     records.push(result);

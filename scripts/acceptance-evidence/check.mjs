@@ -115,7 +115,7 @@ console.log(
 // unchanged adapter-only result and is never treated as a gateway study.
 const v3Hashes = {
   'cases.v3.json': '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
-  'labels.v3.json': '1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a',
+  'labels.v3.json': '4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986',
 };
 for (const [name, hash] of Object.entries(v3Hashes)) {
   const bytes = readFileSync(new URL(name, import.meta.url));

@@ -284,6 +284,9 @@ test('new synthetic AC cases exercise gateway methods and audit store', async ()
     const wrongSourceId = structuredClone(study);
     wrongSourceId.assessmentRecords[0].subject.run.sources[0].sourceId = 'artifacts/other.log';
     assert.throws(() => evaluate(wrongSourceId, cases, labels), /snapshot, input or admission/);
+    const wrongId = structuredClone(study);
+    wrongId.assessmentRecords[0].subject.run.sources[0].id = 'artifacts/other.log';
+    assert.throws(() => evaluate(wrongId, cases, labels), /snapshot, input or admission/);
     const swappedAdmission = structuredClone(study);
     const first = swappedAdmission.assessmentRecords[0];
     const second = swappedAdmission.assessmentRecords[1];

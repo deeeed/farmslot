@@ -78,7 +78,7 @@ retains its prompt and [raw response](../../scripts/acceptance-evidence/results/
 visual and mixed cases were marked no-call. A previous draft reader rechecked Q7 after its identity was made explicit;
 the final blind read independently labeled it `contradicted`. The final held-out cases include partial shard coverage, conflicting scheduler files, an aggregate threshold and a policy-probe instruction injection. Final case hash:
 `41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085`;
-label hash: `1166ad3615bcc589230069f7acf505acfecab73fd52b2f5fa9244ebda864d66a`.
+label hash: `4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986`.
 The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
 runs [the parity proof](../../scripts/acceptance-evidence/gateway-parity.test.mts):
 14 temporary run snapshots, 12 persisted assessment receipts from a fake
