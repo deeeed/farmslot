@@ -335,6 +335,29 @@ cli(
 const report = JSON.parse(await readFile(file('report.json'), 'utf8'));
 assert.equal(report.decision, 'exploratory-complete');
 assert.equal(report.completeMetricsPairs, 2);
+assert.deepEqual(
+  report.pairs.map(
+    (pair: {
+      baseline: { firstReadIncludesRequired: boolean };
+      assisted: { firstReadIncludesRequired: boolean };
+    }) => [pair.baseline.firstReadIncludesRequired, pair.assisted.firstReadIncludesRequired],
+  ),
+  [
+    [true, true],
+    [true, true],
+  ],
+);
+for (const kind of ['named', 'abstention'] as const) {
+  assert.deepEqual(report.navigation[kind], {
+    cases: 1,
+    missing: { baseline: 0, assisted: 0 },
+    zeroRead: { baseline: 0, assisted: 0 },
+    firstReadHits: { baseline: 1, assisted: 1 },
+    equalQualityPairs: 1,
+    matchedReads: { baseline: 1, assisted: 1 },
+    matchedTurns: { baseline: 2, assisted: 2 },
+  });
+}
 assert.deepEqual(report.totals, {
   tokens: { baseline: 80, assisted: 110 },
   costUsd: { baseline: 0.00004, assisted: 0.00024 },

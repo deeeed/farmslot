@@ -138,55 +138,28 @@ budgets. Otherwise the decision is `hold`. Transport fixtures always report
 `efficiencyClaim` stays `not_established`. Correct diagnostic classification is
 a proxy; operator time and whole-workflow token savings need matched trials.
 
-## Draft multi-turn navigation pilot
+## Navigation metrics and rejected draft
 
-`navigation-cases.v2.json` and `navigation-reference.v2.json` are revised,
-`draft-unsealed` synthetic cases. Corpus revision v2 uses the existing reference
-schema version 1; `navigationReferenceHash` accepts it, but the scoring CLI
-requires `status: frozen` before a live comparison. The original v2 draft failed
-independent review on September 24, 2026 because source names and order exposed
-the intended answer, some families overlapped, and some labels were debatable.
-The first revision also failed independent review: semantic source IDs and
-overlapping mechanisms still cued the answer. The current draft uses per-case
-opaque source IDs and generic evidence-type titles; its dependency and remote
-certificate cases replace the overlapping resource and endpoint cases. It still
-failed a source-only independent label and evidence review. The reviewer found
-that `profile-request` does not establish its definite environment cause,
-`export-count-gap` asks for a missing first filter that its evidence never
-claims is missing, and `checkout-revision` calls slot Git state
-"Application state". Several next checks repeat already-read facts rather than
-request new diagnostics. Keep the reviewed draft and its feasibility result
-unchanged; a corrected corpus requires a new version, a new independent review
-and a predeclared comparison method. Do not seal it or call a provider.
+The scorer reports missing and zero-read arms separately. It counts first reads
+of a required source, including when another read is needed, and reports
+read/turn totals only for independently accepted equal-quality pairs. Separate
+named-advice and abstention cohorts prevent one from hiding the other. These
+diagnostics alone establish no token, cost or time saving.
 
-Five revised cases have a single listed required read and three require two.
-The required sources span all four positions. The title "Application state"
-is inaccurate for the checkout case, as noted above. No required title appears
-more than three times. IDs carry no diagnosis.
+A revised eight-case synthetic draft failed independent source-only review. One
+definite cause was unsupported, a next check assumed missing evidence, and a
+Git checkout observation was titled as application state. A metadata-only
+first-read check chose a required source in 6/8 cases, including 4/5 cases
+with one required read, leaving little room for fewer reads. There were no
+provider calls, usage receipts or paired worker answers on that draft. Its
+exact case and reference files are excluded from the shipped corpus; the
+reviewed bytes and hashes remain in the PR's earlier commits and the
+operator's ignored `temp/navigation-v2-rejected/` directory. Do not tune that
+draft against its observed picks. A new, independently reviewed and versioned
+corpus needs a predeclared comparison method before any live advice call.
 
-The source titles are synthetic evidence categories, so they can affect a
-reader's first choice. The metadata-only feasibility pass below tested titles
-and order. It stays outside any paired score and cannot measure advice savings.
-Freeze a new,
-independently reviewed corpus, reference, worker limits and comparison method
-before calling the advice provider.
-
-The revised case-file SHA-256 is `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`;
-the reference-file SHA-256 is `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`.
-A metadata-only first-read feasibility pass on September 24, 2026 gave a
-low-effort Luna worker the eight failure summaries and source IDs/titles in
-case-file order. It saw no case IDs, source text or references. Its first picks
-were `e1,e3,e2,e4,e2,e2,e3,e4`: 6/8 selected a required source, including
-4/5 single-read cases. There are no native usage receipts or paired answers;
-this pass cannot establish advice quality, cost or time savings. It does show
-that the current cases leave little room for fewer first reads. Hold live
-advice generation on this corpus. Do not change these cases based on the
-observed picks to seek a favorable result. A different, independently reviewed
-failure set needs its own version and a predeclared comparison method.
-
-The reference remains unsealed. V1 is also quarantined: inspect its frozen
-results offline, but do not make new provider calls on either corpus. Keep v1's
-frozen hashes and results unchanged.
+V1 is quarantined too: inspect its frozen results offline and do not make new
+provider calls. Keep its hashes and results unchanged.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
