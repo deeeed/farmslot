@@ -233,6 +233,36 @@ test('reservation rejects later requests over the transport byte limit, includin
   }
 });
 
+test('reservation selects the worst escaped pair when only two of four sources can be read', () => {
+  const sealed = plan();
+  const escaped = sealPlan(
+    [
+      {
+        ...cases[0],
+        sources: [
+          { id: 'unicode', title: 'Large UTF-8 source', text: '中'.repeat(8000) },
+          { id: 'slashes-one', title: 'First escaped source', text: '\\'.repeat(8000) },
+          { id: 'slashes-two', title: 'Second escaped source', text: '\\'.repeat(8000) },
+          { id: 'plain', title: 'Unescaped source', text: 'a'.repeat(8000) },
+        ],
+      },
+    ],
+    sealed.advice,
+    { maxTurns: 3, maxReads: 2 },
+    { referenceHash: sealed.referenceHash, adviceProvenance: sealed.adviceProvenance },
+  );
+  assert.throws(
+    () =>
+      reservation(escaped, {
+        ...config,
+        maxInputTokens: 100000,
+        maxTotalTokens: 1000000,
+        price: { ...config.price, inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      }),
+    /transport byte limit/,
+  );
+});
+
 test('approved fixture alternates evidence reads and answers with native receipts in a journal', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'navigation-approved-'));
   try {
