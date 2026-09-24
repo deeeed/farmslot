@@ -168,6 +168,10 @@ metadata-only first-read pass on September 24, 2026 used a cheap worker with
 case IDs, reference answers and source text hidden. It selected a required
 source in 3/8 cases, including 1/5 single-read cases. This is a feasibility
 check without receipts or paired quality; it does not establish savings.
+The recorded first picks in case-file order were `e1,e2,e2,e3,e2,e3,e3,e4`.
+A discarded earlier pass exposed case IDs and cannot count as a blind check.
+The revised case-file SHA-256 is `3936d025685e2bc7953d114166b2a1f201e2b6ae4a36fbb247a3b5f32cbe637e`;
+the reference-file SHA-256 is `594bba87093dcee61b1ffb98a16fbf50caff837203ba47c8ecfb13aebaf4b43c`.
 The independent mechanism review found no remaining overlap with v1, but the
 reference stays unsealed pending a complete frozen study method and approval.
 Keep v1's frozen hashes and results unchanged.
