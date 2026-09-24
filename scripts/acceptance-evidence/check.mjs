@@ -104,7 +104,9 @@ assert.equal(heldCorrect, 8);
 assert.deepEqual(wrongInsufficient, ['held-insufficient-negative']);
 assert.equal(probe.pricing.inputUsdPerMillion, 0.042);
 assert.equal(probe.pricing.outputUsdPerMillion, 0);
-assert.ok((tokens * probe.pricing.inputUsdPerMillion) / 1_000_000 <= probe.maxUsd);
+const estimatedUsd = (tokens * probe.pricing.inputUsdPerMillion) / 1_000_000;
+assert.equal(Number(estimatedUsd.toFixed(8)), probe.estimatedUsd);
+assert.ok(estimatedUsd <= probe.maxUsd);
 console.log(
   `Recorded AC adapter probe: ${heldCorrect}/9 held-out; hold on ${wrongInsufficient.join(', ')}`,
 );
