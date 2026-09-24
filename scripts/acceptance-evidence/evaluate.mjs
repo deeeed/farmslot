@@ -116,6 +116,8 @@ function normalizeRecord(record, path) {
     criterion,
     snapshotHash: record.subject.run.snapshotHash,
     sourceRef: admission.sourceRef,
+    inputDigest: record.requestedIdentity?.inputDigest,
+    sources: record.subject.run.sources,
     attempted: used,
     tokens,
     cost,
@@ -210,16 +212,25 @@ export function evaluate(study, frozenCases, labels) {
           criterion: { id: frozen.criterionId, text: frozen.criterion },
           evidence: frozen.evidence.map(({ id, text }) => ({ id, text })),
         };
-        const hash = createHash('sha256')
-          .update(JSON.stringify({ runId: record.runId, packet }))
-          .digest('hex');
+        const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
         return (
-          record.snapshotHash !== hash ||
+          record.snapshotHash !== hash({ runId: record.runId, packet }) ||
+          record.inputDigest !== hash(packet) ||
+          !Array.isArray(record.sources) ||
+          record.sources.length !== frozen.evidence.length ||
+          record.sources.some((source, index) => {
+            const evidence = frozen.evidence[index];
+            return (
+              source?.id !== evidence.id ||
+              source?.sourceId !== evidence.id ||
+              source?.digest !== hash(evidence.text)
+            );
+          }) ||
           record.sourceRef !== `synthetic:acceptance-evidence-v3/${entry.caseId}`
         );
       })
     )
-      fail(`${entry.caseId} record snapshot or admission does not match the gateway packet`);
+      fail(`${entry.caseId} record snapshot, input or admission does not match the gateway packet`);
     const previousCase = caseForRun.get(entry.assistedRunId);
     if (previousCase && previousCase !== entry.caseId)
       fail(`assisted run ${entry.assistedRunId} is associated with multiple frozen cases`);

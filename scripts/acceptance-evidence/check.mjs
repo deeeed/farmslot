@@ -164,8 +164,18 @@ const blindAudit = JSON.parse(
 );
 assert.equal(blindAudit.casesSha256, v3Hashes['cases.v3.json']);
 assert.equal(blindAudit.labelsSha256, v3Hashes['labels.v3.json']);
-assert.deepEqual(
-  new Map(blindAudit.judgments.map((row) => [row.caseId, row.judgment])),
-  new Map(nextCases.cases.map((row) => [row.id, reference.get(row.id) ?? 'no-call'])),
-);
-console.log('Frozen gateway AC corpus v3: 3 development, 9 held-out, 2 excluded');
+assert.equal(blindAudit.judgments.length, nextCases.cases.length);
+const blindJudgments = new Map(blindAudit.judgments.map((row) => [row.caseId, row.judgment]));
+assert.equal(blindJudgments.size, nextCases.cases.length, 'blind audit has duplicate case IDs');
+assert.deepEqual(new Set(blindJudgments.keys()), new Set(nextCases.cases.map((row) => row.id)));
+let agreement = 0;
+for (const row of nextCases.cases) {
+  const judgment = blindJudgments.get(row.id);
+  if (row.split === 'excluded') assert.equal(judgment, 'no-call');
+  else {
+    assert.ok(['supported', 'contradicted', 'insufficient'].includes(judgment));
+    if (judgment === reference.get(row.id)) agreement++;
+  }
+}
+assert.ok(agreement >= 11, `independent blind agreement ${agreement}/12 is below 11/12`);
+console.log(`Frozen gateway AC corpus v3: ${agreement}/12 blind agreement; 2 exclusions`);

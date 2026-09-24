@@ -13,7 +13,7 @@ f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9  labels.v2.json
 
 Run `node scripts/acceptance-evidence/check.mjs` to verify both hashes, label coverage and the two no-call cases.
 
-There are three development examples and nine held-out examples, balanced across the three judgments, plus two excluded proof modes. Do not tune the held-out cases after a model run. v1 is retained for audit, but its development HTTP case was ambiguous and its AC IDs leaked the held-out labels. v2 corrects that case and uses AC-1 for every case. The importer must send only the criterion text and named evidence, never the case ID, split or labels. A further change to inputs, labels, rubric or split requires v3 and a new hash.
+There are three development examples and nine held-out examples, balanced across the three judgments, plus two excluded proof modes. Do not tune the held-out cases after a model run. v1 is retained for audit, but its development HTTP case was ambiguous and its AC IDs leaked the held-out labels. v2 corrects that case and uses AC-1 for every case. The importer must send only the criterion text and named evidence, never the case ID, split or labels. A further change to inputs, labels, rubric or split requires a new corpus version and hash.
 
 The baseline is an unassisted validator reading the same criterion and identified text evidence through the existing acceptance workflow, without seeing labels or provider advice. For a paired task study, assign matched cases in counterbalanced order, record the validator's verdict, the evidence IDs used, elapsed time and total agent tokens/cost. Repeat with opt-in advice shown and have an independent reader judge correctness while blind to the lane. Count every assessment attempt, including failed calls, latency, input/output/cache tokens, estimated/reported/unknown cost, and time spent reading advice. Report accuracy and a confusion matrix on the nine held-out cases, false confident judgments on insufficient cases, skipped visual/mixed calls, exclusions and each pair's whole-workflow measures. Missing usage, unmatched pairs or unequal correctness means efficiency is inconclusive. No response in these synthetic cases establishes accuracy for production evidence.
 
@@ -130,9 +130,9 @@ production assessment record could satisfy the v2 evaluator. Do not rename v2
 cases, make more candidate calls on them or reinterpret that result as gateway proof.
 
 Version 3 is a new synthetic corpus with gateway-readable artifact paths and
-opaque IDs. An independent blind reader checked its reference judgments before
-freezing it; [the dated blind audit](results/v3-blind-label-audit.json) records
-all first-pass judgments without model calls. The SHA-256 hashes are:
+opaque IDs. A fresh independent reader checked the final v3 cases without seeing
+the reference labels; [the dated blind audit](results/v3-blind-label-audit.json) records
+all first-pass judgments on that final hash without provider calls. The SHA-256 hashes are:
 
 ```
 6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14  cases.v3.json
@@ -152,7 +152,8 @@ spends nothing and proves no model quality or workflow savings.
 
 A v3 study must set `corpusVersion: 3` alongside `version: 1` when passed to
 `node scripts/acceptance-evidence/evaluate.mjs <study.json>`. Every text record
-must come from the gateway snapshot for the recorded run and carry the exact
+must be consistent with the gateway snapshot, prepared input digest and
+source digests for the recorded run, and carry the exact
 synthetic admission `synthetic:acceptance-evidence-v3/<caseId>`. The older study
 format with an omitted `corpusVersion` continues to select frozen v2; an
 explicit `null` version is invalid. Never send IDs,
@@ -180,4 +181,12 @@ set and export are complete before evaluation; omitted attempts make costs
 and policy compliance unknowable. Capture paired worker judgments and full
 workflow time/tokens/cost separately; an assessment record cannot supply
 those measurements. The gateway parity test shows the exact file shapes and
-uses a temporary home so it does not alter real runs.
+uses a temporary home so it does not alter real runs. Its isolated tmux
+startup may log a harmless deferred-options message because it has no server.
+
+The offline hash and digest checks compare fields within the retained record
+against the frozen packet. They cannot authenticate who created a JSON export;
+retain the gateway history export unchanged and verify provenance separately.
+The small synthetic corpus may not distinguish models with similar accuracy.
+A pass here does not repair the v2 false-positive verdict or show production
+accuracy, and the separate paired study is required for an efficiency claim.

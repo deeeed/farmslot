@@ -146,14 +146,27 @@ test('new synthetic AC cases exercise gateway methods and audit store', async ()
       labels.labels.map((label: { id: string; expected: string }) => [label.id, label.expected]),
     );
     let nextVerdict = 'insufficient';
+    let nextCaseId = '';
     const registry = createAssessmentProviderRegistry([
       {
         id: 'codex-lb',
         defaultModel: 'fixture-model',
         credentialEnv: 'CODEX_LB_API_KEY',
         capabilities: ['choice'],
-        async assess() {
+        async assess(request) {
           providerCalls++;
+          const entry = cases.cases.find((item: { id: string }) => item.id === nextCaseId);
+          assert.ok(entry, nextCaseId);
+          assert.deepEqual(request.state, {
+            version: 1,
+            criterion: { id: entry.criterionId, text: entry.criterion },
+            evidence: entry.evidence,
+          });
+          assert.equal(JSON.stringify(request.state).includes(nextCaseId), false);
+          assert.equal(
+            JSON.stringify(request.state).includes('synthetic:acceptance-evidence-v3'),
+            false,
+          );
           return {
             returnedModel: 'fixture-model',
             answers: {
@@ -186,6 +199,7 @@ test('new synthetic AC cases exercise gateway methods and audit store', async ()
     assert.equal(providerCalls, 0);
     for (const admitted of policyEntries) {
       const caseId = admitted.sourceRef.split('/').at(-1)!;
+      nextCaseId = caseId;
       nextVerdict = expected.get(caseId)!;
       const result = await withPrincipal(() =>
         acceptanceEvidenceAnalyze(
@@ -244,10 +258,16 @@ test('new synthetic AC cases exercise gateway methods and audit store', async ()
     assert.equal(evaluate(wrongAnswer, cases, labels).gate, 'hold');
     const tampered = structuredClone(study);
     tampered.assessmentRecords[0].subject.run.snapshotHash = 'a'.repeat(64);
-    assert.throws(() => evaluate(tampered, cases, labels), /snapshot or admission/);
+    assert.throws(() => evaluate(tampered, cases, labels), /snapshot, input or admission/);
     const wrongSource = structuredClone(study);
     wrongSource.assessmentRecords[0].subject.run.admission.sourceRef = 'synthetic:other-source';
-    assert.throws(() => evaluate(wrongSource, cases, labels), /snapshot or admission/);
+    assert.throws(() => evaluate(wrongSource, cases, labels), /snapshot, input or admission/);
+    const wrongInput = structuredClone(study);
+    wrongInput.assessmentRecords[0].requestedIdentity.inputDigest = 'b'.repeat(64);
+    assert.throws(() => evaluate(wrongInput, cases, labels), /snapshot, input or admission/);
+    const wrongEvidence = structuredClone(study);
+    wrongEvidence.assessmentRecords[0].subject.run.sources[0].digest = 'c'.repeat(64);
+    assert.throws(() => evaluate(wrongEvidence, cases, labels), /snapshot, input or admission/);
     assert.throws(() => evaluate({ ...study, corpusVersion: 2 }, cases, labels), /corpusVersion/);
     assert.throws(() => evaluate({ ...study, corpusVersion: 4 }, cases, labels), /corpusVersion/);
     assert.throws(

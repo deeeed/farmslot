@@ -1,7 +1,7 @@
 {
   "version": 1,
   "readDate": "2026-09-24",
-  "method": "Case text reviewed without reference labels; judgments recorded before comparison. Q7 wording was rechecked after clarification.",
+  "method": "A fresh independent reader judged the final 14-case corpus identified by casesSha256 without seeing the reference labels. These are the first-pass judgments for this exact revision; earlier draft reads are not included.",
   "casesSha256": "6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14",
   "labelsSha256": "288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c",
   "judgments": [

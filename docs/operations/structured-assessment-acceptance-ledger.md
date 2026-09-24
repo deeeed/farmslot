@@ -72,12 +72,11 @@ that an opt-in gateway run retained every record. Do not enable routine AC
 calls or change the frozen label to chase a pass.
 
 PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a separately
-frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, an
-independent reader assigned labels from the case text before viewing the
-reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
+frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, a fresh independent reader assigned
+labels from the final 14-case revision without viewing the reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
 records agreement on all three development and nine held-out cases;
-visual and mixed cases were marked no-call. The reader rechecked Q7 after its identity was made explicit and confirmed
-`contradicted`. The final held-out cases include a policy-probe instruction
+visual and mixed cases were marked no-call. A previous draft reader rechecked Q7 after its identity was made explicit;
+the final blind read independently labeled it `contradicted`. The final held-out cases include a policy-probe instruction
 injection and avoid declaring missing result fields in the evidence. Final case hash:
 `6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14`;
 label hash: `288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c`.
@@ -89,3 +88,8 @@ admission binding. The fake provider has the reference answers, so its 9/9
 held-out result is a transport check, not evidence of provider accuracy. Equal
 validator arms remain inconclusive; no live model call or measured workflow
 improvement is claimed. The frozen v2 adapter-only pilot remains **hold**.
+
+The v3 cases are small synthetic checks; several labels depend on one field or
+missing outcome. A high score on them cannot establish production accuracy or
+repair the wrong definite v2 verdict. The gateway-method test checks retained
+record consistency, not export authenticity, provider quality or efficiency.
