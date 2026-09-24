@@ -4,7 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,6 +28,7 @@ import type {
   DispatchQueueAddResult,
   DispatchQueueListResult,
 } from '../packages/protocol/src/index.js';
+import { FLOW_STEPS, PipelineSteps } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
@@ -101,6 +102,7 @@ assert(
     'bare-pr',
     'linked-qa',
     'automatic-qa',
+    'base-review-depth',
   ].includes(scenario),
   'Expected profiles, legacy-queue or conflicts',
 );
@@ -312,6 +314,124 @@ process.stdout.write(JSON.stringify(body));
   { mode: 0o700 },
 );
 
+// Base self-review depth: the gateway launches real reviewer windows on a private tmux
+// server. The reviewer CLI is a fixture that only keeps its pane alive, so no model runs.
+const tmuxEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: path.join(fixture, 't') };
+delete tmuxEnv.TMUX;
+delete tmuxEnv.TMUX_PANE;
+const depthRuns = { 'base-new': 'first-new', 'base-legacy': 'first-legacy' } as const;
+if (scenario === 'base-review-depth') {
+  await mkdir(tmuxEnv.TMUX_TMPDIR!, { mode: 0o700 });
+  await writeFile(
+    path.join(fixture, 'bin', 'cursor-agent'),
+    '#!/bin/sh\n# Reviewer fixture: holds the pane open and never calls a model.\nwhile :; do sleep 1; done\n',
+    { mode: 0o700 },
+  );
+  const projectPath = path.join(fixture, 'projects/first/project.json');
+  const project = JSON.parse(await readFile(projectPath, 'utf8'));
+  project.self_review = {
+    enabled: true,
+    runner: 'cursor',
+    model: 'fixture-model',
+    max_retries: 0,
+    review_timeout_min: 30,
+  };
+  await json(projectPath, project);
+  await mkdir(path.join(fixture, 'projects/first/templates/worker'), { recursive: true });
+  await writeFile(
+    path.join(fixture, 'projects/first/templates/worker/self-review.md'),
+    '# Fixture self-review\n\nVALIDATION_DEPTH: {{VALIDATION_DEPTH}}\n\n- [ ] Review the change.\n',
+  );
+  const poolPath = path.join(fixture, 'pool', 'first.json');
+  const pool = JSON.parse(await readFile(poolPath, 'utf8'));
+  pool.cursor_path = path.join(fixture, 'bin', 'cursor-agent');
+  for (const [runId, slotId] of Object.entries(depthRuns)) {
+    const repo = path.join(fixture, slotId);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    await mkdir(path.join(repo, '.task', runId), { recursive: true });
+    git('init', '-q', '-b', 'main');
+    await writeFile(path.join(repo, '.git/info/exclude'), '.task/\n.agent/\n');
+    await writeFile(path.join(repo, 'app.txt'), 'base\n');
+    git('add', 'app.txt');
+    git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.com', 'commit', '-qm', 'base');
+    git('checkout', '-qb', 'fixture-change');
+    await writeFile(path.join(repo, 'app.txt'), 'change\n');
+    git(
+      '-c',
+      'user.name=fixture',
+      '-c',
+      'user.email=fixture@example.com',
+      'commit',
+      '-qam',
+      'change',
+    );
+    await writeFile(path.join(repo, '.task', runId, 'TASK.md'), '# Fixture task\n');
+    const taskFile = path.join(fixture, 'projects/first/tasks', runId, 'TASK.md');
+    await mkdir(path.dirname(taskFile), { recursive: true });
+    await writeFile(taskFile, '# Fixture task\n');
+    pool.slots.push({ id: slotId, enabled: true, repo, session: slotId, resources: {} });
+    execFileSync('tmux', ['new-session', '-d', '-s', slotId, '-c', repo], { env: tmuxEnv });
+  }
+  await json(poolPath, pool);
+}
+
+// Seeded while the owning gateway is stopped: dev runs whose worker finished, so the engine's
+// next step is the base self-review.
+async function seedDepthRuns() {
+  const now = new Date().toISOString();
+  for (const [runId, slotId] of Object.entries(depthRuns)) {
+    const taskFile = path.join(fixture, 'projects/first/tasks', runId, 'TASK.md');
+    const steps = FLOW_STEPS.dev.map((name) => ({
+      name,
+      status:
+        FLOW_STEPS.dev.indexOf(name) < FLOW_STEPS.dev.indexOf(PipelineSteps.SELF_REVIEW)
+          ? 'done'
+          : 'pending',
+    }));
+    await json(path.join(fixture, 'runs', `${runId}.json`), {
+      id: runId,
+      familyId: runId,
+      parentRunId: null,
+      familyRootTicketOrPr: 'FIXTURE-DEPTH',
+      lane: 'production',
+      variant: null,
+      flowType: 'dev',
+      mode: 'autonomous',
+      status: 'self-reviewing',
+      project: 'first',
+      ticketOrPr: 'FIXTURE-DEPTH',
+      slotId,
+      branch: 'fixture-change',
+      taskFile,
+      createdByPrincipalId: 'legacy-env',
+      steps,
+      decisions: [],
+      metrics: { runner: 'cursor', model: 'fixture-model' },
+      createdAt: now,
+      updatedAt: now,
+      // Pre-migration: a base reviewer launched before depth was recorded carried no scope.
+      ...(runId === 'base-legacy'
+        ? {
+            agentContexts: [
+              {
+                id: 'legacy-reviewer',
+                role: 'self-review',
+                label: 'Self-review',
+                status: 'failed',
+                slotId,
+                runId,
+                runner: 'cursor',
+                model: 'fixture-model',
+                target: null,
+                startedAt: now,
+              },
+            ],
+          }
+        : {}),
+    });
+  }
+}
+
 function launchGateway() {
   const output = openSync(log, 'a', 0o600);
   const processHandle = spawn('yarn', ['workspace', '@farmslot/gateway', 'start'], {
@@ -319,7 +439,7 @@ function launchGateway() {
     detached: true,
     stdio: ['ignore', output, output],
     env: {
-      ...process.env,
+      ...(scenario === 'base-review-depth' ? tmuxEnv : process.env),
       PATH: `${path.join(fixture, 'bin')}${path.delimiter}${process.env.PATH}`,
       FARMSLOT_ROOT: fixture,
       ...(scenario === 'publication-direct'
@@ -334,7 +454,11 @@ function launchGateway() {
       GATEWAY_PORT: String(port),
       FARMSLOT_GATEWAY_TOKEN: token,
       FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
-      FARMSLOT_DISABLE_ORCHESTRATION: ['automatic-qa', 'publication-delivery'].includes(scenario)
+      FARMSLOT_DISABLE_ORCHESTRATION: [
+        'automatic-qa',
+        'publication-delivery',
+        'base-review-depth',
+      ].includes(scenario)
         ? '0'
         : '1',
       FARMSLOT_TEST_PUBLICATION_STATE: path.join(fixture, 'publication-provider.json'),
@@ -1374,6 +1498,129 @@ try {
         0,
       );
     }
+  } else if (scenario === 'base-review-depth') {
+    const step = (run: any) =>
+      run.steps.find((entry: { name: string }) => entry.name === PipelineSteps.SELF_REVIEW);
+    const reviewer = (run: any) =>
+      run.agentContexts?.findLast(
+        (context: any) => context.role === 'self-review' && context.status === 'working',
+      );
+    const waitRun = async (runId: string, what: string, predicate: (run: any) => boolean) => {
+      for (let attempt = 0; attempt < 300; attempt++) {
+        const { run } = await connection!.call<{ run: any }>('run.get', { runId });
+        if (predicate(run)) return run;
+        if (['failed', 'blocked', 'done', 'cancelled'].includes(run.status))
+          throw new Error(
+            `${runId} ${run.status} before ${what}: ${run.error ?? step(run)?.detail}`,
+          );
+        await delay(200);
+      }
+      throw new Error(`${runId} did not reach ${what}`);
+    };
+    // The engine records the depth on the step, then launches a reviewer that reads it.
+    const launched = async (runId: keyof typeof depthRuns, notBefore = '') => {
+      const run = await waitRun(
+        runId,
+        'a live base reviewer',
+        (candidate) =>
+          Boolean(step(candidate)?.inputs?.validationDepth) &&
+          (reviewer(candidate)?.attemptStartedAt ?? '') > notBefore,
+      );
+      const context = reviewer(run);
+      const checklist = await readFile(
+        path.join(fixture, depthRuns[runId], context.taskFile),
+        'utf8',
+      );
+      // The gateway-owned reviewer window runs the fixture reviewer CLI it launched.
+      const panePid = execFileSync(
+        'tmux',
+        ['display-message', '-p', '-t', context.target.target, '#{pane_pid}'],
+        { env: tmuxEnv, encoding: 'utf8' },
+      ).trim();
+      const processes = execFileSync('ps', ['-ax', '-o', 'pid=,ppid=,args='], {
+        encoding: 'utf8',
+      })
+        .split('\n')
+        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+        .filter((match): match is RegExpMatchArray => Boolean(match));
+      const paneTree = new Set([panePid]);
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const [, pid, ppid] of processes)
+          if (paneTree.has(ppid) && !paneTree.has(pid)) grew = paneTree.add(pid) !== undefined;
+      }
+      // The reviewer CLI itself (interpreter + script), not a shell line that mentions it.
+      const reviewerProcess = processes.find(
+        ([, pid, , args]) =>
+          paneTree.has(pid) &&
+          args
+            .split(' ')
+            .slice(0, 2)
+            .includes(path.join(fixture, 'bin', 'cursor-agent')),
+      )?.[3];
+      assert(reviewerProcess, `reviewer pane ${panePid} is not running the reviewer CLI`);
+      return {
+        run,
+        evidence: {
+          runId,
+          stepStatus: step(run).status,
+          stepStartedAt: step(run).startedAt,
+          stepValidationDepth: step(run).inputs.validationDepth,
+          reviewer: {
+            id: context.id,
+            status: context.status,
+            artifactScope: context.artifactScope ?? null,
+            window: context.target?.window ?? null,
+            attemptStartedAt: context.attemptStartedAt,
+            process: reviewerProcess.replace(fixture, '<fixture>').slice(0, 80),
+          },
+          checklistDepth: checklist.match(/^VALIDATION_DEPTH: (.+)$/m)?.[1] ?? null,
+        },
+      };
+    };
+    // Startup recovery defers slot-bound runs until a fleet snapshot exists, so let the
+    // first boot build it, then seed the runs and hand them to a fresh engine.
+    for (let attempt = 0; ; attempt++) {
+      const status = await readFile(path.join(fixture, '.farm-status.json'), 'utf8').then(
+        (text) => JSON.parse(text),
+        (error) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        },
+      );
+      if (status?.slots?.some((slot: { slot: string }) => slot.slot === 'first-new')) break;
+      assert(attempt < 150, 'Isolated gateway did not build its fleet snapshot');
+      await delay(200);
+    }
+    await stopGateway();
+    await seedDepthRuns();
+    gateway = launchGateway();
+    await connectGateway();
+    const fresh = await launched('base-new');
+    console.log(JSON.stringify({ claim: 'new-base-static', ...fresh.evidence }));
+    assert.equal(fresh.evidence.stepValidationDepth, 'static-code');
+    assert.equal(fresh.evidence.checklistDepth, 'static-code');
+    const legacy = await launched('base-legacy');
+    console.log(JSON.stringify({ claim: 'pre-migration-full-live', ...legacy.evidence }));
+    assert.equal(legacy.evidence.stepValidationDepth, 'full-live');
+    assert.equal(legacy.evidence.checklistDepth, 'full-live');
+    // The live reviewer carries no artifact scope, so after a restart only the recorded
+    // step depth distinguishes this run from a pre-migration one.
+    assert.equal(fresh.evidence.reviewer.artifactScope, null);
+    const restartedAt = new Date().toISOString();
+    await stopGateway();
+    gateway = launchGateway();
+    await connectGateway();
+    const resumed = await launched('base-new', restartedAt);
+    console.log(
+      JSON.stringify({ claim: 'restart-keeps-recorded', restartedAt, ...resumed.evidence }),
+    );
+    assert(
+      resumed.evidence.stepStartedAt > restartedAt,
+      'the restarted engine re-entered the step',
+    );
+    assert.equal(resumed.evidence.stepValidationDepth, 'static-code');
+    assert.equal(resumed.evidence.checklistDepth, 'static-code');
   } else if (['legacy-completed', 'legacy-pending', 'approved-qa'].includes(scenario)) {
     const { team } = await connection!.call<{ team: PRTeamProfile }>('prRules.teamSave', {
       config: {
@@ -1535,6 +1782,9 @@ try {
       scenario,
       endpoint: 'isolated production gateway',
       workerExecution: false,
+      ...(scenario === 'base-review-depth'
+        ? { reviewer: 'gateway-launched fixture CLI in a private tmux server; no model' }
+        : {}),
       provider: ['publication-delivery', 'publication-direct'].includes(scenario)
         ? 'isolated publication gh fixture; no live GitHub writes'
         : 'read-only deterministic gh process fixture',
@@ -1564,6 +1814,18 @@ try {
   throw new Error(`${String(error)}\n${details}`, { cause: error });
 } finally {
   await stopGateway();
+  // The private tmux server outlives the gateway; its socket exists only if it started.
+  const tmuxSocket = path.join(tmuxEnv.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
+  const tmuxStarted =
+    scenario === 'base-review-depth' &&
+    (await stat(tmuxSocket).then(
+      () => true,
+      (error) => {
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      },
+    ));
+  if (tmuxStarted) execFileSync('tmux', ['kill-server'], { env: tmuxEnv, stdio: 'pipe' });
   await rm(fixture, { recursive: true, force: true });
   process.removeListener('exit', terminateOwnedGateway);
 }
