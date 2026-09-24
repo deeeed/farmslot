@@ -12,8 +12,8 @@ const FROZEN_HASHES = {
     labels: 'f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9',
   },
   3: {
-    cases: '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
-    labels: '4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986',
+    cases: 'ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4',
+    labels: '31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1',
   },
 };
 

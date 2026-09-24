@@ -69,7 +69,7 @@
       "id": "case-df79ab632b",
       "split": "held-out",
       "criterionId": "AC-1",
-      "criterion": "Scheduler job J6 has next_run_at set to 09:00 UTC",
+      "criterion": "The persisted next_run_at for scheduler job J6 is 09:00 UTC",
       "proofMode": "state",
       "evidence": [
         {

@@ -77,8 +77,8 @@ labels from the final 14-case revision without a reference file; [the blind audi
 retains its prompt and [raw response](../../scripts/acceptance-evidence/results/v3-blind-label-raw.json) and records agreement on all three development and nine held-out cases;
 visual and mixed cases were marked no-call. A previous draft reader rechecked Q7 after its identity was made explicit;
 the final blind read independently labeled it `contradicted`. The final held-out cases include partial shard coverage, conflicting scheduler files, an aggregate threshold and a policy-probe instruction injection. Final case hash:
-`41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085`;
-label hash: `4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986`.
+`ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4`;
+label hash: `31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1`.
 The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
 runs [the parity proof](../../scripts/acceptance-evidence/gateway-parity.test.mts):
 14 temporary run snapshots, 12 persisted assessment receipts from a fake

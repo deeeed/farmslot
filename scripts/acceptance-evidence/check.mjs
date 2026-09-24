@@ -114,8 +114,8 @@ console.log(
 // v3 uses gateway-readable artifact paths and opaque IDs; v2 remains an
 // unchanged adapter-only result and is never treated as a gateway study.
 const v3Hashes = {
-  'cases.v3.json': '41261ac446de4887d7665b008eef4828dcddb52bbb3a0d21d4a4f66952488085',
-  'labels.v3.json': '4ab04f3a0f4157000f11f425c15092d4603ba9e5f6b7e4255a396efc5a749986',
+  'cases.v3.json': 'ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4',
+  'labels.v3.json': '31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1',
 };
 for (const [name, hash] of Object.entries(v3Hashes)) {
   const bytes = readFileSync(new URL(name, import.meta.url));
