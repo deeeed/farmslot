@@ -196,8 +196,9 @@ and `quote-worker` commands make no provider calls. Both estimates need
 verified price snapshots. `quote-advice` checks a 1024-byte envelope reserve;
 the worker checks its request size before each paid call.
 A separate independent reviewer must approve each paid stage's plan, config,
-method hash and journal path. Both paid stages consume approval once and stop
-on unknown charges. Keep plans, approvals, journals and results outside the
+method hash and journal path. Future approved TypeSafe advice needs
+`TYPESAFE_API_KEY`; the worker (or LLM advice provider) needs `STUDY_API_KEY`.
+Both paid stages consume approval once and stop on unknown charges. Keep plans, approvals, journals and results outside the
 tracked tree.
 
 Offline checks for v1:
@@ -231,9 +232,18 @@ wall time, unresolved judgments or unknown charges are inconclusive. The current
 blind export accepts one independent rater per answer. Record that reviewer,
 retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
+Direct library callers can submit invalid answers to blind review, but the
+scorer rejects those arms regardless of the reviewer's judgment. The live
+runner discards invalid turns before export.
 
-Inspect the retained v1 judgments and report offline. The `score` command
-makes no provider call. A completed arm with no read enters `zeroRead` and
+Inspect the retained v1 judgments and report offline. Replace the paths below
+with the saved private artifacts. `score` makes no provider call:
+
+```bash
+TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/failure-triage/workflow-navigation-cli.mts score /path/to/worker-plan.json /path/to/sessions.json scripts/failure-triage/navigation-reference.v1.json /path/to/blind.json /path/to/judgment.json /path/to/worker-method.md /path/to/worker-journal.jsonl /path/to/report.json
+```
+
+A completed arm with no read enters `zeroRead` and
 cannot register a first-read hit. Interrupted arms enter their own count and
 cannot register first-read hits. Compare advice-inclusive tokens, time and
 independently judged quality before claiming efficiency.
