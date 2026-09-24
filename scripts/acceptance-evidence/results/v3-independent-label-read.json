@@ -1,6 +1,6 @@
 {
   "recordedAt": "2026-09-24T14:15:37.907Z",
-  "method": "Independent read of stripped criterion/evidence by case order before opening frozen labels; no provider input included IDs or labels",
+  "method": "Operator-reported read of stripped criterion/evidence by case order before opening frozen labels. The saved result cannot attest the order of access; no provider input included IDs or labels",
   "casesSha256": "ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4",
   "labelsSha256": "31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1",
   "rows": [
