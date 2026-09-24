@@ -607,6 +607,7 @@ export function compareSessions(
             .filter((turn) => turn.action.type === 'read_evidence')
             .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id)
         : [];
+      // maxReads < maxTurns makes exhausted unreachable today; keep the terminal case explicit.
       return {
         status: session?.status ?? 'missing',
         quality: result(session, arm),

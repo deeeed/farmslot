@@ -235,8 +235,7 @@ blind export accepts one independent rater per answer. Record that reviewer,
 retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
 Direct library callers can submit invalid answers to blind review, but the
-scorer rejects those arms regardless of the reviewer's judgment. The live
-runner discards invalid turns before export.
+scorer rejects those arms regardless of the reviewer's judgment.
 
 Inspect the retained v1 judgments and report offline. Replace the paths below
 with the saved private artifacts. `score` makes no provider call:
