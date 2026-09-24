@@ -141,10 +141,10 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 ## Navigation metrics and rejected draft
 
 The scorer reports missing, interrupted and terminal zero-read arms separately.
-It counts first reads of a required source, even when another read is needed, and reports
-read/turn totals only for independently accepted equal-quality pairs. Separate
-named-advice and abstention cohorts prevent one from hiding the other. These
-diagnostics alone establish no token, cost or time saving.
+It counts completed arms whose first delivered read names a required source,
+even when another read is needed. Read/turn totals cover independently accepted
+equal-quality pairs only. Named advice and abstentions have separate cohorts and
+denominators. These diagnostics establish no token, cost or time saving.
 
 A revised eight-case synthetic draft failed independent source-only review. One
 definite cause was unsupported, a next check assumed missing evidence, and a
@@ -153,17 +153,23 @@ first-read check chose a required source in 6/8 cases, including 4/5 cases
 with one required read, leaving little room for fewer reads. There were no
 provider calls, usage receipts or paired worker answers on that draft. Its
 exact case and reference files are excluded from the shipped corpus; the
-reviewed bytes and hashes remain in the PR's earlier commits and the
-operator's ignored `temp/navigation-v2-rejected/` directory. Do not tune that
+reviewed bytes remain in the PR's earlier commits and the operator's ignored
+`temp/navigation-v2-rejected/` directory. Their SHA-256 hashes are
+`b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
+for cases and `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`
+for references. Do not tune that
 draft against its observed picks. A new, independently reviewed and versioned
 corpus needs a predeclared comparison method before any live advice call.
 
 V1 is quarantined too: inspect its frozen results offline and do not make new
-provider calls. Keep its hashes and results unchanged.
+provider calls. Keep its hashes and results unchanged. This is an operator
+policy; the CLI requires a separate approval for paid calls but does not
+identify a case file as quarantined.
 
 `navigation-cases.v1.json` has eight reviewed synthetic cases. The separate
 `navigation-reference.v1.json` holds their labels and source requirements; no
-provider request loads that file. Its reference status is `frozen`; this still permits only a small exploratory study.
+provider request loads that file. Its frozen status records the completed exploratory study; it does not
+permit another paid run.
 The case-file SHA-256 is `48caa3a48f03e26dda23ecdd7fcdaff90194f5a52127910d8da321a615e84e69`;
 the reference-file SHA-256 is `9a864f676cd188f2ec7e5ffc82c2730a6badce53e70c5dd416d286c5033febcc`.
 They cover overlapping incident families, so treat the eight pairs as an
@@ -177,7 +183,7 @@ A separately configured text-generating worker sees the same sources and
 instructions in both arms, with the source suggestion added only to the
 assisted arm. Each session can read at most two named sources in three turns;
 case order alternates arms. Unread source text and reference labels stay out
-of the advice request. Both live stages stop on unknown charges and never retry.
+of the advice request.
 
 The v1 corpus is frozen. Run only its offline checks and inspect existing
 receipts; do not use its sealed plans in `advice` or `worker`. For any future
@@ -198,8 +204,7 @@ TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test script
 
 The historical study generated advice before sealing a paired worker plan. It
 checked chosen sources and receipts for label leakage, quoted the worker plan,
-and obtained a separate approval before running worker sessions. The reviewer
-then judged blind answers before seeing arm assignments or costs.
+and obtained a separate approval before running worker sessions.
 
 A reviewer judges the blind rows before looking at arms, advice or costs.
 The export omits case IDs because their names can reveal the intended diagnosis;
@@ -223,17 +228,10 @@ retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
 
 Inspect the retained v1 judgments and report offline. The `score` command
-accepts a sealed worker plan, saved sessions, frozen reference, blind packet,
-judgments, worker method, worker journal and an output path; it makes no
-provider call.
-
-The scorer counts the first read of a required source, even when a case needs
-another read. An answered or exhausted arm with no read counts as a miss.
-Interrupted arms remain separate and do not count as zero-read choices.
-Read/turn totals cover only equal-quality accepted pairs, with that conditional
-denominator reported separately for named advice and abstentions. Those totals
-do not establish overall savings. Compare advice-inclusive tokens, time and
-independently judged quality before claiming efficiency.
+makes no provider call. A terminal arm with no read counts as a miss;
+interrupted arms do not count as zero-read choices or first-read hits. Compare
+advice-inclusive tokens, time and independently judged quality before claiming
+efficiency.
 
 Compare results by incident family and do not infer a population-wide gain from
 eight synthetic cases.
@@ -259,9 +257,16 @@ rejected quality, so a study-wide efficiency total is deliberately absent.
 Do not rerun or retune this frozen corpus to seek a positive result. A new
 study would need to isolate named hints from the abstention-prompt effect and
 freeze new cases before further candidate calls.
-All five named hints matched the baseline first read. Seven of eight references require two reads, the study limit, so this corpus could not demonstrate fewer reads for those cases. For new results, a provider abstention is recorded as null advice: the assisted worker receives the same prompt as the baseline for that case, while the advice call remains in assisted token, cost and time totals. Old sealed results and their generic abstention text are unchanged. Those
-legacy text abstentions enter the `named` cohort when rescored; compare the
-original result rather than treating that split as evidence about abstention. Before another live study, independently review and freeze fresh cases with enough optional evidence and read budget for a better first choice to save work. Report named-hint and abstention cases separately, and retain advice-inclusive totals.
+
+All five named hints matched the baseline first read. Seven of eight references
+require two reads, the study limit, so this corpus could not demonstrate fewer
+reads for those cases. For new results, a provider abstention is null advice:
+the assisted worker receives the baseline prompt, while the advice call stays
+in its token, cost and time totals. Old sealed results and their generic
+abstention text remain unchanged. Those text abstentions enter the `named`
+cohort when rescored; use the original result to judge abstention. Before
+another live study, independently review fresh cases with enough optional
+evidence and read budget for a better first choice to save work.
 
 Private raw plans, approvals, journals, blind judgments and the scored report
 are retained at `temp/triage/navigation-v1-luna/` in the operator checkout.

@@ -33,7 +33,7 @@ This sample is evidence against an efficiency claim, not a population estimate.
 All five named hints matched the baseline worker's first read; none changed the first evidence choice. Seven of eight cases require two reads, the study maximum, so the accepted answers could not save a read under this design. Future runs represent a provider abstention as null advice in the worker prompt while retaining the paid receipt. The frozen run above used an abstention message and remains unchanged. A new independently reviewed corpus must allow a useful hint to change the work before any further candidate calls.
 PR #736 adds offline first-read and read/turn diagnostics. Its revised corpus
 failed a source-only label review and is excluded from the shipped case files.
-A metadata-only worker chose a required first source in 6/8 draft cases. No
+A metadata-only first-read check chose a required source in 6/8 draft cases. No
 new advice calls or paired workflow results were produced; the efficiency
 claim remains on hold.
 

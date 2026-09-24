@@ -595,18 +595,22 @@ export function compareSessions(
       const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
       const review = reviews[arm];
       const referenceMatch = matchesReference(session);
+      // An invalid last turn never delivered its evidence to the worker.
+      const deliveredTurns =
+        session?.status === 'invalid' ? session.turns.slice(0, -1) : session?.turns;
       const readIds =
-        session?.turns
-          .filter((turn) => turn.action.type === 'read_evidence')
+        deliveredTurns
+          ?.filter((turn) => turn.action.type === 'read_evidence')
           .map((turn) => (turn.action as { type: 'read_evidence'; id: string }).id) ?? [];
       return {
         status: session?.status ?? 'missing',
         quality: result(session, arm),
         referenceMatch,
         readIds,
-        firstReadIncludesRequired: readIds.length
-          ? expected.requiredReadIds.includes(readIds[0])
-          : null,
+        firstReadIncludesRequired:
+          (session?.status === 'answered' || session?.status === 'exhausted') && readIds.length
+            ? expected.requiredReadIds.includes(readIds[0])
+            : null,
         readCount: readIds.length,
         turnCount: session?.turns.length ?? 0,
         answer:

@@ -312,6 +312,39 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
     baseline: 0,
     assisted: 1,
   });
+  const invalidRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('invalid-read', -1),
+  ).session;
+  const invalidSessions = [invalidRead, assisted];
+  const invalidNavigation = compareSessions(
+    sealed,
+    invalidSessions,
+    reference,
+    judgment(sealed, invalidSessions),
+  );
+  assert.deepEqual(invalidNavigation.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(invalidNavigation.navigation.named.zeroRead, { baseline: 0, assisted: 0 });
+  assert.deepEqual(invalidNavigation.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
+  assert.deepEqual(invalidNavigation.pairs[0].baseline.readIds, []);
+  assert.equal(invalidNavigation.pairs[0].baseline.firstReadIncludesRequired, null);
+  const activeRead = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    { type: 'read_evidence', id: 'runner.stderr' },
+    receipt('active-read'),
+  ).session;
+  const activeSessions = [activeRead, assisted];
+  const activeNavigation = compareSessions(
+    sealed,
+    activeSessions,
+    reference,
+    judgment(sealed, activeSessions),
+  );
+  assert.deepEqual(activeNavigation.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(activeNavigation.navigation.named.firstReadHits, { baseline: 0, assisted: 1 });
   const missingNavigation = compareSessions(
     sealed,
     [assisted],
