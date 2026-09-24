@@ -141,8 +141,9 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 ## Navigation metrics and rejected draft
 
 The scorer reports missing, interrupted and completed zero-read arms separately.
-Interrupted includes active sessions and invalid final turns. Invalid answers stay
-visible in blind review as attempted answers; invalid reads never delivered evidence.
+The live runner discards invalid actions before saving a session, leaving the
+arm `active` with no attempted answer in blind review. Direct library callers
+can also submit `invalid` sessions, which the scorer counts as interrupted.
 It counts completed arms whose first delivered read names a required source,
 even when another read is needed. Read/turn totals cover independently accepted
 equal-quality pairs only. Named advice and abstentions have separate cohorts and
