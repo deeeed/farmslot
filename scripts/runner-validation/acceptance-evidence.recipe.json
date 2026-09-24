@@ -24,9 +24,19 @@
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test services/gateway/src/methods/acceptance-evidence.test.ts",
         "timeout_ms": 60000,
         "intent": "Prove an admitted multi-file text packet works and does not change the AC ledger; exercise stale, visual, disabled, malformed and duplicate-call boundaries.",
+        "next": "gateway-parity"
+      },
+      "gateway-parity": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts",
+        "timeout_ms": 60000,
+        "intent": "Create temporary gateway-readable v3 runs; verify 12 persisted fake-provider receipts, frozen packet/admission binding, complete usage and visual/mixed refusal without external calls.",
         "next": "done"
       },
-      "done": { "action": "end", "status": "pass" }
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

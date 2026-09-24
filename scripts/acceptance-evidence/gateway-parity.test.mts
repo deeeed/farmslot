@@ -21,6 +21,8 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
       'FARMSLOT_ASSESSMENT_PROVIDER',
       'FARMSLOT_ASSESSMENT_MODEL',
       'CODEX_LB_API_KEY',
+      'TMUX',
+      'TMUX_TMPDIR',
     ].map((key) => [key, process.env[key]]),
   );
   Object.assign(process.env, {
@@ -30,6 +32,8 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
     FARMSLOT_ASSESSMENT_PROVIDER: 'codex-lb',
     FARMSLOT_ASSESSMENT_MODEL: 'fixture-model',
     CODEX_LB_API_KEY: 'synthetic-test-credential',
+    TMUX: '',
+    TMUX_TMPDIR: home,
   });
   const { createRun, deleteRun, updateRun } =
     await import('../../services/gateway/src/runs/store.js');
@@ -140,6 +144,10 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
     const withPrincipal = <T,>(operation: () => T) =>
       runWithSessionOriginator(principal, operation);
     let providerCalls = 0;
+    const expected = new Map<string, string>(
+      labels.labels.map((label: { id: string; expected: string }) => [label.id, label.expected]),
+    );
+    let nextVerdict = 'insufficient';
     const registry = createAssessmentProviderRegistry([
       {
         id: 'codex-lb',
@@ -153,7 +161,7 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
             answers: {
               verdict: {
                 type: 'choice' as const,
-                choice: 'insufficient',
+                choice: nextVerdict,
                 choices: ['supported', 'contradicted', 'insufficient'],
               },
             },
@@ -162,7 +170,25 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
         },
       },
     ]);
+    for (const excluded of cases.cases.filter(
+      (entry: { proofMode: string }) => entry.proofMode !== 'state',
+    )) {
+      const refused = await withPrincipal(() =>
+        acceptanceEvidenceAnalyze(
+          {
+            runId: runForCase.get(excluded.id)!,
+            criterionId: excluded.criterionId,
+            expectedSnapshotHash: 'a'.repeat(64),
+          },
+          registry,
+        ),
+      );
+      assert.equal(refused.reason, 'non-textual', excluded.id);
+    }
+    assert.equal(providerCalls, 0);
     for (const admitted of policyEntries) {
+      const caseId = admitted.sourceRef.split('/').at(-1)!;
+      nextVerdict = expected.get(caseId)!;
       const result = await withPrincipal(() =>
         acceptanceEvidenceAnalyze(
           {
@@ -173,7 +199,7 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
           registry,
         ),
       );
-      assert.equal(result.verdict, 'insufficient', admitted.sourceRef);
+      assert.equal(result.verdict, nextVerdict, admitted.sourceRef);
     }
     assert.equal(providerCalls, 12);
     const records = await assessmentRecords(principal.id);
@@ -188,7 +214,7 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
         const record = records.find((item) => item.subject.run?.id === runId);
         assert.ok(record, entry.id);
         const arm = {
-          judgment: 'insufficient',
+          judgment: expected.get(entry.id)!,
           elapsedMs: 100,
           workerTokens: 100,
           workerCostUsd: 0.01,
@@ -205,10 +231,33 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
     };
     const evaluated = evaluate(study, cases, labels);
     assert.equal(evaluated.assessment.attemptedCalls, 12);
-    assert.equal(evaluated.gate, 'hold'); // Deliberately poor fake provider: no quality claim.
+    assert.equal(evaluated.assessment.unknownUsageOrCostCalls, 0);
+    assert.deepEqual(evaluated.assessment.totals, {
+      tokens: 1248,
+      cost: 0.00006,
+      latency: 180,
+    });
+    assert.equal(evaluated.quality.provider.heldOut.correct, 9);
+    assert.equal(evaluated.gate, 'inconclusive'); // Equal arms: correct labels prove no savings.
+    const wrongAnswer = structuredClone(study);
+    const insufficientRecord = wrongAnswer.assessmentRecords.find(
+      (record) => record.subject.run.criterion.text === 'Webhook H4 was delivered exactly once',
+    );
+    assert.ok(insufficientRecord);
+    insufficientRecord.result.answers.verdict.choice = 'supported';
+    assert.equal(evaluate(wrongAnswer, cases, labels).gate, 'hold');
     const tampered = structuredClone(study);
     tampered.assessmentRecords[0].subject.run.snapshotHash = 'a'.repeat(64);
     assert.throws(() => evaluate(tampered, cases, labels), /snapshot or admission/);
+    const wrongSource = structuredClone(study);
+    wrongSource.assessmentRecords[0].subject.run.admission.sourceRef = 'synthetic:other-source';
+    assert.throws(() => evaluate(wrongSource, cases, labels), /snapshot or admission/);
+    assert.throws(() => evaluate({ ...study, corpusVersion: 2 }, cases, labels), /corpusVersion/);
+    assert.throws(() => evaluate({ ...study, corpusVersion: 4 }, cases, labels), /corpusVersion/);
+    assert.throws(
+      () => evaluate({ ...study, corpusVersion: undefined }, cases, labels),
+      /corpusVersion/,
+    );
   } finally {
     for (const id of runs) {
       updateRun(id, { status: 'failed' });

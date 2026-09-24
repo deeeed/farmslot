@@ -57,7 +57,7 @@
       "rationale": "A dispatch was accepted, but no delivery receipt or delivery count is recorded."
     },
     {
-      "id": "case-0da17e0a74",
+      "id": "case-72efdd3b17",
       "expected": "contradicted",
       "rationale": "The completed job reports two failed items rather than zero."
     }

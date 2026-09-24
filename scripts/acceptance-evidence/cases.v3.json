@@ -153,15 +153,15 @@
       ]
     },
     {
-      "id": "case-0da17e0a74",
+      "id": "case-72efdd3b17",
       "split": "held-out",
       "criterionId": "AC-1",
-      "criterion": "The completed reconciliation job had zero failed items",
+      "criterion": "The completed reconciliation job Q7 had zero failed items",
       "proofMode": "state",
       "evidence": [
         {
           "id": "artifacts/summary.json",
-          "text": "{\"job\":\"Q7\",\"status\":\"complete\",\"processed\":30,\"failed\":2}"
+          "text": "{\"job\":\"Q7\",\"type\":\"reconciliation\",\"status\":\"complete\",\"processed\":30,\"failed\":2}"
         }
       ]
     },

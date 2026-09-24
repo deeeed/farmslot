@@ -114,8 +114,8 @@ console.log(
 // v3 uses gateway-readable artifact paths and opaque IDs; v2 remains an
 // unchanged adapter-only result and is never treated as a gateway study.
 const v3Hashes = {
-  'cases.v3.json': '9ba8089b23b827b8474f9735f89167ebbef6c645fa4a718ebfdaad2e2899d910',
-  'labels.v3.json': 'c860b4c699145d7093abd04d01274a84fa47e6f40ca91437c28906b7663c4fff',
+  'cases.v3.json': 'e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221',
+  'labels.v3.json': 'b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0',
 };
 for (const [name, hash] of Object.entries(v3Hashes)) {
   const bytes = readFileSync(new URL(name, import.meta.url));
@@ -143,6 +143,7 @@ for (const row of nextCases.cases) {
     assert.ok(['supported', 'contradicted', 'insufficient'].includes(reference.get(row.id)));
     for (const item of row.evidence) {
       assert.match(item.id, /^artifacts\/(?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|log)$/);
+      assert.doesNotMatch(item.id, /(?:image|screenshot|visual)/i);
       assert.ok(item.text && Buffer.byteLength(item.text, 'utf8') <= 4096);
     }
   }

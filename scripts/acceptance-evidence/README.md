@@ -134,8 +134,8 @@ opaque IDs. An independent blind reader checked its reference judgments before
 freezing it. The SHA-256 hashes are:
 
 ```
-9ba8089b23b827b8474f9735f89167ebbef6c645fa4a718ebfdaad2e2899d910  cases.v3.json
-c860b4c699145d7093abd04d01274a84fa47e6f40ca91437c28906b7663c4fff  labels.v3.json
+e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221  cases.v3.json
+b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0  labels.v3.json
 ```
 
 `node scripts/acceptance-evidence/check.mjs` checks both frozen versions.
@@ -143,9 +143,11 @@ c860b4c699145d7093abd04d01274a84fa47e6f40ca91437c28906b7663c4fff  labels.v3.json
 creates temporary runs from all v3 cases and tests gateway eligibility and the
 visual/mixed no-call boundary. It also uses a **fake in-process provider** to
 generate 12 real gateway records and checks that the offline evaluator accepts
-their snapshots, admissions and usage, rejects a changed snapshot, and holds a
-provider that gives poor answers. This test spends nothing and proves no model
-quality or workflow savings.
+their snapshots, admissions and usage. It refuses visual/mixed analyze calls,
+rejects a changed snapshot or admission, and checks that a wrong definite
+answer holds while correct fake answers with equal worker arms remain
+inconclusive. The fake provider gets the reference labels from this test: it
+spends nothing and proves no model quality or workflow savings.
 
 A v3 study must set `corpusVersion: 3` alongside `version: 1` when passed to
 `node scripts/acceptance-evidence/evaluate.mjs <study.json>`. Every text record
@@ -158,3 +160,17 @@ A live experiment still needs a separately verified current price and spend
 cap, exact synthetic admission, complete assessment records and an independent
 paired baseline/assisted validator study at equal quality. Keep each attempt
 and its cost in the study. Until those results exist, **impact is unknown**.
+
+To prepare a live **synthetic-only** study, create one temporary run per case
+with its criterion in `inputs/handoff.json`, a matching `AC-1` entry in
+`artifacts/acceptance-status.json`, and each named evidence file under that
+run's task directory. Preview `acceptanceEvidenceGet` and place its exact
+`runId`, `criterionId`, and `snapshotHash` in the opt-in
+`acceptance-evidence-policy.json` with `classification: synthetic` and
+`sourceRef: synthetic:acceptance-evidence-v3/<caseId>`. Set a verified price
+and per-batch spend/call limits before analyzing. Export the complete
+`assessment.list` history for the run owner, including failed attempts, into
+the study's `assessmentRecords`. Capture paired worker judgments and full
+workflow time/tokens/cost separately; an assessment record cannot supply
+those measurements. The gateway parity test shows the exact file shapes and
+uses a temporary home so it does not alter real runs.
