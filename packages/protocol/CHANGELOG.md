@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Identify synthetic static-review checklist assessments as a separate consumer in retained history.
+
 - Add the official `ui.scroll_to` action with `UI_SCROLL_TO_PARAMS_SCHEMA` (surface, semantic target, measurable visibility anchor, alignment, HUD-safe viewport policy, visibility verification, settlement); action manifests must require string `surface_test_id` and `target_test_id`.
 - Group retained assessment usage, cost provenance and latency by consumer, provider and model for operator comparison.
 

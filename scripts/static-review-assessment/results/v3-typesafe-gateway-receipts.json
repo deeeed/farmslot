@@ -1,0 +1,984 @@
+{
+  "version": 1,
+  "mode": "live",
+  "corpusSha256": "9b8048e47eb56efdcd575f181feb7230f4a2349681e2177cd5365ed5cf0a5bd3",
+  "labelsSha256": "ae44bedd2065aad140585b8bafa50ba84c5f6d059bd819d83f5221a075856fbc",
+  "provider": "typesafe",
+  "model": "jev-1.13.0",
+  "price": {
+    "version": 1,
+    "provider": "typesafe",
+    "model": "jev-1.13.0",
+    "source": "https://docs.typesafe.ai/models",
+    "verifiedAt": "2026-09-24T15:21:32.955183Z",
+    "inputUsdPerMillion": 0.042,
+    "outputUsdPerMillion": 0,
+    "maxInputTokens": 8192,
+    "maxOutputTokens": 500
+  },
+  "maxReservedUsd": 0.0041287680000000005,
+  "records": [
+    {
+      "version": 1,
+      "id": "34738f4d-a835-4c69-86a4-ee8825f2a1a4",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-d486cb9114",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "2f196edf5f515c87b6773daf519694d41bb94e1ee9902cd93ec777494b1224ef",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-d486cb9114"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "2f196edf5f515c87b6773daf519694d41bb94e1ee9902cd93ec777494b1224ef",
+        "questionSchemaHash": "a41ba7dd1e075de6a9a74129cfb4b94457106409d9fc9d0bbdc3a93b1df8db34"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:50.130Z",
+      "status": "completed",
+      "reservation": {
+        "key": "0cdb49235d92a41ef22059c31e9e0dc03f2540d5dc904bfd18b308efa5fb2b57",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:50.516Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "112071a4de0925a580b851c9a428a014cef1c70438519be88f71c0635e32e024",
+        "stateHash": "bdca7a202586d259392e0d100c549b138a34a21b22f3fb261f4c0123a7ef6a2d",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "violation_L1",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 0,
+              "insufficient": 0,
+              "violation_L1": 0.98,
+              "violation_L2": 0.02
+            },
+            "confidence": 0.96
+          }
+        },
+        "usage": {
+          "inputTokens": 658,
+          "outputTokens": 70,
+          "durationMs": 338,
+          "requestId": "req_01a0d40237e676b88a3d9036a0b94a88",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000027636000000000004,
+          "costKind": "estimated"
+        },
+        "assessmentId": "34738f4d-a835-4c69-86a4-ee8825f2a1a4"
+      }
+    },
+    {
+      "version": 1,
+      "id": "3e2d889d-35f5-46a1-bb1f-2e9226c008a7",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-7ce42339e1",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "339a210ad953b35323fc8aac21dc1451503c8a8bf9a25ffa66822bf60eefe343",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-7ce42339e1"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "339a210ad953b35323fc8aac21dc1451503c8a8bf9a25ffa66822bf60eefe343",
+        "questionSchemaHash": "b50aa81f8deabbdbe32a8e6810837528ad62a8ae12ac354cebb58ffa981b41d6"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:48.555Z",
+      "status": "completed",
+      "reservation": {
+        "key": "cf0caf07265e928c07e2917dad6435dbc1b1c785a219788b6050b76f87073999",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:48.967Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "a9101d6873048f26972ccf6da44f0ce61a3af86ef9449fc236f430c97ab1f13a",
+        "stateHash": "6864fdc4b8762d2f3535fb035c7fba11925153e8041a8349f82da63a4951bc1e",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "violation_L1",
+            "probabilities": {
+              "satisfied": 0.01,
+              "not-applicable": 0.01,
+              "insufficient": 0.01,
+              "violation_L1": 0.73,
+              "violation_L2": 0.24
+            },
+            "confidence": 0.67
+          }
+        },
+        "usage": {
+          "inputTokens": 670,
+          "outputTokens": 70,
+          "durationMs": 407,
+          "requestId": "req_01a0d402319372a79990ffe3a8deee26",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.00002814,
+          "costKind": "estimated"
+        },
+        "assessmentId": "3e2d889d-35f5-46a1-bb1f-2e9226c008a7"
+      }
+    },
+    {
+      "version": 1,
+      "id": "3e509448-ed3d-4eaf-b118-0e2c20316989",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-ec428940a3",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "cc110dae414f94810a752e614eead7b7da016518a43db1b11b4f17995202280d",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-ec428940a3"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "cc110dae414f94810a752e614eead7b7da016518a43db1b11b4f17995202280d",
+        "questionSchemaHash": "c5dfaac3d4d221d50b32a6d5914cb295b721786c5f54c65cac7894b16e0ce153"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:49.716Z",
+      "status": "completed",
+      "reservation": {
+        "key": "debe086700cec1980fc3694b3bc248abcc99ed5ca187c154c85432b65bdf5eb3",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:50.081Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "2269d3d43782da7ac30d8cad5228117c106eee3f957c0ae3b7a9fdf5e2d17b67",
+        "stateHash": "bd1f42bde9aba1d7711f996ff7b839ed130edce2ae79356c8f2947401d45b8fa",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "insufficient",
+            "probabilities": {
+              "satisfied": 0.4,
+              "not-applicable": 0,
+              "insufficient": 0.59,
+              "violation_L1": 0.01
+            },
+            "confidence": 0.46
+          }
+        },
+        "usage": {
+          "inputTokens": 583,
+          "outputTokens": 60,
+          "durationMs": 358,
+          "requestId": "req_01a0d402361b72d991481edbec110ad1",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000024486,
+          "costKind": "estimated"
+        },
+        "assessmentId": "3e509448-ed3d-4eaf-b118-0e2c20316989"
+      }
+    },
+    {
+      "version": 1,
+      "id": "6658d661-d2e7-475e-b5a2-3f39ae48b2c5",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-584a94640c",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "cf147d1ac5ab6e8a0667271a5f863230c0632a387bacaa68134cf258759096bc",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-584a94640c"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "cf147d1ac5ab6e8a0667271a5f863230c0632a387bacaa68134cf258759096bc",
+        "questionSchemaHash": "e411944b9307ffb87c27155511df2afbc5fae9e5257fe53698fee44caba68fa3"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:48.984Z",
+      "status": "completed",
+      "reservation": {
+        "key": "56da3040472fb0f8340ba2893f46217e0c79e0b71a9796e1200c9df373f854bb",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:49.334Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "bb788cd7253cff7325a67dba0fbc0430641eb270cb176e14d499bc24fb9f2c0c",
+        "stateHash": "5693e913545ba44bf05b091c43c03b4b9bac0dca1333d3223f2323ea47a15494",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "satisfied",
+            "probabilities": {
+              "satisfied": 0.97,
+              "not-applicable": 0.01,
+              "insufficient": 0.01,
+              "violation_L1": 0.01
+            },
+            "confidence": 0.96
+          }
+        },
+        "usage": {
+          "inputTokens": 575,
+          "outputTokens": 59,
+          "durationMs": 343,
+          "requestId": "req_01a0d40233407eb5b5e09b03e1c66d73",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.00002415,
+          "costKind": "estimated"
+        },
+        "assessmentId": "6658d661-d2e7-475e-b5a2-3f39ae48b2c5"
+      }
+    },
+    {
+      "version": 1,
+      "id": "6e3801ea-02fe-48db-b0bc-c253f4f231a7",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-bae0f657ad",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "b10403d67a8509dd11b1730c4c162e82710e7e4aa7c7486a4ced7a79d0007fcd",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-bae0f657ad"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "b10403d67a8509dd11b1730c4c162e82710e7e4aa7c7486a4ced7a79d0007fcd",
+        "questionSchemaHash": "192ce3a7151130df3b2f27ffe997a1e3b3dbab4a24b1e7e85f28f7fdcc211183"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:46.976Z",
+      "status": "completed",
+      "reservation": {
+        "key": "aa74b078e629e95ccc970ea32471794d7477434a4f8c39ca35737cda12ed5e4e",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:47.360Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "74613ccbe395f6ce7a9bb1f3fa4173ad5f196c90fb57f5932e1cc671c9a183cc",
+        "stateHash": "ecc5e1df54a2ae700f9b3cab4f94eaa779aae90be88331fa9ca6139583477fb3",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "not-applicable",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 1,
+              "insufficient": 0,
+              "violation_L1": 0
+            },
+            "confidence": 1
+          }
+        },
+        "usage": {
+          "inputTokens": 525,
+          "outputTokens": 60,
+          "durationMs": 377,
+          "requestId": "req_01a0d4022b6872dc9af7300df2f45132",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.00002205,
+          "costKind": "estimated"
+        },
+        "assessmentId": "6e3801ea-02fe-48db-b0bc-c253f4f231a7"
+      }
+    },
+    {
+      "version": 1,
+      "id": "740bea74-35c1-4d95-b554-d64f9c5b2475",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-8fc1ae4896",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "67e9f2672a4c7a05b157f42a1260d67e5d53be389cbf48ca74b5f76c4cd2116a",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-8fc1ae4896"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "67e9f2672a4c7a05b157f42a1260d67e5d53be389cbf48ca74b5f76c4cd2116a",
+        "questionSchemaHash": "03800a50382c8403a26d751305c48cbc931c5013dc5f9f4f232dd1dfee8e5c93"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:47.367Z",
+      "status": "completed",
+      "reservation": {
+        "key": "a8f7c1bfc3ae76d6c20e7c9846129beaf2a914c11def91e2759da895a002eefc",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:48.547Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "47403312dbf5d0d9fd26432460c61ab4a08fd41f655d285e98678ba2f4bc6f7a",
+        "stateHash": "8650cc33818da8b933266d46a15da15281f702bd2710999dd7fc2bf058cef961",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "insufficient",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 0.01,
+              "insufficient": 0.96,
+              "violation_L1": 0.03
+            },
+            "confidence": 0.95
+          }
+        },
+        "usage": {
+          "inputTokens": 554,
+          "outputTokens": 60,
+          "durationMs": 1174,
+          "requestId": "req_01a0d4022cf6771d94089d461218f578",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000023268,
+          "costKind": "estimated"
+        },
+        "assessmentId": "740bea74-35c1-4d95-b554-d64f9c5b2475"
+      }
+    },
+    {
+      "version": 1,
+      "id": "9cea513b-3d3f-452f-89a6-4c716ff7a6a5",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-923fc6af84",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "cdbf2dcd8674771de8fa201d55110cfbca3b36b461b56f69e275cb5f42402683",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-923fc6af84"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "cdbf2dcd8674771de8fa201d55110cfbca3b36b461b56f69e275cb5f42402683",
+        "questionSchemaHash": "c8e9e2bc9708dc8c55add2313d37994811bb700ee653957a49e06d04e1fc282a"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:51.005Z",
+      "status": "completed",
+      "reservation": {
+        "key": "cd3c6976782835bc827a832d6ef1a0154e09066cd03852cbc754fab3d48b972b",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:51.366Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "4d03e81469eabf55565520e748f6d8626966e4f3666ba41bd8a9e3a75b22323b",
+        "stateHash": "2e52897f123475f12d87782308b53efdd82b85445dab897b8711fc7c7b6dd2e8",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "not-applicable",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 1,
+              "insufficient": 0,
+              "violation_L1": 0
+            },
+            "confidence": 1
+          }
+        },
+        "usage": {
+          "inputTokens": 528,
+          "outputTokens": 60,
+          "durationMs": 353,
+          "requestId": "req_01a0d4023b287120af1888be8e0c574e",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000022176000000000002,
+          "costKind": "estimated"
+        },
+        "assessmentId": "9cea513b-3d3f-452f-89a6-4c716ff7a6a5"
+      }
+    },
+    {
+      "version": 1,
+      "id": "b3103a17-9b57-479e-b2ac-4cbf9dbf4423",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-40b14f2adc",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "2f276309ab8b46f741573b157385c2e7dfbe53fcc310585c00e7afa37b581baf",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-40b14f2adc"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "2f276309ab8b46f741573b157385c2e7dfbe53fcc310585c00e7afa37b581baf",
+        "questionSchemaHash": "433a40ba8762ad421dd3a766ab78b6d1ce62ef615b1622465c4b7de9ba8a27cd"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:46.632Z",
+      "status": "completed",
+      "reservation": {
+        "key": "2cc6ac55b4c9a8778ec1cb2900cd5f6ae8293d05f3f5562208453ae3d3d7d1bd",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:46.967Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "8fb82b22b16493045f71a32485764e30922ac93eb3623b9d52164be7fdb5b96f",
+        "stateHash": "ea9b582a1af1cf51eefdbceb307655951f16b9fe13251cb70706c22996be3de2",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "satisfied",
+            "probabilities": {
+              "satisfied": 0.98,
+              "not-applicable": 0,
+              "insufficient": 0.01,
+              "violation_L1": 0.01
+            },
+            "confidence": 0.97
+          }
+        },
+        "usage": {
+          "inputTokens": 627,
+          "outputTokens": 59,
+          "durationMs": 330,
+          "requestId": "req_01a0d4022a0f71779c7c6fda3f61a3e5",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000026334000000000002,
+          "costKind": "estimated"
+        },
+        "assessmentId": "b3103a17-9b57-479e-b2ac-4cbf9dbf4423"
+      }
+    },
+    {
+      "version": 1,
+      "id": "cde59c01-fe4a-479e-959b-0fea819f35f1",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-d6e24bc480",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "bc262adc17cbd132e50acccd88caa3a39451de3f076fe8072e2c5e2d128c1f98",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-d6e24bc480"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "bc262adc17cbd132e50acccd88caa3a39451de3f076fe8072e2c5e2d128c1f98",
+        "questionSchemaHash": "a19f0d0025423a79707ec4312103f1db07a40a3a35ff17d1c1b8d7aa5aef234a"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:49.342Z",
+      "status": "completed",
+      "reservation": {
+        "key": "04372aca1c5aa337aa11ae076f380cf22ac34ef10ad96f19c2994a025bdd52f1",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:49.704Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "0f14e9fdb1846908e030175d41429bbdc8d62958c3c623df32332ac77ccca486",
+        "stateHash": "2c0c8cd930f740b023327ee6202bf3dd8f2b5bccac853340865d5c5605aa070d",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "not-applicable",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 0.99,
+              "insufficient": 0,
+              "violation_L1": 0.01
+            },
+            "confidence": 0.98
+          }
+        },
+        "usage": {
+          "inputTokens": 539,
+          "outputTokens": 60,
+          "durationMs": 355,
+          "requestId": "req_01a0d40234ae74238a171a595e74fbc3",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000022638000000000002,
+          "costKind": "estimated"
+        },
+        "assessmentId": "cde59c01-fe4a-479e-959b-0fea819f35f1"
+      }
+    },
+    {
+      "version": 1,
+      "id": "d4e0c116-d08a-418a-b3e7-0c3e3c2b78cc",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-a061c4e203",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "429fcff0c7f9f99fcd6e7dfb2b7caf31a932a5435281027ffa171ac0f5183759",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-a061c4e203"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "429fcff0c7f9f99fcd6e7dfb2b7caf31a932a5435281027ffa171ac0f5183759",
+        "questionSchemaHash": "7fe4da1f3a4950b637c7adf25b10e5e72ee3410002c390dcfabfd42ac544abdb"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:43.635Z",
+      "status": "completed",
+      "reservation": {
+        "key": "4bf806705c3f1447dc6b7b4241f40212a3e253bb5baebe9b4902cde4c91f861d",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:46.624Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "0239224a4bbcad3ecf6e4d6c9e7999514b988ba58107f008bfb1071328c01cb1",
+        "stateHash": "a455310d71bd6c23b4cbdc4c4e7e57c47f6fd5ea4f4ac7a546b9a5601aba7ce0",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "violation_L1",
+            "probabilities": {
+              "satisfied": 0.35,
+              "not-applicable": 0.01,
+              "insufficient": 0.14,
+              "violation_L1": 0.5
+            },
+            "confidence": 0.34
+          }
+        },
+        "usage": {
+          "inputTokens": 609,
+          "outputTokens": 60,
+          "durationMs": 2982,
+          "requestId": "req_01a0d402210e7969a4e7faa477468cfc",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000025578,
+          "costKind": "estimated"
+        },
+        "assessmentId": "d4e0c116-d08a-418a-b3e7-0c3e3c2b78cc"
+      }
+    },
+    {
+      "version": 1,
+      "id": "f67f24c3-720e-4b4e-94fa-27580ed9d837",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-ffc934796a",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "c7914e2da2eba689aafd202257b5b54e8cbec1540c2f508cffe60f5c59ac964d",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-ffc934796a"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "c7914e2da2eba689aafd202257b5b54e8cbec1540c2f508cffe60f5c59ac964d",
+        "questionSchemaHash": "36756fd2203f412f782ffe79576ce46d5ad9b4be35a0d0d621c044c416bf2805"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:51.382Z",
+      "status": "completed",
+      "reservation": {
+        "key": "c3fb6c9623f4aa6fb729b2191597588d1016f8600f1755816fc372afef4da1a0",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:51.731Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "0b0f4a8fc95d70f9d7b7825d2ac4c4748c5a990a71865c7107dd7d107cbde9ae",
+        "stateHash": "01975faa7b9e3a3272695360a8834bc1bcd3325233c75565dac2f0fd94e66279",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "insufficient",
+            "probabilities": {
+              "satisfied": 0,
+              "not-applicable": 0.02,
+              "insufficient": 0.92,
+              "violation_L1": 0.06
+            },
+            "confidence": 0.9
+          }
+        },
+        "usage": {
+          "inputTokens": 576,
+          "outputTokens": 60,
+          "durationMs": 342,
+          "requestId": "req_01a0d4023c9f7339977c950e1ebd3648",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000024192,
+          "costKind": "estimated"
+        },
+        "assessmentId": "f67f24c3-720e-4b4e-94fa-27580ed9d837"
+      }
+    },
+    {
+      "version": 1,
+      "id": "fec57de4-9e05-41d5-ba41-b4d13893b26a",
+      "ownerId": "static-review-pilot",
+      "consumer": "static-review-checklist",
+      "subject": {
+        "run": {
+          "id": "case-4093b52ae8",
+          "project": "synthetic",
+          "step": "static-review-checklist:v2",
+          "snapshotHash": "031015d911df976c1423241c274b659bbac5ae0890f4f5bb125c61203bcaf7c7",
+          "admission": {
+            "classification": "synthetic",
+            "sourceRef": "synthetic:static-review-v2/case-4093b52ae8"
+          }
+        }
+      },
+      "requestedIdentity": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "inputDigest": "031015d911df976c1423241c274b659bbac5ae0890f4f5bb125c61203bcaf7c7",
+        "questionSchemaHash": "b12d2907960a8fa82a82440f95a65a861f4716fd6757c15dcab5209e9bd1122b"
+      },
+      "policyVersion": "static-review-checklist-pilot-v3",
+      "startedAt": "2026-09-24T15:21:50.634Z",
+      "status": "completed",
+      "reservation": {
+        "key": "eb6139169d930d0aeb91351c71807218452c2d15caf3de4edb4c897201e18fd9",
+        "maxUsd": 0.00034406400000000005,
+        "priceHash": "de7179bce61570e6a4431904430bde9e62044ff78f1e4940370fa310b278da65",
+        "price": {
+          "version": 1,
+          "provider": "typesafe",
+          "model": "jev-1.13.0",
+          "source": "https://docs.typesafe.ai/models",
+          "verifiedAt": "2026-09-24T15:21:32.955183Z",
+          "inputUsdPerMillion": 0.042,
+          "outputUsdPerMillion": 0,
+          "maxInputTokens": 8192,
+          "maxOutputTokens": 500,
+          "maxRequestTokens": 8692
+        }
+      },
+      "feedback": [],
+      "completedAt": "2026-09-24T15:21:50.990Z",
+      "result": {
+        "attempted": true,
+        "provider": "typesafe",
+        "requestedModel": "jev-1.13.0",
+        "questionSchemaHash": "3cfcbefa56d25fa06f0173ab4d6e48e3c3752c9be729c605b99194d3d2f7e059",
+        "stateHash": "fc30f6c5a2dc4fd392f5c94afe5b62b33f2b73ac83ecec5b4f4482c89db7a6ce",
+        "status": "completed",
+        "returnedModel": "jev-1.13.0",
+        "answers": {
+          "outcome": {
+            "type": "choice",
+            "choice": "satisfied",
+            "probabilities": {
+              "satisfied": 0.94,
+              "not-applicable": 0.03,
+              "insufficient": 0.01,
+              "violation_L1": 0.02
+            },
+            "confidence": 0.93
+          }
+        },
+        "usage": {
+          "inputTokens": 619,
+          "outputTokens": 59,
+          "durationMs": 340,
+          "requestId": "req_01a0d40239bc76d18e726bb4ec566ea7",
+          "provider": "typesafe",
+          "requestedModel": "jev-1.13.0",
+          "returnedModel": "jev-1.13.0",
+          "costUsd": 0.000025998,
+          "costKind": "estimated"
+        },
+        "assessmentId": "fec57de4-9e05-41d5-ba41-b4d13893b26a"
+      }
+    }
+  ]
+}

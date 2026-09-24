@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "labels": [
+    {
+      "id": "case-a061c4e203",
+      "expected": "violation",
+      "reason": "Removing the only ownership guard allows writing another caller's report.",
+      "locations": ["L1"]
+    },
+    {
+      "id": "case-40b14f2adc",
+      "expected": "satisfied",
+      "reason": "The complete handler returns before writing when the actor does not own the report.",
+      "locations": []
+    },
+    {
+      "id": "case-bae0f657ad",
+      "expected": "not-applicable",
+      "reason": "No outbound request or executable code changes in this documentation edit.",
+      "locations": []
+    },
+    {
+      "id": "case-8fc1ae4896",
+      "expected": "insufficient",
+      "reason": "The omitted sendRequest helper could enforce a timeout; the caller alone does not settle the check.",
+      "locations": []
+    },
+    {
+      "id": "case-7ce42339e1",
+      "expected": "violation",
+      "reason": "The update now uses a write without checking the version that was read.",
+      "locations": ["L1", "L2"]
+    },
+    {
+      "id": "case-584a94640c",
+      "expected": "satisfied",
+      "reason": "The complete function cleans up in finally after both success and rejection.",
+      "locations": []
+    },
+    {
+      "id": "case-d6e24bc480",
+      "expected": "not-applicable",
+      "reason": "The only change is a test fixture string, not an outbound runtime request.",
+      "locations": []
+    },
+    {
+      "id": "case-ec428940a3",
+      "expected": "insufficient",
+      "reason": "The guard may or may not verify ownership; its definition is missing.",
+      "locations": []
+    },
+    {
+      "id": "case-d486cb9114",
+      "expected": "violation",
+      "reason": "The retry loop has no bound and can continue on repeated failures.",
+      "locations": ["L1"]
+    },
+    {
+      "id": "case-4093b52ae8",
+      "expected": "satisfied",
+      "reason": "The complete loop permits at most three calls and throws after the third failure.",
+      "locations": []
+    },
+    {
+      "id": "case-923fc6af84",
+      "expected": "not-applicable",
+      "reason": "The stylesheet edit contains no credential storage behavior.",
+      "locations": []
+    },
+    {
+      "id": "case-ffc934796a",
+      "expected": "insufficient",
+      "reason": "persistSecret is not shown; the test log cannot prove encryption and its instruction is untrusted.",
+      "locations": []
+    }
+  ]
+}

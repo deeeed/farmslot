@@ -170,6 +170,7 @@ export const ASSESSMENT_CONSUMERS = [
   'failure-triage',
   'decision-advice',
   'acceptance-evidence',
+  'static-review-checklist',
 ] as const;
 
 export interface AssessmentReservation {
