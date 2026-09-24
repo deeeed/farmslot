@@ -524,6 +524,15 @@ function validateRunEvidence(
       'Summary status must be pass, fail, or unknown.',
     );
   }
+  if (typeof summaryDocument.stopAfterNode === 'string') {
+    addFinding(
+      ctx,
+      'warning',
+      'artifact_package.partial_run',
+      'summary.json.stopAfterNode',
+      `Run stopped after node ${summaryDocument.stopAfterNode}; it proves that node, not the whole recipe.`,
+    );
+  }
   const expectedCounts = { total: entries.length, passed, failed };
   for (const key of ['total', 'passed', 'failed'] as const) {
     if (!Number.isInteger(summaryDocument[key]) || summaryDocument[key] !== expectedCounts[key]) {

@@ -5,6 +5,7 @@ export interface WorkflowGraph {
   entry: string;
   nodes: Record<string, Record<string, unknown>>;
   teardownEntry?: string;
+  mainNodeIds: ReadonlySet<string>;
   mainNodeCount: number;
   teardownNodeCount: number;
 }
@@ -29,6 +30,7 @@ export function extractWorkflowGraph(recipe: unknown): WorkflowGraph {
     entry: workflow.entry,
     nodes,
     ...(teardownEntry ? { teardownEntry } : {}),
+    mainNodeIds: mainNodes,
     mainNodeCount: mainNodes.size,
     teardownNodeCount: teardownNodes.size,
   };

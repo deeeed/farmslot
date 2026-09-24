@@ -77,6 +77,7 @@ const UI_MECHANIC_INTENTS: Record<string, RegExp> = {
   'ui.key_press': /^(?:press|type)\b/u,
   'ui.set_input': /^(?:fill|set|type)\b/u,
   'ui.scroll': /^(?:bring .* into view|scroll)\b/u,
+  'ui.scroll_to': /^(?:bring .* into view|scroll)\b/u,
   'ui.wait_for': /^wait\b/u,
   'ui.screenshot': /^(?:capture|take (?:a )?screenshot)\b/u,
   'ui.capture_surface': /^(?:capture|take)\b/u,

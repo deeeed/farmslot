@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- QA completion rejects recipe packages from a partial `stop-after-node` run.
 - Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.
 
 - Validate the owner, failed step and approved source before saving a failure-assessment reference alongside a chosen run action.

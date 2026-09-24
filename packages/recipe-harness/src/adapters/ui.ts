@@ -1,5 +1,15 @@
 import type { UiObserverRef } from '@farmslot/protocol';
 
+import { RecipeExecutionError } from '../core/failure.js';
+import { isRecord } from '../core/json.js';
+import {
+  parseUiScrollToRequest,
+  runUiScrollTo,
+  type UiScrollSession,
+  UiScrollToError,
+  type UiScrollToRequest,
+  uiScrollToRequestSummary,
+} from '../core/scroll-to.js';
 import type {
   ActionAdapter,
   ActionExecutionContext,
@@ -14,6 +24,7 @@ export const STANDARD_UI_ACTIONS = [
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
+  'ui.scroll_to',
   'ui.swipe',
   'ui.pan',
   'ui.drag',
@@ -53,6 +64,17 @@ export interface UiActionTransport {
     node: Record<string, unknown>,
     context: ActionExecutionContext,
   ): Promise<RecipeObservationResult>;
+  /**
+   * ui.scroll_to provider hook. Open (or reuse) the backend session, hand it to `use`, and release
+   * it before resolving so the next node never conflicts with this one. Throw UiScrollToError
+   * SCROLL_SESSION_CONFLICT when the backend is held by another session.
+   */
+  withScrollSession?<T>(
+    request: UiScrollToRequest,
+    node: Record<string, unknown>,
+    context: ActionExecutionContext,
+    use: (session: UiScrollSession) => Promise<T>,
+  ): Promise<T>;
 }
 
 export interface CreateStandardUiAdaptersOptions {
@@ -74,6 +96,8 @@ export function createStandardUiAdapters(
       name: '@farmslot/recipe-harness',
     },
     async execute(node, context) {
+      if (action === 'ui.scroll_to') return executeScrollTo(options.transport, node, context);
+      if (action === 'ui.scroll') assertScrollMovement(node);
       return normalizeUiTransportResult(await options.transport.execute(action, node, context));
     },
     async observe(refs, node, context) {
@@ -88,6 +112,61 @@ export function createStandardUiAdapters(
       return options.transport.observe(refs, node, context);
     },
   }));
+}
+
+async function executeScrollTo(
+  transport: UiActionTransport,
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+): Promise<ActionResult> {
+  const request = parseUiScrollToRequest(node);
+  if (!transport.withScrollSession) {
+    throw new UiScrollToError(
+      'SCROLL_UNSUPPORTED',
+      'this UI transport does not implement withScrollSession.',
+      uiScrollToRequestSummary(request),
+    );
+  }
+  try {
+    return {
+      output: await transport.withScrollSession(request, node, context, (session) =>
+        runUiScrollTo(request, session),
+      ),
+    };
+  } catch (error) {
+    // Provider errors raised before a session exists (for example a held device lock) carry
+    // only backend details; attach the request so the trace names the node's proof target.
+    if (error instanceof UiScrollToError) {
+      throw new UiScrollToError(
+        error.code,
+        error.reason,
+        {
+          ...uiScrollToRequestSummary(request),
+          ...(isRecord(error.details) ? error.details : {}),
+        },
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/** ui.scroll is raw movement only: offset_* sets an absolute position, delta_* moves relative to it. */
+function assertScrollMovement(node: Record<string, unknown>): void {
+  const absolute = node.offset_x !== undefined || node.offset_y !== undefined;
+  const relative = node.delta_x !== undefined || node.delta_y !== undefined;
+  if (absolute && relative) {
+    throw new RecipeExecutionError(
+      'harness',
+      'ui.scroll accepts offset_x/offset_y (absolute) or delta_x/delta_y (relative), not both.',
+    );
+  }
+  if ((absolute || relative) && (node.scroll_into_view === true || node.into_view === true)) {
+    throw new RecipeExecutionError(
+      'harness',
+      'ui.scroll cannot combine scroll_into_view with raw movement; use ui.scroll_to to reveal a target.',
+    );
+  }
 }
 
 export function normalizeUiTransportResult(result: unknown): ActionResult {

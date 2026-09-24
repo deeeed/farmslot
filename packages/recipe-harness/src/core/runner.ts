@@ -43,6 +43,7 @@ import {
   cleanupAbortedRunVideoRecording,
   removePartialRunVideoOutput,
 } from './recording-cleanup.js';
+import { RecipeResolutionError } from './resolution-error.js';
 import {
   buildRecipeExecutionPlan,
   enforceRecipeExecutionPlan,
@@ -244,6 +245,18 @@ class DefaultRecipeRunner implements RecipeRunner {
       adapter: request.adapter,
     });
     const graph = extractWorkflowGraph(recipe);
+    if (request.stopAfterNode !== undefined) {
+      const stoppable = [...graph.mainNodeIds].filter(
+        (nodeId) => graph.nodes[nodeId]?.action !== 'end',
+      );
+      if (!stoppable.includes(request.stopAfterNode)) {
+        throw new RecipeResolutionError(
+          'RECIPE_STOP_AFTER_NODE_INVALID',
+          `stop-after-node ${request.stopAfterNode} is not a non-terminal node reachable from workflow.entry.`,
+          `choose one of: ${stoppable.join(', ')}`,
+        );
+      }
+    }
     const rootRef = rootRecipeRef(sourceRecipePath, recipes, recipeSource.digest!);
     const dependencyResolution = resolveRecipeDependencies({
       rootRef,
@@ -392,6 +405,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           },
           publishHudProgress: (hudStatus, event) =>
             this.#publishHudProgressOrRecord(traceWriter, hudStatus, event),
+          ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
         });
         status = execution.status;
         outputs = execution.outputs;
@@ -494,6 +508,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       ...(libraryResolution
         ? { recipeLibraries: buildRecipeLibrarySummary(libraryResolution) }
         : {}),
+      ...(request.stopAfterNode !== undefined ? { stopAfterNode: request.stopAfterNode } : {}),
     };
     const summaryPath = await summaryWriter.write(summary);
     const artifactManifestPath = await artifactWriter.write(status, this.#runnerProvenance);

@@ -5,7 +5,7 @@ import {
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
-import { RecipeExecutionError, recipeFailureCause } from './failure.js';
+import { RecipeExecutionError, recipeFailureCause, recipeFailureTraceFields } from './failure.js';
 import { extractWorkflowGraph, resolveNextNode } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
@@ -67,6 +67,8 @@ export interface ExecuteRecipeOptions {
   ): ActionExecutionContext;
   registerArtifacts(artifacts: NonNullable<ActionResult['artifacts']>): void;
   publishHudProgress?: HudPublisher;
+  /** Root-graph partial execution: stop after this node passes, then run teardown. */
+  stopAfterNode?: string;
 }
 
 export interface ExecuteRecipeResult {
@@ -106,7 +108,11 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   const nextCallStack = [...callStack, options.ref];
   let failureCause: RecipeFailureCause | undefined;
 
-  const runGraph = async (entry: string, nodeCount: number): Promise<RecipeRunStatus> => {
+  const runGraph = async (
+    entry: string,
+    nodeCount: number,
+    stopAfterNode?: string,
+  ): Promise<RecipeRunStatus> => {
     let currentNodeId: string | undefined = entry;
     let transitionCount = 0;
     const maxTransitions = Math.max(1, nodeCount);
@@ -169,7 +175,11 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       const action = String(node.action);
       const startedAt = new Date();
       if (action === 'end') {
-        const status = terminalStatus(node.status);
+        const authored = terminalStatus(node.status);
+        // Reaching a terminal node during partial execution means the stop node never ran.
+        const missedStop = stopAfterNode !== undefined;
+        const status = missedStop ? 'fail' : authored;
+        const causeClass = missedStop ? 'harness' : 'subject';
         const failed = status === 'fail';
         options.traceWriter.record({
           nodeId: namespacedNodeId,
@@ -178,10 +188,15 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
           ok: !failed,
-          ...(failed ? { cause_class: 'subject' as const } : {}),
+          ...(failed ? { cause_class: causeClass } : {}),
           status,
+          ...(missedStop
+            ? {
+                error: `stop-after-node ${stopAfterNode} was not reached; the graph ended at ${localNodeId}.`,
+              }
+            : {}),
         });
-        if (failed) failureCause ??= 'subject';
+        if (failed) failureCause ??= causeClass;
         return status;
       }
 
@@ -303,6 +318,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             return 'fail';
           }
         }
+        if (localNodeId === stopAfterNode) return 'pass';
         currentNodeId = next;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -337,6 +353,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           ok: false,
           cause_class: causeClass,
           error: message,
+          ...recipeFailureTraceFields(error),
         });
         return 'fail';
       }
@@ -344,7 +361,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     return 'fail';
   };
 
-  const mainStatus = await runGraph(graph.entry, graph.mainNodeCount);
+  const mainStatus = await runGraph(graph.entry, graph.mainNodeCount, options.stopAfterNode);
   const teardownStatus = graph.teardownEntry
     ? await runGraph(graph.teardownEntry, graph.teardownNodeCount)
     : 'pass';
@@ -380,6 +397,8 @@ async function executeRecipeCall(
     params: isRecord(options.node.params) ? options.node.params : {},
     prefix: `${options.callNodeId}/`,
     callStack: options.callStack,
+    // Partial execution targets the root graph only; called recipes always run to completion.
+    stopAfterNode: undefined,
   });
   if (result.status !== 'pass') {
     throw new RecipeExecutionError(

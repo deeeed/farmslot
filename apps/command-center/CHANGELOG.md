@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- The Command Center recipe runner supports `ui.scroll_to` and `--stop-after-node`.
+
 - Let the CDP click helper follow explicit shadow-root selectors in assessment browser proofs.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

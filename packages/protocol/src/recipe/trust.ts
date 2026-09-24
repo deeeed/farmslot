@@ -99,6 +99,7 @@ const APP_MUTATION_ACTIONS = new Set<OfficialActionName>([
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
+  'ui.scroll_to',
   'ui.capture_surface',
   'ui.swipe',
   'ui.pan',

@@ -28,6 +28,7 @@ export {
   type RecipeValidationResult,
   type RecipeValidationSeverity,
   type RecipeValidationStatus,
+  UI_SCROLL_TO_PARAMS_SCHEMA,
   type UiObserverRef,
 } from './common.js';
 export { recipeProtocolSchemaUrlForVersion } from './common.js';

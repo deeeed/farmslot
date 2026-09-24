@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Add canonical `ui.scroll_to`: one harness algorithm over a provider `withScrollSession` hook (implemented for CDP) that no-ops when the target is already in the HUD-safe viewport, moves once, waits for geometry to settle and verifies the final bounds; contract failures are `harness` with stable `SCROLL_*` codes and geometry in trace `error_code`/`error_details`. `ui.scroll` now separates absolute `offset_x`/`offset_y` from relative `delta_x`/`delta_y` (a lone `delta_x` no longer adds a 600px vertical step). Add `stopAfterNode` / `--stop-after-node` to run the graph through one node and then its declared teardown.
+
 ## 0.18.1 - 2026-09-21
 
 - Retain typed, redacted invocation parameters with the recipe digest and execution summary; canonical artifact validation now reads those inputs for parameterized runs and rejects mismatches or redacted credentials.
