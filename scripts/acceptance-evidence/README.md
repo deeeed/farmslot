@@ -34,9 +34,9 @@ case entry for every frozen ID. Textual cases contain a `baseline` and `assisted
 arm with `judgment`, `elapsedMs`, `workerTokens`, and `workerCostUsd`; each metric
 is a non-negative number or `null` when unknown. `assistedRunId` and
 `assessmentRecordIds` associate the assisted task with retained gateway records.
-Every supplied record must be associated exactly once, and its run ID, criterion
+Supply the complete unfiltered gateway history export for the studied runs. Every supplied record must be associated exactly once, have synthetic admission, and its run ID, criterion
 text, evidence IDs and evidence text must match that frozen case. A run cannot
-be reused by another case. Visual and mixed entries
+be reused by another case. The offline evaluator cannot prove that a supplied history export is exhaustive; a missing failed retry can falsely reduce cost. Audit completeness against the gateway before interpreting any `pass`. Visual and mixed entries
 must use `baseline: null`, `assisted: null`, and an empty record-ID list.
 
 This is the matching pair of entries inside those two complete arrays, not a
@@ -70,6 +70,10 @@ runnable study file:
   "subject": {
     "run": {
       "id": "synthetic-run-1",
+      "admission": {
+        "classification": "synthetic",
+        "sourceRef": "synthetic:acceptance-evidence-v2"
+      },
       "criterion": {
         "id": "AC-1",
         "text": "The command prints READY when the service is healthy",
@@ -94,12 +98,12 @@ its accuracy separately from the validator arms. Assessment records use the
 persisted protocol shape. Attempted failed calls count. A missing input or
 output token total, cost, or paired workflow measure stays `null`; it is never
 counted as zero. Assisted token and cost totals add retained assessment receipts
-to the worker measurements; `workerTokens` and `workerCostUsd` must exclude those assessment receipts to avoid double counting. The whole-task elapsed time is already measured
+to the worker measurements; `workerTokens` and `workerCostUsd` must exclude those assessment receipts to avoid double counting. A provider may omit output token usage when output is free; this scorer treats missing output tokens as unknown rather than guessing their count. The whole-task elapsed time is already measured
 across advice use, so gateway latency is reported separately and is not added a
 second time.
 
 The report exposes provider and validator-arm accuracy against frozen labels,
-the held-out provider confusion matrix (including missing verdicts), the visual/mixed no-call guard, every attempted call, unknown charges/usage,
+the held-out provider confusion matrix (including missing verdicts), zero records associated with visual/mixed cases in the supplied export, every supplied attempted call, unknown charges/usage,
 and equal-correct held-out paired totals. Development cases do not contribute to the efficiency result. The frozen provider floor applies to one
 retained provider verdict for each held-out case: at least 8/9 correct and no
 wrong definite verdict on an insufficient case. Missing or repeated provider

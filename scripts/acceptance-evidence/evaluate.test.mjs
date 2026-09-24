@@ -18,6 +18,7 @@ function record(id, runId, entry, { failed = false, unknown = false, verdict = '
     subject: {
       run: {
         id: runId,
+        admission: { classification: 'synthetic', sourceRef: 'synthetic:acceptance-evidence-v2' },
         criterion: { id: entry.criterionId, text: entry.criterion, evidence: entry.evidence },
       },
     },
@@ -83,7 +84,7 @@ test('balanced frozen corpus passes only with complete equal-correct measurement
   assert.equal(result.assessment.attemptedCalls, 12);
   assert.equal(result.quality.provider.correct, 12);
   assert.equal(result.paired.efficiency, 'win');
-  assert.equal(result.exclusions.providerCalls, 0);
+  assert.equal(result.exclusions.associatedRecords, 0);
 });
 
 test('visual and mixed cases reject any non-null arm or provider association', () => {
@@ -200,4 +201,29 @@ test('development cases cannot manufacture held-out workflow savings', () => {
   assert.equal(result.paired.total, 9);
   assert.equal(result.paired.efficiency, 'no-win');
   assert.equal(result.gate, 'inconclusive');
+});
+
+test('already impossible held-out provider floor holds despite missing verdicts', () => {
+  const input = study();
+  for (const id of ['held-supported-retry', 'held-contradicted-persistence']) {
+    const missed = input.assessmentRecords.find((row) => row.id === `record-${id}`);
+    missed.result.status = 'unavailable';
+    delete missed.result.answers;
+  }
+  for (const id of ['held-supported-persistence', 'held-contradicted-latency']) {
+    const wrong = input.assessmentRecords.find((row) => row.id === `record-${id}`);
+    wrong.result.answers.verdict.choice = 'insufficient';
+  }
+  const result = evaluate(input, cases, labels);
+  assert.equal(result.quality.provider.heldOut.complete, false);
+  assert.equal(result.gate, 'hold');
+});
+
+test('non-synthetic admission is rejected even when evidence text matches', () => {
+  const input = study();
+  input.assessmentRecords[0].subject.run.admission = {
+    classification: 'public',
+    sourceRef: 'https://example.com',
+  };
+  assert.throws(() => evaluate(input, cases, labels), /admission must identify a synthetic source/);
 });

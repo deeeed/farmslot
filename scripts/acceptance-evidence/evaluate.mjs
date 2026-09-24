@@ -70,6 +70,12 @@ function normalizeRecord(record, path) {
     !Array.isArray(criterion.evidence)
   )
     fail(`${path}.subject.run.criterion with evidence is required`);
+  const admission = record.subject.run.admission;
+  if (
+    admission?.classification !== 'synthetic' ||
+    !/^synthetic:[\w./-]+$/.test(admission.sourceRef)
+  )
+    fail(`${path}.subject.run.admission must identify a synthetic source`);
   const usage = record.result?.usage;
   const used = attempt(record);
   const verdict = record.result?.answers?.verdict;
@@ -303,8 +309,8 @@ export function evaluate(study, frozenCases, labels) {
   );
   const qualityHold =
     providerWrongInsufficient ||
-    (providerHeldOut.complete &&
-      (providerHeldOut.expectedCases !== 9 || providerHeldOut.correct < 8));
+    providerHeldOut.expectedCases !== 9 ||
+    providerHeldOut.correct + (providerHeldOut.expectedCases - providerHeldOut.total) < 8;
   const qualityRegression = rows.some((row) => row.baseline.correct && !row.assisted.correct);
   const repeatedAttempt = rows.some((row) => row.assessment.attempts > 1);
   const gate =
@@ -339,7 +345,7 @@ export function evaluate(study, frozenCases, labels) {
     exclusions: {
       visualMixedCases: frozenCases.cases.filter((entry) => EXCLUDED_MODES.has(entry.proofMode))
         .length,
-      providerCalls: 0,
+      associatedRecords: 0,
     },
     quality: {
       baseline: quality('baseline'),
