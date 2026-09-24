@@ -4,7 +4,17 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -103,6 +113,7 @@ assert(
     'linked-qa',
     'automatic-qa',
     'base-review-depth',
+    'base-review-depth-live',
   ].includes(scenario),
   'Expected profiles, legacy-queue or conflicts',
 );
@@ -315,26 +326,101 @@ process.stdout.write(JSON.stringify(body));
 );
 
 // Base self-review depth: the gateway launches real reviewer windows on a private tmux
-// server. The reviewer CLI is a fixture that only keeps its pane alive, so no model runs.
-const tmuxEnv: NodeJS.ProcessEnv = { ...process.env, TMUX_TMPDIR: path.join(fixture, 't') };
+// server. `base-review-depth` uses a fixture reviewer CLI that only keeps its pane alive
+// (no model); `base-review-depth-live` launches a real Codex reviewer that completes the review.
+// Static base review contract for the live reviewer; the gateway prepends its execution
+// contract (mark wrapper, reviewer-scoped feedback/result paths) when it renders the checklist.
+const STATIC_REVIEW_TEMPLATE = `# Worker: Static Code Self-Review
+
+> **Validation depth:** \`{{VALIDATION_DEPTH}}\`
+> **Checklist marker:** run \`{{TASK_DIR}}/mark start\` once, then \`{{TASK_DIR}}/mark N\` after each step.
+
+**This is a static code review only. Do NOT run builds, tests, package scripts, browsers, or
+recipes. Use read-only inspection (\`git diff\`, \`git show\`, \`cat\`, \`rg\`).**
+
+## Task
+
+\`\`\`
+TASK_DIR: {{TASK_DIR}}
+REPO: {{REPO}}
+TICKET: {{TICKET}}
+VALIDATION_DEPTH: {{VALIDATION_DEPTH}}
+STATUS: pending
+\`\`\`
+
+## Checklist
+
+After completing each step, mark its checkbox \`[x]\` in this file. Continue without waiting for input.
+
+- [ ] **1. Start** — set \`STATUS: working\` above, run \`{{TASK_DIR}}/mark start\`, then \`{{TASK_DIR}}/mark 1\`.
+- [ ] **2. Inspect the diff:** \`git diff main...HEAD --stat\` and \`git diff main...HEAD\`.
+- [ ] **3. Review correctness** of every changed file by reading it. Do not run code.
+- [ ] **4. Write \`{{TASK_DIR}}/artifacts/review-feedback.md\`:**
+
+  \`\`\`markdown
+  # Static Self-Review: {{TICKET}}
+
+  ## Verdict: PASS   (or: ## Verdict: ISSUES)
+
+  ## Summary
+  <1-3 sentences>
+
+  ## Validation Depth
+  - Mode: static-code
+
+  ## Issues
+  - **path/to/file:line** — <actionable issue>   (or: - none)
+  \`\`\`
+- [ ] **5. Write signal:** \`{{TASK_DIR}}/mark complete --mark-last\`
+- [ ] **6. Exit** the reviewer session.
+`;
+const depthScenario = scenario === 'base-review-depth' || scenario === 'base-review-depth-live';
+const liveReview = scenario === 'base-review-depth-live';
+const tmuxEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  TMUX_TMPDIR: path.join(fixture, 't'),
+  // Reviewer panes resolve provider accounts from the isolated home (ambient codex auth).
+  ...(liveReview ? { FARMSLOT_HOME: path.join(fixture, 'home') } : {}),
+};
 delete tmuxEnv.TMUX;
 delete tmuxEnv.TMUX_PANE;
-const depthRuns = { 'base-new': 'first-new', 'base-legacy': 'first-legacy' } as const;
-if (scenario === 'base-review-depth') {
+const depthReviewer = liveReview
+  ? {
+      runner: 'codex',
+      model: process.env.FARMSLOT_PROOF_REVIEWER_MODEL ?? 'gpt-6-sol',
+      effort: process.env.FARMSLOT_PROOF_REVIEWER_EFFORT ?? 'low',
+    }
+  : { runner: 'cursor', model: 'fixture-model', effort: undefined };
+// The pre-migration run stays fixture-only: a real full-live review would attempt runtime validation.
+const depthRuns: Record<string, string> = liveReview
+  ? { 'base-new': 'first-new' }
+  : { 'base-new': 'first-new', 'base-legacy': 'first-legacy' };
+let reviewerBin = path.join(fixture, 'bin', 'cursor-agent');
+if (depthScenario) {
   await mkdir(tmuxEnv.TMUX_TMPDIR!, { mode: 0o700 });
-  await writeFile(
-    path.join(fixture, 'bin', 'cursor-agent'),
-    '#!/bin/sh\n# Reviewer fixture: holds the pane open and never calls a model.\nwhile :; do sleep 1; done\n',
-    { mode: 0o700 },
-  );
+  if (liveReview) {
+    // Resolve the CLI the way the gateway's reviewer pane shell does (`codex` may be a
+    // function in interactive shells; the pane runs a login bash).
+    reviewerBin = execFileSync('bash', ['-lc', 'command -v codex'], {
+      env: tmuxEnv,
+      encoding: 'utf8',
+    }).trim();
+    assert(path.isAbsolute(reviewerBin), `codex must resolve to an executable, got ${reviewerBin}`);
+  } else {
+    await writeFile(
+      reviewerBin,
+      '#!/bin/sh\n# Reviewer fixture: holds the pane open and never calls a model.\nwhile :; do sleep 1; done\n',
+      { mode: 0o700 },
+    );
+  }
   const projectPath = path.join(fixture, 'projects/first/project.json');
   const project = JSON.parse(await readFile(projectPath, 'utf8'));
   project.self_review = {
     enabled: true,
-    runner: 'cursor',
-    model: 'fixture-model',
+    runner: depthReviewer.runner,
+    model: depthReviewer.model,
     max_retries: 0,
-    review_timeout_min: 30,
+    review_timeout_min: liveReview ? 15 : 30,
   };
   await json(projectPath, project);
   await mkdir(path.join(fixture, 'projects/first/templates/worker'), { recursive: true });
@@ -342,9 +428,22 @@ if (scenario === 'base-review-depth') {
     path.join(fixture, 'projects/first/templates/worker/self-review.md'),
     '# Fixture self-review\n\nVALIDATION_DEPTH: {{VALIDATION_DEPTH}}\n\n- [ ] Review the change.\n',
   );
+  // The live reviewer reads the depth-specific static template the gateway selects, and a
+  // post-launch runner (codex) needs the project's dispatch prompt to deliver it.
+  if (liveReview) {
+    await writeFile(
+      path.join(fixture, 'projects/first/templates/worker/self-review.static-code.md'),
+      STATIC_REVIEW_TEMPLATE,
+    );
+    await mkdir(path.join(fixture, 'projects/first/templates/prompts'), { recursive: true });
+    await copyFile(
+      path.join(root, 'projects/farmslot-farm/templates/prompts/worker-dispatch.md'),
+      path.join(fixture, 'projects/first/templates/prompts/worker-dispatch.md'),
+    );
+  }
   const poolPath = path.join(fixture, 'pool', 'first.json');
   const pool = JSON.parse(await readFile(poolPath, 'utf8'));
-  pool.cursor_path = path.join(fixture, 'bin', 'cursor-agent');
+  pool[liveReview ? 'codex_path' : 'cursor_path'] = reviewerBin;
   for (const [runId, slotId] of Object.entries(depthRuns)) {
     const repo = path.join(fixture, slotId);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
@@ -356,6 +455,21 @@ if (scenario === 'base-review-depth') {
     git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.com', 'commit', '-qm', 'base');
     git('checkout', '-qb', 'fixture-change');
     await writeFile(path.join(repo, 'app.txt'), 'change\n');
+    // A small real change for the live reviewer to inspect.
+    if (liveReview)
+      await writeFile(
+        path.join(repo, 'discount.js'),
+        [
+          '// Applies a whole-number percentage discount to an amount in cents.',
+          'export function applyDiscount(cents, percent) {',
+          '  if (!Number.isInteger(percent) || percent < 0 || percent > 100)',
+          "    throw new RangeError('percent must be an integer between 0 and 100');",
+          '  return Math.round((cents * (100 - percent)) / 100);',
+          '}',
+          '',
+        ].join('\n'),
+      );
+    git('add', '-A');
     git(
       '-c',
       'user.name=fixture',
@@ -406,7 +520,8 @@ async function seedDepthRuns() {
       createdByPrincipalId: 'legacy-env',
       steps,
       decisions: [],
-      metrics: { runner: 'cursor', model: 'fixture-model' },
+      metrics: { runner: depthReviewer.runner, model: depthReviewer.model },
+      ...(depthReviewer.effort ? { effort: depthReviewer.effort } : {}),
       createdAt: now,
       updatedAt: now,
       // Pre-migration: a base reviewer launched before depth was recorded carried no scope.
@@ -439,7 +554,7 @@ function launchGateway() {
     detached: true,
     stdio: ['ignore', output, output],
     env: {
-      ...(scenario === 'base-review-depth' ? tmuxEnv : process.env),
+      ...(depthScenario ? tmuxEnv : process.env),
       PATH: `${path.join(fixture, 'bin')}${path.delimiter}${process.env.PATH}`,
       FARMSLOT_ROOT: fixture,
       ...(scenario === 'publication-direct'
@@ -458,6 +573,7 @@ function launchGateway() {
         'automatic-qa',
         'publication-delivery',
         'base-review-depth',
+        'base-review-depth-live',
       ].includes(scenario)
         ? '0'
         : '1',
@@ -1498,33 +1614,41 @@ try {
         0,
       );
     }
-  } else if (scenario === 'base-review-depth') {
+  } else if (depthScenario) {
     const step = (run: any) =>
       run.steps.find((entry: { name: string }) => entry.name === PipelineSteps.SELF_REVIEW);
     const reviewer = (run: any) =>
       run.agentContexts?.findLast(
         (context: any) => context.role === 'self-review' && context.status === 'working',
       );
-    const waitRun = async (runId: string, what: string, predicate: (run: any) => boolean) => {
-      for (let attempt = 0; attempt < 300; attempt++) {
+    const waitRun = async (
+      runId: string,
+      what: string,
+      predicate: (run: any) => boolean,
+      { attempts = 300, intervalMs = 200 } = {},
+    ) => {
+      for (let attempt = 0; attempt < attempts; attempt++) {
         const { run } = await connection!.call<{ run: any }>('run.get', { runId });
         if (predicate(run)) return run;
         if (['failed', 'blocked', 'done', 'cancelled'].includes(run.status))
           throw new Error(
             `${runId} ${run.status} before ${what}: ${run.error ?? step(run)?.detail}`,
           );
-        await delay(200);
+        await delay(intervalMs);
       }
       throw new Error(`${runId} did not reach ${what}`);
     };
     // The engine records the depth on the step, then launches a reviewer that reads it.
-    const launched = async (runId: keyof typeof depthRuns, notBefore = '') => {
+    // `reviewerAfter` demands a new reviewer attempt; `stepAfter` only a re-entered step
+    // (a restarted engine may reclaim the still-running reviewer instead of relaunching).
+    const launched = async (runId: string, { reviewerAfter = '', stepAfter = '' } = {}) => {
       const run = await waitRun(
         runId,
         'a live base reviewer',
         (candidate) =>
           Boolean(step(candidate)?.inputs?.validationDepth) &&
-          (reviewer(candidate)?.attemptStartedAt ?? '') > notBefore,
+          (step(candidate)?.startedAt ?? '') > stepAfter &&
+          (reviewer(candidate)?.attemptStartedAt ?? '') > reviewerAfter,
       );
       const context = reviewer(run);
       const checklist = await readFile(
@@ -1551,12 +1675,7 @@ try {
       }
       // The reviewer CLI itself (interpreter + script), not a shell line that mentions it.
       const reviewerProcess = processes.find(
-        ([, pid, , args]) =>
-          paneTree.has(pid) &&
-          args
-            .split(' ')
-            .slice(0, 2)
-            .includes(path.join(fixture, 'bin', 'cursor-agent')),
+        ([, pid, , args]) => paneTree.has(pid) && args.split(' ').slice(0, 2).includes(reviewerBin),
       )?.[3];
       assert(reviewerProcess, `reviewer pane ${panePid} is not running the reviewer CLI`);
       return {
@@ -1600,27 +1719,142 @@ try {
     console.log(JSON.stringify({ claim: 'new-base-static', ...fresh.evidence }));
     assert.equal(fresh.evidence.stepValidationDepth, 'static-code');
     assert.equal(fresh.evidence.checklistDepth, 'static-code');
-    const legacy = await launched('base-legacy');
-    console.log(JSON.stringify({ claim: 'pre-migration-full-live', ...legacy.evidence }));
-    assert.equal(legacy.evidence.stepValidationDepth, 'full-live');
-    assert.equal(legacy.evidence.checklistDepth, 'full-live');
-    // The live reviewer carries no artifact scope, so after a restart only the recorded
-    // step depth distinguishes this run from a pre-migration one.
-    assert.equal(fresh.evidence.reviewer.artifactScope, null);
-    const restartedAt = new Date().toISOString();
-    await stopGateway();
-    gateway = launchGateway();
-    await connectGateway();
-    const resumed = await launched('base-new', restartedAt);
-    console.log(
-      JSON.stringify({ claim: 'restart-keeps-recorded', restartedAt, ...resumed.evidence }),
-    );
-    assert(
-      resumed.evidence.stepStartedAt > restartedAt,
-      'the restarted engine re-entered the step',
-    );
-    assert.equal(resumed.evidence.stepValidationDepth, 'static-code');
-    assert.equal(resumed.evidence.checklistDepth, 'static-code');
+    if (liveReview) await proveLiveResume(fresh.run);
+    else await proveFixtureDepths(fresh.evidence);
+    async function proveLiveResume(launchedRun: any) {
+      const repo = path.join(fixture, depthRuns['base-new']);
+      const exists = (file: string) =>
+        stat(file).then(
+          () => true,
+          (error) => {
+            if (error.code === 'ENOENT') return false;
+            throw error;
+          },
+        );
+      // Restart only after the real reviewer accepted its task and began work (`mark start`
+      // writes its signal; the gateway cleared that file before launch).
+      const signal = path.join(repo, reviewer(launchedRun).signalFile);
+      for (let attempt = 0; !(await exists(signal)); attempt++) {
+        assert(attempt < 300, 'the real reviewer did not start its checklist within 5 minutes');
+        const { run } = await connection!.call<{ run: any }>('run.get', { runId: 'base-new' });
+        assert.equal(
+          step(run).status,
+          'running',
+          `review ended before starting: ${step(run).detail}`,
+        );
+        await delay(1000);
+      }
+      const { run: beforeStop } = await connection!.call<{ run: any }>('run.get', {
+        runId: 'base-new',
+      });
+      assert.equal(step(beforeStop).status, 'running', 'the review is still in flight');
+      const stoppedAt = new Date().toISOString();
+      await stopGateway();
+      gateway = launchGateway();
+      await connectGateway();
+      const restartedAt = new Date().toISOString();
+      const resumed = await launched('base-new', { stepAfter: stoppedAt });
+      console.log(
+        JSON.stringify({
+          claim: 'restart-keeps-recorded',
+          stoppedAt,
+          restartedAt,
+          stepStartedBeforeStop: step(beforeStop).startedAt,
+          ...resumed.evidence,
+        }),
+      );
+      assert.equal(resumed.evidence.stepValidationDepth, 'static-code');
+      assert.equal(resumed.evidence.checklistDepth, 'static-code');
+      // Let the resumed real review finish. Snapshot reviewer artifacts as they land, since
+      // later pipeline steps own the slot checkout once the step completes.
+      const artifacts = new Map<string, string>();
+      const artifactDir = path.join(repo, '.task', 'base-new', 'artifacts');
+      const collect = async () => {
+        if (!(await exists(artifactDir))) return;
+        for (const entry of await readdir(artifactDir, { recursive: true })) {
+          if (!/review-(feedback|result)[^/]*\.(md|json)$/.test(entry)) continue;
+          const content = await readFile(path.join(artifactDir, entry), 'utf8').catch((error) => {
+            // A later pipeline step may reset the checkout between listing and reading;
+            // the snapshot taken on an earlier poll is kept.
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (content !== null) artifacts.set(entry, content);
+        }
+      };
+      let completed: any;
+      for (let attempt = 0; !completed; attempt++) {
+        assert(attempt < 450, 'the resumed review did not finish within 15 minutes');
+        await collect();
+        const { run } = await connection!.call<{ run: any }>('run.get', { runId: 'base-new' });
+        if (step(run).status !== 'running') completed = run;
+        else await delay(2000);
+      }
+      await collect();
+      const done = step(completed);
+      const attempts = (done.outputs?.attempts ?? []).map((attempt: any) => ({
+        loopNumber: attempt.loopNumber,
+        verdict: attempt.verdict,
+        validationDepth: attempt.validationDepth ?? null,
+        artifactPaths: attempt.artifactPaths,
+      }));
+      const feedbackFile = [...artifacts.keys()].find((name) => name.endsWith('.md'));
+      const resultFile = [...artifacts.keys()].find((name) => name.endsWith('.json'));
+      console.log(
+        JSON.stringify({
+          claim: 'resumed-review-verdict',
+          stepStatus: done.status,
+          stepValidationDepth: done.inputs?.validationDepth,
+          verdict: done.outputs?.verdict,
+          resultValidationDepth: done.outputs?.validationDepth,
+          runner: done.outputs?.runner,
+          model: done.outputs?.model,
+          attempts,
+          reviewerFiles: [...artifacts.keys()],
+          feedbackVerdict: feedbackFile
+            ? (artifacts.get(feedbackFile)!.match(/^## Verdict: *(\w+)/m)?.[1] ?? null)
+            : null,
+          resultVerdict: resultFile
+            ? (JSON.parse(artifacts.get(resultFile)!).verdict ?? null)
+            : null,
+        }),
+      );
+      // A pass completes the step; issues fail it (max_retries 0) with the result retained.
+      assert(
+        (done.status === 'done' && done.outputs?.verdict === 'pass') ||
+          (done.status === 'failed' && done.outputs?.verdict === 'issues'),
+        `unexpected review outcome: ${done.status} ${done.outputs?.verdict} ${done.detail ?? ''}`,
+      );
+      assert.equal(done.inputs?.validationDepth, 'static-code');
+      assert.equal(done.outputs.validationDepth, 'static-code');
+      assert.equal(done.outputs.runner, depthReviewer.runner);
+      assert(attempts.length > 0, 'the review recorded its attempts');
+      for (const attempt of attempts) assert.equal(attempt.validationDepth, 'static-code');
+      assert(feedbackFile && resultFile, 'the real reviewer wrote review feedback and result');
+    }
+    async function proveFixtureDepths(freshEvidence: typeof fresh.evidence) {
+      const legacy = await launched('base-legacy');
+      console.log(JSON.stringify({ claim: 'pre-migration-full-live', ...legacy.evidence }));
+      assert.equal(legacy.evidence.stepValidationDepth, 'full-live');
+      assert.equal(legacy.evidence.checklistDepth, 'full-live');
+      // The live reviewer carries no artifact scope, so after a restart only the recorded
+      // step depth distinguishes this run from a pre-migration one.
+      assert.equal(freshEvidence.reviewer.artifactScope, null);
+      const restartedAt = new Date().toISOString();
+      await stopGateway();
+      gateway = launchGateway();
+      await connectGateway();
+      const resumed = await launched('base-new', { reviewerAfter: restartedAt });
+      console.log(
+        JSON.stringify({ claim: 'restart-keeps-recorded', restartedAt, ...resumed.evidence }),
+      );
+      assert(
+        resumed.evidence.stepStartedAt > restartedAt,
+        'the restarted engine re-entered the step',
+      );
+      assert.equal(resumed.evidence.stepValidationDepth, 'static-code');
+      assert.equal(resumed.evidence.checklistDepth, 'static-code');
+    }
   } else if (['legacy-completed', 'legacy-pending', 'approved-qa'].includes(scenario)) {
     const { team } = await connection!.call<{ team: PRTeamProfile }>('prRules.teamSave', {
       config: {
@@ -1782,8 +2016,12 @@ try {
       scenario,
       endpoint: 'isolated production gateway',
       workerExecution: false,
-      ...(scenario === 'base-review-depth'
-        ? { reviewer: 'gateway-launched fixture CLI in a private tmux server; no model' }
+      ...(depthScenario
+        ? {
+            reviewer: liveReview
+              ? `gateway-launched ${depthReviewer.runner}/${depthReviewer.model} in a private tmux server`
+              : 'gateway-launched fixture CLI in a private tmux server; no model',
+          }
         : {}),
       provider: ['publication-delivery', 'publication-direct'].includes(scenario)
         ? 'isolated publication gh fixture; no live GitHub writes'
@@ -1817,7 +2055,7 @@ try {
   // The private tmux server outlives the gateway; its socket exists only if it started.
   const tmuxSocket = path.join(tmuxEnv.TMUX_TMPDIR!, `tmux-${process.getuid!()}`, 'default');
   const tmuxStarted =
-    scenario === 'base-review-depth' &&
+    depthScenario &&
     (await stat(tmuxSocket).then(
       () => true,
       (error) => {
