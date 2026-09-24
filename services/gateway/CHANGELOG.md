@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Resolve requested start-ref SHAs with one local reachability scan and accept newly advertised remote branch heads without scanning thousands of refs one by one.
+
 - Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.
 
 - QA completion rejects recipe packages from a partial `stop-after-node` run.
