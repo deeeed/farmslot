@@ -398,6 +398,7 @@ export function blindReviewRows(plan: NavigationPlan, sessions: Session[]) {
         reads: deliveredTurns(session)
           .filter((turn) => turn.action.type === 'read_evidence')
           .map((turn) => turn.action),
+        // Keep attempted invalid answers visible for blind review; only valid reads delivered evidence.
         answer: session.turns.find((turn) => turn.action.type === 'answer')?.action ?? null,
       };
     })

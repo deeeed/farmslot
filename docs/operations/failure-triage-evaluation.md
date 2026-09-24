@@ -140,7 +140,9 @@ a proxy; operator time and whole-workflow token savings need matched trials.
 
 ## Navigation metrics and rejected draft
 
-The scorer reports missing, interrupted and terminal zero-read arms separately.
+The scorer reports missing, interrupted and completed zero-read arms separately.
+Interrupted includes active sessions and invalid final turns. Invalid answers stay
+visible in blind review as attempted answers; invalid reads never delivered evidence.
 It counts completed arms whose first delivered read names a required source,
 even when another read is needed. Read/turn totals cover independently accepted
 equal-quality pairs only. Named advice and abstentions have separate cohorts and
@@ -153,8 +155,8 @@ first-read check chose a required source in 6/8 cases, including 4/5 cases
 with one required read, leaving little room for fewer reads. There were no
 provider calls, usage receipts or paired worker answers on that draft. Its
 exact case and reference files are excluded from the shipped corpus; the
-reviewed bytes are recoverable from commit `f72e6d55d2788f9b24cd85da163765ab612703d7`
-and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
+reviewed bytes are recoverable from PR #736 branch commit
+`f72e6d55d2788f9b24cd85da163765ab612703d7` and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
 directory. Their SHA-256 hashes are
 `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
 for cases and `962190287629e2348f9bb94162b8bad0040ed75ee52c5846f262049055522f7f`
@@ -229,7 +231,7 @@ retain their per-row reasons outside the tracked tree, and flag ambiguous rows
 `unresolved`; do not call a single-rater result independently replicated.
 
 Inspect the retained v1 judgments and report offline. The `score` command
-makes no provider call. A terminal arm with no read enters `zeroRead` and
+makes no provider call. A completed arm with no read enters `zeroRead` and
 cannot register a first-read hit. Interrupted arms enter their own count and
 cannot register first-read hits. Compare advice-inclusive tokens, time and
 independently judged quality before claiming efficiency.
