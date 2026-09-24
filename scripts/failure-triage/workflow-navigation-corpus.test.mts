@@ -53,7 +53,7 @@ test('v2 draft has compatible references, independent families, and variable evi
   assert.equal(reference.status, 'draft-unsealed');
   assert.equal(
     sha256(caseSource),
-    '2ffd28345d5481dc183d1bca46ca21e423e6bac76128fcdaa7b4f8387a64348a',
+    'b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a',
   );
   assert.equal(
     sha256(referenceSource),

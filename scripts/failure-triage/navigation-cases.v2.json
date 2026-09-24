@@ -21,7 +21,7 @@
       {
         "id": "e4",
         "title": "Environment snapshot",
-        "text": "Simulator is reachable and has its normal storage allocation."
+        "text": "Simulator is reachable; no additional device state was retained for this attempt."
       }
     ]
   },
@@ -32,7 +32,7 @@
       {
         "id": "e1",
         "title": "Environment snapshot",
-        "text": "Checkout is shallow; preparation stopped before dispatch."
+        "text": "Preparation stopped before dispatch; no checkout completion event was retained."
       },
       {
         "id": "e2",
@@ -99,7 +99,7 @@
       {
         "id": "e4",
         "title": "Request trace",
-        "text": "Authoritative state remains pending; no completed operation was recorded."
+        "text": "Request acknowledged; no authoritative post-operation state read was retained."
       }
     ]
   },
