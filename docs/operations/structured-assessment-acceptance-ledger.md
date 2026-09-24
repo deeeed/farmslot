@@ -49,11 +49,14 @@ This checks labels, not provider accuracy or operator efficiency.
 
 The [AC v2 TypeSafe adapter probe](../../scripts/acceptance-evidence/results/v2-typesafe-adapter.json)
 ran September 24, 2026 against the pinned synthetic text corpus, through the
-production TypeSafe adapter with the same Choice question and criterion/evidence
-packet as the gateway consumer. The adapter received 12 completed responses from
-`jev-1.13.0` with 5,691 input tokens and an estimated USD 0.000239 at the
+production TypeSafe adapter using Choice wording and criterion/evidence fields copied from the gateway
+consumer. The probe did not record a packet hash or gateway history. The adapter received 12 completed responses from
+`jev-1.13.0` with 5,691 input and 561 output tokens and an estimated USD 0.000239 at the
 [verified model price](https://docs.typesafe.ai/models); the reserved maximum
-was USD 0.005. No retries or other provider calls were made. The provider got
+was USD 0.005. The adapter disabled SDK retries, and the saved probe has
+12 call records; this artifact cannot independently prove the provider saw no
+other calls. `node scripts/acceptance-evidence/check.mjs` recomputes the
+recorded counts and held-out verdicts against the pinned labels. The provider got
 8/9 held-out labels right but chose `supported` for `held-insufficient-negative`:
 one worker's zero outbound requests cannot establish that **no worker** sent
 customer data. This fails the predeclared no-wrong-definite-verdict rule, so the Jev

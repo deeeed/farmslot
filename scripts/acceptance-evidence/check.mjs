@@ -61,3 +61,50 @@ assert.ok(
   'criterion ids must not leak labels',
 );
 console.log('Frozen AC corpus v2: 3 development, 9 held-out, 2 excluded; 12 labels matched');
+
+// Recompute the recorded adapter probe from frozen labels. This validates the
+// stored artifact, not whether its adapter-only history is exhaustive.
+const probe = JSON.parse(
+  readFileSync(new URL('results/v2-typesafe-adapter.json', import.meta.url)),
+);
+assert.equal(probe.corpusSha256, frozen['cases.v2.json']);
+assert.equal(probe.labelSha256, frozen['labels.v2.json']);
+assert.equal(probe.provider, 'typesafe');
+assert.equal(probe.requestedModel, 'jev-1.13.0');
+assert.equal(probe.calls, 12);
+assert.equal(probe.records.length, probe.calls);
+const textual = cases.filter((entry) => entry.proofMode === 'state');
+assert.deepEqual(
+  new Set(probe.records.map((row) => row.caseId)),
+  new Set(textual.map((row) => row.id)),
+);
+let tokens = 0;
+let outputTokens = 0;
+let heldCorrect = 0;
+const wrongInsufficient = [];
+for (const row of probe.records) {
+  const item = textual.find((entry) => entry.id === row.caseId);
+  assert.equal(row.split, item.split);
+  assert.equal(row.status, 'completed');
+  assert.equal(row.returnedModel, probe.requestedModel);
+  assert.ok(['supported', 'contradicted', 'insufficient'].includes(row.verdict));
+  assert.ok(Number.isSafeInteger(row.inputTokens) && row.inputTokens >= 0);
+  assert.ok(Number.isSafeInteger(row.outputTokens) && row.outputTokens >= 0);
+  assert.ok(Number.isFinite(row.durationMs) && row.durationMs >= 0);
+  tokens += row.inputTokens;
+  outputTokens += row.outputTokens;
+  if (item.split !== 'held-out') continue;
+  if (row.verdict === labeled.get(row.caseId).expected) heldCorrect++;
+  if (labeled.get(row.caseId).expected === 'insufficient' && row.verdict !== 'insufficient')
+    wrongInsufficient.push(row.caseId);
+}
+assert.equal(tokens, 5691);
+assert.equal(outputTokens, 561);
+assert.equal(heldCorrect, 8);
+assert.deepEqual(wrongInsufficient, ['held-insufficient-negative']);
+assert.equal(probe.pricing.inputUsdPerMillion, 0.042);
+assert.equal(probe.pricing.outputUsdPerMillion, 0);
+assert.ok((tokens * probe.pricing.inputUsdPerMillion) / 1_000_000 <= probe.maxUsd);
+console.log(
+  `Recorded AC adapter probe: ${heldCorrect}/9 held-out; hold on ${wrongInsufficient.join(', ')}`,
+);
