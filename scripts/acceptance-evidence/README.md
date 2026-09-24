@@ -35,7 +35,7 @@ arm with `judgment`, `elapsedMs`, `workerTokens`, and `workerCostUsd`; each metr
 is a non-negative number or `null` when unknown. `assistedRunId` and
 `assessmentRecordIds` associate the assisted task with retained gateway records.
 Supply the complete unfiltered gateway history export for the studied runs. Every supplied record must be associated exactly once, have synthetic admission, and its run ID, criterion
-text, evidence IDs and evidence text must match that frozen case. A run cannot
+text, evidence IDs, evidence text and gateway snapshot hash must match that frozen case. A run cannot
 be reused by another case. The offline evaluator cannot prove that a supplied history export is exhaustive; a missing failed retry can falsely reduce cost. Audit completeness against the gateway before interpreting any `pass`. Visual and mixed entries
 must use `baseline: null`, `assisted: null`, and an empty record-ID list.
 
@@ -70,6 +70,7 @@ runnable study file:
   "subject": {
     "run": {
       "id": "synthetic-run-1",
+      "snapshotHash": "80e32298aacb72b3d233a75d93a663f90b385e098b3041637074e24d68ce5484",
       "admission": {
         "classification": "synthetic",
         "sourceRef": "synthetic:acceptance-evidence-v2"
@@ -95,7 +96,9 @@ runnable study file:
 The complete artifact includes all fourteen case entries. Completed assessment
 records retain `result.answers.verdict` as a closed choice; the evaluator reports
 its accuracy separately from the validator arms. Assessment records use the
-persisted protocol shape. Attempted failed calls count. A missing input or
+persisted protocol shape. The evaluator recomputes `snapshotHash` from the frozen
+criterion, evidence and assisted run ID; it rejects missing or mismatched hashes.
+Attempted failed calls count. A missing input or
 output token total, cost, or paired workflow measure stays `null`; it is never
 counted as zero. Assisted token and cost totals add retained assessment receipts
 to the worker measurements; `workerTokens` and `workerCostUsd` must exclude those assessment receipts to avoid double counting. A provider may omit output token usage when output is free; this scorer treats missing output tokens as unknown rather than guessing their count. The whole-task elapsed time is already measured

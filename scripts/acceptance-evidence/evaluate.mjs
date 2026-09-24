@@ -62,6 +62,9 @@ function normalizeRecord(record, path) {
   if (typeof record.id !== 'string' || !record.id) fail(`${path}.id is required`);
   const runId = record.subject?.run?.id;
   if (typeof runId !== 'string' || !runId) fail(`${path}.subject.run.id is required`);
+  const snapshotHash = record.subject.run.snapshotHash;
+  if (typeof snapshotHash !== 'string' || !/^[a-f0-9]{64}$/.test(snapshotHash))
+    fail(`${path}.subject.run.snapshotHash is required`);
   const criterion = record.subject.run.criterion;
   if (
     !criterion ||
@@ -107,6 +110,7 @@ function normalizeRecord(record, path) {
   return {
     id: record.id,
     runId,
+    snapshotHash,
     criterion,
     attempted: used,
     tokens,
@@ -128,6 +132,15 @@ function matchesFrozenCriterion(record, frozen) {
         evidence?.text === frozen.evidence[index].text,
     )
   );
+}
+
+function frozenSnapshotHash(runId, frozen) {
+  const packet = {
+    version: 1,
+    criterion: { id: frozen.criterionId, text: frozen.criterion },
+    evidence: frozen.evidence.map(({ id, text }) => ({ id, text })),
+  };
+  return createHash('sha256').update(JSON.stringify({ runId, packet })).digest('hex');
 }
 
 function totals(rows, fields) {
@@ -187,6 +200,8 @@ export function evaluate(study, frozenCases, labels) {
       fail(`${entry.caseId} record run does not match assistedRunId`);
     if (linked.some((record) => !matchesFrozenCriterion(record, frozen)))
       fail(`${entry.caseId} record criterion/evidence does not match frozen case`);
+    if (linked.some((record) => record.snapshotHash !== frozenSnapshotHash(record.runId, frozen)))
+      fail(`${entry.caseId} record snapshot hash does not match frozen case`);
     const previousCase = caseForRun.get(entry.assistedRunId);
     if (previousCase && previousCase !== entry.caseId)
       fail(`assisted run ${entry.assistedRunId} is associated with multiple frozen cases`);

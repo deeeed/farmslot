@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
@@ -18,6 +19,18 @@ function record(id, runId, entry, { failed = false, unknown = false, verdict = '
     subject: {
       run: {
         id: runId,
+        snapshotHash: createHash('sha256')
+          .update(
+            JSON.stringify({
+              runId,
+              packet: {
+                version: 1,
+                criterion: { id: entry.criterionId, text: entry.criterion },
+                evidence: entry.evidence.map(({ id, text }) => ({ id, text })),
+              },
+            }),
+          )
+          .digest('hex'),
         admission: { classification: 'synthetic', sourceRef: 'synthetic:acceptance-evidence-v2' },
         criterion: { id: entry.criterionId, text: entry.criterion, evidence: entry.evidence },
       },
@@ -132,6 +145,17 @@ test('missing assessment receipt association is rejected instead of treated as f
     () => evaluate(study({ omitRecord: true }), cases, labels),
     /requires retained assessment/,
   );
+});
+
+test('gateway snapshot hash binds the exact frozen case and assisted run', () => {
+  const missing = study();
+  delete missing.assessmentRecords[0].subject.run.snapshotHash;
+  assert.throws(() => evaluate(missing, cases, labels), /snapshotHash is required/);
+
+  const swapped = study();
+  const [first, second] = swapped.assessmentRecords;
+  first.subject.run.snapshotHash = second.subject.run.snapshotHash;
+  assert.throws(() => evaluate(swapped, cases, labels), /snapshot hash does not match/);
 });
 
 test('a completed verdict cannot be counted without an attempted provider call', () => {
