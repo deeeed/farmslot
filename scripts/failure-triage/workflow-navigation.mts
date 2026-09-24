@@ -399,7 +399,7 @@ export function blindReviewRows(plan: NavigationPlan, sessions: Session[]) {
           .filter((turn) => turn.action.type === 'read_evidence')
           .map((turn) => turn.action),
         // The live runner discards invalid turns; direct callers may still supply an attempted answer.
-        answer: session.turns.find((turn) => turn.action.type === 'answer')?.action ?? null,
+        answer: session.turns.find((turn) => turn.action?.type === 'answer')?.action ?? null,
       };
     })
     .sort((a, b) => a.blindId.localeCompare(b.blindId));
@@ -559,7 +559,7 @@ export function compareSessions(
       assisted: decisions.get(digest(`${plan.hash}:${id}:assisted`)),
     };
     const matchesReference = (session: Session | undefined) => {
-      const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
+      const answer = session?.turns.find((turn) => turn.action?.type === 'answer')?.action;
       return (
         answer?.type === 'answer' &&
         answer.label === expected.label &&
@@ -598,7 +598,7 @@ export function compareSessions(
             ? 'both-rejected'
             : 'inconclusive';
     const armReport = (session: Session | undefined, arm: Arm) => {
-      const answer = session?.turns.find((turn) => turn.action.type === 'answer')?.action;
+      const answer = session?.turns.find((turn) => turn.action?.type === 'answer')?.action;
       const review = reviews[arm];
       const referenceMatch = session?.status === 'answered' && matchesReference(session);
       const readIds = session

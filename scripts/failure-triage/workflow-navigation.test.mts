@@ -373,6 +373,27 @@ test('assisted first-use totals charge advice; absent matched quality cannot cla
     )?.reads.length,
     1,
   );
+  const nullAction = advance(
+    sealed,
+    startSession(sealed, 'case-one', 'baseline'),
+    null as unknown as Parameters<typeof advance>[2],
+    receipt('null-action'),
+  ).session;
+  const nullActionSessions = [nullAction, assisted];
+  const nullActionComparison = compareSessions(
+    sealed,
+    nullActionSessions,
+    reference,
+    judgment(sealed, nullActionSessions),
+  );
+  assert.equal(nullActionComparison.pairs[0].baseline.referenceMatch, false);
+  assert.deepEqual(nullActionComparison.navigation.named.interrupted, { baseline: 1, assisted: 0 });
+  assert.deepEqual(
+    blindReviewRows(sealed, nullActionSessions)
+      .filter((row) => row.answer === null)
+      .map((row) => row.reads),
+    [[]],
+  );
   const activeRead = advance(
     sealed,
     startSession(sealed, 'case-one', 'baseline'),

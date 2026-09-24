@@ -156,7 +156,7 @@ first-read check chose a required source in 6/8 cases, including 4/5 cases
 with one required read, leaving little room for fewer reads. There were no
 provider calls, usage receipts or paired worker answers on that draft. Its
 exact case and reference files are excluded from the shipped corpus; the
-reviewed bytes are recoverable from PR #736 branch commit
+reviewed bytes are recoverable from PR #736's `refs/pull/736/head` at commit
 `f72e6d55d2788f9b24cd85da163765ab612703d7` and are also saved in the operator's ignored `temp/navigation-v2-rejected/`
 directory. Their SHA-256 hashes are
 `b939ff5109c7a789196921d5f34113f14945f7413546ea1529c26f136903ab3a`
@@ -197,8 +197,10 @@ verified price snapshots. `quote-advice` checks a 1024-byte envelope reserve;
 the worker checks its request size before each paid call.
 A separate independent reviewer must approve each paid stage's plan, config,
 method hash and journal path. Future approved TypeSafe advice needs
-`TYPESAFE_API_KEY`; the worker (or LLM advice provider) needs `STUDY_API_KEY`.
-Both paid stages consume approval once and stop on unknown charges. Keep plans, approvals, journals and results outside the
+`TYPESAFE_API_KEY`; if it is unset, the CLI falls back to `STUDY_API_KEY`.
+Use a dedicated TypeSafe key when the worker has a separate credential. The
+worker (or LLM advice provider) needs `STUDY_API_KEY`. Both paid stages consume
+approval once and stop on unknown charges. Keep plans, approvals, journals and results outside the
 tracked tree.
 
 Offline checks for v1:
