@@ -51,7 +51,8 @@ if (phase === 'setup') {
   assert(!fs.existsSync(statePath), `Run cleanup first; ${statePath} exists`);
   const fixture = path.join(proofDir, 'farm');
   const port = Number(process.env.COMPANION_PROOF_GATEWAY_PORT ?? 18791);
-  const token = randomBytes(32).toString('hex');
+  // A rerun can keep the token the Companion's saved proof profile already holds.
+  const token = process.env.COMPANION_PROOF_TOKEN ?? randomBytes(32).toString('hex');
   execFileSync('git', ['clone', '--shared', '--no-checkout', root, fixture], { stdio: 'pipe' });
   for (const name of ['scripts', 'services', 'packages'])
     fs.symlinkSync(path.join(root, name), path.join(fixture, name));
@@ -127,12 +128,22 @@ if (phase === 'setup') {
   fs.writeFileSync(path.join(proofDir, 'token'), token, { mode: 0o600 });
   evidence('backlog-before', { legacy: seeded });
   console.log(JSON.stringify({ gateway: `ws://127.0.0.1:${port}`, legacyId }));
+} else if (phase === 'relaunch') {
+  // Start from a fresh app process so screens from an earlier step or attempt (an open manual
+  // form, a still-mounted create sheet sharing test ids) cannot receive the next step's input.
+  // The recipe waits for the tab bar before deep-linking. Relaunching reuses the installed dev client.
+  assert(process.env.IOS_SIMULATOR, 'Set IOS_SIMULATOR to the leased simulator');
+  const bundleId = process.env.BUNDLE_ID ?? 'net.siteed.farmslot.development';
+  execFileSync('xcrun', ['simctl', 'terminate', process.env.IOS_SIMULATOR, bundleId]);
+  execFileSync('xcrun', ['simctl', 'launch', process.env.IOS_SIMULATOR, bundleId]);
 } else if (phase === 'open-connection') {
   openUrl('/connection');
 } else if (phase === 'open-create') {
   openUrl('/backlog/create');
 } else if (phase === 'verify-create') {
-  const created = (await backlogItems()).find((item) => item.title === createdTitle);
+  const created = (await backlogItems())
+    .filter((item) => item.title === createdTitle)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   evidence('backlog-created', created ?? null);
   assert(created, 'Companion create must persist the backlog item');
   assert.equal(created.pendingReviewPlan?.length, 1);
@@ -144,7 +155,13 @@ if (phase === 'setup') {
 } else if (phase === 'open-edit') {
   openUrl(`/backlog/edit/${legacyId}`);
 } else if (phase === 'verify-edit') {
-  const repaired = (await backlogItems()).find((item) => item.id === legacyId);
+  // Saving closes the edit screen, so the persisted item is the signal; the save is async.
+  let repaired;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    repaired = (await backlogItems()).find((item) => item.id === legacyId);
+    if (repaired?.pendingReviewPlan?.[0]?.validationDepth === 'static-code') break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
   evidence('backlog-after-edit', repaired ?? null);
   assert.deepEqual(
     repaired?.pendingReviewPlan?.map((loop) => [loop.runner, loop.validationDepth]),

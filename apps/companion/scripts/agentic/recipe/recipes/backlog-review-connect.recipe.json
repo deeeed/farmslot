@@ -1,0 +1,132 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Connect the Companion to the backlog review proof gateway",
+  "description": "One-time setup for backlog-review-rounds. Run `node scripts/agentic/backlog-review-proof.mjs setup` first and pass its port and the token from temp/companion-backlog-review-proof/token. Adds a manual gateway profile through the connection screen; the saved profile persists in the app.",
+  "paramsSchema": {
+    "type": "object",
+    "required": ["gateway_port", "token"],
+    "properties": {
+      "gateway_port": {
+        "type": "integer"
+      },
+      "token": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false
+  },
+  "workflow": {
+    "entry": "connect-relaunch",
+    "nodes": {
+      "connect-relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "intent": "Restart the Companion so no earlier screen can take this step's input.",
+        "next": "connect-app-ready"
+      },
+      "connect-app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and is ready for a deep link.",
+        "next": "open-connection"
+      },
+      "open-connection": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-connection",
+        "intent": "Open Companion connection settings on the leased simulator.",
+        "next": "wait-connection"
+      },
+      "wait-connection": {
+        "action": "ui.wait_for",
+        "test_id": "companion-connection-manual-toggle",
+        "timeout_ms": 30000,
+        "intent": "The connection screen is ready for a manual gateway profile.",
+        "next": "open-manual"
+      },
+      "open-manual": {
+        "action": "ui.press",
+        "test_id": "companion-connection-manual-toggle",
+        "intent": "Open the manual gateway form.",
+        "next": "focus-url"
+      },
+      "focus-url": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-url",
+        "intent": "Focus the gateway URL field so the keyboard opens.",
+        "next": "reveal-url"
+      },
+      "reveal-url": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Bring the focused gateway URL field above the keyboard.",
+        "next": "profile-url"
+      },
+      "profile-url": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-url",
+        "value": "ws://127.0.0.1:{{params.gateway_port}}",
+        "intent": "Point the profile at the private fixture gateway.",
+        "next": "reveal-auth"
+      },
+      "reveal-auth": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Reveal the token authentication option above the keyboard.",
+        "next": "auth-token"
+      },
+      "auth-token": {
+        "action": "ui.press",
+        "test_id": "companion-native-auth-token",
+        "intent": "Use token authentication.",
+        "next": "focus-secret"
+      },
+      "focus-secret": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-secret",
+        "intent": "Focus the gateway credential field.",
+        "next": "reveal-secret"
+      },
+      "reveal-secret": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Bring the focused credential field above the keyboard.",
+        "next": "profile-secret"
+      },
+      "profile-secret": {
+        "action": "ui.set_input",
+        "test_id": "companion-native-profile-secret",
+        "value": "{{params.token}}",
+        "intent": "Enter the fixture gateway token.",
+        "next": "reveal-save"
+      },
+      "reveal-save": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 300,
+        "intent": "Reveal the save button above the keyboard.",
+        "next": "save-profile"
+      },
+      "save-profile": {
+        "action": "ui.press",
+        "test_id": "companion-native-profile-save",
+        "intent": "Save and connect to the fixture gateway.",
+        "next": "connected"
+      },
+      "connected": {
+        "action": "ui.wait_for",
+        "text_contains": ["connected"],
+        "timeout_ms": 30000,
+        "intent": "The Companion reports it is connected to the fixture gateway.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
