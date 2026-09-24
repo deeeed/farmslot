@@ -1,0 +1,35 @@
+name: Acceptance Evidence Proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/acceptance-evidence.yml'
+      - 'scripts/acceptance-evidence/**'
+      - 'services/gateway/src/methods/acceptance-evidence.ts'
+      - 'services/gateway/src/tasks/acceptance-status.ts'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/acceptance-evidence.yml'
+      - 'scripts/acceptance-evidence/**'
+      - 'services/gateway/src/methods/acceptance-evidence.ts'
+      - 'services/gateway/src/tasks/acceptance-status.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace @farmslot/protocol build
+      - run: node scripts/acceptance-evidence/check.mjs
+      - run: node --test scripts/acceptance-evidence/evaluate.test.mjs
+      - run: TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts

@@ -131,18 +131,19 @@ cases, make more candidate calls on them or reinterpret that result as gateway p
 
 Version 3 is a new synthetic corpus with gateway-readable artifact paths and
 opaque IDs. An independent blind reader checked its reference judgments before
-freezing it. The SHA-256 hashes are:
+freezing it; [the dated blind audit](results/v3-blind-label-audit.json) records
+all first-pass judgments without model calls. The SHA-256 hashes are:
 
 ```
-e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221  cases.v3.json
-b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0  labels.v3.json
+6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14  cases.v3.json
+288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c  labels.v3.json
 ```
 
 `node scripts/acceptance-evidence/check.mjs` checks both frozen versions.
 `TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts`
 creates temporary runs from all v3 cases and tests gateway eligibility and the
 visual/mixed no-call boundary. It also uses a **fake in-process provider** to
-generate 12 real gateway records and checks that the offline evaluator accepts
+generate 12 persisted records through the gateway methods and checks that the offline evaluator accepts
 their snapshots, admissions and usage. It refuses visual/mixed analyze calls,
 rejects a changed snapshot or admission, and checks that a wrong definite
 answer holds while correct fake answers with equal worker arms remain
@@ -153,7 +154,8 @@ A v3 study must set `corpusVersion: 3` alongside `version: 1` when passed to
 `node scripts/acceptance-evidence/evaluate.mjs <study.json>`. Every text record
 must come from the gateway snapshot for the recorded run and carry the exact
 synthetic admission `synthetic:acceptance-evidence-v3/<caseId>`. The older study
-format without `corpusVersion` continues to select frozen v2. Never send IDs,
+format with an omitted `corpusVersion` continues to select frozen v2; an
+explicit `null` version is invalid. Never send IDs,
 splits or reference labels to the provider. Visual and mixed cases stay no-call.
 
 A live experiment still needs a separately verified current price and spend
@@ -168,9 +170,14 @@ run's task directory. Preview `acceptanceEvidenceGet` and place its exact
 `runId`, `criterionId`, and `snapshotHash` in the opt-in
 `acceptance-evidence-policy.json` with `classification: synthetic` and
 `sourceRef: synthetic:acceptance-evidence-v3/<caseId>`. Set a verified price
-and per-batch spend/call limits before analyzing. Export the complete
-`assessment.list` history for the run owner, including failed attempts, into
-the study's `assessmentRecords`. Capture paired worker judgments and full
+and per-batch spend/call limits before analyzing. Page through
+`assessment.list({ consumer: 'acceptance-evidence', limit: 100, before })` for
+the run owner, passing each `nextCursor` as `before` until none remains.
+Keep every record for the study's 12 run IDs, including failed and repeated
+attempts, and exclude unrelated runs. Export those records unchanged into
+`assessmentRecords` and link each record ID to its case. Check that the run
+set and export are complete before evaluation; omitted attempts make costs
+and policy compliance unknowable. Capture paired worker judgments and full
 workflow time/tokens/cost separately; an assessment record cannot supply
 those measurements. The gateway parity test shows the exact file shapes and
 uses a temporary home so it does not alter real runs.

@@ -114,8 +114,8 @@ console.log(
 // v3 uses gateway-readable artifact paths and opaque IDs; v2 remains an
 // unchanged adapter-only result and is never treated as a gateway study.
 const v3Hashes = {
-  'cases.v3.json': 'e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221',
-  'labels.v3.json': 'b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0',
+  'cases.v3.json': '6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14',
+  'labels.v3.json': '288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c',
 };
 for (const [name, hash] of Object.entries(v3Hashes)) {
   const bytes = readFileSync(new URL(name, import.meta.url));
@@ -159,4 +159,13 @@ for (const split of ['development', 'held-out']) {
     );
   }
 }
+const blindAudit = JSON.parse(
+  readFileSync(new URL('results/v3-blind-label-audit.json', import.meta.url)),
+);
+assert.equal(blindAudit.casesSha256, v3Hashes['cases.v3.json']);
+assert.equal(blindAudit.labelsSha256, v3Hashes['labels.v3.json']);
+assert.deepEqual(
+  new Map(blindAudit.judgments.map((row) => [row.caseId, row.judgment])),
+  new Map(nextCases.cases.map((row) => [row.id, reference.get(row.id) ?? 'no-call'])),
+);
 console.log('Frozen gateway AC corpus v3: 3 development, 9 held-out, 2 excluded');

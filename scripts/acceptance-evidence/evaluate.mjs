@@ -11,8 +11,8 @@ const FROZEN_HASHES = {
     labels: 'f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9',
   },
   3: {
-    cases: 'e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221',
-    labels: 'b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0',
+    cases: '6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14',
+    labels: '288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c',
   },
 };
 
@@ -149,7 +149,7 @@ function totals(rows, fields) {
 export function evaluate(study, frozenCases, labels) {
   if (!study || typeof study !== 'object' || Array.isArray(study)) fail('study must be an object');
   if (study.version !== 1) fail('study.version must be 1');
-  const corpusVersion = study.corpusVersion ?? 2;
+  const corpusVersion = study.corpusVersion === undefined ? 2 : study.corpusVersion;
   if (
     ![2, 3].includes(corpusVersion) ||
     frozenCases.version !== corpusVersion ||
@@ -407,7 +407,7 @@ async function main() {
     fail('Usage: node scripts/acceptance-evidence/evaluate.mjs <study.json>');
   const here = new URL('.', import.meta.url);
   const study = JSON.parse(await readFile(studyPath, 'utf8'));
-  const version = study.corpusVersion ?? 2;
+  const version = study?.corpusVersion === undefined ? 2 : study.corpusVersion;
   if (![2, 3].includes(version)) fail('unsupported frozen corpus version');
   const [caseText, labelText] = await Promise.all([
     readFile(new URL(`./cases.v${version}.json`, here), 'utf8'),

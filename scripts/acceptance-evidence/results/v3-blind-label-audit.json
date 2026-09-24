@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "readDate": "2026-09-24",
+  "method": "Case text reviewed without reference labels; judgments recorded before comparison. Q7 wording was rechecked after clarification.",
+  "casesSha256": "6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14",
+  "labelsSha256": "288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c",
+  "judgments": [
+    {
+      "caseId": "case-bd0e492cb8",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-57584c0514",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-4403723d6f",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-d9148d1742",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-df79ab632b",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-e2864820eb",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-73534ccc73",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-0f44fffa13",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-b378efe57b",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-5606bbd91a",
+      "judgment": "supported"
+    },
+    {
+      "caseId": "case-fc8a9190fd",
+      "judgment": "insufficient"
+    },
+    {
+      "caseId": "case-72efdd3b17",
+      "judgment": "contradicted"
+    },
+    {
+      "caseId": "case-50288dbd0f",
+      "judgment": "no-call"
+    },
+    {
+      "caseId": "case-ffc66c7d36",
+      "judgment": "no-call"
+    }
+  ]
+}

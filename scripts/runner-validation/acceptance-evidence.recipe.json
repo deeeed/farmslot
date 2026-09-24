@@ -30,7 +30,7 @@
         "action": "command",
         "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx --test scripts/acceptance-evidence/gateway-parity.test.mts",
         "timeout_ms": 60000,
-        "intent": "Create temporary gateway-readable v3 runs; verify 12 persisted fake-provider receipts, frozen packet/admission binding, complete usage and visual/mixed refusal without external calls.",
+        "intent": "Create temporary gateway-readable v3 runs; verify 12 receipts from gateway methods using a fake provider, frozen packet/admission binding, complete usage and visual/mixed refusal without external calls.",
         "next": "done"
       },
       "done": {

@@ -1,5 +1,3 @@
-process.env.NODE_TEST_CONTEXT = '1';
-
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +9,7 @@ const cases = JSON.parse(readFileSync(new URL('./cases.v3.json', import.meta.url
 const labels = JSON.parse(readFileSync(new URL('./labels.v3.json', import.meta.url), 'utf8'));
 const { evaluate } = await import('./evaluate.mjs');
 
-test('new synthetic AC case snapshots are accepted by the real gateway', async () => {
+test('new synthetic AC cases exercise gateway methods and audit store', async () => {
   const home = mkdtempSync(path.join(tmpdir(), 'farmslot-ac-v3-'));
   const previous = Object.fromEntries(
     [
@@ -232,16 +230,14 @@ test('new synthetic AC case snapshots are accepted by the real gateway', async (
     const evaluated = evaluate(study, cases, labels);
     assert.equal(evaluated.assessment.attemptedCalls, 12);
     assert.equal(evaluated.assessment.unknownUsageOrCostCalls, 0);
-    assert.deepEqual(evaluated.assessment.totals, {
-      tokens: 1248,
-      cost: 0.00006,
-      latency: 180,
-    });
+    assert.equal(evaluated.assessment.totals.tokens, 1248);
+    assert.ok(Math.abs(evaluated.assessment.totals.cost - 0.00006) < 1e-12);
+    assert.equal(evaluated.assessment.totals.latency, 180);
     assert.equal(evaluated.quality.provider.heldOut.correct, 9);
     assert.equal(evaluated.gate, 'inconclusive'); // Equal arms: correct labels prove no savings.
     const wrongAnswer = structuredClone(study);
     const insufficientRecord = wrongAnswer.assessmentRecords.find(
-      (record) => record.subject.run.criterion.text === 'Webhook H4 was delivered exactly once',
+      (record) => record.subject.run.criterion.text === 'Unauthorized request U4 received HTTP 403',
     );
     assert.ok(insufficientRecord);
     insufficientRecord.result.answers.verdict.choice = 'supported';

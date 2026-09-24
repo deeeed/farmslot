@@ -227,3 +227,11 @@ test('non-synthetic admission is rejected even when evidence text matches', () =
   };
   assert.throws(() => evaluate(input, cases, labels), /admission must identify a synthetic source/);
 });
+
+test('null study and explicit null corpus selection fail with clear errors', () => {
+  assert.throws(() => evaluate(null, cases, labels), /study must be an object/);
+  assert.throws(
+    () => evaluate({ ...study(), corpusVersion: null }, cases, labels),
+    /corpusVersion/,
+  );
+});

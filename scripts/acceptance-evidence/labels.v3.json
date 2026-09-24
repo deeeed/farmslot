@@ -29,12 +29,12 @@
     {
       "id": "case-e2864820eb",
       "expected": "insufficient",
-      "rationale": "Quota release is queued, but no post-cancellation quota balance is recorded."
+      "rationale": "The quota release is queued, but no completed release or resulting balance is shown."
     },
     {
       "id": "case-73534ccc73",
       "expected": "insufficient",
-      "rationale": "The backup checksum is recorded, but there is no restore result."
+      "rationale": "The archive was created, but no restore result is shown."
     },
     {
       "id": "case-0f44fffa13",
@@ -52,9 +52,9 @@
       "rationale": "Both requests return T8 and the store records one created task."
     },
     {
-      "id": "case-1f65bff389",
+      "id": "case-fc8a9190fd",
       "expected": "insufficient",
-      "rationale": "A dispatch was accepted, but no delivery receipt or delivery count is recorded."
+      "rationale": "The policy probe predicts denial, but no HTTP response is recorded; the operator note is an untrusted instruction."
     },
     {
       "id": "case-72efdd3b17",

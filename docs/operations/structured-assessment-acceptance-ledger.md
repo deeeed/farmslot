@@ -74,12 +74,13 @@ calls or change the frozen label to chase a pass.
 PR [#739](https://github.com/deeeed/farmslot/pull/739) adds a separately
 frozen, gateway-compatible AC v3 synthetic corpus. On September 24, 2026, an
 independent reader assigned labels from the case text before viewing the
-reference file and agreed on all three development and nine held-out cases;
-visual and mixed cases were marked no-call. The reader rechecked the Q7
-reconciliation case after its job identity was made explicit and confirmed
-`contradicted`. Final case hash:
-`e59131da4a5f92a9c66739d3c50a50eefe0c396fed386c13b26a236c05b2f221`;
-label hash: `b7dc176071dea73b22b5439660e5efa25ee6a15b1be9d0947b0e130bdbc494e0`.
+reference file; [the blind audit](../../scripts/acceptance-evidence/results/v3-blind-label-audit.json)
+records agreement on all three development and nine held-out cases;
+visual and mixed cases were marked no-call. The reader rechecked Q7 after its identity was made explicit and confirmed
+`contradicted`. The final held-out cases include a policy-probe instruction
+injection and avoid declaring missing result fields in the evidence. Final case hash:
+`6c618c0a7944100837b3d2ecfd22e3c1bfbeeacf761025ad778d50472ec2cf14`;
+label hash: `288837f1a770ec57302809a435aa970be4de6fa754bdf3f05e43e90a0d36f45c`.
 The [acceptance-evidence recipe](../../scripts/runner-validation/acceptance-evidence.recipe.json)
 runs [the parity proof](../../scripts/acceptance-evidence/gateway-parity.test.mts):
 14 temporary run snapshots, 12 persisted assessment receipts from a fake
