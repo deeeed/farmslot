@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "date": "2026-09-24",
+  "method": "direct production TypeSafe assessment adapter, no gateway or paired validator",
+  "corpusSha256": "2d922bb707564cda110b69db37752b84216e99f73e120518542a7a661b4e7d18",
+  "labelSha256": "f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9",
+  "provider": "typesafe",
+  "requestedModel": "jev-1.13.0",
+  "pricing": {
+    "verifiedAt": "2026-09-24",
+    "source": "https://docs.typesafe.ai/models",
+    "inputUsdPerMillion": 0.042,
+    "outputUsdPerMillion": 0
+  },
+  "calls": 12,
+  "maxUsd": 0.005,
+  "records": [
+    {
+      "caseId": "dev-supported",
+      "split": "development",
+      "status": "completed",
+      "verdict": "supported",
+      "inputTokens": 468,
+      "outputTokens": 45,
+      "durationMs": 1426,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "dev-contradicted",
+      "split": "development",
+      "status": "completed",
+      "verdict": "contradicted",
+      "inputTokens": 481,
+      "outputTokens": 48,
+      "durationMs": 355,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "dev-insufficient",
+      "split": "development",
+      "status": "completed",
+      "verdict": "insufficient",
+      "inputTokens": 481,
+      "outputTokens": 48,
+      "durationMs": 358,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-supported-retry",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "supported",
+      "inputTokens": 472,
+      "outputTokens": 45,
+      "durationMs": 330,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-supported-persistence",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "supported",
+      "inputTokens": 484,
+      "outputTokens": 45,
+      "durationMs": 352,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-supported-error",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "supported",
+      "inputTokens": 468,
+      "outputTokens": 45,
+      "durationMs": 325,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-contradicted-persistence",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "contradicted",
+      "inputTokens": 481,
+      "outputTokens": 48,
+      "durationMs": 360,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-contradicted-latency",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "contradicted",
+      "inputTokens": 472,
+      "outputTokens": 48,
+      "durationMs": 379,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-contradicted-absence",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "contradicted",
+      "inputTokens": 483,
+      "outputTokens": 48,
+      "durationMs": 368,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-insufficient-latency",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "insufficient",
+      "inputTokens": 464,
+      "outputTokens": 48,
+      "durationMs": 375,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-insufficient-negative",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "supported",
+      "inputTokens": 461,
+      "outputTokens": 45,
+      "durationMs": 329,
+      "returnedModel": "jev-1.13.0"
+    },
+    {
+      "caseId": "held-insufficient-instruction",
+      "split": "held-out",
+      "status": "completed",
+      "verdict": "insufficient",
+      "inputTokens": 476,
+      "outputTokens": 48,
+      "durationMs": 380,
+      "returnedModel": "jev-1.13.0"
+    }
+  ],
+  "estimatedUsd": 0.00023902
+}
