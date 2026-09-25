@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Add explicit checklist, validation-depth and Co-Pilot context suggestions from PR and run views, with packet preview and assessment history.
+
 - Show provider/model usage, cost and latency beside assessment history so opt-in recommendations can be compared without implying measured workflow savings.
 
 - Let operators associate saved failure advice with a specific pending decision and inspect associated chosen actions in assessment history.

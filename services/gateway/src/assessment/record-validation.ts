@@ -28,8 +28,52 @@ const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export function assertAssessmentSubject(value: unknown): asserts value is AssessmentSubject {
-  if (!record(value) || Object.keys(value).some((k) => !['pr', 'run'].includes(k)))
+  if (!record(value) || Object.keys(value).some((k) => !['pr', 'run', 'suggestion'].includes(k)))
     throw new Error('Invalid assessment subject');
+  if (value.suggestion !== undefined) {
+    const suggestion = value.suggestion;
+    if (
+      !record(suggestion) ||
+      Object.keys(suggestion).some(
+        (k) => !['kind', 'source', 'context', 'items', 'candidates'].includes(k),
+      ) ||
+      !['static-review-checklist', 'copilot-context', 'review-routing'].includes(
+        String(suggestion.kind),
+      ) ||
+      !record(suggestion.source) ||
+      Object.keys(suggestion.source).some((k) => !['classification', 'ref'].includes(k)) ||
+      !['public', 'synthetic'].includes(String(suggestion.source.classification)) ||
+      !admittedText(suggestion.context, 4000) ||
+      (suggestion.source.classification === 'public'
+        ? !/^https:\/\/[^\s]+$/.test(String(suggestion.source.ref)) ||
+          String(suggestion.source.ref).length > 300
+        : !/^synthetic:[\w./-]{1,200}$/.test(String(suggestion.source.ref))) ||
+      (suggestion.items !== undefined &&
+        (!Array.isArray(suggestion.items) ||
+          suggestion.items.length < 1 ||
+          suggestion.items.length > 12 ||
+          !suggestion.items.every(
+            (item) =>
+              record(item) &&
+              Object.keys(item).every((k) => ['id', 'text', 'evidence'].includes(k)) &&
+              /^[a-z][a-z0-9_-]{0,39}$/.test(String(item.id)) &&
+              admittedText(item.text, 600) &&
+              admittedText(item.evidence, 1800),
+          ))) ||
+      (suggestion.candidates !== undefined &&
+        (!Array.isArray(suggestion.candidates) ||
+          suggestion.candidates.length < 2 ||
+          suggestion.candidates.length > 8 ||
+          !suggestion.candidates.every(
+            (item) =>
+              record(item) &&
+              Object.keys(item).every((k) => ['id', 'description'].includes(k)) &&
+              /^[a-z][a-z0-9_-]{0,39}$/.test(String(item.id)) &&
+              admittedText(item.description, 500),
+          )))
+    )
+      throw new Error('Invalid assessment suggestion context');
+  }
   if (value.pr !== undefined) {
     if (
       !record(value.pr) ||

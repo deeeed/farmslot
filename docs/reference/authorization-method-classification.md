@@ -15,6 +15,8 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `assessment.list`                       | admin          |                                                          |
 | `assessment.report`                     | admin          |                                                          |
 | `assessment.status`                     | admin          |                                                          |
+| `assessment.suggestion.analyze`         | admin          |                                                          |
+| `assessment.suggestion.preview`         | admin          |                                                          |
 | `assessment.summary`                    | admin          |                                                          |
 | `assessment.test`                       | admin          |                                                          |
 | `auth.connect`                          | admin          |                                                          |
