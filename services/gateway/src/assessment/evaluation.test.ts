@@ -17,7 +17,7 @@ import { computePackageHash, unavailableDiff } from '../evals/package-store.js';
 import { evaluateAssessmentReport } from './evaluation.js';
 import { assessmentReport } from './report.js';
 import { beginAssessment, finishAssessment } from './store.js';
-import { summarizeAssessments } from './summary.js';
+import { assessmentAccountingCase, assessmentCase, summarizeAssessments } from './summary.js';
 
 const pr = { host: 'github.com', repo: 'example/app', number: 1, headSha: 'a'.repeat(40) };
 function row(id = randomUUID()): AssessmentRecord {
@@ -57,6 +57,27 @@ function report(records: AssessmentRecord[]): AssessmentReport {
     limitations: [],
   };
 }
+
+test('distinct suggestion packets on one PR head remain separate cases and charges', () => {
+  const first = row();
+  first.consumer = 'static-review-checklist';
+  first.requestedIdentity = {
+    provider: 'fake',
+    model: 'fixed',
+    questionSchemaHash: 'b'.repeat(64),
+    inputDigest: '1'.repeat(64),
+  };
+  const second = {
+    ...first,
+    id: randomUUID(),
+    requestedIdentity: { ...first.requestedIdentity, inputDigest: '2'.repeat(64) },
+  };
+  const repeat = { ...first, id: randomUUID() };
+  assert.notEqual(assessmentCase(first), assessmentCase(second));
+  assert.notEqual(assessmentAccountingCase(first), assessmentAccountingCase(second));
+  assert.equal(assessmentCase(first), assessmentCase(repeat));
+  assert.equal(summarizeAssessments([first, second, repeat]).uniqueCases, 2);
+});
 
 test('triage history is visible and run snapshots form distinct cases', () => {
   const triage = row();

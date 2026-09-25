@@ -390,6 +390,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   return html`
     ${backToRuns}
     <file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>
+    <a
+      href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
+      >Suggest a next context read</a
+    >
     ${ctx._bootstrapFailed
       ? html`<div class="rehydrating-banner">
           Run refresh failed… showing cached data and pausing actions

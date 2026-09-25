@@ -9,6 +9,8 @@ import { writeAtomicJSON } from '../core/atomic-json.js';
 import { assertNoCredentials } from './record-validation.js';
 
 const MAX_BYTES = 20 * 1024 * 1024;
+// Bounded assessment packets may reach 64 KiB; include the audit envelope on disk.
+const INPUT_MAX_BYTES = 72 * 1024;
 const ID = /^[a-f0-9]{64}$/;
 let tail: Promise<unknown> = Promise.resolve();
 function directory(owner: string, kind: 'reports' | 'evaluations' | 'inputs') {
@@ -37,8 +39,8 @@ export function saveAssessmentArtifact(
   const operation = tail.then(async () => {
     if (!ID.test(id)) throw new Error('Invalid artifact ID');
     const bytes = JSON.stringify(value);
-    if (Buffer.byteLength(bytes) > (kind === 'inputs' ? 24000 : MAX_BYTES))
-      throw new Error('Assessment artifact exceeds 20 MiB limit');
+    if (Buffer.byteLength(bytes) > (kind === 'inputs' ? INPUT_MAX_BYTES : MAX_BYTES))
+      throw new Error('Assessment artifact exceeds limit');
     assertNoCredentials(bytes);
     const dir = directory(owner, kind);
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -63,7 +65,7 @@ export async function readAssessmentArtifact(
   if (!ID.test(id)) throw new Error('Invalid artifact ID');
   const file = path.join(directory(owner, kind), `${id}.json`);
   const metadata = await stat(file);
-  if (metadata.size > (kind === 'inputs' ? 24000 : MAX_BYTES))
+  if (metadata.size > (kind === 'inputs' ? INPUT_MAX_BYTES : MAX_BYTES))
     throw new Error('Assessment artifact exceeds limit');
   if (metadata.mtimeMs < Date.now() - 30 * 86400_000)
     throw new Error('Assessment artifact expired');

@@ -140,6 +140,8 @@ function inferSafetyTier(method: string): string {
     method === 'resource.pressure.history' ||
     // Owner-scoped assessment aggregates do not mutate history.
     method === 'assessment.summary' ||
+    // Explicit packet preview builds a bounded view without reserving or calling a provider.
+    method === 'assessment.suggestion.preview' ||
     // Device enumeration: runs `simctl`/`adb`/`emulator` list commands and fills
     // a read cache. The heuristic cannot see it because the name says neither
     // "list" nor "get".

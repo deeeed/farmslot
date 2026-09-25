@@ -28,6 +28,8 @@ export const IntelligenceMethods = {
   assessmentSummary: Methods.ASSESSMENT_SUMMARY,
   assessmentStatus: Methods.ASSESSMENT_STATUS,
   assessmentTest: Methods.ASSESSMENT_TEST,
+  assessmentSuggestionPreview: Methods.ASSESSMENT_SUGGESTION_PREVIEW,
+  assessmentSuggestionAnalyze: Methods.ASSESSMENT_SUGGESTION_ANALYZE,
 } as const;
 
 // ─── Fine-tuning data export param/result types ───

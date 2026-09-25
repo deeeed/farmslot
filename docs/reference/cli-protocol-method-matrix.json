@@ -1416,6 +1416,14 @@
       "surface": "rpc-only",
       "note": "Update a clean default-branch checkout through the shared UI or farmslot rpc gateway.update."
     },
+    "assessment.suggestion.preview": {
+      "surface": "rpc-only",
+      "note": "Read-only preview of an explicitly admitted checklist, Co-Pilot context or review-routing suggestion; use farmslot rpc assessment.suggestion.preview."
+    },
+    "assessment.suggestion.analyze": {
+      "surface": "rpc-only",
+      "note": "Confirmed opt-in assessment of the previewed packet; use farmslot rpc assessment.suggestion.analyze."
+    },
     "assessment.status": {
       "surface": "rpc-only",
       "note": "Interim provider status inspection; use `farmslot rpc assessment.status`."

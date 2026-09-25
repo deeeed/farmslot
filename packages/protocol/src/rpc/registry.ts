@@ -397,6 +397,8 @@ export const Methods = {
   FAILURE_TRIAGE_FEEDBACK: 'intelligence.triage.feedback',
   ASSESSMENT_STATUS: 'assessment.status',
   ASSESSMENT_TEST: 'assessment.test',
+  ASSESSMENT_SUGGESTION_PREVIEW: 'assessment.suggestion.preview',
+  ASSESSMENT_SUGGESTION_ANALYZE: 'assessment.suggestion.analyze',
 
   // Co-Pilot Chat
   OPERATOR_SNAPSHOT: 'operator.snapshot',
