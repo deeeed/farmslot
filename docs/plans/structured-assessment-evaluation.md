@@ -1,6 +1,6 @@
 # Structured assessment evaluation and delivery
 
-**Status:** Approved implementation goal, 2026-09-23. Supports
+**Status:** Observable opt-in pilot met on 2026-09-25. Supports
 [the near-term roadmap](../ROADMAP-next.md) and the provider boundary in
 [ADR-061](../adr/061-structured-assessment-providers.md).
 
@@ -11,7 +11,14 @@ classification did not demonstrate a workflow benefit and is being removed.
 It did not complete the original failure-triage backlog items, MANUAL-000128
 and MANUAL-000129. Transport success is not evidence of effectiveness.
 
-Implement these consumers in sequence, with separate evaluation gates:
+Closeout requires one admitted public or synthetic run with its TypeSafe
+answer or abstention, input context, provider/model, usage, cost, latency and
+feedback visible in the run and Intelligence > Assessments. This happened on
+2026-09-25 for a public-PR-backed run; the model abstained. Accuracy and
+workflow savings remain unmeasured and are not required to keep the pilot opt-in.
+
+The original consumers below are possible follow-ups, each requiring separate
+scope approval. None is required to close this goal.
 
 | Consumer                           | Useful outcome to test                                                | Comparison                                                    |
 | ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |

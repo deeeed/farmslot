@@ -1,6 +1,9 @@
 # Structured assessment acceptance ledger
 
 Tracks the [approved evaluation plan](../plans/structured-assessment-evaluation.md).
+The current goal closes on one admitted, operator-visible recommendation linked
+to a Farmslot run. Synthetic scores and workflow-savings studies are optional
+future evidence, not that closeout gate.
 An implemented call path and a measured benefit are separate claims. A passing
 transport fixture or synthetic classification gate cannot establish workflow
 savings. Keep this ledger current when each consumer changes.
@@ -10,13 +13,21 @@ Assessment history shows individual outcomes, operator feedback, associated chos
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Recorded-failure triage                | Opt-in pilot shipped in #714; v2 classifier result                                                               | [v2 held-out report](../../scripts/failure-triage/results/v2-held-out/report.md): 17/21 correct on synthetic cases                                                          | Eight paired navigation cases: two assisted-better on abstentions, four both rejected, two equal accepted; the assisted arm used 48% more tokens and took 10.6% longer on those two | Hold any efficiency claim; #736 excludes the failed draft, reports offline read diagnostics and seals optional worker limits before advice |
 | Textual acceptance criteria / evidence | Opt-in advisory text-only assessment shipped in #730; visual/mixed proof refused; authoritative ledger unchanged | v2 Jev adapter: 8/9 held-out with a wrong definite verdict; v3 gateway Jev: 9/9 held-out, 11/12 overall with a development error; operator label-read provenance unverified | None                                                                                                                                                                                | Keep routine Jev calls off; the small v3 classification pass and development error need paired validation before any benefit claim         |
-| Static-review checklist                | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Freeze checklist applicability and known defects or independent strong-review reference before candidate calls                             |
+| Static-review checklist                | Not shipped. #742 was closed without merging; its worktree has only a synthetic pilot.                           | No retained result on main                                                                                                                                                  | None                                                                                                                                                                                | Separate follow-up, if prioritized                                                                                                         |
 | Copilot context support                | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Compare matched diagnostic tasks, including evidence reads and all context/advice overhead                                                 |
 | Review-routing advice                  | No evaluated consumer                                                                                            | None                                                                                                                                                                        | None                                                                                                                                                                                | Compare routing decisions against the existing route and matched review tasks                                                              |
 
 #723 added opt-in advice for pending run decisions; #728 added decision history visibility. This is distinct from review routing and has no paired outcome study yet. The profile-preview follow-up
 saved after #726 is a separate UI/proof change. Neither is evidence that the
 five consumers above have a measured efficiency benefit.
+On 2026-09-25, an explicitly admitted decision on a public-PR-backed run
+produced a retained `jev-1.13.0` answer. The model abstained on a timeout
+handoff. The run panel and Intelligence > Assessments showed the same answer,
+input decision context, existing actions, model, usage and estimated cost;
+the history offered operator feedback. The call used 610 input and 50 output
+tokens in 972 ms at an estimated $0.000026. The operator has not rated it.
+This verifies observability of one on-demand call, not decision accuracy or
+workflow savings. The owner-scoped record expires with assessment history.
 
 PR #732 merged the multi-turn study path. Its reviewed,
 eight-case synthetic corpus permits two named evidence reads in three turns.
