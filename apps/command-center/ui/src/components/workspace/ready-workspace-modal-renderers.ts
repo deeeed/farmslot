@@ -6,9 +6,7 @@ import type {
   IndependentReviewStatus,
   ReviewLoopRequest,
   ReviewSessionIntent,
-  ReviewValidationDepth,
 } from '@farmslot/protocol';
-import { reviewValidationDepthForLoop } from '@farmslot/protocol';
 
 import '../shared/runner-model-effort-picker.js';
 
@@ -27,7 +25,6 @@ export interface ReviewLoopDraft {
   runner: ReviewRunnerChoice | '';
   model?: string;
   effort?: EffortLevel;
-  validationDepth?: ReviewValidationDepth;
   sessionIntent: ReviewSessionIntent;
 }
 
@@ -79,7 +76,6 @@ export interface ReadyReviewRequestModalContext {
   removeLoop: (id: number) => void;
   setRunner: (id: number, runner: ReviewRunnerChoice) => void;
   setModelEffort: (id: number, model: string, effort: EffortLevel) => void;
-  setDepth: (id: number, validationDepth: ReviewValidationDepth) => void;
   setSessionIntent: (id: number, sessionIntent: ReviewSessionIntent) => void;
   submit: () => void | Promise<void>;
 }
@@ -113,8 +109,6 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
         <div class="rdy-review-sequence">
           ${ctx.loops.map((loop, index) => {
             const selectedRunner = loop.runner || ctx.currentRunner;
-            const validationDepth =
-              loop.validationDepth ?? reviewValidationDepthForLoop(index, ctx.loops.length);
             return html`
               <div class="rdy-review-loop">
                 <div class="rdy-review-loop-row">
@@ -137,22 +131,12 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
                       `,
                     )}
                   </div>
-                  <div class="rdy-review-depth-picker" aria-label="Validation depth">
-                    ${(['static-code', 'full-live'] as ReviewValidationDepth[]).map(
-                      (candidate) => html`
-                        <button
-                          class="rdy-runner-chip ${validationDepth === candidate ? 'active' : ''}"
-                          title=${candidate === 'static-code'
-                            ? 'Static analysis only: no build, no tests, no recipe.'
-                            : 'Final live validation: recipe/evidence checks may run.'}
-                          @click=${() => ctx.setDepth(loop.id, candidate)}
-                          aria-pressed=${validationDepth === candidate ? 'true' : 'false'}
-                        >
-                          ${candidate === 'static-code' ? 'Static' : 'Full live'}
-                        </button>
-                      `,
-                    )}
-                  </div>
+                  <span
+                    class="rdy-review-loop-kind"
+                    data-testid="ready-review-static"
+                    title="Static source inspection: no build, no tests, no app runtime. Run QA separately for runtime validation."
+                    >Static</span
+                  >
                   <div class="rdy-review-session-picker" aria-label="Reviewer session">
                     ${(['resume', 'reset'] as ReviewSessionIntent[]).map(
                       (candidate) => html`

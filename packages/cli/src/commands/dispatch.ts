@@ -159,10 +159,6 @@ export function registerDispatchCommand(program: Command): void {
     .option('--slot <id>', 'Specific slot ID')
     .option('--review-machine <machine>', 'Machine for a static review workspace')
     .option(
-      '--review-validation-depth <depth>',
-      'Legacy compatibility: static-code or full-live; use --flow-type qa for runtime QA',
-    )
-    .option(
       '--qa-profile <id>',
       'Farm-owned QA profile for --flow-type qa (otherwise farm default)',
     )

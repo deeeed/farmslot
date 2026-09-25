@@ -1,0 +1,282 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion backlog review rounds are static",
+  "description": "ADR-058 native proof. Preconditions: `node scripts/agentic/backlog-review-proof.mjs setup` has started the private fixture gateway (holding a pre-migration backlog item whose review round asks for full-live), and the Companion is connected to it (backlog-review-connect). Creates an item with a static round and saves the legacy item, verifying labels on screen and persisted static-code through the fixture gateway. Run `cleanup` afterwards.",
+  "workflow": {
+    "entry": "create-relaunch",
+    "nodes": {
+      "create-relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "intent": "Restart the Companion so no earlier screen can take this step's input.",
+        "next": "create-app-ready"
+      },
+      "create-app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and is ready for a deep link.",
+        "next": "open-create"
+      },
+      "open-create": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-create",
+        "intent": "Open the Companion backlog create form.",
+        "next": "wait-create"
+      },
+      "wait-create": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-title",
+        "timeout_ms": 30000,
+        "intent": "The create form is visible.",
+        "next": "create-title"
+      },
+      "create-title": {
+        "action": "ui.set_input",
+        "test_id": "companion-backlog-title",
+        "value": "Companion static review round",
+        "intent": "Title the new backlog item.",
+        "next": "close-title-keyboard"
+      },
+      "create-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review.",
+        "next": "reveal-create-add"
+      },
+      "create-add-review": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-add",
+        "intent": "Add one independent review round.",
+        "next": "create-static-label"
+      },
+      "create-static-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "timeout_ms": 15000,
+        "intent": "A new round is labelled static and offers no full-live choice.",
+        "next": "capture-create"
+      },
+      "capture-create": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-create-static-round.png",
+        "label": "New Companion review round is static",
+        "intent": "Record the static round before saving.",
+        "next": "reveal-create-submit"
+      },
+      "create-submit": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-submit",
+        "intent": "Create the backlog item.",
+        "next": "create-saved"
+      },
+      "create-saved": {
+        "action": "ui.wait_for",
+        "text_contains": ["Created"],
+        "timeout_ms": 20000,
+        "intent": "The gateway accepted the new item.",
+        "next": "verify-create"
+      },
+      "verify-create": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-create",
+        "intent": "backlog.list shows the new item with one static-code review round.",
+        "next": "edit-relaunch"
+      },
+      "edit-relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "intent": "Restart the Companion so no earlier screen can take this step's input.",
+        "next": "edit-app-ready"
+      },
+      "edit-app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and is ready for a deep link.",
+        "next": "open-edit"
+      },
+      "open-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
+        "intent": "Open the seeded legacy backlog item in the Companion edit form.",
+        "next": "wait-edit"
+      },
+      "wait-edit": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-title",
+        "timeout_ms": 30000,
+        "intent": "The edit form is visible.",
+        "next": "reveal-edit-reviews-1"
+      },
+      "edit-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review.",
+        "next": "reveal-edit-round"
+      },
+      "edit-legacy-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Legacy full live: saving makes it static."],
+        "timeout_ms": 15000,
+        "intent": "The stored full-live round is shown as legacy, not as a selectable depth.",
+        "next": "capture-legacy"
+      },
+      "capture-legacy": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-legacy-round.png",
+        "label": "Seeded legacy round shows the legacy wording",
+        "intent": "Record the legacy wording before saving.",
+        "next": "reveal-edit-submit"
+      },
+      "edit-submit": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-submit",
+        "intent": "Save the edited item.",
+        "next": "verify-edit"
+      },
+      "verify-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-edit",
+        "intent": "backlog.list shows the seeded item's round persisted as static-code with its runner once the save completes.",
+        "next": "reopen-relaunch"
+      },
+      "reopen-relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "intent": "Restart the Companion before reopening the saved item.",
+        "next": "reopen-app-ready"
+      },
+      "reopen-app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and is ready for a deep link.",
+        "next": "reopen-edit"
+      },
+      "reopen-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
+        "intent": "Reopen the saved legacy backlog item in the Companion edit form.",
+        "next": "wait-reopen"
+      },
+      "wait-reopen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-title",
+        "timeout_ms": 30000,
+        "intent": "The reopened edit form is visible.",
+        "next": "reveal-reopen-1"
+      },
+      "reveal-reopen-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the reopened form below the Basics section.",
+        "next": "reveal-reopen-2"
+      },
+      "reveal-reopen-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the Publication review section header of the saved item.",
+        "next": "reopen-open-reviews"
+      },
+      "reopen-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review on the saved item.",
+        "next": "reveal-reopen-round"
+      },
+      "reveal-reopen-round": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 400,
+        "intent": "Show the saved review round and its depth wording.",
+        "next": "reopen-static-label"
+      },
+      "reopen-static-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "timeout_ms": 15000,
+        "intent": "The saved round now reads as a static review; the legacy wording is gone.",
+        "next": "capture-saved"
+      },
+      "capture-saved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-legacy-saved-static.png",
+        "label": "Saved legacy round now shows the static wording",
+        "intent": "Record the saved round reopened in the Companion.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "close-title-keyboard": {
+        "action": "ui.key_press",
+        "key": "Return",
+        "intent": "Close the keyboard after entering the title.",
+        "next": "reveal-create-reviews-1"
+      },
+      "reveal-create-reviews-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the form below the Basics section.",
+        "next": "reveal-create-reviews-2"
+      },
+      "reveal-create-reviews-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the Publication review section header on screen.",
+        "next": "create-open-reviews"
+      },
+      "reveal-create-add": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 400,
+        "intent": "Show the add independent review button on screen.",
+        "next": "create-add-review"
+      },
+      "reveal-create-submit": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the create button at the end of the form.",
+        "next": "create-submit"
+      },
+      "reveal-edit-reviews-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the edit form below the Basics section.",
+        "next": "reveal-edit-reviews-2"
+      },
+      "reveal-edit-reviews-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the Publication review section header of the stored item.",
+        "next": "edit-open-reviews"
+      },
+      "reveal-edit-round": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 400,
+        "intent": "Show the stored review round and its depth wording.",
+        "next": "edit-legacy-label"
+      },
+      "reveal-edit-submit": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 900,
+        "intent": "Show the save button at the end of the edit form.",
+        "next": "edit-submit"
+      }
+    }
+  }
+}

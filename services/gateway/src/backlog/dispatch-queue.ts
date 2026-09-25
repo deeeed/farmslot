@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import {
   assertPRExecutionProfile,
+  assertStaticReviewLoopRequests,
   type DispatchQueueUpdateParams,
   isPRWorkspaceExecutionChoice,
   isTerminalRunStatus,
@@ -854,6 +855,8 @@ export async function cancelGraphQueuedItem(params: {
   return true;
 }
 
+const REVIEW_QA_MIGRATION_HOLD = 'Review/QA migration: ';
+
 export function updateItem(
   params: DispatchQueueUpdateParams,
   originator: WorkOriginator,
@@ -863,6 +866,8 @@ export function updateItem(
   if (item.status !== 'queued') {
     throw new Error(`Cannot update queue item ${params.itemId}: item is ${item.status}`);
   }
+  if (params.pendingReviewPlan !== undefined)
+    assertStaticReviewLoopRequests(params.pendingReviewPlan);
   const workflowExecution =
     item.workflowExecution && (params.slotId !== undefined || params.allowedSlots !== undefined)
       ? constrainDirectWorkflowExecution(item.workflowExecution, {
@@ -880,10 +885,26 @@ export function updateItem(
     item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
   }
   if (workflowExecution) item.workflowExecution = workflowExecution;
+  if (params.pendingReviewPlan !== undefined) {
+    if (params.pendingReviewPlan?.length)
+      item.pendingReviewPlan = structuredClone(params.pendingReviewPlan);
+    else delete item.pendingReviewPlan;
+    // The dispatch cycle re-checks every migration constraint and holds the row again if one remains.
+    if (item.waitingReason?.startsWith(REVIEW_QA_MIGRATION_HOLD)) delete item.waitingReason;
+  }
   setQueueOriginator(item, originator);
   schedulePersist('update');
   broadcastQueue();
   return publicQueueItem(item);
+}
+
+/**
+ * Make a repaired review plan durable, then run the dispatch checks it was held by.
+ * Awaited by the update RPC so a persistence or dispatch failure reaches the operator.
+ */
+export async function recheckRepairedReviewPlan(): Promise<void> {
+  await persistQueueNow();
+  await tryDispatchNext();
 }
 
 export function reorderItems(itemIds: string[], originator: WorkOriginator): QueueItem[] {
@@ -1333,6 +1354,18 @@ function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   return true;
 }
 
+/** Keep refused migrations and all their constraints visible for operator repair. */
+async function holdForReviewQaMigration(
+  item: QueueItem,
+  error: ReviewQaConfigurationError,
+): Promise<void> {
+  const reason = `${REVIEW_QA_MIGRATION_HOLD}${error.message}`;
+  if (item.waitingReason === reason) return;
+  item.waitingReason = reason;
+  await persistQueueNow();
+  broadcastQueue();
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
@@ -1348,12 +1381,21 @@ async function tryDispatchNextOnce(): Promise<void> {
   for (const pendingItem of pending) {
     const item = liveQueuedItem(pendingItem.id);
     if (!item) continue;
+    try {
+      assertStaticReviewLoopRequests(item.pendingReviewPlan);
+    } catch (error) {
+      if (!(error instanceof ReviewQaConfigurationError)) throw error;
+      // A queued legacy live review loop needs an operator choice: dispatch.queue.update replaces
+      // the plan in place, or the operator removes the row and requests QA.
+      await holdForReviewQaMigration(item, error);
+      continue;
+    }
     if (item.flowType === 'review-pr' || item.flowType === 'qa') {
       const project = await loadProjectConfig(item.project);
       if (liveQueuedItem(item.id) !== item) continue;
       try {
         const migrated = migrateQueuedReviewQa(item, project?.qa, project?.workflowDefaults);
-        const repaired = item.waitingReason?.startsWith('Review/QA migration: ') === true;
+        const repaired = item.waitingReason?.startsWith(REVIEW_QA_MIGRATION_HOLD) === true;
         if (repaired) delete item.waitingReason;
         if (migrated || repaired) {
           await persistQueueNow();
@@ -1361,13 +1403,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
       } catch (error) {
         if (!(error instanceof ReviewQaConfigurationError)) throw error;
-        // Keep refused migrations and all their constraints visible for operator repair.
-        const reason = `Review/QA migration: ${error.message}`;
-        if (item.waitingReason !== reason) {
-          item.waitingReason = reason;
-          await persistQueueNow();
-          broadcastQueue();
-        }
+        await holdForReviewQaMigration(item, error);
         continue;
       }
       if (liveQueuedItem(item.id) !== item) continue;

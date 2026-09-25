@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { prReviewPurpose, samePRReviewOptions } from '../src/contracts/pr-rules.js';
 import {
+  assertStaticReviewLoopRequests,
   type ProjectQaConfig,
   qaInputFieldValue,
   resolveReviewQaDispatch,
@@ -218,5 +219,23 @@ test('review intake accepts modern workflows and distinguishes QA profile/input 
   assert.throws(
     () => assertPRReviewOptions({ ...qa, validationDepth: 'static-code' }),
     /conflicts/,
+  );
+});
+
+test('new independent review loops must be static and name the QA flow for runtime validation', () => {
+  assert.doesNotThrow(() => assertStaticReviewLoopRequests(undefined));
+  assert.doesNotThrow(() =>
+    assertStaticReviewLoopRequests([{ runner: 'codex', validationDepth: 'static-code' }, {}]),
+  );
+  assert.throws(
+    () =>
+      assertStaticReviewLoopRequests(
+        [{ validationDepth: 'static-code' }, { validationDepth: 'full-live' }],
+        'reviewRequest.loops',
+      ),
+    (error: Error & { code?: string }) =>
+      error.code === 'REVIEW_QA_NEEDS_CONFIGURATION' &&
+      /^reviewRequest\.loops\[1\] requests full-live validation/.test(error.message) &&
+      /QA flow/.test(error.message),
   );
 });

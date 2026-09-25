@@ -6,10 +6,12 @@ import {
   isInteractiveDevRun,
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
+  isReviewValidationDepth,
   latestIndependentReview,
   PipelineSteps,
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
+  type ReviewValidationDepth,
   type Run,
   type RunSubtaskMetrics,
   type SlotReleaseParams,
@@ -425,6 +427,19 @@ function evidenceRefsMatchAllowingAddedDigests(
   return true;
 }
 
+/**
+ * Base self-review is static (ADR-058). A run whose base review already launched under the
+ * live contract keeps it across restarts; the chosen depth is recorded on the step.
+ */
+export function baseSelfReviewDepth(run: Run): ReviewValidationDepth {
+  const recorded = run.steps.find((step) => step.name === S.SELF_REVIEW)?.inputs?.validationDepth;
+  if (isReviewValidationDepth(recorded)) return recorded;
+  const launchedBeforeRecording = run.agentContexts?.some(
+    (context) => context.role === 'self-review' && !context.artifactScope,
+  );
+  return launchedBeforeRecording ? 'full-live' : 'static-code';
+}
+
 export async function executeMonitorStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -683,8 +698,14 @@ export async function executeSelfReviewStep(
     }
   }
 
+  const validationDepth = baseSelfReviewDepth(current);
+  inputs.validationDepth = validationDepth;
+  const selfReviewStep = current.steps.find((step) => step.name === S.SELF_REVIEW);
+  updateRunStep(runId, S.SELF_REVIEW, {
+    inputs: { ...selfReviewStep?.inputs, validationDepth },
+  });
   const executeSelfReviewForRun = context.executeSelfReviewForRun ?? executeSelfReview;
-  const result = await executeSelfReviewForRun(runId, current.slotId);
+  const result = await executeSelfReviewForRun(runId, current.slotId, { validationDepth });
   const cliCommand = `farmslot rpc self-review.run '{"runId":"${runId}"}'`;
 
   // Interactive mode: present self-review results as a decision before proceeding
@@ -705,6 +726,7 @@ export async function executeSelfReviewStep(
     // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
       const retryResult = await executeSelfReviewForRun(runId, current.slotId, {
+        validationDepth,
         resumeFromResult: result,
       });
       return {

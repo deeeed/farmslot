@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
 - Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.
 
 - Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.

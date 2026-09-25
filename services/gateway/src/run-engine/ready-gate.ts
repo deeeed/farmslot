@@ -219,7 +219,8 @@ async function resumeInterruptedPublicationReviewOnce(
       reviewRunner: interrupted.runner ?? null,
       model: interrupted.model ?? null,
       effort: interrupted.effort ?? null,
-      validationDepth: interrupted.validationDepth ?? null,
+      // Reviews recorded before depth existed ran the live contract; resume them as recorded.
+      validationDepth: interrupted.validationDepth ?? 'full-live',
       artifactScope: interrupted.id,
       publicationReview: true,
       resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),

@@ -115,6 +115,48 @@ test('resumeInterruptedPublicationReview continues the same issues review instea
   assert.equal(reviews[0]?.feedbackSent, true);
 });
 
+test('resumeInterruptedPublicationReview resumes a review recorded without depth as full-live', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-RECOVER-LEGACY-DEPTH',
+    runner: 'codex',
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+  const issues = [{ file: 'src/example.ts', line: 4, description: 'Fix this issue' }];
+  updateRun(run.id, {
+    slotId: 'slot-1',
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-legacy',
+            source: 'dispatch',
+            runner: 'codex',
+            crossRunner: false,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues,
+            feedbackSent: false,
+            recoveryContinuationPending: true,
+            attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 1, issues }],
+          },
+        ],
+      },
+    },
+  });
+  const depths: Array<string | null | undefined> = [];
+  await resumeInterruptedPublicationReview(run.id, 'slot-1', {
+    executeReview: async (_runId, _slotId, options) => {
+      depths.push(options?.validationDepth);
+      return { verdict: 'pass', issues: [], retryCount: 1, feedbackSent: true };
+    },
+  });
+  assert.deepEqual(depths, ['full-live'], 'a pre-depth review keeps the live contract it ran');
+});
+
 test('resumeInterruptedPublicationReview keeps feedback recoverable when delivery fails', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

@@ -312,7 +312,7 @@ test('missing prior reviewed head disables only incremental continuation', () =>
   assert.match(context.incrementalUnavailableReason ?? '', /head SHA/);
   assert.deepEqual(
     repeatReviewDecisionActions(context).map((action) => action.id),
-    ['reuse-full-static', 'fresh-full-static', 'fresh-full-live'],
+    ['reuse-full-static', 'fresh-full-static'],
   );
 });
 
@@ -343,7 +343,13 @@ test('full repeat-review selections always reset reviewer reasoning', () => {
   );
   assert.equal(applyRepeatReviewSelection(context, 'reuse-full-static').sessionIntent, 'reset');
   assert.equal(applyRepeatReviewSelection(context, 'fresh-full-static').sessionIntent, 'reset');
-  assert.equal(applyRepeatReviewSelection(context, 'fresh-full-live').sessionIntent, 'reset');
+  const legacyLive = applyRepeatReviewSelection(context, 'fresh-full-live');
+  assert.equal(legacyLive.sessionIntent, 'reset');
+  assert.equal(
+    legacyLive.validationDepth,
+    'full-live',
+    'pre-ADR-058 decisions keep their contract',
+  );
 });
 
 test('repeat-review context accumulates the complete predecessor chain', () => {

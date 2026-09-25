@@ -235,7 +235,10 @@ export function BacklogCreateForm({
       setError(`${sourceKind === 'jira' ? 'Jira' : 'GitHub'} items require a source ref.`);
       return;
     }
-    const pendingReviewPlan = reviewPlan.length ? reviewPlan : undefined;
+    // Review rounds are static; saving converts a legacy full-live loop (ADR-058).
+    const pendingReviewPlan = reviewPlan.length
+      ? reviewPlan.map((loop) => ({ ...loop, validationDepth: 'static-code' as const }))
+      : undefined;
     setSubmitting(true);
     setError(null);
     try {
@@ -370,6 +373,7 @@ export function BacklogCreateForm({
         )}
         <PlanningField
           label="Title"
+          testID="companion-backlog-title"
           value={title}
           onChangeText={setTitle}
           placeholder="What needs to change?"
@@ -589,6 +593,7 @@ export function BacklogCreateForm({
 
       <PlanningSection
         title="Publication review"
+        testID="companion-backlog-review-section"
         summary={`${reviewPlan.length} additional review loop${reviewPlan.length === 1 ? '' : 's'}`}
       >
         {reviewPlan.map((loop, index) => (
@@ -619,23 +624,11 @@ export function BacklogCreateForm({
                 )
               }
             />
-            <PlanningChoices
-              label="Depth"
-              options={
-                [
-                  { value: 'static-code', label: 'Static' },
-                  { value: 'full-live', label: 'Full live' },
-                ] as const
-              }
-              value={loop.validationDepth ?? 'static-code'}
-              onChange={(value) =>
-                setReviewPlan((current) =>
-                  current.map((entry, currentIndex) =>
-                    currentIndex === index ? { ...entry, validationDepth: value } : entry,
-                  ),
-                )
-              }
-            />
+            <Text style={styles.chipText} testID={`companion-backlog-review-depth-${index}`}>
+              {loop.validationDepth === 'full-live'
+                ? 'Legacy full live: saving makes it static. Run runtime validation with QA.'
+                : 'Static review. Run runtime validation separately with QA.'}
+            </Text>
             <PlanningField
               label="Model override"
               value={loop.model ?? ''}
@@ -670,7 +663,11 @@ export function BacklogCreateForm({
             />
           </View>
         ))}
-        <Pressable style={styles.addReview} onPress={addReview}>
+        <Pressable
+          testID="companion-backlog-review-add"
+          style={styles.addReview}
+          onPress={addReview}
+        >
           <Text style={styles.addReviewText}>+ Add independent review</Text>
         </Pressable>
       </PlanningSection>

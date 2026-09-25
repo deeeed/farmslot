@@ -145,6 +145,8 @@ check_gateway() {
 if [[ "$MODE" == "full" ]]; then
   boot_ios_sim_if_needed
   if [[ -n "$SIM_NAME" ]]; then
+    # run-ios.sh installs simulator builds without Expo's bundler; start the managed Metro first.
+    start_metro_background
     PLATFORM=ios DEVICE_MODE=simulator IOS_SIMULATOR="${SIM_NAME}" \
       METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" \
       bash "${SCRIPT_DIR}/run-ios.sh"

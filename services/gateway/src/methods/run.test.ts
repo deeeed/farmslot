@@ -117,6 +117,63 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
   assert.equal(persistedDecision?.resolvedAction, undefined);
 });
 
+test('runResolveDecision refuses a full-live review loop before any restore or launch check', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-LIVE-LOOP',
+    runner: 'claude',
+    slotId: 'test-review-live-loop-slot',
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-live-loop',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Request another independent review',
+    actions: [
+      { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+    ],
+    createdAt: '2026-09-23T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  const touched: string[] = [];
+
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-extra-review',
+        selectionData: {
+          reviewRequest: { loops: [{ runner: 'codex', validationDepth: 'full-live' }] },
+        },
+      },
+      () => {},
+      {
+        restoreGatePark: async () => {
+          touched.push('restore');
+          throw new Error('restore must not run');
+        },
+        assertReviewLaunchAllowed: async () => {
+          touched.push('launch');
+        },
+      },
+    ),
+    (error: Error & { code?: string }) =>
+      error.code === 'REVIEW_QA_NEEDS_CONFIGURATION' &&
+      /^reviewRequest\.loops\[0\]/.test(error.message),
+  );
+  assert.deepEqual(touched, []);
+  const persisted = getRun(run.id)?.decisions.find((candidate) => candidate.id === decision.id);
+  assert.equal(persisted?.resolvedAt, undefined);
+  assert.equal(persisted?.selectionData, undefined);
+});
+
 test('runResolveDecision reports a recoverable action when a review run has no assigned slot', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

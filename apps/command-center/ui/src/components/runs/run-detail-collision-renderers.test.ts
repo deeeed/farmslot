@@ -59,7 +59,6 @@ test('review continuation summary exposes generation, heads, verdict, and eviden
   const payload: ReviewContinuationPayload = {
     kind: 'review_continuation',
     recommendedActionId: 'reuse-incremental-static',
-    fullLiveAvailable: false,
     prior: {
       version: 1,
       chainId: 'chain-1',

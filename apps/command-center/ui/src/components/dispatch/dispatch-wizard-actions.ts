@@ -7,7 +7,6 @@ import type {
   QaInput,
   ReviewDepthPolicy,
   ReviewLoopRequest,
-  ReviewValidationDepth,
   RunCreateResult,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
@@ -50,7 +49,6 @@ export interface DispatchPayloadDraftInput {
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   reviewTier?: '' | 'light' | 'standard' | 'full';
-  reviewValidationDepth?: ReviewValidationDepth;
   reviewDepth?: ReviewDepthPolicy;
   pendingReviewPlan?: ReviewLoopRequest[];
   pressureAdmissionRef?: PressureAdmissionReference;
@@ -62,7 +60,7 @@ export function buildDispatchWizardPayloadDraft(
   input: DispatchPayloadDraftInput,
 ): DispatchPayloadDraft | null {
   if (!input.flowType) return null;
-  const workspace = input.flowType === 'review-pr' && input.reviewValidationDepth !== 'full-live';
+  const workspace = input.flowType === 'review-pr';
   const variant = input.comparison.variant?.trim() ?? '';
   const branch = resolveComparisonDispatchBranch({
     comparisonLane: Boolean(input.comparison.lane === 'comparison'),
@@ -103,7 +101,6 @@ export function buildDispatchWizardPayloadDraft(
     reviewAutoFinish: input.flowType === 'review-pr' ? input.reviewAutoFinish : undefined,
     publishReview: input.flowType === 'review-pr' ? input.publishReview : undefined,
     reviewScope: input.flowType === 'review-pr' ? 'full' : undefined,
-    reviewValidationDepth: input.flowType === 'review-pr' ? input.reviewValidationDepth : undefined,
     reviewDepth: input.reviewDepth,
     pendingReviewPlan: input.pendingReviewPlan,
     pressureAdmissionRef: workspace ? undefined : input.pressureAdmissionRef,

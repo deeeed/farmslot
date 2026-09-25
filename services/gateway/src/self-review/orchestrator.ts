@@ -292,7 +292,11 @@ async function executeOwnedSelfReview(
     configuredMaxRetries: config.max_retries,
     requestedMaxRetries: options.maxRetries,
   });
-  const validationDepth = options.validationDepth ?? 'full-live';
+  // Callers own the review contract: base self-review records its depth on the step,
+  // publication reviews carry theirs on the plan. There is no implicit live default.
+  const validationDepth = options.validationDepth ?? options.resumeFromResult?.validationDepth;
+  if (!validationDepth)
+    throw new Error(`Self-review for run ${runId} requires an explicit validation depth`);
   const artifactScope = options.artifactScope ?? null;
   const sessionPolicy =
     options.reviewSessionPolicy ?? config.session_policy ?? DEFAULT_REVIEW_SESSION_POLICY;
@@ -570,8 +574,8 @@ export interface SelfReviewRetryDeps {
     slotId: string,
     runId: string,
     reviewTimeoutMs: number,
-    loopNumber?: number,
-    validationDepth?: ReviewValidationDepth,
+    loopNumber: number,
+    validationDepth: ReviewValidationDepth,
     artifactScope?: string | null,
     sessionPolicy?: ReviewSessionPolicy,
     sessionIntent?: ReviewSessionIntent,
@@ -710,7 +714,7 @@ export async function runSelfReviewRetryLoop({
   reviewTimeoutMs,
   reviewResult,
   retryCount,
-  validationDepth = 'full-live',
+  validationDepth,
   artifactScope = null,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   feedbackAlreadySent = false,
@@ -730,7 +734,7 @@ export async function runSelfReviewRetryLoop({
   reviewTimeoutMs: number;
   reviewResult: ReviewAgentResult;
   retryCount: number;
-  validationDepth?: ReviewValidationDepth;
+  validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
   feedbackAlreadySent?: boolean;
