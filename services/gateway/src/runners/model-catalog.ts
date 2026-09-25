@@ -42,7 +42,7 @@ export function readRunnerModelCatalog(
   }
   let data: unknown;
   try {
-    data = JSON.parse(raw) as unknown;
+    data = JSON.parse(raw);
   } catch {
     // The file exists but is not JSON. Treat that as unavailable rather than
     // guessing models from any other runner output.

@@ -424,9 +424,7 @@ export function candidateTemplateChoices(
 
 export function candidateModelOptions(runner: string): string[] {
   const models = modelsForRunner(runner);
-  return models.length > 0
-    ? models
-    : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+  return models.length > 0 ? models : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {

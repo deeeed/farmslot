@@ -37,6 +37,12 @@ import { claudeHookObservability } from './claude-observability.js';
 import { codexSessionObservability } from './codex-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
+  parseCodexModelCatalog,
+  parseGrokModelCatalog,
+  parsePiModelCatalog,
+  type RunnerModelCatalogSource,
+} from './model-catalog.js';
+import {
   buildPendingDegradedAgreementEntry,
   buildRunnerObservabilityAgreementEntry,
   logRunnerObservabilityAgreement,
@@ -46,12 +52,6 @@ import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
-import {
-  parseCodexModelCatalog,
-  parseGrokModelCatalog,
-  parsePiModelCatalog,
-  type RunnerModelCatalogSource,
-} from './model-catalog.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import {
   instructionNeedle,

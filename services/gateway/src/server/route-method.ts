@@ -431,11 +431,6 @@ import {
   recipeRerun,
 } from '../methods/recipe.js';
 import {
-  runnerModelCatalog,
-  runnerVisibleModelsGet,
-  runnerVisibleModelsSet,
-} from '../methods/runner-models.js';
-import {
   resourceCleanup,
   resourceControl,
   resourceDeviceInventory,
@@ -458,6 +453,11 @@ import {
   roadmapRefinementSessionGet,
   roadmapSave,
 } from '../methods/roadmap.js';
+import {
+  runnerModelCatalog,
+  runnerVisibleModelsGet,
+  runnerVisibleModelsSet,
+} from '../methods/runner-models.js';
 import {
   runtimeCapabilityAcquire,
   runtimeCapabilityList,

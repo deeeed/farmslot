@@ -38,7 +38,7 @@ export function readVisibleModelFile(home = visibleModelsHome()): VisibleModelFi
   }
   let data: unknown;
   try {
-    data = JSON.parse(raw) as unknown;
+    data = JSON.parse(raw);
   } catch {
     throw new GatewayMethodError(
       'INVALID_STATE',

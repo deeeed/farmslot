@@ -6,9 +6,9 @@ import {
   type NativeRunnerOption,
   type RunnerCatalogModel,
   type RunnerModelCatalogResult,
-  type RunnerVisibleModelState,
   type RunnerVisibleModelsGetResult,
   type RunnerVisibleModelsSetResult,
+  type RunnerVisibleModelState,
 } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
