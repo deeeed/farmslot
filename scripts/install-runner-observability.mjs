@@ -1349,7 +1349,16 @@ function installGrok({ repo }) {
   const trustedPath = path.join(grokDir, GROK_TRUSTED_FOLDERS_FILE);
   const content = fs.existsSync(trustedPath) ? fs.readFileSync(trustedPath, 'utf8') : '';
   const trusted = grokTrustedFolderPaths(content);
-  const wanted = [...new Set([path.resolve(repo), realRepoPath(repo)])];
+  const gitCommonDir = fs.existsSync(path.join(repo, '.git'))
+    ? execFileSync('git', ['-C', repo, 'rev-parse', '--git-common-dir'], {
+        encoding: 'utf8',
+      }).trim()
+    : '';
+  const gitRoot =
+    gitCommonDir && path.basename(gitCommonDir) === '.git'
+      ? realRepoPath(path.dirname(path.resolve(repo, gitCommonDir)))
+      : null;
+  const wanted = [...new Set([path.resolve(repo), realRepoPath(repo), gitRoot].filter(Boolean))];
   const missing = wanted.filter((folder) => !trusted.has(folder));
   if (missing.length === 0) return { trustedPath, added: [] };
   const decidedAt = Math.floor(Date.now() / 1000);

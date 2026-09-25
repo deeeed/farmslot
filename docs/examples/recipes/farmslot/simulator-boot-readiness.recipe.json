@@ -1,0 +1,72 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Simulator boot readiness through Gateway",
+  "description": "Boot a free iOS simulator through resource.control, verify resource.health observes it running, then shut it down and verify it stopped.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["slot_id", "gateway_port"],
+    "properties": {
+      "slot_id": { "type": "string" },
+      "gateway_port": { "type": "integer" }
+    }
+  },
+  "workflow": {
+    "entry": "check-slot",
+    "nodes": {
+      "check-slot": {
+        "action": "command",
+        "intent": "Require a free slot before taking control of its simulator.",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{}' | jq -ec '.fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .currentRunId == null and .agent == \"idle\") | {slot,currentRunId,agent}'",
+        "next": "check-stopped"
+      },
+      "check-stopped": {
+        "action": "command",
+        "intent": "Require the simulator to be stopped before this recipe takes ownership of its boot.",
+        "cmd": "for attempt in 1 2; do FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway resource.health '{\"slotId\":\"{{params.slot_id}}\",\"resourceId\":\"ios-sim\"}' | jq -ec '.resources[] | select(.id == \"ios-sim\" and .status == \"stopped\")' || exit 1; sleep 2; done",
+        "timeout_ms": 45000,
+        "next": "boot"
+      },
+      "boot": {
+        "action": "command",
+        "intent": "Boot through the Gateway, verify health, and restore the stopped state even when verification fails.",
+        "cmd": "sh scripts/runner-validation/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
+        "timeout_ms": 300000,
+        "next": "boot-succeeded"
+      },
+      "boot-succeeded": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "boot:{\"ok\":true}",
+        "intent": "Require the Gateway boot operation to report success.",
+        "next": "health"
+      },
+      "health": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "running:{\"id\":\"ios-sim\",\"status\":\"running\"}",
+        "intent": "Require an observed running simulator, not only a successful boot RPC.",
+        "next": "shutdown"
+      },
+      "shutdown": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "shutdown:{\"ok\":true}",
+        "intent": "Require the Gateway shutdown operation to report success.",
+        "next": "stopped"
+      },
+      "stopped": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "stopped:{\"id\":\"ios-sim\",\"status\":\"stopped\"}",
+        "intent": "Require the simulator to be stopped before releasing the slot.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

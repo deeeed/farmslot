@@ -7,6 +7,7 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
   canSettleRecoveredFixContext,
+  reconcileRecoveredFixPromptDelivery,
   resolveRecoveredFixBaseSha,
   resolveSelfReviewMaxRetries,
   resolveSelfReviewRunnerModel,
@@ -510,7 +511,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   assert.equal(delivered, true);
 });
 
-test('restart recovery preserves a persisted fix prompt delivery boundary', async () => {
+test('restart recovery preserves a persisted fix prompt delivery boundary when the runner exits', async () => {
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -539,7 +540,7 @@ test('restart recovery preserves a persisted fix prompt delivery boundary', asyn
       syncChecklistTarget: async () => {},
       ensureTarget: async () => 'mm-4:bugfix',
       persistTarget: async () => {},
-      targetHostsRunner: async () => true,
+      targetHostsRunner: async () => false,
       deliver: async (options) => {
         assert.equal(options.priorPromptSendAttempted, true);
         return {
@@ -552,6 +553,104 @@ test('restart recovery preserves a persisted fix prompt delivery boundary', asyn
     },
   );
   assert.deepEqual(result, { status: 'deferred' });
+});
+
+test('recovered fix re-probes the original prompt without another send', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'cursor', model: 'cursor-grok-4.6-high-fast' },
+    agentContexts: [],
+  };
+  let probes = 0;
+  const result = await reconcileRecoveredFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'cursor',
+      model: 'cursor-grok-4.6-high-fast',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      target: { session: 'mm-4', window: 'bugfix', target: 'mm-4:bugfix' },
+      attemptStartedAt: '2026-08-04T08:15:00.000Z',
+      promptDeliveryStartedAt: '2026-08-04T08:15:01.000Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async () => 'read fix task',
+      resolveRuntimeDir: async () => '.agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'mm-4:bugfix',
+      persistTarget: async () => {},
+      targetHostsRunner: async () => probes === 1,
+      deliver: async (options) => {
+        assert.equal(options.priorPromptSendAttempted, true);
+        probes += 1;
+        return probes === 2
+          ? { delivered: true, acknowledgement: 'structured' }
+          : { delivered: false, disposition: 'hold', reason: 'unacknowledged prior send' };
+      },
+    },
+    { retryIntervalMs: 1, retryWindowMs: 100 },
+  );
+  assert.deepEqual(result, { status: 'delivered' });
+  assert.equal(probes, 2);
+});
+
+test('recovered fix fails closed after the acknowledgement window', async () => {
+  let probes = 0;
+  await assert.rejects(
+    reconcileRecoveredFixPromptDelivery(
+      { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+      'run-1',
+      {
+        id: 'self-review-fix',
+        runner: 'cursor',
+        model: 'cursor-grok-4.6-high-fast',
+        taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+        target: { session: 'mm-4', target: 'mm-4:bugfix' },
+        attemptStartedAt: '2026-08-04T08:15:00.000Z',
+        promptDeliveryStartedAt: '2026-08-04T08:15:01.000Z',
+      },
+      {
+        getRun: (() => ({
+          id: 'run-1',
+          project: 'farmslot-farm',
+          flowType: 'fix-bug',
+          metrics: { runner: 'cursor', model: 'cursor-grok-4.6-high-fast' },
+          agentContexts: [],
+        })) as never,
+        resolvePrompt: async () => 'read fix task',
+        resolveRuntimeDir: async () => '.agent',
+        readLaunchAck: async () => null,
+        syncChecklistTarget: async () => {},
+        ensureTarget: async () => 'mm-4:bugfix',
+        persistTarget: async () => {},
+        targetHostsRunner: async () => true,
+        deliver: async (options) => {
+          assert.equal(options.priorPromptSendAttempted, true);
+          probes += 1;
+          return { delivered: false, disposition: 'hold', reason: 'unacknowledged prior send' };
+        },
+      },
+      { retryIntervalMs: 1, retryWindowMs: 5 },
+    ),
+    SelfReviewFixDeliveryError,
+  );
+  assert.ok(probes > 0);
+});
+
+test('recovered fix accepts its terminal signal before re-probing an uncertain send', async () => {
+  const result = await reconcileRecoveredFixPromptDelivery(
+    {} as never,
+    'run-1',
+    {} as never,
+    {} as never,
+    { retryIntervalMs: 1, retryWindowMs: 100, readMatchingSignal: async () => true },
+  );
+  assert.deepEqual(result, { status: 'signal-present' });
 });
 
 test('restart recovery requests a fresh worker after an unacknowledged retained handoff', async () => {
@@ -1035,7 +1134,17 @@ test('runSelfReviewRetryLoop: relaunches a high-context worker before sending th
   const result = await runSelfReviewRetryLoop({
     ...baseArgs,
     maxRetries: 2,
-    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
+    reviewResult: await deps.runReviewAgent(
+      fakeVars,
+      'claude',
+      'sonnet',
+      't',
+      's',
+      'r',
+      1,
+      1,
+      'static-code',
+    ),
     retryCount: 0,
     deps,
   });
@@ -1054,7 +1163,17 @@ test('runSelfReviewRetryLoop: low-context and unknown-context workers are not re
     const result = await runSelfReviewRetryLoop({
       ...baseArgs,
       maxRetries: 2,
-      reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
+      reviewResult: await deps.runReviewAgent(
+        fakeVars,
+        'claude',
+        'sonnet',
+        't',
+        's',
+        'r',
+        1,
+        1,
+        'static-code',
+      ),
       retryCount: 0,
       deps,
     });
@@ -1072,7 +1191,17 @@ test('runSelfReviewRetryLoop: failed high-context relaunch skips feedback instea
   const result = await runSelfReviewRetryLoop({
     ...baseArgs,
     maxRetries: 2,
-    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1, 1, 'static-code'),
+    reviewResult: await deps.runReviewAgent(
+      fakeVars,
+      'claude',
+      'sonnet',
+      't',
+      's',
+      'r',
+      1,
+      1,
+      'static-code',
+    ),
     retryCount: 0,
     deps,
   });

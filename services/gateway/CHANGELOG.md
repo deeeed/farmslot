@@ -4,6 +4,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Block automatic CI-fix retries when a prompt may have been sent without confirmation, so the same fix is not dispatched twice.
+
+- Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
+- Require an exact prompt acknowledgement when recovering an in-place CI fix; a stored working status alone cannot prove delivery.
+- Identify each CI-fix attempt in its runner prompt so recovery cannot accept an earlier attempt's acknowledgement.
+- Allow device boot hooks time to complete cold simulator startup before checking resource health.
+- Keep unacknowledged retained prompts pending for structured re-probing without sending a duplicate.
+
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
 - Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.
 

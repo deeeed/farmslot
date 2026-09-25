@@ -359,7 +359,7 @@ test('Cursor recovery accepts only prior structured evidence and never relaunche
   assert.equal(result.delivered, false);
   if (!result.delivered) {
     assert.equal(result.disposition, 'hold');
-    assert.equal(result.retryable, false);
+    assert.equal(result.retryable, true);
     assert.match(result.reason, /refusing duplicate delivery/);
   }
   assert.equal(
@@ -979,7 +979,7 @@ test('retained fallback refuses a stale task signal during explicit recovery', a
   assert.equal(result.delivered, false);
   if (!result.delivered) {
     assert.equal(result.disposition, 'hold');
-    assert.equal(result.retryable, false);
+    assert.equal(result.retryable, true);
     assert.match(result.reason, /refusing duplicate delivery/);
   }
   assert.equal(

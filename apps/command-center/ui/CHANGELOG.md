@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Allow simulator boot controls and dependent capability acquisition to finish before resource panels time out.
+
 - Dispatch, dispatch-config and ready-gate review rounds are static only, and Dispatch names the farm QA preset used for separate runtime validation. Backlog and Work Graph editors label a stored legacy full-live round and convert it to static only when the operator asks.
 - Add explicit checklist, validation-depth and Co-Pilot context suggestions from PR and run views, with packet preview and assessment history.
 

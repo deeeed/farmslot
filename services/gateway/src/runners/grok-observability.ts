@@ -91,6 +91,7 @@ export function buildGrokPromptSignalProbeCommand(
   return `
 python3 - <<'PY'
 import json
+import mmap
 import os
 import subprocess
 from datetime import datetime
@@ -215,8 +216,47 @@ def read_jsonl_tail(path):
             raise
     return records
 
-latest_start = None
-latest_end = None
+def latest_turn_event(path, event_type):
+    with path.open('rb') as handle:
+        if handle.seek(0, 2) == 0:
+            return None
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            needle = ('"' + event_type + '"').encode('ascii')
+            scan_start = max(0, len(data) - 16 * max_scan_bytes)
+            if scan_start:
+                line_end = data.find(b'\\n', scan_start)
+                scan_start = line_end + 1 if line_end >= 0 else len(data)
+            search_end = len(data)
+            latest = None
+            while (match := data.rfind(needle, scan_start, search_end)) >= 0:
+                line_start = data.rfind(b'\\n', 0, match) + 1
+                line_end = data.find(b'\\n', match)
+                if line_end < 0:
+                    line_end = len(data)
+                try:
+                    event = json.loads(data[line_start:line_end].decode('utf-8', errors='replace'))
+                except json.JSONDecodeError:
+                    search_end = match
+                    continue
+                event_ms = parse_aware_timestamp_ms(event.get('ts'))
+                if event.get('type') == event_type and event_ms is not None:
+                    if (event_type != 'turn_started' or isinstance(event.get('turn_number'), int)) and (
+                        latest is None or event_ms > latest[0]
+                    ):
+                        latest = (event_ms, event)
+                search_end = match
+            return latest[1] if latest is not None else None
+
+start_event = latest_turn_event(events_path, 'turn_started')
+end_event = latest_turn_event(events_path, 'turn_ended')
+latest_start = (
+    {'at': parse_aware_timestamp_ms(start_event['ts']), 'turn_number': start_event['turn_number']}
+    if start_event is not None else None
+)
+latest_end = (
+    {'at': parse_aware_timestamp_ms(end_event['ts']), 'outcome': end_event.get('outcome')}
+    if end_event is not None else None
+)
 latest_tool_start = None
 latest_tool_end = None
 for event in read_jsonl_tail(events_path):
@@ -224,13 +264,7 @@ for event in read_jsonl_tail(events_path):
     if event_ms is None:
         continue
     event_type = event.get('type')
-    if event_type == 'turn_started' and isinstance(event.get('turn_number'), int):
-        if latest_start is None or event_ms > latest_start['at']:
-            latest_start = {'at': event_ms, 'turn_number': event['turn_number']}
-    elif event_type == 'turn_ended':
-        if latest_end is None or event_ms > latest_end['at']:
-            latest_end = {'at': event_ms, 'outcome': event.get('outcome')}
-    elif event_type == 'tool_started':
+    if event_type == 'tool_started':
         latest_tool_start = max(event_ms, latest_tool_start or 0)
     elif event_type == 'tool_completed':
         latest_tool_end = max(event_ms, latest_tool_end or 0)
@@ -253,8 +287,8 @@ for message in read_jsonl_tail(chat_path):
         latest_user = {'prompt_index': prompt_index, 'text': text}
 
 if latest_start is None:
-    activity = 'unknown'
-    activity_at = candidate['opened_at_ms']
+    activity = 'idle' if latest_end is not None and latest_end['outcome'] == 'completed' else 'unknown'
+    activity_at = latest_end['at'] if latest_end is not None else candidate['opened_at_ms']
 elif latest_end is not None and latest_end['at'] >= latest_start['at']:
     activity = 'idle'
     activity_at = latest_end['at']

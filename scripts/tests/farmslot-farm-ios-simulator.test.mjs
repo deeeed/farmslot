@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const projectPath = fileURLToPath(
+  new URL('../../projects/farmslot-farm/project.json', import.meta.url),
+);
+const project = JSON.parse(readFileSync(projectPath, 'utf8'));
+const bootHook = project.resources['ios-sim'].hooks.boot.replaceAll('{{simulator}}', 'fs-2');
+const readinessScript = fileURLToPath(
+  new URL('../runner-validation/simulator-boot-readiness.sh', import.meta.url),
+);
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+
+test('simulator boot waits for readiness and is safe to retry', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ios-boot-'));
+  const state = path.join(directory, 'state');
+  const trace = path.join(directory, 'trace');
+  writeFileSync(
+    path.join(directory, 'xcrun'),
+    `#!/bin/sh
+case "$2" in
+  list) if test "$(cat "$BOOT_STATE")" = booted; then printf '    fs-2 (AA11) (Booted)\n'; else printf '    fs-20 (BB22) (Booted)\n'; fi ;;
+  boot) printf 'booted' > "$BOOT_STATE"; printf 'boot\n' >> "$TRACE" ;;
+  bootstatus) printf 'bootstatus\n' >> "$TRACE"; test "\${FAIL_BOOTSTATUS:-}" != yes ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+
+  try {
+    for (const alreadyBooted of [false, true]) {
+      writeFileSync(state, alreadyBooted ? 'booted' : 'stopped');
+      writeFileSync(trace, '');
+      const result = spawnSync('sh', ['-c', bootHook], {
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          BOOT_STATE: state,
+          TRACE: trace,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr.toString());
+      assert.deepEqual(
+        readFileSync(trace, 'utf8').trim().split('\n'),
+        alreadyBooted ? ['bootstatus'] : ['boot', 'bootstatus'],
+      );
+    }
+
+    const failed = spawnSync('sh', ['-c', bootHook], {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        FAIL_BOOTSTATUS: 'yes',
+      },
+    });
+    assert.notEqual(failed.status, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('simulator readiness handles health failure and extra stream fields', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ios-readiness-'));
+  const state = path.join(directory, 'state');
+  const trace = path.join(directory, 'trace');
+  writeFileSync(state, 'stopped');
+  writeFileSync(
+    path.join(directory, 'node'),
+    `#!/bin/sh
+case "$3" in
+  resource.health)
+    if test "$(cat "$BOOT_STATE")" = stopped; then
+      printf '{"resources":[{"id":"ios-sim","status":"stopped","stream":{"state":"cached"}}]}\\n'
+    else
+      if test "$FAIL_HEALTH_AFTER_BOOT" = yes; then
+        printf 'health failed after boot\\n' >&2
+        exit 1
+      fi
+      printf '{"resources":[{"id":"ios-sim","status":"running","stream":{"state":"cached"}}]}\\n'
+    fi ;;
+  resource.control)
+    case "$4" in
+      *'"action":"boot"'*) printf 'booted' > "$BOOT_STATE"; printf 'boot\\n' >> "$TRACE" ;;
+      *'"action":"shutdown"'*) printf 'stopped' > "$BOOT_STATE"; printf 'shutdown\\n' >> "$TRACE" ;;
+    esac
+    printf '{"ok":true}\\n' ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+
+  try {
+    for (const failHealthAfterBoot of [true, false]) {
+      writeFileSync(state, 'stopped');
+      writeFileSync(trace, '');
+      const result = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          BOOT_STATE: state,
+          TRACE: trace,
+          FAIL_HEALTH_AFTER_BOOT: failHealthAfterBoot ? 'yes' : 'no',
+        },
+      });
+      if (failHealthAfterBoot) assert.notEqual(result.status, 0);
+      else {
+        assert.equal(result.status, 0, result.stderr.toString());
+        assert.match(result.stdout.toString(), /running:\{"id":"ios-sim","status":"running"\}/);
+        assert.match(result.stdout.toString(), /stopped:\{"id":"ios-sim","status":"stopped"\}/);
+      }
+      assert.equal(readFileSync(state, 'utf8'), 'stopped');
+      assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

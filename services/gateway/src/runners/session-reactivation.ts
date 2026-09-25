@@ -777,7 +777,7 @@ function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryRes
     delivered: false,
     disposition: 'hold',
     reason: `A prior ${runner} retained handoff send was recorded, but no exact prompt acknowledgement is available; refusing duplicate delivery`,
-    retryable: false,
+    retryable: true,
   };
 }
 

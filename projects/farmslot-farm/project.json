@@ -34,7 +34,7 @@
     }
   },
   "hooks": {
-    "post_merge_install": "yarn install",
+    "post_merge_install": "yarn install && yarn workspace @farmslot/recipe-harness build",
     "preflight": "cd apps/command-center && yarn typecheck",
     "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
     "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
@@ -315,11 +315,11 @@
         "type": "process-poll",
         "provider": "ios-simulator-inventory",
         "target": "{{simulator}}",
-        "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'"
+        "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)'"
       },
       "hooks": {
-        "health": "xcrun simctl list devices booted 2>/dev/null | grep -q '{{simulator}}'",
-        "boot": "xcrun simctl boot '{{simulator}}'",
+        "health": "xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)'",
+        "boot": "(xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)' || xcrun simctl boot '{{simulator}}') && xcrun simctl bootstatus '{{simulator}}' -b",
         "shutdown": "xcrun simctl shutdown '{{simulator}}'"
       }
     },

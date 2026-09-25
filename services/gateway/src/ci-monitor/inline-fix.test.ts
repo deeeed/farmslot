@@ -10,15 +10,39 @@ import type { Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 
 import {
+  ciFixAttemptPrompt,
+  ciFixHasUnconfirmedPromptSend,
   inlineFixRunnerStillBusy,
+  recoveredCiFixHasDeliveryProof,
   resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
   resolveRecoverableCiFixContext,
   sendCiFixNudge,
 } from './inline-fix.js';
+
+test('unconfirmed CI fix send blocks automatic resends', () => {
+  assert.equal(ciFixHasUnconfirmedPromptSend(false, true), true);
+  assert.equal(ciFixHasUnconfirmedPromptSend(false, false), false);
+  assert.equal(ciFixHasUnconfirmedPromptSend(true, true), false);
+});
+
+test('CI fix prompt identifies one attempt while preserving its recovery digest', () => {
+  const prompt = `Read tasks/run-1/CI-FIX.md ${'x'.repeat(200)}`;
+  const first = ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234');
+  assert.equal(first, ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234'));
+  assert.notEqual(
+    runnerPromptDigest(first),
+    runnerPromptDigest(ciFixAttemptPrompt(prompt, 'run-1', 2, 'abc1234')),
+  );
+  assert.notEqual(
+    runnerPromptDigest(first),
+    runnerPromptDigest(ciFixAttemptPrompt(prompt, 'run-1', 1, 'def5678')),
+  );
+});
 
 test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () => {
   const context = {
@@ -62,8 +86,24 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
       agentContexts: [{ ...codexContext, status: 'launching' }],
     }),
     null,
-    'an in-place runner is recoverable only after its prompt was accepted',
+    'a pre-send in-place context does not prove a prompt was attempted',
   );
+});
+
+test('a recovered in-place CI fix requires prompt acknowledgement, not working status', () => {
+  const context = {
+    id: 'ci-fix',
+    label: 'CI fix',
+    role: 'ci-fix' as const,
+    status: 'working' as const,
+    slotId: 'macpro-ff-1',
+    runId: 'run-1',
+    deliveryBaselinePanePid: '1234',
+  };
+
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'in-place', '5678'), false);
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '1234'), false);
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '5678'), true);
 });
 
 test('CI fix replacement readiness excludes the pending CI context', () => {
