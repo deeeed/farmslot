@@ -113,21 +113,35 @@ companion_resolve_simulator_udid() {
   ' "${target}"
 }
 
+companion_metro_answers() {
+  curl -fsS "http://127.0.0.1:${METRO_PORT}/status" >/dev/null 2>&1 ||
+    curl -fsS "http://[::1]:${METRO_PORT}/status" >/dev/null 2>&1
+}
+
 companion_run_ios_simulator() {
   local udid workspace scheme derived app_path metro_url
   udid="$(companion_resolve_simulator_udid "$1")"
+  # `expo run:ios` generated the native project and installed Pods; do the same on a fresh checkout.
+  if [[ -z "$(find ios -maxdepth 1 -name '*.xcworkspace' -print 2>/dev/null)" || ! -d ios/Pods ]]; then
+    echo "[run-ios] Generating the native iOS project"
+    env "${RUN_ENV[@]}" yarn expo prebuild --platform ios
+  fi
   workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print)"
   if [[ -z "${workspace}" || "$(printf '%s\n' "${workspace}" | wc -l | tr -d ' ')" != "1" ]]; then
-    echo "ERROR: expected exactly one ios/*.xcworkspace; run expo prebuild first." >&2
+    echo "ERROR: expected exactly one ios/*.xcworkspace after expo prebuild." >&2
     exit 1
   fi
   scheme="$(basename "${workspace}" .xcworkspace)"
   derived="ios/build/simulator-${udid}"
   metro_url="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
-  if ! curl -fsS "http://127.0.0.1:${METRO_PORT}/status" >/dev/null 2>&1 &&
-    ! curl -fsS "http://[::1]:${METRO_PORT}/status" >/dev/null 2>&1; then
-    echo "ERROR: Metro is not answering on :${METRO_PORT}. Start it first (prepare-profile.sh warm), then rerun." >&2
-    exit 1
+  # `expo run:ios` started a bundler; this path uses the managed Metro session instead.
+  if ! companion_metro_answers; then
+    METRO_PORT="${METRO_PORT}" GATEWAY_PORT="${GATEWAY_PORT}" IOS_SIMULATOR="${udid}" \
+      bash "${SCRIPT_DIR}/prepare-profile.sh" warm
+    if ! companion_metro_answers; then
+      echo "ERROR: Metro is not answering on :${METRO_PORT} after prepare-profile.sh warm." >&2
+      exit 1
+    fi
   fi
   # Boots a shut-down simulator and waits until it can accept an install.
   xcrun simctl bootstatus "${udid}" -b
