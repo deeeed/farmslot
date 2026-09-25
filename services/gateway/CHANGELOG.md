@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.
+
 - Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.
 
 - QA completion rejects recipe packages from a partial `stop-after-node` run.

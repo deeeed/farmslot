@@ -1666,6 +1666,14 @@ export class PRBoard extends LitElement {
                           rel="noopener noreferrer"
                           >${selected.key.repo}#${selected.key.pr}</a
                         >
+                        <a
+                          href=${`#intelligence?tab=assessments&suggestion=static-review-checklist&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
+                          >Assess checklist</a
+                        >
+                        <a
+                          href=${`#intelligence?tab=assessments&suggestion=review-routing&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
+                          >Suggest validation depth</a
+                        >
                       </p>
                       <p class="pr-author" data-testid="pr-detail-author">
                         ${selected.author

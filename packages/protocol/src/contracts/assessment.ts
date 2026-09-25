@@ -139,8 +139,47 @@ export interface ReviewIntakeAdvisory {
   reasons: string[];
 }
 
+export type AssessmentSuggestionKind =
+  | 'static-review-checklist'
+  | 'copilot-context'
+  | 'review-routing';
+
+/** The operator enters only the specific public or synthetic text they approve sending. */
+export interface AssessmentSuggestionInput {
+  kind: AssessmentSuggestionKind;
+  source: { classification: 'public' | 'synthetic'; ref: string };
+  context: string;
+  pr?: { host: string; repo: string; number: number; headSha: string };
+  runId?: string;
+  items?: Array<{ id: string; text: string; evidence: string }>;
+  candidates?: Array<{ id: string; description: string }>;
+}
+export interface AssessmentSuggestionAnalyzeParams {
+  input: AssessmentSuggestionInput;
+  expectedPacketHash: string;
+  /** Explicit approval of the exact packet returned by preview. */
+  confirmed: true;
+}
+export interface AssessmentSuggestionView {
+  eligible: boolean;
+  /** Identity covered by packetHash for operator confirmation. */
+  provider?: string;
+  model?: string;
+  reason?: string;
+  packetHash?: string;
+  packet?: { state: AssessmentJsonValue; questions: AssessmentQuestions };
+  assessment?: AssessmentResult;
+}
+
 /** Audit-only context. It never enters the model's state. */
 export interface AssessmentSubject {
+  suggestion?: {
+    kind: AssessmentSuggestionKind;
+    source: AssessmentSuggestionInput['source'];
+    context: string;
+    items?: AssessmentSuggestionInput['items'];
+    candidates?: AssessmentSuggestionInput['candidates'];
+  };
   pr?: { host: string; repo: string; number: number; headSha: string };
   run?: {
     id: string;
@@ -166,6 +205,9 @@ export interface AssessmentSubject {
 
 export const ASSESSMENT_CONSUMERS = [
   'review-intake',
+  'static-review-checklist',
+  'copilot-context',
+  'review-routing',
   'smoke-test',
   'failure-triage',
   'decision-advice',

@@ -21,7 +21,8 @@ export function assessmentCase(record: AssessmentRecord): string | undefined {
   if (
     (record.consumer === 'failure-triage' ||
       record.consumer === 'decision-advice' ||
-      record.consumer === 'acceptance-evidence') &&
+      record.consumer === 'acceptance-evidence' ||
+      record.consumer === 'copilot-context') &&
     run
   )
     return JSON.stringify([
@@ -48,7 +49,8 @@ export function assessmentAccountingCase(record: AssessmentRecord): string | und
   if (
     (record.consumer === 'failure-triage' ||
       record.consumer === 'decision-advice' ||
-      record.consumer === 'acceptance-evidence') &&
+      record.consumer === 'acceptance-evidence' ||
+      record.consumer === 'copilot-context') &&
     run
   )
     return JSON.stringify([
@@ -64,7 +66,11 @@ export function assessmentAccountingCase(record: AssessmentRecord): string | und
       record.policyVersion,
     ]);
   const pr = record.subject.pr;
-  if (!pr || record.consumer !== 'review-intake') return undefined;
+  if (
+    !pr ||
+    !['review-intake', 'static-review-checklist', 'review-routing'].includes(record.consumer)
+  )
+    return undefined;
   return JSON.stringify([
     pr.host.toLowerCase(),
     pr.repo.toLowerCase(),

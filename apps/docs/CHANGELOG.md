@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document how to try and monitor the three opt-in assessment suggestions.
+
 - Publish the Action Manifest v1 schema with the official `ui.scroll_to` action and its required `surface_test_id`/`target_test_id` parameters.
 - Refresh the generated gateway API reference for the acceptance evidence assessment RPCs.
 
