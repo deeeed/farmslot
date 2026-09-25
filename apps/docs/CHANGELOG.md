@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Refresh the generated gateway API reference for runner model catalogs and visible-model defaults.
+
 - Update the Command Center ready-gate capture fixture to show static independent review.
 
 - Document how to try and monitor the three opt-in assessment suggestions.
