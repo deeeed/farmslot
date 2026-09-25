@@ -40,6 +40,9 @@ export function assessmentCase(record: AssessmentRecord): string | undefined {
         pr.number,
         pr.headSha.toLowerCase(),
         assessmentCohort(record),
+        ...(['static-review-checklist', 'review-routing'].includes(record.consumer)
+          ? [record.requestedIdentity?.inputDigest ?? record.id]
+          : []),
       ])
     : undefined;
 }
@@ -80,6 +83,9 @@ export function assessmentAccountingCase(record: AssessmentRecord): string | und
     record.requestedIdentity?.model ?? record.result?.requestedModel ?? 'unknown',
     record.requestedIdentity?.questionSchemaHash ?? record.result?.questionSchemaHash ?? 'unknown',
     record.policyVersion,
+    ...(['static-review-checklist', 'review-routing'].includes(record.consumer)
+      ? [record.requestedIdentity?.inputDigest ?? record.id]
+      : []),
   ]);
 }
 /** Pick before looking at labels. Never transfer feedback between repeated predictions. */

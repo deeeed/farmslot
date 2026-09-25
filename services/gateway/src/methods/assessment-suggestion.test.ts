@@ -6,7 +6,10 @@ import test from 'node:test';
 
 import type { AssessmentSuggestionInput } from '@farmslot/protocol';
 
-import { createAssessmentProviderRegistry } from '../assessment/provider.js';
+import {
+  AssessmentResponseError,
+  createAssessmentProviderRegistry,
+} from '../assessment/provider.js';
 import { assessmentRecords, recordAssessmentFeedback } from '../assessment/store.js';
 import { createRun, deleteRun, updateRun } from '../runs/store.js';
 import { runWithSessionOriginator } from '../security/work-originator.js';
@@ -200,6 +203,180 @@ test('explicit preview, confirmed call, durable history and feedback never mutat
     ),
   );
   assert.equal(calls, 1);
+});
+
+test('full twelve-item form previews within the bounded packet and saved refusals stay visible', async (t) => {
+  const { writePolicy } = setup(t);
+  writePolicy();
+  const input: AssessmentSuggestionInput = {
+    kind: 'static-review-checklist',
+    ...base,
+    items: Array.from({ length: 12 }, (_, index) => ({
+      id: `item${index}`,
+      text: 'Changed navigation retains the destination',
+      evidence: 'src/nav.ts:12 redirects to /account; '.repeat(47),
+    })),
+  };
+  const preview = await asOperator(() => assessmentSuggestionPreview(input));
+  assert.equal(preview.eligible, true);
+  assert.equal(Object.keys(preview.packet?.questions ?? {}).length, 12);
+  const unavailable = createAssessmentProviderRegistry([
+    {
+      id: 'typesafe',
+      credentialEnv: 'TYPESAFE_API_KEY',
+      defaultModel: 'jev-1.13.0',
+      capabilities: ['choice'] as const,
+      assess: async () => {
+        throw new AssessmentResponseError(
+          'Synthetic provider refusal',
+          true,
+          { inputTokens: 128, outputTokens: 0, durationMs: 1 },
+          'jev-1.13.0',
+          true,
+        );
+      },
+    },
+  ]);
+  const first = await asOperator(() =>
+    assessmentSuggestionAnalyze(
+      { input, expectedPacketHash: preview.packetHash!, confirmed: true },
+      unavailable,
+    ),
+  );
+  assert.equal(first.assessment?.status, 'unavailable');
+  const saved = await asOperator(() =>
+    assessmentSuggestionAnalyze(
+      { input, expectedPacketHash: preview.packetHash!, confirmed: true },
+      unavailable,
+    ),
+  );
+  assert.equal(saved.eligible, false);
+  assert.equal(saved.reason, 'saved-attempt');
+  assert.equal(saved.assessment?.status, 'unavailable');
+});
+
+test('provider replies respect spend, identity, usage, answer and daily limits', async (t) => {
+  const cases = [
+    {
+      name: 'over input limit',
+      inputTokens: 8193,
+      model: 'jev-1.13.0',
+      answers: true,
+      error: 'spend-bound-exceeded',
+    },
+    {
+      name: 'returned model differs',
+      inputTokens: 128,
+      model: 'other-build',
+      answers: true,
+      error: 'spend-bound-unverifiable',
+    },
+    {
+      name: 'missing usage',
+      inputTokens: undefined,
+      model: 'jev-1.13.0',
+      answers: true,
+      error: 'spend-bound-unverifiable',
+    },
+    {
+      name: 'missing answer',
+      inputTokens: 128,
+      model: 'jev-1.13.0',
+      answers: false,
+      error: 'Invalid suggestion answers',
+    },
+  ] as const;
+  for (const scenario of cases) {
+    await t.test(scenario.name, async (sub) => {
+      const { writePolicy } = setup(sub);
+      writePolicy();
+      const registry = createAssessmentProviderRegistry([
+        {
+          id: 'typesafe',
+          credentialEnv: 'TYPESAFE_API_KEY',
+          defaultModel: 'jev-1.13.0',
+          capabilities: ['choice'] as const,
+          assess: async ({ questions }) => ({
+            returnedModel: scenario.model,
+            answers: scenario.answers
+              ? Object.fromEntries(
+                  Object.keys(questions).map((id) => [
+                    id,
+                    {
+                      type: 'choice' as const,
+                      choice: 'full-live',
+                      choices: ['static-code', 'full-live', 'abstain'],
+                    },
+                  ]),
+                )
+              : {},
+            usage: { inputTokens: scenario.inputTokens as number, outputTokens: 10, durationMs: 1 },
+          }),
+        },
+      ]);
+      const preview = await asOperator(() => assessmentSuggestionPreview(routing));
+      assert.equal(preview.eligible, true);
+      const reply = await asOperator(() =>
+        assessmentSuggestionAnalyze(
+          { input: routing, expectedPacketHash: preview.packetHash!, confirmed: true },
+          registry,
+        ),
+      );
+      assert.equal(reply.assessment?.status, 'unavailable');
+      assert.equal(reply.assessment?.error, scenario.error);
+      if (scenario.error.startsWith('spend-bound')) {
+        const other = { ...routing, context: 'A distinct synthetic routing change.' };
+        const otherPreview = await asOperator(() => assessmentSuggestionPreview(other));
+        const stopped = await asOperator(() =>
+          assessmentSuggestionAnalyze(
+            { input: other, expectedPacketHash: otherPreview.packetHash!, confirmed: true },
+            registry,
+          ),
+        );
+        assert.equal(stopped.reason, 'budget-blocked');
+      }
+    });
+  }
+  await t.test('daily calls cap blocks a second packet', async (sub) => {
+    const { policy, writePolicy } = setup(sub);
+    policy.limits.maxCalls = 1;
+    writePolicy();
+    const registry = createAssessmentProviderRegistry([
+      {
+        id: 'typesafe',
+        credentialEnv: 'TYPESAFE_API_KEY',
+        defaultModel: 'jev-1.13.0',
+        capabilities: ['choice'] as const,
+        assess: async () => ({
+          returnedModel: 'jev-1.13.0',
+          answers: {
+            route: {
+              type: 'choice' as const,
+              choice: 'full-live',
+              choices: ['static-code', 'full-live', 'abstain'],
+            },
+          },
+          usage: { inputTokens: 128, outputTokens: 10, durationMs: 1 },
+        }),
+      },
+    ]);
+    const first = await asOperator(() => assessmentSuggestionPreview(routing));
+    await asOperator(() =>
+      assessmentSuggestionAnalyze(
+        { input: routing, expectedPacketHash: first.packetHash!, confirmed: true },
+        registry,
+      ),
+    );
+    const other = { ...routing, context: 'A distinct synthetic routing change.' };
+    const second = await asOperator(() => assessmentSuggestionPreview(other));
+    const stopped = await asOperator(() =>
+      assessmentSuggestionAnalyze(
+        { input: other, expectedPacketHash: second.packetHash!, confirmed: true },
+        registry,
+      ),
+    );
+    assert.equal(stopped.reason, 'budget-blocked');
+  });
 });
 
 test('checklist items and copilot candidates share the same persisted provider path', async (t) => {

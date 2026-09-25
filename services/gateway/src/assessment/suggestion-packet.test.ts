@@ -85,6 +85,17 @@ test('copilot chooses only an existing named read; routing returns existing dept
   );
 });
 
+test('public source keeps the selected PR host in its identity', () => {
+  const host = 'git.example.com';
+  const packet = suggestionPacket({
+    ...checklist,
+    pr: { ...pr, host },
+    source: { classification: 'public', ref: `https://${host}/example/app/pull/42` },
+  });
+  assert.equal(packet.subject.pr?.host, host);
+  assert.equal(packet.subject.suggestion?.source?.ref, `https://${host}/example/app/pull/42`);
+});
+
 test('unadmitted input, unrelated public URL, malformed identities and extra fields refuse before transport', () => {
   assert.throws(
     () =>

@@ -135,7 +135,7 @@ export function suggestionPacket(
     // The PR/run identity stays in the owner-scoped audit record. Only admitted
     // context and named choices go to the external provider.
     ...(input.items ? { items: input.items } : {}),
-    ...(input.candidates ? { candidates: input.candidates } : {}),
+    // Candidate descriptions are already carried by the choice criteria.
   };
   const questions: AssessmentQuestions = isStatic
     ? Object.fromEntries(

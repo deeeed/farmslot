@@ -18,6 +18,7 @@ export class AssessmentSuggestionPanel extends LitElement {
   @state() private classification: 'public' | 'synthetic' = 'synthetic';
   @state() private sourceRef = '';
   @state() private repo = '';
+  @state() private host = 'github.com';
   @state() private number = '';
   @state() private headSha = '';
   @state() private runId = '';
@@ -68,11 +69,13 @@ export class AssessmentSuggestionPanel extends LitElement {
     if (kind === 'copilot-context') {
       this.runId = getHashParam('run') ?? '';
       this.repo = '';
+      this.host = 'github.com';
       this.number = '';
       this.headSha = '';
     } else {
       this.runId = '';
       this.repo = getHashParam('repo') ?? '';
+      this.host = getHashParam('host') ?? 'github.com';
       this.number = getHashParam('pr') ?? '';
       // Never use a prior review's head: the operator supplies the exact current SHA.
       this.headSha = '';
@@ -185,7 +188,7 @@ export class AssessmentSuggestionPanel extends LitElement {
           }
         : {
             pr: {
-              host: 'github.com',
+              host: this.host.trim(),
               repo: this.repo.trim(),
               number: Number(this.number),
               headSha: this.headSha.trim(),
@@ -233,7 +236,14 @@ export class AssessmentSuggestionPanel extends LitElement {
         Methods.ASSESSMENT_SUGGESTION_ANALYZE,
         { input: this.previewInput, expectedPacketHash: this.preview.packetHash, confirmed: true },
       );
-      if (revision === this.revision) this.result = result;
+      if (revision === this.revision) {
+        this.result = result;
+        if (!result.eligible) {
+          this.preview = undefined;
+          this.previewInput = undefined;
+          this.approved = false;
+        }
+      }
       this.dispatchEvent(
         new CustomEvent('suggestion-completed', { bubbles: true, composed: true }),
       );
@@ -325,6 +335,15 @@ export class AssessmentSuggestionPanel extends LitElement {
             />
           </label>`
         : html`<div class="row">
+            <label
+              >PR host<input
+                name="pr-host"
+                .value=${this.host}
+                @input=${(e: Event) => {
+                  this.host = (e.target as HTMLInputElement).value;
+                  this.changed();
+                }}
+            /></label>
             <label
               >Repository (owner/name)<input
                 name="repo"
@@ -493,7 +512,7 @@ export class AssessmentSuggestionPanel extends LitElement {
       ${this.result
         ? html`<article data-suggestion-result>
             <p>
-              ${result?.status ?? this.result.reason ?? 'Unavailable'} ·
+              ${this.result.reason ?? result?.status ?? 'Unavailable'} ·
               ${result?.provider ?? 'No provider'} /
               ${result?.returnedModel ?? result?.requestedModel ?? 'No model'}
             </p>

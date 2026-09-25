@@ -152,7 +152,7 @@ async function prepare(input: AssessmentSuggestionInput) {
   const packet = prepareAssessmentInput(
     draft.state,
     draft.questions,
-    Math.min(config.maxStateBytes, 8192),
+    Math.min(config.maxStateBytes, 65_536),
     key ?? '',
   );
   // The audit context must describe exactly what would be sent. Refuse a packet
@@ -336,7 +336,14 @@ export async function assessmentSuggestionAnalyze(
     return {
       ...base,
       eligible: record.status === 'completed',
-      ...(record.result ? { assessment: record.result } : { reason: 'assessment-pending' }),
+      ...(record.result ? { assessment: record.result } : {}),
+      ...(record.status === 'interrupted'
+        ? { reason: 'assessment-interrupted' }
+        : record.status === 'started'
+          ? { reason: 'assessment-pending' }
+          : record.status !== 'completed'
+            ? { reason: 'saved-attempt' }
+            : {}),
     };
   }
   const value = (await completeAssessment(reserved.record, async () => {

@@ -1667,11 +1667,11 @@ export class PRBoard extends LitElement {
                           >${selected.key.repo}#${selected.key.pr}</a
                         >
                         <a
-                          href=${`#intelligence?tab=assessments&suggestion=static-review-checklist&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
+                          href=${`#intelligence?tab=assessments&suggestion=static-review-checklist&host=${encodeURIComponent(selected.key.host ?? 'github.com')}&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
                           >Assess checklist</a
                         >
                         <a
-                          href=${`#intelligence?tab=assessments&suggestion=review-routing&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
+                          href=${`#intelligence?tab=assessments&suggestion=review-routing&host=${encodeURIComponent(selected.key.host ?? 'github.com')}&repo=${encodeURIComponent(selected.key.repo)}&pr=${selected.key.pr}`}
                           >Suggest validation depth</a
                         >
                       </p>
