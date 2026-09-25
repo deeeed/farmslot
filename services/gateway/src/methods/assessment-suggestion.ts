@@ -161,6 +161,15 @@ async function prepare(input: AssessmentSuggestionInput) {
     throw new Error('Suggestion input contains a credential');
   return { ...draft, packet, config, providerStatus, provider };
 }
+function fitsPricedInput(
+  packet: ReturnType<typeof prepareAssessmentInput>,
+  price: SuggestionPrice,
+): boolean {
+  // Provider adapters add instructions and a response schema around the packet.
+  // Allow for those bytes and tokenizer variance before reserving the priced ceiling.
+  return Buffer.byteLength(JSON.stringify(packet), 'utf8') * 2 + 4096 <= price.maxInputTokens;
+}
+
 function guard(
   result: AssessmentResult,
   price: SuggestionPrice,
@@ -239,6 +248,7 @@ export async function assessmentSuggestionPreview(
     reason = 'provider-unavailable';
   else if (!validPrice(policy.price, provider.id, providerStatus.model, provider.maxOutputTokens))
     reason = 'price-unavailable';
+  else if (!fitsPricedInput(packet, policy.price)) reason = 'price-unavailable';
   else if (
     (policy.price.maxInputTokens * policy.price.inputUsdPerMillion +
       policy.price.maxOutputTokens * policy.price.outputUsdPerMillion) /
@@ -300,6 +310,8 @@ export async function assessmentSuggestionAnalyze(
     return { ...base, eligible: false, reason: 'provider-unavailable' };
   const price = policy.price;
   if (!validPrice(price, provider.id, model, provider.maxOutputTokens))
+    return { ...base, eligible: false, reason: 'price-unavailable' };
+  if (!fitsPricedInput(selected.packet, price))
     return { ...base, eligible: false, reason: 'price-unavailable' };
   const maxUsd =
     (price.maxInputTokens * price.inputUsdPerMillion +

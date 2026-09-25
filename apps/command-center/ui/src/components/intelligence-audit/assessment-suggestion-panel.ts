@@ -266,6 +266,12 @@ export class AssessmentSuggestionPanel extends LitElement {
   }
   render() {
     const result = this.result?.assessment;
+    const reason =
+      this.result?.reason === 'saved-attempt'
+        ? 'Saved failed attempt. Change the packet and preview again to retry.'
+        : this.result?.reason === 'assessment-interrupted'
+          ? 'The previous attempt was interrupted. Change the packet and preview again to retry.'
+          : this.result?.reason;
     return html`<details data-assessment-suggestions ?open=${this.linked}>
       <summary>Try an opt-in assessment suggestion</summary>
       <p class="muted">
@@ -512,8 +518,7 @@ export class AssessmentSuggestionPanel extends LitElement {
       ${this.result
         ? html`<article data-suggestion-result>
             <p>
-              ${this.result.reason ?? result?.status ?? 'Unavailable'} ·
-              ${result?.provider ?? 'No provider'} /
+              ${reason ?? result?.status ?? 'Unavailable'} · ${result?.provider ?? 'No provider'} /
               ${result?.returnedModel ?? result?.requestedModel ?? 'No model'}
             </p>
             ${result?.answers

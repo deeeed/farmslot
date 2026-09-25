@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import test from 'node:test';
 
 import type { AssessmentSuggestionInput } from '@farmslot/protocol';
 
+import { readAssessmentArtifact } from '../assessment/artifacts.js';
 import {
   AssessmentResponseError,
   createAssessmentProviderRegistry,
@@ -206,7 +208,7 @@ test('explicit preview, confirmed call, durable history and feedback never mutat
 });
 
 test('full twelve-item form previews within the bounded packet and saved refusals stay visible', async (t) => {
-  const { writePolicy } = setup(t);
+  const { policy, writePolicy } = setup(t);
   writePolicy();
   const input: AssessmentSuggestionInput = {
     kind: 'static-review-checklist',
@@ -217,9 +219,11 @@ test('full twelve-item form previews within the bounded packet and saved refusal
       evidence: 'src/nav.ts:12 redirects to /account; '.repeat(47),
     })),
   };
-  const preview = await asOperator(() => assessmentSuggestionPreview(input));
-  assert.equal(preview.eligible, true);
-  assert.equal(Object.keys(preview.packet?.questions ?? {}).length, 12);
+  const tooLarge = await asOperator(() => assessmentSuggestionPreview(input));
+  assert.equal(tooLarge.eligible, false);
+  assert.equal(tooLarge.reason, 'price-unavailable');
+  assert.equal(Object.keys(tooLarge.packet?.questions ?? {}).length, 12);
+  let calls = 0;
   const unavailable = createAssessmentProviderRegistry([
     {
       id: 'typesafe',
@@ -227,6 +231,7 @@ test('full twelve-item form previews within the bounded packet and saved refusal
       defaultModel: 'jev-1.13.0',
       capabilities: ['choice'] as const,
       assess: async () => {
+        calls++;
         throw new AssessmentResponseError(
           'Synthetic provider refusal',
           true,
@@ -237,6 +242,19 @@ test('full twelve-item form previews within the bounded packet and saved refusal
       },
     },
   ]);
+  const refused = await asOperator(() =>
+    assessmentSuggestionAnalyze(
+      { input, expectedPacketHash: tooLarge.packetHash!, confirmed: true },
+      unavailable,
+    ),
+  );
+  assert.equal(refused.reason, 'price-unavailable');
+  assert.equal(calls, 0);
+  assert.equal((await asOperator(() => assessmentRecords(principal.id))).length, 0);
+  policy.price.maxInputTokens = 65_536;
+  writePolicy();
+  const preview = await asOperator(() => assessmentSuggestionPreview(input));
+  assert.equal(preview.eligible, true);
   const first = await asOperator(() =>
     assessmentSuggestionAnalyze(
       { input, expectedPacketHash: preview.packetHash!, confirmed: true },
@@ -244,6 +262,16 @@ test('full twelve-item form previews within the bounded packet and saved refusal
     ),
   );
   assert.equal(first.assessment?.status, 'unavailable');
+  assert.equal(calls, 1);
+  const inputArtifact = await readAssessmentArtifact(
+    principal.id,
+    'inputs',
+    createHash('sha256').update(JSON.stringify(first.assessment!.assessmentId!)).digest('hex'),
+  );
+  assert.equal(
+    (inputArtifact as { packet: { state: { items: unknown[] } } }).packet.state.items.length,
+    12,
+  );
   const saved = await asOperator(() =>
     assessmentSuggestionAnalyze(
       { input, expectedPacketHash: preview.packetHash!, confirmed: true },
