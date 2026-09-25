@@ -185,6 +185,13 @@ export default function RootLayout() {
                 headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/settings" />,
               }}
             />
+            <Stack.Screen
+              name="visual-review/[runId]"
+              options={{
+                title: 'Visual review',
+                headerLeft: () => <FallbackHeaderBack fallbackHref="/(tabs)/runs" />,
+              }}
+            />
             <Stack.Screen name="artifacts/[runId]" options={{ headerShown: false }} />
             <Stack.Screen name="diff/[runId]" options={{ headerShown: false }} />
             <Stack.Screen name="diff/slot/[slotId]" options={{ headerShown: false }} />

@@ -215,6 +215,10 @@ navigation edges (`tab`, `push`, `in-place`, `modal`, or `replace`). The shared 
 images, emits `visual-review-source.json`, and builds the navigation/annotation board; projects do
 not need a renderer.
 
+Feedback downloads as `visual-feedback.json` (`VisualReviewFeedbackDocument`). **Open feedback
+JSON** reopens a document for the same source id, from this board or another renderer, keeping
+surface and capture ids; `feedbackDraftFromDocument` is the same restore for code.
+
 ## Public imports
 
 - `@farmslot/recipe-harness`

@@ -74,6 +74,7 @@ import {
   taskProgressRequestForRun,
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
+import { findVisualReviewSourceArtifacts } from '../../lib/visual-review';
 import {
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
@@ -91,6 +92,7 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { useDecisionStore } from '../../store/decisions';
 import { ReviewHistoryPanel } from '../run-detail/components/ReviewHistoryPanel';
+import { VisualReviewEntryCard } from '../visual-review/components/VisualReviewEntryCard';
 
 import {
   DecisionBeforeAfterPriorityPanel,
@@ -716,6 +718,14 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
     () => selectSlotRecipeArtifactsForPreviewScope(recipeRuns, null),
     [recipeRuns],
   );
+  const visualReviewSource = useMemo(
+    () =>
+      findVisualReviewSourceArtifacts([
+        ...(presentation?.artifactManifest ?? []),
+        ...recipeRuns.flatMap(artifactsForRecipeRun),
+      ])[0] ?? null,
+    [presentation?.artifactManifest, recipeRuns],
+  );
   const recipePreviewArtifacts = useMemo(
     () => recipeScopedArtifacts.slice(0, 4),
     [recipeScopedArtifacts],
@@ -1205,6 +1215,23 @@ export default function DecisionDetailScreen({ embedded = false }: { embedded?: 
 
         {error && <Text style={styles.errorText}>{error}</Text>}
         {recipeAvailabilityError && <Text style={styles.errorText}>{recipeAvailabilityError}</Text>}
+
+        {!embedded && presentation.runId && visualReviewSource ? (
+          <VisualReviewEntryCard
+            onOpen={() =>
+              router.push({
+                pathname: '/visual-review/[runId]',
+                params: {
+                  runId: presentation.runId!,
+                  source: visualReviewSource.path,
+                  ...(visualReviewSource.recipeRunId
+                    ? { recipeRun: visualReviewSource.recipeRunId }
+                    : {}),
+                },
+              })
+            }
+          />
+        ) : null}
 
         {!embedded && activeTaskProgress ? (
           <View

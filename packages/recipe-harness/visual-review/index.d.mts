@@ -1,4 +1,4 @@
-import type { VisualReviewSourceDocument } from '@farmslot/protocol';
+import type { VisualReviewFeedbackDraft, VisualReviewSourceDocument } from '@farmslot/protocol';
 
 export interface GenerateReviewBoardOptions {
   outputDir: string;
@@ -14,6 +14,11 @@ export interface VisualReviewServer {
   close(): Promise<void>;
 }
 
+/** Reopens a portable feedback document as the board's editable draft for `source`. */
+export function feedbackDraftFromDocument(
+  source: VisualReviewSourceDocument,
+  document: unknown,
+): VisualReviewFeedbackDraft;
 export function generateReviewBoard(options: GenerateReviewBoardOptions): void;
 export function buildRecipeReviewBoard(options: {
   artifactsDir: string;

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add `validateVisualReviewSourceDocument`, `validateVisualReviewFeedbackDocument`, and `createVisualReviewFeedbackDocument` so every renderer validates and exports the same visual-review documents; the document shapes are unchanged.
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
 - Define the three opt-in suggestion requests and responses for static review, Co-Pilot context and review routing.
 

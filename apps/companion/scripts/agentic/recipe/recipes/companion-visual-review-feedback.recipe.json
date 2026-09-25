@@ -1,0 +1,388 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion visual review feedback",
+  "description": "Opens a run's Ready Gate visual-review source in Companion, walks the Ready Gate parent and its Evidence, Diff, and Timeline children with a draft in progress, drives every touch annotation control, and sends the feedback to the originating run's worker, reading the run back from the gateway to prove nothing was resolved. Run after a Ready Gate catalog recipe has published visual-review-source.json into the run's artifacts.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["run_id"],
+    "properties": {
+      "run_id": {
+        "type": "string"
+      },
+      "expected_delivery": {
+        "type": "string",
+        "enum": ["accepted", "failed"],
+        "default": "accepted",
+        "description": "Outcome the chosen run produces: accepted when its worker session is live, failed when the gateway refuses the send (for example, no runner context)."
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "surface-navigation",
+      "claim": "The Ready Gate parent lists Evidence, Diff, and Timeline subscreens, and moving between them keeps the draft."
+    },
+    {
+      "id": "touch-annotations",
+      "claim": "An overall note plus colored point and area annotations can be added, selected, moved, edited, and removed by touch."
+    },
+    {
+      "id": "worker-delivery",
+      "claim": "Sending renders the delivery outcome for the originating run, keeps the draft, and resolves nothing."
+    }
+  ],
+  "workflow": {
+    "entry": "open-review",
+    "nodes": {
+      "open-review": {
+        "action": "command",
+        "cmd": "url=\"farmslot-development:///visual-review/{{params.run_id}}\"; if [ \"$PLATFORM\" = ios ]; then xcrun simctl openurl \"$IOS_SIMULATOR\" \"$url\"; else adb -s \"$ADB_SERIAL\" shell am start -a android.intent.action.VIEW -d \"$url\" \"$FARMSLOT_RECIPE_APP_ID\"; fi",
+        "intent": "Open the run's visual review the same way a shared review link does.",
+        "next": "wait-parent"
+      },
+      "wait-parent": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-child-capture-ready-evidence",
+        "expected": "visible",
+        "timeout_ms": 30000,
+        "intent": "The loaded source starts on the Ready Gate parent and lists its first subscreen.",
+        "proves": ["surface-navigation"],
+        "next": "wait-parent-diff"
+      },
+      "wait-parent-diff": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-child-capture-ready-diff",
+        "expected": "visible",
+        "intent": "The parent lists the Diff subscreen.",
+        "proves": ["surface-navigation"],
+        "next": "wait-parent-timeline"
+      },
+      "wait-parent-timeline": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-child-capture-ready-timeline",
+        "expected": "visible",
+        "intent": "The parent lists the Timeline subscreen.",
+        "proves": ["surface-navigation"],
+        "next": "capture-parent"
+      },
+      "capture-parent": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-ready-gate-parent.png",
+        "label": "Ready Gate parent with subscreens",
+        "intent": "Record the parent surface, its subscreen chips, and its capture.",
+        "proves": ["surface-navigation"],
+        "next": "write-note"
+      },
+      "write-note": {
+        "action": "ui.set_input",
+        "test_id": "visual-review-surface-note",
+        "value": "Summary card is too dense on a phone.",
+        "intent": "Leave overall feedback on the parent surface.",
+        "proves": ["touch-annotations"],
+        "next": "open-evidence"
+      },
+      "open-evidence": {
+        "action": "ui.press",
+        "test_id": "visual-review-child-capture-ready-evidence",
+        "intent": "Move from the parent to its first subscreen.",
+        "proves": ["surface-navigation"],
+        "next": "wait-evidence"
+      },
+      "wait-evidence": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-parent-capture-ready-gate",
+        "expected": "visible",
+        "intent": "The subscreen links back to its Ready Gate parent.",
+        "proves": ["surface-navigation"],
+        "next": "add-point"
+      },
+      "add-point": {
+        "action": "ui.press",
+        "test_id": "visual-review-canvas",
+        "intent": "Drop a point annotation on the capture in the default tap mode.",
+        "proves": ["touch-annotations"],
+        "next": "wait-point"
+      },
+      "wait-point": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-marker-annotation-1",
+        "expected": "visible",
+        "intent": "The new point marker renders on the capture and is selected for editing.",
+        "proves": ["touch-annotations"],
+        "next": "describe-point"
+      },
+      "describe-point": {
+        "action": "ui.set_input",
+        "test_id": "visual-review-annotation-body",
+        "value": "Status badge overlaps the run title.",
+        "intent": "Edit the selected point's comment.",
+        "proves": ["touch-annotations"],
+        "next": "recolor-point"
+      },
+      "recolor-point": {
+        "action": "ui.press",
+        "test_id": "visual-review-color-f29d38",
+        "intent": "Change the selected point to the orange review color.",
+        "proves": ["touch-annotations"],
+        "next": "capture-point"
+      },
+      "capture-point": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-point-edited.png",
+        "label": "Point added, described, and recolored",
+        "intent": "Record the selected, recolored point with its comment.",
+        "proves": ["touch-annotations"],
+        "next": "nudge-point"
+      },
+      "nudge-point": {
+        "action": "ui.press",
+        "test_id": "visual-review-nudge-right",
+        "intent": "Move the selected point one step with the touch nudge control.",
+        "proves": ["touch-annotations"],
+        "next": "wait-nudged"
+      },
+      "wait-nudged": {
+        "action": "ui.wait_for",
+        "text_contains": ["x 52%"],
+        "timeout_ms": 5000,
+        "intent": "The nudge moved the point by one step from the tapped center.",
+        "proves": ["touch-annotations"],
+        "next": "drag-point"
+      },
+      "drag-point": {
+        "action": "ui.drag",
+        "target": "visual-review-marker-annotation-1",
+        "path": [
+          {
+            "x": 40,
+            "y": 60
+          }
+        ],
+        "duration_ms": 600,
+        "intent": "Drag the selected point to a new spot on the capture.",
+        "proves": ["touch-annotations"],
+        "next": "wait-dragged"
+      },
+      "wait-dragged": {
+        "action": "ui.wait_for",
+        "text_contains": ["x 52% \u00b7 y 50%"],
+        "expected": "hidden",
+        "timeout_ms": 5000,
+        "intent": "The drag changed the point's stored position.",
+        "proves": ["touch-annotations"],
+        "next": "wait-editor-open"
+      },
+      "capture-moved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-point-moved.png",
+        "label": "Point moved by drag",
+        "intent": "Record the point at its dragged position.",
+        "proves": ["touch-annotations"],
+        "next": "area-mode"
+      },
+      "area-mode": {
+        "action": "ui.press",
+        "test_id": "visual-review-mode-area",
+        "intent": "Switch the canvas to area drawing.",
+        "proves": ["touch-annotations"],
+        "next": "draw-area"
+      },
+      "draw-area": {
+        "action": "ui.drag",
+        "target": "visual-review-canvas",
+        "path": [
+          {
+            "x": -90,
+            "y": -120
+          }
+        ],
+        "duration_ms": 700,
+        "intent": "Drag across the capture to mark an area.",
+        "proves": ["touch-annotations"],
+        "next": "wait-area"
+      },
+      "wait-area": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-marker-annotation-2",
+        "expected": "visible",
+        "intent": "The area annotation renders and is selected for editing.",
+        "proves": ["touch-annotations"],
+        "next": "describe-area"
+      },
+      "describe-area": {
+        "action": "ui.set_input",
+        "test_id": "visual-review-annotation-body",
+        "value": "Group these rows under one heading.",
+        "intent": "Comment on the selected area.",
+        "proves": ["touch-annotations"],
+        "next": "capture-area"
+      },
+      "capture-area": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-area-added.png",
+        "label": "Area annotation with comment",
+        "intent": "Record the point and the selected area together.",
+        "proves": ["touch-annotations"],
+        "next": "select-point"
+      },
+      "select-point": {
+        "action": "ui.press",
+        "test_id": "visual-review-annotation-annotation-1",
+        "intent": "Select the point again from the annotation list.",
+        "proves": ["touch-annotations"],
+        "next": "remove-point"
+      },
+      "remove-point": {
+        "action": "ui.press",
+        "test_id": "visual-review-annotation-remove",
+        "intent": "Remove the selected point.",
+        "proves": ["touch-annotations"],
+        "next": "wait-removed"
+      },
+      "wait-removed": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-marker-annotation-1",
+        "expected": "hidden",
+        "intent": "The removed point is gone while the area remains.",
+        "proves": ["touch-annotations"],
+        "next": "wait-area-kept"
+      },
+      "wait-area-kept": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-marker-annotation-2",
+        "expected": "visible",
+        "intent": "Removing one annotation leaves the other untouched.",
+        "proves": ["touch-annotations"],
+        "next": "capture-removed"
+      },
+      "capture-removed": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-point-removed.png",
+        "label": "Point removed, area kept",
+        "intent": "Record the capture after removal.",
+        "proves": ["touch-annotations"],
+        "next": "open-diff"
+      },
+      "open-diff": {
+        "action": "ui.press",
+        "test_id": "visual-review-surface-capture-ready-diff",
+        "intent": "Move to the Diff sibling through the surface list.",
+        "proves": ["surface-navigation"],
+        "next": "wait-diff"
+      },
+      "wait-diff": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-parent-capture-ready-gate",
+        "expected": "visible",
+        "intent": "Diff also links back to the Ready Gate parent.",
+        "proves": ["surface-navigation"],
+        "next": "open-timeline"
+      },
+      "open-timeline": {
+        "action": "ui.press",
+        "test_id": "visual-review-surface-capture-ready-timeline",
+        "intent": "Move to the Timeline sibling through the surface list.",
+        "proves": ["surface-navigation"],
+        "next": "back-to-parent"
+      },
+      "back-to-parent": {
+        "action": "ui.press",
+        "test_id": "visual-review-parent-capture-ready-gate",
+        "intent": "Return to the Ready Gate parent from a subscreen.",
+        "proves": ["surface-navigation"],
+        "next": "wait-note-kept"
+      },
+      "wait-note-kept": {
+        "action": "ui.wait_for",
+        "text_contains": ["Summary card is too dense on a phone."],
+        "timeout_ms": 5000,
+        "intent": "The parent's overall note survived the round trip through its subscreens.",
+        "proves": ["surface-navigation"],
+        "next": "capture-kept"
+      },
+      "capture-kept": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-draft-kept.png",
+        "label": "Draft kept after subscreen navigation",
+        "intent": "Record the parent with its note and per-surface feedback counts.",
+        "proves": ["surface-navigation"],
+        "next": "reveal-delivery"
+      },
+      "reveal-delivery": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 1600,
+        "intent": "Show the draft totals and send controls below the capture.",
+        "proves": ["worker-delivery"],
+        "next": "wait-summary"
+      },
+      "wait-summary": {
+        "action": "ui.wait_for",
+        "text_contains": ["1 note \u00b7 1 annotation"],
+        "timeout_ms": 5000,
+        "intent": "The draft holds one parent note and the Evidence area.",
+        "proves": ["worker-delivery"],
+        "next": "snapshot-run-before"
+      },
+      "send": {
+        "action": "ui.press",
+        "test_id": "visual-review-send",
+        "intent": "Send the portable feedback document to the originating run's worker.",
+        "proves": ["worker-delivery"],
+        "next": "wait-outcome"
+      },
+      "wait-outcome": {
+        "action": "ui.wait_for",
+        "text_contains": ["Delivery {{params.expected_delivery}}"],
+        "timeout_ms": 20000,
+        "intent": "The worker-input outcome is rendered for the originating run.",
+        "proves": ["worker-delivery"],
+        "next": "wait-draft-after-send"
+      },
+      "wait-draft-after-send": {
+        "action": "ui.wait_for",
+        "text_contains": ["1 note \u00b7 1 annotation"],
+        "intent": "Sending keeps the draft, whatever the outcome.",
+        "proves": ["worker-delivery"],
+        "next": "capture-outcome"
+      },
+      "capture-outcome": {
+        "action": "ui.screenshot",
+        "path": "screenshots/after-delivery-{{params.expected_delivery}}.png",
+        "label": "Delivery outcome with draft kept",
+        "intent": "Record the delivery status next to the retained draft counts.",
+        "proves": ["worker-delivery"],
+        "next": "verify-run-unchanged"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "wait-editor-open": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-annotation-editor",
+        "expected": "visible",
+        "intent": "The dragged point stays selected, so the changed position belongs to it.",
+        "proves": ["touch-annotations"],
+        "next": "capture-moved"
+      },
+      "snapshot-run-before": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY=\"ws://localhost:${GATEWAY_PORT}/ws\" node ../command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}' > \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/run-before-send.json\"",
+        "timeout_ms": 30000,
+        "intent": "Record the run's status and decisions from the gateway before sending feedback.",
+        "proves": ["worker-delivery"],
+        "next": "send"
+      },
+      "verify-run-unchanged": {
+        "action": "command",
+        "cmd": "FARMSLOT_GATEWAY=\"ws://localhost:${GATEWAY_PORT}/ws\" node ../command-center/scripts/cdp.mjs gateway run.get '{\"runId\":\"{{params.run_id}}\"}' > \"$FARMSLOT_RECIPE_ARTIFACTS_DIR/run-after-send.json\" && node -e 'const fs=require(\"fs\");const d=process.argv[1];const view=(f)=>{const {run}=JSON.parse(fs.readFileSync(d+\"/\"+f,\"utf8\"));return JSON.stringify({status:run.status,decisions:(run.decisions||[]).map(({id,resolvedAt,resolvedAction})=>({id,resolvedAt,resolvedAction}))});};const before=view(\"run-before-send.json\"),after=view(\"run-after-send.json\");if(before!==after)throw new Error(\"run changed after feedback: \"+before+\" -> \"+after);console.log(\"RUN_UNCHANGED_AFTER_FEEDBACK\")' \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\"",
+        "timeout_ms": 30000,
+        "intent": "The gateway still reports the same run status and unresolved decisions after the feedback was sent.",
+        "proves": ["worker-delivery"],
+        "next": "done"
+      }
+    }
+  }
+}

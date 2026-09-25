@@ -128,7 +128,7 @@
         "path": "{{params.platform}}/12_ready_gate_evidence.png",
         "label": "Ready Gate — Evidence",
         "visual_review": {
-          "parent": "capture-run",
+          "parent": "capture-ready-gate",
           "navigation": [{ "from": "capture-ready-gate", "kind": "tab" }],
           "related": ["capture-ready-diff", "capture-ready-timeline"]
         },
@@ -154,7 +154,7 @@
         "path": "{{params.platform}}/13_ready_gate_timeline.png",
         "label": "Ready Gate — Timeline",
         "visual_review": {
-          "parent": "capture-run",
+          "parent": "capture-ready-gate",
           "navigation": [{ "from": "capture-ready-evidence", "kind": "tab" }],
           "related": ["capture-ready-evidence", "capture-ready-diff"]
         },
@@ -184,7 +184,7 @@
         "max_scrolls": 30,
         "restore_position": false,
         "visual_review": {
-          "parent": "capture-run",
+          "parent": "capture-ready-gate",
           "navigation": [{ "from": "capture-ready-timeline", "kind": "tab" }],
           "related": ["capture-ready-evidence", "capture-ready-timeline"]
         },
