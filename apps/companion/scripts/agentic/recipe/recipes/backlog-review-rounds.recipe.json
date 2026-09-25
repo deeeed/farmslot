@@ -137,18 +137,79 @@
         "intent": "Save the edited item.",
         "next": "verify-edit"
       },
-      "capture-saved": {
-        "action": "ui.screenshot",
-        "path": "screenshots/companion-backlog-legacy-saved.png",
-        "label": "Legacy round saved",
-        "intent": "Record the Companion screen after the legacy round was saved.",
-        "next": "done"
-      },
       "verify-edit": {
         "action": "command",
         "cmd": "node scripts/agentic/backlog-review-proof.mjs verify-edit",
         "intent": "backlog.list shows the seeded item's round persisted as static-code with its runner once the save completes.",
+        "next": "reopen-relaunch"
+      },
+      "reopen-relaunch": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs relaunch",
+        "intent": "Restart the Companion before reopening the saved item.",
+        "next": "reopen-app-ready"
+      },
+      "reopen-app-ready": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-settings",
+        "timeout_ms": 60000,
+        "intent": "The restarted Companion shows its tab bar and is ready for a deep link.",
+        "next": "reopen-edit"
+      },
+      "reopen-edit": {
+        "action": "command",
+        "cmd": "node scripts/agentic/backlog-review-proof.mjs open-edit",
+        "intent": "Reopen the saved legacy backlog item in the Companion edit form.",
+        "next": "wait-reopen"
+      },
+      "wait-reopen": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-title",
+        "timeout_ms": 30000,
+        "intent": "The reopened edit form is visible.",
+        "next": "reveal-reopen-1"
+      },
+      "reveal-reopen-1": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the reopened form below the Basics section.",
+        "next": "reveal-reopen-2"
+      },
+      "reveal-reopen-2": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 700,
+        "intent": "Show the Publication review section header of the saved item.",
+        "next": "reopen-open-reviews"
+      },
+      "reopen-open-reviews": {
+        "action": "ui.press",
+        "test_id": "companion-backlog-review-section",
+        "intent": "Expand Publication review on the saved item.",
+        "next": "reveal-reopen-round"
+      },
+      "reveal-reopen-round": {
+        "action": "ui.scroll",
+        "direction": "down",
+        "pixels": 400,
+        "intent": "Show the saved review round and its depth wording.",
+        "next": "reopen-static-label"
+      },
+      "reopen-static-label": {
+        "action": "ui.wait_for",
+        "test_id": "companion-backlog-review-depth-0",
+        "text_contains": ["Static review. Run runtime validation separately with QA."],
+        "timeout_ms": 15000,
+        "intent": "The saved round now reads as a static review; the legacy wording is gone.",
         "next": "capture-saved"
+      },
+      "capture-saved": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-backlog-legacy-saved-static.png",
+        "label": "Saved legacy round now shows the static wording",
+        "intent": "Record the saved round reopened in the Companion.",
+        "next": "done"
       },
       "done": {
         "action": "end",
