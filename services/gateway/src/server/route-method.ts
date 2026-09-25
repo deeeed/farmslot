@@ -431,6 +431,11 @@ import {
   recipeRerun,
 } from '../methods/recipe.js';
 import {
+  runnerModelCatalog,
+  runnerVisibleModelsGet,
+  runnerVisibleModelsSet,
+} from '../methods/runner-models.js';
+import {
   resourceCleanup,
   resourceControl,
   resourceDeviceInventory,
@@ -659,6 +664,12 @@ async function routeAuthorizedMethod(
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:
       return gatewayDoctor(p as GatewayDoctorParams, authRuntime);
+    case Methods.RUNNER_MODEL_CATALOG:
+      return runnerModelCatalog(p);
+    case Methods.RUNNER_VISIBLE_MODELS_GET:
+      return runnerVisibleModelsGet(p);
+    case Methods.RUNNER_VISIBLE_MODELS_SET:
+      return runnerVisibleModelsSet(p);
 
     // Principal and credential management (authorization gate above is admin-only).
     case Methods.PRINCIPAL_CREATE:

@@ -1,8 +1,17 @@
-import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { css, html, LitElement, nothing, type PropertyValues, unsafeCSS } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
 
-import type { NativeRunnerOption } from '@farmslot/protocol';
+import {
+  Methods,
+  type NativeRunnerOption,
+  type RunnerCatalogModel,
+  type RunnerModelCatalogResult,
+  type RunnerVisibleModelState,
+  type RunnerVisibleModelsGetResult,
+  type RunnerVisibleModelsSetResult,
+} from '@farmslot/protocol';
 
+import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   DEFAULT_EFFORT,
@@ -13,6 +22,7 @@ import {
   PI_COMPAT_MODEL_HINT,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { rememberVisibleModels } from '../../utils/runner-visible-cache.js';
 
 export interface RunnerModelEffortChangeDetail {
   runner: string;
@@ -31,6 +41,15 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ type: Boolean }) showRunner = true;
   @property({ type: Boolean }) showDefaultEffort = true;
   @property({ attribute: false }) catalog?: NativeRunnerOption[];
+  /** Ask the gateway for visible defaults and, on request, the runner catalog. */
+  @property({ type: Boolean }) discover = true;
+
+  @state() private visibleState: RunnerVisibleModelState | null = null;
+  @state() private loadedCatalog: RunnerModelCatalogResult | null = null;
+  @state() private catalogOpen = false;
+  @state() private catalogChecks: string[] = [];
+  @state() private catalogStatus = '';
+  @state() private modelsReady = false;
 
   static styles = css`
     :host {
@@ -113,6 +132,28 @@ export class RunnerModelEffortPicker extends LitElement {
     .warning {
       color: ${unsafeCSS(colors.statusWarn)};
     }
+
+    .catalog {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .catalog-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+
+    .link {
+      border: 0;
+      background: transparent;
+      color: ${unsafeCSS(colors.accent)};
+      cursor: pointer;
+      font: inherit;
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      padding: 0;
+    }
   `;
 
   private runnerOptions(): string[] {
@@ -120,15 +161,37 @@ export class RunnerModelEffortPicker extends LitElement {
     return this.allowDefault ? ['', ...runners] : [...runners];
   }
 
+  override updated(changed: PropertyValues): void {
+    if (this.catalog || !this.discover) {
+      this.modelsReady = true;
+      return;
+    }
+    if (changed.has('runner')) {
+      this.catalogOpen = false;
+      this.loadedCatalog = null;
+      this.catalogStatus = '';
+      this.modelsReady = false;
+    }
+    if (changed.has('runner') || changed.has('model')) void this.loadVisible();
+  }
+
   private modelOptions(): string[] {
     if (this.catalog)
       return this.catalog.find((option) => option.runner === this.runner)?.models ?? [];
     if (!this.runner) return this.model ? [this.model] : [];
+    if (this.visibleState?.runner === this.runner) return [...this.visibleState.pickerModels];
     return [...new Set([...(MODELS_BY_RUNNER[this.runner] ?? []), this.model].filter(Boolean))];
   }
 
   private effortOptions(): EffortLevel[] {
-    const options = effortsForRunner(this.runner, this.model);
+    const catalogModes = this.loadedCatalog?.models.find(
+      (model) => model.id === this.model,
+    )?.reasoningModes;
+    const options = (
+      catalogModes && catalogModes.length > 0
+        ? catalogModes
+        : effortsForRunner(this.runner, this.model)
+    ) as EffortLevel[];
     const values: EffortLevel[] = this.showDefaultEffort ? ['' as EffortLevel] : [];
     values.push(...options);
     if (this.effort && !values.includes(this.effort)) values.push(this.effort);
@@ -180,6 +243,121 @@ export class RunnerModelEffortPicker extends LitElement {
     this.emitChange({ runner: this.runner, model: this.model, effort });
   }
 
+  private async loadVisible() {
+    if (!this.runner || this.catalog || !this.discover) {
+      this.modelsReady = true;
+      return;
+    }
+    const runner = this.runner;
+    try {
+      const result = await gateway.request<RunnerVisibleModelsGetResult>(
+        Methods.RUNNER_VISIBLE_MODELS_GET,
+        { runner, ...(this.model ? { selectedModel: this.model } : {}) },
+      );
+      if (this.runner !== runner) return;
+      const next = result.runners[0] ?? null;
+      if (next) rememberVisibleModels(runner, next.models);
+      if (JSON.stringify(next) !== JSON.stringify(this.visibleState)) this.visibleState = next;
+    } catch (err) {
+      // The dev harness renders this picker with no gateway socket. Leave the
+      // built-in seed in place. Any other failure is shown on the catalog status.
+      if (!(err instanceof Error && err.message === 'Not connected')) {
+        this.catalogStatus =
+          err instanceof Error ? err.message : 'Visible models could not be loaded.';
+      }
+    } finally {
+      if (this.runner === runner) this.modelsReady = true;
+    }
+  }
+
+  private async toggleCatalog() {
+    this.catalogOpen = !this.catalogOpen;
+    if (!this.catalogOpen) return;
+    this.catalogStatus = 'Loading model catalog.';
+    try {
+      const result = await gateway.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, {
+        runner: this.runner,
+      });
+      this.loadedCatalog = result;
+      this.catalogChecks = [...(this.visibleState?.models ?? [])];
+      this.catalogStatus = result.detail ?? '';
+    } catch (err) {
+      this.loadedCatalog = {
+        runner: this.runner,
+        status: 'unavailable',
+        source: 'structured-file',
+        detail: err instanceof Error ? err.message : 'Model catalog request failed.',
+        models: [],
+      };
+      this.catalogStatus = this.loadedCatalog.detail ?? '';
+    }
+  }
+
+  private toggleCatalogModel(id: string) {
+    this.catalogChecks = this.catalogChecks.includes(id)
+      ? this.catalogChecks.filter((model) => model !== id)
+      : [...this.catalogChecks, id];
+  }
+
+  private async saveVisible() {
+    const runner = this.runner;
+    const models = [...this.catalogChecks];
+    await gateway.request<RunnerVisibleModelsSetResult>(Methods.RUNNER_VISIBLE_MODELS_SET, {
+      runner,
+      models,
+    });
+    if (this.runner !== runner) return;
+    this.catalogStatus = 'Visible models saved.';
+    await this.loadVisible();
+  }
+
+  private renderCatalog() {
+    const rows = this.loadedCatalog?.status === 'ready' ? this.catalogRows() : [];
+    return html`<div class="catalog">
+      ${rows.map(
+        (model) =>
+          html`<label class="catalog-row">
+            <input
+              type="checkbox"
+              data-testid=${`runner-catalog-default-${model.id}`}
+              .checked=${this.catalogChecks.includes(model.id)}
+              ?disabled=${this.disabled}
+              @change=${(event: Event) => {
+                const checked = (event.target as HTMLInputElement).checked;
+                this.catalogChecks = checked
+                  ? [...new Set([...this.catalogChecks, model.id])]
+                  : this.catalogChecks.filter((id) => id !== model.id);
+              }}
+            />
+            <span>${model.id}</span>
+            ${model.reasoningModes.length
+              ? html`<span class="hint">${model.reasoningModes.join(', ')}</span>`
+              : nothing}
+          </label>`,
+      )}
+      ${this.loadedCatalog?.status === 'ready'
+        ? html`<button
+            class="link"
+            type="button"
+            data-testid="runner-visible-models-save"
+            ?disabled=${this.disabled}
+            @click=${() => void this.saveVisible()}
+          >
+            Save visible models
+          </button>`
+        : nothing}
+      <div class="hint" data-testid="runner-model-catalog-status">${this.catalogStatus}</div>
+    </div>`;
+  }
+
+  private catalogRows(): RunnerCatalogModel[] {
+    const reported = this.loadedCatalog?.models ?? [];
+    const extras = (this.visibleState?.models ?? []).filter(
+      (id) => !reported.some((model) => model.id === id),
+    );
+    return [...reported, ...extras.map((id) => ({ id, reasoningModes: [], listed: true }))];
+  }
+
   render() {
     const models = this.modelOptions();
     const efforts = this.effortOptions();
@@ -194,6 +372,7 @@ export class RunnerModelEffortPicker extends LitElement {
                     html`<button
                       class="pill ${this.runner === runner ? 'selected' : ''}"
                       type="button"
+                      data-testid=${`runner-option-${runner || 'default'}`}
                       ?disabled=${this.disabled}
                       @click=${() => this.selectRunner(runner)}
                     >
@@ -207,7 +386,10 @@ export class RunnerModelEffortPicker extends LitElement {
         <div class="config-group">
           <div class="section-label">Model</div>
           ${models.length
-            ? html`<div class="pill-row">
+            ? html`<div
+                class="pill-row"
+                data-testid=${this.modelsReady || this.catalog ? 'runner-models-ready' : nothing}
+              >
                 ${this.allowDefault
                   ? html`<button
                       class="pill ${this.model === '' ? 'selected' : ''}"
@@ -223,6 +405,8 @@ export class RunnerModelEffortPicker extends LitElement {
                     html`<button
                       class="pill ${this.model === model ? 'selected' : ''}"
                       type="button"
+                      data-testid=${`runner-model-${model}`}
+                      ?data-retained=${this.visibleState?.retainedModel === model}
                       ?disabled=${this.disabled}
                       @click=${() => this.selectModel(model)}
                     >
@@ -231,6 +415,18 @@ export class RunnerModelEffortPicker extends LitElement {
                 )}
               </div>`
             : html`<div class="hint">Choose a runner to set a model.</div>`}
+          ${this.discover && !this.catalog && this.runner
+            ? html`<button
+                class="link"
+                type="button"
+                data-testid="runner-model-catalog-toggle"
+                ?disabled=${this.disabled}
+                @click=${() => void this.toggleCatalog()}
+              >
+                ${this.catalogOpen ? 'Hide catalog' : 'Show catalog'}
+              </button>`
+            : nothing}
+          ${this.catalogOpen ? this.renderCatalog() : nothing}
           ${this.runner === 'pi' ? html`<div class="hint">${PI_COMPAT_MODEL_HINT}</div>` : nothing}
           ${!this.catalog && this.runner
             ? html`<details>

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Report each runner's structured model catalog, including reasoning modes, and store the operator's visible model defaults. Runners without a catalog, and catalogs that cannot be read, stay explicit instead of being guessed from runner text.
+
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
 - Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.
 

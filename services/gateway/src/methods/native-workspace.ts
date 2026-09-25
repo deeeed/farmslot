@@ -10,6 +10,7 @@ import {
   KNOWN_RUNNERS,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
+import { describeVisibleModels } from '../runners/visible-models.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
 export {
@@ -70,10 +71,16 @@ export async function nativeCatalog(
                   runnerSupportsNativeTaskReuse(definition.id) &&
                   runnerSupportsReadonlyReviewWorkspace(definition.id),
                 ...definition.nativeChoices,
+                models: visibleNativeModels(definition.id, definition.nativeChoices?.models ?? []),
               },
             ]
           : [],
       ),
     contexts,
   };
+}
+
+function visibleNativeModels(runner: string, seed: string[]): string[] {
+  const visible = describeVisibleModels(runner);
+  return visible.configured ? visible.models : seed;
 }

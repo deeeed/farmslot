@@ -58,7 +58,6 @@ import { renderMarkdown } from '../../utils/markdown.js';
 import {
   DEFAULT_MODEL,
   modelForRunnerChange,
-  MODELS_BY_RUNNER,
   modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
@@ -2112,7 +2111,7 @@ export class BacklogPanel extends LitElement {
     index: number,
     item?: BacklogItem,
   ) {
-    const models = MODELS_BY_RUNNER[candidate.runner] ?? [];
+    const models = modelsForRunner(candidate.runner);
     return html`<div class="launch-row" data-testid="backlog-launch-candidate">
       <div>
         <div class="field-label">${candidate.role}</div>

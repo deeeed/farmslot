@@ -15,7 +15,7 @@ import { isTerminalRunStatus } from '@farmslot/protocol';
 import {
   DEFAULT_MODEL,
   EVAL_CANDIDATE_RUNNERS,
-  MODELS_BY_RUNNER,
+  modelsForRunner,
   runnerLabel,
 } from '../../utils/runner-options.js';
 
@@ -423,7 +423,10 @@ export function candidateTemplateChoices(
 }
 
 export function candidateModelOptions(runner: string): string[] {
-  return MODELS_BY_RUNNER[runner] ?? [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+  const models = modelsForRunner(runner);
+  return models.length > 0
+    ? models
+    : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {

@@ -440,4 +440,9 @@ export const Methods = {
   RECIPE_PROJECT_HOOK_RUN: 'recipe.projectHookRun',
   RUN_RECIPE_RUNS_FOR_SLOT: 'run.recipeRunsForSlot',
   RUN_RECIPE_RUNS_FOR_RUN: 'run.recipeRunsForRun',
+
+  // Runner model catalogs and the operator's visible defaults.
+  RUNNER_MODEL_CATALOG: 'runner.modelCatalog',
+  RUNNER_VISIBLE_MODELS_GET: 'runner.visibleModels.get',
+  RUNNER_VISIBLE_MODELS_SET: 'runner.visibleModels.set',
 } as const;

@@ -486,6 +486,14 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `run.recipeRunsForSlot`      | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `run.recipeRunsForRun`       | rpc-only      |                                   |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
+## runner.\*
+
+| Method                     | Surface  | CLI command | TUI | Note                                                                                           |
+| -------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
+| `runner.modelCatalog`      | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `runner.visibleModels.get` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `runner.visibleModels.set` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+
 ## runtime.\*
 
 | Method                        | Surface       | CLI command                              | TUI | Note                                                                                                                                                       |

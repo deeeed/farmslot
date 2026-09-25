@@ -46,6 +46,12 @@ import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
+import {
+  parseCodexModelCatalog,
+  parseGrokModelCatalog,
+  parsePiModelCatalog,
+  type RunnerModelCatalogSource,
+} from './model-catalog.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import {
   instructionNeedle,
@@ -144,6 +150,11 @@ export interface RunnerDefinition {
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
   nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
+  /**
+   * Structured model catalog. Absent means this runner does not report one.
+   * The reader must not parse runner TUI or CLI help text.
+   */
+  modelCatalog?: RunnerModelCatalogSource;
   /**
    * Review-workspace launches run interactively in a brand-new git worktree the
    * runner has never seen, which can trigger a one-time "trust this folder?"
@@ -334,6 +345,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
       ],
       modes: ['default', 'plan'],
     },
+    modelCatalog: {
+      relativePath: '.codex/models_cache.json',
+      parse: parseCodexModelCatalog,
+    },
     defaultLaunchMode: 'interactive',
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
@@ -441,6 +456,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
     nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
+    modelCatalog: {
+      relativePath: '.grok/models_cache.json',
+      parse: parseGrokModelCatalog,
+    },
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's
@@ -504,6 +523,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_PI_MODEL,
+    modelCatalog: {
+      relativePath: '.pi/agent/models-store.json',
+      parse: parsePiModelCatalog,
+    },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',

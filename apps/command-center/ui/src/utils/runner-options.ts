@@ -14,6 +14,8 @@ import {
   type ReviewRunnerId,
 } from '@farmslot/protocol';
 
+import { rememberedVisibleModels } from './runner-visible-cache.js';
+
 export type EffortLevel = '' | CodexReasoningEffort | PiThinkingLevel;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
@@ -69,9 +71,9 @@ export const DEFAULT_MODEL: Record<string, string> = {
   pi: DEFAULT_PI_MODEL,
 };
 
-/** Canonical selectable models for a runner. Never mixes models across runners. */
+/** Selectable models for a runner. A saved visible set from this page wins over the built-in seed. */
 export function modelsForRunner(runner: string): string[] {
-  return [...(MODELS_BY_RUNNER[runner] ?? [])];
+  return rememberedVisibleModels(runner) ?? [...(MODELS_BY_RUNNER[runner] ?? [])];
 }
 
 /** Keep a selected model when still valid; otherwise fall back to the runner default. */
