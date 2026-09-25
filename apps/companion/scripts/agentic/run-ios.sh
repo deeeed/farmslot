@@ -123,6 +123,14 @@ companion_run_ios_simulator() {
   fi
   scheme="$(basename "${workspace}" .xcworkspace)"
   derived="ios/build/simulator-${udid}"
+  metro_url="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
+  if ! curl -fsS "http://127.0.0.1:${METRO_PORT}/status" >/dev/null 2>&1 &&
+    ! curl -fsS "http://[::1]:${METRO_PORT}/status" >/dev/null 2>&1; then
+    echo "ERROR: Metro is not answering on :${METRO_PORT}. Start it first (prepare-profile.sh warm), then rerun." >&2
+    exit 1
+  fi
+  # Boots a shut-down simulator and waits until it can accept an install.
+  xcrun simctl bootstatus "${udid}" -b
   echo "[run-ios] Building ${scheme} for simulator ${udid}"
   env "${RUN_ENV[@]}" RCT_NO_LAUNCH_PACKAGER=true xcodebuild \
     -workspace "${workspace}" -scheme "${scheme}" -configuration Debug \
@@ -130,7 +138,6 @@ companion_run_ios_simulator() {
     COMPILER_INDEX_STORE_ENABLE=NO build
   app_path="${derived}/Build/Products/Debug-iphonesimulator/${scheme}.app"
   xcrun simctl install "${udid}" "${app_path}"
-  metro_url="http://${COMPANION_PACKAGER_HOSTNAME}:${METRO_PORT}"
   xcrun simctl openurl "${udid}" \
     "${SCHEME}://expo-development-client/?url=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${metro_url}")"
   echo "[run-ios] Installed ${BUNDLE_ID} on ${udid}; dev client opened on ${metro_url}"
@@ -196,7 +203,11 @@ elif [[ "${doctor_status}" -ne 0 ]]; then
   exit "${doctor_status}"
 fi
 
-if [[ "${DEVICE_MODE}" == "simulator" && -n "${IOS_TARGET}" && "${#EXPO_ARGS[@]}" -eq 0 ]]; then
+if [[ "${DEVICE_MODE}" == "simulator" && -n "${IOS_TARGET}" ]]; then
+  if [[ "${#EXPO_ARGS[@]}" -gt 0 ]]; then
+    echo "ERROR: extra Expo arguments (${EXPO_ARGS[*]}) are not supported for simulator targets; expo run:ios --device would take the physical-device path." >&2
+    exit 1
+  fi
   echo "[run-ios] App variant: ${APP_VARIANT} (${BUNDLE_ID}, ${SCHEME}://)"
   echo "[run-ios] Metro port: ${METRO_PORT}"
   companion_run_ios_simulator "${IOS_TARGET}"
