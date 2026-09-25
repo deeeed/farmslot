@@ -23,9 +23,9 @@ five consumers above have a measured efficiency benefit.
 
 On 2026-09-25, an explicitly admitted decision on a public-PR-backed run
 produced a retained `jev-1.13.0` answer. The model abstained on a timeout
-handoff. The run panel and Intelligence > Assessments showed the same answer,
-input decision context, existing actions, model, usage and estimated cost;
-the history offered operator feedback. The call used 610 input and 50 output
+handoff. The run panel showed the abstention, model, usage, latency and estimated
+cost. Intelligence > Assessments showed the same answer, decision context,
+actions, raw usage and a feedback form. The call used 610 input and 50 output
 tokens in 972 ms at an estimated $0.000026. The operator has not rated it.
 This verifies observability of one on-demand call, not decision accuracy or
 workflow savings. The owner-scoped record expires with assessment history.

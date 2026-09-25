@@ -19,8 +19,9 @@ Assessments. This happened on 2026-09-25 for a public-PR-backed run; the
 model abstained. Accuracy and workflow savings remain unmeasured and are not
 required to keep the pilot opt-in.
 
-The original consumers below are possible follow-ups, each requiring separate
-scope approval. None is required to close this goal.
+On 2026-09-25 the operator narrowed this goal's closeout to the observable
+pilot above. The original consumers below are possible follow-ups, each
+requiring separate scope approval. None is required to close this goal.
 
 | Consumer                           | Useful outcome to test                                                | Comparison                                                    |
 | ---------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------- |
