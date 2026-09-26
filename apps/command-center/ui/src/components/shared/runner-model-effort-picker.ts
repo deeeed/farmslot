@@ -52,6 +52,9 @@ export class RunnerModelEffortPicker extends LitElement {
   @state() private catalogChecks: string[] = [];
   @state() private catalogStatus = '';
   @state() private modelsReady = false;
+  /** Latest request ids. An older answer arriving later is dropped. */
+  private visibleRequest = 0;
+  private catalogRequest = 0;
 
   static styles = css`
     :host {
@@ -170,6 +173,7 @@ export class RunnerModelEffortPicker extends LitElement {
     }
     if (changed.has('runner')) {
       this.catalogOpen = false;
+      this.catalogRequest++;
       this.loadedCatalog = null;
       this.catalogStatus = '';
       this.modelsReady = false;
@@ -253,16 +257,18 @@ export class RunnerModelEffortPicker extends LitElement {
       return;
     }
     const runner = this.runner;
+    const request = ++this.visibleRequest;
     try {
       const result = await gateway.request<RunnerVisibleModelsGetResult>(
         Methods.RUNNER_VISIBLE_MODELS_GET,
         { runner, ...(this.model ? { selectedModel: this.model } : {}) },
       );
-      if (this.runner !== runner) return;
+      if (request !== this.visibleRequest || this.runner !== runner) return;
       const next = result.runners[0] ?? null;
       if (next) rememberVisibleModels(runner, next.models);
       if (JSON.stringify(next) !== JSON.stringify(this.visibleState)) this.visibleState = next;
     } catch (err) {
+      if (request !== this.visibleRequest) return;
       // The dev harness renders this picker with no gateway socket. Leave the
       // built-in seed in place. Any other failure is shown on the catalog status.
       if (!(err instanceof Error && err.message === 'Not connected')) {
@@ -270,12 +276,14 @@ export class RunnerModelEffortPicker extends LitElement {
           err instanceof Error ? err.message : 'Visible models could not be loaded.';
       }
     } finally {
-      if (this.runner === runner) this.modelsReady = true;
+      if (request === this.visibleRequest && this.runner === runner) this.modelsReady = true;
     }
   }
 
   private async toggleCatalog() {
     this.catalogOpen = !this.catalogOpen;
+    // Closing, reopening or switching runner makes any pending catalog answer stale.
+    const request = ++this.catalogRequest;
     if (!this.catalogOpen) return;
     const runner = this.runner;
     this.catalogStatus = CATALOG_LOADING;
@@ -296,9 +304,9 @@ export class RunnerModelEffortPicker extends LitElement {
     // The checks start from the saved set. If it has not loaded yet, prefilling
     // from the built-in list would let a save overwrite the operator's set.
     if (this.visibleState?.runner !== runner) await this.loadVisible();
-    // The operator switched runners, or closed the catalog, while a request was
-    // in flight. Its models must not become the checks saved for another runner.
-    if (this.runner !== runner || !this.catalogOpen) return;
+    // The operator switched runners, or closed or reopened the catalog, while a
+    // request was in flight. Its models must not replace the current checks.
+    if (request !== this.catalogRequest || this.runner !== runner || !this.catalogOpen) return;
     if (this.visibleState?.runner !== runner) {
       // loadVisible reports a gateway error itself; a missing socket leaves this.
       if (this.catalogStatus === CATALOG_LOADING)

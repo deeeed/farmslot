@@ -276,6 +276,7 @@ export class RoadmapPanel extends LitElement {
 
   private _unsubscribeConnection?: () => void;
   private _unsubscribeVisibleModels?: () => void;
+  @state() private _visibleModelsError = '';
   private _unsubscribeState?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
   private _onKeydown = (event: KeyboardEvent) => {
@@ -821,7 +822,10 @@ export class RoadmapPanel extends LitElement {
       if (state === 'connected' && !this.items) void this._refresh();
     });
     if (gateway.connectionState === 'connected' && !this.items) void this._refresh();
-    this._unsubscribeVisibleModels = watchVisibleModels(() => this.requestUpdate());
+    this._unsubscribeVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      this.requestUpdate();
+    });
   }
 
   disconnectedCallback() {
@@ -2112,6 +2116,11 @@ export class RoadmapPanel extends LitElement {
                 this._refineModel = model;
               },
             })}
+            ${this._visibleModelsError
+              ? html`<div class="muted" role="status" data-testid="roadmap-visible-models-error">
+                  Saved visible models could not be loaded: ${this._visibleModelsError}
+                </div>`
+              : nothing}
           </div>
           <div class="field full">
             Permission mode

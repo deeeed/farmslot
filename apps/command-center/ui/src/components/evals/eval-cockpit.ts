@@ -89,7 +89,10 @@ export class EvalCockpit extends EvalCockpitState {
 
   connectedCallback(): void {
     super.connectedCallback();
-    this._unsubVisibleModels = watchVisibleModels(() => this.requestUpdate());
+    this._unsubVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      this.requestUpdate();
+    });
     this._restoreUrlState();
     window.addEventListener('hashchange', this._onHashChange);
     this._syncState(getState());
@@ -823,6 +826,7 @@ export class EvalCockpit extends EvalCockpitState {
   private _renderCandidateMatrix() {
     return renderEvalCockpitCandidateMatrix({
       candidateRows: this._candidateRows,
+      visibleModelsError: this._visibleModelsError,
       selectedCaseCount: this._selectedCases.length,
       enabledCandidateCount: this._enabledCandidates().length,
       selectedTaskProfile: this._selectedCases[0]?.taskProfile ?? 'fix-bug',

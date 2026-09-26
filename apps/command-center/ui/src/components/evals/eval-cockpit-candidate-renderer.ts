@@ -24,6 +24,7 @@ export interface EvalCockpitCandidateMatrixRenderOptions {
   candidateLabel: (row: CandidateRow) => string;
   generatedCandidateLabel: (row: CandidateRow) => string;
   candidateModelOptions: (runner: string, selected?: string) => string[];
+  visibleModelsError: string;
   candidateTemplateChoices: (taskProfile: EvalTaskProfile) => CandidateTemplateChoice[];
   candidateTemplateSummary: (row: CandidateRow) => string;
   candidateVariant: (row: CandidateRow) => string;
@@ -115,6 +116,15 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
 
               <div class="dispatch-like-block">
                 <div class="field-label">Model</div>
+                ${options.visibleModelsError
+                  ? html`<div
+                      class="eval-muted"
+                      role="status"
+                      data-testid="eval-visible-models-error"
+                    >
+                      Saved visible models could not be loaded: ${options.visibleModelsError}
+                    </div>`
+                  : nothing}
                 <div class="choice-row" role="group" aria-label="Candidate model">
                   ${models.map(
                     (model) => html`

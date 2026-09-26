@@ -383,6 +383,7 @@ export class BacklogPanel extends LitElement {
 
   private _unsub?: () => void;
   private _unsubVisibleModels?: () => void;
+  @state() private _visibleModelsError = '';
   private _activityCacheItems: BacklogItem[] | null = null;
   private _activityCacheRuns: Run[] | null = null;
   private _activityCache = new Map<string, Run | undefined>();
@@ -1253,7 +1254,10 @@ export class BacklogPanel extends LitElement {
     window.addEventListener('hashchange', this._onHashChange);
     window.addEventListener('keydown', this._onKeydown);
     this._unsub = subscribe((s) => this._sync(s));
-    this._unsubVisibleModels = watchVisibleModels(() => this.requestUpdate());
+    this._unsubVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      this.requestUpdate();
+    });
   }
 
   disconnectedCallback() {
@@ -2159,6 +2163,7 @@ export class BacklogPanel extends LitElement {
         >
           ${models.map((model) => html`<option value=${model}>${model}</option>`)}
         </select>
+        ${this._renderVisibleModelsError()}
       </label>
       ${candidate.role === 'comparison'
         ? html`<label
@@ -3103,6 +3108,14 @@ export class BacklogPanel extends LitElement {
     return [...new Set([...RUNNER_OPTIONS, ...slotRunners])].sort();
   }
 
+  private _renderVisibleModelsError() {
+    return this._visibleModelsError
+      ? html`<div class="muted" role="status" data-testid="backlog-visible-models-error">
+          Saved visible models could not be loaded: ${this._visibleModelsError}
+        </div>`
+      : nothing;
+  }
+
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
     return modelsForRunner(runner, this._refineModel);
@@ -3319,6 +3332,7 @@ export class BacklogPanel extends LitElement {
                 this._refineModel = model;
               },
             })}
+            ${this._renderVisibleModelsError()}
           </div>
           <div class="full">
             ${this._renderRefinementChoice({
