@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Default Codex runs to GPT-6 Sol and offer GPT-6 Luna while accepting existing GPT-5.4/5.5 selections.
 - Load only run-shaped files whose payload id matches the filename, so other JSON in the runs directory, such as the runtime capability store, no longer appears as an id-less run or migrates into `undefined.json` on restart.
 - Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
 

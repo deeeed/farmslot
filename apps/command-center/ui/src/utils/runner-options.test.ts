@@ -75,12 +75,11 @@ test('Claude fable is selectable but not the default model', () => {
 test('modelsForRunner returns only that runner allowlist — no cross-runner bleed', () => {
   assert.deepEqual(modelsForRunner('codex'), [
     DEFAULT_CODEX_MODEL,
-    'gpt-6-sol',
+    'gpt-6-astra',
+    'gpt-6-luna',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
-    'gpt-5.5',
-    'gpt-5.4',
   ]);
   assert.deepEqual(modelsForRunner('claude'), ['sonnet', 'opus', 'haiku', 'fable']);
   assert.equal(modelsForRunner('codex').includes('opus'), false);
@@ -89,10 +88,22 @@ test('modelsForRunner returns only that runner allowlist — no cross-runner ble
   assert.deepEqual(modelsForRunner('unknown-runner'), []);
 });
 
-test('Codex defaults to GPT-6 Astra and offers Sol alongside the 5.6 family', () => {
+test('saved legacy Codex models stay selectable without appearing in new model lists', () => {
+  assert.equal(modelsForRunner('codex').includes('gpt-5.5'), false);
+  assert.equal(modelsForRunner('codex').includes('gpt-5.4'), false);
+  assert.equal(modelsForRunner('codex', 'gpt-5.5').at(-1), 'gpt-5.5');
+  assert.equal(modelsForRunner('codex', 'gpt-5.4').at(-1), 'gpt-5.4');
+  assert.deepEqual(modelsForRunner('codex', 'unsupported'), modelsForRunner('codex'));
+  assert.deepEqual(modelsForRunner('claude', 'gpt-5.4'), modelsForRunner('claude'));
+});
+
+test('Codex defaults to GPT-6 Sol and retains Astra alongside the 5.6 family', () => {
   assert.equal(DEFAULT_MODEL.codex, DEFAULT_CODEX_MODEL);
-  assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-astra');
-  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-6-sol'), true);
+  assert.equal(DEFAULT_CODEX_MODEL, 'gpt-6-sol');
+  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-6-astra'), true);
+  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-6-luna'), true);
+  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.5'), false);
+  assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.4'), false);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-sol'), true);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-terra'), true);
   assert.equal(MODELS_BY_RUNNER.codex.includes('gpt-5.6-luna'), true);
@@ -107,8 +118,8 @@ test('Codex defaults to high effort and Grok retains xhigh', () => {
 });
 
 test('modelForRunnerChange clears or remaps invalid models when the runner changes', () => {
-  // Keep a still-valid model.
-  assert.equal(modelForRunnerChange('codex', 'gpt-5.4'), 'gpt-5.4');
+  // Hidden legacy models fall back to the current default on a new selection.
+  assert.equal(modelForRunnerChange('codex', 'gpt-5.4'), DEFAULT_MODEL.codex);
   assert.equal(modelForRunnerChange('codex', 'gpt-5.6-terra'), 'gpt-5.6-terra');
   // Claude model is invalid for codex → codex default.
   assert.equal(modelForRunnerChange('codex', 'opus'), DEFAULT_MODEL.codex);
@@ -138,6 +149,13 @@ test('effort options respect the selected Codex model', () => {
     'xhigh',
     'max',
     'ultra',
+  ]);
+  assert.deepEqual(effortsForRunner('codex', 'gpt-6-luna'), [
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
   ]);
   assert.deepEqual(effortsForRunner('codex', 'gpt-5.5'), ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(effortsForRunner('codex', 'gpt-5.6-luna'), [

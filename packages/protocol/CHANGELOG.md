@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Default Codex dispatches to GPT-6 Sol, offer GPT-6 Luna, and hide GPT-5.4/5.5 from model pickers while accepting existing selections.
 - Retain the exact CI fix prompt in agent contexts so a gateway restart can safely recover pending delivery.
 
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
