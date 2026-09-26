@@ -1,5 +1,4 @@
-import type { FlowType, ReviewRunnerId, ReviewValidationDepth } from '@farmslot/protocol';
-import { isReviewValidationDepth, reviewValidationDepthForLoop } from '@farmslot/protocol';
+import type { FlowType, ReviewRunnerId } from '@farmslot/protocol';
 
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 
@@ -33,28 +32,14 @@ export function parsePublicationReviews(
   raw: string | null,
   runnerOptions: ReadonlyArray<ReviewRunnerId>,
 ): PublicationReviewLoopDraft[] {
-  const loops = (raw ?? '')
+  // Older links carry `runner:depth`; review rounds are static, so only the runner is kept.
+  const runners = (raw ?? '')
     .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry): { runner: string; validationDepth?: ReviewValidationDepth } => {
-      const [runnerRaw, depthRaw] = entry.split(':');
-      const runner = runnerRaw?.trim();
-      return {
-        runner: runner ?? '',
-        validationDepth: isReviewValidationDepth(depthRaw) ? depthRaw : undefined,
-      };
-    })
-    .filter((loop): loop is { runner: ReviewRunnerId; validationDepth?: ReviewValidationDepth } =>
-      runnerOptions.includes(loop.runner as ReviewRunnerId),
-    )
+    .map((entry) => entry.split(':')[0]?.trim() ?? '')
+    .filter((runner): runner is ReviewRunnerId => runnerOptions.includes(runner as ReviewRunnerId))
     .slice(0, 5);
 
-  return loops.map((loop, index) => ({
-    id: index + 1,
-    runner: loop.runner,
-    validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, loops.length),
-  }));
+  return runners.map((runner, index) => ({ id: index + 1, runner }));
 }
 
 export function parseDispatchWizardHash(
@@ -129,15 +114,7 @@ export function syncPublicationReviewsHash(
   if (!base) return null;
   const params = new URLSearchParams(qIdx >= 0 ? raw.slice(qIdx + 1) : '');
   if (loops.length > 0) {
-    params.set(
-      'publicationReviews',
-      loops
-        .map(
-          (loop, index) =>
-            `${loop.runner}:${loop.validationDepth ?? reviewValidationDepthForLoop(index, loops.length)}`,
-        )
-        .join(','),
-    );
+    params.set('publicationReviews', loops.map((loop) => loop.runner).join(','));
   } else {
     params.delete('publicationReviews');
   }

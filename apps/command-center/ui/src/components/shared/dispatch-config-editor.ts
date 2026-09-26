@@ -8,15 +8,10 @@ import type {
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewRunnerId,
-  ReviewValidationDepth,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
-import {
-  RESOURCE_POSTURE_WAIT_POLICIES,
-  reviewValidationDepthForLoop,
-  selectedTemplateMode,
-} from '@farmslot/protocol';
+import { RESOURCE_POSTURE_WAIT_POLICIES, selectedTemplateMode } from '@farmslot/protocol';
 
 import './runner-model-effort-picker.js';
 import './slot-prepare-options.js';
@@ -255,10 +250,7 @@ export class DispatchConfigEditor extends LitElement {
     this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
   }
 
-  private updateReviewLoop(
-    index: number,
-    patch: Partial<Pick<ReviewLoopRequest, 'runner' | 'validationDepth'>>,
-  ) {
+  private updateReviewLoop(index: number, patch: Partial<Pick<ReviewLoopRequest, 'runner'>>) {
     const next = this.pendingReviewPlan.map((loop, currentIndex) => {
       if (currentIndex !== index) return loop;
       if (patch.runner && patch.runner !== loop.runner) {
@@ -277,13 +269,14 @@ export class DispatchConfigEditor extends LitElement {
     this.emitChange(this.reviewPlanWith(this.normalizeReviewPlan(next)));
   }
 
+  /** Edits emit static rounds; runtime validation is a separate QA run (ADR-058). */
   private normalizeReviewPlan(plan: readonly ReviewLoopRequest[]): ReviewLoopRequest[] {
-    return plan.slice(0, 5).map((loop, index, all) => ({
+    return plan.slice(0, 5).map((loop, index) => ({
       order: index + 1,
       runner: loop.runner || 'same',
       ...(loop.model?.trim() ? { model: loop.model.trim() } : {}),
       ...(loop.effort?.trim() ? { effort: loop.effort.trim() } : {}),
-      validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, all.length),
+      validationDepth: 'static-code',
       ...(loop.sessionIntent ? { sessionIntent: loop.sessionIntent } : {}),
     }));
   }
@@ -425,7 +418,9 @@ export class DispatchConfigEditor extends LitElement {
     ) {
       return nothing;
     }
-    const loops = this.normalizeReviewPlan(this.pendingReviewPlan);
+    // Render the stored depth so a legacy full-live round stays visible until the operator
+    // repairs it; edits normalize to static.
+    const loops = this.pendingReviewPlan.slice(0, 5);
     const runnerOptions: Array<ReviewLoopRequest['runner']> = [
       'same',
       ...(RUNNER_OPTIONS as ReviewRunnerId[]),
@@ -442,7 +437,7 @@ export class DispatchConfigEditor extends LitElement {
                     ${runnerOptions.map(
                       (runner) =>
                         html`<button
-                          class="pill ${loop.runner === runner ? 'selected' : ''}"
+                          class="pill ${(loop.runner || 'same') === runner ? 'selected' : ''}"
                           type="button"
                           ?disabled=${this.disabled}
                           @click=${() => this.updateReviewLoop(index, { runner })}
@@ -451,19 +446,23 @@ export class DispatchConfigEditor extends LitElement {
                         </button>`,
                     )}
                   </div>
-                  <div class="pill-row">
-                    ${(['static-code', 'full-live'] as ReviewValidationDepth[]).map(
-                      (depth) =>
-                        html`<button
-                          class="pill ${loop.validationDepth === depth ? 'selected' : ''}"
-                          type="button"
-                          ?disabled=${this.disabled}
-                          @click=${() => this.updateReviewLoop(index, { validationDepth: depth })}
-                        >
-                          ${depth}
-                        </button>`,
-                    )}
-                  </div>
+                  ${loop.validationDepth === 'full-live'
+                    ? html`<button
+                        class="pill"
+                        type="button"
+                        data-testid="dispatch-config-review-make-static"
+                        title="Legacy full-live round. Review rounds are static; run QA separately for runtime validation."
+                        ?disabled=${this.disabled}
+                        @click=${() =>
+                          this.emitChange(
+                            this.reviewPlanWith(this.normalizeReviewPlan(this.pendingReviewPlan)),
+                          )}
+                      >
+                        Legacy full live · make static
+                      </button>`
+                    : html`<span class="section-help" data-testid="dispatch-config-review-depth"
+                        >Static</span
+                      >`}
                   <button
                     class="pill"
                     type="button"

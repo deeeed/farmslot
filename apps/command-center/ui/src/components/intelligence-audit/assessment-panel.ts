@@ -14,6 +14,8 @@ import {
   type RunGetResult,
 } from '@farmslot/protocol';
 
+import './assessment-suggestion-panel.js';
+
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { getHashParam } from '../../utils/url-state.js';
@@ -34,7 +36,10 @@ export class AssessmentPanel extends LitElement {
     | 'all'
     | 'decision-advice'
     | 'acceptance-evidence'
-    | 'failure-triage' = 'all';
+    | 'failure-triage'
+    | 'static-review-checklist'
+    | 'copilot-context'
+    | 'review-routing' = 'all';
   @state() private summary: AssessmentSummary | null = null;
   @state() private error = '';
   @state() private busy = false;
@@ -344,6 +349,9 @@ export class AssessmentPanel extends LitElement {
     const s = this.summary;
     return html`
       <h2>Assessments</h2>
+      <assessment-suggestion-panel
+        @suggestion-completed=${() => this.load()}
+      ></assessment-suggestion-panel>
       <p>
         Advisory only. No review, dispatch or publication action is applied. History covers the last
         30 days.
@@ -359,7 +367,10 @@ export class AssessmentPanel extends LitElement {
               | 'all'
               | 'decision-advice'
               | 'acceptance-evidence'
-              | 'failure-triage';
+              | 'failure-triage'
+              | 'static-review-checklist'
+              | 'copilot-context'
+              | 'review-routing';
             this.loadedPages = 1;
             this.cursor = undefined;
             this.records = this.injectedHistory
@@ -376,6 +387,9 @@ export class AssessmentPanel extends LitElement {
           <option value="decision-advice">Decision recommendations</option>
           <option value="failure-triage">Failure advice</option>
           <option value="acceptance-evidence">AC evidence</option>
+          <option value="static-review-checklist">Static-review checklist</option>
+          <option value="copilot-context">Co-Pilot context hints</option>
+          <option value="review-routing">Review-routing advice</option>
         </select>
       </label>
       <button data-action="refresh" @click=${() => this.load()} ?disabled=${this.busy}>
@@ -468,7 +482,11 @@ export class AssessmentPanel extends LitElement {
               ? 'No decision recommendations recorded.'
               : this.historyFilter === 'acceptance-evidence'
                 ? 'No AC evidence assessments recorded.'
-                : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
+                : ['static-review-checklist', 'copilot-context', 'review-routing'].includes(
+                      this.historyFilter,
+                    )
+                  ? 'No suggestions recorded for this workflow.'
+                  : 'No assessments recorded. Ordinary run monitoring does not invoke this feature.'}
           </p>`
         : nothing}
       ${repeat(
@@ -486,7 +504,8 @@ export class AssessmentPanel extends LitElement {
               · ${record.startedAt}
               ${(record.consumer === 'decision-advice' ||
                 record.consumer === 'failure-triage' ||
-                record.consumer === 'acceptance-evidence') &&
+                record.consumer === 'acceptance-evidence' ||
+                record.consumer === 'copilot-context') &&
               record.subject.run
                 ? html` ·
                     <a href=${`#runs?run=${encodeURIComponent(record.subject.run.id)}`}
@@ -498,30 +517,43 @@ export class AssessmentPanel extends LitElement {
             </p>
             <p>
               ${record.consumer === 'acceptance-evidence' ? 'Evidence verdict' : 'Recommendation'}:
-              ${record.consumer === 'failure-triage'
-                ? (failureTriageCause(record) ?? 'Unavailable')
-                : record.consumer === 'decision-advice'
-                  ? record.result?.status === 'completed' &&
-                    record.result.answers?.action?.type === 'choice'
-                    ? record.result.answers.action.choice
-                    : record.status === 'started'
-                      ? 'Pending'
-                      : 'Unavailable'
-                  : record.consumer === 'acceptance-evidence'
+              ${record.subject.suggestion
+                ? record.result?.status === 'completed'
+                  ? Object.entries(record.result.answers ?? {})
+                      .map(
+                        ([id, answer]) =>
+                          `${id}: ${answer.type === 'choice' ? answer.choice : 'Unavailable'}`,
+                      )
+                      .join(', ')
+                  : record.status === 'started'
+                    ? 'Pending'
+                    : 'Unavailable'
+                : record.consumer === 'failure-triage'
+                  ? (failureTriageCause(record) ?? 'Unavailable')
+                  : record.consumer === 'decision-advice'
                     ? record.result?.status === 'completed' &&
-                      record.result.answers?.verdict?.type === 'choice'
-                      ? record.result.answers.verdict.choice
+                      record.result.answers?.action?.type === 'choice'
+                      ? record.result.answers.action.choice
                       : record.status === 'started'
                         ? 'Pending'
                         : 'Unavailable'
-                    : (record.recommendation?.route ?? 'Not assessed')}
-              ${record.consumer === 'decision-advice'
-                ? `· ${adviceRating(record)}`
-                : record.consumer === 'failure-triage'
-                  ? '· Advice only; an operator may associate a chosen action'
-                  : record.consumer === 'acceptance-evidence'
-                    ? '· Advisory only; AC ledger unchanged'
-                    : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
+                    : record.consumer === 'acceptance-evidence'
+                      ? record.result?.status === 'completed' &&
+                        record.result.answers?.verdict?.type === 'choice'
+                        ? record.result.answers.verdict.choice
+                        : record.status === 'started'
+                          ? 'Pending'
+                          : 'Unavailable'
+                      : (record.recommendation?.route ?? 'Not assessed')}
+              ${record.subject.suggestion
+                ? '· Advisory only; no workflow settings changed'
+                : record.consumer === 'decision-advice'
+                  ? `· ${adviceRating(record)}`
+                  : record.consumer === 'failure-triage'
+                    ? '· Advice only; an operator may associate a chosen action'
+                    : record.consumer === 'acceptance-evidence'
+                      ? '· Advisory only; AC ledger unchanged'
+                      : `· ${record.recommendation?.reasons.join(', ') ?? ''} · Action: none`}
             </p>
             <p>
               ${record.result?.provider ?? record.requestedIdentity?.provider ?? 'No provider'} /
@@ -575,6 +607,28 @@ export class AssessmentPanel extends LitElement {
                     <small
                       >Association records the operator's choice, not whether advice caused
                       it.</small
+                    >
+                  </section>`
+                : nothing}
+              ${record.subject.suggestion
+                ? html`<section>
+                    <h4>${record.subject.suggestion.kind} · operator-supplied context</h4>
+                    <p>
+                      Admitted as ${record.subject.suggestion.source.classification} ·
+                      ${record.subject.suggestion.source.ref}
+                    </p>
+                    <pre>${record.subject.suggestion.context}</pre>
+                    ${record.subject.suggestion.items?.map(
+                      (item) =>
+                        html`<p>${item.id}: ${item.text}</p>
+                          <pre>${item.evidence}</pre>`,
+                    )}
+                    ${record.subject.suggestion.candidates?.map(
+                      (item) => html`<p>${item.id}: ${item.description}</p>`,
+                    )}
+                    <small
+                      >Model suggestions require a human judgment; this input was supplied by the
+                      operator, not verified against the PR or run.</small
                     >
                   </section>`
                 : nothing}

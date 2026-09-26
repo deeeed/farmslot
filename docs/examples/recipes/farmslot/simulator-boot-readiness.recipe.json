@@ -1,0 +1,79 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Simulator boot readiness through Gateway",
+  "description": "Lease a free iOS simulator through the Gateway, verify resource.health observes it running, then release the lease and verify it stopped.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["slot_id", "gateway_port"],
+    "properties": {
+      "slot_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])" },
+      "gateway_port": { "type": "integer" }
+    }
+  },
+  "workflow": {
+    "entry": "check-slot",
+    "nodes": {
+      "check-slot": {
+        "action": "command",
+        "intent": "Require a free slot before taking control of its simulator.",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=120000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{\"forceRefresh\":true}' | jq -ec 'select(.fleet.stale != true) | .fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .lifecycle == \"ready\" and .currentRunId == null and .agent == \"idle\") | {slot,lifecycle,currentRunId,agent}'",
+        "timeout_ms": 135000,
+        "next": "check-stopped"
+      },
+      "check-stopped": {
+        "action": "command",
+        "intent": "Require the simulator to be stopped before this recipe takes ownership of its boot.",
+        "cmd": "for attempt in 1 2; do FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway resource.health '{\"slotId\":\"{{params.slot_id}}\",\"resourceId\":\"ios-sim\"}' | jq -ec '.resources[] | select(.id == \"ios-sim\" and .status == \"stopped\")' || exit 1; sleep 2; done",
+        "timeout_ms": 45000,
+        "next": "boot"
+      },
+      "boot": {
+        "action": "command",
+        "intent": "Acquire an exclusive Gateway simulator lease, verify health, and release the lease even when verification fails.",
+        "cmd": "sh projects/farmslot-farm/setup/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
+        "timeout_ms": 1200000,
+        "next": "boot-succeeded"
+      },
+      "boot-succeeded": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "boot:ok:",
+        "intent": "Require the Gateway simulator lease to report success.",
+        "next": "health"
+      },
+      "health": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "running:{\"id\":\"ios-sim\",\"status\":\"running\"}",
+        "intent": "Require an observed running simulator, not only a successful boot RPC.",
+        "next": "shutdown"
+      },
+      "shutdown": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "shutdown:ok:",
+        "intent": "Require the Gateway simulator lease release to report success.",
+        "next": "stopped"
+      },
+      "stopped": {
+        "action": "assert_output",
+        "source": "boot",
+        "stream": "stdout",
+        "contains": "stopped:{\"id\":\"ios-sim\",\"status\":\"stopped\"}",
+        "intent": "Require the simulator to be stopped before releasing the slot.",
+        "next": "verify-inventory"
+      },
+      "verify-inventory": {
+        "action": "command",
+        "intent": "Confirm the simulator has settled in Shutdown, not a transient booting state.",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway resource.device.inventory '{\"slotId\":\"{{params.slot_id}}\",\"refresh\":true}' | jq -ec --arg slot '{{params.slot_id}}' '.devices[] | select(.platform == \"ios\" and (.configuredForSlots | index($slot)) and .state == \"Shutdown\")'",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

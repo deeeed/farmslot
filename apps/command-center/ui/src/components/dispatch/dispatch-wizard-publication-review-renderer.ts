@@ -1,12 +1,11 @@
 import { html, nothing } from 'lit';
 
-import type { FlowType, ReviewRunnerId, ReviewValidationDepth } from '@farmslot/protocol';
+import type { FlowType, ReviewRunnerId } from '@farmslot/protocol';
 
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 
 export interface PublicationReviewPlanItem {
   runner: ReviewRunnerId | 'same';
-  validationDepth?: ReviewValidationDepth;
 }
 
 export interface PublicationReviewConfigRenderContext {
@@ -17,8 +16,9 @@ export interface PublicationReviewConfigRenderContext {
   loops: readonly PublicationReviewLoopDraft[];
   plan: readonly PublicationReviewPlanItem[];
   runnerOptions: readonly string[];
+  /** Effective farm QA preset title; null when the project has none, undefined until its config loads. */
+  qaPreset: string | null | undefined;
   setRunner: (id: number, runner: ReviewRunnerId) => void;
-  setDepth: (id: number, validationDepth: ReviewValidationDepth) => void;
   removeLoop: (id: number) => void;
   addWorkerReviewLoop: () => void;
   addExternalReviewLoop: () => void;
@@ -50,6 +50,7 @@ export function renderPublicationReviewConfig(ctx: PublicationReviewConfigRender
         </div>
         ${ctx.loops.map((loop, index) => renderReviewLoopRow(ctx, loop, index))}
       </div>
+      ${renderRuntimeValidationNote(ctx.qaPreset)}
       <div class="publication-review-actions">
         <button
           class="pill"
@@ -75,18 +76,18 @@ function renderReviewLoopRow(
   loop: PublicationReviewLoopDraft,
   index: number,
 ) {
-  const depth = ctx.plan[index]?.validationDepth ?? loop.validationDepth ?? 'static-code';
   return html`
     <div class="publication-review-row">
       <span class="publication-review-index">${index + 1}</span>
       <div class="publication-review-runners">
         ${ctx.runnerOptions.map((runner) => renderRunnerChoice(ctx, loop, runner))}
       </div>
-      <div class="publication-review-depth" aria-label="Validation depth">
-        ${(['static-code', 'full-live'] as ReviewValidationDepth[]).map((candidate) =>
-          renderDepthChoice(ctx, loop, depth, candidate),
-        )}
-      </div>
+      <span
+        class="publication-review-kind"
+        data-testid="publication-review-static"
+        title="Static source inspection: no build, no tests, no app runtime."
+        >Static</span
+      >
       <span class="publication-review-kind"
         >${loop.runner === ctx.runner ? 'worker runner' : 'runner diversity'}</span
       >
@@ -111,24 +112,17 @@ function renderRunnerChoice(
   `;
 }
 
-function renderDepthChoice(
-  ctx: PublicationReviewConfigRenderContext,
-  loop: PublicationReviewLoopDraft,
-  depth: ReviewValidationDepth,
-  candidate: ReviewValidationDepth,
-) {
-  return html`
-    <button
-      class="review-runner-chip ${depth === candidate ? 'selected' : ''}"
-      aria-pressed=${depth === candidate ? 'true' : 'false'}
-      title=${candidate === 'static-code'
-        ? 'Static analysis only: no build, no tests, no recipe.'
-        : 'Final live validation: recipe/evidence checks may run.'}
-      @click=${() => ctx.setDepth(loop.id, candidate)}
-    >
-      ${candidate === 'static-code' ? 'Static' : 'Full live'}
-    </button>
-  `;
+function renderRuntimeValidationNote(qaPreset: string | null | undefined) {
+  const preset =
+    qaPreset === undefined
+      ? 'Select a project to see its QA preset.'
+      : qaPreset === null
+        ? 'This project has no QA preset configured.'
+        : html`Farm QA preset: <strong>${qaPreset}</strong>.`;
+  return html`<p class="section-help" data-testid="publication-review-qa-note">
+    Independent reviews inspect source only. Runtime validation runs separately with the QA flow.
+    ${preset}
+  </p>`;
 }
 
 function runnerLabel(runner: string): string {

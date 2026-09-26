@@ -47,7 +47,6 @@ export interface ReviewGateCountSummary {
   fixLoopCertified: boolean;
   unresolvedFindings: number;
   externalFreshPassingReviews: number;
-  fullLiveFreshPassingReviews: number;
   freshness: ReviewFreshnessDisplay[];
 }
 
@@ -223,7 +222,6 @@ function reviewCertifiesApprovedHeadAfterFix(
 ): boolean {
   if (!reviewIsPassing(review)) return false;
   if (requireCrossRunner && !review.crossRunner) return false;
-  if ((review.validationDepth ?? 'full-live') !== 'full-live') return false;
   const packageHead = payload.prPackage?.headSha ?? payload.headSha;
   const packageSubject = payload.prPackage?.reviewSubjectHash?.trim();
   const snapshot = review.reviewSnapshot;
@@ -378,9 +376,6 @@ export function summarizeReviewCounts(payload: ReadyGatePayload): ReviewGateCoun
     externalFreshPassingReviews: (fixLoopCertified ? passingReviews : freshPassing).filter(
       (review) => review.crossRunner,
     ).length,
-    fullLiveFreshPassingReviews: (fixLoopCertified ? passingReviews : freshPassing).filter(
-      (review) => (review.validationDepth ?? 'full-live') === 'full-live',
-    ).length,
     freshness,
   };
 }
@@ -415,9 +410,6 @@ export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): str
   }
   if (counts.externalRequired && counts.externalFreshPassingReviews === 0) {
     return 'Fresh passing runner-diversity review required';
-  }
-  if (counts.fullLiveFreshPassingReviews === 0 && counts.requiredReviews > 0) {
-    return 'Full live fresh review required';
   }
   if (firstStale) return `Review gate blocked; stale review ignored: ${firstStale.detail}`;
   return 'Review gate blocked; check package, evidence, and review status';

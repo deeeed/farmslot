@@ -94,8 +94,8 @@ export function requestedReviewLoopCount(
 /**
  * Materialize the configured publication-review minimum into executable work.
  * A pipeline self-review is useful worker feedback, but it is not independent
- * and therefore never consumes this budget. The default publication review is
- * static; operators and explicit dispatch plans can still request full-live.
+ * and therefore never consumes this budget. New publication reviews are static
+ * (ADR-058); started and completed reviews keep their recorded depth.
  */
 export function automaticPublicationReviewPlan(
   policy: ReviewDepthPolicy,

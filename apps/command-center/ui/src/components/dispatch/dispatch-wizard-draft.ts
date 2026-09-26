@@ -4,24 +4,22 @@ import type {
   ReviewDepthPolicy,
   ReviewLoopRequest,
   ReviewRunnerId,
-  ReviewValidationDepth,
   TaskTemplateSelection,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import {
   interactiveWorkerTemplateOption,
   modeForFlow as sharedModeForFlow,
-  reviewValidationDepthForLoop,
   selectedTemplateMode as sharedSelectedTemplateMode,
   selectQaProfile,
 } from '@farmslot/protocol';
 
 import type { EffortLevel } from '../../utils/runner-options.js';
 
+/** Independent review rounds are static; runtime validation is a separate QA run (ADR-058). */
 export interface PublicationReviewLoopDraft {
   id: number;
   runner: ReviewRunnerId;
-  validationDepth?: ReviewValidationDepth;
 }
 
 export interface DispatchDraftState {
@@ -154,7 +152,7 @@ export function buildPublicationReviewPlan(
   return loops.slice(0, 5).map((loop, index) => ({
     order: index + 1,
     runner: loop.runner || current,
-    validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, loops.length),
+    validationDepth: 'static-code',
   }));
 }
 

@@ -79,6 +79,15 @@ describe('tmuxSendTextCommand', () => {
     assert.doesNotMatch(command, /sleep/);
   });
 
+  it('distinguishes a failed literal send from a failed submit when requested', () => {
+    const command = tmuxSendTextCommand('mm-1:bugfix', 'echo ok', {
+      enter: true,
+      typeFailureExitCode: 85,
+    });
+    assert.match(command, /send-keys -t 'mm-1:bugfix' -l 'echo ok' \|\| exit 85/);
+    assert.match(command, /send-keys -t 'mm-1:bugfix' Enter/);
+  });
+
   it('inserts only the requested bounded delay between literal text and submit', () => {
     const literal = tmuxShellSnippet(`send-keys -t 'ff-1:dev' -l '/exit'`);
     const submit = tmuxShellSnippet(`send-keys -t 'ff-1:dev' Enter`);

@@ -3,6 +3,9 @@ import { StyleSheet } from 'react-native';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
 export const connectionStyles = StyleSheet.create({
+  page: {
+    flex: 1,
+  },
   lead: {
     color: colors.textSecondary,
     fontSize: fonts.sizeSm,

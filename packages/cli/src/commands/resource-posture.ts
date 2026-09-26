@@ -53,6 +53,8 @@ import { createEmitter, type EnvelopeEmitter } from '../envelope.js';
 import type { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
 
+import { RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS } from './rpc.js';
+
 interface PostureTargetOptions {
   posture?: ResourcePosture;
   choice?: ResourcePostureGateChoice;
@@ -716,7 +718,12 @@ export function registerResourcePostureCommands(resource: Command): void {
         options: CapabilityAcquireOptions,
         command: Command,
       ) => {
-        const { client, output } = resolveContext(command);
+        const { client, output } = resolveContext(command, {
+          timeout: Math.max(
+            Number(command.optsWithGlobals().timeout) || 0,
+            RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS,
+          ),
+        });
         const emitter = createEmitter(output, command);
         const params: RuntimeCapabilityAcquireParams = {
           slotId,

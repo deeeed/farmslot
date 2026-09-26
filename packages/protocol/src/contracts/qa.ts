@@ -155,6 +155,24 @@ export function resolveReviewQaDispatch(
   return { flowType: 'review-pr', contract };
 }
 
+/**
+ * New independent review rounds are static. A `full-live` loop cannot be downgraded to a static
+ * verdict or mapped to a publication QA gate, so new requests must choose the separate QA flow.
+ * Stored plans on started runs keep their original depth and never pass through this check.
+ */
+export function assertStaticReviewLoopRequests(
+  loops: readonly unknown[] | null | undefined,
+  field = 'pendingReviewPlan',
+): void {
+  const index = (loops ?? []).findIndex(
+    (loop) => isRecord(loop) && loop.validationDepth === 'full-live',
+  );
+  if (index >= 0)
+    throw new ReviewQaConfigurationError(
+      `${field}[${index}] requests full-live validation; independent reviews are static. Run runtime validation with the QA flow and a farm QA preset.`,
+    );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

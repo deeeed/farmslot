@@ -8,17 +8,23 @@ export function PlanningSection({
   title,
   summary,
   initiallyOpen = false,
+  testID,
   children,
 }: {
   title: string;
   summary?: string;
   initiallyOpen?: boolean;
+  testID?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
   return (
     <View style={styles.section}>
-      <Pressable style={styles.sectionHeader} onPress={() => setOpen((current) => !current)}>
+      <Pressable
+        testID={testID}
+        style={styles.sectionHeader}
+        onPress={() => setOpen((current) => !current)}
+      >
         <View style={styles.sectionCopy}>
           <Text style={styles.sectionTitle}>{title}</Text>
           {summary ? <Text style={styles.sectionSummary}>{summary}</Text> : null}
@@ -38,6 +44,7 @@ export function PlanningField({
   multiline = false,
   keyboardType,
   editable = true,
+  testID,
 }: {
   label: string;
   value: string;
@@ -46,11 +53,13 @@ export function PlanningField({
   multiline?: boolean;
   keyboardType?: 'default' | 'numeric' | 'url';
   editable?: boolean;
+  testID?: string;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
+        testID={testID}
         style={[styles.input, multiline && styles.multiline]}
         value={value}
         onChangeText={onChangeText}

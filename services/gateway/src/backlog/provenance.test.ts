@@ -163,7 +163,7 @@ test('legacy migration is per-store, observable, one-time, and public projection
     });
     assert.equal(JSON.stringify(queue.listItems()).includes('principalId'), false);
     assert.equal(JSON.stringify(events).includes('principalId'), false);
-    const reauthored = runWithSessionOriginator(
+    const reauthored = await runWithSessionOriginator(
       {
         id: 'editor',
         subject: { type: 'person', displayName: 'editor' },

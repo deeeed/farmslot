@@ -5,6 +5,7 @@ import type { SlotVars } from '../core/config.js';
 
 const vars = { slotId: 'macwork-mm-2', remoteRepo: '/tmp/repo' } as SlotVars;
 const issuedCommands: string[] = [];
+let descendantProbeStatus: 'present' | 'absent' | 'unknown' = 'present';
 
 function cmdIncludes(cmd: string, fragment: string): boolean {
   return cmd.includes(fragment);
@@ -118,6 +119,12 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: '4242', stderr: '' };
       }
       if (cmdIncludes(cmd, "root='4242'")) {
+        if (descendantProbeStatus === 'unknown') {
+          return { exitCode: 124, stdout: '', stderr: '' };
+        }
+        if (descendantProbeStatus === 'absent') {
+          return { exitCode: 1, stdout: '', stderr: '' };
+        }
         return { exitCode: 0, stdout: '4343\n', stderr: '' };
       }
       if (cmdIncludes(cmd, 'capture-pane') && cmdIncludes(cmd, "'coredev-5:fix.0'")) {
@@ -128,8 +135,26 @@ mock.module('../core/exec.js', {
   },
 });
 
-const { ensureTmuxTargetReadyForRelaunch, rediscoverAcceptingWorkerPane } =
+const { ensureTmuxTargetReadyForRelaunch, paneHostsRunnerProcess, rediscoverAcceptingWorkerPane } =
   await import('./worker-lifecycle.js');
+
+test('runner exit requires an observed absent process, not a timed-out probe', async (t) => {
+  t.after(() => {
+    descendantProbeStatus = 'present';
+  });
+  descendantProbeStatus = 'unknown';
+  await assert.rejects(
+    paneHostsRunnerProcess(vars, 'coredev-5:fix.0', 'claude', '4242', true),
+    /Cannot confirm runner exit/,
+  );
+  descendantProbeStatus = 'absent';
+  assert.equal(
+    await paneHostsRunnerProcess(vars, 'coredev-5:fix.0', 'claude', '4242', true),
+    false,
+  );
+  descendantProbeStatus = 'present';
+  assert.equal(await paneHostsRunnerProcess(vars, 'coredev-5:fix.0', 'claude', '4242', true), true);
+});
 
 test('ensureTmuxTargetReadyForRelaunch recreates role window when numeric index drifted', async () => {
   const target = await ensureTmuxTargetReadyForRelaunch(vars, 'mm-2', 'mm-2:1.1', 'dev');

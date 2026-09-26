@@ -1,4 +1,5 @@
 import {
+  assertStaticReviewLoopRequests,
   type DispatchQueueAddParams,
   type DispatchQueueAddResult,
   type DispatchQueueListResult,
@@ -16,6 +17,7 @@ import {
   addItem,
   listItems,
   queueRecordOriginator,
+  recheckRepairedReviewPlan,
   removeItem,
   reorderItems,
   updateItem,
@@ -75,6 +77,7 @@ export async function dispatchQueueAdd(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );
   }
+  assertStaticReviewLoopRequests(params.pendingReviewPlan);
   const projectVars = await loadProjectVars(params.project);
   if (params.flowType === 'review-pr') {
     const repo = projectVars.projectJson.ci?.repo;
@@ -194,10 +197,13 @@ export async function dispatchQueueRemoveOrphan(
   return removeOrphanBacklogQueueItem(params);
 }
 
-export function dispatchQueueUpdate(params: DispatchQueueUpdateParams): DispatchQueueUpdateResult {
+export async function dispatchQueueUpdate(
+  params: DispatchQueueUpdateParams,
+): Promise<DispatchQueueUpdateResult> {
   const previous = queueRecordOriginator(params.itemId);
   const originator = currentSessionOriginator();
   const item = updateItem(params, originator);
+  if (params.pendingReviewPlan !== undefined) await recheckRepairedReviewPlan();
   const authorshipNotice = workAuthorshipNotice(previous, originator);
   return { item, ...(authorshipNotice ? { authorshipNotice } : {}) };
 }

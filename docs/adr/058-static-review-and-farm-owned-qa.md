@@ -11,6 +11,8 @@
 
 The first PR delivers slot-free static review. Existing slot-based `review-pr` requests with `full-live` depth retain their current execution path. QA workflow/profile migration, shared task-template changes and QA controls ship in the follow-up PR. The QA mappings below describe that second stage; they are not enabled by the static-review PR.
 
+Client and intake cutover (2026-09-23): new independent review rounds (dispatch plans, backlog plans, ready-gate requests) are static. Intake refuses a new `full-live` loop with `REVIEW_QA_NEEDS_CONFIGURATION`; a queued legacy loop waits for operator repair, and started or completed reviews keep their recorded depth. Review continuation no longer offers a live escalation. Runtime validation runs as QA with a farm preset.
+
 Review publication and feedback-loop work remain explicit follow-ups in the aggregate plan. The first static capability retains local results.
 
 ## Context

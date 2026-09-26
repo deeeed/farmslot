@@ -4,10 +4,17 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const VERDICTS = new Set(['supported', 'contradicted', 'insufficient']);
+const V3_QUESTION_SCHEMA_HASH = '37c010cfcc3bb378e16d48f32f6588bedbed5f3137252920b445443490e5eb63';
 const EXCLUDED_MODES = new Set(['visual', 'mixed']);
 const FROZEN_HASHES = {
-  cases: '2d922bb707564cda110b69db37752b84216e99f73e120518542a7a661b4e7d18',
-  labels: 'f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9',
+  2: {
+    cases: '2d922bb707564cda110b69db37752b84216e99f73e120518542a7a661b4e7d18',
+    labels: 'f32c5d367ed71ceae38b8aec883f6cb94780206fe8021d38916c6b133d6223c9',
+  },
+  3: {
+    cases: 'ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4',
+    labels: '31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1',
+  },
 };
 
 function fail(message) {
@@ -108,6 +115,14 @@ function normalizeRecord(record, path) {
     id: record.id,
     runId,
     criterion,
+    snapshotHash: record.subject.run.snapshotHash,
+    sourceRef: admission.sourceRef,
+    inputDigest: record.requestedIdentity?.inputDigest,
+    provider: record.requestedIdentity?.provider,
+    model: record.requestedIdentity?.model,
+    questionSchemaHash: record.requestedIdentity?.questionSchemaHash,
+    policyVersion: record.policyVersion,
+    sources: record.subject.run.sources,
     attempted: used,
     tokens,
     cost,
@@ -141,6 +156,13 @@ function totals(rows, fields) {
 export function evaluate(study, frozenCases, labels) {
   if (!study || typeof study !== 'object' || Array.isArray(study)) fail('study must be an object');
   if (study.version !== 1) fail('study.version must be 1');
+  const corpusVersion = study.corpusVersion === undefined ? 2 : study.corpusVersion;
+  if (
+    ![2, 3].includes(corpusVersion) ||
+    frozenCases.version !== corpusVersion ||
+    labels.version !== corpusVersion
+  )
+    fail('study.corpusVersion must match a supported frozen corpus');
   if (!Array.isArray(study.cases) || !Array.isArray(study.assessmentRecords))
     fail('study.cases and study.assessmentRecords are required arrays');
   const caseById = new Map(frozenCases.cases.map((entry) => [entry.id, entry]));
@@ -151,6 +173,23 @@ export function evaluate(study, frozenCases, labels) {
   const records = study.assessmentRecords.map((record, index) =>
     normalizeRecord(record, `assessmentRecords[${index}]`),
   );
+  if (corpusVersion === 3) {
+    if (
+      records.some(
+        (record) =>
+          record.policyVersion !== 'acceptance-evidence-v1' ||
+          !record.provider ||
+          !record.model ||
+          record.questionSchemaHash !== V3_QUESTION_SCHEMA_HASH,
+      ) ||
+      new Set(
+        records.map((record) =>
+          JSON.stringify([record.provider, record.model, record.questionSchemaHash]),
+        ),
+      ).size !== 1
+    )
+      fail('v3 assessment records must share provider, model, question schema and policy');
+  }
   const recordById = new Map();
   for (const record of records) {
     if (recordById.has(record.id)) fail(`duplicate assessment record ${record.id}`);
@@ -187,6 +226,33 @@ export function evaluate(study, frozenCases, labels) {
       fail(`${entry.caseId} record run does not match assistedRunId`);
     if (linked.some((record) => !matchesFrozenCriterion(record, frozen)))
       fail(`${entry.caseId} record criterion/evidence does not match frozen case`);
+    if (
+      corpusVersion === 3 &&
+      linked.some((record) => {
+        const packet = {
+          version: 1,
+          criterion: { id: frozen.criterionId, text: frozen.criterion },
+          evidence: frozen.evidence.map(({ id, text }) => ({ id, text })),
+        };
+        const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+        return (
+          record.snapshotHash !== hash({ runId: record.runId, packet }) ||
+          record.inputDigest !== hash(packet) ||
+          !Array.isArray(record.sources) ||
+          record.sources.length !== frozen.evidence.length ||
+          record.sources.some((source, index) => {
+            const evidence = frozen.evidence[index];
+            return (
+              source?.id !== evidence.id ||
+              source?.sourceId !== evidence.id ||
+              source?.digest !== hash(evidence.text)
+            );
+          }) ||
+          record.sourceRef !== `synthetic:acceptance-evidence-v3/${entry.caseId}`
+        );
+      })
+    )
+      fail(`${entry.caseId} record snapshot, input or admission does not match the gateway packet`);
     const previousCase = caseForRun.get(entry.assistedRunId);
     if (previousCase && previousCase !== entry.caseId)
       fail(`assisted run ${entry.assistedRunId} is associated with multiple frozen cases`);
@@ -340,8 +406,7 @@ export function evaluate(study, frozenCases, labels) {
         ? ['no efficiency claim: equal-correct totals did not improve on every measure']
         : []),
     ],
-    scope:
-      'offline frozen-v2 synthetic study; input assertions are not a demonstrated real-world gain',
+    scope: `offline frozen-v${corpusVersion} synthetic study; input assertions are not a demonstrated real-world gain`,
     exclusions: {
       visualMixedCases: frozenCases.cases.filter((entry) => EXCLUDED_MODES.has(entry.proofMode))
         .length,
@@ -374,16 +439,18 @@ async function main() {
   if (!studyPath || process.argv.length !== 3)
     fail('Usage: node scripts/acceptance-evidence/evaluate.mjs <study.json>');
   const here = new URL('.', import.meta.url);
-  const [study, caseText, labelText] = await Promise.all([
-    readFile(studyPath, 'utf8').then(JSON.parse),
-    readFile(new URL('./cases.v2.json', here), 'utf8'),
-    readFile(new URL('./labels.v2.json', here), 'utf8'),
+  const study = JSON.parse(await readFile(studyPath, 'utf8'));
+  const version = study?.corpusVersion === undefined ? 2 : study.corpusVersion;
+  if (![2, 3].includes(version)) fail('unsupported frozen corpus version');
+  const [caseText, labelText] = await Promise.all([
+    readFile(new URL(`./cases.v${version}.json`, here), 'utf8'),
+    readFile(new URL(`./labels.v${version}.json`, here), 'utf8'),
   ]);
   if (
-    createHash('sha256').update(caseText).digest('hex') !== FROZEN_HASHES.cases ||
-    createHash('sha256').update(labelText).digest('hex') !== FROZEN_HASHES.labels
+    createHash('sha256').update(caseText).digest('hex') !== FROZEN_HASHES[version].cases ||
+    createHash('sha256').update(labelText).digest('hex') !== FROZEN_HASHES[version].labels
   )
-    fail('frozen v2 cases or labels hash does not match README');
+    fail(`frozen v${version} cases or labels hash does not match README`);
   console.log(
     JSON.stringify(evaluate(study, JSON.parse(caseText), JSON.parse(labelText)), null, 2),
   );

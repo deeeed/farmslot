@@ -31,7 +31,7 @@ test('comparison links round-trip the baseline transport and an explicit termina
   );
 });
 
-test('parseDispatchWizardHash reads dispatch URL prefill and publication reviews', () => {
+test('parseDispatchWizardHash reads publication review runners and keeps legacy live links static', () => {
   const result = parseDispatchWizardHash(
     '#dispatch?flow=fix-bug&ticket=PROJ-1&project=mobile&slot=runner-a-mobile-1&publicationReviews=codex:static-code,claude:full-live',
     runners,
@@ -41,8 +41,8 @@ test('parseDispatchWizardHash reads dispatch URL prefill and publication reviews
   assert.equal(result?.project, 'mobile');
   assert.equal(result?.slot, 'runner-a-mobile-1');
   assert.deepEqual(result?.publicationReviewLoops, [
-    { id: 1, runner: 'codex', validationDepth: 'static-code' },
-    { id: 2, runner: 'claude', validationDepth: 'full-live' },
+    { id: 1, runner: 'codex' },
+    { id: 2, runner: 'claude' },
   ]);
 });
 
@@ -52,9 +52,7 @@ test('parseDispatchWizardHash ignores invalid flow and unsupported review runner
     runners,
   );
   assert.equal(result?.flowType, undefined);
-  assert.deepEqual(result?.publicationReviewLoops, [
-    { id: 1, runner: 'codex', validationDepth: 'static-code' },
-  ]);
+  assert.deepEqual(result?.publicationReviewLoops, [{ id: 1, runner: 'codex' }]);
 });
 
 test('parseDispatchWizardHash returns sanitized hash when legacy startRef prefill appears', () => {
@@ -88,9 +86,9 @@ test('parseDispatchWizardHash reads comparison intent without baseline prefill',
 
 test('syncPublicationReviewsHash preserves unrelated query params', () => {
   const next = syncPublicationReviewsHash('#dispatch?flow=fix-bug&ticket=PROJ-1', [
-    { id: 7, runner: 'codex', validationDepth: 'static-code' },
+    { id: 7, runner: 'codex' },
   ]);
-  assert.equal(next, '#dispatch?flow=fix-bug&ticket=PROJ-1&publicationReviews=codex%3Astatic-code');
+  assert.equal(next, '#dispatch?flow=fix-bug&ticket=PROJ-1&publicationReviews=codex');
   assert.equal(
     syncPublicationReviewsHash('#dispatch?flow=fix-bug&publicationReviews=codex', []),
     '#dispatch?flow=fix-bug',

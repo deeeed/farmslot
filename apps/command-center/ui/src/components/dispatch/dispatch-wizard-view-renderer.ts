@@ -10,7 +10,6 @@ import type {
   ProfileFitSuggestion,
   QueueItem,
   ReviewRunnerId,
-  ReviewValidationDepth,
   Run,
   SlotStatus,
   WorkerTemplateOption,
@@ -95,6 +94,7 @@ interface DispatchWizardViewContext {
   publicationReviewsEnabled: boolean;
   publicationReviewLoops: readonly PublicationReviewLoopDraft[];
   publicationReviewPlan: readonly PublicationReviewPlanItem[];
+  publicationReviewQaPreset: string | null | undefined;
   runnerOptions: readonly string[];
   loadingCandidates: boolean;
   candidates: readonly DispatchCandidatesResult['candidates'][number][];
@@ -135,7 +135,6 @@ interface DispatchWizardViewContext {
   exitComparisonMode: () => void;
   setVariantInput: (value: string) => void;
   setPublicationReviewRunner: (id: number, runner: ReviewRunnerId) => void;
-  setPublicationReviewDepth: (id: number, validationDepth: ReviewValidationDepth) => void;
   removePublicationReviewLoop: (id: number) => void;
   addWorkerReviewLoop: () => void;
   addExternalReviewLoop: () => void;
@@ -270,8 +269,8 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
               loops: ctx.publicationReviewLoops,
               plan: ctx.publicationReviewPlan,
               runnerOptions: ctx.runnerOptions,
+              qaPreset: ctx.publicationReviewQaPreset,
               setRunner: ctx.setPublicationReviewRunner,
-              setDepth: ctx.setPublicationReviewDepth,
               removeLoop: ctx.removePublicationReviewLoop,
               addWorkerReviewLoop: ctx.addWorkerReviewLoop,
               addExternalReviewLoop: ctx.addExternalReviewLoop,

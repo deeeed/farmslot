@@ -4,6 +4,9 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Backlog review rounds are static; runtime validation runs separately with QA.
+- Keep the manual gateway form reachable above the iOS keyboard on the connection screen.
+- Install the iOS dev client on a simulator with a simulator build and `simctl install`, so a booted simulator listed by `devicectl` no longer takes the code-signed device path. Like `expo run:ios`, the simulator path generates the native project when it is missing and starts Metro (the managed session) when none is answering; it also boots the device if needed and rejects extra Expo arguments.
 - Show assessed and proven acceptance criteria separately, matching Command Center.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

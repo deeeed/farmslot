@@ -1,0 +1,89 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Opt-in assessment suggestions gateway preview",
+  "description": "Preview three bounded suggestion packets through an authenticated gateway without making a model call. Requires one existing accessible run for Co-Pilot. Set FARMSLOT_GATEWAY to the target URL before running.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "workflow": {
+    "entry": "preview-review-routing",
+    "nodes": {
+      "preview-review-routing": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway assessment.suggestion.preview '{\"kind\":\"review-routing\",\"source\":{\"classification\":\"synthetic\",\"ref\":\"synthetic:assessment-suggestions\"},\"pr\":{\"host\":\"github.com\",\"repo\":\"example/app\",\"number\":42,\"headSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"context\":\"Synthetic change to navigation routing.\"}'",
+        "next": "assert-review-routing-packet",
+        "intent": "Preview the review-routing packet through the real gateway without calling a model."
+      },
+      "assert-review-routing-packet": {
+        "action": "assert_output",
+        "source": "preview-review-routing",
+        "stream": "stdout",
+        "contains": "\"kind\": \"review-routing\"",
+        "next": "preview-static-review-checklist",
+        "intent": "Require the gateway to return the bounded review-routing packet."
+      },
+      "preview-static-review-checklist": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway assessment.suggestion.preview '{\"kind\":\"static-review-checklist\",\"source\":{\"classification\":\"synthetic\",\"ref\":\"synthetic:assessment-suggestions\"},\"pr\":{\"host\":\"github.com\",\"repo\":\"example/app\",\"number\":42,\"headSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"context\":\"Synthetic change to navigation routing.\",\"items\":[{\"id\":\"navigation\",\"text\":\"Navigation reaches the intended route\",\"evidence\":\"src/nav.ts:12 redirects to /account\"}]}'",
+        "next": "assert-static-review-checklist-packet",
+        "intent": "Preview the static-review-checklist packet through the real gateway without calling a model."
+      },
+      "assert-static-review-checklist-packet": {
+        "action": "assert_output",
+        "source": "preview-static-review-checklist",
+        "stream": "stdout",
+        "contains": "\"kind\": \"static-review-checklist\"",
+        "next": "preview-copilot-context",
+        "intent": "Require the gateway to return the bounded static-review-checklist packet."
+      },
+      "preview-copilot-context": {
+        "action": "command",
+        "cmd": "node -e 'const {execFileSync}=require(\"node:child_process\");const cli=\"apps/command-center/scripts/cdp.mjs\";const call=(method,params)=>JSON.parse(execFileSync(process.execPath,[cli,\"gateway\",method,JSON.stringify(params)],{encoding:\"utf8\"}));const id=call(\"run.list\",{limit:1}).runs?.[0]?.id;if(!id)throw Error(\"An accessible run is required\");const input={kind:\"copilot-context\",source:{classification:\"synthetic\",ref:\"synthetic:assessment-suggestions\"},runId:id,context:\"Read current run status before investigating an error.\",candidates:[{id:\"status\",description:\"Read run status\"},{id:\"logs\",description:\"Read bounded run logs\"}]};console.log(JSON.stringify(call(\"assessment.suggestion.preview\",input),null,2))'",
+        "next": "assert-copilot-context-packet",
+        "intent": "Preview the copilot-context packet through the real gateway without calling a model."
+      },
+      "assert-copilot-context-packet": {
+        "action": "assert_output",
+        "source": "preview-copilot-context",
+        "stream": "stdout",
+        "contains": "\"kind\": \"copilot-context\"",
+        "next": "reject-stale-analysis",
+        "intent": "Require the gateway to return the bounded copilot-context packet."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "reject-stale-analysis": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway assessment.suggestion.analyze '{\"input\":{\"kind\":\"review-routing\",\"source\":{\"classification\":\"synthetic\",\"ref\":\"synthetic:assessment-suggestions\"},\"pr\":{\"host\":\"github.com\",\"repo\":\"example/app\",\"number\":42,\"headSha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"context\":\"Synthetic change to navigation routing.\"},\"expectedPacketHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"confirmed\":true}'",
+        "next": "assert-stale-no-call",
+        "intent": "Send a confirmed but stale packet hash; the gateway must refuse it before reserving or calling a provider."
+      },
+      "assert-stale-no-call": {
+        "action": "assert_output",
+        "source": "reject-stale-analysis",
+        "stream": "stdout",
+        "contains": "\"reason\": \"stale\"",
+        "next": "read-suggestion-history",
+        "intent": "The live gateway rejects a stale packet without a model call."
+      },
+      "read-suggestion-history": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs gateway assessment.list '{\"limit\":100,\"consumer\":\"review-routing\"}' | node -e 'const s=require(\"fs\").readFileSync(0,\"utf8\");const r=JSON.parse(s).records;if(!Array.isArray(r)||r.some(x=>x.subject?.suggestion?.source?.ref===\"synthetic:assessment-suggestions\"))process.exit(1);console.log(\"NO_ASSESSMENT_RECORDED\")'",
+        "next": "assert-no-reservation",
+        "intent": "Read owner-scoped gateway history and reject any record for this unique stale synthetic case."
+      },
+      "assert-no-reservation": {
+        "action": "assert_output",
+        "source": "read-suggestion-history",
+        "stream": "stdout",
+        "contains": "NO_ASSESSMENT_RECORDED",
+        "next": "done",
+        "intent": "Prove stale analysis left no paid or pending assessment record."
+      }
+    }
+  }
+}

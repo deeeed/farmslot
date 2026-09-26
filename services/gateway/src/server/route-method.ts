@@ -11,6 +11,8 @@ import {
   type AssessmentHistoryParams,
   type AssessmentRecordParams,
   type AssessmentReportParams,
+  type AssessmentSuggestionAnalyzeParams,
+  type AssessmentSuggestionInput,
   type AssessmentTestParams,
   type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
@@ -266,6 +268,10 @@ import {
   assessmentSummary,
   assessmentTest,
 } from '../methods/assessment.js';
+import {
+  assessmentSuggestionAnalyze,
+  assessmentSuggestionPreview,
+} from '../methods/assessment-suggestion.js';
 import {
   backlogArchive,
   backlogAutoDispatchTick,
@@ -1491,6 +1497,10 @@ async function routeAuthorizedMethod(
       return assessmentStatus();
     case Methods.ASSESSMENT_TEST:
       return assessmentTest(p as AssessmentTestParams);
+    case Methods.ASSESSMENT_SUGGESTION_PREVIEW:
+      return assessmentSuggestionPreview(p as AssessmentSuggestionInput);
+    case Methods.ASSESSMENT_SUGGESTION_ANALYZE:
+      return assessmentSuggestionAnalyze(p as AssessmentSuggestionAnalyzeParams);
 
     // Node Health
     case Methods.NODE_HEALTH: {

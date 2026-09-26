@@ -253,6 +253,11 @@ test('summarizeReviewCounts mirrors gateway fix-loop certification by trusting p
   assert.equal(summary.fixLoopCertified, true);
   assert.equal(summary.trustedPassingReviews, 1);
   assert.equal(summary.staleIgnoredReviews, 0);
+
+  // The gateway certifies fix loops regardless of depth; static rounds must certify too.
+  const staticFixture = structuredClone(fixture);
+  staticFixture.independentReviews![0]!.validationDepth = 'static-code';
+  assert.equal(summarizeReviewCounts(staticFixture).fixLoopCertified, true);
 });
 
 test('classifyReviewFreshness treats missing package review subject as stale', () => {
