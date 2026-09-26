@@ -337,7 +337,10 @@ test('a new CI-fix attempt clears the previous prompt boundary', async (t) => {
   });
 
   const updated = getRun(run.id)!;
-  assert.equal(resolveRecoverableCiFixContext(updated), null);
+  const recoverable = resolveRecoverableCiFixContext(updated);
+  assert.equal(recoverable?.deliveryBaselineRef, 'new-sha');
+  assert.equal(recoverable?.deliveryBaselinePanePid, 'new-pid');
+  assert.equal(recoverable?.ciFixPrompt, undefined);
   assert.equal(
     updated.agentContexts?.find((context) => context.role === 'ci-fix')?.ciFixPrompt,
     undefined,
