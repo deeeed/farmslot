@@ -167,14 +167,16 @@ export function resolveRecoverableCiFixContext(run: Run | undefined): AgentConte
   return (
     run?.agentContexts?.find((context) => {
       const handoff = runnerRetainedSessionHandoff(context.runner);
+      const preSend = context.status === 'launching' && !context.promptDeliveryStartedAt;
       const recoverableStatus =
         context.status === 'working' ||
-        (handoff === 'argv-relaunch' && context.status === 'launching');
+        (handoff === 'argv-relaunch' && context.status === 'launching') ||
+        preSend;
       return (
         context.role === 'ci-fix' &&
         handoff !== 'unsupported' &&
         recoverableStatus &&
-        !!context.promptDeliveryStartedAt &&
+        (preSend || !!context.promptDeliveryStartedAt) &&
         !!context.deliveryBaselineRef &&
         !!context.deliveryBaselinePanePid &&
         !!context.taskFile &&
@@ -193,6 +195,7 @@ export function recoveredCiFixHasDeliveryProof(
   return Boolean(
     context &&
     handoff === 'argv-relaunch' &&
+    context.promptDeliveryStartedAt &&
     currentPanePid &&
     currentPanePid !== context.deliveryBaselinePanePid,
   );
@@ -209,13 +212,14 @@ export function ciFixAttemptPrompt(
 
 export function ciFixPromptForRecovery(
   prompt: string,
-  recoveredContext: Pick<AgentContext, 'ciFixPrompt'> | null,
+  recoveredContext: Pick<AgentContext, 'ciFixPrompt' | 'promptDeliveryStartedAt'> | null,
   runId: string,
   attempt: number,
   headSha: string,
 ): string {
-  return recoveredContext
-    ? (recoveredContext.ciFixPrompt ?? prompt)
+  if (recoveredContext?.ciFixPrompt) return recoveredContext.ciFixPrompt;
+  return recoveredContext?.promptDeliveryStartedAt
+    ? prompt
     : ciFixAttemptPrompt(prompt, runId, attempt, headSha);
 }
 
@@ -787,7 +791,7 @@ async function attemptInlineCIFix(
           `[ci-monitor] run ${runId.slice(0, 8)} — recovering in-flight CI fix delivery on ${workerTarget}`,
         );
       } else {
-        if (!recoveredContext) {
+        if (!recoveredContext || !recoveredContext.promptDeliveryStartedAt) {
           await upsertAgentContext(runId, 'ci-fix', {
             ciFixPrompt: nudgeCmd,
             promptDeliveryStartedAt: new Date().toISOString(),

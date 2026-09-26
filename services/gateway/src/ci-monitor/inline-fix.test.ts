@@ -53,7 +53,17 @@ test('CI fix recovery retains the exact prompt sent before a restart', () => {
     ciFixPromptForRecovery(currentPrompt, { ciFixPrompt: taggedPrompt }, 'run-1', 2, 'def5678'),
     taggedPrompt,
   );
-  assert.equal(ciFixPromptForRecovery(legacyPrompt, {}, 'run-1', 1, 'abc1234'), legacyPrompt);
+  assert.equal(
+    ciFixPromptForRecovery(
+      legacyPrompt,
+      { promptDeliveryStartedAt: '2026-08-25T09:00:00.000Z' },
+      'run-1',
+      1,
+      'abc1234',
+    ),
+    legacyPrompt,
+  );
+  assert.equal(ciFixPromptForRecovery(legacyPrompt, {}, 'run-1', 1, 'abc1234'), taggedPrompt);
   assert.equal(ciFixPromptForRecovery(legacyPrompt, null, 'run-1', 1, 'abc1234'), taggedPrompt);
 });
 
@@ -76,10 +86,12 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
   const run = { ...makeRun({ flowType: 'dev' }), agentContexts: [context] };
 
   assert.equal(resolveRecoverableCiFixContext(run)?.id, 'ci-fix');
+  const preSend = { ...context, promptDeliveryStartedAt: undefined };
+  assert.equal(resolveRecoverableCiFixContext({ ...run, agentContexts: [preSend] })?.id, 'ci-fix');
   assert.equal(
     resolveRecoverableCiFixContext({
       ...run,
-      agentContexts: [{ ...context, promptDeliveryStartedAt: undefined }],
+      agentContexts: [{ ...preSend, deliveryBaselineRef: undefined }],
     }),
     null,
   );
@@ -101,6 +113,13 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
     null,
     'a pre-send in-place context does not prove a prompt was attempted',
   );
+  assert.equal(
+    resolveRecoverableCiFixContext({
+      ...run,
+      agentContexts: [{ ...codexContext, status: 'launching', promptDeliveryStartedAt: undefined }],
+    })?.id,
+    'ci-fix',
+  );
 });
 
 test('a recovered in-place CI fix requires prompt acknowledgement, not working status', () => {
@@ -112,11 +131,20 @@ test('a recovered in-place CI fix requires prompt acknowledgement, not working s
     slotId: 'macpro-ff-1',
     runId: 'run-1',
     deliveryBaselinePanePid: '1234',
+    promptDeliveryStartedAt: '2026-08-25T09:00:00.000Z',
   };
 
   assert.equal(recoveredCiFixHasDeliveryProof(context, 'in-place', '5678'), false);
   assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '1234'), false);
   assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '5678'), true);
+  assert.equal(
+    recoveredCiFixHasDeliveryProof(
+      { ...context, promptDeliveryStartedAt: undefined },
+      'argv-relaunch',
+      '5678',
+    ),
+    false,
+  );
 });
 
 test('CI fix replacement readiness excludes the pending CI context', () => {
