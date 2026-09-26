@@ -134,6 +134,46 @@ test('resolveStartRefInRepo rejects local-only commit SHA', async (t) => {
   );
 });
 
+test('resolveStartRefInRepo accepts an advertised head absent from local tracking refs', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-advertised-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const source = path.join(root, 'source');
+  const remote = path.join(root, 'origin.git');
+  const clone = path.join(root, 'clone');
+
+  await sh(`git init --bare ${remote}`);
+  await sh(`git init -b main ${source}`);
+  await sh('git config user.email test@example.com', source);
+  await sh('git config user.name Test', source);
+  await sh('printf base > file.txt && git add file.txt && git commit -m base', source);
+  await sh(`git remote add origin ${remote}`, source);
+  await sh('git push origin main', source);
+  await sh(`git --git-dir=${remote} symbolic-ref HEAD refs/heads/main`);
+  await sh(`git clone ${remote} ${clone}`);
+  await sh('git checkout -b feature/new-pr', source);
+  await sh('printf feature > file.txt && git commit -am feature', source);
+  await sh('git push origin feature/new-pr', source);
+  const head = (await sh('git rev-parse HEAD', source)).stdout.trim();
+  assert.notEqual(
+    (await shResult(`git -C ${clone} show-ref --verify refs/remotes/origin/feature/new-pr`))
+      .exitCode,
+    0,
+  );
+
+  const commands: string[] = [];
+  const resolved = await resolveStartRefInRepo({
+    repo: clone,
+    requestedRef: head,
+    exec: (command) => {
+      commands.push(command);
+      return shResult(command);
+    },
+  });
+  assert.equal(resolved.resolvedSha, head);
+  assert.equal(commands.filter((command) => command.includes('merge-base --is-ancestor')).length, 0);
+});
+
 test('resolveStartRefInRepo rejects SHA reachable only from a local tag', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-start-ref-local-tag-'));
   t.after(() => rm(root, { recursive: true, force: true }));
