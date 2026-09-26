@@ -14,7 +14,8 @@ rpc() {
 }
 
 health() {
-  rpc resource.health "$resource_args" 15000 | jq -ec '.resources[] | select(.id == "ios-sim") | {id,status}'
+  health_result=$(rpc resource.health "$resource_args" 15000) || return
+  printf '%s\n' "$health_result" | jq -ec '.resources[] | select(.id == "ios-sim") | {id,status}'
 }
 
 ready() {
@@ -44,7 +45,11 @@ printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 
 observed=no
 for attempt in 1 2 3 4 5 6; do
-  snapshot=$(health)
+  if ! snapshot=$(health); then
+    printf 'Simulator running health probe failed (%s/6); retrying\n' "$attempt" >&2
+    sleep 2
+    continue
+  fi
   if printf '%s\n' "$snapshot" | jq -e '.status == "running"' >/dev/null; then
     printf 'running:%s\n' "$snapshot"
     observed=yes
@@ -56,7 +61,11 @@ done
 
 shutdown
 for attempt in 1 2 3 4 5 6; do
-  snapshot=$(health)
+  if ! snapshot=$(health); then
+    printf 'Simulator stopped health probe failed (%s/6); retrying\n' "$attempt" >&2
+    sleep 2
+    continue
+  fi
   if printf '%s\n' "$snapshot" | jq -e '.status == "stopped"' >/dev/null; then
     printf 'stopped:%s\n' "$snapshot"
     boot_attempted=no

@@ -83,7 +83,10 @@ test('simulator readiness handles health failure and extra stream fields', () =>
   const directory = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ios-readiness-'));
   const state = path.join(directory, 'state');
   const trace = path.join(directory, 'trace');
+  const failedBootHealth = path.join(directory, 'failed-boot-health');
+  const failedShutdownHealth = path.join(directory, 'failed-shutdown-health');
   writeFileSync(state, 'stopped');
+  writeFileSync(path.join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(
     path.join(directory, 'node'),
     `#!/bin/sh
@@ -92,8 +95,18 @@ case "$3" in
     printf '{"fleet":{"slots":[{"slot":"mini-mm-2","lifecycle":"%s","currentRunId":null,"agent":"idle"}]}}\\n' "$SLOT_LIFECYCLE" ;;
   resource.health)
     if test "$(cat "$BOOT_STATE")" = stopped; then
+      if test "$TRANSIENT_HEALTH_FAILURE" = yes && grep -q shutdown "$TRACE" && test ! -f "$FAILED_SHUTDOWN_HEALTH"; then
+        : > "$FAILED_SHUTDOWN_HEALTH"
+        printf '{"resources":[{"id":"ios-sim","status":"stopped"}]}\\n'
+        exit 1
+      fi
       printf '{"resources":[{"id":"ios-sim","status":"stopped","stream":{"state":"cached"}}]}\\n'
     else
+      if test "$TRANSIENT_HEALTH_FAILURE" = yes && test ! -f "$FAILED_BOOT_HEALTH"; then
+        : > "$FAILED_BOOT_HEALTH"
+        printf '{"resources":[{"id":"ios-sim","status":"running"}]}\\n'
+        exit 1
+      fi
       if test "$FAIL_HEALTH_AFTER_BOOT" = yes; then
         printf 'health failed after boot\\n' >&2
         exit 1
@@ -140,6 +153,28 @@ esac
       assert.equal(readFileSync(state, 'utf8'), 'stopped');
       assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
     }
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const transient = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        FAIL_HEALTH_AFTER_BOOT: 'no',
+        TRANSIENT_HEALTH_FAILURE: 'yes',
+        FAILED_BOOT_HEALTH: failedBootHealth,
+        FAILED_SHUTDOWN_HEALTH: failedShutdownHealth,
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.equal(transient.status, 0, transient.stderr.toString());
+    assert.match(transient.stderr.toString(), /running health probe failed/);
+    assert.match(transient.stderr.toString(), /stopped health probe failed/);
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
 
     writeFileSync(state, 'stopped');
     writeFileSync(trace, '');
