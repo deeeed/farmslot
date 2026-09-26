@@ -5,22 +5,41 @@ import type { Run } from '@farmslot/protocol';
 
 import { resolveRunsDir } from './paths.js';
 
+/**
+ * The runs directory also holds other stores' JSON (`runtime-capabilities-<port>.json`).
+ * A file is a run record only when its payload id names the file; anything else is not
+ * a run to load, migrate, or rewrite. Shared with the Gateway run store.
+ */
+export function parseRunRecordFile(name: string, raw: string): Run | null {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const id = (parsed as { id?: unknown }).id;
+  if (typeof id !== 'string' || id === '' || name !== `${id}.json`) return null;
+  return parsed as Run;
+}
+
+function readRunRecordFile(runsDir: string, name: string): Run | null {
+  return parseRunRecordFile(name, readFileSync(path.join(runsDir, name), 'utf-8'));
+}
+
 export function loadRunRecord(runsDir: string, runId: string): Run | null {
-  const exact = path.join(runsDir, `${runId}.json`);
-  if (existsSync(exact)) {
-    return JSON.parse(readFileSync(exact, 'utf-8')) as Run;
+  if (existsSync(path.join(runsDir, `${runId}.json`))) {
+    return readRunRecordFile(runsDir, `${runId}.json`);
   }
-  const files = readdirSync(runsDir).filter((name) => name.endsWith('.json'));
-  const match = files.find((name) => name.replace(/\.json$/, '').startsWith(runId));
-  if (!match) return null;
-  return JSON.parse(readFileSync(path.join(runsDir, match), 'utf-8')) as Run;
+  for (const name of readdirSync(runsDir)) {
+    if (!name.endsWith('.json') || !name.startsWith(runId)) continue;
+    const run = readRunRecordFile(runsDir, name);
+    if (run) return run;
+  }
+  return null;
 }
 
 export function loadAllRunRecords(runsDir: string): Run[] {
   if (!existsSync(runsDir)) return [];
   return readdirSync(runsDir)
     .filter((name) => name.endsWith('.json'))
-    .map((name) => JSON.parse(readFileSync(path.join(runsDir, name), 'utf-8')) as Run);
+    .map((name) => readRunRecordFile(runsDir, name))
+    .filter((run): run is Run => run !== null);
 }
 
 export function selectRunsForExport(input: {
