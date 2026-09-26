@@ -7,6 +7,7 @@ resource_args="{\"slotId\":\"$slot_id\",\"resourceId\":\"ios-sim\"}"
 owner_run_id="simulator-readiness-$$"
 acquire_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"proofRequirement\":{\"capabilityId\":\"ios-simulator\",\"reason\":\"Simulator boot readiness\",\"mode\":\"state\"}}"
 release_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"keepWarm\":false}"
+acquire_attempted=no
 lease_acquired=no
 lease_released=no
 
@@ -26,15 +27,24 @@ ready() {
 }
 
 shutdown() {
-  result=$(rpc runtime.capability.release "$release_args" 45000)
+  result=$(rpc runtime.capability.release "$release_args" 120000)
   printf '%s\n' "$result" | jq -e '.ok == true and any(.released[]?; .capabilityId == "ios-simulator")' >/dev/null
   lease_released=yes
   printf 'shutdown:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 }
 
 cleanup() {
-  if [ "$lease_acquired" != yes ]; then return 0; fi
-  if [ "$lease_released" != yes ]; then shutdown >/dev/null || return 1; fi
+  if [ "$acquire_attempted" != yes ]; then return 0; fi
+  if [ "$lease_released" != yes ]; then
+    if [ "$lease_acquired" = yes ]; then
+      shutdown >/dev/null || return 1
+    else
+      result=$(rpc runtime.capability.release "$release_args" 360000) || return 1
+      printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null || return 1
+      if ! printf '%s\n' "$result" | jq -e 'any(.released[]?; .capabilityId == "ios-simulator")' >/dev/null; then return 0; fi
+      lease_released=yes
+    fi
+  fi
   attempt=0
   while [ "$attempt" -lt 60 ]; do
     attempt=$((attempt + 1))
@@ -55,6 +65,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 ready
 health | jq -e '.status == "stopped"' >/dev/null
+acquire_attempted=yes
 result=$(rpc runtime.capability.acquire "$acquire_args" 300000)
 printf '%s\n' "$result" | jq -e '.ok == true and .lease.capabilityId == "ios-simulator"' >/dev/null
 lease_acquired=yes

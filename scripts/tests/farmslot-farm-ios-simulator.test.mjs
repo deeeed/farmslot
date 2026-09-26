@@ -156,9 +156,25 @@ case "$3" in
     fi
     printf 'boot\\n' >> "$TRACE"
     if test "$FAIL_BOOT_DURING_START" = yes; then exit 1; fi
+    if test "$FAIL_ACQUIRE_RESPONSE" = yes; then
+      printf booted > "$BOOT_STATE"
+      exit 1
+    fi
     if test "$STOP_AFTER_ACQUIRE" = yes; then printf stopped > "$BOOT_STATE"; else printf booted > "$BOOT_STATE"; fi
     printf '{"ok":true,"lease":{"capabilityId":"ios-simulator"}}\\n' ;;
   runtime.capability.release)
+    if test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 60000; then
+      printf 'Release timeout is shorter than simulator and Metro shutdown budgets\n' >&2
+      exit 1
+    fi
+    if test "$FAIL_BOOT_DURING_START" = yes || test "$LEASE_HELD" = yes; then
+      printf '{"ok":true,"released":[]}\\n'
+      exit 0
+    fi
+    if test "$FAIL_ACQUIRE_RESPONSE" = yes && test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 300000; then
+      printf 'Release cannot wait for an in-flight acquisition\n' >&2
+      exit 1
+    fi
     if test "$LAG_INVENTORY" = yes; then
       if test -f "$RELEASE_SENTINEL"; then printf '{"ok":true,"released":[]}\\n'; exit 0; fi
       : > "$RELEASE_SENTINEL"
@@ -313,6 +329,23 @@ esac
     assert.notEqual(failedDuringBoot.status, 0);
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
     assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot']);
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const lostResponse = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        FAIL_ACQUIRE_RESPONSE: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.notEqual(lostResponse.status, 0);
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
 
     writeFileSync(state, 'stopped');
     writeFileSync(trace, '');
