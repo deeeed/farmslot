@@ -105,7 +105,7 @@ case "$3" in
       *'"action":"boot"'*) printf 'booted' > "$BOOT_STATE"; printf 'boot\\n' >> "$TRACE" ;;
       *'"action":"shutdown"'*) printf 'stopped' > "$BOOT_STATE"; printf 'shutdown\\n' >> "$TRACE" ;;
     esac
-    printf '{"ok":true}\\n' ;;
+    printf '{"ok":true,"detail":"simulator output"}\\n' ;;
 esac
 `,
     { mode: 0o755 },
@@ -129,6 +129,11 @@ esac
       if (failHealthAfterBoot) assert.notEqual(result.status, 0);
       else {
         assert.equal(result.status, 0, result.stderr.toString());
+        for (const nodeName of ['boot-succeeded', 'shutdown']) {
+          assert.ok(
+            result.stdout.toString().includes(readinessRecipe.workflow.nodes[nodeName].contains),
+          );
+        }
         assert.match(result.stdout.toString(), /running:\{"id":"ios-sim","status":"running"\}/);
         assert.match(result.stdout.toString(), /stopped:\{"id":"ios-sim","status":"stopped"\}/);
       }

@@ -25,7 +25,7 @@ ready() {
 shutdown() {
   result=$(rpc resource.control "$shutdown_args" 45000)
   printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null
-  printf 'shutdown:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
+  printf 'shutdown:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 }
 
 cleanup() {
@@ -40,7 +40,7 @@ health | jq -e '.status == "stopped"' >/dev/null
 boot_attempted=yes
 result=$(rpc resource.control "$boot_args" 150000)
 printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null
-printf 'boot:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
+printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 
 observed=no
 for attempt in 1 2 3 4 5 6; do
