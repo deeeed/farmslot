@@ -109,6 +109,7 @@ projects/farmslot-farm/setup/*
 !projects/farmslot-farm/setup/sandbox-dev.sh
 !projects/farmslot-farm/setup/sandbox-companion.sh
 !projects/farmslot-farm/setup/companion-prepare.sh
+!projects/farmslot-farm/setup/simulator-booted.sh
 !projects/farmslot-farm/setup/validate-recipe.sh
 !projects/farmslot-farm/setup/sync-recipe-evidence.sh
 !projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh

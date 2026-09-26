@@ -12,7 +12,9 @@ const projectPath = fileURLToPath(
   new URL('../../projects/farmslot-farm/project.json', import.meta.url),
 );
 const project = JSON.parse(readFileSync(projectPath, 'utf8'));
-const bootHook = project.resources['ios-sim'].hooks.boot.replaceAll('{{simulator}}', 'fs-2');
+const bootHook = project.resources['ios-sim'].hooks.boot
+  .replaceAll('{{simulator}}', 'fs-2')
+  .replaceAll('{{repo}}', fileURLToPath(new URL('../../', import.meta.url)));
 const readinessScript = fileURLToPath(
   new URL('../../projects/farmslot-farm/setup/simulator-boot-readiness.sh', import.meta.url),
 );
@@ -52,7 +54,9 @@ test('simulator boot waits for readiness and is safe to retry', () => {
     path.join(directory, 'xcrun'),
     `#!/bin/sh
 case "$2" in
-  list) if test "$(cat "$BOOT_STATE")" = booted; then printf '    fs-2 (AA11) (Booted)\n'; else printf '    fs-20 (BB22) (Booted)\n'; fi ;;
+  list)
+    if test "$(cat "$BOOT_STATE")" = booted; then configured=Booted; else configured=Shutdown; fi
+    printf '{"devices":{"runtime":[{"name":"fs-2","udid":"AA11","state":"%s"},{"name":"fs-20","udid":"BB22","state":"Booted"}]}}\\n' "$configured" ;;
   boot) printf 'booted' > "$BOOT_STATE"; printf 'boot\n' >> "$TRACE" ;;
   bootstatus) printf 'bootstatus\n' >> "$TRACE"; test "\${FAIL_BOOTSTATUS:-}" != yes ;;
 esac
@@ -89,6 +93,62 @@ esac
       },
     });
     assert.notEqual(failed.status, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('simulator probes do not confuse similarly named booted devices', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ios-identity-'));
+  const state = path.join(directory, 'state');
+  const trace = path.join(directory, 'trace');
+  writeFileSync(state, 'stopped');
+  writeFileSync(trace, '');
+  writeFileSync(
+    path.join(directory, 'xcrun'),
+    `#!/bin/sh
+case "$2" in
+  list)
+    if test "$4" = -j; then
+      if test "$(cat "$BOOT_STATE")" = booted; then configured=Booted; else configured=Shutdown; fi
+      printf '{"devices":{"runtime":[{"name":"iPhone Pro","udid":"BB22","state":"Booted"},{"name":"Pro","udid":"AA11","state":"%s"}]}}\\n' "$configured"
+    else
+      printf '    iPhone Pro (BB22) (Booted)\\n'
+      if test "$(cat "$BOOT_STATE")" = booted; then printf '    Pro (AA11) (Booted)\\n'; fi
+    fi ;;
+  boot) printf booted > "$BOOT_STATE"; printf 'boot\\n' >> "$TRACE" ;;
+  bootstatus) printf 'bootstatus\\n' >> "$TRACE"; test "$(cat "$BOOT_STATE")" = booted ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+
+  const command = (value) =>
+    value.replaceAll('{{simulator}}', 'Pro').replaceAll('{{repo}}', repoRoot);
+  const env = {
+    ...process.env,
+    PATH: `${directory}:${process.env.PATH}`,
+    BOOT_STATE: state,
+    TRACE: trace,
+  };
+  try {
+    for (const probe of [
+      project.resources['ios-sim'].hooks.health,
+      project.resources['ios-sim'].watch.cmd,
+    ]) {
+      assert.notEqual(spawnSync('sh', ['-c', command(probe)], { env }).status, 0);
+    }
+    const result = spawnSync('sh', ['-c', command(project.resources['ios-sim'].hooks.boot)], {
+      env,
+    });
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'bootstatus']);
+    for (const probe of [
+      project.resources['ios-sim'].hooks.health,
+      project.resources['ios-sim'].watch.cmd,
+    ]) {
+      assert.equal(spawnSync('sh', ['-c', command(probe)], { env }).status, 0);
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

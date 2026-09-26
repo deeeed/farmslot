@@ -315,11 +315,11 @@
         "type": "process-poll",
         "provider": "ios-simulator-inventory",
         "target": "{{simulator}}",
-        "cmd": "xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)'"
+        "cmd": "sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}'"
       },
       "hooks": {
-        "health": "xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)'",
-        "boot": "(xcrun simctl list devices booted 2>/dev/null | grep -Fq -e ' {{simulator}} (' -e '({{simulator}}) (Booted)' || xcrun simctl boot '{{simulator}}') && xcrun simctl bootstatus '{{simulator}}' -b",
+        "health": "sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}'",
+        "boot": "(sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}' || xcrun simctl boot '{{simulator}}') && xcrun simctl bootstatus '{{simulator}}' -b",
         "shutdown": "xcrun simctl shutdown '{{simulator}}'"
       }
     },
