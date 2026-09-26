@@ -1422,9 +1422,7 @@ export async function reconcileRecoveredFixPromptDelivery(
     if (delivery.status === 'delivered') return delivery;
     if (delivery.status !== 'deferred') break;
   }
-  throw new SelfReviewFixDeliveryError(
-    'Recovered self-review fix prompt has no exact acknowledgement; refusing to resend or wait for an undelivered fix',
-  );
+  return { status: 'deferred' };
 }
 
 export function canSettleRecoveredFixContext(
