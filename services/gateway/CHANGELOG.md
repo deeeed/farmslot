@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Report each runner's structured model catalog, including reasoning modes, and store the operator's visible model defaults. Runners without a catalog, and catalogs that cannot be read, stay explicit instead of being guessed from runner text.
+- Report each runner's structured model catalog, including reasoning modes, and store the operator's visible model defaults. Until a set is saved, every runner reports the same picker defaults clients show, and a native session's default model stays selectable when a saved set omits it. Runners without a catalog, and catalogs that cannot be read, stay explicit instead of being guessed from runner text.
 - Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
 
 - Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.

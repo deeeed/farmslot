@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import type { RunnerVisibleModelState } from '@farmslot/protocol';
+import { RUNNER_PICKER_MODELS, type RunnerVisibleModelState } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -95,10 +95,7 @@ export function describeVisibleModels(
   }
   const saved = readVisibleModelFile(home).byRunner[runner];
   const configured = Array.isArray(saved);
-  const definition = getRunnerDefinition(runner);
-  const seed =
-    definition.nativeChoices?.models ?? (definition.defaultModel ? [definition.defaultModel] : []);
-  const models = configured ? saved : [...seed];
+  const models = configured ? saved : visibleModelSeed(runner);
   const retained =
     selectedModel && selectedModel.trim() && !models.includes(selectedModel)
       ? selectedModel.trim()
@@ -113,6 +110,16 @@ export function describeVisibleModels(
     pickerModels: retained ? [...models, retained] : [...models],
     ...(retained ? { retainedModel: retained } : {}),
   };
+}
+
+/** Models shown before an operator saves a visible set: the same picker defaults clients show. */
+function visibleModelSeed(runner: string): string[] {
+  const definition = getRunnerDefinition(runner);
+  const seed =
+    RUNNER_PICKER_MODELS[definition.id] ??
+    definition.nativeChoices?.models ??
+    (definition.defaultModel ? [definition.defaultModel] : []);
+  return [...seed];
 }
 
 export function assertVisibleModelList(models: unknown): string[] {

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- The model picker loads each runner's catalog on demand, saves which models appear by default, and says when a runner has no catalog or the catalog cannot be read.
+- The model picker loads each runner's catalog on demand, saves which models appear by default, and says when a runner has no catalog or the catalog cannot be read. Catalog reasoning modes only narrow the efforts a launch accepts, and Evals, Backlog and Roadmap load the saved defaults on direct entry.
 - Allow simulator boot and its Metro dependency to finish before resource panels time out.
 
 - Dispatch, dispatch-config and ready-gate review rounds are static only, and Dispatch names the farm QA preset used for separate runtime validation. Backlog and Work Graph editors label a stored legacy full-live round and convert it to static only when the operator asks.

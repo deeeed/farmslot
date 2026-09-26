@@ -151,3 +151,14 @@ test('effort options respect the selected Codex model', () => {
   assert.deepEqual(effortsForRunner('codex', ''), ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(effortsForRunner('grok', 'grok-4.6'), EFFORT_BY_RUNNER.grok);
 });
+
+test('catalog reasoning modes narrow efforts but never add ones the gateway rejects', () => {
+  // A catalog-only Codex model lists max and ultra; launch validation accepts only the legacy set.
+  assert.deepEqual(
+    effortsForRunner('codex', 'gpt-7-preview', ['low', 'high', 'xhigh', 'max', 'ultra']),
+    ['low', 'high', 'xhigh'],
+  );
+  assert.deepEqual(effortsForRunner('codex', 'gpt-6-astra', ['high', 'ultra']), ['high', 'ultra']);
+  assert.deepEqual(effortsForRunner('pi', 'grok-4.6', ['high', 'turbo']), ['high']);
+  assert.deepEqual(effortsForRunner('codex', 'gpt-5.5', []), ['low', 'medium', 'high', 'xhigh']);
+});

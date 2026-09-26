@@ -12,6 +12,7 @@ import {
   PI_THINKING_LEVELS,
   type PiThinkingLevel,
   type ReviewRunnerId,
+  RUNNER_PICKER_MODELS,
 } from '@farmslot/protocol';
 
 import { rememberedVisibleModels } from './runner-visible-cache.js';
@@ -20,44 +21,12 @@ export type EffortLevel = '' | CodexReasoningEffort | PiThinkingLevel;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
 
-// Pi's Anthropic OAuth provider uses Anthropic model IDs. Keep the provider
-// prefix so launch-command.ts cannot mistake them for xAI's bare model IDs.
-export const PI_ANTHROPIC_MODELS = [
-  'anthropic/claude-opus-5',
-  'anthropic/claude-sonnet-5',
-  'anthropic/claude-haiku-4-5',
-  'anthropic/claude-fable-5-1',
-] as const;
+export { PI_ANTHROPIC_MODELS } from '@farmslot/protocol';
 
-export const MODELS_BY_RUNNER: Record<string, string[]> = {
-  claude: ['sonnet', 'opus', 'haiku', 'fable'],
-  // Astra first; retain earlier Codex models for explicit selections.
-  codex: [
-    DEFAULT_CODEX_MODEL,
-    'gpt-6-sol',
-    'gpt-5.6-sol',
-    'gpt-5.6-terra',
-    'gpt-5.6-luna',
-    'gpt-5.5',
-    'gpt-5.4',
-  ],
-  // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
-  // shared protocol default used by every client.
-  cursor: [
-    DEFAULT_CURSOR_MODEL,
-    'composer-2.5',
-    'composer-2.5-fast',
-    'cursor-grok-4.6-high',
-    'cursor-grok-4.6-xhigh',
-    'grok-4.7-high',
-    'grok-4.7-xhigh',
-    'gpt-5.6-sol-medium',
-    'gpt-5.6-sol-high',
-    'gpt-5.6-sol-max',
-  ],
-  grok: [DEFAULT_GROK_MODEL, 'grok-4.7'],
-  pi: [DEFAULT_PI_MODEL, ...PI_ANTHROPIC_MODELS],
-};
+/** Built-in picker models, shared with the gateway's visible-model seed. */
+export const MODELS_BY_RUNNER: Record<string, string[]> = Object.fromEntries(
+  Object.entries(RUNNER_PICKER_MODELS).map(([runner, models]) => [runner, [...models]]),
+);
 
 /** Dispatch hint: PI accepts OpenAI-compatible ids once the worker registers them. */
 export const PI_COMPAT_MODEL_HINT =
@@ -103,11 +72,20 @@ export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   pi: [...PI_THINKING_LEVELS],
 };
 
-/** Select efforts supported by the runner and the selected model. */
-export function effortsForRunner(runner: string, model: string): EffortLevel[] {
-  return runner === 'codex'
-    ? [...codexReasoningEfforts(model)]
-    : [...(EFFORT_BY_RUNNER[runner] ?? [])];
+/**
+ * Efforts the gateway accepts for the runner and model. When the runner's catalog
+ * lists reasoning modes for the model, only accepted modes it also lists are offered.
+ */
+export function effortsForRunner(
+  runner: string,
+  model: string,
+  catalogModes?: readonly string[],
+): EffortLevel[] {
+  const accepted =
+    runner === 'codex' ? [...codexReasoningEfforts(model)] : [...(EFFORT_BY_RUNNER[runner] ?? [])];
+  return catalogModes?.length
+    ? accepted.filter((effort) => catalogModes.includes(effort))
+    : accepted;
 }
 
 /** Launch default when effort is omitted (matches gateway resolveRunnerEffort). */

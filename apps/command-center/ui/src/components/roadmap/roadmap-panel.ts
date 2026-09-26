@@ -44,6 +44,7 @@ import {
   modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import {
   planningBadgeStyles,
@@ -274,6 +275,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _promotionDrafts: PromotionDraft[] = [];
 
   private _unsubscribeConnection?: () => void;
+  private _unsubscribeVisibleModels?: () => void;
   private _unsubscribeState?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
   private _onKeydown = (event: KeyboardEvent) => {
@@ -819,11 +821,13 @@ export class RoadmapPanel extends LitElement {
       if (state === 'connected' && !this.items) void this._refresh();
     });
     if (gateway.connectionState === 'connected' && !this.items) void this._refresh();
+    this._unsubscribeVisibleModels = watchVisibleModels(() => this.requestUpdate());
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribeConnection?.();
+    this._unsubscribeVisibleModels?.();
     this._unsubscribeState?.();
     this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('keydown', this._onKeydown);

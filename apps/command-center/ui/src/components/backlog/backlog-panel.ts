@@ -61,6 +61,7 @@ import {
   modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
@@ -381,6 +382,7 @@ export class BacklogPanel extends LitElement {
   @state() private _existingRefinementSession: BacklogRefinementSessionGetResult | null = null;
 
   private _unsub?: () => void;
+  private _unsubVisibleModels?: () => void;
   private _activityCacheItems: BacklogItem[] | null = null;
   private _activityCacheRuns: Run[] | null = null;
   private _activityCache = new Map<string, Run | undefined>();
@@ -1251,10 +1253,12 @@ export class BacklogPanel extends LitElement {
     window.addEventListener('hashchange', this._onHashChange);
     window.addEventListener('keydown', this._onKeydown);
     this._unsub = subscribe((s) => this._sync(s));
+    this._unsubVisibleModels = watchVisibleModels(() => this.requestUpdate());
   }
 
   disconnectedCallback() {
     this._unsub?.();
+    this._unsubVisibleModels?.();
     this._confirmTimer.clear();
     this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);

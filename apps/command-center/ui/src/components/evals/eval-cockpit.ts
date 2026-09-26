@@ -16,6 +16,7 @@ import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 
 import { renderEvalCockpitCandidateMatrix } from './eval-cockpit-candidate-renderer.js';
 import { renderEvalCockpitCaseBrowser } from './eval-cockpit-case-renderer.js';
@@ -84,8 +85,11 @@ import { type EvalLaunchCell, patchCell } from './eval-suite-launch-model.js';
 
 @customElement('eval-cockpit')
 export class EvalCockpit extends EvalCockpitState {
+  private _unsubVisibleModels?: () => void;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this._unsubVisibleModels = watchVisibleModels(() => this.requestUpdate());
     this._restoreUrlState();
     window.addEventListener('hashchange', this._onHashChange);
     this._syncState(getState());
@@ -95,6 +99,7 @@ export class EvalCockpit extends EvalCockpitState {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsub?.();
+    this._unsubVisibleModels?.();
   }
 
   protected firstUpdated(): void {
@@ -568,8 +573,8 @@ export class EvalCockpit extends EvalCockpitState {
     });
   }
 
-  private _candidateModelOptions(runner: string): string[] {
-    return candidateModelOptions(runner);
+  private _candidateModelOptions(runner: string, selected?: string): string[] {
+    return candidateModelOptions(runner, selected);
   }
 
   private _setCandidateRunner(id: string, runner: string): void {
@@ -834,7 +839,7 @@ export class EvalCockpit extends EvalCockpitState {
       },
       candidateLabel: (row) => this._candidateLabel(row),
       generatedCandidateLabel: (row) => this._generatedCandidateLabel(row),
-      candidateModelOptions: (runner) => this._candidateModelOptions(runner),
+      candidateModelOptions: (runner, selected) => this._candidateModelOptions(runner, selected),
       candidateTemplateChoices: (taskProfile) => this._candidateTemplateChoices(taskProfile),
       candidateTemplateSummary: (row) => this._candidateTemplateSummary(row),
       candidateVariant: (row) => this._candidateVariant(row),

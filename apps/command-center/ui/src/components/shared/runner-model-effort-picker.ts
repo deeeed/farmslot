@@ -183,15 +183,17 @@ export class RunnerModelEffortPicker extends LitElement {
     return [...new Set([...(MODELS_BY_RUNNER[this.runner] ?? []), this.model].filter(Boolean))];
   }
 
+  /** Accepted efforts for a model, narrowed by the loaded catalog's modes for it. */
+  private effortsForModel(model: string): EffortLevel[] {
+    const catalogModes =
+      this.loadedCatalog?.runner === this.runner
+        ? this.loadedCatalog.models.find((entry) => entry.id === model)?.reasoningModes
+        : undefined;
+    return effortsForRunner(this.runner, model, catalogModes);
+  }
+
   private effortOptions(): EffortLevel[] {
-    const catalogModes = this.loadedCatalog?.models.find(
-      (model) => model.id === this.model,
-    )?.reasoningModes;
-    const options = (
-      catalogModes && catalogModes.length > 0
-        ? catalogModes
-        : effortsForRunner(this.runner, this.model)
-    ) as EffortLevel[];
+    const options = this.effortsForModel(this.model);
     const values: EffortLevel[] = this.showDefaultEffort ? ['' as EffortLevel] : [];
     values.push(...options);
     if (this.effort && !values.includes(this.effort)) values.push(this.effort);
@@ -225,7 +227,7 @@ export class RunnerModelEffortPicker extends LitElement {
   }
 
   private selectModel(model: string) {
-    const efforts = effortsForRunner(this.runner, model);
+    const efforts = this.effortsForModel(model);
     const preferred = DEFAULT_EFFORT[this.runner] ?? '';
     const fallback = this.showDefaultEffort
       ? ''
@@ -273,30 +275,31 @@ export class RunnerModelEffortPicker extends LitElement {
   private async toggleCatalog() {
     this.catalogOpen = !this.catalogOpen;
     if (!this.catalogOpen) return;
+    const runner = this.runner;
     this.catalogStatus = 'Loading model catalog.';
+    let result: RunnerModelCatalogResult;
     try {
-      const result = await gateway.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, {
-        runner: this.runner,
+      result = await gateway.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, {
+        runner,
       });
-      this.loadedCatalog = result;
-      this.catalogChecks = [...(this.visibleState?.models ?? [])];
-      this.catalogStatus = result.detail ?? '';
     } catch (err) {
-      this.loadedCatalog = {
-        runner: this.runner,
+      result = {
+        runner,
         status: 'unavailable',
         source: 'structured-file',
         detail: err instanceof Error ? err.message : 'Model catalog request failed.',
         models: [],
       };
-      this.catalogStatus = this.loadedCatalog.detail ?? '';
     }
-  }
-
-  private toggleCatalogModel(id: string) {
-    this.catalogChecks = this.catalogChecks.includes(id)
-      ? this.catalogChecks.filter((model) => model !== id)
-      : [...this.catalogChecks, id];
+    // The operator switched runners, or closed the catalog, while this request was
+    // in flight. Its models must not become the checks saved for another runner.
+    if (this.runner !== runner || !this.catalogOpen) return;
+    this.loadedCatalog = result;
+    this.catalogChecks =
+      this.visibleState?.runner === runner
+        ? [...this.visibleState.models]
+        : [...(MODELS_BY_RUNNER[runner] ?? [])];
+    this.catalogStatus = result.detail ?? '';
   }
 
   private async saveVisible() {
@@ -454,6 +457,7 @@ export class RunnerModelEffortPicker extends LitElement {
                     html`<button
                       class="pill ${this.effort === effort ? 'selected' : ''}"
                       type="button"
+                      data-testid=${`runner-effort-${effort || 'default'}`}
                       ?disabled=${this.disabled}
                       @click=${() => this.selectEffort(effort)}
                     >

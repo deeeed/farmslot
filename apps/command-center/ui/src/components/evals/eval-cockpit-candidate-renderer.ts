@@ -23,7 +23,7 @@ export interface EvalCockpitCandidateMatrixRenderOptions {
   setAdvancedStrategyOpen: (open: boolean) => void;
   candidateLabel: (row: CandidateRow) => string;
   generatedCandidateLabel: (row: CandidateRow) => string;
-  candidateModelOptions: (runner: string) => string[];
+  candidateModelOptions: (runner: string, selected?: string) => string[];
   candidateTemplateChoices: (taskProfile: EvalTaskProfile) => CandidateTemplateChoice[];
   candidateTemplateSummary: (row: CandidateRow) => string;
   candidateVariant: (row: CandidateRow) => string;
@@ -52,7 +52,7 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
       </div>
       <div class="candidate-card-list">
         ${options.candidateRows.map((row, index) => {
-          const models = options.candidateModelOptions(row.runner);
+          const models = options.candidateModelOptions(row.runner, row.model);
           return html`
             <article class=${`candidate-card ${row.enabled ? '' : 'disabled'}`}>
               <div class="candidate-card-head">
@@ -120,6 +120,7 @@ export function renderEvalCockpitCandidateMatrix(options: EvalCockpitCandidateMa
                     (model) => html`
                       <button
                         class=${`choice-chip ${row.model === model ? 'active' : ''}`}
+                        data-testid=${`eval-candidate-model-${model}`}
                         aria-pressed=${row.model === model ? 'true' : 'false'}
                         @click=${() => options.updateRow(row.id, { model })}
                       >

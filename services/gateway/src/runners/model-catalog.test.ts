@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { RUNNER_PICKER_MODELS } from '@farmslot/protocol';
+
 import {
   runnerModelCatalog,
   runnerVisibleModelsGet,
@@ -99,6 +101,12 @@ test('saved visible models keep an explicit selection and do not invent catalog 
     const seed = runnerVisibleModelsGet({ runner: 'claude' });
     assert.equal(seed.runners[0]?.configured, false);
     assert.ok(seed.runners[0]?.models.includes('opus'));
+    // Until a set is saved, every runner reports the same picker defaults clients show.
+    for (const runner of ['claude', 'cursor', 'grok', 'pi']) {
+      const state = runnerVisibleModelsGet({ runner }).runners[0];
+      assert.equal(state?.configured, false);
+      assert.deepEqual(state?.models, [...(RUNNER_PICKER_MODELS[runner] ?? [])]);
+    }
   } finally {
     if (previous === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previous;

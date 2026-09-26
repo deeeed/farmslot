@@ -422,9 +422,11 @@ export function candidateTemplateChoices(
   return dynamic.length > 0 ? dynamic : [...CANDIDATE_TEMPLATE_OPTIONS];
 }
 
-export function candidateModelOptions(runner: string): string[] {
+/** Visible models for a runner. A selected model outside the visible set stays listed. */
+export function candidateModelOptions(runner: string, selected?: string): string[] {
   const models = modelsForRunner(runner);
-  return models.length > 0 ? models : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+  if (models.length === 0) return [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+  return selected && !models.includes(selected) ? [...models, selected] : models;
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {
