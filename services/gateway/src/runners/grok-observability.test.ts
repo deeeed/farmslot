@@ -292,6 +292,18 @@ describe('Grok structured prompt observability', () => {
       assert.equal(parseGrokPromptSignalProbe(partialUtf8.stdout.trim()).status, 'matched');
 
       await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          '{"type":"turn_ended",}',
+          ...Array(1025).fill(JSON.stringify({ type: 'other', payload: 'x'.repeat(1024) })),
+        ].join('\n'),
+      );
+      const malformedCompleteTurn = await runProbe();
+      assert.notEqual(malformedCompleteTurn.exitCode, 0);
+      assert.match(malformedCompleteTurn.stderr, /JSONDecodeError/);
+
+      await writeFile(
         chatPath,
         `${JSON.stringify({
           type: 'user',

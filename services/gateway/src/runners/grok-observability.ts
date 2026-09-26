@@ -237,8 +237,10 @@ def latest_turn_event(path, event_type):
                 try:
                     event = json.loads(data[line_start:line_end].decode('utf-8', errors='replace'))
                 except json.JSONDecodeError:
-                    search_end = match
-                    continue
+                    if line_end == len(data) and data[-1:] != b'\\n':
+                        search_end = match
+                        continue
+                    raise
                 event_ms = parse_aware_timestamp_ms(event.get('ts'))
                 if event.get('type') == event_type and event_ms is not None:
                     if (event_type != 'turn_started' or isinstance(event.get('turn_number'), int)) and (
