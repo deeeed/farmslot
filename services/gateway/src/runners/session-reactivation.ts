@@ -38,6 +38,7 @@ import {
   type RunnerSendRecoveryContext,
   sendRunnerInstructionSafely,
   sendRunnerPostLaunchPrompt,
+  withRunnerPromptMutationBoundary,
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
@@ -72,6 +73,7 @@ export interface RunnerSessionReactivationOptions {
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
   acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
+  onPromptMutationStart?: () => void;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
@@ -252,6 +254,7 @@ async function relaunchRunnerWithArgvPrompt(
     },
   );
   try {
+    options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(
       options.vars,
       owningWindowId,
@@ -442,6 +445,7 @@ async function reactivateRunnerSessionWithPrompt(
       },
     )}`;
     paneMutationStarted = true;
+    options.onPromptMutationStart?.();
     await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
       preserveWindowAfterExit: true,
     });
@@ -581,26 +585,30 @@ export async function deliverPromptInPlace(
       runner,
       sentAtMs,
     );
-    const accepted = await sendRunnerInstructionSafely(
-      options.vars,
-      options.target,
-      runner,
-      options.prompt,
-      options.sendLogPrefix ?? '[retained-handoff]',
-      timeoutMs,
-      {
-        forceBusyPoll: options.forceBusyPoll ?? true,
-        recovery: options.recovery,
-        ...(options.sessionId && options.sessionPath
-          ? {
-              retainedSession: {
-                sessionId: options.sessionId,
-                sessionPath: options.sessionPath,
-              },
-            }
-          : {}),
-      },
-    );
+    const send = () =>
+      sendRunnerInstructionSafely(
+        options.vars,
+        options.target,
+        runner,
+        options.prompt,
+        options.sendLogPrefix ?? '[retained-handoff]',
+        timeoutMs,
+        {
+          forceBusyPoll: options.forceBusyPoll ?? true,
+          recovery: options.recovery,
+          ...(options.sessionId && options.sessionPath
+            ? {
+                retainedSession: {
+                  sessionId: options.sessionId,
+                  sessionPath: options.sessionPath,
+                },
+              }
+            : {}),
+        },
+      );
+    const accepted = options.onPromptMutationStart
+      ? await withRunnerPromptMutationBoundary(options.onPromptMutationStart, send)
+      : await send();
     if (accepted && options.launchAckSignalPath) {
       // Pane-only runners have no exact prompt hook/native acknowledgement.
       // Probe the generic task signal once, then preserve the runner-specific
@@ -882,35 +890,41 @@ export async function deliverPromptToLiveRunner(
       return unacknowledgedPriorSendHold(runner);
     }
     const handoffAckSinceMs = Date.now();
-    await sendRunnerPostLaunchPrompt(
-      options.vars,
-      options.target,
-      runner,
-      options.prompt,
-      options.promptMarker,
-      options.sendLogPrefix ?? 'live-runner-handoff',
-      {
-        readyTimeoutMs: options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS,
-        maxAttempts: 5,
-        ...(options.taskDir
-          ? {
-              blockerSnapshotPath: `${options.taskDir}/artifacts/runner-blockers/live-runner-handoff.txt`,
-            }
-          : {}),
-        ...(options.launchAckSignalPath
-          ? {
-              signalPath: options.launchAckSignalPath,
-              launchAckSignalPath: options.launchAckSignalPath,
-            }
-          : {}),
-        launchAckBaseline: options.launchAckBaseline,
-        requirePromptDigest: true,
-        acceptExistingLaunchAck: options.acceptExistingLaunchAck,
-        handoffAckSinceMs,
-        softAcceptOnHandoffAck: true,
-        ...(options.runtimeDir ? { runtimeDir: options.runtimeDir } : {}),
-      },
-    );
+    const send = () =>
+      sendRunnerPostLaunchPrompt(
+        options.vars,
+        options.target,
+        runner,
+        options.prompt,
+        options.promptMarker,
+        options.sendLogPrefix ?? 'live-runner-handoff',
+        {
+          readyTimeoutMs: options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS,
+          maxAttempts: 5,
+          ...(options.taskDir
+            ? {
+                blockerSnapshotPath: `${options.taskDir}/artifacts/runner-blockers/live-runner-handoff.txt`,
+              }
+            : {}),
+          ...(options.launchAckSignalPath
+            ? {
+                signalPath: options.launchAckSignalPath,
+                launchAckSignalPath: options.launchAckSignalPath,
+              }
+            : {}),
+          launchAckBaseline: options.launchAckBaseline,
+          requirePromptDigest: true,
+          acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+          handoffAckSinceMs,
+          softAcceptOnHandoffAck: true,
+          ...(options.runtimeDir ? { runtimeDir: options.runtimeDir } : {}),
+        },
+      );
+    if (options.onPromptMutationStart) {
+      await withRunnerPromptMutationBoundary(options.onPromptMutationStart, send);
+    } else {
+      await send();
+    }
     return { delivered: true, acknowledgement: 'structured' };
   } catch (error) {
     return {

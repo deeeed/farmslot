@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Block automatic CI-fix retries when a prompt may have been sent without confirmation, so the same fix is not dispatched twice.
+- Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
 
 - Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
 - Require an exact prompt acknowledgement when recovering an in-place CI fix; a stored working status alone cannot prove delivery. A recovered self-review fix keeps waiting for its terminal signal after the acknowledgement window instead of failing a busy worker.

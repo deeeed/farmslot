@@ -2273,6 +2273,14 @@ type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
  * already-buffered text adds no copy.
  */
 const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
+const promptMutationStore = new AsyncLocalStorage<() => void>();
+
+export function withRunnerPromptMutationBoundary<Result>(
+  onMutation: () => void,
+  send: () => Promise<Result>,
+): Promise<Result> {
+  return promptMutationStore.run(onMutation, send);
+}
 
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -2290,6 +2298,7 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
+    promptMutationStore.getStore()?.();
     const write = await execOnSlot(
       vars,
       tmuxSendTextCommand(target, message, {
@@ -2322,6 +2331,7 @@ async function submitRunnerInstruction(
       return 'not-buffered';
     }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
+    promptMutationStore.getStore()?.();
     await execOnSlot(
       vars,
       tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`),
@@ -3555,6 +3565,7 @@ export async function sendRunnerPostLaunchPrompt(
       });
     }
     const sentAtMs = Date.now();
+    promptMutationStore.getStore()?.();
     const promptResult = await execOnSlot(vars, sendCommand);
     if (promptResult.exitCode !== 0) {
       throw new Error(

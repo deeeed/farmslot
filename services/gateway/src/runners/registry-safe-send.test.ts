@@ -254,6 +254,7 @@ const {
   runnerSupportsInitialPromptArg,
   sendRunnerInstructionSafely,
   sendRunnerPostLaunchPrompt,
+  withRunnerPromptMutationBoundary,
 } = await import('./registry.js');
 
 test('initial prompt capability rejects unknown runner ids', () => {
@@ -301,6 +302,18 @@ test('launch observation requires exact high-confidence acceptance and never tou
       /requires a prompt acceptance boundary/,
     );
     assert.deepEqual(callOrder, []);
+    let mutationStarts = 0;
+    await withRunnerPromptMutationBoundary(
+      () => {
+        mutationStarts += 1;
+      },
+      () =>
+        sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 1, {
+          observeOnly: true,
+          acceptanceSinceMs: Date.now() - 100,
+        }),
+    );
+    assert.equal(mutationStarts, 0);
   } finally {
     promptAcceptedReading = previousReading;
   }
@@ -326,9 +339,13 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
 
   // Codex owns the pane-fallback decision path (Claude is hook-only per ADR-032 Phase 3): it
   // consults observability first, then the pane.
-  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
-    forceBusyPoll: true,
-  });
+  const sent = await withRunnerPromptMutationBoundary(
+    () => callOrder.push('mutation:start'),
+    () =>
+      sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
+        forceBusyPoll: true,
+      }),
+  );
 
   assert.equal(sent, true);
   const obsPromptIdx = callOrder.indexOf('obs:promptAccepted');
@@ -336,6 +353,11 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   const firstPaneIdx = callOrder.indexOf('pane:capture');
   assert.ok(obsPromptIdx >= 0, `expected obs:promptAccepted in ${callOrder.join(',')}`);
   assert.ok(obsActivityIdx >= 0, `expected obs:getActivity in ${callOrder.join(',')}`);
+  assert.ok(
+    callOrder.includes('mutation:start'),
+    `expected send boundary in ${callOrder.join(',')}`,
+  );
+  assert.ok(callOrder.indexOf('mutation:start') < callOrder.indexOf('tmux:send'));
   assert.ok(
     obsPromptIdx < firstPaneIdx,
     `obs promptAccepted should precede first pane capture; order=${callOrder.join(',')}`,
@@ -348,6 +370,7 @@ test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to ses
 });
 
 test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in', async () => {
+  let mutationStarts = 0;
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
   paneText = '❯\nctx:12%\n';
@@ -358,13 +381,20 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     observedAt: Date.now(),
   };
 
-  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-    readyTimeoutMs: 100,
-    stabilityPolls: 1,
-    pollIntervalMs: 0,
-    verifyWaitMs: 0,
-    maxAttempts: 1,
-  });
+  await withRunnerPromptMutationBoundary(
+    () => {
+      mutationStarts += 1;
+    },
+    () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+        readyTimeoutMs: 100,
+        stabilityPolls: 1,
+        pollIntervalMs: 0,
+        verifyWaitMs: 0,
+        maxAttempts: 1,
+      }),
+  );
+  assert.equal(mutationStarts, 0);
 
   assert.ok(
     handoffRequirePromptDigestValues.every((value) => value !== true),
@@ -392,6 +422,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
 });
 
 test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async (t) => {
+  let mutationStarts = 0;
   t.after(() => {
     paneTextAfterLiteralSend = null;
     paneTextAfterBareSend = null;
@@ -414,18 +445,35 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
   };
 
   await assert.rejects(
-    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
-      readyTimeoutMs: 100,
-      stabilityPolls: 1,
-      pollIntervalMs: 0,
-      verifyWaitMs: 0,
-      maxAttempts: 2,
-      requirePromptDigest: true,
-    }),
+    withRunnerPromptMutationBoundary(
+      () => {
+        mutationStarts += 1;
+        callOrder.push('mutation:start');
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(
+          vars,
+          target,
+          'claude',
+          reviewMessage,
+          'SELF-REVIEW.md',
+          '[test]',
+          {
+            readyTimeoutMs: 100,
+            stabilityPolls: 1,
+            pollIntervalMs: 0,
+            verifyWaitMs: 0,
+            maxAttempts: 2,
+            requirePromptDigest: true,
+          },
+        ),
+    ),
     PromptDeliveryUncertainError,
   );
 
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.equal(mutationStarts, 2);
+  assert.ok(callOrder.indexOf('mutation:start') < callOrder.indexOf('tmux:send-literal'));
   assert.equal(
     callOrder.filter((entry) => entry === 'tmux:send').length,
     2,
