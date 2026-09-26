@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Simulator boot readiness through Gateway",
-  "description": "Boot a free iOS simulator through resource.control, verify resource.health observes it running, then shut it down and verify it stopped.",
+  "description": "Lease a free iOS simulator through the Gateway, verify resource.health observes it running, then release the lease and verify it stopped.",
   "paramsSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -17,7 +17,8 @@
       "check-slot": {
         "action": "command",
         "intent": "Require a free slot before taking control of its simulator.",
-        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{}' | jq -ec '.fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .lifecycle == \"ready\" and .currentRunId == null and .agent == \"idle\") | {slot,lifecycle,currentRunId,agent}'",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=120000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{\"forceRefresh\":true}' | jq -ec 'select(.fleet.stale != true) | .fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .lifecycle == \"ready\" and .currentRunId == null and .agent == \"idle\") | {slot,lifecycle,currentRunId,agent}'",
+        "timeout_ms": 135000,
         "next": "check-stopped"
       },
       "check-stopped": {
@@ -29,7 +30,7 @@
       },
       "boot": {
         "action": "command",
-        "intent": "Boot through the Gateway, verify health, and restore the stopped state even when verification fails.",
+        "intent": "Acquire an exclusive Gateway simulator lease, verify health, and release the lease even when verification fails.",
         "cmd": "sh projects/farmslot-farm/setup/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
         "timeout_ms": 540000,
         "next": "boot-succeeded"
@@ -39,7 +40,7 @@
         "source": "boot",
         "stream": "stdout",
         "contains": "boot:ok:",
-        "intent": "Require the Gateway boot operation to report success.",
+        "intent": "Require the Gateway simulator lease to report success.",
         "next": "health"
       },
       "health": {
@@ -55,7 +56,7 @@
         "source": "boot",
         "stream": "stdout",
         "contains": "shutdown:ok:",
-        "intent": "Require the Gateway shutdown operation to report success.",
+        "intent": "Require the Gateway simulator lease release to report success.",
         "next": "stopped"
       },
       "stopped": {

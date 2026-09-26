@@ -295,13 +295,22 @@ function validatePropertySchema(
     );
   }
   if (hasOwn(schema, 'pattern')) {
-    if (!compileParamPattern(schema.pattern) || !schemaIncludesType(schema.type, 'string')) {
+    const pattern = compileParamPattern(schema.pattern);
+    if (!pattern || !schemaIncludesType(schema.type, 'string')) {
       addFinding(
         ctx,
         'error',
         'recipe.invalid_param_pattern',
         `${path}.pattern`,
         `${path}.pattern must be a valid regular expression for a string parameter.`,
+      );
+    } else if (typeof schema.default === 'string' && !pattern.test(schema.default)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_param_default_pattern',
+        `${path}.default`,
+        `${path}.default does not match ${path}.pattern.`,
       );
     }
   }

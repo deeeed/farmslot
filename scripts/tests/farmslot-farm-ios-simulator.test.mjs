@@ -107,7 +107,8 @@ test('simulator readiness handles health failure and extra stream fields', () =>
     `#!/bin/sh
 case "$3" in
   fleet.status)
-    printf '{"fleet":{"slots":[{"slot":"mini-mm-2","lifecycle":"%s","currentRunId":null,"agent":"idle"}]}}\\n' "$SLOT_LIFECYCLE" ;;
+    if test "$STALE_FLEET" = yes; then stale=true; else stale=false; fi
+    printf '{"fleet":{"stale":%s,"slots":[{"slot":"mini-mm-2","dispatchable":true,"lifecycle":"%s","currentRunId":null,"agent":"idle"}]}}\\n' "$stale" "$SLOT_LIFECYCLE" ;;
   resource.device.inventory)
     current_state=$(cat "$BOOT_STATE")
     if test "$current_state" = booting; then
@@ -136,17 +137,21 @@ case "$3" in
       fi
       printf '{"resources":[{"id":"ios-sim","status":"running","stream":{"state":"cached"}}]}\\n'
     fi ;;
-  resource.control)
-    case "$4" in
-      *'"action":"boot"'*)
-        printf 'boot\\n' >> "$TRACE"
-        if test "$FAIL_BOOT_DURING_START" = yes; then printf booting > "$BOOT_STATE"; exit 1; fi
-        printf booted > "$BOOT_STATE" ;;
-      *'"action":"shutdown"'*)
-        if test "$(cat "$BOOT_STATE")" != booted; then printf '{"ok":true,"detail":"already stopped"}\\n'; exit 0; fi
-        printf 'stopped' > "$BOOT_STATE"; printf 'shutdown\\n' >> "$TRACE" ;;
-    esac
-    printf '{"ok":true,"detail":"simulator output"}\\n' ;;
+  runtime.capability.acquire)
+    if test "$LEASE_HELD" = yes; then
+      printf '{"ok":false,"conflict":{"kind":"resource-held"}}\\n'
+      exit 0
+    fi
+    printf 'boot\\n' >> "$TRACE"
+    if test "$FAIL_BOOT_DURING_START" = yes; then printf booting > "$BOOT_STATE"; exit 1; fi
+    printf booted > "$BOOT_STATE"
+    printf '{"ok":true,"lease":{"capabilityId":"ios-simulator"}}\\n' ;;
+  runtime.capability.release)
+    if test "$(cat "$BOOT_STATE")" = booted; then
+      printf stopped > "$BOOT_STATE"
+      printf 'shutdown\\n' >> "$TRACE"
+    fi
+    printf '{"ok":true,"released":[{"capabilityId":"ios-simulator"}]}\\n' ;;
 esac
 `,
     { mode: 0o755 },
@@ -252,6 +257,36 @@ esac
       },
     });
     assert.notEqual(reserved.status, 0);
+    assert.equal(readFileSync(trace, 'utf8'), '');
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+
+    const stale = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        STALE_FLEET: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.notEqual(stale.status, 0);
+    assert.equal(readFileSync(trace, 'utf8'), '');
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+
+    const occupied = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        LEASE_HELD: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.notEqual(occupied.status, 0);
     assert.equal(readFileSync(trace, 'utf8'), '');
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
   } finally {

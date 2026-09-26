@@ -225,6 +225,16 @@ test('string parameter patterns reject shell metacharacters before recipe interp
   };
   assert.equal(validateRecipeParamsSchema(paramsSchema).status, 'valid');
   assert.equal(validateRecipeParams({ slot_id: 'mini-mm-2' }, paramsSchema).status, 'valid');
+  const invalidDefaultSchema = structuredClone(paramsSchema);
+  (invalidDefaultSchema.properties.slot_id as Record<string, unknown>).default =
+    'mini-mm-2; echo unsafe';
+  const invalidDefault = validateRecipeParamsSchema(invalidDefaultSchema);
+  assert.equal(invalidDefault.status, 'invalid');
+  assert.ok(
+    invalidDefault.findings.some(
+      (finding) => finding.code === 'recipe.invalid_param_default_pattern',
+    ),
+  );
   for (const slotId of ["mini-mm-2'; touch /tmp/injected; echo '", 'mini-mm-2\n']) {
     assert.equal(validateRecipeParams({ slot_id: slotId }, paramsSchema).status, 'invalid');
   }

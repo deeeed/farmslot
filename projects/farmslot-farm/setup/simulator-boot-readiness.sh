@@ -4,8 +4,9 @@ set -eu
 slot_id=$1
 gateway_port=$2
 resource_args="{\"slotId\":\"$slot_id\",\"resourceId\":\"ios-sim\"}"
-boot_args="{\"slotId\":\"$slot_id\",\"resourceId\":\"ios-sim\",\"action\":\"boot\"}"
-shutdown_args="{\"slotId\":\"$slot_id\",\"resourceId\":\"ios-sim\",\"action\":\"shutdown\"}"
+owner_run_id="simulator-readiness-$$"
+acquire_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"proofRequirement\":{\"capabilityId\":\"ios-simulator\",\"reason\":\"Simulator boot readiness\",\"mode\":\"state\"}}"
+release_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"keepWarm\":false}"
 boot_attempted=no
 
 rpc() {
@@ -19,13 +20,13 @@ health() {
 }
 
 ready() {
-  rpc fleet.status '{}' 15000 |
-    jq -ec --arg slot "$slot_id" '.fleet.slots[] | select(.slot == $slot and .lifecycle == "ready" and .currentRunId == null and .agent == "idle")' >/dev/null
+  rpc fleet.status '{"forceRefresh":true}' 120000 |
+    jq -ec --arg slot "$slot_id" 'select(.fleet.stale != true) | .fleet.slots[] | select(.slot == $slot and .lifecycle == "ready" and .currentRunId == null and .agent == "idle")' >/dev/null
 }
 
 shutdown() {
-  result=$(rpc resource.control "$shutdown_args" 45000)
-  printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null
+  result=$(rpc runtime.capability.release "$release_args" 45000)
+  printf '%s\n' "$result" | jq -e '.ok == true and any(.released[]?; .capabilityId == "ios-simulator")' >/dev/null
   printf 'shutdown:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 }
 
@@ -38,7 +39,7 @@ cleanup() {
     state=$(printf '%s\n' "$inventory" | jq -er --arg slot "$slot_id" '.devices[] | select(.platform == "ios" and (.configuredForSlots | index($slot))) | .state') || return 1
     case "$state" in
       Shutdown) return 0 ;;
-      Booted) shutdown >/dev/null || return 1 ;;
+      Booted) shutdown >/dev/null || return 1; sleep 2 ;;
       Booting|"Shutting Down") sleep 2 ;;
       *) printf 'Simulator cleanup cannot resolve state: %s\n' "$state" >&2; return 1 ;;
     esac
@@ -53,8 +54,8 @@ trap 'exit 143' TERM
 ready
 health | jq -e '.status == "stopped"' >/dev/null
 boot_attempted=yes
-result=$(rpc resource.control "$boot_args" 150000)
-printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null
+result=$(rpc runtime.capability.acquire "$acquire_args" 150000)
+printf '%s\n' "$result" | jq -e '.ok == true and .lease.capabilityId == "ios-simulator"' >/dev/null
 printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 
 observed=no
