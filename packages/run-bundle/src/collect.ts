@@ -7,14 +7,19 @@ import { resolveRunsDir } from './paths.js';
 
 /**
  * The runs directory also holds other stores' JSON (`runtime-capabilities-<port>.json`).
- * A file is a run record only when its payload id names the file; anything else is not
- * a run to load, migrate, or rewrite. Shared with the Gateway run store.
+ * A file is a run record only when its payload id names the file and it carries the
+ * fields every run reader dereferences (`status`, `steps`, `createdAt`); anything else
+ * is not a run to load, migrate, or rewrite. Shared with the Gateway run store.
  */
 export function parseRunRecordFile(name: string, raw: string): Run | null {
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const id = (parsed as { id?: unknown }).id;
-  if (typeof id !== 'string' || id === '' || name !== `${id}.json`) return null;
+  const record = parsed as Partial<Record<'id' | 'status' | 'steps' | 'createdAt', unknown>>;
+  if (typeof record.id !== 'string' || record.id === '' || name !== `${record.id}.json`) {
+    return null;
+  }
+  if (typeof record.status !== 'string' || !Array.isArray(record.steps)) return null;
+  if (typeof record.createdAt !== 'string') return null;
   return parsed as Run;
 }
 

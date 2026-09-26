@@ -789,6 +789,8 @@ test('loadAllRuns leaves non-run JSON untouched across restarts', async (t) => {
         variant: null,
       },
       'stale-copy.json': { ...validRun, id: 'e5f6a7b8-1111-4222-8333-444455556666' },
+      // Filename-matched JSON without the run shape (status, steps, createdAt).
+      'f6a7b8c9-1111-4222-8333-444455556666.json': { id: 'f6a7b8c9-1111-4222-8333-444455556666' },
     },
   };
   const gatewayRoot = path.resolve(import.meta.dirname, '../..');

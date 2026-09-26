@@ -11,7 +11,8 @@ test('run records skip non-run JSON that shares the runs directory', (t) => {
   t.after(() => rmSync(runsDir, { recursive: true, force: true }));
   const runId = 'a1b2c3d4-1111-4222-8333-444455556666';
   const capabilityStore = { version: 1, leases: [], proofPlans: {}, events: [] };
-  writeFileSync(path.join(runsDir, `${runId}.json`), JSON.stringify({ id: runId, status: 'done' }));
+  const run = { id: runId, status: 'done', steps: [], createdAt: '2026-09-26T08:00:00.000Z' };
+  writeFileSync(path.join(runsDir, `${runId}.json`), JSON.stringify(run));
   writeFileSync(
     path.join(runsDir, 'runtime-capabilities-7777.json'),
     JSON.stringify(capabilityStore),
@@ -22,8 +23,10 @@ test('run records skip non-run JSON that shares the runs directory', (t) => {
   );
   writeFileSync(
     path.join(runsDir, 'stale-copy.json'),
-    JSON.stringify({ id: 'b2c3d4e5-1111-4222-8333-444455556666', status: 'done' }),
+    JSON.stringify({ ...run, id: 'b2c3d4e5-1111-4222-8333-444455556666' }),
   );
+  // Filename-matched JSON without the run shape is not a run either.
+  writeFileSync(path.join(runsDir, 'foo.json'), JSON.stringify({ id: 'foo' }));
 
   assert.deepEqual(
     loadAllRunRecords(runsDir).map((run) => run.id),
@@ -31,6 +34,7 @@ test('run records skip non-run JSON that shares the runs directory', (t) => {
   );
   assert.equal(loadRunRecord(runsDir, 'runtime'), null);
   assert.equal(loadRunRecord(runsDir, 'undefined'), null);
+  assert.equal(loadRunRecord(runsDir, 'foo'), null);
   assert.equal(loadRunRecord(runsDir, runId.slice(0, 8))?.id, runId);
   // A non-run file sorting before the run under the same prefix must not hide it.
   writeFileSync(path.join(runsDir, 'a1b2-copy.json'), JSON.stringify(capabilityStore));
