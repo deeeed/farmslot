@@ -1645,6 +1645,63 @@ test('retryDeferredFixDelivery keeps the stored target when re-resolution confir
   assert.equal(persistCalls, 0);
 });
 
+test('retryDeferredFixDelivery never rediscover or persist a pane after a possible send', async () => {
+  const sends: string[] = [];
+  const sendAttempted = true;
+  let rediscoverCalls = 0;
+  let persistCalls = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-uncertain-send',
+    target: 'coredev-1:dev',
+    send: async (target) => {
+      sends.push(target);
+      return sends.length === 2;
+    },
+    rediscover: async () => {
+      rediscoverCalls += 1;
+      return { target: 'coredev-1:other', window: 'other', seenWindows: [] };
+    },
+    persistTarget: async () => {
+      persistCalls += 1;
+    },
+    getRun: (() => ({ status: 'working' })) as any,
+    isTargetBound: () => sendAttempted,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, true);
+  assert.deepEqual(sends, ['coredev-1:dev', 'coredev-1:dev']);
+  assert.equal(rediscoverCalls, 0);
+  assert.equal(persistCalls, 0);
+});
+
+test('retryDeferredFixDelivery pins the adopted pane once a retry may have sent', async () => {
+  const sends: string[] = [];
+  let sendAttempted = false;
+  let rediscoverCalls = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-mid-retry-send',
+    target: 'coredev-1:dev',
+    send: async (target) => {
+      sends.push(target);
+      sendAttempted = true;
+      return sends.length === 2;
+    },
+    rediscover: async () => {
+      rediscoverCalls += 1;
+      return { target: `coredev-1:other-${rediscoverCalls}`, window: 'other', seenWindows: [] };
+    },
+    persistTarget: async () => {},
+    getRun: (() => ({ status: 'working' })) as any,
+    isTargetBound: () => sendAttempted,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, true);
+  assert.deepEqual(sends, ['coredev-1:other-1', 'coredev-1:other-1']);
+  assert.equal(rediscoverCalls, 1);
+});
+
 test('retryDeferredFixDelivery reports the inspected windows when no pane ever accepts', async () => {
   const result = await retryDeferredFixDelivery({
     runId: 'run-rediscovery-3',

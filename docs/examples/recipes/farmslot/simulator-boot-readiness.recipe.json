@@ -7,7 +7,7 @@
     "additionalProperties": false,
     "required": ["slot_id", "gateway_port"],
     "properties": {
-      "slot_id": { "type": "string" },
+      "slot_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])" },
       "gateway_port": { "type": "integer" }
     }
   },
@@ -30,7 +30,7 @@
       "boot": {
         "action": "command",
         "intent": "Boot through the Gateway, verify health, and restore the stopped state even when verification fails.",
-        "cmd": "sh scripts/runner-validation/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
+        "cmd": "sh projects/farmslot-farm/setup/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
         "timeout_ms": 540000,
         "next": "boot-succeeded"
       },

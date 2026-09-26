@@ -6,13 +6,15 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { validateRecipeParams, validateRecipeParamsSchema } from '@farmslot/protocol';
+
 const projectPath = fileURLToPath(
   new URL('../../projects/farmslot-farm/project.json', import.meta.url),
 );
 const project = JSON.parse(readFileSync(projectPath, 'utf8'));
 const bootHook = project.resources['ios-sim'].hooks.boot.replaceAll('{{simulator}}', 'fs-2');
 const readinessScript = fileURLToPath(
-  new URL('../runner-validation/simulator-boot-readiness.sh', import.meta.url),
+  new URL('../../projects/farmslot-farm/setup/simulator-boot-readiness.sh', import.meta.url),
 );
 const readinessRecipe = JSON.parse(
   readFileSync(
@@ -27,6 +29,19 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 test('simulator readiness recipe allows boot, health retries, shutdown, and cleanup', () => {
   assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 480_000);
+  assert.equal(validateRecipeParamsSchema(readinessRecipe.paramsSchema).status, 'valid');
+  for (const slotId of [
+    'mini-mm-2',
+    "mini-mm-2'; touch /tmp/farmslot-injection; echo '",
+    'mini-mm-2\n',
+    '',
+  ]) {
+    const result = validateRecipeParams(
+      { slot_id: slotId, gateway_port: 7801 },
+      readinessRecipe.paramsSchema,
+    );
+    assert.equal(result.status, slotId === 'mini-mm-2' ? 'valid' : 'invalid');
+  }
 });
 
 test('simulator boot waits for readiness and is safe to retry', () => {

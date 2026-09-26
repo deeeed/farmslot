@@ -1956,10 +1956,9 @@ export interface FixDeliveryRetryResult {
 
 /**
  * Retry a deferred fix-task send until it lands or the window closes. Before
- * each retry the worker pane is re-resolved: the stored target is kept while
- * it still hosts the runner, otherwise the session's accepting runner pane is
- * adopted and persisted so later sends follow the same pane. Bails early when
- * the run reaches a terminal status underneath the loop.
+ * each retry the worker pane is re-resolved until a prompt might have been
+ * sent, then retries remain bound to that pane. Bails early when the run
+ * reaches a terminal status underneath the loop.
  */
 export async function retryDeferredFixDelivery({
   runId,
@@ -1969,6 +1968,7 @@ export async function retryDeferredFixDelivery({
   persistTarget,
   getRun: getRunDep,
   shouldAbort = () => false,
+  isTargetBound = () => false,
   retryIntervalMs = SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -1979,6 +1979,7 @@ export async function retryDeferredFixDelivery({
   persistTarget: (target: string, window: string | null) => Promise<void>;
   getRun: typeof getRun;
   shouldAbort?: () => boolean;
+  isTargetBound?: () => boolean;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
@@ -2000,14 +2001,16 @@ export async function retryDeferredFixDelivery({
       `[self-review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${retryIntervalMs / 1000}s`,
     );
     await new Promise((r) => setTimeout(r, retryIntervalMs));
-    const rediscovery = await rediscover(currentTarget);
-    if (rediscovery.seenWindows.length > 0) seenWindows = rediscovery.seenWindows;
-    if (rediscovery.target && rediscovery.target !== currentTarget) {
-      console.warn(
-        `[self-review] run ${runId.slice(0, 8)} — fix delivery target ${currentTarget} no longer hosts the runner; adopting ${rediscovery.target}`,
-      );
-      currentTarget = rediscovery.target;
-      await persistTarget(currentTarget, rediscovery.window);
+    if (!isTargetBound()) {
+      const rediscovery = await rediscover(currentTarget);
+      if (rediscovery.seenWindows.length > 0) seenWindows = rediscovery.seenWindows;
+      if (rediscovery.target && rediscovery.target !== currentTarget) {
+        console.warn(
+          `[self-review] run ${runId.slice(0, 8)} — fix delivery target ${currentTarget} no longer hosts the runner; adopting ${rediscovery.target}`,
+        );
+        currentTarget = rediscovery.target;
+        await persistTarget(currentTarget, rediscovery.window);
+      }
     }
     sent = await send(currentTarget);
   }
@@ -2259,8 +2262,7 @@ async function sendOwnedFeedbackToWorker(
       // worker was mid-merge and picked the task up instantly once idle. So:
       // keep retrying on an interval until the worker accepts or the window
       // closes, bailing early if the run is cancelled underneath us. Each
-      // retry re-resolves the worker pane first: a revived worker can sit in
-      // a different window than the recorded target.
+      // retry re-resolves the worker pane until a send has been attempted.
       const retry = await retryDeferredFixDelivery({
         runId,
         target: workerTarget,
@@ -2279,6 +2281,7 @@ async function sendOwnedFeedbackToWorker(
         },
         getRun,
         shouldAbort: () => terminalRetainedHoldReason != null,
+        isTargetBound: () => promptSendAttempted,
       });
       sent = retry.sent;
       workerTarget = retry.target;

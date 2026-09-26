@@ -869,6 +869,7 @@ async function attemptInlineCIFix(
             },
             getRun,
             shouldAbort: () => ciDeliveryTerminal,
+            isTargetBound: () => ciPromptSendAttempted || sendOutcomeUnknown,
           });
           sent = retry.sent;
           workerTarget = retry.target;
