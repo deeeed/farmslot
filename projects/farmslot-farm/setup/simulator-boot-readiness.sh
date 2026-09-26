@@ -7,7 +7,8 @@ resource_args="{\"slotId\":\"$slot_id\",\"resourceId\":\"ios-sim\"}"
 owner_run_id="simulator-readiness-$$"
 acquire_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"proofRequirement\":{\"capabilityId\":\"ios-simulator\",\"reason\":\"Simulator boot readiness\",\"mode\":\"state\"}}"
 release_args="{\"slotId\":\"$slot_id\",\"capabilityId\":\"ios-simulator\",\"ownerRunId\":\"$owner_run_id\",\"keepWarm\":false}"
-boot_attempted=no
+lease_acquired=no
+lease_released=no
 
 rpc() {
   FARMSLOT_RPC_TIMEOUT_MS=$3 FARMSLOT_GATEWAY="ws://127.0.0.1:$gateway_port/ws" \
@@ -27,20 +28,21 @@ ready() {
 shutdown() {
   result=$(rpc runtime.capability.release "$release_args" 45000)
   printf '%s\n' "$result" | jq -e '.ok == true and any(.released[]?; .capabilityId == "ios-simulator")' >/dev/null
+  lease_released=yes
   printf 'shutdown:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 }
 
 cleanup() {
-  if [ "$boot_attempted" != yes ]; then return 0; fi
+  if [ "$lease_acquired" != yes ]; then return 0; fi
+  if [ "$lease_released" != yes ]; then shutdown >/dev/null || return 1; fi
   attempt=0
   while [ "$attempt" -lt 60 ]; do
     attempt=$((attempt + 1))
     inventory=$(rpc resource.device.inventory "{\"slotId\":\"$slot_id\",\"refresh\":true}" 15000) || return 1
     state=$(printf '%s\n' "$inventory" | jq -er --arg slot "$slot_id" '.devices[] | select(.platform == "ios" and (.configuredForSlots | index($slot))) | .state') || return 1
     case "$state" in
-      Shutdown) return 0 ;;
-      Booted) shutdown >/dev/null || return 1; sleep 2 ;;
-      Booting|"Shutting Down") sleep 2 ;;
+      Shutdown) lease_acquired=no; return 0 ;;
+      Booted|Booting|"Shutting Down") sleep 2 ;;
       *) printf 'Simulator cleanup cannot resolve state: %s\n' "$state" >&2; return 1 ;;
     esac
   done
@@ -53,9 +55,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 ready
 health | jq -e '.status == "stopped"' >/dev/null
-boot_attempted=yes
 result=$(rpc runtime.capability.acquire "$acquire_args" 300000)
 printf '%s\n' "$result" | jq -e '.ok == true and .lease.capabilityId == "ios-simulator"' >/dev/null
+lease_acquired=yes
 printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 
 observed=no
@@ -84,7 +86,6 @@ for attempt in 1 2 3 4 5 6; do
   if printf '%s\n' "$snapshot" | jq -e '.status == "stopped"' >/dev/null; then
     printf 'stopped:%s\n' "$snapshot"
     cleanup
-    boot_attempted=no
     exit 0
   fi
   sleep 2

@@ -119,6 +119,10 @@ case "$3" in
       printf 'Shutting Down' > "$INVENTORY_TRANSITION_SEEN"
       current_state='Shutting Down'
     fi
+    if test "$current_state" = Shutdown && test "$LAG_INVENTORY" = yes && test ! -f "$INVENTORY_LAG_SEEN"; then
+      : > "$INVENTORY_LAG_SEEN"
+      current_state=Booted
+    fi
     if test "$FORCE_INVENTORY_BOOTING" = yes; then current_state=Booting; fi
     printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state" ;;
   resource.health)
@@ -151,14 +155,16 @@ case "$3" in
       exit 0
     fi
     printf 'boot\\n' >> "$TRACE"
-    if test "$FAIL_BOOT_DURING_START" = yes; then printf booting > "$BOOT_STATE"; exit 1; fi
-    printf booted > "$BOOT_STATE"
+    if test "$FAIL_BOOT_DURING_START" = yes; then exit 1; fi
+    if test "$STOP_AFTER_ACQUIRE" = yes; then printf stopped > "$BOOT_STATE"; else printf booted > "$BOOT_STATE"; fi
     printf '{"ok":true,"lease":{"capabilityId":"ios-simulator"}}\\n' ;;
   runtime.capability.release)
-    if test "$(cat "$BOOT_STATE")" = booted; then
-      printf stopped > "$BOOT_STATE"
-      printf 'shutdown\\n' >> "$TRACE"
+    if test "$LAG_INVENTORY" = yes; then
+      if test -f "$RELEASE_SENTINEL"; then printf '{"ok":true,"released":[]}\\n'; exit 0; fi
+      : > "$RELEASE_SENTINEL"
     fi
+    printf stopped > "$BOOT_STATE"
+    printf 'shutdown\\n' >> "$TRACE"
     printf '{"ok":true,"released":[{"capabilityId":"ios-simulator"}]}\\n' ;;
 esac
 `,
@@ -236,6 +242,43 @@ esac
     assert.equal(readFileSync(inventoryTransitionSeen, 'utf8'), 'Shutting Down');
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
 
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const earlyStop = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        STOP_AFTER_ACQUIRE: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.notEqual(earlyStop.status, 0);
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const inventoryLagSeen = path.join(directory, 'inventory-lag-seen');
+    const releaseSentinel = path.join(directory, 'release-sentinel');
+    const delayedInventory = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        LAG_INVENTORY: 'yes',
+        INVENTORY_LAG_SEEN: inventoryLagSeen,
+        RELEASE_SENTINEL: releaseSentinel,
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.equal(delayedInventory.status, 0, delayedInventory.stderr.toString());
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+
     const inventoryCommand = readinessRecipe.workflow.nodes['verify-inventory'].cmd
       .replaceAll('{{params.slot_id}}', 'mini-mm-2')
       .replaceAll('{{params.gateway_port}}', '7801');
@@ -269,7 +312,7 @@ esac
     });
     assert.notEqual(failedDuringBoot.status, 0);
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
-    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot']);
 
     writeFileSync(state, 'stopped');
     writeFileSync(trace, '');
