@@ -28,7 +28,7 @@ const readinessRecipe = JSON.parse(
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 test('simulator readiness recipe allows boot, health retries, shutdown, and cleanup', () => {
-  assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 720_000);
+  assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 1_200_000);
   assert.equal(validateRecipeParamsSchema(readinessRecipe.paramsSchema).status, 'valid');
   for (const slotId of [
     'mini-mm-2',
@@ -146,7 +146,7 @@ case "$3" in
       printf '{"resources":[{"id":"ios-sim","status":"running","stream":{"state":"cached"}}]}\\n'
     fi ;;
   runtime.capability.acquire)
-    if test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 300000; then
+    if test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 420000; then
       printf 'Acquisition timeout is shorter than its dependency and boot budgets\n' >&2
       exit 1
     fi
@@ -171,7 +171,7 @@ case "$3" in
       printf '{"ok":true,"released":[]}\\n'
       exit 0
     fi
-    if test "$FAIL_ACQUIRE_RESPONSE" = yes && test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 300000; then
+    if test "$FAIL_ACQUIRE_RESPONSE" = yes && test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 540000; then
       printf 'Release cannot wait for an in-flight acquisition\n' >&2
       exit 1
     fi

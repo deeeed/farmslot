@@ -47,7 +47,7 @@ test('acquire and restart leave time for dependent resources and a cold simulato
   );
   const restart = source.slice(source.indexOf('private async restart('));
 
-  assert.ok(RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS >= 150_000 + 120_000);
+  assert.ok(RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS >= 180_000 + 120_000 + 60_000);
   assert.match(acquire, /RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS/);
   assert.match(restart, /RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS/);
 });

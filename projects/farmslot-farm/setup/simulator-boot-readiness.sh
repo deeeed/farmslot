@@ -39,7 +39,7 @@ cleanup() {
     if [ "$lease_acquired" = yes ]; then
       shutdown >/dev/null || return 1
     else
-      result=$(rpc runtime.capability.release "$release_args" 360000) || return 1
+      result=$(rpc runtime.capability.release "$release_args" 540000) || return 1
       printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null || return 1
       if ! printf '%s\n' "$result" | jq -e 'any(.released[]?; .capabilityId == "ios-simulator")' >/dev/null; then return 0; fi
       lease_released=yes
@@ -66,7 +66,7 @@ trap 'exit 143' TERM
 ready
 health | jq -e '.status == "stopped"' >/dev/null
 acquire_attempted=yes
-result=$(rpc runtime.capability.acquire "$acquire_args" 300000)
+result=$(rpc runtime.capability.acquire "$acquire_args" 420000)
 printf '%s\n' "$result" | jq -e '.ok == true and .lease.capabilityId == "ios-simulator"' >/dev/null
 lease_acquired=yes
 printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"

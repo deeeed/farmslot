@@ -32,7 +32,7 @@
         "action": "command",
         "intent": "Acquire an exclusive Gateway simulator lease, verify health, and release the lease even when verification fails.",
         "cmd": "sh projects/farmslot-farm/setup/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
-        "timeout_ms": 900000,
+        "timeout_ms": 1200000,
         "next": "boot-succeeded"
       },
       "boot-succeeded": {

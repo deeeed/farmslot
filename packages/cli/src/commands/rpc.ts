@@ -5,7 +5,7 @@ import { type EventFrame, Methods } from '@farmslot/protocol';
 import { resolveContext } from '../context.js';
 
 const RESOURCE_CONTROL_BOOT_RPC_TIMEOUT_MS = 150_000;
-export const RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS = 300_000;
+export const RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS = 420_000;
 
 export function resolveRpcGatewayTimeoutMs(
   method: string,

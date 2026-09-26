@@ -20,10 +20,14 @@ test('raw RPC leaves time for simulator boot and dependent capability acquisitio
   );
   assert.equal(
     resolveRpcGatewayTimeoutMs(Methods.RUNTIME_CAPABILITY_ACQUIRE, {}, '30000'),
-    300_000,
+    420_000,
   );
   assert.equal(
     resolveRpcGatewayTimeoutMs(Methods.RUNTIME_CAPABILITY_ACQUIRE, {}, '360000'),
-    360_000,
+    420_000,
+  );
+  assert.equal(
+    resolveRpcGatewayTimeoutMs(Methods.RUNTIME_CAPABILITY_ACQUIRE, {}, '480000'),
+    480_000,
   );
 });
