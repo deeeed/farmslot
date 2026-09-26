@@ -10,7 +10,8 @@ import './resource-toolbar.js';
 import './resource-grid.js';
 
 import { gateway } from '../../gateway-client.js';
-import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { colors, fonts } from '../../styles/theme-tokens.js';
+import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import type { ActiveStream } from './resource-grid.js';
 
@@ -126,11 +127,15 @@ export class ResourcePanel extends LitElement {
   ) {
     const { resourceId, action } = e.detail;
     try {
-      await gateway.request(Methods.RESOURCE_CONTROL, {
-        slotId: this.slotId,
-        resourceId,
-        action,
-      });
+      await gateway.request(
+        Methods.RESOURCE_CONTROL,
+        {
+          slotId: this.slotId,
+          resourceId,
+          action,
+        },
+        RESOURCE_CONTROL_TIMEOUT_MS,
+      );
     } catch (err) {
       console.error(
         `[resource-panel] control ${action} failed for ${resourceId}:`,

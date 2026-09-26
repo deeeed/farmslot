@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
+
 /**
  * Source-level guard for the restart sequence.
  *
@@ -35,4 +37,17 @@ test('stop also confirms the Gateway actually released the lease', () => {
   );
 
   assert.match(release, /result\.released\.some/);
+});
+
+test('acquire and restart leave time for dependent resources and a cold simulator boot', () => {
+  const source = panelSource();
+  const acquire = source.slice(
+    source.indexOf('private async acquire('),
+    source.indexOf('private async restart('),
+  );
+  const restart = source.slice(source.indexOf('private async restart('));
+
+  assert.ok(RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS >= 180_000 + 120_000 + 60_000);
+  assert.match(acquire, /RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS/);
+  assert.match(restart, /RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS/);
 });

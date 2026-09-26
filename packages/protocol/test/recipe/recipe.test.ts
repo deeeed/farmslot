@@ -217,6 +217,49 @@ test('recipe digests and structured parameter equality stay canonical', () => {
   assert.equal(validateRecipeParamsSchema(duplicateEnum).status, 'invalid');
 });
 
+test('string parameter patterns reject shell metacharacters before recipe interpolation', async () => {
+  const paramsSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: { slot_id: { type: 'string', pattern: '^[A-Za-z0-9_-]+$(?![\\s\\S])' } },
+  };
+  assert.equal(validateRecipeParamsSchema(paramsSchema).status, 'valid');
+  assert.equal(validateRecipeParams({ slot_id: 'mini-mm-2' }, paramsSchema).status, 'valid');
+  const invalidDefaultSchema = structuredClone(paramsSchema);
+  (invalidDefaultSchema.properties.slot_id as Record<string, unknown>).default =
+    'mini-mm-2; echo unsafe';
+  const invalidDefault = validateRecipeParamsSchema(invalidDefaultSchema);
+  assert.equal(invalidDefault.status, 'invalid');
+  assert.ok(
+    invalidDefault.findings.some(
+      (finding) => finding.code === 'recipe.invalid_param_default_pattern',
+    ),
+  );
+  for (const slotId of ["mini-mm-2'; touch /tmp/injected; echo '", 'mini-mm-2\n']) {
+    assert.equal(validateRecipeParams({ slot_id: slotId }, paramsSchema).status, 'invalid');
+  }
+  const publicSchema = await readJson('packages/protocol/schemas/recipe-v1.schema.json');
+  const validatePublicSchema = new Ajv2020({ allErrors: true, strict: false }).compile(
+    publicSchema,
+  );
+  assert.equal(
+    validatePublicSchema(recipe({ done: { action: 'end', status: 'pass' } }, { paramsSchema })),
+    true,
+  );
+  for (const pattern of ['', '[', 123]) {
+    const invalidSchema = structuredClone(paramsSchema);
+    (invalidSchema.properties.slot_id as Record<string, unknown>).pattern = pattern;
+    assert.equal(validateRecipeParamsSchema(invalidSchema).status, 'invalid');
+    assert.equal(validateRecipeParams({ slot_id: 'mini-mm-2' }, invalidSchema).status, 'invalid');
+    assert.equal(
+      validatePublicSchema(
+        recipe({ done: { action: 'end', status: 'pass' } }, { paramsSchema: invalidSchema }),
+      ),
+      typeof pattern === 'string' && pattern === '[',
+    );
+  }
+});
+
 test('canonical schema leaves action parameter names to the action manifest', async () => {
   const schema = (await readJson('packages/protocol/schemas/recipe-v1.schema.json')) as Record<
     string,

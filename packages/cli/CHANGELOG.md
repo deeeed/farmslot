@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Keep raw RPC calls for simulator boot and its Metro dependency open long enough for cold starts.
+
 - Remove `--review-validation-depth` from `run create` and `dispatch preview`; use `--flow-type qa` with `--qa-profile` for runtime validation.
 
 - `--role subtask` is rejected: a child checklist unit is observed through its files, never given a session, so `run session` validates against the dispatchable roles instead of the full role list.

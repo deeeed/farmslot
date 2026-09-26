@@ -24,6 +24,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
 - [ ] **3. Start** — `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
+  - Control-plane capability acquisition requires operator credentials. If the slot has none and receives `AUTH_FAILED token_missing`, do not copy an admin token into the worker environment or retry unauthenticated. Request an operator-provided receipt naming acquired capability IDs, lease IDs, slot, owner run/family, and healthy status. Once the operator confirms the leases belong to this run, check the local surfaces with the doctor/device checks below and continue; otherwise mark blocked. Never boot or install outside the capability lease.
   - **`command-center` only when listed:**
     ```bash
     cd {{REPO}}

@@ -117,6 +117,7 @@ export function tmuxSendTextCommand(
     /** Opt-in gap between literal text and submit for TUIs with paste-burst detection. */
     submitDelayMs?: number;
     suffix?: string;
+    typeFailureExitCode?: number;
   },
 ): string {
   const submitDelayMs = opts?.submitDelayMs ?? 0;
@@ -126,8 +127,13 @@ export function tmuxSendTextCommand(
     );
   }
   const suffix = opts?.suffix ? ` ${opts.suffix}` : '';
+  const typeCommand = tmuxShellSnippet(
+    `send-keys -t ${shellQuote(target)} -l ${shellQuote(text)}${suffix}`,
+  );
   const commands = [
-    tmuxShellSnippet(`send-keys -t ${shellQuote(target)} -l ${shellQuote(text)}${suffix}`),
+    opts?.typeFailureExitCode === undefined
+      ? typeCommand
+      : `${typeCommand} || exit ${opts.typeFailureExitCode}`,
   ];
   if (opts?.enter) {
     if (submitDelayMs > 0) commands.push(`sleep ${submitDelayMs / 1_000}`);
