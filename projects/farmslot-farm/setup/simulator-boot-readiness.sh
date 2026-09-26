@@ -30,7 +30,21 @@ shutdown() {
 }
 
 cleanup() {
-  if [ "$boot_attempted" = yes ]; then shutdown >/dev/null; fi
+  if [ "$boot_attempted" != yes ]; then return 0; fi
+  attempt=0
+  while [ "$attempt" -lt 60 ]; do
+    attempt=$((attempt + 1))
+    inventory=$(rpc resource.device.inventory "{\"slotId\":\"$slot_id\",\"refresh\":true}" 15000) || return 1
+    state=$(printf '%s\n' "$inventory" | jq -er --arg slot "$slot_id" '.devices[] | select(.platform == "ios" and (.configuredForSlots | index($slot))) | .state') || return 1
+    case "$state" in
+      Shutdown) return 0 ;;
+      Booted) shutdown >/dev/null || return 1 ;;
+      Booting|"Shutting Down") sleep 2 ;;
+      *) printf 'Simulator cleanup cannot resolve state: %s\n' "$state" >&2; return 1 ;;
+    esac
+  done
+  printf 'Simulator cleanup could not observe a stopped device\n' >&2
+  return 1
 }
 
 trap cleanup EXIT

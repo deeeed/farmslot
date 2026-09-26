@@ -64,6 +64,12 @@
         "stream": "stdout",
         "contains": "stopped:{\"id\":\"ios-sim\",\"status\":\"stopped\"}",
         "intent": "Require the simulator to be stopped before releasing the slot.",
+        "next": "verify-inventory"
+      },
+      "verify-inventory": {
+        "action": "command",
+        "intent": "Confirm the simulator has settled in Shutdown, not a transient booting state.",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway resource.device.inventory '{\"slotId\":\"{{params.slot_id}}\",\"refresh\":true}' | jq -ec --arg slot '{{params.slot_id}}' '.devices[] | select(.platform == \"ios\" and (.configuredForSlots | index($slot)) and .state == \"Shutdown\")'",
         "next": "done"
       },
       "done": { "action": "end", "status": "pass" }

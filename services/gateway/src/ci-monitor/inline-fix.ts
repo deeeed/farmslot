@@ -763,6 +763,8 @@ async function attemptInlineCIFix(
       deliveryBaselinePanePid = deliveryBaselinePane.panePid;
       await upsertAgentContext(runId, 'ci-fix', {
         status: 'launching',
+        promptDeliveryStartedAt: undefined,
+        ciFixPrompt: undefined,
         taskFile: writeResult.taskPath,
         signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
         runner,

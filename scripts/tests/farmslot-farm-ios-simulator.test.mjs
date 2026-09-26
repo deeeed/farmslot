@@ -108,6 +108,14 @@ test('simulator readiness handles health failure and extra stream fields', () =>
 case "$3" in
   fleet.status)
     printf '{"fleet":{"slots":[{"slot":"mini-mm-2","lifecycle":"%s","currentRunId":null,"agent":"idle"}]}}\\n' "$SLOT_LIFECYCLE" ;;
+  resource.device.inventory)
+    current_state=$(cat "$BOOT_STATE")
+    if test "$current_state" = booting; then
+      if test -f "$BOOT_INVENTORY_SEEN"; then current_state=booted; printf '%s' "$current_state" > "$BOOT_STATE"; else : > "$BOOT_INVENTORY_SEEN"; fi
+    fi
+    case "$current_state" in stopped) current_state=Shutdown ;; booting) current_state=Booting ;; booted) current_state=Booted ;; esac
+    if test "$FORCE_INVENTORY_BOOTING" = yes; then current_state=Booting; fi
+    printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state" ;;
   resource.health)
     if test "$(cat "$BOOT_STATE")" = stopped; then
       if test "$TRANSIENT_HEALTH_FAILURE" = yes && grep -q shutdown "$TRACE" && test ! -f "$FAILED_SHUTDOWN_HEALTH"; then
@@ -130,8 +138,13 @@ case "$3" in
     fi ;;
   resource.control)
     case "$4" in
-      *'"action":"boot"'*) printf 'booted' > "$BOOT_STATE"; printf 'boot\\n' >> "$TRACE" ;;
-      *'"action":"shutdown"'*) printf 'stopped' > "$BOOT_STATE"; printf 'shutdown\\n' >> "$TRACE" ;;
+      *'"action":"boot"'*)
+        printf 'boot\\n' >> "$TRACE"
+        if test "$FAIL_BOOT_DURING_START" = yes; then printf booting > "$BOOT_STATE"; exit 1; fi
+        printf booted > "$BOOT_STATE" ;;
+      *'"action":"shutdown"'*)
+        if test "$(cat "$BOOT_STATE")" != booted; then printf '{"ok":true,"detail":"already stopped"}\\n'; exit 0; fi
+        printf 'stopped' > "$BOOT_STATE"; printf 'shutdown\\n' >> "$TRACE" ;;
     esac
     printf '{"ok":true,"detail":"simulator output"}\\n' ;;
 esac
@@ -188,6 +201,41 @@ esac
     assert.equal(transient.status, 0, transient.stderr.toString());
     assert.match(transient.stderr.toString(), /running health probe failed/);
     assert.match(transient.stderr.toString(), /stopped health probe failed/);
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+
+    const inventoryCommand = readinessRecipe.workflow.nodes['verify-inventory'].cmd
+      .replaceAll('{{params.slot_id}}', 'mini-mm-2')
+      .replaceAll('{{params.gateway_port}}', '7801');
+    for (const forceBooting of [false, true]) {
+      const inventoryCheck = spawnSync('sh', ['-c', inventoryCommand], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          BOOT_STATE: state,
+          FORCE_INVENTORY_BOOTING: forceBooting ? 'yes' : 'no',
+        },
+      });
+      assert.equal(inventoryCheck.status === 0, !forceBooting);
+    }
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const bootInventorySeen = path.join(directory, 'boot-inventory-seen');
+    const failedDuringBoot = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        BOOT_INVENTORY_SEEN: bootInventorySeen,
+        TRACE: trace,
+        FAIL_BOOT_DURING_START: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.notEqual(failedDuringBoot.status, 0);
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
     assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
 
