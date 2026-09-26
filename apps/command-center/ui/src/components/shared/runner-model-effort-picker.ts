@@ -24,6 +24,8 @@ import {
 } from '../../utils/runner-options.js';
 import { rememberVisibleModels } from '../../utils/runner-visible-cache.js';
 
+const CATALOG_LOADING = 'Loading model catalog.';
+
 export interface RunnerModelEffortChangeDetail {
   runner: string;
   model: string;
@@ -276,7 +278,7 @@ export class RunnerModelEffortPicker extends LitElement {
     this.catalogOpen = !this.catalogOpen;
     if (!this.catalogOpen) return;
     const runner = this.runner;
-    this.catalogStatus = 'Loading model catalog.';
+    this.catalogStatus = CATALOG_LOADING;
     let result: RunnerModelCatalogResult;
     try {
       result = await gateway.request<RunnerModelCatalogResult>(Methods.RUNNER_MODEL_CATALOG, {
@@ -291,14 +293,20 @@ export class RunnerModelEffortPicker extends LitElement {
         models: [],
       };
     }
-    // The operator switched runners, or closed the catalog, while this request was
+    // The checks start from the saved set. If it has not loaded yet, prefilling
+    // from the built-in list would let a save overwrite the operator's set.
+    if (this.visibleState?.runner !== runner) await this.loadVisible();
+    // The operator switched runners, or closed the catalog, while a request was
     // in flight. Its models must not become the checks saved for another runner.
     if (this.runner !== runner || !this.catalogOpen) return;
+    if (this.visibleState?.runner !== runner) {
+      // loadVisible reports a gateway error itself; a missing socket leaves this.
+      if (this.catalogStatus === CATALOG_LOADING)
+        this.catalogStatus = 'Visible models could not be loaded.';
+      return;
+    }
     this.loadedCatalog = result;
-    this.catalogChecks =
-      this.visibleState?.runner === runner
-        ? [...this.visibleState.models]
-        : [...(MODELS_BY_RUNNER[runner] ?? [])];
+    this.catalogChecks = [...this.visibleState.models];
     this.catalogStatus = result.detail ?? '';
   }
 

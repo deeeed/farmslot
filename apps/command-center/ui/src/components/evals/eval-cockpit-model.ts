@@ -15,6 +15,7 @@ import { isTerminalRunStatus } from '@farmslot/protocol';
 import {
   DEFAULT_MODEL,
   EVAL_CANDIDATE_RUNNERS,
+  isRestorableModelId,
   modelsForRunner,
   runnerLabel,
 } from '../../utils/runner-options.js';
@@ -166,13 +167,14 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
     const record = raw as Partial<Record<keyof CandidateRow, unknown>>;
     const id =
       typeof record.id === 'string' && record.id.trim() ? record.id : `candidate-${index + 1}`;
-    const runner =
+    const runnerRestored =
       typeof record.runner === 'string' &&
-      EVAL_CANDIDATE_RUNNERS.includes(record.runner as (typeof EVAL_CANDIDATE_RUNNERS)[number])
-        ? record.runner
-        : fallback.runner;
+      EVAL_CANDIDATE_RUNNERS.includes(record.runner as (typeof EVAL_CANDIDATE_RUNNERS)[number]);
+    const runner = runnerRestored ? (record.runner as string) : fallback.runner;
+    // Saved visibility may not be loaded yet, so a restored model is not checked
+    // against the visible list. Launch validation still rejects a wrong model.
     const model =
-      typeof record.model === 'string' && candidateModelOptions(runner).includes(record.model)
+      runnerRestored && isRestorableModelId(record.model)
         ? record.model
         : (candidateModelOptions(runner)[0] ?? fallback.model);
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
@@ -424,9 +426,8 @@ export function candidateTemplateChoices(
 
 /** Visible models for a runner. A selected model outside the visible set stays listed. */
 export function candidateModelOptions(runner: string, selected?: string): string[] {
-  const models = modelsForRunner(runner);
-  if (models.length === 0) return [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
-  return selected && !models.includes(selected) ? [...models, selected] : models;
+  const models = modelsForRunner(runner, selected);
+  return models.length > 0 ? models : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {

@@ -16,6 +16,7 @@ import {
   isReviewerWindowName,
   normalizeRunner,
   RUNNER_ALIASES,
+  RUNNER_PICKER_MODELS,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -291,7 +292,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'claude',
     nativeTransport: 'claude-stream-json',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
@@ -333,18 +334,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'codex',
     nativeTransport: 'codex-app-server',
     supportsNativeTaskReuse: true,
-    nativeChoices: {
-      models: [
-        DEFAULT_CODEX_MODEL,
-        'gpt-6-sol',
-        'gpt-5.6-sol',
-        'gpt-5.6-terra',
-        'gpt-5.6-luna',
-        'gpt-5.5',
-        'gpt-5.4',
-      ],
-      modes: ['default', 'plan'],
-    },
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.codex], modes: ['default', 'plan'] },
     modelCatalog: {
       relativePath: '.codex/models_cache.json',
       parse: parseCodexModelCatalog,
@@ -455,7 +445,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'grok',
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.grok], modes: ['default'] },
     modelCatalog: {
       relativePath: '.grok/models_cache.json',
       parse: parseGrokModelCatalog,

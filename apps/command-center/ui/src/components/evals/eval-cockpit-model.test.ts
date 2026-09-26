@@ -480,3 +480,13 @@ test('sanitizeSelectedCases keeps restorable URL cases and omits malformed entri
   assert.equal(rows[0].runStatusLabel, 'done');
   assert.equal(rows[0].packagePath, '/tmp/pkg.json');
 });
+
+test('sanitizeCandidateRows keeps a restored model for a valid runner before visibility loads', () => {
+  const [row] = sanitizeCandidateRows([
+    { id: 'candidate-a', runner: 'codex', model: 'gpt-6-luna' },
+  ]);
+  assert.equal(row.runner, 'codex');
+  assert.equal(row.model, 'gpt-6-luna');
+  const [unsafe] = sanitizeCandidateRows([{ id: 'candidate-b', runner: 'codex', model: '--yolo' }]);
+  assert.equal(unsafe.model, defaultRows()[0].model);
+});

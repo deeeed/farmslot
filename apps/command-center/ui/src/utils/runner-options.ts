@@ -40,9 +40,18 @@ export const DEFAULT_MODEL: Record<string, string> = {
   pi: DEFAULT_PI_MODEL,
 };
 
-/** Selectable models for a runner. A saved visible set from this page wins over the built-in seed. */
-export function modelsForRunner(runner: string): string[] {
-  return rememberedVisibleModels(runner) ?? [...(MODELS_BY_RUNNER[runner] ?? [])];
+/**
+ * Selectable models for a runner. A saved visible set from this page wins over the
+ * built-in seed, and a selected model outside that set stays listed.
+ */
+export function modelsForRunner(runner: string, selected?: string): string[] {
+  const models = rememberedVisibleModels(runner) ?? [...(MODELS_BY_RUNNER[runner] ?? [])];
+  return selected && !models.includes(selected) ? [...models, selected] : models;
+}
+
+/** A model id restored from a URL or draft: kept as typed, and validated again at launch. */
+export function isRestorableModelId(model: unknown): model is string {
+  return typeof model === 'string' && /^[A-Za-z0-9][^\s]*$/.test(model);
 }
 
 /** Keep a selected model when still valid; otherwise fall back to the runner default. */

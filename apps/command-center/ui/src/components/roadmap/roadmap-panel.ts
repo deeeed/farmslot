@@ -1080,7 +1080,7 @@ export class RoadmapPanel extends LitElement {
   /** Models for the selected (or default) runner only — never fleet-wide cross-runner models. */
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    return modelsForRunner(runner);
+    return modelsForRunner(runner, this._refineModel);
   }
 
   private get _refinementDefaultModelLabel(): string {

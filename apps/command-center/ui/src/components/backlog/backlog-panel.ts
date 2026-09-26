@@ -2115,7 +2115,7 @@ export class BacklogPanel extends LitElement {
     index: number,
     item?: BacklogItem,
   ) {
-    const models = modelsForRunner(candidate.runner);
+    const models = modelsForRunner(candidate.runner, candidate.model);
     return html`<div class="launch-row" data-testid="backlog-launch-candidate">
       <div>
         <div class="field-label">${candidate.role}</div>
@@ -3105,7 +3105,7 @@ export class BacklogPanel extends LitElement {
 
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-    return modelsForRunner(runner);
+    return modelsForRunner(runner, this._refineModel);
   }
 
   private get _refinementDefaultModelLabel(): string {

@@ -162,3 +162,13 @@ test('catalog reasoning modes narrow efforts but never add ones the gateway reje
   assert.deepEqual(effortsForRunner('pi', 'grok-4.6', ['high', 'turbo']), ['high']);
   assert.deepEqual(effortsForRunner('codex', 'gpt-5.5', []), ['low', 'medium', 'high', 'xhigh']);
 });
+
+test('modelsForRunner keeps a selected model outside the visible list', () => {
+  assert.deepEqual(modelsForRunner('grok', 'grok-5-preview'), [
+    DEFAULT_GROK_MODEL,
+    'grok-4.7',
+    'grok-5-preview',
+  ]);
+  assert.deepEqual(modelsForRunner('grok', 'grok-4.7'), [DEFAULT_GROK_MODEL, 'grok-4.7']);
+  assert.deepEqual(modelsForRunner('grok', ''), [DEFAULT_GROK_MODEL, 'grok-4.7']);
+});
