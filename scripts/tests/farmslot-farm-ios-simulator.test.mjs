@@ -93,6 +93,19 @@ esac
       },
     });
     assert.notEqual(failed.status, 0);
+    const healthHook = project.resources['ios-sim'].hooks.health
+      .replaceAll('{{simulator}}', 'fs-2')
+      .replaceAll('{{repo}}', repoRoot);
+    const failedHealth = spawnSync('sh', ['-c', healthHook], {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        FAIL_BOOTSTATUS: 'yes',
+      },
+    });
+    assert.notEqual(failedHealth.status, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -184,7 +197,11 @@ case "$3" in
       current_state=Booted
     fi
     if test "$FORCE_INVENTORY_BOOTING" = yes; then current_state=Booting; fi
-    printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state" ;;
+    if test "$DUPLICATE_INVENTORY" = yes; then
+      printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"},{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state" "$current_state"
+    else
+      printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state"
+    fi ;;
   resource.health)
     if test "$(cat "$BOOT_STATE")" = stopped; then
       if test "$TRANSIENT_HEALTH_FAILURE" = yes && grep -q shutdown "$TRACE" && test ! -f "$FAILED_SHUTDOWN_HEALTH"; then
@@ -297,6 +314,22 @@ esac
     assert.match(transient.stderr.toString(), /running health probe failed/);
     assert.match(transient.stderr.toString(), /stopped health probe failed/);
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
+    assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const duplicate = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        DUPLICATE_INVENTORY: 'yes',
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.equal(duplicate.status, 0, duplicate.stderr.toString());
     assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
 
     writeFileSync(state, 'stopped');

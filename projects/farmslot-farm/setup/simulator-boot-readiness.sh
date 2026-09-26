@@ -49,7 +49,7 @@ cleanup() {
   while [ "$attempt" -lt 60 ]; do
     attempt=$((attempt + 1))
     inventory=$(rpc resource.device.inventory "{\"slotId\":\"$slot_id\",\"refresh\":true}" 15000) || return 1
-    state=$(printf '%s\n' "$inventory" | jq -er --arg slot "$slot_id" '.devices[] | select(.platform == "ios" and (.configuredForSlots | index($slot))) | .state') || return 1
+    state=$(printf '%s\n' "$inventory" | jq -er --arg slot "$slot_id" '.devices[] | select(.platform == "ios" and (.configuredForSlots | index($slot))) | .state' | sort -u) || return 1
     case "$state" in
       Shutdown) lease_acquired=no; return 0 ;;
       Booted|Booting|"Shutting Down") sleep 2 ;;

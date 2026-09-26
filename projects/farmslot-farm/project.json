@@ -318,7 +318,7 @@
         "cmd": "sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}'"
       },
       "hooks": {
-        "health": "sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}'",
+        "health": "sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}' && xcrun simctl bootstatus '{{simulator}}' -b",
         "boot": "(sh '{{repo}}/projects/farmslot-farm/setup/simulator-booted.sh' '{{simulator}}' || xcrun simctl boot '{{simulator}}') && xcrun simctl bootstatus '{{simulator}}' -b",
         "shutdown": "xcrun simctl shutdown '{{simulator}}'"
       }
