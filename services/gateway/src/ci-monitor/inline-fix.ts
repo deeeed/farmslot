@@ -236,6 +236,7 @@ export async function sendCiFixNudge(input: {
   replacementOwner?: AgentContext | null;
   priorPromptSendAttempted?: boolean;
   onPromptMutationStart?: () => void;
+  onPromptMutationConfirmedUntouched?: () => void;
 }): Promise<{
   sent: boolean;
   sendAttempted: boolean;
@@ -280,6 +281,7 @@ export async function sendCiFixNudge(input: {
     launchAckBaseline: input.launchAckBaseline,
     priorPromptSendAttempted: input.priorPromptSendAttempted,
     onPromptMutationStart: input.onPromptMutationStart,
+    onPromptMutationConfirmedUntouched: input.onPromptMutationConfirmedUntouched,
     timeoutMs: input.timeoutMs,
     recovery: input.recovery,
     sendLogPrefix: 'ci-monitor',
@@ -728,6 +730,15 @@ async function attemptInlineCIFix(
     let acceptedTurnToken: string | undefined;
     let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);
     let sendOutcomeUnknown = false;
+    let possiblePromptMutations = 0;
+    const onPromptMutationStart = () => {
+      possiblePromptMutations += 1;
+      sendOutcomeUnknown = true;
+    };
+    const onPromptMutationConfirmedUntouched = () => {
+      possiblePromptMutations -= 1;
+      sendOutcomeUnknown = possiblePromptMutations > 0;
+    };
     let deliveryBaselinePanePid = recoveredContext?.deliveryBaselinePanePid;
     let deliveryMutationObserved = false;
     const retainedHandoff = runnerRetainedSessionHandoff(runner);
@@ -793,13 +804,13 @@ async function attemptInlineCIFix(
           replacementReadySignal,
           replacementOwner,
           priorPromptSendAttempted: ciPromptSendAttempted,
-          onPromptMutationStart: () => {
-            sendOutcomeUnknown = true;
-          },
+          onPromptMutationStart,
+          onPromptMutationConfirmedUntouched,
           recovery: { runId },
         });
         ciPromptSendAttempted ||= initialDelivery.sendAttempted || sendOutcomeUnknown;
         sendOutcomeUnknown = false;
+        possiblePromptMutations = 0;
         retainedSession = initialDelivery.retainedSession;
         if (retainedSession.reason) {
           console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
@@ -834,14 +845,14 @@ async function attemptInlineCIFix(
                 replacementReadySignal,
                 replacementOwner,
                 priorPromptSendAttempted: ciPromptSendAttempted,
-                onPromptMutationStart: () => {
-                  sendOutcomeUnknown = true;
-                },
+                onPromptMutationStart,
+                onPromptMutationConfirmedUntouched,
                 forceBusyPoll: true,
                 recovery: { runId },
               });
               ciPromptSendAttempted ||= retryDelivery.sendAttempted || sendOutcomeUnknown;
               sendOutcomeUnknown = false;
+              possiblePromptMutations = 0;
               ciDeliveryTerminal ||= !retryDelivery.retryable;
               acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
               return retryDelivery.sent;

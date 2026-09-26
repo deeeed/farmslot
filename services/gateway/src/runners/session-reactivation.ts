@@ -74,6 +74,7 @@ export interface RunnerSessionReactivationOptions {
   acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
   onPromptMutationStart?: () => void;
+  onPromptMutationConfirmedUntouched?: () => void;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
@@ -607,7 +608,11 @@ export async function deliverPromptInPlace(
         },
       );
     const accepted = options.onPromptMutationStart
-      ? await withRunnerPromptMutationBoundary(options.onPromptMutationStart, send)
+      ? await withRunnerPromptMutationBoundary(
+          options.onPromptMutationStart,
+          send,
+          options.onPromptMutationConfirmedUntouched,
+        )
       : await send();
     if (accepted && options.launchAckSignalPath) {
       // Pane-only runners have no exact prompt hook/native acknowledgement.
@@ -921,7 +926,11 @@ export async function deliverPromptToLiveRunner(
         },
       );
     if (options.onPromptMutationStart) {
-      await withRunnerPromptMutationBoundary(options.onPromptMutationStart, send);
+      await withRunnerPromptMutationBoundary(
+        options.onPromptMutationStart,
+        send,
+        options.onPromptMutationConfirmedUntouched,
+      );
     } else {
       await send();
     }

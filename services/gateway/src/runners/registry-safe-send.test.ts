@@ -50,6 +50,8 @@ let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 let grokPromptAcceptanceBaselineMs = Date.now();
 let grokActivityReads = 0;
 let grokActivitySequence: RunnerActivity[] = ['idle'];
+let failedPromptSends = 0;
+let failedPromptSendExitCode = 85;
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -194,6 +196,10 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
+        if (failedPromptSends > 0) {
+          failedPromptSends -= 1;
+          return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
+        }
         // A literal payload (-l) is the message being TYPED; a bare send is a
         // key like Enter. The distinction is what separates fresh-send from
         // submit-existing in assertions.
@@ -1190,6 +1196,117 @@ test('sendRunnerInstructionSafely types the message when hook says not-accepted 
     callOrder.includes('tmux:send-literal'),
     `an authoritative not-accepted reading with an EMPTY composer must TYPE the message — a bare Enter reports success while the instruction was never delivered; order=${callOrder.join(',')}`,
   );
+});
+
+test('a rejected tmux send leaves the prompt mutation boundary untouched', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+  let started = 0;
+  let confirmedUntouched = 0;
+  const sent = await withRunnerPromptMutationBoundary(
+    () => {
+      started += 1;
+    },
+    () => sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]'),
+    () => {
+      confirmedUntouched += 1;
+    },
+  );
+  assert.equal(sent, false);
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 1);
+});
+
+test('a rejected post-launch tmux send leaves the prompt mutation boundary untouched', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  let started = 0;
+  let confirmedUntouched = 0;
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        started += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          verifyWaitMs: 0,
+          maxAttempts: 1,
+          requirePromptDigest: true,
+        }),
+      () => {
+        confirmedUntouched += 1;
+      },
+    ),
+    /Failed to send prompt/,
+  );
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 1);
+});
+
+test('a failed submit leaves a typed prompt uncertain', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  failedPromptSendExitCode = 1;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  let started = 0;
+  let confirmedUntouched = 0;
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        started += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          maxAttempts: 1,
+          requirePromptDigest: true,
+        }),
+      () => {
+        confirmedUntouched += 1;
+      },
+    ),
+    /Failed to send prompt/,
+  );
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 0);
 });
 
 test('sendRunnerInstructionSafely submits the buffered instruction when the pane shows it', async () => {
