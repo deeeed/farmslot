@@ -29,7 +29,7 @@ shutdown() {
 }
 
 cleanup() {
-  if [ "$boot_attempted" = yes ]; then shutdown; fi
+  if [ "$boot_attempted" = yes ]; then shutdown >/dev/null; fi
 }
 
 trap cleanup EXIT
