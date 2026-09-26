@@ -17,7 +17,7 @@
       "check-slot": {
         "action": "command",
         "intent": "Require a free slot before taking control of its simulator.",
-        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{}' | jq -ec '.fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .currentRunId == null and .agent == \"idle\") | {slot,currentRunId,agent}'",
+        "cmd": "FARMSLOT_RPC_TIMEOUT_MS=15000 FARMSLOT_GATEWAY=ws://127.0.0.1:{{params.gateway_port}}/ws node apps/command-center/scripts/cdp.mjs gateway fleet.status '{}' | jq -ec '.fleet.slots[] | select(.slot == \"{{params.slot_id}}\" and .lifecycle == \"ready\" and .currentRunId == null and .agent == \"idle\") | {slot,lifecycle,currentRunId,agent}'",
         "next": "check-stopped"
       },
       "check-stopped": {

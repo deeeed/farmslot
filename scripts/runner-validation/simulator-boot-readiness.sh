@@ -17,6 +17,11 @@ health() {
   rpc resource.health "$resource_args" 15000 | jq -ec '.resources[] | select(.id == "ios-sim") | {id,status}'
 }
 
+ready() {
+  rpc fleet.status '{}' 15000 |
+    jq -ec --arg slot "$slot_id" '.fleet.slots[] | select(.slot == $slot and .lifecycle == "ready" and .currentRunId == null and .agent == "idle")' >/dev/null
+}
+
 shutdown() {
   result=$(rpc resource.control "$shutdown_args" 45000)
   printf '%s\n' "$result" | jq -e '.ok == true' >/dev/null
@@ -30,6 +35,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+ready
 health | jq -e '.status == "stopped"' >/dev/null
 boot_attempted=yes
 result=$(rpc resource.control "$boot_args" 150000)
