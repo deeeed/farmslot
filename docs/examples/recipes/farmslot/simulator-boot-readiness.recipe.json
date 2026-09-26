@@ -31,7 +31,7 @@
         "action": "command",
         "intent": "Boot through the Gateway, verify health, and restore the stopped state even when verification fails.",
         "cmd": "sh scripts/runner-validation/simulator-boot-readiness.sh '{{params.slot_id}}' '{{params.gateway_port}}'",
-        "timeout_ms": 300000,
+        "timeout_ms": 540000,
         "next": "boot-succeeded"
       },
       "boot-succeeded": {

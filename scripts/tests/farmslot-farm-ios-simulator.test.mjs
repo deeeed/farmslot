@@ -14,7 +14,20 @@ const bootHook = project.resources['ios-sim'].hooks.boot.replaceAll('{{simulator
 const readinessScript = fileURLToPath(
   new URL('../runner-validation/simulator-boot-readiness.sh', import.meta.url),
 );
+const readinessRecipe = JSON.parse(
+  readFileSync(
+    new URL(
+      '../../docs/examples/recipes/farmslot/simulator-boot-readiness.recipe.json',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
+);
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+
+test('simulator readiness recipe allows boot, health retries, shutdown, and cleanup', () => {
+  assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 480_000);
+});
 
 test('simulator boot waits for readiness and is safe to retry', () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ios-boot-'));
