@@ -712,16 +712,18 @@ async function attemptInlineCIFix(
     if (!recoveredContext) await execOnSlot(vars, `rm -f '${signalPath}'`);
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
-    const nudgeCmd = ciFixPromptForRecovery(
-      await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
-        taskFile: ciFixTaskFile,
-        taskDir: writeResult.taskDir,
-      }),
-      recoveredContext,
-      runId,
-      totalAttempts,
-      beforeSha,
-    );
+    const nudgeCmd =
+      recoveredContext?.ciFixPrompt ??
+      ciFixPromptForRecovery(
+        await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
+          taskFile: ciFixTaskFile,
+          taskDir: writeResult.taskDir,
+        }),
+        recoveredContext,
+        runId,
+        totalAttempts,
+        beforeSha,
+      );
     let retainedSession = resolveCiFixRetainedSession(run);
     let acceptedTurnToken: string | undefined;
     let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);

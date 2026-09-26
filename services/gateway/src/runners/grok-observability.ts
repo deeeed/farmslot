@@ -197,6 +197,7 @@ if not events_path.is_file() or not chat_path.is_file():
 
 accepted_at = None
 max_scan_bytes = 1024 * 1024
+turn_event_scan_bytes = 16 * 1024 * 1024
 
 def read_jsonl_tail(path):
     with path.open('rb') as handle:
@@ -222,7 +223,7 @@ def latest_turn_event(path, event_type):
             return None
         with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
             needle = ('"' + event_type + '"').encode('ascii')
-            scan_start = max(0, len(data) - 16 * max_scan_bytes)
+            scan_start = max(0, len(data) - turn_event_scan_bytes)
             if scan_start:
                 line_end = data.find(b'\\n', scan_start)
                 scan_start = line_end + 1 if line_end >= 0 else len(data)

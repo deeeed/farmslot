@@ -575,7 +575,7 @@ export async function deliverPromptInPlace(
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
     if (options.priorPromptSendAttempted) {
-      return unacknowledgedPriorSendHold(runner);
+      return retryableUnacknowledgedPriorSendHold(runner);
     }
     const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
     const sentAtMs = Date.now();
@@ -780,7 +780,7 @@ async function probeDelayedPromptAcknowledgement(
     : null;
 }
 
-function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryResult {
+function retryableUnacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryResult {
   return {
     delivered: false,
     disposition: 'hold',
@@ -798,7 +798,7 @@ export async function deliverPromptWithRetainedFallback(
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
     if (options.priorPromptSendAttempted) {
-      return unacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
+      return retryableUnacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
     }
   } catch (error) {
     return {
@@ -887,7 +887,7 @@ export async function deliverPromptToLiveRunner(
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
     if (options.priorPromptSendAttempted) {
-      return unacknowledgedPriorSendHold(runner);
+      return retryableUnacknowledgedPriorSendHold(runner);
     }
     const handoffAckSinceMs = Date.now();
     const send = () =>
