@@ -207,7 +207,7 @@ export function ciFixAttemptPrompt(
   attempt: number,
   headSha: string,
 ): string {
-  return `CI fix attempt ${attempt} for run ${runId} at ${headSha}.\n${prompt}`;
+  return `CI fix attempt ${attempt} for run ${runId} at ${headSha}. ${prompt.replace(/\s*\r?\n\s*/g, ' ')}`;
 }
 
 export function ciFixPromptForRecovery(

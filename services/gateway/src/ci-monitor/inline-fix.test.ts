@@ -32,8 +32,10 @@ test('unconfirmed CI fix send blocks automatic resends', () => {
 });
 
 test('CI fix prompt identifies one attempt while preserving its recovery digest', () => {
-  const prompt = `Read tasks/run-1/CI-FIX.md ${'x'.repeat(200)}`;
+  const prompt = `Read tasks/run-1/CI-FIX.md ${'x'.repeat(200)}\nAfter reading, mark the step.`;
   const first = ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234');
+  assert.equal(first.includes('\n'), false);
+  assert.match(first, /After reading, mark the step\./);
   assert.equal(first, ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234'));
   assert.notEqual(
     runnerPromptDigest(first),
