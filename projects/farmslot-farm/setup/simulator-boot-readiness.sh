@@ -83,6 +83,7 @@ for attempt in 1 2 3 4 5 6; do
   fi
   if printf '%s\n' "$snapshot" | jq -e '.status == "stopped"' >/dev/null; then
     printf 'stopped:%s\n' "$snapshot"
+    cleanup
     boot_attempted=no
     exit 0
   fi

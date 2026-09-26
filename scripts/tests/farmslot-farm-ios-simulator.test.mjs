@@ -115,6 +115,10 @@ case "$3" in
       if test -f "$BOOT_INVENTORY_SEEN"; then current_state=booted; printf '%s' "$current_state" > "$BOOT_STATE"; else : > "$BOOT_INVENTORY_SEEN"; fi
     fi
     case "$current_state" in stopped) current_state=Shutdown ;; booting) current_state=Booting ;; booted) current_state=Booted ;; esac
+    if test "$current_state" = Shutdown && test "$TRANSIENT_SHUTDOWN" = yes && test ! -f "$INVENTORY_TRANSITION_SEEN"; then
+      printf 'Shutting Down' > "$INVENTORY_TRANSITION_SEEN"
+      current_state='Shutting Down'
+    fi
     if test "$FORCE_INVENTORY_BOOTING" = yes; then current_state=Booting; fi
     printf '{"devices":[{"platform":"ios","configuredForSlots":["mini-mm-2"],"state":"%s"}]}\\n' "$current_state" ;;
   resource.health)
@@ -208,6 +212,25 @@ esac
     assert.match(transient.stderr.toString(), /stopped health probe failed/);
     assert.equal(readFileSync(state, 'utf8'), 'stopped');
     assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const inventoryTransitionSeen = path.join(directory, 'inventory-transition-seen');
+    const settling = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        TRANSIENT_SHUTDOWN: 'yes',
+        INVENTORY_TRANSITION_SEEN: inventoryTransitionSeen,
+        SLOT_LIFECYCLE: 'ready',
+      },
+    });
+    assert.equal(settling.status, 0, settling.stderr.toString());
+    assert.equal(readFileSync(inventoryTransitionSeen, 'utf8'), 'Shutting Down');
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
 
     const inventoryCommand = readinessRecipe.workflow.nodes['verify-inventory'].cmd
       .replaceAll('{{params.slot_id}}', 'mini-mm-2')
