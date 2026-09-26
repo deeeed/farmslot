@@ -48,7 +48,7 @@ Mobile should complement the desktop command center, not replicate every heavy d
 
 ### 5. Persistent PR attention away from the desk (planned)
 
-Review intake displays Continue/Fresh policy, static/full-live depth, prior reviewed SHA and session continuation outcome. Slots can handle other PRs between rounds while the PR's reviewer context remains resumable.
+Review intake displays Continue/Fresh policy, static review with separate QA, prior reviewed SHA and session continuation outcome. Slots can handle other PRs between rounds while the PR's reviewer context remains resumable.
 
 Expose the same [persistent PR monitors and incidents](PRD-automation-intelligence-canonical.md#6-persistent-pr-monitoring-planned) as Command Center, including externally created PRs and PRs by other authors. Support adding a PR URL, choosing notify-only or automatic repair, inspecting current evidence, requesting a repair, and pausing/snoozing monitoring actions. Push notifications deep-link to current gateway incident state; failed push delivery does not remove the in-app attention item. The app must distinguish a stale observation, pending operator action, queued repair, running repair, and dependency wait.
 

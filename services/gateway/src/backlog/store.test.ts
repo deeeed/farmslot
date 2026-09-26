@@ -185,6 +185,45 @@ test('waitPolicy is validated, persisted, clearable, and carried onto the queue 
   assert.equal(cleared.item.waitPolicy, undefined);
 });
 
+test('new backlog review plans are static while stored legacy live loops stay readable', async () => {
+  const { backlog } = await freshStores();
+  const liveLoop = { order: 1, runner: 'codex' as const, validationDepth: 'full-live' as const };
+  const request = {
+    project: 'farmslot-farm',
+    title: 'Legacy live review loop',
+    sourceKind: 'manual' as const,
+    flowType: 'dev' as const,
+  };
+  await assert.rejects(
+    backlog.createBacklogItem({ ...request, pendingReviewPlan: [liveLoop] }, { kind: 'system' }),
+    /pendingReviewPlan\[0\] requests full-live validation/,
+  );
+
+  const created = await backlog.createBacklogItem(request, { kind: 'system' });
+  await assert.rejects(
+    backlog.updateBacklogItem({ itemId: created.item.id, pendingReviewPlan: [liveLoop] }),
+    /QA flow/,
+  );
+  // A record persisted before ADR-058 keeps its original plan across reloads.
+  backlog.mutateBacklogItemForTests(created.item.id, (item) => {
+    item.pendingReviewPlan = [liveLoop];
+  });
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  assert.deepEqual(backlog.getBacklogItemSnapshot(created.item.id)?.pendingReviewPlan, [liveLoop]);
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  await assert.rejects(
+    backlog.enqueueBacklogItem({ itemId: created.item.id }),
+    /independent reviews are static/,
+  );
+
+  const repaired = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    pendingReviewPlan: [{ ...liveLoop, validationDepth: 'static-code' }],
+  });
+  assert.equal(repaired.item.pendingReviewPlan?.[0]?.validationDepth, 'static-code');
+});
+
 test('markdown-backed backlog specs require acceptance criteria before ready', async () => {
   const { backlog } = await freshStores();
   const specPath = await writeSpec(

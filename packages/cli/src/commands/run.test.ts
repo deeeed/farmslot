@@ -674,17 +674,11 @@ test('static review flags preserve machine, native runner and effort while refus
   assert.deepEqual(params.reviewWorkspaceTarget, { machine: 'node' });
   assert.equal(params.transport, 'native');
   assert.equal(params.effort, 'high');
-  assert.equal(
-    buildRunCreateParams({ ...base, slot: 'runtime', reviewValidationDepth: 'full-live' })
-      .reviewValidationDepth,
-    'full-live',
+  assert.equal('reviewValidationDepth' in params, false, 'new CLI reviews never submit a depth');
+  assert.throws(
+    () => buildRunCreateParams({ ...base, reviewMachine: 'node', slot: 'runtime' }),
+    /--review-machine cannot be combined with --slot/,
   );
-  for (const patch of [
-    { slot: 'runtime' },
-    { reviewValidationDepth: 'full-live' },
-    { reviewValidationDepth: 'invalid' },
-  ])
-    assert.throws(() => buildRunCreateParams({ ...base, reviewMachine: 'node', ...patch }));
 });
 
 test('QA CLI flags preserve opaque nested skill inputs and require the explicit QA flow', () => {
@@ -729,10 +723,6 @@ test('QA CLI flags preserve opaque nested skill inputs and require the explicit 
   assert.throws(
     () => buildRunCreateParams({ ...base, reviewMachine: 'static-machine' }),
     /QA uses a runtime slot/,
-  );
-  assert.throws(
-    () => buildRunCreateParams({ ...base, reviewValidationDepth: 'static-code' }),
-    /conflicts with legacy validation depth/,
   );
 });
 

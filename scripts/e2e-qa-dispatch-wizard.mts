@@ -122,7 +122,7 @@ try {
   const models = [{ runner: 'codex', model: 'gpt-5.6-luna', effort: 'low' }];
   for (const name of ['wizard-farm', 'workspace-only']) {
     const project = path.join(fixture, 'projects', name);
-    for (const flow of ['review-pr', 'validation', 'dev']) {
+    for (const flow of ['review-pr', 'validation', 'dev', 'fix-bug']) {
       await mkdir(path.join(project, 'shared', flow), { recursive: true });
       await writeFile(
         path.join(project, 'shared', flow, 'shared.md'),
@@ -282,6 +282,7 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_POOL_DIR: path.join(fixture, 'pool'),
     FARMSLOT_RUNS_DIR: path.join(fixture, 'runs'),
     FARMSLOT_DISPATCH_QUEUE_FILE: path.join(fixture, 'queue.json'),
+    FARMSLOT_BACKLOG_FILE: path.join(fixture, '.backlog.json'),
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(gatewayPort),
     VITE_PORT: String(uiPort),
@@ -296,6 +297,26 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_UI_URL: `http://127.0.0.1:${uiPort}/#dispatch`,
     FARMSLOT_CDP_HEADLESS: '1',
   };
+  // A pre-ADR-058 backlog record: its stored publication-review round still asks for full-live.
+  const legacyBacklogId = 'legacy-live-review-item';
+  const seededAt = new Date().toISOString();
+  await json(path.join(fixture, '.backlog.json'), [
+    {
+      id: legacyBacklogId,
+      project: 'wizard-farm',
+      title: 'Legacy live review round',
+      sourceKind: 'manual',
+      sourceRef: 'MANUAL-900',
+      flowType: 'fix-bug',
+      status: 'ready',
+      priority: 10,
+      pendingReviewPlan: [
+        { order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'full-live' },
+      ],
+      createdAt: seededAt,
+      updatedAt: seededAt,
+    },
+  ]);
   servers = startReviewInterfaceServers({ root, evidence, environment });
   const client = new GatewayClient({
     url: `ws://127.0.0.1:${gatewayPort}`,
@@ -314,6 +335,7 @@ process.stdout.write(JSON.stringify(body));
   assert(connection, 'Fixture gateway did not start');
   const cdpFile = path.join(root, 'apps/command-center/scripts/cdp.mjs');
   let activeRoute = 'dispatch';
+  let count = 0;
   const cdp = (...args: string[]) =>
     execFileSync(process.execPath, [cdpFile, ...args], {
       cwd: root,
@@ -451,7 +473,7 @@ process.stdout.write(JSON.stringify(body));
     evaluate(
       `return [...find('runner-model-effort-picker').element.shadowRoot.querySelector('.pill-row').querySelectorAll('button')].map(button=>button.textContent.trim());`,
     ),
-    ['claude', 'codex', 'cursor', 'grok'],
+    ['claude', 'codex', 'cursor', 'grok', 'pi'],
   );
   evaluate(
     `find('[data-testid="dispatch-execution-options"]').element.querySelector('summary').click();find('runner-model-effort-picker').element.shadowRoot.querySelector('details summary').click();return true;`,
@@ -650,6 +672,88 @@ process.stdout.write(JSON.stringify(body));
   );
   screenshot('existing-dev-controls');
   checkpoints.push('qa-return-and-existing-dev-controls');
+
+  // ADR-058: independent review rounds are static; a legacy live link cannot re-enable live depth.
+  await navigate(
+    '#dispatch?flow=fix-bug&project=wizard-farm&ticket=PROJ-107&publicationReviews=codex%3Afull-live%2Cclaude',
+  );
+  await waitUI(`return find('.publication-review-panel')?.element.getClientRects().length > 0;`);
+  evaluate(
+    `find('.publication-review-panel').element.scrollIntoView({block:'center'});return true;`,
+  );
+  screenshot('after-static-publication-reviews');
+  const publicationPanel = evaluate(
+    `const panel=find('.publication-review-panel').element;const rect=panel.getBoundingClientRect();return {text:panel.textContent.replace(/\\s+/g,' '),statics:[...panel.querySelectorAll('[data-testid="publication-review-static"]')].map(e=>e.textContent.trim()),buttons:[...panel.querySelectorAll('button')].map(b=>b.textContent.trim()),visible:rect.height>0};`,
+  );
+  assert(publicationPanel.visible, 'Publication reviews panel must render');
+  assert.deepEqual(publicationPanel.statics, ['Static', 'Static']);
+  assert(
+    !publicationPanel.buttons.some((label: string) => /full.?live/i.test(label)),
+    `Publication reviews must not offer a full-live button: ${publicationPanel.buttons.join(', ')}`,
+  );
+  assert.match(publicationPanel.text, /Runtime validation runs separately with the QA flow/);
+  assert.match(publicationPanel.text, /Farm QA preset: Daily changes/);
+  assert(
+    !evaluate(`return /full.?live/i.test(find('dispatch-wizard').element.shadowRoot.textContent);`),
+    'No full-live review choice anywhere in Dispatch config',
+  );
+  await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
+  count = (await queue()).length;
+  click('dispatch-queue');
+  const staticItems = await waitQueue(count + 1);
+  const staticRequest = staticItems.find((item) => item.ticketOrPr === 'PROJ-107')!;
+  assert.equal(staticRequest.flowType, 'fix-bug');
+  assert.deepEqual(
+    staticRequest.pendingReviewPlan?.map((loop) => [loop.runner, loop.validationDepth]),
+    [
+      ['codex', 'static-code'],
+      ['claude', 'static-code'],
+    ],
+  );
+  await json(path.join(evidence, 'static-publication-review-item.json'), staticRequest);
+  checkpoints.push('dispatch-config-offers-only-static-review-rounds');
+
+  const liveLoopRequest = {
+    flowType: 'fix-bug',
+    project: 'wizard-farm',
+    ticketOrPr: 'PROJ-108',
+    pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'full-live' }],
+  };
+  const refusals: Record<string, string> = {};
+  for (const method of ['dispatch.queue.add', 'run.create']) {
+    await assert.rejects(connection.call(method, liveLoopRequest), (error: Error) => {
+      refusals[method] = error.message;
+      return /independent reviews are static.*QA flow/.test(error.message);
+    });
+  }
+  await assert.rejects(
+    connection.call('backlog.create', {
+      project: 'wizard-farm',
+      title: 'Legacy live review loop',
+      sourceKind: 'manual',
+      flowType: 'fix-bug',
+      pendingReviewPlan: liveLoopRequest.pendingReviewPlan,
+    }),
+    (error: Error) => {
+      refusals['backlog.create'] = error.message;
+      return /independent reviews are static.*QA flow/.test(error.message);
+    },
+  );
+  assert(
+    !(await connection.call<{ items: Array<{ title: string }> }>('backlog.list', {})).items.some(
+      (item) => item.title === 'Legacy live review loop',
+    ),
+    'Refused live loops must not create a backlog item',
+  );
+  assert.equal((await queue()).length, count + 1, 'Refused live loops must not queue work');
+  assert(
+    !(await connection.call<{ runs: Array<{ ticketOrPr: string }> }>('run.list')).runs.some(
+      (run) => run.ticketOrPr === 'PROJ-108',
+    ),
+    'Refused live loops must not create a run',
+  );
+  await json(path.join(evidence, 'full-live-review-loop-refusals.json'), refusals);
+  checkpoints.push('gateway-refuses-new-full-live-review-loops');
   await navigate('#dispatch?flow=qa&project=wizard-farm&ticket=changes-since-yesterday');
   await waitUI(`return Boolean(find('[data-testid="dispatch-qa-domain"]'));`);
   await choose('dispatch-qa-domain', 'payments');
@@ -666,7 +770,7 @@ process.stdout.write(JSON.stringify(body));
     );
   };
   await chooseField('window', '48h');
-  let count = (await queue()).length;
+  count = (await queue()).length;
   await waitUI(`return !find('[data-testid="dispatch-queue"]').element.disabled;`);
   click('dispatch-queue');
   let actionItems = await waitQueue(count + 1);
@@ -698,6 +802,54 @@ process.stdout.write(JSON.stringify(body));
   assert.deepEqual(release.qaInputs, { scope: 'payments', lane: 'source' });
   await json(path.join(evidence, 'qa-dynamic-actions.json'), { daily, release });
   checkpoints.push('farm-fields-domain-and-non-pr-qa-actions');
+
+  // The shared dispatch-config editor (Backlog and Work Graph) shows a stored legacy round as
+  // legacy and repairs it to static only when the operator asks.
+  const backlogPlan = async () =>
+    (
+      await connection!.call<{
+        items: Array<{ id: string; pendingReviewPlan?: QueueItem['pendingReviewPlan'] }>;
+      }>('backlog.list', {})
+    ).items.find((item) => item.id === legacyBacklogId)?.pendingReviewPlan;
+  assert.equal((await backlogPlan())?.[0]?.validationDepth, 'full-live');
+  cdp('goto', '#fleet');
+  cdp('goto', `#backlog?item=${legacyBacklogId}&dispatchConfig=1`);
+  activeRoute = 'backlog';
+  const makeStatic = `find('[data-testid="dispatch-config-review-make-static"]')?.element`;
+  await waitUI(`return Boolean(${makeStatic}?.getClientRects().length);`);
+  evaluate(`${makeStatic}.scrollIntoView({block:'center'});return true;`);
+  screenshot('backlog-legacy-review-round');
+  const legacyLabel = evaluate(
+    `return {button:${makeStatic}.textContent.trim(),statics:Boolean(find('[data-testid="dispatch-config-review-depth"]'))};`,
+  );
+  assert.match(legacyLabel.button, /Legacy full live · make static/);
+  assert.equal(legacyLabel.statics, false, 'A legacy round must not be labelled Static');
+  click('dispatch-config-review-make-static');
+  const repairedUntil = Date.now() + 30000;
+  let repairedPlan = await backlogPlan();
+  while (repairedPlan?.[0]?.validationDepth !== 'static-code' && Date.now() < repairedUntil) {
+    await delay(250);
+    repairedPlan = await backlogPlan();
+  }
+  assert.deepEqual(
+    repairedPlan,
+    [{ order: 1, runner: 'codex', model: 'gpt-5.6-luna', validationDepth: 'static-code' }],
+    'make static persists a static round and keeps the runner and model',
+  );
+  await waitUI(
+    `return !${makeStatic} && find('[data-testid="dispatch-config-review-depth"]')?.element.textContent.trim()==='Static';`,
+  );
+  evaluate(
+    `find('[data-testid="dispatch-config-review-depth"]').element.scrollIntoView({block:'center'});return true;`,
+  );
+  screenshot('backlog-review-round-made-static');
+  await json(path.join(evidence, 'backlog-legacy-review-repair.json'), {
+    itemId: legacyBacklogId,
+    before: 'full-live',
+    label: legacyLabel,
+    after: repairedPlan,
+  });
+  checkpoints.push('backlog-editor-repairs-legacy-review-round');
 
   await noExecution();
   await json(path.join(evidence, 'queue.json'), {

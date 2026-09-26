@@ -1,0 +1,64 @@
+{
+  "recordedAt": "2026-09-24T14:15:37.907Z",
+  "method": "Operator-reported read of stripped criterion/evidence by case order before opening frozen labels. The saved result cannot attest the order of access; no provider input included IDs or labels",
+  "casesSha256": "ba30af5bea1f9c54e2723220c658dfe0c70fe9f663d37f65380d09a5b679afe4",
+  "labelsSha256": "31ba1b52dad4186d59c6d82ce7923fb400b9bfe6c5aaac5ea7a06bd4fd59f7b1",
+  "rows": [
+    {
+      "caseId": "case-bd0e492cb8",
+      "independentJudgment": "contradicted"
+    },
+    {
+      "caseId": "case-57584c0514",
+      "independentJudgment": "insufficient"
+    },
+    {
+      "caseId": "case-4403723d6f",
+      "independentJudgment": "supported"
+    },
+    {
+      "caseId": "case-d9148d1742",
+      "independentJudgment": "supported"
+    },
+    {
+      "caseId": "case-df79ab632b",
+      "independentJudgment": "contradicted"
+    },
+    {
+      "caseId": "case-e2864820eb",
+      "independentJudgment": "insufficient"
+    },
+    {
+      "caseId": "case-73534ccc73",
+      "independentJudgment": "insufficient"
+    },
+    {
+      "caseId": "case-0f44fffa13",
+      "independentJudgment": "supported"
+    },
+    {
+      "caseId": "case-b378efe57b",
+      "independentJudgment": "contradicted"
+    },
+    {
+      "caseId": "case-5606bbd91a",
+      "independentJudgment": "supported"
+    },
+    {
+      "caseId": "case-fc8a9190fd",
+      "independentJudgment": "insufficient"
+    },
+    {
+      "caseId": "case-72efdd3b17",
+      "independentJudgment": "contradicted"
+    },
+    {
+      "caseId": "case-50288dbd0f",
+      "independentJudgment": "no-call"
+    },
+    {
+      "caseId": "case-ffc66c7d36",
+      "independentJudgment": "no-call"
+    }
+  ]
+}

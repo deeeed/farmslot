@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -756,6 +756,81 @@ test('loadAllRuns quarantines persisted gateway test fixture leaks', async () =>
   await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
     cwd: gatewayRoot,
   });
+});
+
+test('loadAllRuns leaves non-run JSON untouched across restarts', async (t) => {
+  const runId = 'd4e5f6a7-1111-4222-8333-444455556666';
+  const validRun = {
+    id: runId,
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    status: 'failed',
+    project: 'farmslot-farm',
+    ticketOrPr: 'NON-RUN-JSON-1',
+    slotId: 'macpro-ff-3',
+    steps: [{ name: 'write-task', status: 'done' }],
+    decisions: [],
+    metrics: {},
+    createdAt: '2026-09-26T08:00:00.000Z',
+    updatedAt: '2026-09-26T08:10:00.000Z',
+  };
+  const capabilityStore = { version: 1, leases: [], proofPlans: {}, events: [] };
+  const scenarios: Record<string, Record<string, unknown>> = {
+    // The capability store alone used to load as a run and migrate into undefined.json.
+    'capability-only': { 'runtime-capabilities-7777.json': capabilityStore },
+    // The record that migration left behind, plus a real payload under the wrong filename.
+    'leftover-undefined': {
+      'runtime-capabilities-7777.json': capabilityStore,
+      'undefined.json': {
+        ...capabilityStore,
+        flowType: 'fix-bug',
+        parentRunId: null,
+        lane: 'production',
+        variant: null,
+      },
+      'stale-copy.json': { ...validRun, id: 'e5f6a7b8-1111-4222-8333-444455556666' },
+      // Filename-matched JSON without the run shape (status, steps, createdAt).
+      'f6a7b8c9-1111-4222-8333-444455556666.json': { id: 'f6a7b8c9-1111-4222-8333-444455556666' },
+    },
+  };
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
+  for (const [scenario, nonRunFiles] of Object.entries(scenarios)) {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), `farmslot-non-run-${scenario}-`));
+    t.after(() => rm(tmp, { recursive: true, force: true }));
+    await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(validRun));
+    const before = new Map<string, string>();
+    for (const [name, body] of Object.entries(nonRunFiles)) {
+      const raw = JSON.stringify(body, null, 2);
+      await writeFile(path.join(tmp, name), raw);
+      before.set(name, raw);
+    }
+    const script = `
+      process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
+      const { loadAllRuns, getAllRuns, persistRunNow, getRun } = await import('./src/runs/store.js');
+      await loadAllRuns();
+      const ids = getAllRuns().map((run) => run.id);
+      if (ids.length !== 1 || ids[0] !== ${JSON.stringify(runId)}) {
+        console.error(JSON.stringify(ids));
+        process.exit(2);
+      }
+      await persistRunNow(getRun(${JSON.stringify(runId)}), 'test flush');
+    `;
+    // Two processes: the second load is the restart that previously read undefined.json.
+    for (let boot = 0; boot < 2; boot++) {
+      await execFileAsync(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '-e', script],
+        {
+          cwd: gatewayRoot,
+        },
+      );
+    }
+    const files = (await readdir(tmp)).filter((name) => name.endsWith('.json')).sort();
+    assert.deepEqual(files, [`${runId}.json`, ...before.keys()].sort(), scenario);
+    for (const [name, raw] of before) {
+      assert.equal(await readFile(path.join(tmp, name), 'utf-8'), raw, `${scenario}: ${name}`);
+    }
+  }
 });
 
 test('cleanupRuns quarantines synthetic fixture leaks', async () => {

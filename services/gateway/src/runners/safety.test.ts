@@ -336,7 +336,7 @@ describe('RunnerDefinition.defaultSafetyTier registry field', () => {
 describe('runnerDefaultModel', () => {
   it('reads defaults from the runner registry', () => {
     assert.equal(runnerDefaultModel('claude'), 'opus');
-    assert.equal(runnerDefaultModel('codex'), 'gpt-6-astra');
+    assert.equal(runnerDefaultModel('codex'), 'gpt-6-sol');
     assert.equal(runnerDefaultModel('cursor'), DEFAULT_CURSOR_MODEL);
     assert.equal(runnerDefaultModel('opencode'), null);
     assert.equal(runnerDefaultModel('unknown-runner'), null);

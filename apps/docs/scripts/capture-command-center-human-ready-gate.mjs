@@ -378,7 +378,7 @@ const readyPayload = {
       loopNumber: 1,
       verdict: 'pass',
       unresolvedCount: 0,
-      validationDepth: 'full-live',
+      validationDepth: 'static-code',
       artifactPaths: ['artifacts/trace.json', 'artifacts/diff.patch'],
       reviewedHeadSha: 'f00dbabe1234567890abcdef1234567890abcdef',
       reviewedPackageInputHash: 'input_farmslot_demo_ready_gate',

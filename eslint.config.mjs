@@ -53,6 +53,7 @@ export default [
       'apps/companion/android/**',
       'apps/companion/ios/**',
       '.farm-cache/**',
+      '.backlog/**',
       '.omc/**',
       '.omx/**',
       '.runs/**',

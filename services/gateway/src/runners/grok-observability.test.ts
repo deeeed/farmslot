@@ -275,6 +275,35 @@ describe('Grok structured prompt observability', () => {
       });
 
       await writeFile(
+        eventsPath,
+        Buffer.concat([
+          Buffer.from(
+            [
+              JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+              JSON.stringify({ type: 'tool_started', ts: '2026-08-01T12:00:01.500+00:00' }),
+              '{"type":"turn_ended","payload":"',
+            ].join('\n'),
+          ),
+          Buffer.from([0xc3]),
+        ]),
+      );
+      const partialUtf8 = await runProbe();
+      assert.equal(partialUtf8.exitCode, 0, partialUtf8.stderr);
+      assert.equal(parseGrokPromptSignalProbe(partialUtf8.stdout.trim()).status, 'matched');
+
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          '{"type":"turn_ended",}',
+          ...Array(1025).fill(JSON.stringify({ type: 'other', payload: 'x'.repeat(1024) })),
+        ].join('\n'),
+      );
+      const malformedCompleteTurn = await runProbe();
+      assert.notEqual(malformedCompleteTurn.exitCode, 0);
+      assert.match(malformedCompleteTurn.stderr, /JSONDecodeError/);
+
+      await writeFile(
         chatPath,
         `${JSON.stringify({
           type: 'user',
@@ -309,6 +338,95 @@ describe('Grok structured prompt observability', () => {
         sessionId,
         sessionPath: await realpath(sessionDir),
       });
+
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          JSON.stringify({
+            type: 'turn_ended',
+            ts: '2026-08-01T12:00:02+00:00',
+            outcome: 'completed',
+          }),
+          JSON.stringify({ type: 'turn_started', ts: '2026-08-01T11:59:59+00:00', turn_number: 0 }),
+        ].join('\n'),
+      );
+      const outOfOrder = parseGrokPromptSignalProbe((await runProbe()).stdout.trim());
+      assert.equal(outOfOrder.status, 'matched');
+      if (outOfOrder.status === 'matched') {
+        assert.equal(outOfOrder.activity, 'idle');
+        assert.equal(outOfOrder.turnStartedAt, Date.parse(acceptedAt));
+      }
+
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          ...Array(1025).fill(JSON.stringify({ type: 'other', payload: 'x'.repeat(1024) })),
+          JSON.stringify({
+            type: 'turn_ended',
+            ts: '2026-08-01T12:00:02+00:00',
+            outcome: 'completed',
+          }),
+        ].join('\n'),
+      );
+      const longSession = await runProbe();
+      assert.equal(longSession.exitCode, 0, longSession.stderr);
+      const longSessionSignal = parseGrokPromptSignalProbe(longSession.stdout.trim());
+      assert.equal(longSessionSignal.status, 'matched');
+      if (longSessionSignal.status === 'matched') assert.equal(longSessionSignal.activity, 'idle');
+
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          ...Array(1025).fill(JSON.stringify({ type: 'other', payload: 'x'.repeat(1024) })),
+        ].join('\n'),
+      );
+      const unboundedTurn = await runProbe();
+      assert.equal(unboundedTurn.exitCode, 0, unboundedTurn.stderr);
+      const unboundedTurnSignal = parseGrokPromptSignalProbe(unboundedTurn.stdout.trim());
+      assert.equal(unboundedTurnSignal.status, 'matched');
+      if (unboundedTurnSignal.status === 'matched') {
+        assert.equal(unboundedTurnSignal.activity, 'composing');
+        assert.equal(unboundedTurnSignal.promptAcceptedAt, null);
+      }
+
+      await writeFile(
+        chatPath,
+        `${JSON.stringify({
+          type: 'user',
+          prompt_index: 0,
+          content: [{ type: 'text', text: prompt }],
+        })}\n`,
+      );
+      const recoveredPrompt = await runProbe();
+      const recoveredSignal = parseGrokPromptSignalProbe(recoveredPrompt.stdout.trim());
+      assert.equal(recoveredSignal.status, 'matched');
+      if (recoveredSignal.status === 'matched') {
+        assert.equal(recoveredSignal.promptAcceptedAt, Date.parse(acceptedAt));
+      }
+
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({ type: 'turn_started', ts: acceptedAt, turn_number: 0 }),
+          JSON.stringify({ type: 'other', payload: 'x'.repeat(17 * 1024 * 1024) }),
+          JSON.stringify({
+            type: 'turn_ended',
+            ts: '2026-08-01T12:00:02+00:00',
+            outcome: 'completed',
+          }),
+        ].join('\n'),
+      );
+      const boundedSession = await runProbe();
+      assert.equal(boundedSession.exitCode, 0, boundedSession.stderr);
+      const boundedSignal = parseGrokPromptSignalProbe(boundedSession.stdout.trim());
+      assert.equal(boundedSignal.status, 'matched');
+      if (boundedSignal.status === 'matched') {
+        assert.equal(boundedSignal.promptAcceptedAt, null);
+        assert.equal(boundedSignal.activity, 'idle');
+      }
 
       await writeFile(
         activePath,

@@ -83,6 +83,19 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
   );
 });
 
+test('publication review plans submit only static rounds', () => {
+  const loops = [
+    { id: 1, runner: 'codex' as const },
+    { id: 2, runner: 'claude' as const },
+    { id: 3, runner: 'cursor' as const },
+  ];
+  const plan = buildPublicationReviewPlan('fix-bug', 'claude', loops, runners);
+  assert.deepEqual(
+    plan.map((loop) => loop.validationDepth),
+    ['static-code', 'static-code', 'static-code'],
+  );
+});
+
 test('publication review depth counts configured loops once', () => {
   assert.deepEqual(
     buildPublicationReviewDepth('fix-bug', 'claude', [

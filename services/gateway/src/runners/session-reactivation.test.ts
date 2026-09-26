@@ -220,6 +220,7 @@ const vars = {
 
 test('Cursor retained handoff relaunches with argv and waits for the scoped task signal', async (t) => {
   commands.length = 0;
+  let mutationStarts = 0;
   paneCount = 1;
   advanceTaskSignalOnRespawn = true;
   taskSignalOutput = '2000000000\n{"status":"complete","timestamp":"2026-08-02T00:00:00.000Z"}\n';
@@ -238,9 +239,17 @@ test('Cursor retained handoff relaunches with argv and waits for the scoped task
     replacementReadySignalPath: '/tmp/PRIOR-TASK-SIGNAL.json',
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
     timeoutMs: 1_000,
+    onPromptMutationStart: () => {
+      mutationStarts += 1;
+      assert.equal(
+        commands.some((command) => command.includes('respawn-window')),
+        false,
+      );
+    },
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(mutationStarts, 1);
   const command = commands.find((candidate) => candidate.includes('respawn-window')) ?? '';
   assert.match(command, /cursor-agent/);
   assert.match(command, /Read and execute SELF-REVIEW-FIX[.]md/);
@@ -359,7 +368,7 @@ test('Cursor recovery accepts only prior structured evidence and never relaunche
   assert.equal(result.delivered, false);
   if (!result.delivered) {
     assert.equal(result.disposition, 'hold');
-    assert.equal(result.retryable, false);
+    assert.equal(result.retryable, true);
     assert.match(result.reason, /refusing duplicate delivery/);
   }
   assert.equal(
@@ -372,6 +381,7 @@ test('Cursor argv handoff refuses delivery without a task signal contract', asyn
   commands.length = 0;
   paneCount = 1;
   advanceTaskSignalOnRespawn = false;
+  let mutationStarts = 0;
 
   const result = await deliverPromptToLiveRunner({
     vars,
@@ -380,9 +390,13 @@ test('Cursor argv handoff refuses delivery without a task signal contract', asyn
     model: 'cursor-grok-4.6-high-fast',
     prompt: 'Read and execute CI-FIX.md',
     promptMarker: 'CI-FIX.md',
+    onPromptMutationStart: () => {
+      mutationStarts += 1;
+    },
   });
 
   assert.equal(result.delivered, false);
+  assert.equal(mutationStarts, 0);
   if (!result.delivered) assert.match(result.reason, /task-scoped acknowledgement signal/);
   assert.equal(
     commands.some((candidate) => candidate.includes('respawn-window')),
@@ -979,7 +993,7 @@ test('retained fallback refuses a stale task signal during explicit recovery', a
   assert.equal(result.delivered, false);
   if (!result.delivered) {
     assert.equal(result.disposition, 'hold');
-    assert.equal(result.retryable, false);
+    assert.equal(result.retryable, true);
     assert.match(result.reason, /refusing duplicate delivery/);
   }
   assert.equal(

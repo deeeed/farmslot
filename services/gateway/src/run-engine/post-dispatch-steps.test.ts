@@ -8,6 +8,7 @@ import type {
   CompleteStepOutput,
   PublicationReviewLaunchRejection,
   ReviewLoopRequest,
+  Run,
 } from '@farmslot/protocol';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
@@ -15,6 +16,7 @@ import type { PrepareCompletionPackageResult } from '../run-completion/orchestra
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  baseSelfReviewDepth,
   executeHumanGateStep,
   executeSelfReviewStep,
   holdInteractiveCompletionForOperator,
@@ -327,6 +329,99 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
   assert.equal(selfReviewCalls, 1);
   assert.equal(io.inputs?.enabled, true);
   assert.equal(io.outputs?.verdict, 'pass');
+});
+
+test('baseSelfReviewDepth is static for new runs and keeps a recorded or pre-migration live review', () => {
+  assert.equal(baseSelfReviewDepth(makeRun({ steps: [] })), 'static-code');
+  const recorded = makeRun({
+    steps: [
+      { name: 'self-review', status: 'running', inputs: { validationDepth: 'full-live' } },
+    ] as Run['steps'],
+  });
+  assert.equal(baseSelfReviewDepth(recorded), 'full-live', 'recorded depth survives a restart');
+  const preMigration: Run = {
+    ...makeRun({ steps: [] }),
+    agentContexts: [{ id: 'reviewer-1', role: 'self-review' }] as Run['agentContexts'],
+  };
+  assert.equal(
+    baseSelfReviewDepth(preMigration),
+    'full-live',
+    'a base review launched before depth was recorded ran the live contract',
+  );
+  const publicationOnly: Run = {
+    ...makeRun({ steps: [] }),
+    agentContexts: [
+      { id: 'reviewer-2', role: 'self-review', artifactScope: 'independent-review-1' },
+    ] as Run['agentContexts'],
+  };
+  assert.equal(
+    baseSelfReviewDepth(publicationOnly),
+    'static-code',
+    'a publication reviewer is not a started base review',
+  );
+});
+
+test('executeSelfReviewStep records a static base review and replays the recorded depth', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-BASE-DEPTH',
+    runner: 'claude',
+    slotId: 'base-depth-slot',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+  const depths: Array<string | undefined> = [];
+  const context = {
+    activeMonitors: new Map(),
+    blockedRunError: (message: string, reason: string) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => ({ reviewIds: [] }),
+    executeReadyGate: async () => 'ready' as const,
+    executeReviewGate: async () => {},
+    executeSelfReviewForRun: async (
+      _runId: string,
+      _slotId: string | null | undefined,
+      options?: { validationDepth?: string },
+    ) => {
+      depths.push(options?.validationDepth);
+      return { verdict: 'pass' as const, retryCount: 0 };
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    monitorTerminalError: ({ reason }: { reason: string }) => new Error(reason),
+    probeWorkerSignalForRun: async () => ({
+      ok: false as const,
+      code: 'missing' as const,
+      message: 'signal missing',
+    }),
+    refreshRunLinks: async () => {},
+    stepPartialIO: new Map(),
+    deferTerminalSlotRelease: () => {},
+  } as unknown as Parameters<typeof executeSelfReviewStep>[1];
+
+  const io = await executeSelfReviewStep(run.id, context);
+  assert.equal(io.inputs?.validationDepth, 'static-code');
+  assert.equal(
+    getRun(run.id)?.steps.find((step) => step.name === 'self-review')?.inputs?.validationDepth,
+    'static-code',
+  );
+  // A restarted engine re-enters the step: the recorded depth wins over the new default.
+  const step = getRun(run.id)!.steps.find((candidate) => candidate.name === 'self-review')!;
+  updateRun(run.id, {
+    steps: getRun(run.id)!.steps.map((candidate) =>
+      candidate === step
+        ? { ...candidate, inputs: { ...candidate.inputs, validationDepth: 'full-live' } }
+        : candidate,
+    ),
+  });
+  await executeSelfReviewStep(run.id, context);
+  assert.deepEqual(depths, ['static-code', 'full-live']);
 });
 
 test('interactive send-feedback continues from existing findings without another initial review', async (t) => {

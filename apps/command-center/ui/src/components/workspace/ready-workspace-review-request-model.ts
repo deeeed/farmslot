@@ -1,9 +1,4 @@
-import type {
-  ReviewLoopRequest,
-  ReviewSessionIntent,
-  ReviewValidationDepth,
-} from '@farmslot/protocol';
-import { reviewValidationDepthForLoop } from '@farmslot/protocol';
+import type { ReviewLoopRequest, ReviewSessionIntent } from '@farmslot/protocol';
 
 import {
   DEFAULT_EFFORT,
@@ -80,14 +75,6 @@ export function setReadyReviewLoopModelEffort(
   return loops.map((loop) => (loop.id === id ? { ...loop, model, effort } : loop));
 }
 
-export function setReadyReviewLoopDepth(
-  loops: ReviewLoopDraft[],
-  id: number,
-  validationDepth: ReviewValidationDepth,
-): ReviewLoopDraft[] {
-  return loops.map((loop) => (loop.id === id ? { ...loop, validationDepth } : loop));
-}
-
 export function setReadyReviewLoopSessionIntent(
   loops: ReviewLoopDraft[],
   id: number,
@@ -105,7 +92,8 @@ export function readyReviewLoopRequestPayload(
     runner: (loop.runner || currentRunner) as ReviewRunnerChoice,
     ...(loop.model?.trim() ? { model: loop.model.trim() } : {}),
     ...(loop.effort?.trim() ? { effort: loop.effort.trim() } : {}),
-    validationDepth: loop.validationDepth ?? reviewValidationDepthForLoop(index, loops.length),
+    // Independent review rounds are static; runtime validation is a separate QA run (ADR-058).
+    validationDepth: 'static-code',
     sessionIntent: loop.sessionIntent,
   }));
   return {

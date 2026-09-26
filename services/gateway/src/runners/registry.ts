@@ -325,12 +325,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeChoices: {
       models: [
         DEFAULT_CODEX_MODEL,
-        'gpt-6-sol',
+        'gpt-6-astra',
+        'gpt-6-luna',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
-        'gpt-5.5',
-        'gpt-5.4',
       ],
       modes: ['default', 'plan'],
     },
@@ -2273,6 +2272,22 @@ type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
  * already-buffered text adds no copy.
  */
 const composerTouchStore = new AsyncLocalStorage<{ touched: boolean }>();
+const PROMPT_TYPE_FAILURE_EXIT_CODE = 85;
+const promptMutationStore = new AsyncLocalStorage<{
+  started: () => void;
+  confirmedUntouched?: () => void;
+}>();
+
+export function withRunnerPromptMutationBoundary<Result>(
+  onMutation: () => void,
+  send: () => Promise<Result>,
+  onConfirmedUntouched?: () => void,
+): Promise<Result> {
+  return promptMutationStore.run(
+    { started: onMutation, confirmedUntouched: onConfirmedUntouched },
+    send,
+  );
+}
 
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -2290,11 +2305,15 @@ async function submitRunnerInstruction(
     } catch (error) {
       console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
+    promptMutationStore.getStore()?.started();
     const write = await execOnSlot(
       vars,
       tmuxSendTextCommand(target, message, {
         enter: true,
         submitKey: getRunnerDefinition(runner).promptSubmitKey,
+        ...(promptMutationStore.getStore()
+          ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
+          : {}),
       }),
     );
     // Only once the write actually succeeded. `execOnSlot` resolves on a non-zero exit
@@ -2305,9 +2324,13 @@ async function submitRunnerInstruction(
       const touchRecord = composerTouchStore.getStore();
       if (touchRecord) touchRecord.touched = true;
     } else {
+      if (write.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
+        promptMutationStore.getStore()?.confirmedUntouched?.();
+      }
       console.warn(
         `[${logPrefix}] send-keys to ${target} exited ${write.exitCode}; nothing reached the composer`,
       );
+      return write.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE ? 'not-buffered' : 'stuck';
     }
   } else {
     const pane = await captureTmuxPane(vars, target);
@@ -2322,10 +2345,15 @@ async function submitRunnerInstruction(
       return 'not-buffered';
     }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
-    await execOnSlot(
+    promptMutationStore.getStore()?.started();
+    const submit = await execOnSlot(
       vars,
       tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`),
     );
+    if (submit.exitCode !== 0) {
+      promptMutationStore.getStore()?.confirmedUntouched?.();
+      return 'stuck';
+    }
   }
 
   for (let attempt = 1; attempt <= 5; attempt++) {
@@ -3552,11 +3580,18 @@ export async function sendRunnerPostLaunchPrompt(
       sendCommand = tmuxSendTextCommand(target, message, {
         enter: true,
         submitKey: runnerPromptSubmitKey(runner),
+        ...(promptMutationStore.getStore()
+          ? { typeFailureExitCode: PROMPT_TYPE_FAILURE_EXIT_CODE }
+          : {}),
       });
     }
     const sentAtMs = Date.now();
+    promptMutationStore.getStore()?.started();
     const promptResult = await execOnSlot(vars, sendCommand);
     if (promptResult.exitCode !== 0) {
+      if (shouldSubmitOnly || promptResult.exitCode === PROMPT_TYPE_FAILURE_EXIT_CODE) {
+        promptMutationStore.getStore()?.confirmedUntouched?.();
+      }
       throw new Error(
         `Failed to send prompt to ${target}: ${promptResult.stderr || promptResult.stdout || `exit ${promptResult.exitCode}`}`,
       );

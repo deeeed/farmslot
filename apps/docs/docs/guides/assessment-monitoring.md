@@ -3,8 +3,8 @@ title: Monitor structured assessments
 ---
 
 Open **Intelligence → Assessments** to inspect saved experimental assessments.
-The history includes synthetic connection tests, historical PR-intake advice and
-opt-in failure-triage requests. **PR rule previews and scheduled scans do not call the classifier.**
+The history includes synthetic connection tests, historical PR-intake advice,
+opt-in failure triage and explicit checklist, Co-Pilot and review-routing suggestions. **PR rule previews and scheduled scans do not call the classifier.**
 The earlier PR-metadata pilot has no demonstrated workflow benefit and its
 automatic preview invocation has been removed.
 
@@ -49,6 +49,33 @@ No run verdict or recovery action changes.
 Follow the [gateway setup guide](https://github.com/deeeed/farmslot/blob/main/docs/operations/experimental-failure-advice.md)
 for source drafts, policy and checkout-local CLI commands. The pilot's workflow
 efficiency remains unproven.
+
+## Try suggestions from a PR or run
+
+Open a PR in the dashboard to try **Assess checklist** or **Suggest validation depth**.
+Open a run to try **Suggest a next context read**. The links fill only the PR or
+run identity. In Intelligence → Assessments, provide the current PR head SHA
+when relevant, choose an approved public or synthetic source, and enter bounded
+text. Checklist items need their own criterion and changed-line excerpt. Co-Pilot
+needs at least two named, read-only sources to choose between. The model sees
+only the previewed packet. It cannot read a diff, screenshot or run logs on its
+own. A checklist judgment covers the supplied excerpt, not the whole PR.
+
+Preview makes no provider call. Inspect the state and questions, approve that
+exact packet, then choose **Assess**. The answer or abstention, provider/model,
+usage, estimated cost where available, source context and your per-question
+feedback appear in Assessments history. These suggestions never publish a review,
+change the selected validation route or send a command to Co-Pilot. Preview can
+report disabled, unavailable provider, expired or mismatched price, or a per-call
+budget limit. An answer has no demonstrated accuracy or time savings yet.
+
+This opt-in pilot requires `FARMSLOT_ASSESSMENT_ENABLED=true`, an explicitly
+selected assessment provider and model, its credential on the gateway host,
+and a local `assessment-suggestion-policy.json` under `FARMSLOT_HOME`. The policy
+must enable the feature and contain a current, verified price for the exact
+provider/model, plus `maxCalls` and `maxUsd` limits. Price verification expires
+after seven days. A credential alone does not enable suggestions. Keep private
+PR bodies and run logs out of a public or synthetic packet.
 
 ## Evaluate failure triage
 
@@ -145,8 +172,10 @@ out of the held-out evaluation.
 History is scoped to the authenticated owner and retained for 30 days, capped at
 5,000 records across the gateway. Reads hide expired rows. New attempts prune
 expired rows, with at most one sweep per minute. Records contain metadata and typed answers;
-raw titles, diffs, model inputs and upstream error bodies are not stored.
-Credential values known to the gateway are rejected. Use evidence references,
+historical PR titles, diffs, model inputs and upstream error bodies are not stored.
+For these explicit suggestion pilots, the entered context, checklist excerpts or
+candidate descriptions and typed answers are saved so you can review and rate
+them later. Credential values known to the gateway are rejected. Use evidence references,
 not copied review bodies, in feedback.
 
 Reports and evaluations live in owner-scoped directories under `FARMSLOT_HOME`.

@@ -162,10 +162,10 @@ format with an omitted `corpusVersion` continues to select frozen v2; an
 explicit `null` version is invalid. Never send IDs,
 splits or reference labels to the provider. Visual and mixed cases stay no-call.
 
-A live experiment still needs a separately verified current price and spend
+Any further live study needs a separately verified current price and spend
 cap, exact synthetic admission, complete assessment records and an independent
 paired baseline/assisted validator study at equal quality. Keep each attempt
-and its cost in the study. Until those results exist, **impact is unknown**.
+and its cost in the study. Until paired results exist, **impact is unknown**.
 
 To prepare a live **synthetic-only** study, create one temporary run per case
 with its criterion in `inputs/handoff.json`, a matching `AC-1` entry in
@@ -193,3 +193,37 @@ retain the gateway history export unchanged and verify provenance separately.
 The small synthetic corpus may not distinguish models with similar accuracy.
 A pass here does not repair the v2 false-positive verdict or show production
 accuracy, and the separate paired study is required for an efficiency claim.
+
+## Recorded live v3 probe
+
+On September 24, 2026, an operator reported reading the stripped v3 case
+text before looking at reference labels. The order of access is not independently
+attested. [The saved judgments](results/v3-independent-label-read.json)
+matched all 12 text labels and both no-call exclusions. A single explicitly
+opted-in synthetic-only batch then used gateway methods with pinned TypeSafe
+`jev-1.13.0`, no SDK retries, 12 exact run/snapshot admissions, a
+per-call cost reservation of 8,192 input tokens, a 500-output-token
+accounting allowance (output is free), and a USD 0.01 policy cap. The
+[complete isolated-owner receipt export](results/v3-typesafe-gateway-receipts.json)
+contains 12 completed calls. The operator script reported two visual/mixed
+`non-textual` refusals before transport; they have no assessment records.
+The operator reports checking the USD 0.042 per million input-token price
+and free output tokens at [TypeSafe's model page](https://docs.typesafe.ai/models)
+before the batch. The recorded timestamp cannot attest the page visit.
+The full input ceiling reserved USD 0.004128768.
+
+Jev matched 9/9 held-out labels and 11/12 text labels overall. The wrong
+**development** answer called `store_write_attempted` proof of persistence,
+with confidence 0.83. Recorded use was 6,132 input and 561 output tokens,
+USD 0.000257544 estimated cost, and 7,096 ms summed call duration. The
+classification threshold holds for this small synthetic held-out set, but
+the development mistake and the earlier v2 false positive matter. This export
+has no paired worker arms, so elapsed workflow time, total worker tokens and
+benefit remain **unknown**. The isolated gateway export is an operator record,
+not independent authentication of its source or any provider traffic outside
+that owner. Keep routine calls off pending a matched study.
+
+The receipts contain two question schema hashes. `requestedIdentity.questionSchemaHash`
+pins the consumer rubric and is the one the offline evaluator checks;
+`result.questionSchemaHash` is the assessment engine's request hash. Their
+values differ in this export.

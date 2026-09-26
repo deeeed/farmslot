@@ -16,6 +16,8 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'assessment.list': { classification: 'admin' },
   'assessment.report': { classification: 'admin' },
   'assessment.status': { classification: 'admin' },
+  'assessment.suggestion.analyze': { classification: 'admin' },
+  'assessment.suggestion.preview': { classification: 'admin' },
   'assessment.summary': { classification: 'admin' },
   'assessment.test': { classification: 'admin' },
   'auth.connect': { classification: 'admin' },

@@ -585,6 +585,48 @@ test('retains resolved parameterized intents in a valid real-run package', async
   }
 });
 
+test('rejects a shell-injected recipe parameter before executing its command', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = recipeDocument(
+      {
+        inspect: {
+          action: 'command',
+          intent: 'Check the chosen slot.',
+          cmd: 'touch {{params.slot_id}}',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+      {
+        paramsSchema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['slot_id'],
+          properties: { slot_id: { type: 'string', pattern: '^[A-Za-z0-9_-]+$(?![\\s\\S])' } },
+        },
+      },
+    );
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    await assert.rejects(
+      runner.run({
+        recipeDocument: recipe,
+        artifactsDir: path.join(tempRoot, 'artifacts'),
+        projectRoot: tempRoot,
+        params: { slot_id: 'mini-mm-2; touch injected' },
+      }),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'RECIPE_PARAMS_INVALID',
+    );
+    await assert.rejects(access(path.join(tempRoot, 'injected')), /ENOENT/u);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('validates executed parameters without overriding or rewriting the recipe', async () => {
   const tempRoot = await createTempRoot();
   try {
