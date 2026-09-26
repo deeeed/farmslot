@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Load only run-shaped files whose payload id matches the filename, so other JSON in the runs directory, such as the runtime capability store, no longer appears as an id-less run or migrates into `undefined.json` on restart.
 - Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
 
 - Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
