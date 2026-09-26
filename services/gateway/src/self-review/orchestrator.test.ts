@@ -35,6 +35,7 @@ test('recovery binds a completed fix when its running signal was missed, but nev
     promptDeliveryStartedAt: '2026-09-22T10:00:01Z',
   };
   assert.equal(canSettleRecoveredFixContext(context, context, 'completed-attempt'), true);
+  assert.equal(canSettleRecoveredFixContext(context, context, undefined), true);
   assert.equal(
     canSettleRecoveredFixContext(
       { ...context, signalAttemptId: 'completed-attempt' },
@@ -541,18 +542,54 @@ test('restart recovery preserves a persisted fix prompt delivery boundary when t
       ensureTarget: async () => 'mm-4:bugfix',
       persistTarget: async () => {},
       targetHostsRunner: async () => false,
-      deliver: async (options) => {
-        assert.equal(options.priorPromptSendAttempted, true);
-        return {
-          delivered: false,
-          disposition: 'hold',
-          reason: 'unacknowledged prior send',
-          retryable: false,
-        };
+      deliver: async () => {
+        throw new Error('An exited worker must not receive another prompt');
       },
     },
   );
-  assert.deepEqual(result, { status: 'deferred' });
+  assert.deepEqual(result, { status: 'blocked' });
+});
+
+test('recovered fix stops polling when the worker has exited', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'cursor', model: 'cursor-grok-4.6-high-fast' },
+    agentContexts: [],
+  };
+  let probes = 0;
+  const result = await reconcileRecoveredFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'cursor',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      target: { session: 'mm-4', target: 'mm-4:bugfix' },
+      attemptStartedAt: '2026-08-04T08:15:00.000Z',
+      promptDeliveryStartedAt: '2026-08-04T08:15:01.000Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async () => 'read fix task',
+      resolveRuntimeDir: async () => '.agent',
+      readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
+      ensureTarget: async () => 'mm-4:bugfix',
+      persistTarget: async () => {},
+      targetHostsRunner: async () => {
+        probes += 1;
+        return false;
+      },
+      deliver: async () => {
+        throw new Error('An exited worker must not receive another prompt');
+      },
+    },
+    { retryIntervalMs: 1, retryWindowMs: 100 },
+  );
+  assert.deepEqual(result, { status: 'blocked' });
+  assert.equal(probes, 1);
 });
 
 test('recovered fix re-probes the original prompt without another send', async () => {
@@ -584,7 +621,7 @@ test('recovered fix re-probes the original prompt without another send', async (
       syncChecklistTarget: async () => {},
       ensureTarget: async () => 'mm-4:bugfix',
       persistTarget: async () => {},
-      targetHostsRunner: async () => probes === 1,
+      targetHostsRunner: async () => true,
       deliver: async (options) => {
         assert.equal(options.priorPromptSendAttempted, true);
         probes += 1;

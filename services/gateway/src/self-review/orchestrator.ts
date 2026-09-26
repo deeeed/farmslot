@@ -523,7 +523,7 @@ interface FixDeliveryAcceptance {
 
 type FixPromptDeliveryResult =
   | { status: 'delivered'; turnToken?: string }
-  | { status: 'deferred' | 'relaunch-required' | 'unsupported' };
+  | { status: 'deferred' | 'relaunch-required' | 'unsupported' | 'blocked' };
 
 // Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
 // defaultSelfReviewRetryDeps below; tests pass a struct of mocks to exercise the
@@ -1336,7 +1336,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     target,
   });
   const targetHostsRunner = deps.targetHostsRunner
-    ? await deps.targetHostsRunner(vars, target, runner)
+    ? await deps.targetHostsRunner(vars, target, runner, undefined, true)
     : true;
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return { status: 'deferred' };
@@ -1350,6 +1350,7 @@ export async function resumeSelfReviewFixPromptDelivery(
   const runtimeDir = await deps.resolveRuntimeDir(run.project);
   const priorPromptSendAttempted =
     options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt);
+  if (priorPromptSendAttempted && !targetHostsRunner) return { status: 'blocked' };
   const result = await deps.deliver({
     vars,
     target,
@@ -1419,8 +1420,7 @@ export async function reconcileRecoveredFixPromptDelivery(
     const delivery = await resumeSelfReviewFixPromptDelivery(vars, runId, context, deps, {
       priorPromptSendAttempted: true,
     });
-    if (delivery.status === 'delivered') return delivery;
-    if (delivery.status !== 'deferred') break;
+    if (delivery.status !== 'deferred') return delivery;
   }
   return { status: 'deferred' };
 }
@@ -1682,6 +1682,34 @@ async function recoverSelfReviewFixPass({
             runId,
             `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
           );
+        }
+      }
+      if (delivery.status === 'blocked') {
+        fixSignal = matchingFixSignal(await readOptionalSelfReviewFixSignal(vars, fixSignalPath));
+        if (!fixSignal) {
+          if (
+            !(await settleRecoveredFixContext('blocked', fixContext.signalAttemptId ?? undefined))
+          )
+            return null;
+          return {
+            verdict: 'blocked',
+            reason: 'Recovered self-review fix worker exited without a terminal signal',
+            issues,
+            validationDepth,
+            retryCount: 1,
+            maxRetries,
+            feedbackSent: true,
+            attempts: [
+              {
+                loopNumber: 1,
+                verdict: 'issues',
+                unresolvedCount: issues.length,
+                issues,
+                validationDepth,
+              },
+            ],
+            durationMs: Date.now() - start,
+          };
         }
       }
       if (!fixSignal) {
