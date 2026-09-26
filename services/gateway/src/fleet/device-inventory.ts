@@ -451,8 +451,13 @@ export async function readDeviceInventory(
 
   const owners = await configuredSlots(machine, deps);
   const labelled = devices.map((device) => {
-    const owning = owners.get(`${device.key}:${device.identity}`);
-    return owning?.length ? { ...device, configuredForSlots: [...owning].sort() } : device;
+    const owning = new Set([
+      ...(owners.get(`${device.key}:${device.identity}`) ?? []),
+      ...(device.platform === 'ios' && device.key === 'udid'
+        ? (owners.get(`simulator:${device.identity}`) ?? [])
+        : []),
+    ]);
+    return owning.size ? { ...device, configuredForSlots: [...owning].sort() } : device;
   });
   labelled.sort((a, b) => a.key.localeCompare(b.key) || a.identity.localeCompare(b.identity));
 

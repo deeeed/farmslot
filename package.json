@@ -42,7 +42,7 @@
     "docs:dev": "yarn workspace @farmslot/docs start",
     "docs:build": "yarn workspace @farmslot/docs build",
     "test:recipe-operational-gates": "yarn --cwd apps/command-center test:recipe-operational-gates",
-    "test:project-hooks": "node --test scripts/tests/*.test.mjs",
+    "test:project-hooks": "yarn workspace @farmslot/protocol build && node --test scripts/tests/*.test.mjs",
     "docs:deploy": "yarn workspace @farmslot/docs deploy",
     "packages:publish:check": "node scripts/quality/check-farmslot-package-readiness.mjs --pack",
     "packages:publish:check:strict": "node scripts/quality/check-farmslot-package-readiness.mjs --pack --publish",

@@ -16,7 +16,7 @@ import {
   runnerPaneLooksIdle,
   runnerProcessPatternSource,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import { isRunnerAliveUnderPane, probeRunnerDescendantPid } from '../runners/session-process.js';
 import { getRun } from '../runs/store.js';
 
 export async function runnerTurnLeaseIsActive(
@@ -132,17 +132,20 @@ export async function paneHostsRunnerProcess(
   target: string,
   runner: string,
   knownPanePid?: string,
+  requireCertainAbsence = false,
 ): Promise<boolean> {
-  const paneCommand = (
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `display-message -p -t ${shellQuote(target)} '#{pane_current_command}' 2>/dev/null`,
-      ),
-    )
-  ).stdout
-    .trim()
-    .toLowerCase();
+  const commandResult = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `display-message -p -t ${shellQuote(target)} '#{pane_current_command}' 2>/dev/null`,
+    ),
+  );
+  if (requireCertainAbsence && commandResult.exitCode !== 0) {
+    throw new Error(
+      `Cannot confirm runner exit from ${target}: pane command probe exited ${commandResult.exitCode}`,
+    );
+  }
+  const paneCommand = commandResult.stdout.trim().toLowerCase();
   const matcherParts = runnerProcessPatternSource(runner)
     .split('|')
     .map((part) => part.trim().toLowerCase())
@@ -150,16 +153,27 @@ export async function paneHostsRunnerProcess(
   if (paneCommand && matcherParts.some((part) => paneCommand.includes(part))) {
     return true;
   }
-  const panePid =
-    knownPanePid ??
-    (
-      await execOnSlot(
+  const paneResult = knownPanePid
+    ? null
+    : await execOnSlot(
         vars,
         tmuxShellSnippet(
           `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
         ),
-      )
-    ).stdout.trim();
+      );
+  if (requireCertainAbsence && paneResult && paneResult.exitCode !== 0) {
+    throw new Error(
+      `Cannot confirm runner exit from ${target}: pane PID probe exited ${paneResult.exitCode}`,
+    );
+  }
+  const panePid = knownPanePid ?? paneResult?.stdout.trim() ?? '';
+  if (requireCertainAbsence) {
+    const probe = await probeRunnerDescendantPid(vars, panePid, runner);
+    if (probe.state === 'unknown') {
+      throw new Error(`Cannot confirm runner exit from ${target}: ${probe.reason ?? probe.code}`);
+    }
+    return probe.state === 'present';
+  }
   return await isRunnerAliveUnderPane(vars, panePid, runner);
 }
 

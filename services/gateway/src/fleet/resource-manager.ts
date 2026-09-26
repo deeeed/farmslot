@@ -1263,6 +1263,13 @@ export async function reconcileFailedDeviceControl(input: {
   };
 }
 
+export function resourceControlTimeoutMs(
+  resourceType: string,
+  action: ResourceControlAction,
+): number {
+  return resourceType === 'device' && action === 'boot' ? 120_000 : 30_000;
+}
+
 /**
  * Execute a resource control hook (boot, shutdown, relaunch).
  * After control, immediately re-polls the slot's resources.
@@ -1299,6 +1306,7 @@ export async function executeResourceControl(
   }
 
   const expanded = expandTemplate(hookCmd, slotVars, projectVars, extraVars);
+  const timeoutMs = resourceControlTimeoutMs(resourceDef.type, action);
 
   // Check for unresolved required variables after expansion
   if (hasUnresolvedPlaceholders(expanded)) {
@@ -1324,11 +1332,12 @@ export async function executeResourceControl(
       return { ok: false, detail: `No node connected for ${machine}` };
     }
     try {
-      const execResult = (await sendNodeRequest(node, 'exec', {
-        cmd: expanded,
-        cwd: slotVars.repo,
-        timeout: 30_000,
-      })) as { stdout: string; stderr: string; exitCode: number };
+      const execResult = (await sendNodeRequest(
+        node,
+        'exec',
+        { cmd: expanded, cwd: slotVars.repo, timeout: timeoutMs },
+        { timeout: timeoutMs + 10_000 },
+      )) as { stdout: string; stderr: string; exitCode: number };
       if (execResult.exitCode === 0) {
         result = { ok: true, detail: execResult.stdout?.trim() || undefined };
       } else {
@@ -1345,7 +1354,7 @@ export async function executeResourceControl(
       result = { ok: false, detail: (err as Error).message };
     }
   } else {
-    const execResult = await execLocal(expanded, { cwd: slotVars.repo, timeout: 30_000 });
+    const execResult = await execLocal(expanded, { cwd: slotVars.repo, timeout: timeoutMs });
     if (execResult.exitCode === 0) {
       result = { ok: true, detail: execResult.stdout.trim() || undefined };
     } else {

@@ -12,6 +12,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const wrapperPath = path.join(repoRoot, 'projects/farmslot-farm/setup/validate-recipe.sh');
 const projectJsonPath = path.join(repoRoot, 'projects/farmslot-farm/project.json');
 
+test('farmslot-farm prepare builds recipe dependencies before doctor runs', async () => {
+  const projectJson = JSON.parse(await readFile(projectJsonPath, 'utf-8'));
+  assert.match(
+    projectJson.hooks.post_merge_install,
+    /^yarn install && yarn workspace @farmslot\/recipe-harness build$/,
+  );
+  assert.match(projectJson.hooks.recipe_doctor, /recipe-doctor\.mjs/);
+});
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

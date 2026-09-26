@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Add runner model catalog and visible-default RPC types so clients can load a structured catalog and save which models appear by default.
+- Retain the exact CI fix prompt in agent contexts so a gateway restart can safely recover pending delivery.
 
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
 - Define the three opt-in suggestion requests and responses for static review, Co-Pilot context and review routing.

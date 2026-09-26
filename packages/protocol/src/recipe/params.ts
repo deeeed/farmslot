@@ -22,6 +22,7 @@ const PARAM_SCHEMA_FIELDS = new Set([
   'properties',
   'items',
   'minimum',
+  'pattern',
   'minItems',
   'maxItems',
 ]);
@@ -293,6 +294,26 @@ function validatePropertySchema(
       `${path}.minimum must be a finite number for a numeric parameter.`,
     );
   }
+  if (hasOwn(schema, 'pattern')) {
+    const pattern = compileParamPattern(schema.pattern);
+    if (!pattern || !schemaIncludesType(schema.type, 'string')) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_param_pattern',
+        `${path}.pattern`,
+        `${path}.pattern must be a valid regular expression for a string parameter.`,
+      );
+    } else if (typeof schema.default === 'string' && !pattern.test(schema.default)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_param_default_pattern',
+        `${path}.default`,
+        `${path}.default does not match ${path}.pattern.`,
+      );
+    }
+  }
   if (
     hasOwn(schema, 'minItems') &&
     (!Number.isInteger(schema.minItems) ||
@@ -477,6 +498,26 @@ function validateParamValue(
       `${path} must be greater than or equal to ${schema.minimum}.`,
     );
   }
+  if (typeof value === 'string' && hasOwn(schema, 'pattern')) {
+    const pattern = compileParamPattern(schema.pattern);
+    if (!pattern) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_param_pattern',
+        path,
+        `${path} has an invalid pattern.`,
+      );
+    } else if (!pattern.test(value)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.param_value_pattern_mismatch',
+        path,
+        `${path} does not match the required pattern.`,
+      );
+    }
+  }
   if (
     Array.isArray(value) &&
     typeof schema.minItems === 'number' &&
@@ -509,6 +550,15 @@ function validateParamValue(
     value.forEach((entry, index) =>
       validateParamValue(ctx, entry, schema.items, `${path}[${index}]`, allowTemplates),
     );
+  }
+}
+
+function compileParamPattern(value: unknown): RegExp | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    return new RegExp(value, 'u');
+  } catch {
+    return null;
   }
 }
 

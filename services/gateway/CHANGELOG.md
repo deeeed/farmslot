@@ -5,6 +5,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Report each runner's structured model catalog, including reasoning modes, and store the operator's visible model defaults. Runners without a catalog, and catalogs that cannot be read, stay explicit instead of being guessed from runner text.
+- Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
+
+- Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
+- Require an exact prompt acknowledgement when recovering an in-place CI fix; a stored working status alone cannot prove delivery. A recovered self-review fix keeps waiting for its terminal signal after the acknowledgement window instead of failing a busy worker.
+- Identify each CI-fix attempt in its runner prompt and retain that exact prompt across gateway restarts, including pre-send recovery without charging another attempt.
+- Allow cold simulator startup to finish, check the exact booted device rather than a partial name, and identify UDID-configured simulators in inventory.
+- Keep unacknowledged retained prompts pending for structured re-probing without sending a duplicate.
 
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
 - Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.

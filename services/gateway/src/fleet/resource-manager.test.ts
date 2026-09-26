@@ -12,6 +12,7 @@ import {
   isSimulatorDeviceProbe,
   isSlotResourceConfigured,
   purgeRemovedSlotWarnings,
+  resourceControlTimeoutMs,
   resourceStatusFromHealth,
   shouldProbeResourceForSlot,
   slotHasActiveRun,
@@ -31,6 +32,12 @@ test('isSlotResourceConfigured only accepts resources declared by the slot', () 
   assert.equal(isSlotResourceConfigured(resources, 'ios-sim'), true);
   assert.equal(isSlotResourceConfigured(resources, 'android-emu'), false);
   assert.equal(isSlotResourceConfigured(undefined, 'ios-sim'), false);
+});
+
+test('resource control allows cold device boots without extending other hooks', () => {
+  assert.equal(resourceControlTimeoutMs('device', 'boot'), 120_000);
+  assert.equal(resourceControlTimeoutMs('device', 'shutdown'), 30_000);
+  assert.equal(resourceControlTimeoutMs('dev-server', 'boot'), 30_000);
 });
 
 const iosSimResource = {

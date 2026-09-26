@@ -523,7 +523,7 @@ interface FixDeliveryAcceptance {
 
 type FixPromptDeliveryResult =
   | { status: 'delivered'; turnToken?: string }
-  | { status: 'deferred' | 'relaunch-required' | 'unsupported' };
+  | { status: 'deferred' | 'relaunch-required' | 'unsupported' | 'blocked' };
 
 // Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
 // defaultSelfReviewRetryDeps below; tests pass a struct of mocks to exercise the
@@ -1336,7 +1336,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     target,
   });
   const targetHostsRunner = deps.targetHostsRunner
-    ? await deps.targetHostsRunner(vars, target, runner)
+    ? await deps.targetHostsRunner(vars, target, runner, undefined, true)
     : true;
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return { status: 'deferred' };
@@ -1348,6 +1348,9 @@ export async function resumeSelfReviewFixPromptDelivery(
   const signalPath = `${vars.remoteRepo}/${signalRelPath}`;
   const launchAckBaseline = await deps.readLaunchAck(vars, signalPath);
   const runtimeDir = await deps.resolveRuntimeDir(run.project);
+  const priorPromptSendAttempted =
+    options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt);
+  if (priorPromptSendAttempted && !targetHostsRunner) return { status: 'blocked' };
   const result = await deps.deliver({
     vars,
     target,
@@ -1367,9 +1370,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     launchAckSignalPath: signalPath,
     launchAckBaseline,
     acceptExistingLaunchAck: false,
-    priorPromptSendAttempted: targetHostsRunner
-      ? (options.priorPromptSendAttempted ?? Boolean(context.promptDeliveryStartedAt))
-      : false,
+    priorPromptSendAttempted,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
     sendLogPrefix: 'self-review-fix-recovery',
@@ -1381,6 +1382,7 @@ export async function resumeSelfReviewFixPromptDelivery(
       ...(result.turnToken ? { turnToken: result.turnToken } : {}),
     };
   }
+  if (priorPromptSendAttempted) return { status: 'deferred' };
   if (
     runnerRetainedSessionHandoff(runner) === 'argv-relaunch' &&
     targetHostsRunner &&
@@ -1391,6 +1393,36 @@ export async function resumeSelfReviewFixPromptDelivery(
   return result.disposition === 'hold' && result.retryable === false
     ? { status: 'relaunch-required' }
     : { status: 'deferred' };
+}
+
+export async function reconcileRecoveredFixPromptDelivery(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  context: FixPromptRecoveryContext,
+  deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
+  {
+    retryIntervalMs = 5_000,
+    retryWindowMs = RUNNER_LAUNCH_READY_TIMEOUT_MS,
+    readMatchingSignal,
+  }: {
+    retryIntervalMs?: number;
+    retryWindowMs?: number;
+    readMatchingSignal?: () => Promise<boolean>;
+  } = {},
+): Promise<FixPromptDeliveryResult | { status: 'signal-present' }> {
+  const deadline = Date.now() + retryWindowMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(retryIntervalMs, deadline - Date.now())),
+    );
+    assertNativeReviewOperationCurrent();
+    if (await readMatchingSignal?.()) return { status: 'signal-present' };
+    const delivery = await resumeSelfReviewFixPromptDelivery(vars, runId, context, deps, {
+      priorPromptSendAttempted: true,
+    });
+    if (delivery.status !== 'deferred') return delivery;
+  }
+  return { status: 'deferred' };
 }
 
 export function canSettleRecoveredFixContext(
@@ -1498,22 +1530,23 @@ async function recoverSelfReviewFixPass({
   let recoveryFailure: unknown;
   try {
     const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
+    const matchingFixSignal = (raw: string | null): WorkerSignal | undefined => {
+      try {
+        const signal = terminalWorkerSignalFromRaw(raw ?? '');
+        if (!signal) return undefined;
+        const matchesAttempt = fixContext.signalAttemptId
+          ? signal.attemptId === fixContext.signalAttemptId
+          : signalFreshSince(signal, fixContext.attemptStartedAt ?? fixContext.startedAt);
+        return matchesAttempt ? signal : undefined;
+      } catch (err) {
+        console.warn(
+          `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+        );
+        return undefined;
+      }
+    };
     const rawSignal = await readOptionalSelfReviewFixSignal(vars, fixSignalPath);
-    let fixSignal: WorkerSignal | undefined;
-    try {
-      fixSignal = terminalWorkerSignalFromRaw(rawSignal ?? '');
-    } catch (err) {
-      console.warn(
-        `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-    }
-
-    if (fixSignal) {
-      const matchesAttempt = fixContext.signalAttemptId
-        ? fixSignal.attemptId === fixContext.signalAttemptId
-        : signalFreshSince(fixSignal, fixContext.attemptStartedAt ?? fixContext.startedAt);
-      if (!matchesAttempt) fixSignal = undefined;
-    }
+    let fixSignal = matchingFixSignal(rawSignal);
 
     // Older contexts can be migrated only after their opaque worker attempt
     // matches. Bind the review generation then; never infer it from clocks.
@@ -1624,42 +1657,95 @@ async function recoverSelfReviewFixPass({
         );
       }
       if (delivery.status === 'deferred') {
-        setProgressDetail(
-          runId,
-          `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
-        );
+        if (fixContextMatchesWorker && fixContext.promptDeliveryStartedAt) {
+          setProgressDetail(
+            runId,
+            'Recovered reviewer findings; reconciling fix prompt acknowledgement...',
+          );
+          const reconciled = await reconcileRecoveredFixPromptDelivery(
+            vars,
+            runId,
+            fixContext,
+            FIX_PROMPT_RECOVERY_DEPS,
+            {
+              readMatchingSignal: async () => {
+                fixSignal = matchingFixSignal(
+                  await readOptionalSelfReviewFixSignal(vars, fixSignalPath),
+                );
+                return Boolean(fixSignal);
+              },
+            },
+          );
+          if (reconciled.status !== 'signal-present') delivery = reconciled;
+        } else {
+          setProgressDetail(
+            runId,
+            `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
+          );
+        }
       }
-      const fixTaskPath = slotTaskRelPath(
-        vars,
-        taskDir,
-        SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
-      );
-      const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix', {
-        isCurrent: captureNativeReviewOperationCheck(),
-      });
-      let waitFailure: unknown;
-      try {
-        const deliveredTurnToken = delivery.status === 'delivered' ? delivery.turnToken : undefined;
-        fixSignal = await waitForWorkerSignal(
+      if (delivery.status === 'blocked') {
+        fixSignal = matchingFixSignal(await readOptionalSelfReviewFixSignal(vars, fixSignalPath));
+        if (!fixSignal) {
+          if (
+            !(await settleRecoveredFixContext('blocked', fixContext.signalAttemptId ?? undefined))
+          )
+            return null;
+          return {
+            verdict: 'blocked',
+            reason: 'Recovered self-review fix worker exited without a terminal signal',
+            issues,
+            validationDepth,
+            retryCount: 1,
+            maxRetries,
+            feedbackSent: true,
+            attempts: [
+              {
+                loopNumber: 1,
+                verdict: 'issues',
+                unresolvedCount: issues.length,
+                issues,
+                validationDepth,
+              },
+            ],
+            durationMs: Date.now() - start,
+          };
+        }
+      }
+      if (!fixSignal) {
+        const fixTaskPath = slotTaskRelPath(
           vars,
           taskDir,
-          FEEDBACK_TIMEOUT_MS,
-          rawSignal ?? '',
-          deliveredTurnToken
-            ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
-            : undefined,
-          () =>
-            getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
-              ?.signalAttemptId ?? undefined,
-          (attemptId) => {
-            expiredAttemptId = attemptId;
-          },
+          SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
         );
-      } catch (error) {
-        waitFailure = error;
-        throw error;
-      } finally {
-        await finishReviewCleanup(waitFailure, [() => fixWatcher.stop()]);
+        const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix', {
+          isCurrent: captureNativeReviewOperationCheck(),
+        });
+        let waitFailure: unknown;
+        try {
+          const deliveredTurnToken =
+            delivery.status === 'delivered' ? delivery.turnToken : undefined;
+          fixSignal = await waitForWorkerSignal(
+            vars,
+            taskDir,
+            FEEDBACK_TIMEOUT_MS,
+            rawSignal ?? '',
+            deliveredTurnToken
+              ? () => selfReviewFixTurnIsActive(vars, runId, workerRunner, deliveredTurnToken)
+              : undefined,
+            () =>
+              getRun(runId)?.agentContexts?.find((context) => context.id === fixContext.id)
+                ?.signalAttemptId ?? undefined,
+            (attemptId) => {
+              expiredAttemptId = attemptId;
+            },
+          );
+        } catch (error) {
+          waitFailure = error;
+          throw error;
+        } finally {
+          await finishReviewCleanup(waitFailure, [() => fixWatcher.stop()]);
+        }
       }
     }
 
@@ -1870,10 +1956,9 @@ export interface FixDeliveryRetryResult {
 
 /**
  * Retry a deferred fix-task send until it lands or the window closes. Before
- * each retry the worker pane is re-resolved: the stored target is kept while
- * it still hosts the runner, otherwise the session's accepting runner pane is
- * adopted and persisted so later sends follow the same pane. Bails early when
- * the run reaches a terminal status underneath the loop.
+ * each retry the worker pane is re-resolved until a prompt might have been
+ * sent, then retries remain bound to that pane. Bails early when the run
+ * reaches a terminal status underneath the loop.
  */
 export async function retryDeferredFixDelivery({
   runId,
@@ -1883,6 +1968,7 @@ export async function retryDeferredFixDelivery({
   persistTarget,
   getRun: getRunDep,
   shouldAbort = () => false,
+  isTargetBound = () => false,
   retryIntervalMs = SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -1893,6 +1979,7 @@ export async function retryDeferredFixDelivery({
   persistTarget: (target: string, window: string | null) => Promise<void>;
   getRun: typeof getRun;
   shouldAbort?: () => boolean;
+  isTargetBound?: () => boolean;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
@@ -1914,14 +2001,16 @@ export async function retryDeferredFixDelivery({
       `[self-review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${retryIntervalMs / 1000}s`,
     );
     await new Promise((r) => setTimeout(r, retryIntervalMs));
-    const rediscovery = await rediscover(currentTarget);
-    if (rediscovery.seenWindows.length > 0) seenWindows = rediscovery.seenWindows;
-    if (rediscovery.target && rediscovery.target !== currentTarget) {
-      console.warn(
-        `[self-review] run ${runId.slice(0, 8)} — fix delivery target ${currentTarget} no longer hosts the runner; adopting ${rediscovery.target}`,
-      );
-      currentTarget = rediscovery.target;
-      await persistTarget(currentTarget, rediscovery.window);
+    if (!isTargetBound()) {
+      const rediscovery = await rediscover(currentTarget);
+      if (rediscovery.seenWindows.length > 0) seenWindows = rediscovery.seenWindows;
+      if (rediscovery.target && rediscovery.target !== currentTarget) {
+        console.warn(
+          `[self-review] run ${runId.slice(0, 8)} — fix delivery target ${currentTarget} no longer hosts the runner; adopting ${rediscovery.target}`,
+        );
+        currentTarget = rediscovery.target;
+        await persistTarget(currentTarget, rediscovery.window);
+      }
     }
     sent = await send(currentTarget);
   }
@@ -2173,8 +2262,7 @@ async function sendOwnedFeedbackToWorker(
       // worker was mid-merge and picked the task up instantly once idle. So:
       // keep retrying on an interval until the worker accepts or the window
       // closes, bailing early if the run is cancelled underneath us. Each
-      // retry re-resolves the worker pane first: a revived worker can sit in
-      // a different window than the recorded target.
+      // retry re-resolves the worker pane until a send has been attempted.
       const retry = await retryDeferredFixDelivery({
         runId,
         target: workerTarget,
@@ -2193,6 +2281,7 @@ async function sendOwnedFeedbackToWorker(
         },
         getRun,
         shouldAbort: () => terminalRetainedHoldReason != null,
+        isTargetBound: () => promptSendAttempted,
       });
       sent = retry.sent;
       workerTarget = retry.target;
