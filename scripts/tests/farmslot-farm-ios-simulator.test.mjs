@@ -75,6 +75,8 @@ test('simulator readiness handles health failure and extra stream fields', () =>
     path.join(directory, 'node'),
     `#!/bin/sh
 case "$3" in
+  fleet.status)
+    printf '{"fleet":{"slots":[{"slot":"mini-mm-2","lifecycle":"%s","currentRunId":null,"agent":"idle"}]}}\\n' "$SLOT_LIFECYCLE" ;;
   resource.health)
     if test "$(cat "$BOOT_STATE")" = stopped; then
       printf '{"resources":[{"id":"ios-sim","status":"stopped","stream":{"state":"cached"}}]}\\n'
@@ -108,6 +110,7 @@ esac
           BOOT_STATE: state,
           TRACE: trace,
           FAIL_HEALTH_AFTER_BOOT: failHealthAfterBoot ? 'yes' : 'no',
+          SLOT_LIFECYCLE: 'ready',
         },
       });
       if (failHealthAfterBoot) assert.notEqual(result.status, 0);
@@ -119,6 +122,22 @@ esac
       assert.equal(readFileSync(state, 'utf8'), 'stopped');
       assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'), ['boot', 'shutdown']);
     }
+
+    writeFileSync(state, 'stopped');
+    writeFileSync(trace, '');
+    const reserved = spawnSync('sh', [readinessScript, 'mini-mm-2', '7801'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        BOOT_STATE: state,
+        TRACE: trace,
+        SLOT_LIFECYCLE: 'manual',
+      },
+    });
+    assert.notEqual(reserved.status, 0);
+    assert.equal(readFileSync(trace, 'utf8'), '');
+    assert.equal(readFileSync(state, 'utf8'), 'stopped');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
