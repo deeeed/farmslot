@@ -28,7 +28,7 @@ const readinessRecipe = JSON.parse(
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 test('simulator readiness recipe allows boot, health retries, shutdown, and cleanup', () => {
-  assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 480_000);
+  assert.ok(readinessRecipe.workflow.nodes.boot.timeout_ms >= 720_000);
   assert.equal(validateRecipeParamsSchema(readinessRecipe.paramsSchema).status, 'valid');
   for (const slotId of [
     'mini-mm-2',
@@ -142,6 +142,10 @@ case "$3" in
       printf '{"resources":[{"id":"ios-sim","status":"running","stream":{"state":"cached"}}]}\\n'
     fi ;;
   runtime.capability.acquire)
+    if test "$FARMSLOT_RPC_TIMEOUT_MS" -lt 300000; then
+      printf 'Acquisition timeout is shorter than its dependency and boot budgets\n' >&2
+      exit 1
+    fi
     if test "$LEASE_HELD" = yes; then
       printf '{"ok":false,"conflict":{"kind":"resource-held"}}\\n'
       exit 0

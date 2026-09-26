@@ -54,7 +54,7 @@ trap 'exit 143' TERM
 ready
 health | jq -e '.status == "stopped"' >/dev/null
 boot_attempted=yes
-result=$(rpc runtime.capability.acquire "$acquire_args" 150000)
+result=$(rpc runtime.capability.acquire "$acquire_args" 300000)
 printf '%s\n' "$result" | jq -e '.ok == true and .lease.capabilityId == "ios-simulator"' >/dev/null
 printf 'boot:ok:%s\n' "$(printf '%s\n' "$result" | jq -c '.')"
 
