@@ -15,6 +15,7 @@ import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 import {
   ciFixAttemptPrompt,
   ciFixHasUnconfirmedPromptSend,
+  ciFixPromptForRecovery,
   inlineFixRunnerStillBusy,
   recoveredCiFixHasDeliveryProof,
   resolveCiFixReplacementOwner,
@@ -42,6 +43,18 @@ test('CI fix prompt identifies one attempt while preserving its recovery digest'
     runnerPromptDigest(first),
     runnerPromptDigest(ciFixAttemptPrompt(prompt, 'run-1', 1, 'def5678')),
   );
+});
+
+test('CI fix recovery retains the exact prompt sent before a restart', () => {
+  const legacyPrompt = 'Read tasks/run-1/CI-FIX.md';
+  const taggedPrompt = ciFixAttemptPrompt(legacyPrompt, 'run-1', 1, 'abc1234');
+  const currentPrompt = 'Read tasks/run-1/CI-FIX.md with a revised template';
+  assert.equal(
+    ciFixPromptForRecovery(currentPrompt, { ciFixPrompt: taggedPrompt }, 'run-1', 2, 'def5678'),
+    taggedPrompt,
+  );
+  assert.equal(ciFixPromptForRecovery(legacyPrompt, {}, 'run-1', 1, 'abc1234'), legacyPrompt);
+  assert.equal(ciFixPromptForRecovery(legacyPrompt, null, 'run-1', 1, 'abc1234'), taggedPrompt);
 });
 
 test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () => {

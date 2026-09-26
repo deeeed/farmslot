@@ -207,6 +207,18 @@ export function ciFixAttemptPrompt(
   return `CI fix attempt ${attempt} for run ${runId} at ${headSha}.\n${prompt}`;
 }
 
+export function ciFixPromptForRecovery(
+  prompt: string,
+  recoveredContext: Pick<AgentContext, 'ciFixPrompt'> | null,
+  runId: string,
+  attempt: number,
+  headSha: string,
+): string {
+  return recoveredContext
+    ? (recoveredContext.ciFixPrompt ?? prompt)
+    : ciFixAttemptPrompt(prompt, runId, attempt, headSha);
+}
+
 export async function sendCiFixNudge(input: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   target: string;
@@ -697,11 +709,12 @@ async function attemptInlineCIFix(
     if (!recoveredContext) await execOnSlot(vars, `rm -f '${signalPath}'`);
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
-    const nudgeCmd = ciFixAttemptPrompt(
+    const nudgeCmd = ciFixPromptForRecovery(
       await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
         taskFile: ciFixTaskFile,
         taskDir: writeResult.taskDir,
       }),
+      recoveredContext,
       runId,
       totalAttempts,
       beforeSha,
@@ -758,6 +771,7 @@ async function attemptInlineCIFix(
       } else {
         if (!recoveredContext) {
           await upsertAgentContext(runId, 'ci-fix', {
+            ciFixPrompt: nudgeCmd,
             promptDeliveryStartedAt: new Date().toISOString(),
           });
         }

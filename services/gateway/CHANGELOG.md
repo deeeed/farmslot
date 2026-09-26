@@ -8,7 +8,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
 - Require an exact prompt acknowledgement when recovering an in-place CI fix; a stored working status alone cannot prove delivery.
-- Identify each CI-fix attempt in its runner prompt so recovery cannot accept an earlier attempt's acknowledgement.
+- Identify each CI-fix attempt in its runner prompt and retain that exact prompt across gateway restarts so recovery accepts only its acknowledgement, including for older in-flight fixes.
 - Allow device boot hooks time to complete cold simulator startup before checking resource health.
 - Keep unacknowledged retained prompts pending for structured re-probing without sending a duplicate.
 
