@@ -142,7 +142,7 @@ function collectSourceErrors(value: unknown, errors: string[], prefix: string): 
     errors.push(`${prefix}.surfaces must be a non-empty array`);
     return;
   }
-  const surfaces = value.surfaces as unknown[];
+  const surfaces: unknown[] = value.surfaces;
   const surfaceIds = new Set<string>();
   surfaces.forEach((surface, index) => {
     const at = `${prefix}.surfaces[${index}]`;
@@ -246,12 +246,18 @@ export function validateVisualReviewSourceDocument(
     : { ok: true, document: value as VisualReviewSourceDocument, errors };
 }
 
-/** Surface and capture ids are validated against the embedded source snapshot. */
-export function validateVisualReviewFeedbackDocument(
+/**
+ * Runs every feedback check, collecting failures into `errors`; the value is a feedback document
+ * only when none fail. Surface and capture ids are checked against the embedded source snapshot.
+ */
+function isVisualReviewFeedbackDocument(
   value: unknown,
-): VisualReviewValidationResult<VisualReviewFeedbackDocument> {
-  const errors: string[] = [];
-  if (!isRecord(value)) return { ok: false, errors: ['feedback must be an object'] };
+  errors: string[],
+): value is VisualReviewFeedbackDocument {
+  if (!isRecord(value)) {
+    errors.push('feedback must be an object');
+    return false;
+  }
   if (value.version !== VISUAL_REVIEW_FEEDBACK_VERSION) {
     errors.push(`version must be ${VISUAL_REVIEW_FEEDBACK_VERSION}`);
   }
@@ -329,9 +335,16 @@ export function validateVisualReviewFeedbackDocument(
       }
     });
   }
-  return errors.length
-    ? { ok: false, errors }
-    : { ok: true, document: value as unknown as VisualReviewFeedbackDocument, errors };
+  return errors.length === 0;
+}
+
+export function validateVisualReviewFeedbackDocument(
+  value: unknown,
+): VisualReviewValidationResult<VisualReviewFeedbackDocument> {
+  const errors: string[] = [];
+  return isVisualReviewFeedbackDocument(value, errors)
+    ? { ok: true, document: value, errors }
+    : { ok: false, errors };
 }
 
 export type VisualReviewAnnotation = VisualReviewPointAnnotation | VisualReviewAreaAnnotation;

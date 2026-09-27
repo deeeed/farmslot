@@ -6,8 +6,8 @@ import path from 'node:path';
 import {
   buildRecipeReviewBoard,
   generateReviewBoard,
-  visualReviewFeedbackStorageKey,
   serveReviewBoard,
+  visualReviewFeedbackStorageKey,
 } from '../visual-review/index.mjs';
 
 function option(args, name, fallback) {

@@ -20,8 +20,8 @@ import {
   VISUAL_REVIEW_MESSAGE_MAX_BYTES,
   type VisualReviewAnnotationInput,
   visualReviewFeedbackMessage,
-  visualReviewMessageBytes,
   visualReviewImageArtifactPath,
+  visualReviewMessageBytes,
 } from '../../lib/visual-review';
 import type { VisualReviewArtifactRef, VisualReviewGateway } from '../../lib/visual-review-gateway';
 
