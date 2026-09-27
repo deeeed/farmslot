@@ -4,9 +4,11 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
-- Agent Device `ui.scroll` maps one-axis `delta_x`/`delta_y` to a relative direction and pixel scroll, and rejects absolute `offset_x`/`offset_y` instead of ignoring them.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.12.0 - 2026-09-27
+
+- Agent Device `ui.scroll` maps one-axis `delta_x`/`delta_y` to a relative direction and pixel scroll, and rejects absolute `offset_x`/`offset_y` instead of ignoring them.
 
 ## 0.11.0 - 2026-09-20
 

@@ -1,8 +1,11 @@
 {
-  "version": "0.16.0",
-  "date": "2026-09-20",
+  "version": "0.17.0",
+  "date": "2026-09-27",
   "items": [
-    "The macOS client remembers your login and shows pending decisions in the menu bar.",
-    "Static review checklists and acceptance results update as work progresses."
+    "Keep static code review separate from runtime QA.",
+    "Recover blocked workers with explicit preparation and visible resource status.",
+    "Inspect acceptance-evidence assessments, decision advice and recorded costs.",
+    "Use updated model choices and host-specific account readiness.",
+    "Copy credential-free app links and preserve navigation across background updates."
   ]
 }

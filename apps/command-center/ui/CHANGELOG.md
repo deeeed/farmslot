@@ -4,57 +4,38 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.17.0 - 2026-09-27
+
 - Default Codex pickers to GPT-6 Sol, offer GPT-6 Luna, and retain saved GPT-5.4/5.5 selections without offering them for new choices.
 - Allow simulator boot and its Metro dependency to finish before resource panels time out.
-
 - Dispatch, dispatch-config and ready-gate review rounds are static only, and Dispatch names the farm QA preset used for separate runtime validation. Backlog and Work Graph editors label a stored legacy full-live round and convert it to static only when the operator asks.
 - Add explicit checklist, validation-depth and Co-Pilot context suggestions from PR and run views, with packet preview and assessment history.
-
 - Show provider/model usage, cost and latency beside assessment history so opt-in recommendations can be compared without implying measured workflow savings.
-
 - Let operators associate saved failure advice with a specific pending decision and inspect associated chosen actions in assessment history.
-
 - Show saved acceptance-evidence verdicts and their admitted text in assessment history, with a dedicated filter.
-
 - Show advice at every eligible run gate. Filter advice history and show the saved decision, options, provider, model, operator rating and chosen run action.
-
 - Offer the existing decision advice panel for any eligible pending run decision, regardless of its type.
-
 - Explain when a chosen slot cannot use a suggested Companion profile, and hide its apply action until the operator changes slots; auto-picked slots can still search for a compatible slot.
-
 - Allow assessment feedback for plain model judgments that do not report probability distributions.
 - Offer a read-only recommendation panel for eligible pending run decisions when explicitly requested.
 - Count assessed acceptance criteria separately from proven ones, and show unresolved cleanup with the last provider check instead of implying a fresh health result.
-
 - Show blocked workers how to restart on an available worker after slot release, or resume monitoring after a fresh signal and proof-resource check while they still own the slot. Update-branch runs without worker selection instead direct operators to start a new run.
-
 - Offer GPT-6 Sol in the Codex model picker and use Cursor's advertised Grok 4.7 model IDs.
-
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
-
 - Keep PR-rule previews deterministic, show loading feedback and report match counts explicitly.
-
 - Show assessment history, answers, uncertainty and operator feedback under Intelligence, with PR preview links and full-history or selected-case report export.
-
 - Explain unavailable review terminals when dispatch never started or the worktree was cleaned up.
 - Offer Grok 4.7 model choices for Grok and Cursor.
-
 - Display and refresh provider/account entries for each runner in Config and Fleet, including Pi and OpenCode, with host-targeted status commands to copy for manual inspection.
-
 - Offer current Anthropic Opus, Sonnet, Haiku and Fable models in the Pi runner picker.
-
 - Expand and scroll long step commands and output so preparation failures remain inspectable.
-
 - Offer the dangerous publication override for missing, failed, or stale reviews, without waiting for review retries to run out. A fresh direct run fetch also restores gate actions when the bulk run list times out.
 - Add a native-app Copy link button beside the connection status, preserving screens, filters and selected files in credential-free app links.
-
 - Update a clean gateway checkout from the update banner with progress, errors and rebuild guidance; refresh stale status after local pulls.
-
 - Keep navigation on the requested run or slot when background work from a previous slot finishes, including desktop deep links.
-
 - Restore diff and source editor styles inside review gates in packaged desktop and production web builds, where bundled CSS filenames no longer identify their libraries.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.16.0 - 2026-09-20
 

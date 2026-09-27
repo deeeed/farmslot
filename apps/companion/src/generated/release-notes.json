@@ -1,9 +1,11 @@
 {
-  "version": "0.7.0",
-  "date": "2026-09-20",
+  "version": "0.8.0",
+  "date": "2026-09-27",
   "items": [
-    "Follow static reviews and expand their child checklists.",
-    "See acceptance verdicts, missing proof and evidence links in run detail.",
-    "Open Settings before pairing and connect with a QR code."
+    "Annotate captured screens by touch and send portable feedback to workers.",
+    "Keep feedback delivery separate from approval and publication.",
+    "Separate static review from runtime QA and show assessed versus proven criteria.",
+    "Keep manual gateway pairing usable above the keyboard.",
+    "Install simulator dev clients with the correct native build and managed Metro."
   ]
 }

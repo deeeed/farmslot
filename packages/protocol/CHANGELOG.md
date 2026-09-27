@@ -4,47 +4,34 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.31.0 - 2026-09-27
+
 - Add `validateVisualReviewSourceDocument`, `validateVisualReviewFeedbackDocument`, and `createVisualReviewFeedbackDocument` so every renderer validates and exports the same visual-review documents (capture sizes must be positive when given); the document shapes are unchanged.
 - Document recovery preparation precedence for explicit skip requests and selected profiles.
 - Default Codex dispatches to GPT-6 Sol, offer GPT-6 Luna, and hide GPT-5.4/5.5 from model pickers while accepting existing selections.
 - Retain the exact CI fix prompt in agent contexts so a gateway restart can safely recover pending delivery.
 - Add a typed check that refuses new full-live independent review loops and points runtime validation to the QA flow; remove `ReviewContinuationPayload.fullLiveAvailable`, since review continuation no longer offers a full-live action. `DispatchQueueUpdateParams.pendingReviewPlan` replaces a queued review plan in place.
 - Define the three opt-in suggestion requests and responses for static review, Co-Pilot context and review routing.
-
 - Add the official `ui.scroll_to` action with `UI_SCROLL_TO_PARAMS_SCHEMA` (surface, semantic target, measurable visibility anchor, alignment, HUD-safe viewport policy, visibility verification, settlement); action manifests must require string `surface_test_id` and `target_test_id`.
 - Group retained assessment usage, cost provenance and latency by consumer, provider and model for operator comparison.
-
 - Carry an optional failure-assessment reference with a run decision resolution and its saved result.
-
 - Define advisory acceptance-evidence RPCs and assessment records for a recorded criterion and named text evidence.
-
 - Allow admitted decision context on saved assessment records for later operator review.
-
 - Include the selected slot resource blocker in profile-fit suggestions.
-
 - Support plain structured judgments alongside optional native probabilities, with explicit choice vocabularies for feedback and evaluation.
 - Define optional pending-decision advice RPC and assessment reporting contracts.
 - Allow per-flow terminal acceptance rules and carry the provider's last health-check time in run posture.
-
 - Support GPT-6 Sol reasoning efforts for Codex selections.
-
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
-
 - Remove the unreachable PR-preview assessment field; retain historical assessment records.
-
 - Add assessment history, feedback and effectiveness report contracts with explicit uncertainty.
-
 - Add provider-neutral structured-assessment contracts, eval axes/scorer kind, and optional review-intake advisory data.
-
 - Record runner-native prompt acceptance separately from model-written task progress for review startup.
-
 - Add provider/account inventories to runner snapshots, separating configured credentials, readiness, identity and host scope.
-
 - Persist prepare branch intent so early retries can distinguish a never-created branch from a lost work branch.
-
 - Add the admin-only gateway.update operation and checkout update progress to gateway.status.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.30.0 - 2026-09-20
 
