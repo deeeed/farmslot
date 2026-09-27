@@ -456,7 +456,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['grok'],
-    headlessPrintFlags: ['-p', '--print'],
+    headlessPrintFlags: ['-p', '--single', '--prompt-file', '--prompt-json'],
     headlessPrintPath: 'grokPath',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's
@@ -929,6 +929,7 @@ function headlessPrintMode(
         getRunnerDefinition(runner).headlessPrintFlags?.some(
           (flag) =>
             arg === flag ||
+            (flag.startsWith('--') && arg.startsWith(`${flag}=`)) ||
             (flag.length === 2 && /^-[A-Za-z]{2,}$/u.test(arg) && arg.slice(1).includes(flag[1])),
         ),
       )

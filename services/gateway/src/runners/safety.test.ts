@@ -412,8 +412,22 @@ describe('tmux nudge launch policy', () => {
   it('keeps print-mode safety runner-specific', () => {
     for (const runner of ['claude', 'cursor', 'grok', 'pi']) {
       const executable = runner === 'cursor' ? 'cursor-agent' : runner;
-      assert.equal(runnerSupportsTmuxNudgesForLaunch(runner, `${executable} -p task`), false);
-      assert.equal(runnerSupportsTmuxNudgesForLaunch(runner, `${executable} --print task`), false);
+      const flags =
+        runner === 'grok'
+          ? ['-p', '--single', '--prompt-file', '--prompt-json']
+          : ['-p', '--print'];
+      for (const flag of flags) {
+        assert.equal(
+          runnerSupportsTmuxNudgesForLaunch(runner, `${executable} ${flag} task`),
+          false,
+        );
+        if (flag.startsWith('--')) {
+          assert.equal(
+            runnerSupportsTmuxNudgesForLaunch(runner, `${executable} ${flag}=task`),
+            false,
+          );
+        }
+      }
       assert.equal(
         runnerSupportsTmuxNudgesForLaunch(runner, `mkdir -p /tmp/setup && ${executable}`),
         true,
