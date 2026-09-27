@@ -148,7 +148,6 @@ export async function pasteTmuxText(
     if (text) {
       bufferMayExist = true;
       const write = await command(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(text)}`);
-      if (write.exitCode !== 0) bufferMayExist = false;
       checkPasteResult(write, `set-buffer for ${pane}`);
       const paste = await command(
         `paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(pane)}`,

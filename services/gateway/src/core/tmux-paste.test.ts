@@ -88,12 +88,36 @@ test('aliases of one pane serialize paste through submit', async () => {
 });
 
 test('a failed set-buffer never pastes or submits', async () => {
-  const trace = executor(() => ({ ...success, exitCode: 1, stderr: 'write refused' }));
+  const trace = executor((command) =>
+    command.includes('set-buffer') ? { ...success, exitCode: 1, stderr: 'write refused' } : success,
+  );
   await assert.rejects(
     pasteTmuxText(vars, '%701', 'text', { execute: trace.execute, submitKey: 'Enter' }),
     /write refused/,
   );
-  assert.equal(trace.commands.length, 2);
+  assert.equal(trace.commands.length, 3);
+  assert.ok(trace.commands.at(-1)?.includes('delete-buffer'));
+});
+
+test('a returned set-buffer timeout cleans up the uncertain write', async () => {
+  const trace = executor((command) =>
+    command.includes('set-buffer')
+      ? { ...success, exitCode: 124, stderr: 'write timed out' }
+      : success,
+  );
+  await assert.rejects(
+    pasteTmuxText(vars, '%701', 'text', { execute: trace.execute, submitKey: 'Enter' }),
+    /write timed out/,
+  );
+  assert.ok(trace.commands.at(-1)?.includes('delete-buffer'));
+  assert.equal(
+    trace.commands.some((command) => command.includes('paste-buffer -d')),
+    false,
+  );
+  assert.equal(
+    trace.commands.some((command) => command.includes('send-keys')),
+    false,
+  );
 });
 
 for (const stage of ['set-buffer', 'paste-buffer']) {
