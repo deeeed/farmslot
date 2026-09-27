@@ -159,6 +159,8 @@ function ReadyVisualReview({
           testID="visual-review-surface-note"
           style={styles.input}
           multiline
+          returnKeyType="done"
+          submitBehavior="blurAndSubmit"
           placeholder="Feedback that applies to the whole screen…"
           placeholderTextColor={colors.textMuted}
           value={draft.surfaceNotes[surfaceId] ?? ''}

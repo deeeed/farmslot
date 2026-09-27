@@ -64,6 +64,8 @@ export function AnnotationInspector({
             testID="visual-review-annotation-body"
             style={styles.input}
             multiline
+            returnKeyType="done"
+            submitBehavior="blurAndSubmit"
             placeholder="What should change here?"
             placeholderTextColor={colors.textMuted}
             value={selected.body}

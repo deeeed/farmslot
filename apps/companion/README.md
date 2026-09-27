@@ -59,6 +59,10 @@ FARMSLOT_SLOT_ID=<slot> PLATFORM=ios yarn recipe:run \
   scripts/agentic/recipe/recipes/companion-visual-review-feedback.recipe.json --param run_id=<run-id>
 ```
 
+The source must sit in the run's task-dir `artifacts/` outside dot-directories, which the gateway
+does not list. When Companion is paired with a gateway other than the slot sandbox, set
+`FARMSLOT_GATEWAY` (and `FARMSLOT_GATEWAY_TOKEN`) so the recipe reads the run back from that gateway.
+
 ## Scripts
 
 Use `package.json` commands as stable entrypoints. Helper files under `scripts/`
