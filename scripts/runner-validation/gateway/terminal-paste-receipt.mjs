@@ -41,7 +41,6 @@ export function verifyReceipts(proof, transcript) {
               .filter((entry) => entry.type === 'text')
               .map((entry) => entry.text)
         : [];
-    let matchedInTurn = false;
     for (const text of texts) {
       if (typeof text !== 'string') continue;
       const wrapper = text.match(
@@ -50,9 +49,8 @@ export function verifyReceipts(proof, transcript) {
       const payload = wrapper ? wrapper[2] : text;
       for (const expected of proof.messages) {
         if (payload === expected.text) {
-          assert.equal(matchedInTurn, false, 'Messages must arrive in separate user turns');
+          assert.equal(texts.length, 1, 'A matching user turn must contain only its message text');
           assert.equal(receipts.has(expected.id), false, 'Message delivered more than once');
-          matchedInTurn = true;
           receipts.set(expected.id, {
             id: expected.id,
             bytes: Buffer.byteLength(payload),

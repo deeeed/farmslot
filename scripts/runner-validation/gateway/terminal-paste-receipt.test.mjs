@@ -46,6 +46,17 @@ test('rejects empty and duplicate expected messages', () => {
   );
 });
 
+test('rejects extra text in a matching user turn but permits non-text tool results', () => {
+  const content = [
+    { type: 'text', text: 'first complete' },
+    { type: 'text', text: 'extra bytes' },
+  ];
+  const second = userTurn('second complete');
+  assert.throws(() => verifyReceipts(proof, `${userTurn(content)}\n${second}`));
+  content[1].type = 'tool_result';
+  assert.equal(verifyReceipts(proof, `${userTurn(content)}\n${second}`).length, 2);
+});
+
 test('rejects tail-only and merged receipts', () => {
   assert.throws(() =>
     verifyReceipts(proof, `${userTurn('complete')}\n${userTurn('second complete')}`),
