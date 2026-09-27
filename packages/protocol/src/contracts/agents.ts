@@ -161,6 +161,8 @@ export interface AgentContext {
   attemptStartedAt?: string;
   /** Durable boundary recorded immediately before a task prompt may mutate the runner. */
   promptDeliveryStartedAt?: string;
+  /** Exact CI fix prompt for duplicate-safe delivery recovery across gateway restarts. */
+  ciFixPrompt?: string;
   /** Exact prompt acceptance from the runner's native protocol, not a model-written mark. */
   promptAcceptance?: RunnerPromptAcceptance;
   /** Optional source ref captured with the delivery boundary, such as the pre-fix HEAD. */

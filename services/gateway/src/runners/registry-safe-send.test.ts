@@ -50,6 +50,8 @@ let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 let grokPromptAcceptanceBaselineMs = Date.now();
 let grokActivityReads = 0;
 let grokActivitySequence: RunnerActivity[] = ['idle'];
+let failedPromptSends = 0;
+let failedPromptSendExitCode = 85;
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -194,6 +196,10 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
+        if (failedPromptSends > 0) {
+          failedPromptSends -= 1;
+          return { exitCode: failedPromptSendExitCode, stdout: '', stderr: 'target missing' };
+        }
         // A literal payload (-l) is the message being TYPED; a bare send is a
         // key like Enter. The distinction is what separates fresh-send from
         // submit-existing in assertions.
@@ -254,6 +260,7 @@ const {
   runnerSupportsInitialPromptArg,
   sendRunnerInstructionSafely,
   sendRunnerPostLaunchPrompt,
+  withRunnerPromptMutationBoundary,
 } = await import('./registry.js');
 
 test('initial prompt capability rejects unknown runner ids', () => {
@@ -301,6 +308,18 @@ test('launch observation requires exact high-confidence acceptance and never tou
       /requires a prompt acceptance boundary/,
     );
     assert.deepEqual(callOrder, []);
+    let mutationStarts = 0;
+    await withRunnerPromptMutationBoundary(
+      () => {
+        mutationStarts += 1;
+      },
+      () =>
+        sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 1, {
+          observeOnly: true,
+          acceptanceSinceMs: Date.now() - 100,
+        }),
+    );
+    assert.equal(mutationStarts, 0);
   } finally {
     promptAcceptedReading = previousReading;
   }
@@ -326,9 +345,13 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
 
   // Codex owns the pane-fallback decision path (Claude is hook-only per ADR-032 Phase 3): it
   // consults observability first, then the pane.
-  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
-    forceBusyPoll: true,
-  });
+  const sent = await withRunnerPromptMutationBoundary(
+    () => callOrder.push('mutation:start'),
+    () =>
+      sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
+        forceBusyPoll: true,
+      }),
+  );
 
   assert.equal(sent, true);
   const obsPromptIdx = callOrder.indexOf('obs:promptAccepted');
@@ -336,6 +359,11 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   const firstPaneIdx = callOrder.indexOf('pane:capture');
   assert.ok(obsPromptIdx >= 0, `expected obs:promptAccepted in ${callOrder.join(',')}`);
   assert.ok(obsActivityIdx >= 0, `expected obs:getActivity in ${callOrder.join(',')}`);
+  assert.ok(
+    callOrder.includes('mutation:start'),
+    `expected send boundary in ${callOrder.join(',')}`,
+  );
+  assert.ok(callOrder.indexOf('mutation:start') < callOrder.indexOf('tmux:send'));
   assert.ok(
     obsPromptIdx < firstPaneIdx,
     `obs promptAccepted should precede first pane capture; order=${callOrder.join(',')}`,
@@ -348,6 +376,7 @@ test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to ses
 });
 
 test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in', async () => {
+  let mutationStarts = 0;
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
   paneText = '❯\nctx:12%\n';
@@ -358,13 +387,20 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     observedAt: Date.now(),
   };
 
-  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
-    readyTimeoutMs: 100,
-    stabilityPolls: 1,
-    pollIntervalMs: 0,
-    verifyWaitMs: 0,
-    maxAttempts: 1,
-  });
+  await withRunnerPromptMutationBoundary(
+    () => {
+      mutationStarts += 1;
+    },
+    () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+        readyTimeoutMs: 100,
+        stabilityPolls: 1,
+        pollIntervalMs: 0,
+        verifyWaitMs: 0,
+        maxAttempts: 1,
+      }),
+  );
+  assert.equal(mutationStarts, 0);
 
   assert.ok(
     handoffRequirePromptDigestValues.every((value) => value !== true),
@@ -392,6 +428,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
 });
 
 test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async (t) => {
+  let mutationStarts = 0;
   t.after(() => {
     paneTextAfterLiteralSend = null;
     paneTextAfterBareSend = null;
@@ -414,18 +451,35 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
   };
 
   await assert.rejects(
-    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
-      readyTimeoutMs: 100,
-      stabilityPolls: 1,
-      pollIntervalMs: 0,
-      verifyWaitMs: 0,
-      maxAttempts: 2,
-      requirePromptDigest: true,
-    }),
+    withRunnerPromptMutationBoundary(
+      () => {
+        mutationStarts += 1;
+        callOrder.push('mutation:start');
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(
+          vars,
+          target,
+          'claude',
+          reviewMessage,
+          'SELF-REVIEW.md',
+          '[test]',
+          {
+            readyTimeoutMs: 100,
+            stabilityPolls: 1,
+            pollIntervalMs: 0,
+            verifyWaitMs: 0,
+            maxAttempts: 2,
+            requirePromptDigest: true,
+          },
+        ),
+    ),
     PromptDeliveryUncertainError,
   );
 
   assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.equal(mutationStarts, 2);
+  assert.ok(callOrder.indexOf('mutation:start') < callOrder.indexOf('tmux:send-literal'));
   assert.equal(
     callOrder.filter((entry) => entry === 'tmux:send').length,
     2,
@@ -1142,6 +1196,117 @@ test('sendRunnerInstructionSafely types the message when hook says not-accepted 
     callOrder.includes('tmux:send-literal'),
     `an authoritative not-accepted reading with an EMPTY composer must TYPE the message — a bare Enter reports success while the instruction was never delivered; order=${callOrder.join(',')}`,
   );
+});
+
+test('a rejected tmux send leaves the prompt mutation boundary untouched', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+  let started = 0;
+  let confirmedUntouched = 0;
+  const sent = await withRunnerPromptMutationBoundary(
+    () => {
+      started += 1;
+    },
+    () => sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]'),
+    () => {
+      confirmedUntouched += 1;
+    },
+  );
+  assert.equal(sent, false);
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 1);
+});
+
+test('a rejected post-launch tmux send leaves the prompt mutation boundary untouched', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  let started = 0;
+  let confirmedUntouched = 0;
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        started += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          verifyWaitMs: 0,
+          maxAttempts: 1,
+          requirePromptDigest: true,
+        }),
+      () => {
+        confirmedUntouched += 1;
+      },
+    ),
+    /Failed to send prompt/,
+  );
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 1);
+});
+
+test('a failed submit leaves a typed prompt uncertain', async (t) => {
+  t.after(() => {
+    failedPromptSends = 0;
+    failedPromptSendExitCode = 85;
+  });
+  failedPromptSends = 1;
+  failedPromptSendExitCode = 1;
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  let started = 0;
+  let confirmedUntouched = 0;
+  await assert.rejects(
+    withRunnerPromptMutationBoundary(
+      () => {
+        started += 1;
+      },
+      () =>
+        sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+          readyTimeoutMs: 100,
+          stabilityPolls: 1,
+          pollIntervalMs: 0,
+          maxAttempts: 1,
+          requirePromptDigest: true,
+        }),
+      () => {
+        confirmedUntouched += 1;
+      },
+    ),
+    /Failed to send prompt/,
+  );
+  assert.equal(started, 1);
+  assert.equal(confirmedUntouched, 0);
 });
 
 test('sendRunnerInstructionSafely submits the buffered instruction when the pane shows it', async () => {

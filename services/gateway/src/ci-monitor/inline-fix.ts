@@ -167,15 +167,16 @@ export function resolveRecoverableCiFixContext(run: Run | undefined): AgentConte
   return (
     run?.agentContexts?.find((context) => {
       const handoff = runnerRetainedSessionHandoff(context.runner);
+      const preSend = context.status === 'launching' && !context.promptDeliveryStartedAt;
       const recoverableStatus =
-        handoff === 'argv-relaunch'
-          ? context.status === 'launching' || context.status === 'working'
-          : context.status === 'working';
+        context.status === 'working' ||
+        (handoff === 'argv-relaunch' && context.status === 'launching') ||
+        preSend;
       return (
         context.role === 'ci-fix' &&
         handoff !== 'unsupported' &&
         recoverableStatus &&
-        !!context.promptDeliveryStartedAt &&
+        (preSend || !!context.promptDeliveryStartedAt) &&
         !!context.deliveryBaselineRef &&
         !!context.deliveryBaselinePanePid &&
         !!context.taskFile &&
@@ -184,6 +185,42 @@ export function resolveRecoverableCiFixContext(run: Run | undefined): AgentConte
       );
     }) ?? null
   );
+}
+
+export function recoveredCiFixHasDeliveryProof(
+  context: AgentContext | null,
+  handoff: ReturnType<typeof runnerRetainedSessionHandoff>,
+  currentPanePid: string | null,
+): boolean {
+  return Boolean(
+    context &&
+    handoff === 'argv-relaunch' &&
+    context.promptDeliveryStartedAt &&
+    currentPanePid &&
+    currentPanePid !== context.deliveryBaselinePanePid,
+  );
+}
+
+export function ciFixAttemptPrompt(
+  prompt: string,
+  runId: string,
+  attempt: number,
+  headSha: string,
+): string {
+  return `CI fix attempt ${attempt} for run ${runId} at ${headSha}. ${prompt.replace(/\s*\r?\n\s*/g, ' ')}`;
+}
+
+export function ciFixPromptForRecovery(
+  prompt: string,
+  recoveredContext: Pick<AgentContext, 'ciFixPrompt' | 'promptDeliveryStartedAt'> | null,
+  runId: string,
+  attempt: number,
+  headSha: string,
+): string {
+  if (recoveredContext?.ciFixPrompt) return recoveredContext.ciFixPrompt;
+  return recoveredContext?.promptDeliveryStartedAt
+    ? prompt
+    : ciFixAttemptPrompt(prompt, runId, attempt, headSha);
 }
 
 export async function sendCiFixNudge(input: {
@@ -202,6 +239,8 @@ export async function sendCiFixNudge(input: {
   replacementReadySignal?: LaunchAckSignalSnapshot | null;
   replacementOwner?: AgentContext | null;
   priorPromptSendAttempted?: boolean;
+  onPromptMutationStart?: () => void;
+  onPromptMutationConfirmedUntouched?: () => void;
 }): Promise<{
   sent: boolean;
   sendAttempted: boolean;
@@ -245,6 +284,8 @@ export async function sendCiFixNudge(input: {
     launchAckSignalPath: input.launchAckSignalPath,
     launchAckBaseline: input.launchAckBaseline,
     priorPromptSendAttempted: input.priorPromptSendAttempted,
+    onPromptMutationStart: input.onPromptMutationStart,
+    onPromptMutationConfirmedUntouched: input.onPromptMutationConfirmedUntouched,
     timeoutMs: input.timeoutMs,
     recovery: input.recovery,
     sendLogPrefix: 'ci-monitor',
@@ -257,6 +298,10 @@ export async function sendCiFixNudge(input: {
     ...(delivery.delivered && delivery.turnToken ? { turnToken: delivery.turnToken } : {}),
     retainedSession,
   };
+}
+
+export function ciFixHasUnconfirmedPromptSend(sent: boolean, sendAttempted: boolean): boolean {
+  return !sent && sendAttempted;
 }
 
 export async function isInlineFixDedupedNow(
@@ -642,6 +687,7 @@ async function attemptInlineCIFix(
 
   // Delete old CI-FIX-SIGNAL.json so we can detect fresh completion
   let ciFixContextStarted = false;
+  let unconfirmedPromptSend = false;
   let vars: Awaited<ReturnType<typeof loadSlotVars>> | undefined;
   try {
     vars = await loadSlotVars(slotId);
@@ -672,30 +718,47 @@ async function attemptInlineCIFix(
     if (!recoveredContext) await execOnSlot(vars, `rm -f '${signalPath}'`);
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
-    const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
-      taskFile: ciFixTaskFile,
-      taskDir: writeResult.taskDir,
-    });
+    const nudgeCmd =
+      recoveredContext?.ciFixPrompt ??
+      ciFixPromptForRecovery(
+        await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
+          taskFile: ciFixTaskFile,
+          taskDir: writeResult.taskDir,
+        }),
+        recoveredContext,
+        runId,
+        totalAttempts,
+        beforeSha,
+      );
     let retainedSession = resolveCiFixRetainedSession(run);
     let acceptedTurnToken: string | undefined;
     let ciPromptSendAttempted = Boolean(recoveredContext?.promptDeliveryStartedAt);
+    let sendOutcomeUnknown = false;
+    let possiblePromptMutations = 0;
+    const onPromptMutationStart = () => {
+      possiblePromptMutations += 1;
+      sendOutcomeUnknown = true;
+    };
+    const onPromptMutationConfirmedUntouched = () => {
+      possiblePromptMutations -= 1;
+      sendOutcomeUnknown = possiblePromptMutations > 0;
+    };
     let deliveryBaselinePanePid = recoveredContext?.deliveryBaselinePanePid;
     let deliveryMutationObserved = false;
     const retainedHandoff = runnerRetainedSessionHandoff(runner);
-    const recoveredAcceptedInPlace = Boolean(
-      recoveredContext &&
-      retainedHandoff !== 'argv-relaunch' &&
-      recoveredContext.status === 'working',
-    );
     if (recoveredContext && retainedHandoff === 'argv-relaunch') {
       const currentPane = await resolveExactTmuxWindowPane(vars, workerTarget);
       if (!currentPane) {
         throw new Error(`Cannot resolve recovered CI fix pane ${workerTarget}`);
       }
-      deliveryMutationObserved = currentPane.panePid !== recoveredContext.deliveryBaselinePanePid;
+      deliveryMutationObserved = recoveredCiFixHasDeliveryProof(
+        recoveredContext,
+        retainedHandoff,
+        currentPane.panePid,
+      );
       if (!deliveryMutationObserved) ciPromptSendAttempted = false;
     }
-    let sent = recoveredContext ? deliveryMutationObserved || recoveredAcceptedInPlace : false;
+    let sent = recoveredContext ? deliveryMutationObserved : false;
     if (!recoveredContext) {
       const deliveryBaselinePane = await resolveExactTmuxWindowPane(vars, workerTarget);
       if (!deliveryBaselinePane) {
@@ -704,6 +767,8 @@ async function attemptInlineCIFix(
       deliveryBaselinePanePid = deliveryBaselinePane.panePid;
       await upsertAgentContext(runId, 'ci-fix', {
         status: 'launching',
+        promptDeliveryStartedAt: undefined,
+        ciFixPrompt: undefined,
         taskFile: writeResult.taskPath,
         signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
         runner,
@@ -716,17 +781,22 @@ async function attemptInlineCIFix(
         },
         runnerSessionId: retainedSession.binding?.runnerSessionId ?? null,
         runnerSessionPath: retainedSession.binding?.runnerSessionPath ?? null,
-        promptDeliveryStartedAt: new Date().toISOString(),
         deliveryBaselineRef: beforeSha,
         deliveryBaselinePanePid,
       });
     }
     try {
-      if (recoveredContext && (deliveryMutationObserved || recoveredAcceptedInPlace)) {
+      if (recoveredContext && deliveryMutationObserved) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — recovering in-flight CI fix delivery on ${workerTarget}`,
         );
       } else {
+        if (!recoveredContext || !recoveredContext.promptDeliveryStartedAt) {
+          await upsertAgentContext(runId, 'ci-fix', {
+            ciFixPrompt: nudgeCmd,
+            promptDeliveryStartedAt: new Date().toISOString(),
+          });
+        }
         const initialDelivery = await sendCiFixNudge({
           vars,
           target: workerTarget,
@@ -739,9 +809,14 @@ async function attemptInlineCIFix(
           launchAckBaseline,
           replacementReadySignal,
           replacementOwner,
+          priorPromptSendAttempted: ciPromptSendAttempted,
+          onPromptMutationStart,
+          onPromptMutationConfirmedUntouched,
           recovery: { runId },
         });
-        ciPromptSendAttempted = initialDelivery.sendAttempted;
+        ciPromptSendAttempted ||= initialDelivery.sendAttempted || sendOutcomeUnknown;
+        sendOutcomeUnknown = false;
+        possiblePromptMutations = 0;
         retainedSession = initialDelivery.retainedSession;
         if (retainedSession.reason) {
           console.warn(`[ci-monitor] run ${runId.slice(0, 8)} — ${retainedSession.reason}`);
@@ -776,10 +851,14 @@ async function attemptInlineCIFix(
                 replacementReadySignal,
                 replacementOwner,
                 priorPromptSendAttempted: ciPromptSendAttempted,
+                onPromptMutationStart,
+                onPromptMutationConfirmedUntouched,
                 forceBusyPoll: true,
                 recovery: { runId },
               });
-              ciPromptSendAttempted ||= retryDelivery.sendAttempted;
+              ciPromptSendAttempted ||= retryDelivery.sendAttempted || sendOutcomeUnknown;
+              sendOutcomeUnknown = false;
+              possiblePromptMutations = 0;
               ciDeliveryTerminal ||= !retryDelivery.retryable;
               acceptedTurnToken = retryDelivery.turnToken ?? acceptedTurnToken;
               return retryDelivery.sent;
@@ -796,6 +875,7 @@ async function attemptInlineCIFix(
             },
             getRun,
             shouldAbort: () => ciDeliveryTerminal,
+            isTargetBound: () => ciPromptSendAttempted || sendOutcomeUnknown,
           });
           sent = retry.sent;
           workerTarget = retry.target;
@@ -804,7 +884,10 @@ async function attemptInlineCIFix(
       console.log(
         `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (retry window exhausted)'} to ${workerTarget}`,
       );
-      if (!sent) {
+      if (ciFixHasUnconfirmedPromptSend(sent, ciPromptSendAttempted)) {
+        unconfirmedPromptSend = true;
+      }
+      if (!sent && !unconfirmedPromptSend) {
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
         // Undelivered nudge burns no attempt: refund the dedup counters and
@@ -828,21 +911,25 @@ async function attemptInlineCIFix(
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
       );
-      // Same undelivered semantics as a deferred send: refund the consecutive
-      // window and schedule a fallback poll. totalAttempts stays consumed so a
-      // permanently dead session is still bounded by MAX_INLINE_CI_FIX_TOTAL.
-      const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
-      mutateDedup(runId, (s) => {
-        s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
-      });
-      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
-      return {
-        attempted: true,
-        success: false,
-        attempts,
-        durationMs: Date.now() - startedAt,
-        retryScheduled: true,
-      };
+      if (ciFixHasUnconfirmedPromptSend(false, ciPromptSendAttempted || sendOutcomeUnknown)) {
+        unconfirmedPromptSend = true;
+      } else {
+        // Same undelivered semantics as a deferred send: refund the consecutive
+        // window and schedule a fallback poll. totalAttempts stays consumed so a
+        // permanently dead session is still bounded by MAX_INLINE_CI_FIX_TOTAL.
+        const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
+        mutateDedup(runId, (s) => {
+          s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
+        });
+        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt }, writeResult.taskPath);
+        return {
+          attempted: true,
+          success: false,
+          attempts,
+          durationMs: Date.now() - startedAt,
+          retryScheduled: true,
+        };
+      }
     }
     const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
       status: 'working',
@@ -863,8 +950,9 @@ async function attemptInlineCIFix(
       deliveryBaselineRef: beforeSha,
       deliveryBaselinePanePid,
     });
+    ciFixContextStarted = true;
     if (ciFixContext) await watchContext(slotId, ciFixContext);
-    if (!retainedSession.binding) {
+    if (!retainedSession.binding && !unconfirmedPromptSend) {
       // No retained binding means `relaunchWorkerSession` respawned the runner,
       // so this delivery owns a brand-new session that no earlier capture can
       // supply. Attribute it to the delivery pane and bind both the ci-fix role
@@ -890,7 +978,6 @@ async function attemptInlineCIFix(
         });
       }
     }
-    ciFixContextStarted = true;
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',
       fixInProgress: true,
@@ -1132,6 +1219,14 @@ async function attemptInlineCIFix(
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — worker session died during inline fix without success signal`,
         );
+        if (unconfirmedPromptSend) {
+          return blockInlineFix(
+            'CI fix prompt was not acknowledged and the worker exited without a terminal signal',
+            await getSlotHeadSha(slotId),
+            new Date().toISOString(),
+            fixProgress,
+          );
+        }
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
         clearInlineFixState(
@@ -1172,6 +1267,14 @@ async function attemptInlineCIFix(
     console.log(
       `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s without an active runner turn`,
     );
+    if (unconfirmedPromptSend) {
+      return blockInlineFix(
+        'CI fix prompt may have reached the worker, but no terminal signal or new commit arrived before timeout',
+        await getSlotHeadSha(slotId),
+        new Date().toISOString(),
+        await readRemoteCIFixProgress(vars, writeResult.taskPath),
+      );
+    }
     await markAgentContextStatus(runId, 'ci-fix', 'failed');
     await unwatchContext(slotId, 'ci-fix');
     clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
@@ -1181,12 +1284,27 @@ async function attemptInlineCIFix(
       `[ci-monitor] run ${runId.slice(0, 8)} — inline CI fix setup failed: ${(err as Error).message}`,
     );
     if (ciFixContextStarted) {
-      await markAgentContextStatus(runId, 'ci-fix', 'failed');
+      await markAgentContextStatus(runId, 'ci-fix', unconfirmedPromptSend ? 'blocked' : 'failed');
       await unwatchContext(slotId, 'ci-fix');
     }
     vars = vars ?? (await loadSlotVars(slotId));
-    clearInlineFixState(runId, { phase: 'polling' }, writeResult.taskPath);
-    return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+    clearInlineFixState(
+      runId,
+      { phase: unconfirmedPromptSend ? 'blocked' : 'polling' },
+      writeResult.taskPath,
+    );
+    return {
+      attempted: true,
+      success: false,
+      ...(unconfirmedPromptSend
+        ? {
+            blocked: true,
+            blockedReason: 'CI fix outcome could not be observed after a possible send',
+          }
+        : {}),
+      attempts,
+      durationMs: Date.now() - startedAt,
+    };
   } finally {
     if (vars) {
       await restoreWorkerChecklistTargetFromSlot(

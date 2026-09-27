@@ -17,6 +17,7 @@ import {
   signalFileForTask,
 } from '@farmslot/protocol';
 
+import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
 import { poolDir } from '../core/config.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -305,6 +306,45 @@ test('upsertAgentContext keeps independent role contexts across rapid updates', 
     .agentContexts?.map((ctx) => ctx.role)
     .sort();
   assert.deepEqual(roles, ['ci-fix', 'fix-bug', 'review']);
+});
+
+test('a new CI-fix attempt clears the previous prompt boundary', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-ci-retry`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  await upsertAgentContext(run.id, 'ci-fix', {
+    status: 'complete',
+    runner: 'cursor',
+    taskFile: 'ci/CI-FIX.md',
+    signalFile: 'ci/CI-FIX-SIGNAL.json',
+    target: { session: 'mme-1', window: 'dev', target: 'mme-1:dev' },
+    deliveryBaselineRef: 'old-sha',
+    deliveryBaselinePanePid: 'old-pid',
+    ciFixPrompt: 'old prompt',
+    promptDeliveryStartedAt: new Date().toISOString(),
+  });
+  await upsertAgentContext(run.id, 'ci-fix', {
+    status: 'launching',
+    deliveryBaselineRef: 'new-sha',
+    deliveryBaselinePanePid: 'new-pid',
+    ciFixPrompt: undefined,
+    promptDeliveryStartedAt: undefined,
+  });
+
+  const updated = getRun(run.id)!;
+  const recoverable = resolveRecoverableCiFixContext(updated);
+  assert.equal(recoverable?.deliveryBaselineRef, 'new-sha');
+  assert.equal(recoverable?.deliveryBaselinePanePid, 'new-pid');
+  assert.equal(recoverable?.ciFixPrompt, undefined);
+  assert.equal(
+    updated.agentContexts?.find((context) => context.role === 'ci-fix')?.ciFixPrompt,
+    undefined,
+  );
 });
 
 test('upsertAgentContext keeps independent role contexts across concurrent microtasks', async (t) => {

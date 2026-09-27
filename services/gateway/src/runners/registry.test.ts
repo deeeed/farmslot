@@ -2360,6 +2360,8 @@ describe('session portability', () => {
 describe('reasoning effort capability', () => {
   it('validates model-specific efforts through the runner registry', () => {
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', 'ultra'), true);
+    assert.equal(runnerSupportsEffort('codex', 'gpt-6-luna', 'max'), true);
+    assert.equal(runnerSupportsEffort('codex', 'gpt-6-luna', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-5.4', 'ultra'), false);
     assert.equal(runnerSupportsEffort('codex', 'gpt-6-astra', '--help'), false);
     assert.equal(runnerSupportsEffort('claude', 'sonnet', 'high'), false);

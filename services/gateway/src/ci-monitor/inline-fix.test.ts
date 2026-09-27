@@ -10,15 +10,64 @@ import type { Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/config.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
+import { runnerPromptDigest } from '../runners/observability-prompt-digest.js';
 
 import {
+  ciFixAttemptPrompt,
+  ciFixHasUnconfirmedPromptSend,
+  ciFixPromptForRecovery,
   inlineFixRunnerStillBusy,
+  recoveredCiFixHasDeliveryProof,
   resolveCiFixReplacementOwner,
   resolveCiFixRetainedSession,
   resolveCiFixTemplatePath,
   resolveRecoverableCiFixContext,
   sendCiFixNudge,
 } from './inline-fix.js';
+
+test('unconfirmed CI fix send blocks automatic resends', () => {
+  assert.equal(ciFixHasUnconfirmedPromptSend(false, true), true);
+  assert.equal(ciFixHasUnconfirmedPromptSend(false, false), false);
+  assert.equal(ciFixHasUnconfirmedPromptSend(true, true), false);
+});
+
+test('CI fix prompt identifies one attempt while preserving its recovery digest', () => {
+  const prompt = `Read tasks/run-1/CI-FIX.md ${'x'.repeat(200)}\nAfter reading, mark the step.`;
+  const first = ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234');
+  assert.equal(first.includes('\n'), false);
+  assert.match(first, /After reading, mark the step\./);
+  assert.equal(first, ciFixAttemptPrompt(prompt, 'run-1', 1, 'abc1234'));
+  assert.notEqual(
+    runnerPromptDigest(first),
+    runnerPromptDigest(ciFixAttemptPrompt(prompt, 'run-1', 2, 'abc1234')),
+  );
+  assert.notEqual(
+    runnerPromptDigest(first),
+    runnerPromptDigest(ciFixAttemptPrompt(prompt, 'run-1', 1, 'def5678')),
+  );
+});
+
+test('CI fix recovery retains the exact prompt sent before a restart', () => {
+  const legacyPrompt = 'Read tasks/run-1/CI-FIX.md';
+  const taggedPrompt = ciFixAttemptPrompt(legacyPrompt, 'run-1', 1, 'abc1234');
+  const currentPrompt = 'Read tasks/run-1/CI-FIX.md with a revised template';
+  assert.equal(
+    ciFixPromptForRecovery(currentPrompt, { ciFixPrompt: taggedPrompt }, 'run-1', 2, 'def5678'),
+    taggedPrompt,
+  );
+  assert.equal(
+    ciFixPromptForRecovery(
+      legacyPrompt,
+      { promptDeliveryStartedAt: '2026-08-25T09:00:00.000Z' },
+      'run-1',
+      1,
+      'abc1234',
+    ),
+    legacyPrompt,
+  );
+  assert.equal(ciFixPromptForRecovery(legacyPrompt, {}, 'run-1', 1, 'abc1234'), taggedPrompt);
+  assert.equal(ciFixPromptForRecovery(legacyPrompt, null, 'run-1', 1, 'abc1234'), taggedPrompt);
+});
 
 test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () => {
   const context = {
@@ -39,10 +88,12 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
   const run = { ...makeRun({ flowType: 'dev' }), agentContexts: [context] };
 
   assert.equal(resolveRecoverableCiFixContext(run)?.id, 'ci-fix');
+  const preSend = { ...context, promptDeliveryStartedAt: undefined };
+  assert.equal(resolveRecoverableCiFixContext({ ...run, agentContexts: [preSend] })?.id, 'ci-fix');
   assert.equal(
     resolveRecoverableCiFixContext({
       ...run,
-      agentContexts: [{ ...context, promptDeliveryStartedAt: undefined }],
+      agentContexts: [{ ...preSend, deliveryBaselineRef: undefined }],
     }),
     null,
   );
@@ -62,7 +113,39 @@ test('CI fix recovery requires a durable prompt boundary and HEAD baseline', () 
       agentContexts: [{ ...codexContext, status: 'launching' }],
     }),
     null,
-    'an in-place runner is recoverable only after its prompt was accepted',
+    'a pre-send in-place context does not prove a prompt was attempted',
+  );
+  assert.equal(
+    resolveRecoverableCiFixContext({
+      ...run,
+      agentContexts: [{ ...codexContext, status: 'launching', promptDeliveryStartedAt: undefined }],
+    })?.id,
+    'ci-fix',
+  );
+});
+
+test('a recovered in-place CI fix requires prompt acknowledgement, not working status', () => {
+  const context = {
+    id: 'ci-fix',
+    label: 'CI fix',
+    role: 'ci-fix' as const,
+    status: 'working' as const,
+    slotId: 'macpro-ff-1',
+    runId: 'run-1',
+    deliveryBaselinePanePid: '1234',
+    promptDeliveryStartedAt: '2026-08-25T09:00:00.000Z',
+  };
+
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'in-place', '5678'), false);
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '1234'), false);
+  assert.equal(recoveredCiFixHasDeliveryProof(context, 'argv-relaunch', '5678'), true);
+  assert.equal(
+    recoveredCiFixHasDeliveryProof(
+      { ...context, promptDeliveryStartedAt: undefined },
+      'argv-relaunch',
+      '5678',
+    ),
+    false,
   );
 });
 

@@ -22,6 +22,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import {
   isDeviceGridResourceApplicable,
@@ -539,7 +540,11 @@ export class DeviceGrid extends LitElement {
 
   private async _handleControl(slotId: string, resourceId: string, action: ResourceControlAction) {
     try {
-      await gateway.request(Methods.RESOURCE_CONTROL, { slotId, resourceId, action });
+      await gateway.request(
+        Methods.RESOURCE_CONTROL,
+        { slotId, resourceId, action },
+        RESOURCE_CONTROL_TIMEOUT_MS,
+      );
     } catch (err) {
       console.error(
         `[device-grid] control ${action} failed for ${slotId}:${resourceId}:`,

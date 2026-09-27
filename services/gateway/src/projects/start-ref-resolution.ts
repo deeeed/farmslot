@@ -125,27 +125,6 @@ async function fetchedRemoteTagCommitishes(
   ];
 }
 
-async function existingRemoteTrackingRefs(
-  repo: string,
-  exec: StartRefExec,
-  remote: string,
-): Promise<string[]> {
-  const refs = await runGit(
-    repo,
-    exec,
-    `git for-each-ref --format=${shellQuote('%(refname)')} ${shellQuote(`refs/remotes/${remote}`)}`,
-  );
-  if (refs.exitCode !== 0) {
-    throw new Error(
-      `startRef local remote ref scan failed: ${refs.stderr.slice(-200) || refs.stdout.slice(-200)}`,
-    );
-  }
-  return refs.stdout
-    .split('\n')
-    .map((ref) => ref.trim())
-    .filter(Boolean);
-}
-
 function remoteTrackingRefFromHeadRef(headRef: string, remote: string): string {
   return `refs/remotes/${remote}/${headRef.slice('refs/heads/'.length)}`;
 }
@@ -246,18 +225,27 @@ async function assertReachableFromKnownRemote(
 ): Promise<void> {
   // Do not fetch every remote branch here: case-colliding refs on macOS can
   // make all-head refspecs fail even when the requested commit is valid.
-  // Existing remote-tracking refs (normally origin/main plus recently used
-  // branches) and advertised tag commitishes are enough to reject local-only
-  // objects while still supporting release/tag-only SHAs once the exact SHA
-  // has been fetched above.
-  for (const ref of await existingRemoteTrackingRefs(repo, exec, remote)) {
-    const contains = await runGit(
-      repo,
-      exec,
-      `git merge-base --is-ancestor ${shellQuote(sha)} ${shellQuote(ref)}`,
+  // Existing remote-tracking refs, advertised heads, and advertised tag
+  // commitishes reject local-only objects while supporting newly published PR
+  // heads and release/tag-only SHAs after the exact SHA is fetched above.
+  const containingRefs = await runGit(
+    repo,
+    exec,
+    `git for-each-ref --contains ${shellQuote(sha)} --format=${shellQuote('%(refname)')} ${shellQuote(`refs/remotes/${remote}`)}`,
+  );
+  if (containingRefs.exitCode !== 0) {
+    throw new Error(
+      `startRef local remote ref scan failed: ${containingRefs.stderr.slice(-200) || containingRefs.stdout.slice(-200)}`,
     );
-    if (contains.exitCode === 0) return;
   }
+  if (containingRefs.stdout.trim()) return;
+  const remoteHeads = await runGit(repo, exec, `git ls-remote --heads ${shellQuote(remote)}`);
+  if (remoteHeads.exitCode !== 0) {
+    throw new Error(
+      `startRef remote head scan failed: ${remoteHeads.stderr.slice(-200) || remoteHeads.stdout.slice(-200)}`,
+    );
+  }
+  if (remoteHeads.stdout.split('\n').some((line) => line.split(/\s+/, 1)[0] === sha)) return;
   for (const tagCommitish of await fetchedRemoteTagCommitishes(repo, exec, remote)) {
     const tagCommit = `${tagCommitish}^{commit}`;
     const contains = await runGit(

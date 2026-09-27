@@ -10,11 +10,15 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
+import { DEFAULT_MODEL } from '../../utils/runner-options.js';
+
 import {
   activeEvalRunCount,
+  applyCandidateRunner,
   axesForCandidateRow,
   buildEvalCellQueueRequest,
   candidateLabel,
+  candidateModelOptions,
   candidateTemplateChoices,
   candidateVariant,
   capGroupIdForDataset,
@@ -450,6 +454,20 @@ test('sanitizeCandidateRows restores valid URL rows and drops invalid labels/mod
   assert.equal(rows[0].reviewName, 'review-loop');
   assert.equal(rows[0].reviewVersion, 'v2');
   assert.equal(rows[0].repeat, true);
+});
+
+test('sanitizeCandidateRows preserves saved legacy Codex choices without accepting unknown models', () => {
+  for (const model of ['gpt-5.4', 'gpt-5.5']) {
+    const [row] = sanitizeCandidateRows([{ id: `legacy-${model}`, runner: 'codex', model }]);
+    assert.equal(row.model, model);
+    assert.equal(candidateModelOptions('codex', model).at(-1), model);
+    assert.equal(candidateModelOptions('codex').includes(model), false);
+    assert.equal(applyCandidateRunner(row, 'codex').model, model);
+  }
+  assert.equal(
+    sanitizeCandidateRows([{ runner: 'codex', model: 'unknown' }])[0].model,
+    DEFAULT_MODEL.codex,
+  );
 });
 
 test('sanitizeSelectedCases keeps restorable URL cases and omits malformed entries', () => {

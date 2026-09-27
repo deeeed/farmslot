@@ -6,6 +6,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, shadows, spacing } from '../../styles/theme-tokens.js';
+import { RESOURCE_CONTROL_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import type { ResourceEntry } from './fleet-canvas.js';
 
@@ -190,11 +191,15 @@ export class ResourceOverview extends LitElement {
     this._busy = new Set([...this._busy, slotId]);
     this.requestUpdate();
     try {
-      const res = (await gateway.request(Methods.RESOURCE_CONTROL, {
-        slotId,
-        resourceId: this.resourceId,
-        action,
-      })) as { ok: boolean; detail?: string };
+      const res = (await gateway.request(
+        Methods.RESOURCE_CONTROL,
+        {
+          slotId,
+          resourceId: this.resourceId,
+          action,
+        },
+        RESOURCE_CONTROL_TIMEOUT_MS,
+      )) as { ok: boolean; detail?: string };
       if (!res.ok) {
         console.error(`[resource-overview] ${action} ${slotId}/${this.resourceId}: ${res.detail}`);
         this.showFlash(`${slotId}: ${res.detail}`, false);

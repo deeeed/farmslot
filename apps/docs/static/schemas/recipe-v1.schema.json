@@ -132,6 +132,11 @@
           "type": "number",
           "description": "Inclusive lower bound for numeric parameters."
         },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regular expression that string parameters must match."
+        },
         "minItems": {
           "type": "integer",
           "minimum": 0,

@@ -619,6 +619,30 @@ test('the devices are labelled with the slots the fleet configures them for', as
   );
 });
 
+test('a simulator configured by UDID labels its inventory entry', async () => {
+  clearDeviceInventoryCache();
+  const clock = { ms: 1_000 };
+  const { deps } = inventoryDeps(SIMCTL_ANSWER, clock);
+  const inventory = await readDeviceInventory('macwork-ff-4', {
+    deps: {
+      ...deps,
+      loadSlotVars: async (slotId) => ({
+        machine: 'macwork',
+        repo: '/repo-a',
+        resourceVars: {
+          simulator: '1111-AAAA',
+          ...(slotId === 'macwork-ff-3' ? { udid: '1111-AAAA' } : {}),
+        },
+      }),
+    },
+  });
+  assert.deepEqual(
+    inventory.devices.find((device) => device.key === 'udid' && device.identity === '1111-AAAA')
+      ?.configuredForSlots,
+    ['macwork-ff-3', 'macwork-ff-4'],
+  );
+});
+
 test('a tool that did not answer leaves its source unread rather than failing the read', async () => {
   clearDeviceInventoryCache();
   const clock = { ms: 1_000 };

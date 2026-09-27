@@ -16,6 +16,7 @@ import {
   DEFAULT_MODEL,
   EVAL_CANDIDATE_RUNNERS,
   MODELS_BY_RUNNER,
+  modelsForRunner,
   runnerLabel,
 } from '../../utils/runner-options.js';
 
@@ -172,7 +173,8 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
         ? record.runner
         : fallback.runner;
     const model =
-      typeof record.model === 'string' && candidateModelOptions(runner).includes(record.model)
+      typeof record.model === 'string' &&
+      candidateModelOptions(runner, record.model).includes(record.model)
         ? record.model
         : (candidateModelOptions(runner)[0] ?? fallback.model);
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
@@ -422,12 +424,14 @@ export function candidateTemplateChoices(
   return dynamic.length > 0 ? dynamic : [...CANDIDATE_TEMPLATE_OPTIONS];
 }
 
-export function candidateModelOptions(runner: string): string[] {
-  return MODELS_BY_RUNNER[runner] ?? [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+export function candidateModelOptions(runner: string, selectedModel?: string): string[] {
+  return MODELS_BY_RUNNER[runner]
+    ? modelsForRunner(runner, selectedModel)
+    : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {
-  const models = candidateModelOptions(runner);
+  const models = candidateModelOptions(runner, row.model);
   return {
     ...row,
     runner,

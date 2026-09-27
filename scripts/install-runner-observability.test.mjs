@@ -357,6 +357,36 @@ test('grok install honours GROK_HOME and creates the trust store when absent', (
   assert.ok(content.includes(`[folders."${fs.realpathSync(repo)}"]\ntrusted = true\n`), content);
 });
 
+test('grok install trusts the shared Git root for a worktree', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-worktree-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-repo-worktree-'));
+  const worktree = path.join(path.dirname(repo), `${path.basename(repo)}-slot`);
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', [
+    '-C',
+    repo,
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '--allow-empty',
+    '-qm',
+    'initial',
+  ]);
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', worktree]);
+
+  installGrokTrust(worktree, { HOME: home });
+  const trustedPath = path.join(home, '.grok', 'trusted_folders.toml');
+  const first = fs.readFileSync(trustedPath, 'utf8');
+  assert.equal(grokTrustedFolderCount(first, fs.realpathSync(repo)), 1);
+  assert.equal(grokTrustedFolderCount(first, fs.realpathSync(worktree)), 1);
+  installGrokTrust(worktree, { HOME: home });
+  assert.equal(fs.readFileSync(trustedPath, 'utf8'), first);
+});
+
 test('codex install keeps project hooks and config clean while isolating managed hooks', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-'));
   fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });

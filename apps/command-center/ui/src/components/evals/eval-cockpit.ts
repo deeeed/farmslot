@@ -568,8 +568,8 @@ export class EvalCockpit extends EvalCockpitState {
     });
   }
 
-  private _candidateModelOptions(runner: string): string[] {
-    return candidateModelOptions(runner);
+  private _candidateModelOptions(runner: string, selectedModel?: string): string[] {
+    return candidateModelOptions(runner, selectedModel);
   }
 
   private _setCandidateRunner(id: string, runner: string): void {
@@ -834,7 +834,8 @@ export class EvalCockpit extends EvalCockpitState {
       },
       candidateLabel: (row) => this._candidateLabel(row),
       generatedCandidateLabel: (row) => this._generatedCandidateLabel(row),
-      candidateModelOptions: (runner) => this._candidateModelOptions(runner),
+      candidateModelOptions: (runner, selectedModel) =>
+        this._candidateModelOptions(runner, selectedModel),
       candidateTemplateChoices: (taskProfile) => this._candidateTemplateChoices(taskProfile),
       candidateTemplateSummary: (row) => this._candidateTemplateSummary(row),
       candidateVariant: (row) => this._candidateVariant(row),

@@ -16,6 +16,7 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS } from '../../utils/resource-operation-timeout.js';
 
 import {
   projectRuntimeCapabilityLeases,
@@ -235,7 +236,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           revalidateHealth: true,
           proofRequirement: requirement,
         },
-        120_000,
+        RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS,
       );
       if (!result.ok) {
         throw new Error(`Acquire refused: ${result.conflict.reason}`);
@@ -298,7 +299,7 @@ export class RuntimeCapabilitiesPanel extends LitElement {
           proofRequirement: requirement,
           ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
         },
-        120_000,
+        RUNTIME_CAPABILITY_ACQUIRE_TIMEOUT_MS,
       );
       if (!acquired.ok) {
         throw new Error(

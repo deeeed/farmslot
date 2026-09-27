@@ -46,6 +46,7 @@ import {
   type RunStepStatus,
   signalFileForTask,
 } from '@farmslot/protocol';
+import { parseRunRecordFile } from '@farmslot/run-bundle';
 
 import { assertNoAutomatedPRConflict, assertPRRunActivation } from '../backlog/pr-admission.js';
 import { readSlotField } from '../core/state.js';
@@ -547,13 +548,18 @@ export async function loadAllRuns(): Promise<void> {
   }
   let quarantined = 0;
   let skippedSynthetic = 0;
+  const ignored: string[] = [];
   for (const file of files) {
     if (!file.endsWith('.json')) continue;
     if (file.includes('.tmp.')) continue; // stray atomic-write artifacts
     try {
       const filePath = path.join(RUNS_DIR, file);
       const raw = await readFile(filePath, 'utf-8');
-      const run: Run = JSON.parse(raw);
+      const run = parseRunRecordFile(file, raw);
+      if (!run) {
+        ignored.push(file);
+        continue;
+      }
       if (isLeakedGatewayTestRun(run)) {
         await quarantineRunFile(run.id, filePath, run);
         quarantined++;
@@ -576,6 +582,10 @@ export async function loadAllRuns(): Promise<void> {
       console.warn(`[run-store] failed to load ${file}`);
     }
   }
+  if (ignored.length > 0)
+    console.log(
+      `[run-store] ignored ${ignored.length} non-run JSON file(s): ${ignored.join(', ')}`,
+    );
   if (quarantined > 0) console.log(`[run-store] quarantined ${quarantined} synthetic/leaked runs`);
   if (skippedSynthetic > 0)
     console.warn(
@@ -1344,7 +1354,11 @@ export async function getArchivedRuns(): Promise<Run[]> {
       if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
       const filePath = path.join(ARCHIVE_DIR, file);
       try {
-        const archived = JSON.parse(await readFile(filePath, 'utf-8')) as Run;
+        const archived = parseRunRecordFile(file, await readFile(filePath, 'utf-8'));
+        if (!archived) {
+          console.warn(`[run-store] skipping non-run archive file ${file}`);
+          continue;
+        }
         // Same migrations as the live load. Without them a pre-backfill archive keeps
         // a missing familyId and every such run groups under one undefined family,
         // merging lineage across unrelated backlog items.

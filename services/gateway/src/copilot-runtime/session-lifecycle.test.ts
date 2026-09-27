@@ -125,7 +125,7 @@ test('Copilot effort persists without relabelling or replacing a live conversati
   const { controller, tmux } = testController({ home, checkout: process.cwd() });
   const fresh = await controller.status();
   assert.equal(fresh.session.runner, 'codex');
-  assert.equal(fresh.session.model, 'gpt-6-astra');
+  assert.equal(fresh.session.model, 'gpt-6-sol');
   assert.equal(fresh.session.effort, 'low');
   await controller.configure({ runner: 'codex', model: 'gpt-5.6-sol', effort: 'medium' });
   const started = await controller.start();

@@ -109,12 +109,14 @@ projects/farmslot-farm/setup/*
 !projects/farmslot-farm/setup/sandbox-dev.sh
 !projects/farmslot-farm/setup/sandbox-companion.sh
 !projects/farmslot-farm/setup/companion-prepare.sh
+!projects/farmslot-farm/setup/simulator-booted.sh
 !projects/farmslot-farm/setup/validate-recipe.sh
 !projects/farmslot-farm/setup/sync-recipe-evidence.sh
 !projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh
 !projects/farmslot-farm/setup/upload-pr-evidence.mjs
 !projects/farmslot-farm/setup/capture-helper-tmux-check.sh
 !projects/farmslot-farm/setup/runtime-capability-browser.sh
+!projects/farmslot-farm/setup/simulator-boot-readiness.sh
 projects/farmslot-farm/tasks/
 projects/farmslot-farm/.agent/
 projects/farmslot-farm/.task/

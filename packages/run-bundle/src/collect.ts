@@ -5,22 +5,46 @@ import type { Run } from '@farmslot/protocol';
 
 import { resolveRunsDir } from './paths.js';
 
-export function loadRunRecord(runsDir: string, runId: string): Run | null {
-  const exact = path.join(runsDir, `${runId}.json`);
-  if (existsSync(exact)) {
-    return JSON.parse(readFileSync(exact, 'utf-8')) as Run;
+/**
+ * The runs directory also holds other stores' JSON (`runtime-capabilities-<port>.json`).
+ * A file is a run record only when its payload id names the file and it carries the
+ * fields every run reader dereferences (`status`, `steps`, `createdAt`); anything else
+ * is not a run to load, migrate, or rewrite. Shared with the Gateway run store.
+ */
+export function parseRunRecordFile(name: string, raw: string): Run | null {
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const record = parsed as Partial<Record<'id' | 'status' | 'steps' | 'createdAt', unknown>>;
+  if (typeof record.id !== 'string' || record.id === '' || name !== `${record.id}.json`) {
+    return null;
   }
-  const files = readdirSync(runsDir).filter((name) => name.endsWith('.json'));
-  const match = files.find((name) => name.replace(/\.json$/, '').startsWith(runId));
-  if (!match) return null;
-  return JSON.parse(readFileSync(path.join(runsDir, match), 'utf-8')) as Run;
+  if (typeof record.status !== 'string' || !Array.isArray(record.steps)) return null;
+  if (typeof record.createdAt !== 'string') return null;
+  return parsed as Run;
+}
+
+function readRunRecordFile(runsDir: string, name: string): Run | null {
+  return parseRunRecordFile(name, readFileSync(path.join(runsDir, name), 'utf-8'));
+}
+
+export function loadRunRecord(runsDir: string, runId: string): Run | null {
+  if (existsSync(path.join(runsDir, `${runId}.json`))) {
+    return readRunRecordFile(runsDir, `${runId}.json`);
+  }
+  for (const name of readdirSync(runsDir)) {
+    if (!name.endsWith('.json') || !name.startsWith(runId)) continue;
+    const run = readRunRecordFile(runsDir, name);
+    if (run) return run;
+  }
+  return null;
 }
 
 export function loadAllRunRecords(runsDir: string): Run[] {
   if (!existsSync(runsDir)) return [];
   return readdirSync(runsDir)
     .filter((name) => name.endsWith('.json'))
-    .map((name) => JSON.parse(readFileSync(path.join(runsDir, name), 'utf-8')) as Run);
+    .map((name) => readRunRecordFile(runsDir, name))
+    .filter((run): run is Run => run !== null);
 }
 
 export function selectRunsForExport(input: {
