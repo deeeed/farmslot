@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Identify headless flags on the runner invocation only, so setup commands such as `mkdir -p` no longer block interactive worker recovery.
 - Apply the selected prepare profile when recovering a retained slot, while preserving implicit warm reuse and explicit skip requests.
 - Resolve requested start-ref SHAs with one local reachability scan and accept newly advertised remote branch heads without scanning thousands of refs one by one.
 - Default Codex runs to GPT-6 Sol and offer GPT-6 Luna while accepting existing GPT-5.4/5.5 selections.
