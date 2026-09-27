@@ -4,6 +4,24 @@ Farmslot-owned tmux validation for **runner capability and interaction** differe
 
 Implementation: `scripts/runner-validation/`
 
+## Worker completion contracts
+
+`gateway/worker-quality-ownership.mts` checks recovery from a stale worker requirement for gateway-owned recipe quality. It is read-only against the gateway and task files. Run it from the repository root against a retained worker, before changing its contract. Set the gateway URL for your deployment; this example uses the default port:
+
+```bash
+export FARMSLOT_GATEWAY=ws://127.0.0.1:7777/ws
+export FARMSLOT_QUALITY_PROOF_DIR=/tmp/worker-quality-proof
+export FARMSLOT_QUALITY_PROOF_RUN_ID='<run-id>'
+export FARMSLOT_QUALITY_PROOF_CONTEXT_ID='<worker-context-id>'
+yarn --cwd services/gateway exec tsx --tsconfig tsconfig.json ../../scripts/runner-validation/gateway/worker-quality-ownership.mts --snapshot
+```
+
+Snapshot requires matching slot and authoritative task contracts and saves the original contract and signal privately. It refuses to overwrite an existing snapshot.
+
+After reviewing the project policy change, regenerate the contract through the canonical resolver and reconcile both saved copies. Preserve every coverage, evidence, acceptance and signal requirement. Have the worker complete through its normal `mark` command, then run the same command with `--verify` instead of `--snapshot`.
+
+Verification checks that only the quality requirement changed, both copies agree with the current project policy, and the same worker attempt completed and passed the gateway monitor. Policy comparison ignores resolution timestamps and treats an absent quality flag as false, so normal contract regeneration does not invalidate the proof. It rejects projects that still require worker-authored quality. Neither phase writes a completion signal or generates a quality verdict. If the snapshot came from an earlier recovery tool, retain that provenance with the proof rather than claiming the current script produced it.
+
 ## Validation (live tmux E2E)
 
 ```bash

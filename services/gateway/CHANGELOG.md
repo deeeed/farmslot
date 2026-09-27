@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Verify the Farmslot Farm pack's gateway-owned quality policy while preserving worker coverage, evidence, acceptance and other projects' contracts.
 - Deliver slot-worker terminal messages as bounded, per-pane serialized pastes with the runner's submit key, preserving complete feedback documents while leaving raw input and submit-only actions unchanged.
 - Identify headless flags on the runner invocation only, so setup commands such as `mkdir -p` no longer block interactive worker recovery.
 - Apply the selected prepare profile when recovering a retained slot, while preserving implicit warm reuse and explicit skip requests.
