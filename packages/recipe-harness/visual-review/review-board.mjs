@@ -178,6 +178,7 @@ function indexHtml(source, storageKey, defaultPlatform, assetVersion) {
       <p>${escapeHtml(source.capturedAt)}${source.description ? ` · ${escapeHtml(source.description)}` : ''}</p>
     </div>
     <div class="header-actions">${platformFilterHtml(source, defaultPlatform)}${FEEDBACK_ACTIONS_HTML}</div>
+    <p data-feedback-status class="autosave" role="status"></p>
   </header>
   <main class="screen-index" aria-label="Captured surfaces">
     <section class="navigation-map" aria-labelledby="navigation-map-title">
