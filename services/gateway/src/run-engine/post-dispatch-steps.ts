@@ -37,7 +37,7 @@ import {
   prepareCompletionPackage,
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
-import { captureRunOutput } from '../run-completion/output.js';
+import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
 import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
@@ -540,17 +540,7 @@ export async function executeMonitorStep(
         if (!canSettle()) return retiredResult();
         // Preserve the worker's outcome; a failed transfer is separately visible
         // and retryable through run.refreshMirror, never an empty success card.
-        const latest = getRun(runId)!;
-        updateRun(runId, {
-          output: {
-            workerFinished: true,
-            capturedAt: new Date().toISOString(),
-            artifactManifest: latest.output?.artifactManifest ?? [],
-            manifestDigest: latest.output?.manifestDigest ?? '',
-            reportPath: latest.output?.reportPath,
-            captureError: error instanceof Error ? error.message : String(error),
-          },
-        });
+        failRunOutputCapture(runId, error, true);
       }
       if (!canSettle()) return retiredResult();
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });

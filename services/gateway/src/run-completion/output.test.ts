@@ -10,7 +10,7 @@ import { runResolveDecision } from '../methods/run.js';
 import { makeRun } from '../methods/run/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
-import { captureRunOutput, outputReviewDecisions } from './output.js';
+import { captureRunOutput, failRunOutputCapture, outputReviewDecisions } from './output.js';
 
 const output: RunOutput = {
   workerFinished: true,
@@ -53,6 +53,58 @@ test('running output, eval packages and publication flows do not acquire an outp
     outputReviewDecisions(run, { ...output, captureError: 'failed transfer' }).length,
     0,
   );
+});
+
+test('a failed manual refresh does not mark an active worker finished', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'generic-project',
+    ticketOrPr: 'active-output',
+  });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+  updateRun(run.id, { status: 'monitoring' });
+  const failed = failRunOutputCapture(run.id, new Error('Unavailable worker files'));
+  assert.equal(failed.status, 'monitoring');
+  assert.equal(failed.output?.workerFinished, false);
+});
+
+test('capture follows the existing narrative report names for every flow', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'flow-output-'));
+  await mkdir(path.join(dir, 'artifacts'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const cases = [
+    ['qa', 'qa-report.md'],
+    ['dev', 'pr-description.md'],
+    ['fix-bug', 'pr-description.md'],
+    ['review-pr', 'review.md'],
+    ['pr-complete', 'comments-report.md'],
+    ['update-branch', 'report.md'],
+  ] as const;
+  for (const [, name] of cases) await writeFile(path.join(dir, 'artifacts', name), `# ${name}\n`);
+  for (const [flowType, name] of cases) {
+    const run = createRun({
+      flowType: 'dev',
+      project: 'generic-project',
+      ticketOrPr: 'report-name-test',
+    });
+    t.after(async () => {
+      updateRun(run.id, { status: 'failed' });
+      await deleteRun(run.id);
+    });
+    updateRun(run.id, {
+      flowType,
+      status: 'done',
+      completionPolicy: 'artifact-only',
+      taskFile: path.join(dir, 'TASK.md'),
+    });
+    await captureRunOutput(run.id, false);
+    const captured = getRun(run.id)!;
+    assert.equal(captured.output?.reportPath, `artifacts/${name}`, flowType);
+    assert.equal(captured.decisions[0].payload?.kind, 'output-review', flowType);
+  }
 });
 
 test('partial output can be reviewed without resuming the worker; changed bytes require another review', async (t) => {
@@ -119,6 +171,23 @@ test('partial output can be reviewed without resuming the worker; changed bytes 
     getRun(run.id)?.output?.workerFinished,
     true,
     'refresh preserves terminal capture before monitor routes the run status',
+  );
+  const reviewBeforeFailure = getRun(run.id)!.decisions.find((decision) => !decision.resolvedAt)!;
+  failRunOutputCapture(run.id, new Error('Could not fingerprint output'));
+  assert.equal(getRun(run.id)?.output?.captureError, 'Could not fingerprint output');
+  assert.equal(getRun(run.id)?.output?.artifactManifest.length, 2);
+  assert.equal(
+    getRun(run.id)!.decisions.find((d) => d.id === reviewBeforeFailure.id)?.resolvedAction,
+    'superseded',
+  );
+  assert.equal(
+    getRun(run.id)!.decisions.some((d) => !d.resolvedAt),
+    false,
+  );
+  await captureRunOutput(run.id, false);
+  assert.equal(getRun(run.id)?.output?.captureError, undefined);
+  assert.ok(
+    getRun(run.id)!.decisions.some((d) => !d.resolvedAt && d.id !== reviewBeforeFailure.id),
   );
   updateRun(run.id, { status: 'cancelled' });
   const decisionsBefore = getRun(run.id)!.decisions.length;

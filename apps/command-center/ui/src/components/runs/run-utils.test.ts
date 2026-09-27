@@ -58,6 +58,15 @@ test('retained output exposes nested files independently of a skipped completion
     collectRunEvidenceArtifacts(run).map((artifact) => artifact.path),
     ['artifacts/report.md', 'artifacts/case-one/trace.json', 'artifacts/case-two/trace.json'],
   );
+  run.status = 'done';
+  run.steps = [
+    { name: 'complete', status: 'done', outputs: { artifacts: run.output.artifactManifest } },
+  ];
+  assert.equal(
+    collectRunEvidenceArtifacts(run).length,
+    3,
+    'completion must not duplicate retained files from monitor',
+  );
 });
 
 function makeRun(overrides: Partial<Run> = {}): Run {

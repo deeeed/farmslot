@@ -273,6 +273,9 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
           : nothing}
       </div>
       ${ctx.outputError ? html`<p role="alert">${ctx.outputError}</p>` : nothing}
+      ${artifacts.length && run.output?.captureError
+        ? html`<p role="alert">Could not retrieve worker files: ${run.output.captureError}</p>`
+        : nothing}
       ${artifacts.length
         ? html`
             <details data-testid="run-output-files">

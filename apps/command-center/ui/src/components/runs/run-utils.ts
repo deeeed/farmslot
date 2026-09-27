@@ -379,7 +379,7 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
   const packageEvidencePaths = new Set(packageEvidence.map((artifact) => artifact.path));
 
   const add = (artifact: FamilyObservabilityArtifact) => {
-    const key = `${artifact.stepName ?? artifact.source}:${artifact.path}`;
+    const key = artifact.path;
     if (seen.has(key)) return;
     seen.add(key);
     artifacts.push(artifact);

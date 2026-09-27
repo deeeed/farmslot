@@ -2,7 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ArtifactRef, Run, RunDecision, RunOutput } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  FLOW_WORKER_REPORT_ARTIFACTS,
+  type Run,
+  type RunDecision,
+  type RunOutput,
+} from '@farmslot/protocol';
 
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
@@ -26,7 +32,16 @@ export function outputManifestDigest(artifacts: ArtifactRef[]): string {
 export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[] {
   const decisions = structuredClone(run.decisions);
   const prior = decisions.filter((decision) => decision.payload?.kind === 'output-review');
+  const eligible =
+    output.workerFinished &&
+    output.reportPath &&
+    !output.captureError &&
+    run.completionPolicy === 'artifact-only' &&
+    run.lane !== 'comparison' &&
+    !run.engineState?.evalExperiment &&
+    !run.reviewWorkspace;
   if (
+    eligible &&
     prior.some(
       (decision) =>
         decision.payload?.kind === 'output-review' &&
@@ -41,16 +56,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
       decision.resolvedAction = 'superseded';
     }
   }
-  if (
-    !output.workerFinished ||
-    !output.reportPath ||
-    output.captureError ||
-    run.completionPolicy !== 'artifact-only' ||
-    run.lane === 'comparison' ||
-    run.engineState?.evalExperiment ||
-    run.reviewWorkspace
-  )
-    return decisions;
+  if (!eligible || !output.reportPath) return decisions;
   decisions.push({
     id: randomUUID(),
     type: 'engine_output_review',
@@ -76,6 +82,25 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
   return decisions;
 }
 
+/** Keep retained files readable, but retire a review of an invalid snapshot. */
+export function failRunOutputCapture(runId: string, error: unknown, workerFinished = false): Run {
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  const output: RunOutput = {
+    workerFinished:
+      workerFinished ||
+      Boolean(run.output?.workerFinished) ||
+      Boolean(run.completedAt) ||
+      ['done', 'failed', 'cancelled'].includes(run.status),
+    capturedAt: new Date().toISOString(),
+    artifactManifest: run.output?.artifactManifest ?? [],
+    manifestDigest: run.output?.manifestDigest ?? '',
+    reportPath: run.output?.reportPath,
+    captureError: error instanceof Error ? error.message : String(error),
+  };
+  return updateRun(runId, { output, decisions: outputReviewDecisions(run, output) });
+}
+
 /** Capture before completion policy can skip COMPLETE, including partial work. */
 export async function captureRunOutput(
   runId: string,
@@ -91,7 +116,9 @@ export async function captureRunOutput(
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
   const report =
-    artifacts.find((artifact) => artifact.path === 'artifacts/report.md') ??
+    (FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md'])
+      .map((name) => artifacts.find((artifact) => artifact.path === `artifacts/${name}`))
+      .find(Boolean) ??
     artifacts.find(
       (artifact) =>
         artifact.purpose === 'report' &&

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retained output recapture and completion",
+  "description": "Exercise completion deduplication and capture recovery, run output-capture-recovery.mjs against a separate disposable fixture: a completed artifact-only run with COMPLETE artifacts duplicated in its captured manifest, both the flow-preferred narrative and report.md, and a .output-validation-fixture file beside worker artifacts containing the fixture run ID. Set FARMSLOT_OUTPUT_RUN_ID, FARMSLOT_OUTPUT_FIXTURE_ARTIFACTS, FARMSLOT_OUTPUT_EXPECT_REPORT_PATH and FARMSLOT_OUTPUT_REGRESSION_ROUTE. The driver temporarily removes read permission from and restores only the marked worker artifact directory and proves the resulting gateway and UI state.",
+  "workflow": {
+    "entry": "capture-recovery",
+    "nodes": {
+      "capture-recovery": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/output-capture-recovery.mjs",
+        "intent": "Prove preferred narrative selection and unique completed-run file counts, then make a real refresh fail and verify the stale review disappears, the error is visible and a successful recapture creates a new review without changing execution.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}
