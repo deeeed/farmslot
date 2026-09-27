@@ -31,7 +31,6 @@ export function buildRecipeUxCatalog({ artifactsDir, outputDir, platform, recipe
     runId: process.env.FARMSLOT_RUN_ID,
     surfaceLocations: COMPANION_SURFACE_LOCATIONS,
     title: 'Companion UX catalog',
-    storageKey: 'farmslot-companion-ux-feedback',
   });
 }
 

@@ -28,7 +28,10 @@ export interface VisualReviewArtifactRef {
  * artifact, and runner-input contracts. Screens receive this port, never the client.
  */
 export interface VisualReviewGateway {
-  /** Profile and URL of the connection; a review is bound to the one it was loaded from. */
+  /**
+   * Profile, URL, and credential fingerprint of the connection. A review is bound to the one it
+   * was loaded from: replaced credentials may authenticate as another principal.
+   */
   readonly connectionId: string;
   getRun(runId: string): Promise<Run>;
   /** Decision/step manifests plus every recipe-run group's entries, scoped by `recipeRunId`. */
@@ -42,6 +45,28 @@ export interface VisualReviewGateway {
   sendWorkerMessage(params: TerminalSendParams): Promise<void>;
 }
 
+/**
+ * One-way fingerprint of the auth headers, so a connection identity can be compared without
+ * keeping or printing the secret. Not a security boundary; the gateway still authenticates.
+ */
+export function credentialFingerprint(headers: ArtifactHttpHeaders): string {
+  const text = Object.entries(headers)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, value]) => `${name}:${value}`)
+    .join('\n');
+  // cyrb53: a 53-bit string hash, stable across runs and platforms.
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 export function createVisualReviewGateway(
   client: Pick<GatewayClient, 'request'>,
   gatewayUrl: string,
@@ -51,7 +76,7 @@ export function createVisualReviewGateway(
   const urlFor = (runId: string, artifact: VisualReviewArtifactRef) =>
     artifactUrl(gatewayUrl, runId, artifact.path, artifact.recipeRunId);
   return {
-    connectionId: `${profileId}|${gatewayUrl}`,
+    connectionId: `${profileId}|${gatewayUrl}|${credentialFingerprint(authHeaders)}`,
     async getRun(runId) {
       return (await client.request<RunGetResult>(Methods.RUN_GET, { runId })).run;
     },

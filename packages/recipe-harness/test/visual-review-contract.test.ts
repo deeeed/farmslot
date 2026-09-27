@@ -174,6 +174,10 @@ test('reopening refuses malformed or stale feedback instead of storing part of i
     /invalid entries: annotations\[1\]/u,
   );
   assert.throws(
+    () => feedbackDraftFromDocument(readyGateSource, feedback([point, { ...point, id: '' }])),
+    /invalid entries: annotations\[1\]/u,
+  );
+  assert.throws(
     () => feedbackDraftFromDocument(readyGateSource, feedback([point, point])),
     /invalid entries: annotations\[1\]/u,
   );
@@ -190,5 +194,16 @@ test('reopening refuses malformed or stale feedback instead of storing part of i
   assert.deepEqual(
     feedbackDraftFromDocument(readyGateSource, feedback([point])).annotations.map(({ id }) => id),
     ['c'],
+  );
+  const builtinNamed = {
+    ...readyGateSource,
+    surfaces: [{ ...readyGateSource.surfaces[0], id: 'constructor', parentId: undefined }],
+  };
+  assert.deepEqual(
+    feedbackDraftFromDocument(builtinNamed, {
+      ...feedback([], { source: builtinNamed }),
+      surfaceNotes: [{ surfaceId: 'constructor', body: 'kept' }],
+    }).surfaceNotes,
+    { constructor: 'kept' },
   );
 });

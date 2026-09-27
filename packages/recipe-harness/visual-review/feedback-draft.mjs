@@ -41,7 +41,7 @@ export function feedbackDraftFromDocument(source, document) {
   document.surfaceNotes.forEach((note, index) => {
     const valid =
       surfaceIds.has(note?.surfaceId) &&
-      !(note.surfaceId in surfaceNotes) &&
+      !Object.hasOwn(surfaceNotes, note.surfaceId) &&
       typeof note.body === 'string' &&
       note.body.trim() !== '';
     if (valid) {
@@ -54,6 +54,7 @@ export function feedbackDraftFromDocument(source, document) {
     const valid =
       captureKeys.has(annotation?.surfaceId + ':' + annotation?.captureId) &&
       typeof annotation.id === 'string' &&
+      annotation.id.trim() !== '' &&
       !ids.has(annotation.id) &&
       typeof annotation.body === 'string' &&
       annotation.body.trim() !== '' &&

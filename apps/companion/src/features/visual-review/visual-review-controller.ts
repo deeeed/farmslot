@@ -96,9 +96,9 @@ export class VisualReviewController {
   };
 
   /**
-   * Reconnecting through the profile the review was loaded from keeps the draft and rebuilds image
-   * sources with fresh credentials. Another profile or URL may be another run store or principal,
-   * so the review reloads.
+   * Reconnecting with the same profile, URL, and credentials keeps the draft and rebuilds image
+   * sources for the new client. Another profile or URL may be another run store, and replaced
+   * credentials may be another principal, so the review reloads.
    * Any change drops an in-flight load that belongs to the previous connection.
    */
   setGateway(gateway: VisualReviewGateway | null): void {
@@ -260,6 +260,10 @@ export class VisualReviewController {
       // A finished run's slot may already host another worker; never type into it.
       if (isTerminalRunStatus(run.status)) {
         throw new Error(`Run ${targetRunId} is ${run.status}; its worker no longer takes input.`);
+      }
+      // The client is shared across profiles; never send this review through another connection.
+      if (this.gateway?.connectionId !== gateway.connectionId) {
+        throw new Error('The gateway connection changed while sending. Reopen the review to send.');
       }
       await gateway.sendWorkerMessage({
         slotId: run.slotId,

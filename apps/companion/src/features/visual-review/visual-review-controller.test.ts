@@ -85,6 +85,7 @@ function harness(
     route?: { sourcePath?: string };
     originStatus?: Run['status'];
     holdSend?: Promise<void>;
+    holdOriginRun?: Promise<void>;
   } = {},
 ): Harness {
   const requests: Harness['requests'] = [];
@@ -99,6 +100,7 @@ function harness(
       if (method === Methods.RUN_GET) {
         const { runId } = params as { runId: string };
         if (runId !== originRun.id) return { run: hostRun };
+        await options.holdOriginRun;
         return {
           run: options.originStatus ? { ...originRun, status: options.originStatus } : originRun,
         };
@@ -357,23 +359,36 @@ test('feedback too large for one worker message fails before sending', async () 
   );
 });
 
-test('reconnecting to the same gateway keeps the draft and refreshes image sources', async () => {
+test('reconnecting with the same credentials keeps the draft and refreshes image sources', async () => {
   const { controller, client } = harness();
-  await ready(controller);
+  const loaded = await ready(controller);
   draftSomeFeedback(controller);
   const draft = (controller.getState() as VisualReviewReadyState).draft;
 
   controller.setGateway(null);
-  controller.setGateway(
-    createVisualReviewGateway(client, GATEWAY_URL, { Authorization: 'Bearer next' }),
-  );
+  controller.setGateway(createVisualReviewGateway({ ...client }, GATEWAY_URL, { ...AUTH }));
 
   const state = controller.getState() as VisualReviewReadyState;
   assert.equal(state.draft, draft);
-  assert.match(
-    state.captures['capture-ready-gate\u0000ios'].image.uri,
-    /^http:\/\/gateway\.test:8809\/api\/run-artifact\?.*token=next$/u,
+  assert.equal(state.gatewayConnectionId, loaded.gatewayConnectionId);
+  assert.notEqual(state.captures, loaded.captures);
+  assert.equal(state.gatewayConnectionId.includes('review-token'), false);
+});
+
+test('replacing the credentials on the same profile reloads the review', async () => {
+  const { controller, client } = harness();
+  const loaded = await ready(controller);
+  draftSomeFeedback(controller);
+
+  controller.setGateway(
+    createVisualReviewGateway(client, GATEWAY_URL, { Authorization: 'Bearer replaced' }),
   );
+  assert.equal(controller.getState().status, 'loading');
+  const state = await ready(controller);
+
+  assert.notEqual(state.gatewayConnectionId, loaded.gatewayConnectionId);
+  assert.equal(state.gatewayConnectionId.includes('replaced'), false);
+  assert.deepEqual(state.draft.annotations, []);
 });
 
 test('switching to another gateway reloads the review from it', async () => {
@@ -386,7 +401,7 @@ test('switching to another gateway reloads the review from it', async () => {
   assert.equal(controller.getState().status, 'loading');
   const state = await ready(controller);
 
-  assert.equal(state.gatewayConnectionId, '|ws://gateway.other:9000/ws');
+  assert.ok(state.gatewayConnectionId.startsWith('|ws://gateway.other:9000/ws|'));
   assert.deepEqual(state.draft.annotations, []);
   assert.ok(requests.slice(before).some(({ method }) => method === Methods.RUN_GET));
 });
@@ -443,6 +458,42 @@ test('switching profiles on the same gateway URL reloads the review', async () =
   controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH, 'other-principal'));
   const state = await ready(controller);
 
-  assert.equal(state.gatewayConnectionId, `other-principal|${GATEWAY_URL}`);
+  assert.ok(state.gatewayConnectionId.startsWith(`other-principal|${GATEWAY_URL}|`));
   assert.deepEqual(state.draft.annotations, []);
+});
+
+test('a profile switch while sending never sends through the new connection', async () => {
+  let release!: () => void;
+  const { controller, client, requests } = harness({
+    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
+  });
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  const sending = controller.submit();
+  controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH, 'other-principal'));
+  release();
+  await sending;
+
+  assert.equal(
+    requests.some(({ method }) => method === Methods.TERMINAL_SEND),
+    false,
+  );
+});
+
+test('a same-credential reconnect while sending still delivers', async () => {
+  let release!: () => void;
+  const { controller, client } = harness({
+    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
+  });
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  const sending = controller.submit();
+  controller.setGateway(null);
+  controller.setGateway(createVisualReviewGateway({ ...client }, GATEWAY_URL, { ...AUTH }));
+  release();
+  await sending;
+
+  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'accepted');
 });
