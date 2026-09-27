@@ -6,10 +6,10 @@ Implementation: `scripts/runner-validation/`
 
 ## Worker completion contracts
 
-`gateway/worker-quality-ownership.mts` checks recovery from a stale worker requirement for gateway-owned recipe quality. It is read-only against the gateway and task files. Run it from the repository root against a retained worker, before changing its contract:
+`gateway/worker-quality-ownership.mts` checks recovery from a stale worker requirement for gateway-owned recipe quality. It is read-only against the gateway and task files. Run it from the repository root against a retained worker, before changing its contract. Set the gateway URL for your deployment; this example uses the default port:
 
 ```bash
-export FARMSLOT_GATEWAY=ws://127.0.0.1:7801/ws
+export FARMSLOT_GATEWAY=ws://127.0.0.1:7777/ws
 export FARMSLOT_QUALITY_PROOF_DIR=/tmp/worker-quality-proof
 export FARMSLOT_QUALITY_PROOF_RUN_ID='<run-id>'
 export FARMSLOT_QUALITY_PROOF_CONTEXT_ID='<worker-context-id>'
