@@ -39,7 +39,12 @@ export function feedbackDraftFromDocument(source, document) {
   const invalid = [];
   const surfaceNotes = {};
   document.surfaceNotes.forEach((note, index) => {
-    if (surfaceIds.has(note?.surfaceId) && typeof note.body === 'string') {
+    const valid =
+      surfaceIds.has(note?.surfaceId) &&
+      !(note.surfaceId in surfaceNotes) &&
+      typeof note.body === 'string' &&
+      note.body.trim() !== '';
+    if (valid) {
       surfaceNotes[note.surfaceId] = note.body;
     } else {
       invalid.push('surfaceNotes[' + index + ']');
@@ -51,6 +56,7 @@ export function feedbackDraftFromDocument(source, document) {
       typeof annotation.id === 'string' &&
       !ids.has(annotation.id) &&
       typeof annotation.body === 'string' &&
+      annotation.body.trim() !== '' &&
       (annotation.shape === 'point'
         ? isUnit(annotation.x) && isUnit(annotation.y)
         : annotation.shape === 'area' &&
@@ -59,7 +65,8 @@ export function feedbackDraftFromDocument(source, document) {
     if (valid) ids.add(annotation.id);
     else invalid.push('annotations[' + index + ']');
   });
-  // Renderers never write these, so any invalid entry means the wrong or an edited file.
+  // Exports never contain these (blank entries are dropped on export), so any invalid entry
+  // means the wrong or an edited file.
   if (invalid.length) {
     throw new Error(
       'Feedback has invalid entries: ' + invalid.join(', ') + '. Nothing was opened.',

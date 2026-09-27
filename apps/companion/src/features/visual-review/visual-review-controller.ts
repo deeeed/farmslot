@@ -48,8 +48,8 @@ export interface VisualReviewReadyState {
   status: 'ready';
   source: VisualReviewSourceDocument;
   sourceArtifact: VisualReviewArtifactRef;
-  /** The gateway the source was loaded from; sending goes back to that run store only. */
-  gatewayUrl: string;
+  /** The connection the source was loaded from; sending goes back to that run store only. */
+  gatewayConnectionId: string;
   /** The run the feedback is about: the source's own run id, else the run hosting it. */
   targetRunId: string;
   surfaceId: string;
@@ -96,15 +96,16 @@ export class VisualReviewController {
   };
 
   /**
-   * Reconnecting to the gateway the review was loaded from keeps the draft and rebuilds image
-   * sources with the new credentials. Another gateway is another run store, so the review reloads.
+   * Reconnecting through the profile the review was loaded from keeps the draft and rebuilds image
+   * sources with fresh credentials. Another profile or URL may be another run store or principal,
+   * so the review reloads.
    * Any change drops an in-flight load that belongs to the previous connection.
    */
   setGateway(gateway: VisualReviewGateway | null): void {
     this.gateway = gateway;
     this.loadGeneration++;
     if (!gateway) return;
-    if (this.state.status === 'ready' && this.state.gatewayUrl === gateway.url) {
+    if (this.state.status === 'ready' && this.state.gatewayConnectionId === gateway.connectionId) {
       const { source, sourceArtifact } = this.state;
       this.updateReady((state) => ({
         ...state,
@@ -323,7 +324,7 @@ export class VisualReviewController {
       status: 'ready',
       source,
       sourceArtifact,
-      gatewayUrl: gateway.url,
+      gatewayConnectionId: gateway.connectionId,
       targetRunId: source.runId ?? runId,
       surfaceId: firstSurface.id,
       captureId: firstSurface.captures[0]?.id ?? '',

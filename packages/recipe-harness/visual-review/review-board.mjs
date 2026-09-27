@@ -883,6 +883,11 @@ function clientScript(reviewSource) {
 `;
 }
 
+/** Drafts are stored per capture, so a recapture under the same source id starts empty. */
+export function visualReviewFeedbackStorageKey(source) {
+  return `farmslot-visual-review:${source.id}:${source.capturedAt}`;
+}
+
 export function generateReviewBoard({ outputDir, source, storageKey, defaultPlatform }) {
   const normalizedSource = {
     ...source,

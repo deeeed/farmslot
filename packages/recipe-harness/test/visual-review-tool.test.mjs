@@ -11,6 +11,7 @@ import {
   buildRecipeReviewBoard,
   generateReviewBoard,
   serveReviewBoard,
+  visualReviewFeedbackStorageKey,
 } from '../visual-review/index.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -230,6 +231,12 @@ test('builds a project review board directly from recipe artifacts', async () =>
     assert.equal(source.surfaces[1].location, '/markets/[id]');
     assert.equal(source.runId, 'run-123');
     const index = await readFile(path.join(outputDir, 'index.html'), 'utf8');
+    // Drafts are keyed per capture, so a recapture under the same source id starts empty.
+    assert.ok(index.includes(`data-feedback-key="${visualReviewFeedbackStorageKey(source)}"`));
+    assert.notEqual(
+      visualReviewFeedbackStorageKey(source),
+      visualReviewFeedbackStorageKey({ ...source, capturedAt: '2026-01-01T00:00:00.000Z' }),
+    );
     assert.match(index, /Perps surfaces/u);
     assert.match(index, /data-default-platform="ios"/u);
     assert.equal((await stat(path.join(outputDir, 'screens', 'markets.png'))).size, 7);

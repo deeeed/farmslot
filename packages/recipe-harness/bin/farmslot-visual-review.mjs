@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   buildRecipeReviewBoard,
   generateReviewBoard,
+  visualReviewFeedbackStorageKey,
   serveReviewBoard,
 } from '../visual-review/index.mjs';
 
@@ -132,7 +133,7 @@ async function main() {
   generateReviewBoard({
     outputDir,
     source,
-    storageKey: `farmslot-visual-review:${source.id}`,
+    storageKey: visualReviewFeedbackStorageKey(source),
   });
 
   if (command === 'build') {

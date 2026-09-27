@@ -14,6 +14,7 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
   const client = useConnectionStore((s) => s.client);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const authHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const profileId = useConnectionStore((s) => s.activeProfileId);
   const { runId, sourcePath, recipeRunId } = route;
   const controller = useMemo(
     () => new VisualReviewController({ runId, sourcePath, recipeRunId }),
@@ -24,9 +25,9 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
 
   useEffect(() => {
     controller.setGateway(
-      client ? createVisualReviewGateway(client, gatewayUrl, authHeaders) : null,
+      client ? createVisualReviewGateway(client, gatewayUrl, authHeaders, profileId) : null,
     );
-  }, [authHeaders, client, controller, gatewayUrl]);
+  }, [authHeaders, client, controller, gatewayUrl, profileId]);
 
   const exportFeedback = useCallback(async () => {
     try {

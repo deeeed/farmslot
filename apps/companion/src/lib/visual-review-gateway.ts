@@ -28,8 +28,8 @@ export interface VisualReviewArtifactRef {
  * artifact, and runner-input contracts. Screens receive this port, never the client.
  */
 export interface VisualReviewGateway {
-  /** Gateway URL; a review is bound to the gateway it was loaded from. */
-  readonly url: string;
+  /** Profile and URL of the connection; a review is bound to the one it was loaded from. */
+  readonly connectionId: string;
   getRun(runId: string): Promise<Run>;
   /** Decision/step manifests plus every recipe-run group's entries, scoped by `recipeRunId`. */
   listRunArtifacts(run: Run): Promise<ArtifactManifestEntry[]>;
@@ -46,11 +46,12 @@ export function createVisualReviewGateway(
   client: Pick<GatewayClient, 'request'>,
   gatewayUrl: string,
   authHeaders: ArtifactHttpHeaders,
+  profileId = '',
 ): VisualReviewGateway {
   const urlFor = (runId: string, artifact: VisualReviewArtifactRef) =>
     artifactUrl(gatewayUrl, runId, artifact.path, artifact.recipeRunId);
   return {
-    url: gatewayUrl,
+    connectionId: `${profileId}|${gatewayUrl}`,
     async getRun(runId) {
       return (await client.request<RunGetResult>(Methods.RUN_GET, { runId })).run;
     },

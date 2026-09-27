@@ -386,7 +386,7 @@ test('switching to another gateway reloads the review from it', async () => {
   assert.equal(controller.getState().status, 'loading');
   const state = await ready(controller);
 
-  assert.equal(state.gatewayUrl, 'ws://gateway.other:9000/ws');
+  assert.equal(state.gatewayConnectionId, '|ws://gateway.other:9000/ws');
   assert.deepEqual(state.draft.annotations, []);
   assert.ok(requests.slice(before).some(({ method }) => method === Methods.RUN_GET));
 });
@@ -433,4 +433,16 @@ test('a finished run does not take feedback', async () => {
     requests.some(({ method }) => method === Methods.TERMINAL_SEND),
     false,
   );
+});
+
+test('switching profiles on the same gateway URL reloads the review', async () => {
+  const { controller, client } = harness();
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH, 'other-principal'));
+  const state = await ready(controller);
+
+  assert.equal(state.gatewayConnectionId, `other-principal|${GATEWAY_URL}`);
+  assert.deepEqual(state.draft.annotations, []);
 });

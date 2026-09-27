@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- The visual review board can reopen a downloaded or Companion-exported feedback JSON (`Open feedback JSON`), keeping surface and capture ids and refusing malformed feedback or feedback for another capture; `feedbackDraftFromDocument` exposes the same restore for tests and other renderers.
+- The visual review board can reopen a downloaded or Companion-exported feedback JSON (`Open feedback JSON`), keeping surface and capture ids and refusing malformed feedback or feedback for another capture. Drafts are stored per capture; `feedbackDraftFromDocument` exposes the same restore for tests and other renderers.
 - Add canonical `ui.scroll_to`: one harness algorithm over a provider `withScrollSession` hook (implemented for CDP) that no-ops when the target is already in the HUD-safe viewport, moves once, waits for geometry to settle and verifies the final bounds; contract failures are `harness` with stable `SCROLL_*` codes and geometry in trace `error_code`/`error_details`. `ui.scroll` now separates absolute `offset_x`/`offset_y` from relative `delta_x`/`delta_y` (a lone `delta_x` no longer adds a 600px vertical step). Add `stopAfterNode` / `--stop-after-node` to run the graph through one node and then its declared teardown.
 
 ## 0.18.1 - 2026-09-21

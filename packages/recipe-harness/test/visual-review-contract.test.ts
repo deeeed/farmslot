@@ -153,6 +153,27 @@ test('reopening refuses malformed or stale feedback instead of storing part of i
     /invalid entries: annotations\[1\]/u,
   );
   assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point], {
+          surfaceNotes: [
+            { surfaceId: 'capture-ready-gate', body: 'first' },
+            { surfaceId: 'capture-ready-gate', body: 'second' },
+          ],
+        }),
+      ),
+    /invalid entries: surfaceNotes\[1\]/u,
+  );
+  assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point, { ...point, id: 'd', body: '  ' }]),
+      ),
+    /invalid entries: annotations\[1\]/u,
+  );
+  assert.throws(
     () => feedbackDraftFromDocument(readyGateSource, feedback([point, point])),
     /invalid entries: annotations\[1\]/u,
   );

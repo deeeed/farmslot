@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { generateReviewBoard } from './review-board.mjs';
+import { generateReviewBoard, visualReviewFeedbackStorageKey } from './review-board.mjs';
 
 function visualCaptureNodes(recipe, surfaceLocations) {
   return Object.entries(recipe.workflow?.nodes ?? {})
@@ -42,7 +42,7 @@ export function buildRecipeReviewBoard({
   runId,
   surfaceLocations = {},
   title,
-  storageKey = `farmslot-visual-review:${sourceId}`,
+  storageKey,
 }) {
   const recipe = JSON.parse(readFileSync(recipePath, 'utf8'));
   const captures = visualCaptureNodes(recipe, surfaceLocations);
@@ -131,7 +131,7 @@ export function buildRecipeReviewBoard({
   generateReviewBoard({
     outputDir: resolvedOutputDir,
     source,
-    storageKey,
+    storageKey: storageKey ?? visualReviewFeedbackStorageKey(source),
     defaultPlatform: platform,
   });
   for (const { destinationPath, sourceImagePath } of imageCopies) {

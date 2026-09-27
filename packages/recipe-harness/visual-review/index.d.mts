@@ -7,6 +7,8 @@ export interface GenerateReviewBoardOptions {
   defaultPlatform?: string;
 }
 
+export function visualReviewFeedbackStorageKey(source: VisualReviewSourceDocument): string;
+
 export interface VisualReviewServer {
   url: string;
   host: string;
