@@ -122,19 +122,11 @@ export async function snapshot(slotId: string, session: string, lines = 200): Pr
   return content.split('\n');
 }
 
-export function buildSendKeysCommand(
-  session: string,
-  text: string,
-  enter = true,
-  runner?: string,
-): string {
-  // Raw operator PTY input omits runner identity and keeps normal Enter
-  // semantics. Semantic agent steering supplies the resolved runner and uses
-  // the shared runner capability.
+export function buildSendKeysCommand(session: string, text: string, enter = true): string {
   return enter
     ? tmuxSendTextCommand(session, text, {
         enter: true,
-        submitKey: runner ? runnerPromptSubmitKey(runner) : 'Enter',
+        submitKey: 'Enter',
       })
     : tmuxSendTextCommand(session, text);
 }
@@ -153,7 +145,7 @@ export async function sendKeys(
     });
     return;
   }
-  const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), {
+  const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter), {
     timeout: 5000,
   });
   // A discarded exit code is how a send into a window that no longer exists

@@ -123,11 +123,7 @@ export async function pasteTmuxText(
 ): Promise<void> {
   const execute = options.execute ?? execOnSlot;
   const deadline = Date.now() + 20_000;
-  const command = (body: string, cleanup = false) => {
-    const timeout = cleanup ? 5000 : Math.min(5000, deadline - Date.now());
-    if (timeout <= 0) throw new Error(`tmux paste to ${target} timed out before delivery`);
-    return execute(vars, tmuxShellSnippet(body), { timeout });
-  };
+  const command = (body: string) => execute(vars, tmuxShellSnippet(body), { timeout: 5000 });
   const resolved = await command(`display-message -p -t ${shellQuote(target)} '#{pane_id}'`);
   checkPasteResult(resolved, `resolve pane ${target}`);
   const pane = resolved.stdout.trim();
@@ -162,9 +158,9 @@ export async function pasteTmuxText(
   } catch (failure) {
     if (bufferMayExist) {
       try {
-        const cleanup = await command(`delete-buffer -b ${shellQuote(bufferName)}`, true);
+        const cleanup = await command(`delete-buffer -b ${shellQuote(bufferName)}`);
         if (cleanup.exitCode !== 0) {
-          const remaining = await command("list-buffers -F '#{buffer_name}'", true);
+          const remaining = await command("list-buffers -F '#{buffer_name}'");
           checkPasteResult(remaining, 'inspect paste buffer cleanup');
           if (remaining.stdout.split('\n').includes(bufferName)) {
             checkPasteResult(cleanup, `delete-buffer ${bufferName}`);

@@ -256,10 +256,21 @@ test('expired queued input never writes a buffer', async (context) => {
   releaseFirst();
   assert.deepEqual(
     (await settled).map((result) => result.status),
-    ['rejected', 'rejected'],
+    ['fulfilled', 'rejected'],
   );
   assert.equal(
     trace.commands.some((command) => command.includes("-- 'second'")),
     false,
   );
+});
+
+test('initiation expiry after paste does not prevent submission', async (context) => {
+  let now = 0;
+  context.mock.method(Date, 'now', () => now);
+  const trace = executor((command) => {
+    if (command.includes('paste-buffer')) now = 25_000;
+    return success;
+  });
+  await pasteTmuxText(vars, '%701', 'text', { execute: trace.execute, submitKey: 'Enter' });
+  assert.match(trace.commands.at(-1)!, /send-keys -t '%701' Enter/);
 });
