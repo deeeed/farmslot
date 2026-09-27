@@ -73,14 +73,14 @@ import {
   hasActiveInlineCiFix,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
-  mergeTrimmedDecisions,
+  mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   runBootstrapBlocksActions,
   runDetailDesiredRecipeRunId,
   runEvidenceLightboxItems,
   runFamilyPrStatus,
-  runHasTrimmedDecisions,
+  runHasTrimmedDetail,
   shouldAcceptTaskProgressUpdate,
   shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
@@ -269,9 +269,9 @@ export class RunDetail extends RunDetailState {
     this._connectionStale = s.connection !== 'connected';
     if (wasHydrating && !this._hydrating) this._missingRunFetchAttempted = false;
     const sharedRun = s.runs.find((r) => r.id === this.runId) ?? null;
-    // A list row with trimmed decision payloads keeps its direct copy: the gate
-    // and review renderers need the full payload run.get carries.
-    const sharedTrimmed = sharedRun ? runHasTrimmedDecisions(sharedRun) : false;
+    // List rows omit large decision payloads and output manifests. Keep the
+    // direct copy so the gate and file browser retain their full detail.
+    const sharedTrimmed = sharedRun ? runHasTrimmedDetail(sharedRun) : false;
     if (sharedRun && !sharedTrimmed) {
       if (
         this._directRun ||
@@ -289,7 +289,7 @@ export class RunDetail extends RunDetailState {
     const directRun = this._directRun?.id === this.runId ? this._directRun : null;
     this.run = sharedRun
       ? sharedTrimmed
-        ? mergeTrimmedDecisions(sharedRun, directRun)
+        ? mergeTrimmedRunDetail(sharedRun, directRun)
         : sharedRun
       : directRun;
     // Reset transient nudge-decision-card state when the bound run changes or when the
@@ -1028,6 +1028,32 @@ export class RunDetail extends RunDetailState {
     this._updateEvidenceArtifactHash(this._evidenceLightboxItems[index] ?? null);
   }
 
+  @state() private _refreshingOutput = false;
+  @state() private _outputError = '';
+
+  private async _refreshOutput(run: Run): Promise<void> {
+    if (this._refreshingOutput) return;
+    this._refreshingOutput = true;
+    this._outputError = '';
+    try {
+      const result = await gateway.request<{ ok: boolean; reason?: string }>(
+        Methods.RUN_REFRESH_MIRROR,
+        { runId: run.id },
+        120_000,
+      );
+      if (!result.ok) throw new Error(result.reason ?? 'Could not retrieve worker output');
+      const updated = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId: run.id });
+      if (this.run?.id === run.id) {
+        this.run = updated.run;
+        this._directRun = updated.run;
+      }
+    } catch (error) {
+      this._outputError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._refreshingOutput = false;
+    }
+  }
+
   private _renderRunEvidence(run: Run) {
     return renderRunEvidence(run, {
       taskProgress: this.taskProgress,
@@ -1038,6 +1064,9 @@ export class RunDetail extends RunDetailState {
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
       navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
+      refreshOutput: () => void this._refreshOutput(run),
+      refreshingOutput: this._refreshingOutput,
+      outputError: this._outputError,
     });
   }
 
@@ -1405,9 +1434,12 @@ export class RunDetail extends RunDetailState {
   private _confirmResolve(runId: string, decision: RunDecision, actionId: string) {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
-    if (!canResolveWithPostureChoice(this._postureGateStateForRender())) return;
+    const outputReview = decision.payload?.kind === 'output-review';
+    if (!outputReview && !canResolveWithPostureChoice(this._postureGateStateForRender())) return;
     // Snapshot once: the request and the baseline must agree on what was sent.
-    const forwardedChoice = postureChoiceForResolve(this._postureGateStateForRender()) ?? null;
+    const forwardedChoice = outputReview
+      ? null
+      : (postureChoiceForResolve(this._postureGateStateForRender()) ?? null);
     const observation = this._postureTransitionObservation(forwardedChoice);
     confirmRunDecision(runId, decision, actionId, {
       ...this._confirmTimerContext(),
@@ -1444,7 +1476,8 @@ export class RunDetail extends RunDetailState {
           run.decisions.some((item) => item.id === decision.id && item.resolvedAt)
         )
           this._triageDecisionLink = null;
-        this._adoptResolvedPostureTransition(run, observation);
+        // Output acknowledgement has no resource transition to wait for.
+        if (!outputReview) this._adoptResolvedPostureTransition(run, observation);
       },
     });
   }

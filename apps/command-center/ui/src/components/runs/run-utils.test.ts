@@ -41,6 +41,51 @@ import {
   summarizeEligibilityReasons,
 } from './run-utils.js';
 
+test('retained output exposes nested files independently of a skipped completion step', () => {
+  const run = makeRun({ status: 'blocked', steps: [{ name: 'complete', status: 'skipped' }] });
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    manifestDigest: 'digest',
+    reportPath: 'artifacts/report.md',
+    artifactManifest: [
+      { path: 'artifacts/report.md', purpose: 'report' },
+      { path: 'artifacts/case-one/trace.json', purpose: 'trace' },
+      { path: 'artifacts/case-two/trace.json', purpose: 'trace' },
+    ],
+  };
+  assert.deepEqual(
+    collectRunEvidenceArtifacts(run).map((artifact) => artifact.path),
+    ['artifacts/report.md', 'artifacts/case-one/trace.json', 'artifacts/case-two/trace.json'],
+  );
+  run.status = 'done';
+  run.output.artifactManifest.push({ path: 'artifacts/proof.webm', purpose: 'video' });
+  run.steps = [
+    {
+      name: 'complete',
+      status: 'done',
+      outputs: {
+        artifacts: run.output.artifactManifest.map((artifact) =>
+          artifact.path === 'artifacts/proof.webm'
+            ? { ...artifact, maxFps: 30, sizeBytes: 100, sha256: 'video-hash' }
+            : artifact,
+        ),
+      },
+    },
+  ];
+  assert.equal(
+    collectRunEvidenceArtifacts(run).length,
+    4,
+    'completion must not duplicate retained files from monitor',
+  );
+  const video = collectRunEvidenceArtifacts(run).find(
+    (artifact) => artifact.path === 'artifacts/proof.webm',
+  );
+  assert.equal(video?.maxFps, 30);
+  assert.equal(video?.sizeBytes, 100);
+  assert.equal(video?.sha256, 'video-hash');
+});
+
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: overrides.id ?? 'run-1',

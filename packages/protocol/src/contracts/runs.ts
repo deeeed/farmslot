@@ -1143,6 +1143,7 @@ export interface LearningsDraftPayload {
 }
 
 export type RunDecisionPayload =
+  | OutputReviewPayload
   | ReviewGatePayload
   | ReadyGatePayload
   | NoChangeGatePayload
@@ -1153,6 +1154,24 @@ export type RunDecisionPayload =
   | RetrospectivePayload
   | CollisionPayload
   | ReviewContinuationPayload;
+
+/** Review retained output independently of worker outcome or publication. */
+export interface OutputReviewPayload {
+  kind: 'output-review';
+  manifestDigest: string;
+  reportPath: string;
+}
+
+export interface RunOutput {
+  capturedAt: string;
+  workerFinished: boolean;
+  artifactManifest: ArtifactRef[];
+  manifestDigest: string;
+  /** List projection only; run.get retains the full manifest. */
+  artifactManifestOmitted?: boolean;
+  reportPath?: string;
+  captureError?: string;
+}
 
 export interface RunDecision {
   id: string;
@@ -2324,6 +2343,8 @@ export interface Run {
   branch: string | null;
   /** Completion pipeline side effects. Separate requested review publication uses prWork.publication. */
   completionPolicy?: RunCompletionPolicy;
+  /** Local retained output; viewing or acknowledging it never changes the verdict. */
+  output?: RunOutput;
   /** Principal-stamped one-dispatch pressure override requested for this run.
    * Bound to one machine + pressure generation; dispatch execution recomputes
    * the admission decision and rejects the override when the generation moved. */

@@ -14,6 +14,7 @@ import '../workspace/ready-workspace.js';
 import './run-pipeline.js';
 import './step-inspector.js';
 
+import { familyArtifactUrl } from './family-observability-artifact-model.js';
 import {
   familyPublishGateMaximizeLabel,
   familyPublishGateReopenLabel,
@@ -80,13 +81,67 @@ export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRe
       decision: retrospective,
       onResolve: options.onResolveRetrospective,
     })}
-    ${renderFamilyPublishGateReopen(options)}
+    ${renderFamilyPublishGateReopen(options)} ${renderFamilyRunFiles(options)}
     ${renderFamilyRunSummaryGrid({ run: options.run, runs: options.runs, prs: options.prs })}
     ${renderFamilyAgentSessions(options)} ${renderFamilyRunPipelineDetail(options)}
     ${options.renderLedgerDiffDetail(options.run)} ${renderFamilyRecipeQualityDetail(options.run)}
     ${renderFamilyRecipeProvenance(options.run)} ${renderFamilyLearnings(options.run)}
     ${renderFamilyMissingData(options.run)}
   `;
+}
+
+function renderFamilyRunFiles(options: FamilySelectedRunDetailRenderOptions) {
+  const artifacts = options.run.artifacts;
+  if (!artifacts.length) return nothing;
+  const candidateReportPath =
+    options.fullRun?.output?.reportPath ??
+    artifacts.find((artifact) => artifact.path === 'artifacts/report.md')?.path;
+  const reportPath = artifacts.some((artifact) => artifact.path === candidateReportPath)
+    ? candidateReportPath
+    : undefined;
+  const open = (path: string) => {
+    const index = artifacts.findIndex((artifact) => artifact.path === path);
+    if (index >= 0)
+      options.onOpenStepArtifact(
+        artifacts,
+        index,
+        new CustomEvent('step-artifact-click', { detail: { artifacts, index } }),
+      );
+  };
+  return html`<section class="detail-section" data-testid="family-run-files">
+    <div class="detail-title">Run output</div>
+    ${reportPath
+      ? html`<button
+          class="action-btn small"
+          data-testid="family-read-report"
+          @click=${() => open(reportPath)}
+        >
+          Read report
+        </button>`
+      : nothing}
+    ${artifacts.some((artifact) => artifact.path === 'artifacts/retrospective.md')
+      ? html`<button
+          class="action-btn small"
+          data-testid="family-read-retrospective"
+          @click=${() => open('artifacts/retrospective.md')}
+        >
+          Read retrospective
+        </button>`
+      : nothing}
+    <details data-testid="family-browse-files">
+      <summary>Browse files (${artifacts.length})</summary>
+      <step-artifacts
+        stepName="Output files"
+        status="done"
+        default-open
+        .artifacts=${artifacts}
+        .artifactUrl=${familyArtifactUrl}
+        @step-artifact-click=${(
+          event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
+        ) => options.onOpenStepArtifact(event.detail.artifacts, event.detail.index, event)}
+      ></step-artifacts>
+    </details>
+  </section>`;
 }
 
 function renderFamilyAgentSessions(options: FamilySelectedRunDetailRenderOptions) {

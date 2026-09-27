@@ -151,6 +151,30 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   if (!rawPending) return nothing;
   const pending = withGraftedGateSummary(rawPending, context.pendingDecisions);
 
+  if (pending.payload?.kind === 'output-review') {
+    return html`<section class="gate-section" data-testid="output-review-gate">
+      <div class="gate-header"><div class="gate-title">Review run output</div></div>
+      <p class="gate-description">${pending.description}</p>
+      <div class="evidence-actions">
+        <a
+          class="evidence-link"
+          href=${`#run/${run.id}?artifactRun=${encodeURIComponent(run.id)}&artifact=${encodeURIComponent(pending.payload.reportPath)}`}
+          >Read report</a
+        >
+        <button
+          class="gate-action-btn evidence-link"
+          ?disabled=${context.actionsBlocked || Boolean(run.output?.captureError)}
+          @click=${() => context.confirmResolve(run.id, pending, 'mark-reviewed')}
+        >
+          Mark reviewed
+        </button>
+      </div>
+      ${context.decisionResolveError
+        ? html`<p role="alert">${context.decisionResolveError}</p>`
+        : nothing}
+    </section>`;
+  }
+
   const kind = decisionPayloadKind(pending.payload);
   const isReview = kind === 'review';
   const isReady = kind === 'ready';

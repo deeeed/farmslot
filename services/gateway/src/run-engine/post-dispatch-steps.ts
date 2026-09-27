@@ -37,6 +37,7 @@ import {
   prepareCompletionPackage,
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
+import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
 import {
   computeReadyGateReviewSubjectHash,
   readReadyGatePreparedPackage,
@@ -532,6 +533,18 @@ export async function executeMonitorStep(
       workerSignal,
       cliCommand,
     };
+    if (workerSignal && ['complete', 'done', 'blocked', 'failed'].includes(workerSignal.status)) {
+      try {
+        await captureRunOutput(runId, true, true);
+      } catch (error) {
+        if (!canSettle()) return retiredResult();
+        // Preserve the worker's outcome; a failed transfer is separately visible
+        // and retryable through run.refreshMirror, never an empty success card.
+        failRunOutputCapture(runId, error, true);
+      }
+      if (!canSettle()) return retiredResult();
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+    }
     if (
       (isInteractiveDevRun(after) &&
         (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed')) ||

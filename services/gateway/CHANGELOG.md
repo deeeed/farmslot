@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Retain reports and output files for partial or failed workers, and review artifact-only output without resuming execution or changing its verdict.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.17.0 - 2026-09-27

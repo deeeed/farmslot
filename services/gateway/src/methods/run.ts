@@ -1600,6 +1600,20 @@ async function resolveRunDecision(
   let decision = existing.decisions.find((d) => d.id === params.decisionId);
   if (!decision) throw new Error(`Decision not found: ${params.decisionId}`);
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
+  if (decision.payload?.kind === 'output-review') {
+    if (params.actionId !== 'mark-reviewed') throw new Error('Invalid output review action');
+    const { acknowledgeRunOutput } = await import('../run-completion/output.js');
+    const run = await acknowledgeRunOutput(params.runId, params.decisionId);
+    emit(Events.RUN_UPDATED, { run });
+    emit(Events.RUN_DECISION_RESOLVED, {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: params.actionId,
+    });
+    // Acknowledgement owns no execution or publication transition. In
+    // particular it must not restore a slot or resume a blocked worker.
+    return { run };
+  }
   // ADR-054 `free-slot`: refuse a park that is still LANDING before anything
   // else looks at the request. Its effects are in flight and there is nothing
   // coherent to restore into, so there is no point validating further.

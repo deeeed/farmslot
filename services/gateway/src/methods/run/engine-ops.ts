@@ -20,7 +20,7 @@ import {
 import { pokeCIPoll } from '../../ci-monitor/service.js';
 import { claimSlotStatusIf, updateSlotStatusIf } from '../../core/index.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
+import { captureRunOutput, failRunOutputCapture } from '../../run-completion/output.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { getRun, updateRun } from '../../runs/store.js';
@@ -78,15 +78,23 @@ export async function runRefreshPublishPackage(
 
 export async function runRefreshMirror(
   params: RunRefreshMirrorParams,
-  _emit: Emit,
+  emit: Emit,
 ): Promise<RunRefreshMirrorResult> {
   const run = getRun(params.runId);
   if (!run) return { ok: false, reason: `Run not found: ${params.runId}` };
   if (!run.slotId) return { ok: false, reason: 'Run not attached to a slot' };
+  const taskFile = run.taskFile;
+  const generation = run.engineState?.generation;
   try {
-    const copied = await refreshArtifactMirror(run);
+    const copied = await captureRunOutput(run.id);
+    emit(Events.RUN_UPDATED, { run: getRun(run.id) });
     return { ok: true, copied };
   } catch (err) {
+    // A failed mirror can leave partial files. Retire any review of that snapshot
+    // until a successful refresh establishes a fingerprinted output again.
+    const current = getRun(run.id);
+    if (current && current.taskFile === taskFile && current.engineState?.generation === generation)
+      emit(Events.RUN_UPDATED, { run: failRunOutputCapture(run.id, err) });
     return { ok: false, reason: (err as Error).message };
   }
 }
