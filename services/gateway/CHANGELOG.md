@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Deliver slot-worker terminal messages as one bracketed paste with the runner's submit key, preserving complete feedback documents while leaving raw input and submit-only actions unchanged.
 - Identify headless flags on the runner invocation only, so setup commands such as `mkdir -p` no longer block interactive worker recovery.
 - Apply the selected prepare profile when recovering a retained slot, while preserving implicit warm reuse and explicit skip requests.
 - Resolve requested start-ref SHAs with one local reachability scan and accept newly advertised remote branch heads without scanning thousands of refs one by one.

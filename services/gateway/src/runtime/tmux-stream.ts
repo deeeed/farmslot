@@ -4,7 +4,7 @@ import type { TerminalData } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import { pasteTmuxText, shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { runnerPromptSubmitKey } from '../runners/registry.js';
 
 export type TerminalDataHandler = (data: TerminalData) => void;
@@ -139,6 +139,10 @@ export function buildSendKeysCommand(
     : tmuxSendTextCommand(session, text);
 }
 
+export function sendsRunnerInputAsPaste(text: string, runner?: string): boolean {
+  return !!runner && text.length > 0;
+}
+
 export async function sendKeys(
   slotId: string,
   session: string,
@@ -147,6 +151,20 @@ export async function sendKeys(
   runner?: string,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
+  if (sendsRunnerInputAsPaste(text, runner)) {
+    await pasteTmuxText(vars, session, text);
+    if (!enter) return;
+    const submit = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`send-keys -t ${shellQuote(session)} ${runnerPromptSubmitKey(runner)}`),
+    );
+    if (submit.exitCode !== 0) {
+      throw new Error(
+        `tmux send-keys to ${session} failed: ${submit.stderr?.trim() || submit.stdout?.trim() || `exit ${submit.exitCode}`}`,
+      );
+    }
+    return;
+  }
   const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), {
     timeout: 5000,
   });

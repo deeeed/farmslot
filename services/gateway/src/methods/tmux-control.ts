@@ -1,7 +1,5 @@
 // methods/tmux-control.ts — tmux split, pane navigation, window management
 
-import { randomUUID } from 'node:crypto';
-
 import type {
   OkResult,
   TmuxKillPaneParams,
@@ -24,7 +22,13 @@ import type {
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { execOnSlot } from '../core/exec.js';
 import { loadSlotVars } from '../core/index.js';
-import { parseTmuxKeys, resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  parseTmuxKeys,
+  pasteTmuxText,
+  resolveTmuxSession,
+  shellQuote,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 
 const TMUX_LIST_TIMEOUT_MS = 3000;
 const TMUX_LIST_CACHE_TTL_MS = 3000;
@@ -261,31 +265,7 @@ export async function tmuxSendKeys(params: TmuxSendKeysParams): Promise<OkResult
  */
 export async function tmuxPasteText(params: TmuxPasteTextParams): Promise<OkResult> {
   const { vars, target } = await resolveTmuxControlTarget(params);
-  const bufferName = `farmslot-paste-${randomUUID()}`;
-  const write = await execOnSlot(
-    vars,
-    tmuxShellSnippet(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(params.text)}`),
-  );
-  if (write.exitCode !== 0) {
-    throw new Error(
-      `tmux set-buffer for ${target} failed: ${write.stderr?.trim() || write.stdout?.trim() || `exit ${write.exitCode}`}`,
-    );
-  }
-  // `-d` deletes the buffer after pasting, so a long command is never left in
-  // the slot's shared paste stack.
-  const paste = await execOnSlot(
-    vars,
-    tmuxShellSnippet(`paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(target)}`),
-  );
-  if (paste.exitCode !== 0) {
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(`delete-buffer -b ${shellQuote(bufferName)} 2>/dev/null || true`),
-    );
-    throw new Error(
-      `tmux paste-buffer to ${target} failed: ${paste.stderr?.trim() || paste.stdout?.trim() || `exit ${paste.exitCode}`}`,
-    );
-  }
+  await pasteTmuxText(vars, target, params.text);
   if (params.submit) {
     const submit = await execOnSlot(
       vars,

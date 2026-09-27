@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import type { ExecResult } from '@farmslot/protocol';
@@ -102,6 +103,36 @@ export function buildDispatchRoleShellCommand(remoteRepo: string): string {
     'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
     'exec "${shell:-/bin/sh}"',
   ].join(' && ');
+}
+
+export async function pasteTmuxText(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  text: string,
+): Promise<void> {
+  const bufferName = `farmslot-paste-${randomUUID()}`;
+  const write = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(text)}`),
+  );
+  if (write.exitCode !== 0) {
+    throw new Error(
+      `tmux set-buffer for ${target} failed: ${write.stderr?.trim() || write.stdout?.trim() || `exit ${write.exitCode}`}`,
+    );
+  }
+  const paste = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(target)}`),
+  );
+  if (paste.exitCode !== 0) {
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(`delete-buffer -b ${shellQuote(bufferName)} 2>/dev/null || true`),
+    );
+    throw new Error(
+      `tmux paste-buffer to ${target} failed: ${paste.stderr?.trim() || paste.stdout?.trim() || `exit ${paste.exitCode}`}`,
+    );
+  }
 }
 
 export function parseTmuxKeys(keys: string): string[] {
