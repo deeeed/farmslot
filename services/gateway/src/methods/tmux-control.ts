@@ -265,18 +265,9 @@ export async function tmuxSendKeys(params: TmuxSendKeysParams): Promise<OkResult
  */
 export async function tmuxPasteText(params: TmuxPasteTextParams): Promise<OkResult> {
   const { vars, target } = await resolveTmuxControlTarget(params);
-  await pasteTmuxText(vars, target, params.text);
-  if (params.submit) {
-    const submit = await execOnSlot(
-      vars,
-      tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter`),
-    );
-    if (submit.exitCode !== 0) {
-      throw new Error(
-        `tmux submit to ${target} failed: ${submit.stderr?.trim() || submit.stdout?.trim() || `exit ${submit.exitCode}`}`,
-      );
-    }
-  }
+  await pasteTmuxText(vars, target, params.text, {
+    submitKey: params.submit ? 'Enter' : undefined,
+  });
   return { ok: true };
 }
 

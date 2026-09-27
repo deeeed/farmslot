@@ -139,10 +139,6 @@ export function buildSendKeysCommand(
     : tmuxSendTextCommand(session, text);
 }
 
-export function sendsRunnerInputAsPaste(text: string, runner?: string): boolean {
-  return !!runner && text.length > 0;
-}
-
 export async function sendKeys(
   slotId: string,
   session: string,
@@ -151,18 +147,10 @@ export async function sendKeys(
   runner?: string,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
-  if (sendsRunnerInputAsPaste(text, runner)) {
-    await pasteTmuxText(vars, session, text);
-    if (!enter) return;
-    const submit = await execOnSlot(
-      vars,
-      tmuxShellSnippet(`send-keys -t ${shellQuote(session)} ${runnerPromptSubmitKey(runner)}`),
-    );
-    if (submit.exitCode !== 0) {
-      throw new Error(
-        `tmux send-keys to ${session} failed: ${submit.stderr?.trim() || submit.stdout?.trim() || `exit ${submit.exitCode}`}`,
-      );
-    }
+  if (runner) {
+    await pasteTmuxText(vars, session, text, {
+      submitKey: enter ? runnerPromptSubmitKey(runner) : undefined,
+    });
     return;
   }
   const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), {
