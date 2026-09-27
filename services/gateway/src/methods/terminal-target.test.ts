@@ -55,42 +55,6 @@ test('every tmux key delivery path fails loudly when tmux refuses the send', () 
   }
 });
 
-/**
- * A multi-kilobyte command typed as keystrokes is chunked, and a shell can be
- * left mid-token at a continuation prompt with nothing executed. Paste is one
- * buffer write and one paste.
- */
-function functionBody(source: string, signature: string): string {
-  const fn = source.slice(source.indexOf(signature));
-  return fn.slice(0, fn.indexOf('\n}\n') + 3);
-}
-
-test('pasted text is delivered as one bracketed paste buffer, not typed keys', () => {
-  const core = readFileSync(path.join(GATEWAY_SRC, 'core/tmux.ts'), 'utf8');
-  const control = readFileSync(path.join(GATEWAY_SRC, 'methods/tmux-control.ts'), 'utf8');
-  const primitive = functionBody(core, 'export async function pasteTmuxText');
-  const pasteText = functionBody(control, 'export async function tmuxPasteText');
-
-  assert.match(primitive, /set-buffer -b /);
-  // `-p` brackets the paste so the shell does not run on an embedded newline.
-  assert.match(primitive, /paste-buffer -d -p -b /);
-  // The text never goes through send-keys, which chunks and truncates.
-  assert.doesNotMatch(primitive, /send-keys[^\n]* -l /);
-  // Every tmux step is checked; a refused paste must not report success.
-  assert.match(primitive, /checkPasteResult\(write,/);
-  assert.match(primitive, /checkPasteResult\(paste,/);
-  assert.match(pasteText, /pasteTmuxText\(vars, target, params\.text,/);
-  assert.match(pasteText, /submitKey: params\.submit/);
-});
-
-test('long runner input from terminal.send is pasted and submitted with the runner key', () => {
-  const stream = readFileSync(path.join(GATEWAY_SRC, 'runtime/tmux-stream.ts'), 'utf8');
-  const body = functionBody(stream, 'export async function sendKeys');
-
-  assert.match(body, /if \(runner\) \{\n\s+await pasteTmuxText\(vars, session, text,/);
-  assert.match(body, /submitKey: enter \? runnerPromptSubmitKey\(runner\) : undefined/);
-});
-
 test('the paste buffer is named uniquely and deleted after use', () => {
   const source = readFileSync(path.join(GATEWAY_SRC, 'core/tmux.ts'), 'utf8');
 

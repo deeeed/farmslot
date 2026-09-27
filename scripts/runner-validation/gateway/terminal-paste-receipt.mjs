@@ -34,15 +34,14 @@ export function verifyReceipts(proof, transcript) {
     const record = JSON.parse(line);
     if (record.sessionId !== proof.sessionId) continue;
     const texts =
-      record.type === 'queue-operation' && record.operation === 'enqueue'
-        ? [record.content]
-        : record.type === 'user' && record.message?.role === 'user'
-          ? typeof record.message.content === 'string'
-            ? [record.message.content]
-            : (record.message.content ?? [])
-                .filter((entry) => entry.type === 'text')
-                .map((entry) => entry.text)
-          : [];
+      record.type === 'user' && record.message?.role === 'user'
+        ? typeof record.message.content === 'string'
+          ? [record.message.content]
+          : (record.message.content ?? [])
+              .filter((entry) => entry.type === 'text')
+              .map((entry) => entry.text)
+        : [];
+    let matchedInTurn = false;
     for (const text of texts) {
       if (typeof text !== 'string') continue;
       const wrapper = text.match(
@@ -50,7 +49,10 @@ export function verifyReceipts(proof, transcript) {
       );
       const payload = wrapper ? wrapper[2] : text;
       for (const expected of proof.messages) {
-        if (payload === expected.text)
+        if (payload === expected.text) {
+          assert.equal(matchedInTurn, false, 'Messages must arrive in separate user turns');
+          assert.equal(receipts.has(expected.id), false, 'Message delivered more than once');
+          matchedInTurn = true;
           receipts.set(expected.id, {
             id: expected.id,
             bytes: Buffer.byteLength(payload),
@@ -60,6 +62,7 @@ export function verifyReceipts(proof, transcript) {
             eventType: record.type,
             timestamp: record.timestamp,
           });
+        }
       }
     }
   }
