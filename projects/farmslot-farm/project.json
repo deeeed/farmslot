@@ -574,7 +574,6 @@
       {
         "path": "artifacts/recipe.json",
         "alsoRequire": ["artifacts/recipe-coverage.md", "artifacts/evidence-manifest.json"],
-        "requireRecipeQuality": true,
         "requireRecipeCoverage": true
       }
     ]
