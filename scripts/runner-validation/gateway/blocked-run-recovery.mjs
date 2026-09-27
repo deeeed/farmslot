@@ -44,7 +44,13 @@ const boundReservedRollbackSlotId = `bound-reserved-rollback-${randomUUID()}`;
 const transferRollbackSlotId = `transfer-rollback-${randomUUID()}`;
 const releasingRollbackSlotId = `releasing-rollback-${randomUUID()}`;
 const heldReleasingSlotId = `held-releasing-${randomUUID()}`;
-const preparationCases = ['activation', 'explicit-prepare', 'implicit-reuse'].map((name) => ({
+const preparationCases = [
+  'activation',
+  'explicit-prepare',
+  'profile-prepare',
+  'explicit-skip',
+  'implicit-reuse',
+].map((name) => ({
   name,
   runId: randomUUID(),
   slotId: `preparation-${name}-${randomUUID()}`,
@@ -393,6 +399,7 @@ try {
     run.ticketOrPr = 'deeeed/farmslot#721';
     run.prNumber = 721;
     run.parentRunId = lostRunId;
+    run.prepareProfile = 'attach';
     run.engineState = { flags: { skipPrepare: true } };
     writeJson(path.join(root, '.runs', `${run.id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
@@ -535,8 +542,11 @@ try {
       rpc('run.replayStep', {
         runId: entry.runId,
         stepName: 'prepare',
-        prepareProfile: 'attach',
+        ...(entry.name === 'profile-prepare' || entry.name === 'explicit-skip'
+          ? { prepareProfile: 'attach' }
+          : {}),
         ...(entry.name === 'explicit-prepare' ? { skipPrepare: false } : {}),
+        ...(entry.name === 'explicit-skip' ? { skipPrepare: true } : {}),
       });
     }
     const recovered = rpc('run.get', { runId: entry.runId }).run;
@@ -544,7 +554,7 @@ try {
     assert.equal(recovered.prepareProfile, 'attach');
     assert.equal(
       Boolean(recovered.engineState?.flags?.skipPrepare),
-      entry.name === 'implicit-reuse',
+      entry.name === 'implicit-reuse' || entry.name === 'explicit-skip',
       `${entry.name} must honor the requested preparation policy`,
     );
   }

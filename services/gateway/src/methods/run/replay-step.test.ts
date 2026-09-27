@@ -2050,9 +2050,23 @@ test('blocked eval monitor without a slot restarts at find-slot instead of requi
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'find-slot');
 });
 
+const preparationPolicies = [
+  { label: 'default reuse', params: {}, expectedSkipPrepare: true },
+  { label: 'explicit preparation', params: { skipPrepare: false }, expectedSkipPrepare: undefined },
+  {
+    label: 'profile selection',
+    params: { prepareProfile: 'attach' },
+    expectedSkipPrepare: undefined,
+  },
+  {
+    label: 'explicit skip',
+    params: { prepareProfile: 'attach', skipPrepare: true },
+    expectedSkipPrepare: true,
+  },
+];
 for (const initialSkipPrepare of [true, undefined]) {
-  for (const requestedSkipPrepare of [undefined, false]) {
-    test(`runReplayStep respects preparation override ${requestedSkipPrepare} with retained flag ${initialSkipPrepare}`, async (t) => {
+  for (const preparationPolicy of preparationPolicies) {
+    test(`runReplayStep honors ${preparationPolicy.label} with ${initialSkipPrepare ? 'retained' : 'absent'} skip flag`, async (t) => {
       const parent = createRun({
         flowType: 'dev',
         project: 'farmslot-farm',
@@ -2094,17 +2108,14 @@ for (const initialSkipPrepare of [true, undefined]) {
           runId: run.id,
           stepName: 'write-task',
           triggeredBy: 'operator',
-          skipPrepare: requestedSkipPrepare,
+          ...preparationPolicy.params,
         },
         () => {},
       );
 
       const replayed = getRun(run.id);
       assert.ok(replayed);
-      assert.equal(
-        replayed.engineState?.flags?.skipPrepare,
-        requestedSkipPrepare === false ? undefined : true,
-      );
+      assert.equal(replayed.engineState?.flags?.skipPrepare, preparationPolicy.expectedSkipPrepare);
       assert.equal(replayed.engineState?.flags?.warmRecovery, true);
     });
   }
