@@ -69,6 +69,12 @@ test('a failed manual refresh does not mark an active worker finished', async (t
   const failed = failRunOutputCapture(run.id, new Error('Unavailable worker files'));
   assert.equal(failed.status, 'monitoring');
   assert.equal(failed.output?.workerFinished, false);
+  updateRun(run.id, { status: 'dispatching', output: { ...failed.output!, workerFinished: true } });
+  assert.equal(
+    failRunOutputCapture(run.id, new Error('Retry failed')).output?.workerFinished,
+    false,
+    'an active retry must not inherit completion from its previous attempt',
+  );
 });
 
 test('capture follows the existing narrative report names for every flow', async (t) => {
@@ -104,6 +110,16 @@ test('capture follows the existing narrative report names for every flow', async
     const captured = getRun(run.id)!;
     assert.equal(captured.output?.reportPath, `artifacts/${name}`, flowType);
     assert.equal(captured.decisions[0].payload?.kind, 'output-review', flowType);
+    if (name !== 'report.md') {
+      await writeFile(path.join(dir, 'artifacts', name), '  \n');
+      await captureRunOutput(run.id, false);
+      assert.equal(
+        getRun(run.id)?.output?.reportPath,
+        'artifacts/report.md',
+        `${flowType} skips a whitespace-only preferred report`,
+      );
+      await writeFile(path.join(dir, 'artifacts', name), `# ${name}\n`);
+    }
   }
 });
 
@@ -188,6 +204,22 @@ test('partial output can be reviewed without resuming the worker; changed bytes 
   assert.equal(getRun(run.id)?.output?.captureError, undefined);
   assert.ok(
     getRun(run.id)!.decisions.some((d) => !d.resolvedAt && d.id !== reviewBeforeFailure.id),
+  );
+  updateRun(run.id, {
+    status: 'monitoring',
+    completedAt: undefined,
+    output: { ...getRun(run.id)!.output!, workerFinished: false },
+  });
+  const inFlight = captureRunOutput(run.id, false);
+  updateRun(run.id, {
+    status: 'blocked',
+    output: { ...getRun(run.id)!.output!, workerFinished: true },
+  });
+  await inFlight;
+  assert.equal(
+    getRun(run.id)?.output?.workerFinished,
+    true,
+    'refresh uses completion recorded while artifact IO was in flight',
   );
   updateRun(run.id, { status: 'cancelled' });
   const decisionsBefore = getRun(run.id)!.decisions.length;

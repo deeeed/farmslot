@@ -59,14 +59,31 @@ test('retained output exposes nested files independently of a skipped completion
     ['artifacts/report.md', 'artifacts/case-one/trace.json', 'artifacts/case-two/trace.json'],
   );
   run.status = 'done';
+  run.output.artifactManifest.push({ path: 'artifacts/proof.webm', purpose: 'video' });
   run.steps = [
-    { name: 'complete', status: 'done', outputs: { artifacts: run.output.artifactManifest } },
+    {
+      name: 'complete',
+      status: 'done',
+      outputs: {
+        artifacts: run.output.artifactManifest.map((artifact) =>
+          artifact.path === 'artifacts/proof.webm'
+            ? { ...artifact, maxFps: 30, sizeBytes: 100, sha256: 'video-hash' }
+            : artifact,
+        ),
+      },
+    },
   ];
   assert.equal(
     collectRunEvidenceArtifacts(run).length,
-    3,
+    4,
     'completion must not duplicate retained files from monitor',
   );
+  const video = collectRunEvidenceArtifacts(run).find(
+    (artifact) => artifact.path === 'artifacts/proof.webm',
+  );
+  assert.equal(video?.maxFps, 30);
+  assert.equal(video?.sizeBytes, 100);
+  assert.equal(video?.sha256, 'video-hash');
 });
 
 function makeRun(overrides: Partial<Run> = {}): Run {

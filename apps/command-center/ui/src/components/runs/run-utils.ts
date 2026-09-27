@@ -373,15 +373,21 @@ export function canCompareRuns(a: Run, b: Run): boolean {
 }
 
 export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifact[] {
-  const seen = new Set<string>();
+  const seen = new Map<string, FamilyObservabilityArtifact>();
   const artifacts: FamilyObservabilityArtifact[] = [];
   const packageEvidence = latestPublishPackageEvidence(run);
   const packageEvidencePaths = new Set(packageEvidence.map((artifact) => artifact.path));
 
   const add = (artifact: FamilyObservabilityArtifact) => {
     const key = artifact.path;
-    if (seen.has(key)) return;
-    seen.add(key);
+    const existing = seen.get(key);
+    if (existing) {
+      existing.maxFps ??= artifact.maxFps;
+      existing.sha256 ??= artifact.sha256;
+      existing.sizeBytes ??= artifact.sizeBytes;
+      return;
+    }
+    seen.set(key, artifact);
     artifacts.push(artifact);
   };
 

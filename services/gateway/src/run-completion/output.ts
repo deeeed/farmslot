@@ -82,16 +82,22 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
   return decisions;
 }
 
+function outputWorkerFinished(run: Run, workerFinished: boolean): boolean {
+  return (
+    workerFinished ||
+    (Boolean(run.output?.workerFinished) &&
+      ['monitoring', 'paused', 'blocked', 'human-gating'].includes(run.status)) ||
+    Boolean(run.completedAt) ||
+    ['done', 'failed', 'cancelled'].includes(run.status)
+  );
+}
+
 /** Keep retained files readable, but retire a review of an invalid snapshot. */
 export function failRunOutputCapture(runId: string, error: unknown, workerFinished = false): Run {
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   const output: RunOutput = {
-    workerFinished:
-      workerFinished ||
-      Boolean(run.output?.workerFinished) ||
-      Boolean(run.completedAt) ||
-      ['done', 'failed', 'cancelled'].includes(run.status),
+    workerFinished: outputWorkerFinished(run, workerFinished),
     capturedAt: new Date().toISOString(),
     artifactManifest: run.output?.artifactManifest ?? [],
     manifestDigest: run.output?.manifestDigest ?? '',
@@ -115,32 +121,38 @@ export async function captureRunOutput(
   const artifacts = await scanArtifacts(path.dirname(taskFile));
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
-  const report =
-    (FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md'])
-      .map((name) => artifacts.find((artifact) => artifact.path === `artifacts/${name}`))
-      .find(Boolean) ??
-    artifacts.find(
+  const candidates = [
+    ...(FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md']).map((name) =>
+      artifacts.find((artifact) => artifact.path === `artifacts/${name}`),
+    ),
+    ...artifacts.filter(
       (artifact) =>
         artifact.purpose === 'report' &&
         artifact.path.endsWith('.md') &&
         artifact.path.split('/').length === 2,
-    );
+    ),
+  ];
+  let report: ArtifactRef | undefined;
+  for (const candidate of candidates) {
+    if (
+      candidate &&
+      (await readFile(path.join(path.dirname(taskFile), candidate.path), 'utf8')).trim()
+    ) {
+      report = candidate;
+      break;
+    }
+  }
+  const current = getRun(runId);
+  if (!current) return copied;
+  if (current.taskFile !== taskFile || current.engineState?.generation !== generation)
+    throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const output: RunOutput = {
-    workerFinished:
-      workerFinished ||
-      (Boolean(run.output?.workerFinished) &&
-        ['monitoring', 'paused', 'blocked', 'human-gating'].includes(run.status)) ||
-      Boolean(run.completedAt) ||
-      ['done', 'failed', 'cancelled'].includes(run.status),
+    workerFinished: outputWorkerFinished(current, workerFinished),
     capturedAt: new Date().toISOString(),
     artifactManifest: artifacts,
     manifestDigest: outputManifestDigest(artifacts),
     ...(report ? { reportPath: report.path } : {}),
   };
-  const current = getRun(runId);
-  if (!current) return copied;
-  if (current.taskFile !== taskFile || current.engineState?.generation !== generation)
-    throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const updated = updateRun(runId, {
     output,
     decisions:
