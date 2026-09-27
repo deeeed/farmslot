@@ -4705,11 +4705,13 @@ __metadata:
     "@farmslot/slot-config": "workspace:*"
     "@sinclair/typebox": "npm:^0.34.49"
     "@types/node": "npm:^22.0.0"
+    "@types/shell-quote": "npm:^1.7.5"
     "@types/ws": "npm:^8.5.0"
     "@typesafe-ai/sdk": "npm:^0.6.0"
     ajv: "npm:^8.20.0"
     chokidar: "npm:^4.0.0"
     node-pty: "npm:^1.0.0"
+    shell-quote: "npm:^1.8.4"
     tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
     ws: "npm:^8.18.0"
@@ -7874,6 +7876,13 @@ __metadata:
     "@types/http-errors": "npm:*"
     "@types/node": "npm:*"
   checksum: 10c0/a3c6126bdbf9685e6c7dc03ad34639666eff32754e912adeed9643bf3dd3aa0ff043002a7f69039306e310d233eb8e160c59308f95b0a619f32366bbc48ee094
+  languageName: node
+  linkType: hard
+
+"@types/shell-quote@npm:^1.7.5":
+  version: 1.7.5
+  resolution: "@types/shell-quote@npm:1.7.5"
+  checksum: 10c0/ddcf225e85e5520e3f44411d7d79eee0e56477fab705d0d93e293b61b9f8de2a57db6e859d492a24bc9e0d071c0490271efeae832756e2ac0d4d255922ac281d
   languageName: node
   linkType: hard
 
