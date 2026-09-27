@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,8 +8,11 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = process.env.FARMSLOT_HEADLESS_PROOF_RUN_ID;
 const decisionId = process.env.FARMSLOT_HEADLESS_PROOF_DECISION_ID;
 const sessionId = process.env.FARMSLOT_HEADLESS_PROOF_SESSION_ID;
-const machine = process.env.FARMSLOT_HEADLESS_PROOF_MACHINE;
-assert.ok(runId && decisionId && sessionId && machine, 'Set run, decision, session and machine');
+const gatewayLog = process.env.FARMSLOT_HEADLESS_PROOF_GATEWAY_LOG;
+assert.ok(
+  runId && decisionId && sessionId && gatewayLog,
+  'Set run, decision, session and gateway log',
+);
 
 function rpc(method, params) {
   return JSON.parse(
@@ -41,16 +45,34 @@ assert.equal(
 const launch = run.steps.find((step) => step.name === 'dispatch').outputs.launchCommand;
 assert.match(launch, /mkdir -p/);
 assert.equal(/(^|\s)--print(\s|$)|(^|\s)-p(\s|$)/.test(launch), true);
-const { candidates } = rpc('dispatch.candidates', {
-  project: run.project,
-  flowType: run.flowType,
-  machines: [machine],
-  ticketOrPr: run.ticketOrPr,
-  targetBranch: run.branch,
+const context = run.agentContexts.find((entry) => entry.runnerSessionId === sessionId);
+assert.ok(context?.target?.paneId);
+const prefix = '[run-monitor] [observability] degraded — ';
+const records = readFileSync(gatewayLog, 'utf8')
+  .split('\n')
+  .filter((line) => line.includes(prefix))
+  .map((line) => JSON.parse(line.slice(line.indexOf(prefix) + prefix.length)));
+const attemptedSend = records.find(
+  (entry) =>
+    entry.record === 'observability-degraded-recovery' &&
+    entry.slotId === run.slotId &&
+    entry.target === context.target.paneId &&
+    entry.timestamp > Date.parse(decision.resolvedAt),
+);
+assert.ok(attemptedSend, 'The production monitor must pass the launch guard and enter send safety');
+assert.equal(attemptedSend.action, 'hold-send');
+const { summary } = rpc('intelligence.actions.summary', {
+  dateFrom: decision.resolvedAt,
+  limit: 1000,
 });
-const candidate = candidates.find((entry) => entry.slotId === run.slotId);
-assert.equal(candidate?.nudgeEligible, true, 'Production launch policy must allow this worker');
-assert.equal(candidate.nudgeMeta.canNudge, true);
+const audited = summary.records.find(
+  (entry) =>
+    entry.runId === runId &&
+    Date.parse(entry.decidedAt) === attemptedSend.timestamp &&
+    entry.actor === 'auto-nudge',
+);
+assert.ok(audited, 'The send-safety event must also exist in the gateway audit');
+assert.equal(audited.verdict.patternId, 'composer-draft-hold');
 console.log(
   JSON.stringify({
     runId,
@@ -59,7 +81,8 @@ console.log(
     sessionId,
     status: run.status,
     oldWholeCommandMatcher: 'headless',
-    nudgeEligible: candidate.nudgeEligible,
-    canNudge: candidate.nudgeMeta.canNudge,
+    monitorPassedLaunchGuard: true,
+    delivery: attemptedSend.action,
+    auditId: audited.id,
   }),
 );

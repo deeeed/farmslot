@@ -157,6 +157,9 @@ export interface RunnerDefinition {
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
   headlessPrintExecutables?: readonly string[];
+  headlessPrintFlags?: readonly string[];
+  headlessPrintPath?: keyof RunnerLaunchPaths;
+  headlessPrintEntrypoints?: readonly string[];
   processMatchers: string[];
   /** Process name is too generic for destructive discovery without recorded runner identity. */
   requiresExplicitTerminationIdentity?: boolean;
@@ -286,6 +289,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['claude'],
+    headlessPrintFlags: ['-p', '--print'],
+    headlessPrintPath: 'claudePath',
+    headlessPrintEntrypoints: ['@anthropic-ai/claude-code/cli.js'],
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
@@ -403,6 +409,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['cursor-agent', 'agent'],
+    headlessPrintFlags: ['-p', '--print'],
+    headlessPrintPath: 'cursorPath',
+    headlessPrintEntrypoints: ['cursor-agent/cli.js'],
     processMatchers: ['(^|/)(cursor-)?agent($| )'],
     requiresExplicitTerminationIdentity: true,
     // Cursor Agent v2026.06.19 leaves tmux-injected prompts buffered/reset at
@@ -447,6 +456,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['grok'],
+    headlessPrintFlags: ['-p', '--print'],
+    headlessPrintPath: 'grokPath',
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's
     // operator contract: open the pane first, then deliver the task prompt
@@ -486,6 +497,12 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'pi',
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['pi'],
+    headlessPrintFlags: ['-p', '--print'],
+    headlessPrintPath: 'piPath',
+    headlessPrintEntrypoints: [
+      '@mariozechner/pi-coding-agent/dist/cli.js',
+      '@earendil-works/pi-coding-agent/dist/cli.js',
+    ],
     processMatchers: ['(^|/)pi($| )', 'pi-coding-agent'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: false,
@@ -835,8 +852,18 @@ export async function interruptRunnerTurn(
 
 type HeadlessPrintMode = 'interactive' | 'headless' | 'unknown';
 const UNRESOLVED_LAUNCH_VARIABLE = '\u0000';
+type RunnerLaunchPaths = Partial<
+  Pick<
+    Awaited<ReturnType<typeof loadSlotVars>>,
+    'claudePath' | 'cursorPath' | 'grokPath' | 'piPath'
+  >
+>;
 
-function runnerArgvForShellSegment(runner: string, words: string[]): string[] | null {
+function runnerArgvForShellSegment(
+  runner: string,
+  words: string[],
+  vars?: RunnerLaunchPaths,
+): string[] | null {
   const definition = getRunnerDefinition(runner);
   let position = 0;
   while (position < words.length) {
@@ -857,24 +884,29 @@ function runnerArgvForShellSegment(runner: string, words: string[]): string[] | 
   }
   const executable = words[position];
   if (!executable) return null;
-  if (definition.headlessPrintExecutables?.includes(path.posix.basename(executable))) {
+  const configured = definition.headlessPrintPath && vars?.[definition.headlessPrintPath];
+  if (
+    executable === configured ||
+    definition.headlessPrintExecutables?.includes(path.posix.basename(executable))
+  ) {
     return words.slice(position + 1);
   }
   if (path.posix.basename(executable) !== 'node') return null;
   const script = words[position + 1];
   if (
     !script ||
-    path.posix.basename(script) !== 'cli.js' ||
-    !definition.processMatchers.some((matcher) =>
-      new RegExp(matcher).test(path.posix.dirname(script)),
-    )
+    !definition.headlessPrintEntrypoints?.some((entrypoint) => script.endsWith(`/${entrypoint}`))
   ) {
     return null;
   }
   return words.slice(position + 2);
 }
 
-function headlessPrintMode(runner: string, launchCommand: unknown): HeadlessPrintMode {
+function headlessPrintMode(
+  runner: string,
+  launchCommand: unknown,
+  vars?: RunnerLaunchPaths,
+): HeadlessPrintMode {
   if (typeof launchCommand !== 'string' || !launchCommand.trim()) return 'interactive';
   if (!getRunnerDefinition(runner).headlessPrintExecutables) return 'interactive';
   let tokens: ReturnType<typeof parseLaunchShell>;
@@ -886,14 +918,20 @@ function headlessPrintMode(runner: string, launchCommand: unknown): HeadlessPrin
   let words: string[] = [];
   let mode: HeadlessPrintMode = 'unknown';
   const inspectSegment = (): boolean => {
-    const argv = runnerArgvForShellSegment(runner, words);
+    const argv = runnerArgvForShellSegment(runner, words, vars);
     words = [];
     if (!argv) return true;
     if (argv.some((word) => word.includes(UNRESOLVED_LAUNCH_VARIABLE))) return false;
     if (mode !== 'unknown') return false;
     mode = argv
       .slice(0, argv.indexOf('--') < 0 ? undefined : argv.indexOf('--'))
-      .some((arg) => arg === '-p' || arg === '--print')
+      .some((arg) =>
+        getRunnerDefinition(runner).headlessPrintFlags?.some(
+          (flag) =>
+            arg === flag ||
+            (flag.length === 2 && /^-[A-Za-z]{2,}$/u.test(arg) && arg.slice(1).includes(flag[1])),
+        ),
+      )
       ? 'headless'
       : 'interactive';
     return true;
@@ -906,9 +944,18 @@ function headlessPrintMode(runner: string, launchCommand: unknown): HeadlessPrin
     }
     if (typeof token === 'string') {
       words.push(token);
-    } else if ('op' in token && ['>', '>>', '<', '>&'].includes(token.op)) {
+    } else if ('op' in token && token.op === 'glob') {
+      words.push(token.pattern);
+    } else if ('comment' in token) {
+      break;
+    } else if ('op' in token && ['>', '>>', '<', '>&', '<&', '<<<'].includes(token.op)) {
       redirectTarget = true;
-    } else if (!inspectSegment()) {
+    } else if (
+      'op' in token &&
+      ['&&', '||', ';', ';;', '|', '|&', '&', '(', ')'].includes(token.op)
+    ) {
+      if (!inspectSegment()) return 'unknown';
+    } else {
       return 'unknown';
     }
   }
@@ -918,17 +965,20 @@ function headlessPrintMode(runner: string, launchCommand: unknown): HeadlessPrin
 export function runnerLaunchCommandUsesHeadlessPrint(
   runnerId?: string | null,
   launchCommand?: unknown,
+  vars?: RunnerLaunchPaths,
 ): boolean {
-  return headlessPrintMode(normalizeRunner(runnerId), launchCommand) === 'headless';
+  return headlessPrintMode(normalizeRunner(runnerId), launchCommand, vars) === 'headless';
 }
 
 export function runnerSupportsTmuxNudgesForLaunch(
   runnerId?: string | null,
   launchCommand?: unknown,
+  vars?: RunnerLaunchPaths,
 ): boolean {
   const runner = normalizeRunner(runnerId);
   return (
-    runnerSupportsTmuxNudges(runner) && headlessPrintMode(runner, launchCommand) === 'interactive'
+    runnerSupportsTmuxNudges(runner) &&
+    headlessPrintMode(runner, launchCommand, vars) === 'interactive'
   );
 }
 
@@ -936,6 +986,7 @@ export function runnerTmuxNudgeUnsupportedDescription(
   runnerId?: string | null,
   launchCommand?: unknown,
   violationType?: string,
+  vars?: RunnerLaunchPaths,
 ): string {
   const runner = normalizeRunner(runnerId);
   const reason =
@@ -944,10 +995,13 @@ export function runnerTmuxNudgeUnsupportedDescription(
       : violationType === 'idle'
         ? 'appears idle'
         : 'is waiting';
-  if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) {
+  if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand, vars)) {
     return `${runner} ${reason}, but this lane was launched with --print/headless, so tmux keystrokes cannot reach a live chat prompt. Re-run or resume the worker instead of using tmux nudge.`;
   }
-  if (headlessPrintMode(runner, launchCommand) === 'unknown') {
+  if (
+    runnerSupportsTmuxNudges(runner) &&
+    headlessPrintMode(runner, launchCommand, vars) === 'unknown'
+  ) {
     return `${runner} ${reason}, but its launch argv could not be identified, so tmux nudge safety is unknown. Inspect the launch before sending pane instructions.`;
   }
   return `${runnerId ?? 'runner'} ${reason}, but this launch mode does not support tmux nudges`;

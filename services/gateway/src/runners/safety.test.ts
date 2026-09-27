@@ -434,6 +434,34 @@ describe('tmux nudge launch policy', () => {
     );
     assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude $FLAGS'), false);
     assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude && claude -p task'), false);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', 'claude --add-dir /tmp/* --print task'),
+      false,
+    );
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude <<< "hi" -p'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude <& 3 -p'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude -cp task'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude # --print'), true);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', 'node /tmp/claude-helper/cli.js && claude'),
+      true,
+    );
+  });
+
+  it('honors configured runner wrappers in generated launches', () => {
+    for (const [runner, overrides] of [
+      ['pi', { piPath: '/x/farmslot-pi-anthropic' }],
+      ['claude', { claudePath: '/x/team-model-wrapper' }],
+    ] as const) {
+      const vars = makeVars(overrides);
+      const launch = buildLaunchCommand(vars, runner, 'opus', 'Read TASK.md');
+      assert.equal(runnerSupportsTmuxNudgesForLaunch(runner, launch, vars), true, launch);
+      const executable = runner === 'pi' ? vars.piPath : vars.claudePath;
+      assert.equal(
+        runnerSupportsTmuxNudgesForLaunch(runner, `${executable} --print task`, vars),
+        false,
+      );
+    }
   });
 });
 
