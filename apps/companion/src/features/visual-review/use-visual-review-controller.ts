@@ -25,7 +25,16 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
 
   useEffect(() => {
     controller.setGateway(
-      client ? createVisualReviewGateway(client, gatewayUrl, authHeaders, profileId) : null,
+      client
+        ? createVisualReviewGateway(client, { gatewayUrl, authHeaders, profileId }, () => {
+            const live = useConnectionStore.getState();
+            return {
+              gatewayUrl: live.gatewayUrl,
+              authHeaders: live.activeProfileHttpAuthHeaders,
+              profileId: live.activeProfileId,
+            };
+          })
+        : null,
     );
   }, [authHeaders, client, controller, gatewayUrl, profileId]);
 

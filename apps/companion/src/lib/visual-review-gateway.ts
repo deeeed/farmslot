@@ -67,21 +67,49 @@ export function credentialFingerprint(headers: ArtifactHttpHeaders): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
+export interface VisualReviewConnection {
+  gatewayUrl: string;
+  authHeaders: ArtifactHttpHeaders;
+  profileId?: string;
+}
+
+export function visualReviewConnectionId({
+  gatewayUrl,
+  authHeaders,
+  profileId = '',
+}: VisualReviewConnection): string {
+  return `${profileId}|${gatewayUrl}|${credentialFingerprint(authHeaders)}`;
+}
+
+/**
+ * `liveConnection` reads the connection the shared client is switching to. The store updates it
+ * before the client reconnects, so every request is refused once it no longer matches, even
+ * before the screen rebinds.
+ */
 export function createVisualReviewGateway(
   client: Pick<GatewayClient, 'request'>,
-  gatewayUrl: string,
-  authHeaders: ArtifactHttpHeaders,
-  profileId = '',
+  connection: VisualReviewConnection,
+  liveConnection: () => VisualReviewConnection = () => connection,
 ): VisualReviewGateway {
+  const { gatewayUrl, authHeaders } = connection;
+  const connectionId = visualReviewConnectionId(connection);
+  const request = <T>(method: string, params: unknown): Promise<T> => {
+    if (visualReviewConnectionId(liveConnection()) !== connectionId) {
+      return Promise.reject(
+        new Error('The gateway connection changed. Reopen the review to continue.'),
+      );
+    }
+    return client.request<T>(method, params);
+  };
   const urlFor = (runId: string, artifact: VisualReviewArtifactRef) =>
     artifactUrl(gatewayUrl, runId, artifact.path, artifact.recipeRunId);
   return {
-    connectionId: `${profileId}|${gatewayUrl}|${credentialFingerprint(authHeaders)}`,
+    connectionId,
     async getRun(runId) {
-      return (await client.request<RunGetResult>(Methods.RUN_GET, { runId })).run;
+      return (await request<RunGetResult>(Methods.RUN_GET, { runId })).run;
     },
     async listRunArtifacts(run) {
-      const { recipeRuns } = await client.request<RunRecipeRunsForRunResult>(
+      const { recipeRuns } = await request<RunRecipeRunsForRunResult>(
         Methods.RUN_RECIPE_RUNS_FOR_RUN,
         { runId: run.id },
       );
@@ -99,7 +127,7 @@ export function createVisualReviewGateway(
       return artifactSource(urlFor(runId, artifact), authHeaders);
     },
     async sendWorkerMessage(params) {
-      await client.request(Methods.TERMINAL_SEND, params);
+      await request(Methods.TERMINAL_SEND, params);
     },
   };
 }

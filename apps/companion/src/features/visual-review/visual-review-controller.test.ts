@@ -126,7 +126,9 @@ function harness(
     const status = state.status === 'ready' ? state.delivery.status : null;
     if (status && deliveries[deliveries.length - 1] !== status) deliveries.push(status);
   });
-  controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH));
+  controller.setGateway(
+    createVisualReviewGateway(client, { gatewayUrl: GATEWAY_URL, authHeaders: AUTH }),
+  );
   return { controller, client, requests, fetched, deliveries };
 }
 
@@ -366,7 +368,9 @@ test('reconnecting with the same credentials keeps the draft and refreshes image
   const draft = (controller.getState() as VisualReviewReadyState).draft;
 
   controller.setGateway(null);
-  controller.setGateway(createVisualReviewGateway({ ...client }, GATEWAY_URL, { ...AUTH }));
+  controller.setGateway(
+    createVisualReviewGateway({ ...client }, { gatewayUrl: GATEWAY_URL, authHeaders: { ...AUTH } }),
+  );
 
   const state = controller.getState() as VisualReviewReadyState;
   assert.equal(state.draft, draft);
@@ -381,7 +385,10 @@ test('replacing the credentials on the same profile reloads the review', async (
   draftSomeFeedback(controller);
 
   controller.setGateway(
-    createVisualReviewGateway(client, GATEWAY_URL, { Authorization: 'Bearer replaced' }),
+    createVisualReviewGateway(client, {
+      gatewayUrl: GATEWAY_URL,
+      authHeaders: { Authorization: 'Bearer replaced' },
+    }),
   );
   assert.equal(controller.getState().status, 'loading');
   const state = await ready(controller);
@@ -397,7 +404,12 @@ test('switching to another gateway reloads the review from it', async () => {
   draftSomeFeedback(controller);
   const before = requests.length;
 
-  controller.setGateway(createVisualReviewGateway(client, 'ws://gateway.other:9000/ws', AUTH));
+  controller.setGateway(
+    createVisualReviewGateway(client, {
+      gatewayUrl: 'ws://gateway.other:9000/ws',
+      authHeaders: AUTH,
+    }),
+  );
   assert.equal(controller.getState().status, 'loading');
   const state = await ready(controller);
 
@@ -455,7 +467,13 @@ test('switching profiles on the same gateway URL reloads the review', async () =
   await ready(controller);
   draftSomeFeedback(controller);
 
-  controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH, 'other-principal'));
+  controller.setGateway(
+    createVisualReviewGateway(client, {
+      gatewayUrl: GATEWAY_URL,
+      authHeaders: AUTH,
+      profileId: 'other-principal',
+    }),
+  );
   const state = await ready(controller);
 
   assert.ok(state.gatewayConnectionId.startsWith(`other-principal|${GATEWAY_URL}|`));
@@ -471,7 +489,13 @@ test('a profile switch while sending never sends through the new connection', as
   draftSomeFeedback(controller);
 
   const sending = controller.submit();
-  controller.setGateway(createVisualReviewGateway(client, GATEWAY_URL, AUTH, 'other-principal'));
+  controller.setGateway(
+    createVisualReviewGateway(client, {
+      gatewayUrl: GATEWAY_URL,
+      authHeaders: AUTH,
+      profileId: 'other-principal',
+    }),
+  );
   release();
   await sending;
 
@@ -491,9 +515,38 @@ test('a same-credential reconnect while sending still delivers', async () => {
 
   const sending = controller.submit();
   controller.setGateway(null);
-  controller.setGateway(createVisualReviewGateway({ ...client }, GATEWAY_URL, { ...AUTH }));
+  controller.setGateway(
+    createVisualReviewGateway({ ...client }, { gatewayUrl: GATEWAY_URL, authHeaders: { ...AUTH } }),
+  );
   release();
   await sending;
 
   assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'accepted');
+});
+
+test('a connection switch before the screen rebinds refuses the send', async () => {
+  let release!: () => void;
+  const { controller, client, requests } = harness({
+    holdOriginRun: new Promise<void>((resolve) => (release = resolve)),
+  });
+  let live = { gatewayUrl: GATEWAY_URL, authHeaders: AUTH };
+  controller.setGateway(
+    createVisualReviewGateway(client, { gatewayUrl: GATEWAY_URL, authHeaders: AUTH }, () => live),
+  );
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  const sending = controller.submit();
+  // The store has switched credentials; React has not rebound the controller yet.
+  live = { gatewayUrl: GATEWAY_URL, authHeaders: { Authorization: 'Bearer replaced' } };
+  release();
+  await sending;
+
+  const { delivery } = controller.getState() as VisualReviewReadyState;
+  assert.equal(delivery.status, 'failed');
+  assert.match((delivery as { message: string }).message, /connection changed/u);
+  assert.equal(
+    requests.some(({ method }) => method === Methods.TERMINAL_SEND),
+    false,
+  );
 });
