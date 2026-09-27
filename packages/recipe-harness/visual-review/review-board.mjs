@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { feedbackDraftFromDocument } from './feedback-draft.mjs';
+
 const SAFE_FILE_ID = /^[a-zA-Z0-9._-]+$/u;
 
 const escapeHtml = (value) =>
@@ -12,6 +14,9 @@ const escapeHtml = (value) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 
+const FEEDBACK_ACTIONS_HTML =
+  '<label class="feedback-open">Open feedback JSON<input data-feedback-open type="file" accept="application/json,.json" hidden></label>' +
+  '<button data-feedback-download type="button">Download feedback JSON</button>';
 function safeFileId(value, label) {
   const normalized = String(value);
   if (!SAFE_FILE_ID.test(normalized)) {
@@ -171,8 +176,9 @@ function indexHtml(source, storageKey, defaultPlatform, assetVersion) {
     <div>
       <h1>${escapeHtml(source.title)}</h1>
       <p>${escapeHtml(source.capturedAt)}${source.description ? ` · ${escapeHtml(source.description)}` : ''}</p>
+      <p data-feedback-status class="autosave" role="status"></p>
     </div>
-    <div class="header-actions">${platformFilterHtml(source, defaultPlatform)}<button data-feedback-download type="button">Download feedback JSON</button></div>
+    <div class="header-actions">${platformFilterHtml(source, defaultPlatform)}${FEEDBACK_ACTIONS_HTML}</div>
   </header>
   <main class="screen-index" aria-label="Captured surfaces">
     <section class="navigation-map" aria-labelledby="navigation-map-title">
@@ -268,7 +274,7 @@ function screenHtml(source, storageKey, defaultPlatform, surface, index, assetVe
           : ''
       }
     </div>
-    <div class="header-actions">${platformFilterHtml(source, defaultPlatform)}<button data-feedback-download type="button">Download feedback JSON</button></div>
+    <div class="header-actions">${platformFilterHtml(source, defaultPlatform)}${FEEDBACK_ACTIONS_HTML}</div>
   </header>
   <nav class="route-nav" aria-label="Screen navigation">
     ${previous ? `<a href="${escapeHtml(previous.id)}.html#surface-${escapeHtml(previous.id)}">← ${escapeHtml(previous.title)}</a>` : '<span></span>'}
@@ -322,6 +328,7 @@ button { border: 1px solid #5555dd; border-radius: 8px; padding: 10px 14px; back
 code { color: #aaaaff; overflow-wrap: anywhere; }
 .board-header, .screen-header { display: flex; justify-content: space-between; align-items: start; gap: 20px; max-width: 1180px; margin: 0 auto 24px; }
 .header-actions { display: flex; align-items: center; justify-content: end; gap: 10px; }
+.feedback-open { border: 1px solid #5555dd; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
 .platform-filter { display: inline-flex; padding: 3px; border: 1px solid #30304a; border-radius: 10px; background: #12121c; }
 .platform-filter button { border: 0; border-radius: 7px; padding: 7px 11px; background: transparent; color: #aaaabb; }
 .platform-filter button[aria-pressed="true"] { background: #3333aa; color: white; }
@@ -828,6 +835,40 @@ function clientScript(reviewSource) {
     ),
   });
 
+  const setFeedbackStatus = (message) => {
+    for (const status of document.querySelectorAll('[data-feedback-status]')) status.textContent = message;
+  };
+  ${feedbackDraftFromDocument.toString()}
+  for (const input of document.querySelectorAll('[data-feedback-open]')) {
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.value = '';
+      if (!file) return;
+      let restored;
+      try {
+        restored = feedbackDraftFromDocument(source, JSON.parse(await file.text()));
+      } catch (error) {
+        // An unreadable or foreign document must not replace the current draft.
+        setFeedbackStatus('Could not open ' + file.name + ': ' + error.message);
+        return;
+      }
+      const hasDraft =
+        feedback.annotations.length > 0 ||
+        Object.values(feedback.surfaceNotes).some((body) => body.trim());
+      if (hasDraft && !confirm('Replace the current feedback with ' + file.name + '?')) return;
+      feedback.surfaceNotes = restored.surfaceNotes;
+      feedback.annotations = restored.annotations;
+      persist();
+      for (const field of document.querySelectorAll('[data-surface-note]')) {
+        field.value = feedback.surfaceNotes[field.dataset.surfaceNote] || '';
+      }
+      for (const surface of document.querySelectorAll('[data-annotation-surface]')) {
+        renderCapture(surface.dataset.surfaceId, surface.dataset.captureId);
+      }
+      setFeedbackStatus('Opened ' + file.name);
+    });
+  }
+
   for (const button of document.querySelectorAll('[data-feedback-download]')) {
     button.addEventListener('click', () => {
       persist();
@@ -841,6 +882,11 @@ function clientScript(reviewSource) {
   }
 })();
 `;
+}
+
+/** Drafts are stored per capture, so a recapture under the same source id starts empty. */
+export function visualReviewFeedbackStorageKey(source) {
+  return `farmslot-visual-review:${source.id}:${source.capturedAt}`;
 }
 
 export function generateReviewBoard({ outputDir, source, storageKey, defaultPlatform }) {

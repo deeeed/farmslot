@@ -50,6 +50,13 @@ test('derives review surfaces from recipe capture nodes', async () => {
     assert.equal(source.surfaces[0].captures[0].image.path, 'ios/review.png');
     assert.equal(source.surfaces[1].parentId, 'capture-review');
     assert.deepEqual(source.surfaces[1].relatedSurfaceIds, ['capture-review']);
+    // Board drafts are stored per capture, so a recapture never reopens the previous draft.
+    const index = await readFile(path.join(outputDir, 'index.html'), 'utf8');
+    assert.ok(
+      index.includes(
+        `data-feedback-key="farmslot-visual-review:${source.id}:${source.capturedAt}"`,
+      ),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

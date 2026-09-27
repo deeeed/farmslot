@@ -11,6 +11,7 @@ import {
   buildRecipeReviewBoard,
   generateReviewBoard,
   serveReviewBoard,
+  visualReviewFeedbackStorageKey,
 } from '../visual-review/index.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -230,6 +231,12 @@ test('builds a project review board directly from recipe artifacts', async () =>
     assert.equal(source.surfaces[1].location, '/markets/[id]');
     assert.equal(source.runId, 'run-123');
     const index = await readFile(path.join(outputDir, 'index.html'), 'utf8');
+    // Drafts are keyed per capture, so a recapture under the same source id starts empty.
+    assert.ok(index.includes(`data-feedback-key="${visualReviewFeedbackStorageKey(source)}"`));
+    assert.notEqual(
+      visualReviewFeedbackStorageKey(source),
+      visualReviewFeedbackStorageKey({ ...source, capturedAt: '2026-01-01T00:00:00.000Z' }),
+    );
     assert.match(index, /Perps surfaces/u);
     assert.match(index, /data-default-platform="ios"/u);
     assert.equal((await stat(path.join(outputDir, 'screens', 'markets.png'))).size, 7);
@@ -242,5 +249,44 @@ test('builds a project review board directly from recipe artifacts', async () =>
   } finally {
     if (server) await server.close();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('every page with Open feedback JSON shows whether the file opened', async () => {
+  const outputDir = await mkdtemp(path.join(tmpdir(), 'farmslot-visual-review-status-'));
+  try {
+    await writeFile(path.join(outputDir, 'gate.png'), 'gate');
+    generateReviewBoard({
+      outputDir,
+      storageKey: 'visual-review-status',
+      source: {
+        version: 1,
+        kind: 'visual-review-source',
+        id: 'example-farm:status',
+        title: 'Status review',
+        capturedAt: '2026-09-27T00:00:00.000Z',
+        surfaces: [
+          {
+            id: 'gate',
+            title: 'Gate',
+            captures: [{ id: 'ios-gate', platform: 'ios', image: { path: 'gate.png' } }],
+          },
+        ],
+      },
+    });
+    const pages = [
+      await readFile(path.join(outputDir, 'index.html'), 'utf8'),
+      await readFile(path.join(outputDir, 'screens', 'gate.html'), 'utf8'),
+    ];
+    for (const page of pages) {
+      assert.match(page, /data-feedback-open/u);
+      // A refused or opened file is reported in this element; without it the result is silent.
+      assert.match(page, /<p data-feedback-status /u);
+    }
+    const client = await readFile(path.join(outputDir, 'assets', 'review-board.js'), 'utf8');
+    assert.match(client, /setFeedbackStatus\('Could not open ' \+ file\.name/u);
+    assert.match(client, /setFeedbackStatus\('Opened ' \+ file\.name\)/u);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
   }
 });

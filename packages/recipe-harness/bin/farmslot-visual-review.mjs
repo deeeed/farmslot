@@ -7,6 +7,7 @@ import {
   buildRecipeReviewBoard,
   generateReviewBoard,
   serveReviewBoard,
+  visualReviewFeedbackStorageKey,
 } from '../visual-review/index.mjs';
 
 function option(args, name, fallback) {
@@ -132,7 +133,7 @@ async function main() {
   generateReviewBoard({
     outputDir,
     source,
-    storageKey: `farmslot-visual-review:${source.id}`,
+    storageKey: visualReviewFeedbackStorageKey(source),
   });
 
   if (command === 'build') {
