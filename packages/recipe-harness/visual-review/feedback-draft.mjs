@@ -17,6 +17,15 @@ export function feedbackDraftFromDocument(source, document) {
       'Feedback belongs to source ' + document.source?.id + ', not ' + source.id + '.',
     );
   }
+  if (document.source.capturedAt !== source.capturedAt) {
+    throw new Error(
+      'Feedback was written for the capture of ' +
+        document.source.capturedAt +
+        '; this board shows the capture of ' +
+        source.capturedAt +
+        '.',
+    );
+  }
   const surfaceIds = new Set(source.surfaces.map((surface) => surface.id));
   const captureKeys = new Set(
     source.surfaces.flatMap((surface) =>
@@ -24,25 +33,40 @@ export function feedbackDraftFromDocument(source, document) {
     ),
   );
   const isUnit = (value) => typeof value === 'number' && value >= 0 && value <= 1;
+  const isExtent = (start, size) =>
+    isUnit(start) && typeof size === 'number' && size > 0 && start + size <= 1;
+  const ids = new Set();
+  const invalid = [];
   const surfaceNotes = {};
-  for (const note of document.surfaceNotes) {
+  document.surfaceNotes.forEach((note, index) => {
     if (surfaceIds.has(note?.surfaceId) && typeof note.body === 'string') {
       surfaceNotes[note.surfaceId] = note.body;
+    } else {
+      invalid.push('surfaceNotes[' + index + ']');
     }
+  });
+  document.annotations.forEach((annotation, index) => {
+    const valid =
+      captureKeys.has(annotation?.surfaceId + ':' + annotation?.captureId) &&
+      typeof annotation.id === 'string' &&
+      !ids.has(annotation.id) &&
+      typeof annotation.body === 'string' &&
+      (annotation.shape === 'point'
+        ? isUnit(annotation.x) && isUnit(annotation.y)
+        : annotation.shape === 'area' &&
+          isExtent(annotation.x, annotation.width) &&
+          isExtent(annotation.y, annotation.height));
+    if (valid) ids.add(annotation.id);
+    else invalid.push('annotations[' + index + ']');
+  });
+  // Renderers never write these, so any invalid entry means the wrong or an edited file.
+  if (invalid.length) {
+    throw new Error(
+      'Feedback has invalid entries: ' + invalid.join(', ') + '. Nothing was opened.',
+    );
   }
   return {
     surfaceNotes,
-    annotations: document.annotations
-      .filter(
-        (annotation) =>
-          captureKeys.has(annotation?.surfaceId + ':' + annotation?.captureId) &&
-          typeof annotation.id === 'string' &&
-          typeof annotation.body === 'string' &&
-          isUnit(annotation.x) &&
-          isUnit(annotation.y) &&
-          (annotation.shape === 'point' ||
-            (annotation.shape === 'area' && isUnit(annotation.width) && isUnit(annotation.height))),
-      )
-      .map((annotation) => ({ ...annotation })),
+    annotations: document.annotations.map((annotation) => ({ ...annotation })),
   };
 }

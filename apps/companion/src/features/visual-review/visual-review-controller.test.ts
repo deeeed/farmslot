@@ -79,7 +79,13 @@ afterEach(() => {
 });
 
 function harness(
-  options: { sourceText?: string; sendError?: Error; route?: { sourcePath?: string } } = {},
+  options: {
+    sourceText?: string;
+    sendError?: Error;
+    route?: { sourcePath?: string };
+    originStatus?: Run['status'];
+    holdSend?: Promise<void>;
+  } = {},
 ): Harness {
   const requests: Harness['requests'] = [];
   const fetched: Harness['fetched'] = [];
@@ -92,13 +98,17 @@ function harness(
       requests.push({ method, params });
       if (method === Methods.RUN_GET) {
         const { runId } = params as { runId: string };
-        return { run: runId === originRun.id ? originRun : hostRun };
+        if (runId !== originRun.id) return { run: hostRun };
+        return {
+          run: options.originStatus ? { ...originRun, status: options.originStatus } : originRun,
+        };
       }
       if (method === Methods.RUN_RECIPE_RUNS_FOR_RUN) {
         return { recipeRuns: [currentArtifacts], selectedRecipeRunId: null };
       }
       if (method === Methods.TERMINAL_SEND) {
         if (options.sendError) throw options.sendError;
+        await options.holdSend;
         return { sent: true };
       }
       throw new Error(`unexpected gateway method ${method}`);
@@ -331,35 +341,96 @@ test('editing after an accepted send marks the draft as not yet delivered', asyn
 test('feedback too large for one worker message fails before sending', async () => {
   const { controller, requests } = harness();
   await ready(controller);
-  controller.setSurfaceNote('x'.repeat(40_000));
+  controller.setSurfaceNote('é'.repeat(8_000));
 
   await controller.submit();
 
   const { delivery } = controller.getState() as VisualReviewReadyState;
   assert.equal(delivery.status, 'failed');
-  assert.match((delivery as { message: string }).message, /limited to 32000\. Export the JSON/u);
+  assert.match(
+    (delivery as { message: string }).message,
+    /is \d+ bytes; worker messages are limited to 15000\. Export the JSON/u,
+  );
   assert.equal(
     requests.some(({ method }) => method === Methods.TERMINAL_SEND),
     false,
   );
 });
 
-test('rebinding the gateway keeps the draft and refreshes image sources', async () => {
+test('reconnecting to the same gateway keeps the draft and refreshes image sources', async () => {
   const { controller, client } = harness();
   await ready(controller);
   draftSomeFeedback(controller);
   const draft = (controller.getState() as VisualReviewReadyState).draft;
 
+  controller.setGateway(null);
   controller.setGateway(
-    createVisualReviewGateway(client, 'ws://gateway.other:9000/ws', {
-      Authorization: 'Bearer next',
-    }),
+    createVisualReviewGateway(client, GATEWAY_URL, { Authorization: 'Bearer next' }),
   );
 
   const state = controller.getState() as VisualReviewReadyState;
   assert.equal(state.draft, draft);
   assert.match(
     state.captures['capture-ready-gate\u0000ios'].image.uri,
-    /^http:\/\/gateway\.other:9000\/api\/run-artifact\?.*token=next$/u,
+    /^http:\/\/gateway\.test:8809\/api\/run-artifact\?.*token=next$/u,
+  );
+});
+
+test('switching to another gateway reloads the review from it', async () => {
+  const { controller, client, requests } = harness();
+  await ready(controller);
+  draftSomeFeedback(controller);
+  const before = requests.length;
+
+  controller.setGateway(createVisualReviewGateway(client, 'ws://gateway.other:9000/ws', AUTH));
+  assert.equal(controller.getState().status, 'loading');
+  const state = await ready(controller);
+
+  assert.equal(state.gatewayUrl, 'ws://gateway.other:9000/ws');
+  assert.deepEqual(state.draft.annotations, []);
+  assert.ok(requests.slice(before).some(({ method }) => method === Methods.RUN_GET));
+});
+
+test('disconnecting during a load drops the stale response', async () => {
+  const { controller } = harness();
+  controller.setGateway(null);
+  for (let attempt = 0; attempt < 20; attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(controller.getState().status, 'loading');
+});
+
+test('edits made while a send is pending leave the draft unsent', async () => {
+  let release!: () => void;
+  const { controller } = harness({ holdSend: new Promise<void>((resolve) => (release = resolve)) });
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  const sending = controller.submit();
+  for (let attempt = 0; attempt < 5; attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((controller.getState() as VisualReviewReadyState).delivery.status, 'pending');
+  controller.setSurfaceNote('Added while sending.');
+  release();
+  await sending;
+
+  assert.deepEqual((controller.getState() as VisualReviewReadyState).delivery, { status: 'idle' });
+});
+
+test('a finished run does not take feedback', async () => {
+  const { controller, requests } = harness({ originStatus: 'done' });
+  await ready(controller);
+  draftSomeFeedback(controller);
+
+  await controller.submit();
+
+  assert.deepEqual((controller.getState() as VisualReviewReadyState).delivery, {
+    status: 'failed',
+    targetRunId: 'run-origin',
+    message: 'Run run-origin is done; its worker no longer takes input.',
+  });
+  assert.equal(
+    requests.some(({ method }) => method === Methods.TERMINAL_SEND),
+    false,
   );
 });

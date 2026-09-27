@@ -53,7 +53,7 @@ test('resolves capture images relative to the source document', () => {
   );
   assert.throws(
     () => visualReviewImageArtifactPath('visual-review-source.json', '../outside.png'),
-    /escapes the source directory/u,
+    /escapes the run artifacts/u,
   );
 });
 

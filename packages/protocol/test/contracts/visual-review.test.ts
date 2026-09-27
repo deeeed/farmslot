@@ -63,6 +63,25 @@ test('visual review source validator rejects missing targets and parent cycles',
   ]);
 });
 
+test('visual review source validator rejects non-positive capture sizes', () => {
+  const capture = source.surfaces[0].captures[0];
+  const result = validateVisualReviewSourceDocument({
+    ...source,
+    surfaces: [
+      {
+        ...source.surfaces[0],
+        captures: [{ ...capture, image: { ...capture.image, width: 0, height: 390 } }],
+      },
+      source.surfaces[1],
+      source.surfaces[2],
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    'source.surfaces[0].captures[0].image.width must be a positive number',
+  ]);
+});
+
 test('visual review feedback validator binds notes and annotations to source ids', () => {
   const valid = validateVisualReviewFeedbackDocument({
     version: 1,

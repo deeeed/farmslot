@@ -32,7 +32,9 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
     try {
       const json = `${JSON.stringify(controller.exportDocument(), null, 2)}\n`;
       let result: Awaited<ReturnType<typeof Share.share>>;
-      if (Platform.OS === 'ios' && FileSystem.cacheDirectory) {
+      // React Native's Share only attaches files on iOS; elsewhere the JSON is shared as text.
+      const sharedFile = Platform.OS === 'ios' && !!FileSystem.cacheDirectory;
+      if (sharedFile) {
         const uri = `${FileSystem.cacheDirectory}${EXPORT_FILE_NAME}`;
         await FileSystem.writeAsStringAsync(uri, json);
         result = await Share.share({ url: uri, title: EXPORT_FILE_NAME });
@@ -43,7 +45,11 @@ export function useVisualReviewController(route: VisualReviewRouteParams) {
         setExportMessage('Export cancelled.');
         return;
       }
-      setExportMessage(`Exported ${EXPORT_FILE_NAME}. Open it in the HTML board to continue.`);
+      setExportMessage(
+        sharedFile
+          ? `Exported ${EXPORT_FILE_NAME}. Open it in the HTML board to continue.`
+          : `Shared the feedback JSON as text. Save it as ${EXPORT_FILE_NAME} to open it in the HTML board.`,
+      );
     } catch (error) {
       // Export problems are shown next to the button; the draft is unaffected.
       setExportMessage(`Export failed: ${(error as Error).message}`);

@@ -248,14 +248,22 @@
         "duration_ms": 600,
         "intent": "Drag the selected point to a new spot on the capture.",
         "proves": ["touch-annotations"],
+        "next": "wait-position-shown"
+      },
+      "wait-position-shown": {
+        "action": "ui.wait_for",
+        "test_id": "visual-review-annotation-position",
+        "expected": "visible",
+        "intent": "Keep the point position readout on screen so its change is checked, not assumed.",
+        "proves": ["touch-annotations"],
         "next": "wait-dragged"
       },
       "wait-dragged": {
         "action": "ui.wait_for",
         "text_contains": ["52%"],
-        "expected": "hidden",
+        "expected": "absent",
         "timeout_ms": 5000,
-        "intent": "The drag changed the point's stored position.",
+        "intent": "The drag moved the point: its old 52% position is gone from the screen tree.",
         "proves": ["touch-annotations"],
         "next": "wait-editor-open"
       },
@@ -382,7 +390,7 @@
       "wait-removed": {
         "action": "ui.wait_for",
         "test_id": "visual-review-marker-annotation-1",
-        "expected": "hidden",
+        "expected": "absent",
         "intent": "The removed point is gone while the area remains.",
         "proves": ["touch-annotations"],
         "next": "wait-area-kept"

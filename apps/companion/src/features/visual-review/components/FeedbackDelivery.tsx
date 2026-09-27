@@ -10,7 +10,7 @@ function deliveryCopy(delivery: VisualReviewDelivery, targetRunId: string): stri
     case 'pending':
       return `Delivering to run ${delivery.targetRunId}…`;
     case 'accepted':
-      return `Delivery accepted: the worker input for run ${delivery.targetRunId} received the feedback. Not an approval.`;
+      return `Delivery accepted: sent to run ${delivery.targetRunId}'s worker input. Not an approval. Edit the draft to send again.`;
     case 'failed':
       return `Delivery failed: ${delivery.message} Your draft is kept.`;
   }
@@ -34,6 +34,8 @@ export function FeedbackDelivery({
   onSend: () => void;
 }) {
   const pending = delivery.status === 'pending';
+  // An accepted send stays accepted until the draft changes, so a second tap cannot duplicate it.
+  const sendDisabled = pending || delivery.status === 'accepted';
   const statusStyle =
     delivery.status === 'accepted'
       ? styles.statusAccepted
@@ -59,9 +61,9 @@ export function FeedbackDelivery({
         </Pressable>
         <Pressable
           testID="visual-review-send"
-          accessibilityState={{ disabled: pending }}
-          disabled={pending}
-          style={[styles.button, pending && styles.buttonDisabled]}
+          accessibilityState={{ disabled: sendDisabled }}
+          disabled={sendDisabled}
+          style={[styles.button, sendDisabled && styles.buttonDisabled]}
           onPress={onSend}
         >
           {pending ? <ActivityIndicator /> : <Text style={styles.buttonText}>Send to worker</Text>}

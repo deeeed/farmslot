@@ -32,14 +32,14 @@ export function findVisualReviewSourceArtifacts(
   );
 }
 
-/** Image paths in a source document are relative to the document's own directory. */
+/** Image paths are relative to the source document; `..` may climb to, but not past, the run artifact root. */
 export function visualReviewImageArtifactPath(sourcePath: string, imagePath: string): string {
   const segments = sourcePath.split('/').slice(0, -1);
   for (const segment of imagePath.split('/')) {
     if (segment === '' || segment === '.') continue;
     if (segment === '..') {
       if (segments.length === 0) {
-        throw new Error(`Visual review image ${imagePath} escapes the source directory.`);
+        throw new Error(`Visual review image ${imagePath} escapes the run artifacts.`);
       }
       segments.pop();
       continue;
@@ -176,10 +176,14 @@ export function setVisualReviewSurfaceNote(
 }
 
 /**
- * Worker messages travel as one `tmux send-keys` argument, possibly over SSH; larger feedback
- * is exported as a file instead.
+ * Worker messages travel as one `tmux send-keys -l` argument, which tmux 3.7 refuses at about
+ * 16 KB ("command too long"). The cap leaves room for quoting; larger feedback is exported instead.
  */
-export const VISUAL_REVIEW_MESSAGE_MAX_LENGTH = 32_000;
+export const VISUAL_REVIEW_MESSAGE_MAX_BYTES = 15_000;
+
+export function visualReviewMessageBytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
 
 /**
  * One-line worker input: `terminal.send` submits on Enter, so the document is compact JSON.

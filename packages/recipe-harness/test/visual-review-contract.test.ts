@@ -118,37 +118,56 @@ test('the generated board embeds the same feedback restore used by the contract'
   }
 });
 
-test('reopening drops malformed notes and annotations instead of storing them', () => {
-  const reopened = feedbackDraftFromDocument(readyGateSource, {
+test('reopening refuses malformed or stale feedback instead of storing part of it', () => {
+  const feedback = (annotations: unknown[], extra: Record<string, unknown> = {}) => ({
     version: 1,
     kind: 'visual-review-feedback',
     source: readyGateSource,
-    surfaceNotes: [{ surfaceId: 'capture-ready-gate' }, null],
-    annotations: [
-      { id: 'a', surfaceId: 'capture-ready-diff', captureId: 'ios', shape: 'point', x: 0.2, y: 2 },
-      {
-        id: 'b',
-        surfaceId: 'capture-ready-diff',
-        captureId: 'ios',
-        shape: 'area',
-        x: 0.1,
-        y: 0.1,
-        body: 'no size',
-      },
-      {
-        id: 'c',
-        surfaceId: 'capture-ready-diff',
-        captureId: 'ios',
-        shape: 'point',
-        x: 0.3,
-        y: 0.3,
-        body: 'kept',
-      },
-    ],
+    surfaceNotes: [],
+    annotations,
+    ...extra,
   });
-  assert.deepEqual(reopened.surfaceNotes, {});
+  const point = {
+    id: 'c',
+    surfaceId: 'capture-ready-diff',
+    captureId: 'ios',
+    shape: 'point',
+    x: 0.3,
+    y: 0.3,
+    body: 'kept',
+  };
+  assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point], { surfaceNotes: [{ surfaceId: 'capture-ready-gate' }] }),
+      ),
+    /invalid entries: surfaceNotes\[0\]\. Nothing was opened/u,
+  );
+  assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point, { ...point, id: 'd', shape: 'area', width: 0.8, height: 0.1 }]),
+      ),
+    /invalid entries: annotations\[1\]/u,
+  );
+  assert.throws(
+    () => feedbackDraftFromDocument(readyGateSource, feedback([point, point])),
+    /invalid entries: annotations\[1\]/u,
+  );
+  assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point], {
+          source: { ...readyGateSource, capturedAt: '2026-09-24T00:00:00.000Z' },
+        }),
+      ),
+    /written for the capture of 2026-09-24T00:00:00\.000Z/u,
+  );
   assert.deepEqual(
-    reopened.annotations.map(({ id }) => id),
+    feedbackDraftFromDocument(readyGateSource, feedback([point])).annotations.map(({ id }) => id),
     ['c'],
   );
 });

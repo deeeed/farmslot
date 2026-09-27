@@ -1,5 +1,6 @@
 import {
   createVisualReviewFeedbackDocument,
+  isTerminalRunStatus,
   validateVisualReviewFeedbackDocument,
   validateVisualReviewSourceDocument,
   type VisualReviewFeedbackDocument,
@@ -16,9 +17,10 @@ import {
   removeVisualReviewAnnotation,
   setVisualReviewSurfaceNote,
   updateVisualReviewAnnotation,
-  VISUAL_REVIEW_MESSAGE_MAX_LENGTH,
+  VISUAL_REVIEW_MESSAGE_MAX_BYTES,
   type VisualReviewAnnotationInput,
   visualReviewFeedbackMessage,
+  visualReviewMessageBytes,
   visualReviewImageArtifactPath,
 } from '../../lib/visual-review';
 import type { VisualReviewArtifactRef, VisualReviewGateway } from '../../lib/visual-review-gateway';
@@ -46,6 +48,8 @@ export interface VisualReviewReadyState {
   status: 'ready';
   source: VisualReviewSourceDocument;
   sourceArtifact: VisualReviewArtifactRef;
+  /** The gateway the source was loaded from; sending goes back to that run store only. */
+  gatewayUrl: string;
   /** The run the feedback is about: the source's own run id, else the run hosting it. */
   targetRunId: string;
   surfaceId: string;
@@ -92,12 +96,15 @@ export class VisualReviewController {
   };
 
   /**
-   * Rebinding keeps the draft; a reconnect must not discard review work. Image sources are
-   * rebuilt so they carry the new gateway URL and credentials.
+   * Reconnecting to the gateway the review was loaded from keeps the draft and rebuilds image
+   * sources with the new credentials. Another gateway is another run store, so the review reloads.
+   * Any change drops an in-flight load that belongs to the previous connection.
    */
   setGateway(gateway: VisualReviewGateway | null): void {
     this.gateway = gateway;
-    if (gateway && this.state.status === 'ready') {
+    this.loadGeneration++;
+    if (!gateway) return;
+    if (this.state.status === 'ready' && this.state.gatewayUrl === gateway.url) {
       const { source, sourceArtifact } = this.state;
       this.updateReady((state) => ({
         ...state,
@@ -105,6 +112,7 @@ export class VisualReviewController {
       }));
       return;
     }
+    this.setState({ status: 'loading' });
     void this.load();
   }
 
@@ -229,9 +237,10 @@ export class VisualReviewController {
       return;
     }
     const text = visualReviewFeedbackMessage(document);
-    if (text.length > VISUAL_REVIEW_MESSAGE_MAX_LENGTH) {
+    const bytes = visualReviewMessageBytes(text);
+    if (bytes > VISUAL_REVIEW_MESSAGE_MAX_BYTES) {
       fail(
-        `Feedback is ${text.length} characters; worker messages are limited to ${VISUAL_REVIEW_MESSAGE_MAX_LENGTH}. Export the JSON instead.`,
+        `Feedback is ${bytes} bytes; worker messages are limited to ${VISUAL_REVIEW_MESSAGE_MAX_BYTES}. Export the JSON instead.`,
       );
       return;
     }
@@ -239,6 +248,7 @@ export class VisualReviewController {
       fail('Gateway is not connected.');
       return;
     }
+    const sentDraft = state.draft;
     this.updateReady((current) => ({
       ...current,
       delivery: { status: 'pending', targetRunId },
@@ -246,6 +256,10 @@ export class VisualReviewController {
     try {
       const run = await gateway.getRun(targetRunId);
       if (!run.slotId) throw new Error(`Run ${targetRunId} is not attached to a slot.`);
+      // A finished run's slot may already host another worker; never type into it.
+      if (isTerminalRunStatus(run.status)) {
+        throw new Error(`Run ${targetRunId} is ${run.status}; its worker no longer takes input.`);
+      }
       await gateway.sendWorkerMessage({
         slotId: run.slotId,
         runId: targetRunId,
@@ -257,9 +271,13 @@ export class VisualReviewController {
       fail((error as Error).message);
       return;
     }
+    // Edits made while the send was pending were not in the message the worker received.
     this.updateReady((current) => ({
       ...current,
-      delivery: { status: 'accepted', targetRunId, settledAt: this.now().toISOString() },
+      delivery:
+        current.draft === sentDraft
+          ? { status: 'accepted', targetRunId, settledAt: this.now().toISOString() }
+          : { status: 'idle' },
     }));
   }
 
@@ -305,6 +323,7 @@ export class VisualReviewController {
       status: 'ready',
       source,
       sourceArtifact,
+      gatewayUrl: gateway.url,
       targetRunId: source.runId ?? runId,
       surfaceId: firstSurface.id,
       captureId: firstSurface.captures[0]?.id ?? '',

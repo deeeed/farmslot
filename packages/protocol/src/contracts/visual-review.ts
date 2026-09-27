@@ -173,6 +173,17 @@ function collectSourceErrors(value: unknown, errors: string[], prefix: string): 
       }
       if (!isRecord(capture.image) || !isNonEmptyString(capture.image.path)) {
         errors.push(`${captureAt}.image.path must be a non-empty string`);
+      } else {
+        // Renderers size their canvas from these; zero or negative would divide by nothing.
+        for (const key of ['width', 'height'] as const) {
+          const value = capture.image[key];
+          if (
+            value != null &&
+            !(typeof value === 'number' && Number.isFinite(value) && value > 0)
+          ) {
+            errors.push(`${captureAt}.image.${key} must be a positive number`);
+          }
+        }
       }
     });
   });
