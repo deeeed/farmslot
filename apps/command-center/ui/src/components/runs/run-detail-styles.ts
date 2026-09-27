@@ -231,6 +231,9 @@ export const runDetailStyles = css`
     margin-bottom: ${unsafeCSS(spacing.sm)};
   }
   .evidence-link {
+    background: transparent;
+    font-family: inherit;
+    cursor: pointer;
     color: ${unsafeCSS(colors.accent)};
     text-decoration: none;
     border: 1px solid ${unsafeCSS(colors.accent)}44;
@@ -241,6 +244,12 @@ export const runDetailStyles = css`
   }
   .evidence-link:hover {
     background: ${unsafeCSS(colors.accent)}16;
+  }
+  .output-file-summary {
+    cursor: pointer;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 12px;
+    padding: 4px 0;
   }
   .evidence-empty {
     color: ${unsafeCSS(colors.textMuted)};

@@ -220,24 +220,32 @@ export function runEvidenceSummary(
   artifacts: readonly FamilyObservabilityArtifact[],
 ): RunEvidenceSummary {
   const isReplay =
-    run.completionPolicy === 'artifact-only' || run.lane === 'comparison' || Boolean(run.startRef);
+    run.lane === 'comparison' || Boolean(run.startRef) || Boolean(run.engineState?.evalExperiment);
   const completeStep = run.steps.find((step) => step.name === 'complete');
   const sourceRef = run.startRef?.resolvedSha ?? run.startRef?.requestedRef;
+  const hasOutput = Boolean(run.output);
   return {
-    shouldRender: isReplay || artifacts.length > 0,
+    shouldRender:
+      hasOutput || run.completionPolicy === 'artifact-only' || isReplay || artifacts.length > 0,
     completeStep,
-    title: isReplay ? 'Replay evidence' : 'Run evidence',
-    badge: isReplay ? 'comparison · artifact-only' : 'artifacts',
+    title: isReplay ? 'Replay evidence' : 'Run results',
+    badge: isReplay ? 'comparison · artifact-only' : (run.metrics.outcome ?? run.status),
     status:
       completeStep?.status ??
       (run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'pending'),
-    copy: run.startRef
-      ? `This replay started from ${sourceRef ?? 'the selected ref'} and stopped at artifacts. Prior-run replay comparisons are represented by eval Reference and Candidate packages, not run parentage; no PR was published.`
-      : isReplay
-        ? 'This comparison run stops at artifacts instead of publishing a PR. Use these captured files as the run output evidence.'
-        : 'Final artifacts captured by the worker.',
+    copy: run.output?.workerFinished
+      ? 'The worker has finished. Read its findings and coverage gaps before reviewing the output. Reviewing does not change the verdict or publish anything.'
+      : hasOutput
+        ? 'Files retained from the worker. Execution is still in progress.'
+        : run.startRef
+          ? `This replay started from ${sourceRef ?? 'the selected ref'} and stopped at artifacts. Prior-run replay comparisons are represented by eval Reference and Candidate packages, not run parentage; no PR was published.`
+          : isReplay
+            ? 'This comparison run stops at artifacts instead of publishing a PR. Use these captured files as the run output evidence.'
+            : 'Final artifacts captured by the worker.',
     showEvalPackageHint: Boolean(run.startRef),
-    emptyMessage: 'No artifacts have been captured for this replay yet.',
+    emptyMessage: run.output?.captureError
+      ? `Could not retrieve worker files: ${run.output.captureError}`
+      : 'No output files have been retrieved yet.',
   };
 }
 
@@ -587,22 +595,36 @@ export function currentRunCiStatus(
 
 /**
  * `run.list` leaves large decision payload values out and names them in
- * `payloadTrimmed`; the run page needs those (review markdown, PR package,
- * input snapshot) and gets them from its direct `run.get` copy.
+ * `payloadTrimmed`, and omits the output manifest. The run page gets both
+ * from its direct `run.get` copy.
  */
-export function runHasTrimmedDecisions(run: Pick<Run, 'decisions'>): boolean {
-  return (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0);
+export function runHasTrimmedDetail(run: Pick<Run, 'decisions' | 'output'>): boolean {
+  return (
+    Boolean(run.output?.artifactManifestOmitted) ||
+    (run.decisions ?? []).some((decision) => (decision.payloadTrimmed?.length ?? 0) > 0)
+  );
 }
 
 /**
  * The shared (list) run drives status and steps; each trimmed decision takes
  * its payload from the direct copy of the same decision when one is present.
  */
-export function mergeTrimmedDecisions(shared: Run, direct: Run | null): Run {
-  if (!direct || direct.id !== shared.id || !runHasTrimmedDecisions(shared)) return shared;
+export function mergeTrimmedRunDetail(shared: Run, direct: Run | null): Run {
+  if (!direct || direct.id !== shared.id || !runHasTrimmedDetail(shared)) return shared;
   const directById = new Map(direct.decisions.map((decision) => [decision.id, decision]));
   return {
     ...shared,
+    output:
+      shared.output?.artifactManifestOmitted &&
+      direct.output &&
+      !direct.output.artifactManifestOmitted &&
+      shared.output.manifestDigest === direct.output.manifestDigest
+        ? {
+            ...shared.output,
+            artifactManifest: direct.output.artifactManifest,
+            artifactManifestOmitted: false,
+          }
+        : shared.output,
     decisions: shared.decisions.map((decision) => {
       if (!decision.payloadTrimmed?.length) return decision;
       const full = directById.get(decision.id);
@@ -623,14 +645,14 @@ export const TRIMMED_RUN_FETCH_RETRY_MS = 5_000;
  * good; an in-flight fetch is never doubled.
  */
 export function shouldFetchTrimmedRun(params: {
-  sharedRun: Pick<Run, 'decisions' | 'updatedAt'> | null;
+  sharedRun: Pick<Run, 'decisions' | 'output' | 'updatedAt'> | null;
   directRun: Pick<Run, 'updatedAt'> | null;
   refreshing: boolean;
   failedAt: number | null;
   now: number;
 }): boolean {
   if (!params.sharedRun || params.refreshing) return false;
-  if (!runHasTrimmedDecisions(params.sharedRun)) return false;
+  if (!runHasTrimmedDetail(params.sharedRun)) return false;
   if (params.failedAt !== null && params.now - params.failedAt < TRIMMED_RUN_FETCH_RETRY_MS) {
     return false;
   }

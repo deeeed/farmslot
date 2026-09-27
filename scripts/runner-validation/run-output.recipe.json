@@ -1,0 +1,38 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Retain and review run output",
+  "description": "On an isolated gateway, seed a finished artifact-only run with a real worker task directory and report. Set FARMSLOT_GATEWAY, FARMSLOT_OUTPUT_RUN_ID and FARMSLOT_OUTPUT_REPORT_SHA256 from the original report bytes. Run before and after acknowledging through Command Center. No project or QA profile is assumed. Negative control: use a different expected hash and confirm the report assertion fails. For the browser node, set FARMSLOT_CDP_PORT and FARMSLOT_OUTPUT_ROUTE to the isolated run route including its unique query. Reload that page before running; after acknowledgement it must retain files without a resource-transition wait. Set FARMSLOT_OUTPUT_FAMILY_ROUTE to the family route with the selected run. Set FARMSLOT_OUTPUT_REPORT_TEXT to expected report text and FARMSLOT_OUTPUT_LINKED_PATH to an artifact linked from the report; start with the lightbox closed.",
+  "workflow": {
+    "entry": "refresh-output",
+    "nodes": {
+      "refresh-output": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/run-output.mjs",
+        "intent": "Prove run.refreshMirror retains indexed output and a review decision while run status, verdict, execution steps and acknowledgement remain unchanged. Open the report in Command Center and follow a nested artifact link; acknowledge only on the isolated copy. Re-run to verify the acknowledgement survives refresh.",
+        "next": "browser-output"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "browser-output": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval \"$FARMSLOT_OUTPUT_ROUTE\" 'const root = document.querySelector(\"run-detail\")?.shadowRoot; const files = root?.querySelector(\"[data-testid=run-output-files] summary\")?.textContent; if (!files || !/Browse files \\([1-9][0-9]*\\)/.test(files)) throw new Error(\"Retained files missing after navigation\"); if (root.textContent.includes(\"not finished reconciling your last resolution\")) throw new Error(\"Output review incorrectly waits for a resource transition\"); return { files, resourceWait: false };' ",
+        "intent": "Verify the normal detail page hydrates its omitted file manifest after reload, and output acknowledgement does not trigger a resource transition. This reads the real DOM without injecting state.",
+        "next": "family-files"
+      },
+      "family-files": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/cdp.mjs eval \"$FARMSLOT_OUTPUT_FAMILY_ROUTE\" 'const root = document.querySelector(\"family-observability\")?.shadowRoot; const files = root?.querySelector(\"[data-testid=family-browse-files] summary\")?.textContent; if (!files || !/Browse files \\([1-9][0-9]*\\)/.test(files)) throw new Error(\"Family files missing\"); if (!root.querySelector(\"[data-testid=family-read-report]\")) throw new Error(\"Family report link missing\"); return { files, reportAvailable: true };' ",
+        "intent": "Prove the family page exposes the selected run files returned by family.observability.get. Click Read report and a nested evidence link in the real browser to verify file content renders.",
+        "next": "family-report-links"
+      },
+      "family-report-links": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/family-output-browser.mjs",
+        "intent": "Use real CDP clicks to open the family report, assert its expected content, follow a nested artifact link and assert the selected file. Negative control: supply incorrect expected report text and confirm the assertion fails.",
+        "next": "done"
+      }
+    }
+  }
+}

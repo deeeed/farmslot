@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show run results, reports and browsable files in run details and family view before worker recovery; distinguish output review from comparison runs and publication.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.17.0 - 2026-09-27

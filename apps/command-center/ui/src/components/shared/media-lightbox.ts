@@ -10,6 +10,10 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import '../diff-viewer/diff-review.js';
 
 import { type ArtifactKind, artifactKind } from '../../utils/artifact-kind.js';
+import {
+  buildArtifactUrlResolver,
+  rewriteMarkdownArtifactUrls,
+} from '../../utils/artifact-markdown.js';
 import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 
@@ -849,10 +853,23 @@ export class MediaLightbox extends MediaLightboxState {
         return r.text();
       })
       .then((text) => {
+        const document = this.items.find((item) => item.url === url);
+        const byPath = new Map(this.items.map((item) => [item.path, item.url]));
+        const content =
+          kind === 'markdown'
+            ? rewriteMarkdownArtifactUrls(
+                text,
+                buildArtifactUrlResolver(
+                  byPath.keys(),
+                  (file) => byPath.get(file)!,
+                  document?.path,
+                ),
+              )
+            : text;
         putCapped(
           this._mdCache,
           url,
-          { status: 'ok', data: formatLightboxTextPreview(kind, text) },
+          { status: 'ok', data: formatLightboxTextPreview(kind, content) },
           MD_CACHE_LIMIT,
         );
         this._mdCacheVersion += 1;
@@ -878,7 +895,27 @@ export class MediaLightbox extends MediaLightboxState {
             ? html`<div class="ml-fallback">Loading…</div>`
             : entry.status === 'err'
               ? html`<div class="ml-fallback ml-broken">Failed to load: ${entry.error}</div>`
-              : html`<div class="ml-md-content">${unsafeHTML(entry.data)}</div>`}
+              : html`<div
+                  class="ml-md-content"
+                  @click=${(event: MouseEvent) => {
+                    const anchor = (event.target as Element).closest('a');
+                    if (!anchor) return;
+                    const index = this.items.findIndex(
+                      (candidate) => new URL(candidate.url, location.href).href === anchor.href,
+                    );
+                    if (index < 0) return;
+                    event.preventDefault();
+                    this.dispatchEvent(
+                      new CustomEvent('lightbox-navigate', {
+                        detail: { index },
+                        bubbles: true,
+                        composed: true,
+                      }),
+                    );
+                  }}
+                >
+                  ${unsafeHTML(entry.data)}
+                </div>`}
         </div>
       </div>
     `;

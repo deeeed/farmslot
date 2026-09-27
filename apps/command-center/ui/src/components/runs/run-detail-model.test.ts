@@ -26,7 +26,7 @@ import {
   isInteractiveCompletionAwaitingOperator,
   isLiveTimeoutPrStatusAllGreen,
   isTaskProgressRunActive,
-  mergeTrimmedDecisions,
+  mergeTrimmedRunDetail,
   pendingCITimeoutDecision,
   readCiWatchOutputs,
   reviewTerminalUnavailableReason,
@@ -35,7 +35,7 @@ import {
   runEvidenceLightboxItems,
   runEvidenceSummary,
   runFamilyPrStatus,
-  runHasTrimmedDecisions,
+  runHasTrimmedDetail,
   shouldAcceptTaskProgressUpdate,
   shouldFetchTrimmedRun,
   shouldShowRunCiStatus,
@@ -230,6 +230,24 @@ test('runEvidenceSummary renders artifact-only replay copy and complete-step sta
 test('runEvidenceSummary hides non-replay runs without collected artifacts', () => {
   assert.equal(runEvidenceSummary(makeRun({ status: 'done' }), []).shouldRender, false);
   assert.equal(runEvidenceSummary(makeRun({ status: 'failed' }), [artifact]).status, 'failed');
+});
+
+test('artifact-only output is a run result, not a comparison or a passing verdict', () => {
+  const run = makeRun({ completionPolicy: 'artifact-only', status: 'blocked' });
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    artifactManifest: [],
+    manifestDigest: 'digest',
+    reportPath: 'artifacts/report.md',
+  };
+  run.metrics.outcome = 'partial';
+  const summary = runEvidenceSummary(run, []);
+  assert.equal(summary.title, 'Run results');
+  assert.equal(summary.badge, 'partial');
+  assert.equal(summary.shouldRender, true);
+  assert.doesNotMatch(summary.copy, /comparison|replay/i);
+  assert.match(summary.copy, /does not change the verdict/);
 });
 
 test('runEvidenceLightboxItems derives stable captions from artifact provenance', () => {
@@ -610,9 +628,9 @@ test('a list row with trimmed decision payloads takes them from the direct run c
       decision('d2', { kind: 'ready' }),
     ],
   } as unknown as Run;
-  assert.equal(runHasTrimmedDecisions(shared), true);
-  assert.equal(runHasTrimmedDecisions(direct), false);
-  const merged = mergeTrimmedDecisions(shared, direct);
+  assert.equal(runHasTrimmedDetail(shared), true);
+  assert.equal(runHasTrimmedDetail(direct), false);
+  const merged = mergeTrimmedRunDetail(shared, direct);
   assert.equal(
     (merged.decisions[0].payload as unknown as Record<string, unknown>).reviewMd,
     '# full',
@@ -621,8 +639,42 @@ test('a list row with trimmed decision payloads takes them from the direct run c
   assert.equal(merged.decisions[1], shared.decisions[1], 'untrimmed decisions stay the list copy');
   assert.equal(merged.status, 'blocked', 'status and steps come from the list row');
   // No direct copy (or a different run) leaves the row as-is.
-  assert.equal(mergeTrimmedDecisions(shared, null), shared);
-  assert.equal(mergeTrimmedDecisions(shared, { ...direct, id: 'other' } as Run), shared);
+  assert.equal(mergeTrimmedRunDetail(shared, null), shared);
+  assert.equal(mergeTrimmedRunDetail(shared, { ...direct, id: 'other' } as Run), shared);
+});
+
+test('output-only list projections hydrate and retain only the matching manifest', () => {
+  const direct = makeRun({
+    output: {
+      workerFinished: true,
+      capturedAt: 'now',
+      manifestDigest: 'first',
+      reportPath: 'artifacts/report.md',
+      artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report', sha256: 'hash' }],
+    },
+  });
+  const shared = {
+    ...direct,
+    output: { ...direct.output!, artifactManifest: [], artifactManifestOmitted: true },
+  };
+  assert.equal(runHasTrimmedDetail(shared), true);
+  assert.equal(
+    shouldFetchTrimmedRun({
+      sharedRun: shared,
+      directRun: null,
+      refreshing: false,
+      failedAt: null,
+      now: 1,
+    }),
+    true,
+  );
+  assert.deepEqual(
+    mergeTrimmedRunDetail(shared, direct).output?.artifactManifest,
+    direct.output?.artifactManifest,
+  );
+  assert.equal(mergeTrimmedRunDetail(shared, direct).output?.artifactManifestOmitted, false);
+  const changed = { ...shared, output: { ...shared.output, manifestDigest: 'next' } };
+  assert.deepEqual(mergeTrimmedRunDetail(changed, direct).output?.artifactManifest, []);
 });
 
 test('a trimmed row is fetched once, again when it moves on, and retried after a failure window', () => {

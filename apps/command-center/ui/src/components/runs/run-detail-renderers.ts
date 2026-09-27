@@ -201,6 +201,9 @@ export interface RunEvidenceRenderContext {
   ) => void;
   closeEvidenceLightbox: () => void;
   navigateEvidenceLightbox: (index: number) => void;
+  refreshOutput?: () => void;
+  refreshingOutput?: boolean;
+  outputError?: string;
 }
 
 export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
@@ -209,9 +212,16 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runEvidenceSummary(run, artifacts);
   if (!evidence.shouldRender) return nothing;
+  const openArtifact = (file: string) => {
+    const index = artifacts.findIndex((artifact) => artifact.path === file);
+    if (index >= 0)
+      ctx.onEvidenceArtifactClick(
+        new CustomEvent('step-artifact-click', { detail: { artifacts, index } }),
+      );
+  };
 
   return html`
-    <div class="evidence-card">
+    <div class="evidence-card" data-testid="run-results">
       <div class="evidence-head">
         <div>
           <div class="evidence-title">${evidence.title}</div>
@@ -219,7 +229,33 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
         </div>
         <span class="evidence-badge">${evidence.badge}</span>
       </div>
+      ${run.error ? html`<p role="status">${run.error}</p>` : nothing}
       <div class="evidence-actions">
+        ${run.output?.reportPath
+          ? html`<button
+              class="evidence-link"
+              @click=${() => openArtifact(run.output!.reportPath!)}
+            >
+              Read report
+            </button>`
+          : nothing}
+        ${artifacts.find((artifact) => artifact.path === 'artifacts/retrospective.md')
+          ? html`<button
+              class="evidence-link"
+              @click=${() => openArtifact('artifacts/retrospective.md')}
+            >
+              Read retrospective
+            </button>`
+          : nothing}
+        ${ctx.refreshOutput
+          ? html`<button
+              class="evidence-link"
+              ?disabled=${ctx.refreshingOutput}
+              @click=${ctx.refreshOutput}
+            >
+              ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh output'}
+            </button>`
+          : nothing}
         ${evidence.showEvalPackageHint
           ? html`
               <span class="evidence-empty"
@@ -230,25 +266,29 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
         <a class="evidence-link" href=${`#family/${run.familyId}?run=${encodeURIComponent(run.id)}`}
           >Open family evidence</a
         >
-        ${evidence.completeStep
+        ${evidence.completeStep && !run.output
           ? html`<a class="evidence-link" href=${`#run/${run.id}?step=complete`}
               >Open complete step</a
             >`
           : nothing}
       </div>
+      ${ctx.outputError ? html`<p role="alert">${ctx.outputError}</p>` : nothing}
       ${artifacts.length
         ? html`
-            <step-artifacts
-              stepName="run evidence"
-              status=${evidence.status}
-              .durationMs=${evidence.completeStep?.durationMs}
-              .artifacts=${artifacts}
-              .artifactUrl=${ctx.artifactUrl}
-              default-open
-              @step-artifact-click=${(
-                event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
-              ) => ctx.onEvidenceArtifactClick(event)}
-            ></step-artifacts>
+            <details data-testid="run-output-files">
+              <summary class="output-file-summary">Browse files (${artifacts.length})</summary>
+              <step-artifacts
+                stepName="Output files"
+                status=${evidence.status}
+                .durationMs=${evidence.completeStep?.durationMs}
+                .artifacts=${artifacts}
+                .artifactUrl=${ctx.artifactUrl}
+                default-open
+                @step-artifact-click=${(
+                  event: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
+                ) => ctx.onEvidenceArtifactClick(event)}
+              ></step-artifacts>
+            </details>
           `
         : html`<div class="evidence-empty">${evidence.emptyMessage}</div>`}
       ${renderEvidenceLightbox(ctx)}
@@ -261,7 +301,7 @@ function renderEvidenceLightbox(ctx: RunEvidenceRenderContext) {
     .items=${ctx.evidenceLightboxItems}
     .open=${ctx.evidenceLightboxOpen}
     .selectedIndex=${ctx.evidenceLightboxIndex}
-    scopeLabel="Replay evidence"
+    scopeLabel="Run output"
     @lightbox-close=${() => ctx.closeEvidenceLightbox()}
     @lightbox-navigate=${(event: CustomEvent) => ctx.navigateEvidenceLightbox(event.detail.index)}
   ></media-lightbox>`;
@@ -641,14 +681,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             : nothing}
         </div>`
       : nothing}
-    ${r.reviewWorkspaceTarget ? ctx._renderRunEvidence(r) : nothing}
+    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+      ? ctx._renderRunEvidence(r)
+      : nothing}
+    ${r.output ? ctx.renderGateSection(r) : nothing}
     ${renderRunReviewResult(
       r,
       () => void ctx._onReplayStep('human-gate'),
       actionsBlocked || ctx._rereviewInFlight,
       () => void ctx._rereviewLatestHead(r),
     )}
-    ${r.reviewWorkspace ? ctx.renderGateSection(r) : nothing}
+    ${r.reviewWorkspace && !r.output ? ctx.renderGateSection(r) : nothing}
     ${r.qa
       ? html`<p data-testid="run-qa-profile">QA profile: <strong>${r.qa.profile.title}</strong></p>`
       : nothing}
@@ -1070,7 +1113,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : ''}
     </div>
     ${ctx._renderInteractivePackets(r)}
-    ${r.reviewWorkspaceTarget ? nothing : ctx._renderRunEvidence(r)}
+    ${r.reviewWorkspaceTarget || r.output || r.completionPolicy === 'artifact-only'
+      ? nothing
+      : ctx._renderRunEvidence(r)}
     ${boundSlotId || (r.reviewWorkspace && !terminalUnavailable)
       ? html`
           <button
@@ -1101,16 +1146,23 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       : r.reviewWorkspace
         ? html`<p data-testid="review-terminal-unavailable">${terminalUnavailable}</p>`
         : nothing}
-    ${r.reviewWorkspace ? nothing : ctx.renderGateSection(r)}
+    ${r.reviewWorkspace || r.output ? nothing : ctx.renderGateSection(r)}
     ${isRecoverableBlockedWorkerRun(r)
-      ? html`<blocked-run-recovery
-          .run=${r}
-          .disabled=${actionsBlocked}
-          .replayMonitor=${() => ctx._onReplayStep('monitor')}
-          .restartWorker=${() => ctx._onReplayStep('find-slot')}
-        ></blocked-run-recovery>`
+      ? html`<details>
+          <summary class="output-file-summary">Worker recovery (advanced)</summary>
+          <p class="evidence-copy">
+            Use this only to resume unfinished execution. It does not review the report or validate
+            missing checks.
+          </p>
+          <blocked-run-recovery
+            .run=${r}
+            .disabled=${actionsBlocked}
+            .replayMonitor=${() => ctx._onReplayStep('monitor')}
+            .restartWorker=${() => ctx._onReplayStep('find-slot')}
+          ></blocked-run-recovery>
+        </details>`
       : nothing}
-    ${r.error
+    ${r.error && !r.output
       ? html`
           <div class="error-box">
             <div>${r.error}</div>

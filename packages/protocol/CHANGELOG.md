@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Describe retained run output and digest-bound output-review decisions independently of publication.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.31.0 - 2026-09-27

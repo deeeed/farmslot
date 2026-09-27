@@ -41,6 +41,25 @@ import {
   summarizeEligibilityReasons,
 } from './run-utils.js';
 
+test('retained output exposes nested files independently of a skipped completion step', () => {
+  const run = makeRun({ status: 'blocked', steps: [{ name: 'complete', status: 'skipped' }] });
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    manifestDigest: 'digest',
+    reportPath: 'artifacts/report.md',
+    artifactManifest: [
+      { path: 'artifacts/report.md', purpose: 'report' },
+      { path: 'artifacts/case-one/trace.json', purpose: 'trace' },
+      { path: 'artifacts/case-two/trace.json', purpose: 'trace' },
+    ],
+  };
+  assert.deepEqual(
+    collectRunEvidenceArtifacts(run).map((artifact) => artifact.path),
+    ['artifacts/report.md', 'artifacts/case-one/trace.json', 'artifacts/case-two/trace.json'],
+  );
+});
+
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
     id: overrides.id ?? 'run-1',

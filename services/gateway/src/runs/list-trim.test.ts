@@ -67,3 +67,22 @@ test('the limit is measured in UTF-8 bytes, not string length', () => {
     undefined,
   );
 });
+
+test('run lists omit output file manifests without changing the retained detail', () => {
+  const run = {
+    id: 'output',
+    decisions: [],
+    output: {
+      workerFinished: true,
+      capturedAt: 'now',
+      manifestDigest: 'hash',
+      reportPath: 'artifacts/report.md',
+      artifactManifest: [{ path: 'artifacts/report.md', purpose: 'report' }],
+    },
+  } as unknown as Run;
+  const listed = trimRunForList(run);
+  assert.equal(listed.output?.reportPath, run.output?.reportPath);
+  assert.equal(listed.output?.artifactManifestOmitted, true);
+  assert.deepEqual(listed.output?.artifactManifest, []);
+  assert.equal(run.output?.artifactManifest.length, 1);
+});

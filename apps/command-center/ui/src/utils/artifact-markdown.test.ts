@@ -38,3 +38,15 @@ test('rewriteMarkdownArtifactUrls refuses traversal and unknown relative URLs', 
 
   assert.equal(rewriteMarkdownArtifactUrls(markdown, resolveUrl), markdown);
 });
+
+test('report links resolve against the document directory, never an ambiguous basename', () => {
+  const resolveUrl = buildArtifactUrlResolver(
+    ['artifacts/report.md', 'artifacts/first/trace.json', 'artifacts/second/trace.json'],
+    (file) => `/files/${file}`,
+    'artifacts/report.md',
+  );
+  assert.equal(resolveUrl('second/trace.json'), '/files/artifacts/second/trace.json');
+  assert.equal(resolveUrl('trace.json'), null);
+  assert.equal(resolveUrl('missing/trace.json'), null);
+  assert.equal(resolveUrl('../TASK.md'), null);
+});

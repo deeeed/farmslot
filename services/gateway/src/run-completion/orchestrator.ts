@@ -860,8 +860,8 @@ export async function runCompletionPipeline(
   // 0. Copy artifacts from worker repo FIRST (skip for review-pr — already done in review-gate).
   //    Best-effort: completion proceeds even if the mirror copy fails so the
   //    rest of the pipeline (cost extraction, report generation) is not
-  //    blocked. The explicit user-triggered path (run.refreshMirror) does NOT
-  //    swallow errors — see runRefreshMirror in methods/run.ts.
+  //    blocked. The explicit run.refreshMirror capture returns a failure to the
+  //    client instead of continuing when the mirror is incomplete.
   if (!isReviewPR) {
     try {
       const copied = await refreshArtifactMirror(run);

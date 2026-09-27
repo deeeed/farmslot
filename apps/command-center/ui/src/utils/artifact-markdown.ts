@@ -11,19 +11,25 @@ function normalizeArtifactCandidate(rawUrl: string): string | null {
 export function buildArtifactUrlResolver(
   artifactPaths: Iterable<string>,
   toUrl: (artifactPath: string) => string,
+  documentPath?: string,
 ): (rawUrl: string) => string | null {
   const byPath = new Map<string, string>();
+  const byBasename = new Map<string, string | null>();
   for (const artifactPath of artifactPaths) {
     const normalized = artifactPath.replace(/\\/g, '/').replace(/^\.\/+/, '');
     byPath.set(normalized, artifactPath);
     const basename = normalized.split('/').pop();
-    if (basename && !byPath.has(basename)) byPath.set(basename, artifactPath);
+    if (basename) byBasename.set(basename, byBasename.has(basename) ? null : artifactPath);
   }
 
   return (rawUrl: string) => {
     const candidate = normalizeArtifactCandidate(rawUrl);
     if (!candidate) return null;
-    const artifactPath = byPath.get(candidate) ?? byPath.get(candidate.split('/').pop() ?? '');
+    const directory = documentPath?.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
+    const artifactPath =
+      (directory ? byPath.get(`${directory}/${candidate}`) : undefined) ??
+      byPath.get(candidate) ??
+      (!candidate.includes('/') ? byBasename.get(candidate) : undefined);
     return artifactPath ? toUrl(artifactPath) : null;
   };
 }

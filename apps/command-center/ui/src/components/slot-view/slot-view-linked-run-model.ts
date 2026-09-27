@@ -1,6 +1,6 @@
 import { isTerminalRunStatus, type Run, type RunStatus } from '@farmslot/protocol';
 
-import { runHasTrimmedDecisions } from '../runs/run-detail-model.js';
+import { runHasTrimmedDetail } from '../runs/run-detail-model.js';
 
 import { deriveSlotViewAgentContexts } from './slot-view-agent-contexts.js';
 
@@ -120,5 +120,5 @@ export function slotViewNeedsDirectRunFetch(
   requestedContextId: string | null = null,
 ): boolean {
   if (!requestedRunId) return false;
-  return Boolean(requestedContextId) || !cachedRun || runHasTrimmedDecisions(cachedRun);
+  return Boolean(requestedContextId) || !cachedRun || runHasTrimmedDetail(cachedRun);
 }
