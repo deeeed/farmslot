@@ -15,6 +15,8 @@ test('Farmslot Farm keeps gateway quality separate from worker evidence', () => 
     ),
   );
   const contract = resolveWorkerTerminalContract(project.worker_terminal, 'fix-bug');
+  assert.equal(contract.whenPresent.length, 1);
+  assert.equal(contract.whenPresent[0].path, 'artifacts/recipe.json');
   assert.notEqual(contract.whenPresent[0].requireRecipeQuality, true);
   assert.equal(contract.whenPresent[0].requireRecipeCoverage, true);
   assert.deepEqual(contract.whenPresent[0].alsoRequire, [
@@ -25,7 +27,7 @@ test('Farmslot Farm keeps gateway quality separate from worker evidence', () => 
   assert.deepEqual(contract.acceptance, { require: true });
 });
 
-test('other projects retain explicit worker-authored quality requirements', () => {
+test('resolver preserves explicit worker-authored quality requirements', () => {
   const config = {
     acceptance: { require: true },
     whenPresent: [
