@@ -147,6 +147,17 @@ async function freePort() {
   return address.port;
 }
 
+function preparationRun(entry) {
+  return {
+    ...blockedRun(entry.runId, entry.slotId, 'pr-complete', true),
+    ticketOrPr: 'deeeed/farmslot#721',
+    prNumber: 721,
+    parentRunId: lostRunId,
+    prepareProfile: 'attach',
+    engineState: { flags: { skipPrepare: true } },
+  };
+}
+
 async function startGateway(port, env) {
   const processHandle = spawn(
     process.execPath,
@@ -398,12 +409,7 @@ try {
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
   }
   for (const entry of preparationCases) {
-    const run = blockedRun(entry.runId, entry.slotId, 'pr-complete', true);
-    run.ticketOrPr = 'deeeed/farmslot#721';
-    run.prNumber = 721;
-    run.parentRunId = lostRunId;
-    run.prepareProfile = 'attach';
-    run.engineState = { flags: { skipPrepare: true } };
+    const run = preparationRun(entry);
     writeJson(path.join(root, '.runs', `${run.id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable preparation recovery\n');
@@ -534,7 +540,7 @@ try {
   assert.equal(rpc('fleet.status', {}).fleet.checkedAt, initialFleetCheckedAt);
   assert.equal(rpc('run.get', { runId }).run.status, 'blocked');
 
-  for (const entry of preparationCases) {
+  const replayPreparation = (entry) => {
     if (entry.name === 'activation') {
       rpc('run.activateOnSlot', {
         runId: entry.runId,
@@ -552,6 +558,9 @@ try {
         ...(entry.name === 'explicit-skip' ? { skipPrepare: true } : {}),
       });
     }
+  };
+  for (const entry of preparationCases) {
+    replayPreparation(entry);
     const recovered = rpc('run.get', { runId: entry.runId }).run;
     assert.equal(recovered.status, 'preparing');
     assert.equal(recovered.prepareProfile, 'attach');
@@ -865,6 +874,9 @@ try {
   });
   assert.equal(restartRelease.ok, true, JSON.stringify(restartRelease));
   await stopGateway();
+  for (const entry of preparationCases) {
+    writeJson(path.join(root, '.runs', `${entry.runId}.json`), preparationRun(entry));
+  }
   writeJson(
     path.join(root, '.runs', `${successRunId}.json`),
     blockedRun(
@@ -877,7 +889,16 @@ try {
   );
   writeJson(path.join(root, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
-    slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId }],
+    slots: [
+      { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId },
+      ...preparationCases.map((entry) => ({
+        slot: entry.slotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: entry.runId,
+      })),
+    ],
   });
   execFileSync('tmux', ['new-session', '-d', '-s', slotId, '-c', repo, 'sleep 300']);
   workerSession = true;
@@ -997,15 +1018,7 @@ try {
   writeFileSync(preparationMarker, '');
   for (const entry of preparationCases) {
     const markerBefore = readFileSync(preparationMarker, 'utf8');
-    rpc('run.replayStep', {
-      runId: entry.runId,
-      stepName: 'prepare',
-      ...(entry.name === 'implicit-reuse' ? {} : { prepareProfile: 'attach' }),
-      ...(entry.name === 'activation' || entry.name === 'explicit-prepare'
-        ? { skipPrepare: false }
-        : {}),
-      ...(entry.name === 'explicit-skip' ? { skipPrepare: true } : {}),
-    });
+    replayPreparation(entry);
     let prepared;
     for (let attempt = 0; attempt < 100; attempt++) {
       prepared = rpc('run.get', { runId: entry.runId }).run.steps.find(
@@ -1055,6 +1068,8 @@ try {
   throw error;
 } finally {
   await stopGateway();
+  if (logFd !== undefined) closeSync(logFd);
+  rmSync(temporaryRoot, { recursive: true, force: true });
   if (workerSession) execFileSync('tmux', ['kill-session', '-t', slotId]);
   if (rollbackWorkerSession) execFileSync('tmux', ['kill-session', '-t', rollbackSlotId]);
   for (const entry of preparationCases) {
@@ -1063,6 +1078,4 @@ try {
     assert.ok(session.status === 0 || session.status === 1);
     if (session.status === 0) execFileSync('tmux', ['kill-session', '-t', `=${entry.slotId}`]);
   }
-  if (logFd !== undefined) closeSync(logFd);
-  rmSync(temporaryRoot, { recursive: true, force: true });
 }

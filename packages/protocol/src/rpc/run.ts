@@ -336,9 +336,9 @@ export interface RunReplayStepParams {
   runner?: string;
   /** Model paired with `runner`; defaults to that runner's configured default when omitted. */
   model?: string;
-  /** True skips preparation; false overrides retained warm reuse and forces preparation. */
+  /** True skips preparation without health gating (operator-owned state, ADR-037 §5); false forces preparation over retained warm reuse. */
   skipPrepare?: boolean;
-  /** Persist and apply this profile on replay unless skipPrepare is true; implicit follow-ups still reuse the warm slot. */
+  /** Persist and apply this profile unless skipPrepare is true. A later chained replay setting neither field reuses the warm slot. */
   prepareProfile?: string;
   /** Explicitly start a fresh native task, or abandon a retained terminal handoff. Dispatch only. */
   freshDispatch?: boolean;
