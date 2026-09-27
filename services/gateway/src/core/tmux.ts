@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import type { ExecResult } from '@farmslot/protocol';
@@ -102,6 +103,81 @@ export function buildDispatchRoleShellCommand(remoteRepo: string): string {
     'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
     'exec "${shell:-/bin/sh}"',
   ].join(' && ');
+}
+
+const pasteQueues = new Map<string, Promise<void>>();
+
+function checkPasteResult(result: ExecResult, operation: string): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `tmux ${operation} failed: ${result.stderr?.trim() || result.stdout?.trim() || `exit ${result.exitCode}`}`,
+    );
+  }
+}
+
+export async function pasteTmuxText(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  text: string,
+  options: { submitKey?: 'Enter' | 'C-m'; execute?: typeof execOnSlot } = {},
+): Promise<void> {
+  const execute = options.execute ?? execOnSlot;
+  const deadline = Date.now() + 20_000;
+  const command = (body: string) => execute(vars, tmuxShellSnippet(body), { timeout: 5000 });
+  const resolved = await command(`display-message -p -t ${shellQuote(target)} '#{pane_id}'`);
+  checkPasteResult(resolved, `resolve pane ${target}`);
+  const pane = resolved.stdout.trim();
+  if (!/^%\d+$/u.test(pane)) throw new Error(`tmux target ${target} did not resolve to one pane`);
+  const key = JSON.stringify([vars.machine, pane]);
+  const previous = pasteQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  pasteQueues.set(key, current);
+  await previous;
+  const bufferName = `farmslot-paste-${randomUUID()}`;
+  let bufferMayExist = false;
+  try {
+    if (Date.now() >= deadline)
+      throw new Error(`tmux paste to ${target} timed out before delivery`);
+    if (text) {
+      bufferMayExist = true;
+      const write = await command(`set-buffer -b ${shellQuote(bufferName)} -- ${shellQuote(text)}`);
+      checkPasteResult(write, `set-buffer for ${pane}`);
+      const paste = await command(
+        `paste-buffer -d -p -b ${shellQuote(bufferName)} -t ${shellQuote(pane)}`,
+      );
+      checkPasteResult(paste, `paste-buffer to ${pane}`);
+      bufferMayExist = false;
+    }
+    if (options.submitKey) {
+      const submit = await command(`send-keys -t ${shellQuote(pane)} ${options.submitKey}`);
+      checkPasteResult(submit, `submit to ${pane}`);
+    }
+  } catch (failure) {
+    if (bufferMayExist) {
+      try {
+        const cleanup = await command(`delete-buffer -b ${shellQuote(bufferName)}`);
+        if (cleanup.exitCode !== 0) {
+          const remaining = await command("list-buffers -F '#{buffer_name}'");
+          checkPasteResult(remaining, 'inspect paste buffer cleanup');
+          if (remaining.stdout.split('\n').includes(bufferName)) {
+            checkPasteResult(cleanup, `delete-buffer ${bufferName}`);
+          }
+        }
+      } catch (cleanupFailure) {
+        throw new AggregateError(
+          [failure, cleanupFailure],
+          `tmux paste to ${pane} failed and buffer cleanup failed`,
+        );
+      }
+    }
+    throw failure;
+  } finally {
+    release();
+    if (pasteQueues.get(key) === current) pasteQueues.delete(key);
+  }
 }
 
 export function parseTmuxKeys(keys: string): string[] {

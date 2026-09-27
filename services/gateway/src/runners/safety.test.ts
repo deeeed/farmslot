@@ -367,6 +367,116 @@ describe('tmux nudge launch policy', () => {
     assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', undefined), true);
     assert.equal(runnerSupportsTmuxNudgesForLaunch('codex', undefined), true);
   });
+
+  it('scopes print flags to the runner argv, not observability setup', () => {
+    const command = buildLaunchCommand(
+      makeVars({ dispatchCmd: 'cd {repo} && {claude_path}' }),
+      'claude',
+      'opus',
+      'Read TASK.md',
+      { claudeUsesDispatchCmd: true, runtimeDir: 'temp/recipe/runtime' },
+    );
+    assert.match(command, /mkdir -p/);
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('claude', command), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', command), true);
+  });
+
+  it('ignores setup and suffix flags, plus quoted prompt content', () => {
+    const command =
+      "mkdir -p /tmp/setup && echo 'claude --print' && env TOOL=1 '/usr/bin/claude' 'Please inspect mkdir -p and --print' ; mkdir -p /tmp/cleanup";
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('claude', command), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', command), true);
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('claude', "echo 'claude --print'"), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', "echo 'claude --print'"), false);
+  });
+
+  it('recognizes print flags on quoted binaries and runner-owned node entrypoints', () => {
+    for (const command of [
+      "exec env TOOL=1 '/usr/local/bin/claude' -p 'Read TASK.md'",
+      "node '/opt/node_modules/@anthropic-ai/claude-code/cli.js' --print 'Read TASK.md'",
+      "'/opt/cursor-agent' --print 'Read TASK.md'",
+      "node '/opt/cursor-agent/cli.js' --print 'Read TASK.md'",
+    ]) {
+      const runner = command.includes('cursor-agent') ? 'cursor' : 'claude';
+      assert.equal(runnerLaunchCommandUsesHeadlessPrint(runner, command), true, command);
+      assert.equal(runnerSupportsTmuxNudgesForLaunch(runner, command), false, command);
+    }
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('claude', 'claude -- --print'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude -- --print'), true);
+    assert.equal(
+      runnerLaunchCommandUsesHeadlessPrint('claude', 'mkdir -p x && claude --print'),
+      true,
+    );
+  });
+
+  it('keeps print-mode safety runner-specific', () => {
+    for (const runner of ['claude', 'cursor', 'grok', 'pi']) {
+      const executable = runner === 'cursor' ? 'cursor-agent' : runner;
+      const flags =
+        runner === 'grok'
+          ? ['-p', '--single', '--prompt-file', '--prompt-json']
+          : ['-p', '--print'];
+      for (const flag of flags) {
+        assert.equal(
+          runnerSupportsTmuxNudgesForLaunch(runner, `${executable} ${flag} task`),
+          false,
+        );
+        if (flag.startsWith('--')) {
+          assert.equal(
+            runnerSupportsTmuxNudgesForLaunch(runner, `${executable} ${flag}=task`),
+            false,
+          );
+        }
+      }
+      assert.equal(
+        runnerSupportsTmuxNudgesForLaunch(runner, `mkdir -p /tmp/setup && ${executable}`),
+        true,
+      );
+    }
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('codex', 'codex -p work'), true);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', '/usr/bin/env WORK=1 /opt/bin/claude'),
+      true,
+    );
+  });
+
+  it('keeps redirections out of argv and refuses unresolved runner arguments', () => {
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude > /tmp/log --print'), false);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', 'claude 2>/tmp/log --model opus'),
+      true,
+    );
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude $FLAGS'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude && claude -p task'), false);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', 'claude --add-dir /tmp/* --print task'),
+      false,
+    );
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude <<< "hi" -p'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude <& 3 -p'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude -cp task'), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', 'claude # --print'), true);
+    assert.equal(
+      runnerSupportsTmuxNudgesForLaunch('claude', 'node /tmp/claude-helper/cli.js && claude'),
+      true,
+    );
+  });
+
+  it('honors configured runner wrappers in generated launches', () => {
+    for (const [runner, overrides] of [
+      ['pi', { piPath: '/x/farmslot-pi-anthropic' }],
+      ['claude', { claudePath: '/x/team-model-wrapper' }],
+    ] as const) {
+      const vars = makeVars(overrides);
+      const launch = buildLaunchCommand(vars, runner, 'opus', 'Read TASK.md');
+      assert.equal(runnerSupportsTmuxNudgesForLaunch(runner, launch, vars), true, launch);
+      const executable = runner === 'pi' ? vars.piPath : vars.claudePath;
+      assert.equal(
+        runnerSupportsTmuxNudgesForLaunch(runner, `${executable} --print task`, vars),
+        false,
+      );
+    }
+  });
 });
 
 describe('runnerFlagsForTier — cursor', () => {

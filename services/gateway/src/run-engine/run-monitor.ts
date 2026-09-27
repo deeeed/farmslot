@@ -848,10 +848,17 @@ function launchCommandForRun(run: Run): unknown {
   return run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs?.launchCommand;
 }
 
-function workerNudgesSupported(run: Run): boolean {
+async function workerNudgesSupported(run: Run, slotId: string): Promise<boolean> {
+  const launchCommand = launchCommandForRun(run);
   return (
     run.transport === 'native' ||
-    runnerSupportsTmuxNudgesForLaunch(run.metrics.runner, launchCommandForRun(run))
+    runnerSupportsTmuxNudgesForLaunch(
+      run.metrics.runner,
+      launchCommand,
+      typeof launchCommand === 'string' && launchCommand.trim()
+        ? await loadSlotVars(slotId)
+        : undefined,
+    )
   );
 }
 
@@ -1555,7 +1562,7 @@ export async function monitorRun(
             }
             // "continue" — reset nudge count and resume
             updateRun(runId, { metrics: { ...latestRun.metrics, nudgeCount: 0 } });
-          } else if (workerNudgesSupported(latestRun)) {
+          } else if (await workerNudgesSupported(latestRun, slotId)) {
             const nudgeContext = currentMonitorContext();
             if (await sendNudge(runId, slotId, v, nudgeContext?.role, nudgeContext?.id)) {
               snapshots.push({ timestamp: new Date().toISOString(), trigger: 'nudge' });
@@ -1565,6 +1572,7 @@ export async function monitorRun(
               latestRun.metrics.runner,
               launchCommandForRun(latestRun),
               v.type,
+              await loadSlotVars(slotId),
             );
             console.log(
               `[run-monitor] run ${runId.slice(0, 8)} — ${description}; escalating to decision`,
@@ -1845,7 +1853,7 @@ async function sendNudge(
 ): Promise<boolean> {
   const run = getRun(runId);
   if (!run) return false;
-  if (!workerNudgesSupported(run)) {
+  if (!(await workerNudgesSupported(run, slotId))) {
     return false;
   }
 
@@ -1964,7 +1972,7 @@ export async function sendBudgetNudge(
 ): Promise<BudgetNudgeDelivery> {
   const run = getRun(runId);
   if (!run) return 'not-attempted';
-  if (!workerNudgesSupported(run)) {
+  if (!(await workerNudgesSupported(run, slotId))) {
     return 'not-attempted';
   }
 
@@ -2224,7 +2232,7 @@ export async function pollBudgetGuardStep(params: {
     if (decision.deliver) {
       const run = getRun(params.runId);
       const deliveryViolation = violation ?? raiseViolation(decision.message);
-      if (run && !workerNudgesSupported(run)) {
+      if (run && !(await workerNudgesSupported(run, params.slotId))) {
         // Waiting cannot help: this runner will never accept a pane instruction.
         delivery = advanceBudgetDelivery(delivery, {
           kind: 'delivery-impossible',

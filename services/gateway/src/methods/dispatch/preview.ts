@@ -621,7 +621,9 @@ export async function verifyBranchAffinityNudgeStillEligible(
   const resourceBlocker = companionResourceBlocker(slot, options?.requiredPrepareProfile);
   if (resourceBlocker) return resourceBlocker;
   const launchCommand = await launchCommandForSlotCurrentRun(slot);
-  if (!runnerSupportsTmuxNudgesForLaunch(slot.runner, launchCommand)) {
+  if (
+    !runnerSupportsTmuxNudgesForLaunch(slot.runner, launchCommand, await loadSlotVars(slot.slot))
+  ) {
     return `slot ${slot.slot} runner '${slot.runner ?? 'unknown'}' launch mode does not support tmux nudges`;
   }
   return `slot ${slot.slot} no longer matches branch / PR for ${ticketOrPr} (current branch=${slot.branch || 'none'})`;

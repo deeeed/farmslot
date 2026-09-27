@@ -1150,10 +1150,14 @@ export async function runReplayStep(
     // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/update-branch) set
     // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
     // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
-    // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
+    // was meant to reuse. Explicit preparation or profile requests override the retained skip.
     const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
     const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
-    const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
+    const keepHotSlotSkipPrepare =
+      params.skipPrepare !== false &&
+      !params.prepareProfile &&
+      isChainedFollowUp &&
+      Boolean(effectiveSlotId);
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
     if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
@@ -1546,8 +1550,8 @@ export async function runReplayStep(
     }
     emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
 
-    // Retry-with-profile: persist the selection so the replayed PREPARE (and any
-    // later replay) uses it — profile choice is run state, not a one-shot flag.
+    // Persist the selected profile for preparation. Implicit chained follow-ups
+    // still reuse the warm slot without preparing it.
     if (params.prepareProfile) {
       updateRun(params.runId, { prepareProfile: params.prepareProfile });
     }
