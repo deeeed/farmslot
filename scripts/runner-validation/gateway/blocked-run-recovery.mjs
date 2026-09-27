@@ -44,6 +44,11 @@ const boundReservedRollbackSlotId = `bound-reserved-rollback-${randomUUID()}`;
 const transferRollbackSlotId = `transfer-rollback-${randomUUID()}`;
 const releasingRollbackSlotId = `releasing-rollback-${randomUUID()}`;
 const heldReleasingSlotId = `held-releasing-${randomUUID()}`;
+const preparationCases = ['activation', 'explicit-prepare', 'implicit-reuse'].map((name) => ({
+  name,
+  runId: randomUUID(),
+  slotId: `preparation-${name}-${randomUUID()}`,
+}));
 const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
@@ -259,6 +264,7 @@ try {
         transferRollbackSlotId,
         releasingRollbackSlotId,
         heldReleasingSlotId,
+        ...preparationCases.map((entry) => entry.slotId),
       ].map((id) => ({
         id,
         project,
@@ -350,6 +356,13 @@ try {
         agent: 'idle',
         current_run_id: heldReleasingRunId,
       },
+      ...preparationCases.map((entry) => ({
+        slot: entry.slotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: entry.runId,
+      })),
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
@@ -374,6 +387,16 @@ try {
     writeJson(path.join(root, '.runs', `${id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
+  }
+  for (const entry of preparationCases) {
+    const run = blockedRun(entry.runId, entry.slotId, 'pr-complete', true);
+    run.ticketOrPr = 'deeeed/farmslot#721';
+    run.prNumber = 721;
+    run.parentRunId = lostRunId;
+    run.engineState = { flags: { skipPrepare: true } };
+    writeJson(path.join(root, '.runs', `${run.id}.json`), run);
+    mkdirSync(path.dirname(run.taskFile), { recursive: true });
+    writeFileSync(run.taskFile, '# Disposable preparation recovery\n');
   }
   const evalRun = blockedRun(evalRunId, evalSlotId, 'fix-bug', true);
   evalRun.engineState = {
@@ -474,6 +497,8 @@ try {
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
+    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
     FARMSLOT_RPC_TIMEOUT_MS: '25000',
     TSX_TSCONFIG_PATH: path.join(sourceRoot, 'services/gateway/tsconfig.json'),
@@ -498,6 +523,31 @@ try {
   gateway = await startGateway(port, env);
   assert.equal(rpc('fleet.status', {}).fleet.checkedAt, initialFleetCheckedAt);
   assert.equal(rpc('run.get', { runId }).run.status, 'blocked');
+
+  for (const entry of preparationCases) {
+    if (entry.name === 'activation') {
+      rpc('run.activateOnSlot', {
+        runId: entry.runId,
+        slotId: entry.slotId,
+        prepareProfile: 'attach',
+      });
+    } else {
+      rpc('run.replayStep', {
+        runId: entry.runId,
+        stepName: 'prepare',
+        prepareProfile: 'attach',
+        ...(entry.name === 'explicit-prepare' ? { skipPrepare: false } : {}),
+      });
+    }
+    const recovered = rpc('run.get', { runId: entry.runId }).run;
+    assert.equal(recovered.status, 'preparing');
+    assert.equal(recovered.prepareProfile, 'attach');
+    assert.equal(
+      Boolean(recovered.engineState?.flags?.skipPrepare),
+      entry.name === 'implicit-reuse',
+      `${entry.name} must honor the requested preparation policy`,
+    );
+  }
 
   const lost = denied({ runId: lostRunId, stepName: 'monitor' }, /no longer owns its slot/);
   assert.equal(lost.slotId, 'unavailable-worker');

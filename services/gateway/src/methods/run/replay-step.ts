@@ -1153,7 +1153,8 @@ export async function runReplayStep(
     // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
     const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
     const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
-    const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
+    const keepHotSlotSkipPrepare =
+      params.skipPrepare !== false && isChainedFollowUp && Boolean(effectiveSlotId);
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
     if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
