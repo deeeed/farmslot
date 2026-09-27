@@ -1550,8 +1550,8 @@ export async function runReplayStep(
     }
     emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
 
-    // Retry-with-profile: persist the selection so the replayed PREPARE (and any
-    // later replay) uses it — profile choice is run state, not a one-shot flag.
+    // Persist the selected profile for preparation. Implicit chained follow-ups
+    // still reuse the warm slot without preparing it.
     if (params.prepareProfile) {
       updateRun(params.runId, { prepareProfile: params.prepareProfile });
     }

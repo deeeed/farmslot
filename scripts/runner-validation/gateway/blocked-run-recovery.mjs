@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
@@ -59,6 +59,7 @@ const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
 const repo = path.join(root, 'repo');
+const preparationMarker = path.join(temporaryRoot, 'prepared.txt');
 const startedAt = new Date(Date.now() - 120000).toISOString();
 const blockedAt = new Date(Date.now() - 60000).toISOString();
 let gateway;
@@ -288,6 +289,8 @@ try {
     primary_repo: repo,
     default_branch: 'main',
     task_dir: 'tasks',
+    prepare: { default: 'attach', profiles: { attach: { phases: ['deps'] } } },
+    hooks: { post_merge_install: `printf 'prepared\\n' >> '${preparationMarker}'` },
     slot_actions: {
       'proof-check': { label: 'Check proof resource', command: 'true' },
     },
@@ -990,6 +993,39 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   assert.equal(monitored.steps.find((step) => step.name === 'monitor')?.status, 'done');
+  const preparationOutputs = [];
+  writeFileSync(preparationMarker, '');
+  for (const entry of preparationCases) {
+    const markerBefore = readFileSync(preparationMarker, 'utf8');
+    rpc('run.replayStep', {
+      runId: entry.runId,
+      stepName: 'prepare',
+      ...(entry.name === 'implicit-reuse' ? {} : { prepareProfile: 'attach' }),
+      ...(entry.name === 'activation' || entry.name === 'explicit-prepare'
+        ? { skipPrepare: false }
+        : {}),
+      ...(entry.name === 'explicit-skip' ? { skipPrepare: true } : {}),
+    });
+    let prepared;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      prepared = rpc('run.get', { runId: entry.runId }).run.steps.find(
+        (step) => step.name === 'prepare',
+      );
+      if (prepared?.status === 'done' || prepared?.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.equal(prepared?.status, 'done', JSON.stringify(prepared));
+    if (entry.name === 'implicit-reuse' || entry.name === 'explicit-skip') {
+      assert.equal(prepared.outputs.skipped, true);
+      assert.equal(prepared.outputs.reason, 'operator-skip');
+      assert.equal(readFileSync(preparationMarker, 'utf8'), markerBefore);
+    } else {
+      assert.equal(prepared.outputs.profile.selected, 'attach');
+      assert.notEqual(prepared.outputs.skipped, true);
+      assert.equal(readFileSync(preparationMarker, 'utf8'), `${markerBefore}prepared\n`);
+    }
+    preparationOutputs.push({ name: entry.name, outputs: prepared.outputs });
+  }
   console.log(
     JSON.stringify({
       runId,
@@ -1010,6 +1046,7 @@ try {
       successRunId,
       acceptance: assessed.code,
       monitor: monitored.steps.find((step) => step.name === 'monitor')?.status,
+      preparationOutputs,
     }),
   );
 } catch (error) {
@@ -1020,6 +1057,12 @@ try {
   await stopGateway();
   if (workerSession) execFileSync('tmux', ['kill-session', '-t', slotId]);
   if (rollbackWorkerSession) execFileSync('tmux', ['kill-session', '-t', rollbackSlotId]);
+  for (const entry of preparationCases) {
+    const session = spawnSync('tmux', ['has-session', '-t', `=${entry.slotId}`]);
+    assert.ifError(session.error);
+    assert.ok(session.status === 0 || session.status === 1);
+    if (session.status === 0) execFileSync('tmux', ['kill-session', '-t', `=${entry.slotId}`]);
+  }
   if (logFd !== undefined) closeSync(logFd);
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
