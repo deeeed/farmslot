@@ -20,9 +20,47 @@ test('verifies whole separately queued messages', () => {
   );
 });
 
+test('rejects empty and duplicate expected messages', () => {
+  assert.throws(() => verifyReceipts({ ...proof, messages: [] }, ''));
+  assert.throws(() =>
+    verifyReceipts(
+      { ...proof, messages: [proof.messages[0], proof.messages[0]] },
+      queued('first complete'),
+    ),
+  );
+});
+
 test('rejects tail-only and merged receipts', () => {
   assert.throws(() => verifyReceipts(proof, `${queued('complete')}\n${queued('second complete')}`));
   assert.throws(() => verifyReceipts(proof, queued('first completesecond complete')));
+});
+
+test('decodes one native paste envelope without changing payload bytes', () => {
+  const wrapped = (text) =>
+    `\n\n<pasted_content id="3fad">\n${text}\n</pasted_content id="3fad">\n`;
+  const receipts = verifyReceipts(
+    proof,
+    `${queued(wrapped('first complete'))}\n${queued(wrapped('second complete'))}`,
+  );
+  assert.equal(receipts.length, 2);
+  assert.equal(receipts[0].bytes, Buffer.byteLength('first complete'));
+  assert.equal(receipts[0].nativePasteEnvelope, true);
+  assert.ok(receipts[0].nativeEventBytes > receipts[0].bytes);
+  assert.throws(() =>
+    verifyReceipts(
+      proof,
+      `${queued(wrapped(' first complete'))}\n${queued(wrapped('second complete'))}`,
+    ),
+  );
+  assert.throws(() =>
+    verifyReceipts(
+      proof,
+      `${queued(wrapped('first complete').replace('</pasted_content id="3fad">', '</pasted_content id="other">'))}\n${queued(wrapped('second complete'))}`,
+    ),
+  );
+  assert.throws(() =>
+    verifyReceipts(proof, queued(wrapped('first complete') + wrapped('second complete'))),
+  );
 });
 
 test('rejects another session and assistant echoes', () => {

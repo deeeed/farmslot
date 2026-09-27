@@ -25,6 +25,9 @@ async function rpc(method, params) {
 }
 
 export function verifyReceipts(proof, transcript) {
+  assert.equal(proof.messages.length, 2, 'Concurrency proof requires two messages');
+  assert.notEqual(proof.messages[0].id, proof.messages[1].id);
+  assert.notEqual(proof.messages[0].text, proof.messages[1].text);
   const receipts = new Map();
   for (const line of transcript.split('\n')) {
     if (!line.trim()) continue;
@@ -42,12 +45,18 @@ export function verifyReceipts(proof, transcript) {
           : [];
     for (const text of texts) {
       if (typeof text !== 'string') continue;
+      const wrapper = text.match(
+        /^[\t\r\n ]*<pasted_content id="([A-Za-z0-9_-]+)">\n([\s\S]*)\n<\/pasted_content id="\1">[\t\r\n ]*$/u,
+      );
+      const payload = wrapper ? wrapper[2] : text;
       for (const expected of proof.messages) {
-        if (text === expected.text)
+        if (payload === expected.text)
           receipts.set(expected.id, {
             id: expected.id,
-            bytes: Buffer.byteLength(text),
-            sha256: digest(text),
+            bytes: Buffer.byteLength(payload),
+            sha256: digest(payload),
+            nativeEventBytes: Buffer.byteLength(text),
+            nativePasteEnvelope: Boolean(wrapper),
             eventType: record.type,
             timestamp: record.timestamp,
           });
@@ -74,7 +83,8 @@ async function main() {
     assert.ok(contextId, 'Set FARMSLOT_PASTE_PROOF_CONTEXT_ID to the selected worker context');
     const context = run.agentContexts.find((entry) => entry.id === contextId);
     assert.equal(context?.runner ?? run.metrics.runner, 'claude');
-    assert.equal(run.transport, 'tmux');
+    assert.equal(run.transport ?? 'tmux', 'tmux');
+    assert.ok(context?.target && !context.nativeSession && !context.nativeSessionOwner);
     assert.ok(run.slotId && context?.runnerSessionId && context.runnerSessionPath);
     assert.ok(
       ['monitoring', 'blocked'].includes(run.status),
