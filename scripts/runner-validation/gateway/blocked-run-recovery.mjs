@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import {
@@ -44,10 +44,22 @@ const boundReservedRollbackSlotId = `bound-reserved-rollback-${randomUUID()}`;
 const transferRollbackSlotId = `transfer-rollback-${randomUUID()}`;
 const releasingRollbackSlotId = `releasing-rollback-${randomUUID()}`;
 const heldReleasingSlotId = `held-releasing-${randomUUID()}`;
+const preparationCases = [
+  'activation',
+  'explicit-prepare',
+  'profile-prepare',
+  'explicit-skip',
+  'implicit-reuse',
+].map((name) => ({
+  name,
+  runId: randomUUID(),
+  slotId: `preparation-${name}-${randomUUID()}`,
+}));
 const rollbackSlotId = `blocked-rollback-${randomUUID()}`;
 const evalSlotId = `blocked-eval-${randomUUID()}`;
 const project = `blocked-recovery-${randomUUID()}`;
 const repo = path.join(root, 'repo');
+const preparationMarker = path.join(temporaryRoot, 'prepared.txt');
 const startedAt = new Date(Date.now() - 120000).toISOString();
 const blockedAt = new Date(Date.now() - 60000).toISOString();
 let gateway;
@@ -133,6 +145,17 @@ async function freePort() {
   assert.ok(address && typeof address !== 'string');
   await new Promise((resolve) => server.close(resolve));
   return address.port;
+}
+
+function preparationRun(entry) {
+  return {
+    ...blockedRun(entry.runId, entry.slotId, 'pr-complete', true),
+    ticketOrPr: 'deeeed/farmslot#721',
+    prNumber: 721,
+    parentRunId: lostRunId,
+    prepareProfile: 'attach',
+    engineState: { flags: { skipPrepare: true } },
+  };
 }
 
 async function startGateway(port, env) {
@@ -259,6 +282,7 @@ try {
         transferRollbackSlotId,
         releasingRollbackSlotId,
         heldReleasingSlotId,
+        ...preparationCases.map((entry) => entry.slotId),
       ].map((id) => ({
         id,
         project,
@@ -276,6 +300,8 @@ try {
     primary_repo: repo,
     default_branch: 'main',
     task_dir: 'tasks',
+    prepare: { default: 'attach', profiles: { attach: { phases: ['deps'] } } },
+    hooks: { post_merge_install: `printf 'prepared\\n' >> '${preparationMarker}'` },
     slot_actions: {
       'proof-check': { label: 'Check proof resource', command: 'true' },
     },
@@ -350,6 +376,13 @@ try {
         agent: 'idle',
         current_run_id: heldReleasingRunId,
       },
+      ...preparationCases.map((entry) => ({
+        slot: entry.slotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: entry.runId,
+      })),
     ],
   });
   for (const [id, ownedSlotId, flowType] of [
@@ -374,6 +407,12 @@ try {
     writeJson(path.join(root, '.runs', `${id}.json`), run);
     mkdirSync(path.dirname(run.taskFile), { recursive: true });
     writeFileSync(run.taskFile, '# Disposable blocked worker\n');
+  }
+  for (const entry of preparationCases) {
+    const run = preparationRun(entry);
+    writeJson(path.join(root, '.runs', `${run.id}.json`), run);
+    mkdirSync(path.dirname(run.taskFile), { recursive: true });
+    writeFileSync(run.taskFile, '# Disposable preparation recovery\n');
   }
   const evalRun = blockedRun(evalRunId, evalSlotId, 'fix-bug', true);
   evalRun.engineState = {
@@ -474,6 +513,8 @@ try {
     FARMSLOT_DEMO_POOL: '0',
     GATEWAY_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
+    FARMSLOT_GATEWAY_TOKEN: randomUUID(),
+    FARMSLOT_GATEWAY_PASSWORD: '',
     FARMSLOT_GATEWAY: `ws://127.0.0.1:${port}`,
     FARMSLOT_RPC_TIMEOUT_MS: '25000',
     TSX_TSCONFIG_PATH: path.join(sourceRoot, 'services/gateway/tsconfig.json'),
@@ -498,6 +539,37 @@ try {
   gateway = await startGateway(port, env);
   assert.equal(rpc('fleet.status', {}).fleet.checkedAt, initialFleetCheckedAt);
   assert.equal(rpc('run.get', { runId }).run.status, 'blocked');
+
+  const replayPreparation = (entry) => {
+    if (entry.name === 'activation') {
+      rpc('run.activateOnSlot', {
+        runId: entry.runId,
+        slotId: entry.slotId,
+        prepareProfile: 'attach',
+      });
+    } else {
+      rpc('run.replayStep', {
+        runId: entry.runId,
+        stepName: 'prepare',
+        ...(entry.name === 'profile-prepare' || entry.name === 'explicit-skip'
+          ? { prepareProfile: 'attach' }
+          : {}),
+        ...(entry.name === 'explicit-prepare' ? { skipPrepare: false } : {}),
+        ...(entry.name === 'explicit-skip' ? { skipPrepare: true } : {}),
+      });
+    }
+  };
+  for (const entry of preparationCases) {
+    replayPreparation(entry);
+    const recovered = rpc('run.get', { runId: entry.runId }).run;
+    assert.equal(recovered.status, 'preparing');
+    assert.equal(recovered.prepareProfile, 'attach');
+    assert.equal(
+      Boolean(recovered.engineState?.flags?.skipPrepare),
+      entry.name === 'implicit-reuse' || entry.name === 'explicit-skip',
+      `${entry.name} must honor the requested preparation policy`,
+    );
+  }
 
   const lost = denied({ runId: lostRunId, stepName: 'monitor' }, /no longer owns its slot/);
   assert.equal(lost.slotId, 'unavailable-worker');
@@ -802,6 +874,9 @@ try {
   });
   assert.equal(restartRelease.ok, true, JSON.stringify(restartRelease));
   await stopGateway();
+  for (const entry of preparationCases) {
+    writeJson(path.join(root, '.runs', `${entry.runId}.json`), preparationRun(entry));
+  }
   writeJson(
     path.join(root, '.runs', `${successRunId}.json`),
     blockedRun(
@@ -814,7 +889,16 @@ try {
   );
   writeJson(path.join(root, '.farm-status.json'), {
     checked_at: new Date().toISOString(),
-    slots: [{ slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId }],
+    slots: [
+      { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: successRunId },
+      ...preparationCases.map((entry) => ({
+        slot: entry.slotId,
+        lifecycle: 'held',
+        phase: 'pr-watch',
+        agent: 'idle',
+        current_run_id: entry.runId,
+      })),
+    ],
   });
   execFileSync('tmux', ['new-session', '-d', '-s', slotId, '-c', repo, 'sleep 300']);
   workerSession = true;
@@ -930,6 +1014,31 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   assert.equal(monitored.steps.find((step) => step.name === 'monitor')?.status, 'done');
+  const preparationOutputs = [];
+  writeFileSync(preparationMarker, '');
+  for (const entry of preparationCases) {
+    const markerBefore = readFileSync(preparationMarker, 'utf8');
+    replayPreparation(entry);
+    let prepared;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      prepared = rpc('run.get', { runId: entry.runId }).run.steps.find(
+        (step) => step.name === 'prepare',
+      );
+      if (prepared?.status === 'done' || prepared?.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.equal(prepared?.status, 'done', JSON.stringify(prepared));
+    if (entry.name === 'implicit-reuse' || entry.name === 'explicit-skip') {
+      assert.equal(prepared.outputs.skipped, true);
+      assert.equal(prepared.outputs.reason, 'operator-skip');
+      assert.equal(readFileSync(preparationMarker, 'utf8'), markerBefore);
+    } else {
+      assert.equal(prepared.outputs.profile.selected, 'attach');
+      assert.notEqual(prepared.outputs.skipped, true);
+      assert.equal(readFileSync(preparationMarker, 'utf8'), `${markerBefore}prepared\n`);
+    }
+    preparationOutputs.push({ name: entry.name, outputs: prepared.outputs });
+  }
   console.log(
     JSON.stringify({
       runId,
@@ -950,6 +1059,7 @@ try {
       successRunId,
       acceptance: assessed.code,
       monitor: monitored.steps.find((step) => step.name === 'monitor')?.status,
+      preparationOutputs,
     }),
   );
 } catch (error) {
@@ -958,8 +1068,14 @@ try {
   throw error;
 } finally {
   await stopGateway();
-  if (workerSession) execFileSync('tmux', ['kill-session', '-t', slotId]);
-  if (rollbackWorkerSession) execFileSync('tmux', ['kill-session', '-t', rollbackSlotId]);
   if (logFd !== undefined) closeSync(logFd);
   rmSync(temporaryRoot, { recursive: true, force: true });
+  if (workerSession) execFileSync('tmux', ['kill-session', '-t', slotId]);
+  if (rollbackWorkerSession) execFileSync('tmux', ['kill-session', '-t', rollbackSlotId]);
+  for (const entry of preparationCases) {
+    const session = spawnSync('tmux', ['has-session', '-t', `=${entry.slotId}`]);
+    assert.ifError(session.error);
+    assert.ok(session.status === 0 || session.status === 1);
+    if (session.status === 0) execFileSync('tmux', ['kill-session', '-t', `=${entry.slotId}`]);
+  }
 }

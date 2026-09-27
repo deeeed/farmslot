@@ -222,6 +222,7 @@ export async function runActivateOnSlot(
         runId: params.runId,
         stepName: PipelineSteps.PREPARE,
         prepareProfile: params.prepareProfile ?? 'attach',
+        skipPrepare: false,
         triggeredBy: 'operator',
       },
       emit,

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Document recovery preparation precedence for explicit skip requests and selected profiles.
 - Default Codex dispatches to GPT-6 Sol, offer GPT-6 Luna, and hide GPT-5.4/5.5 from model pickers while accepting existing selections.
 - Retain the exact CI fix prompt in agent contexts so a gateway restart can safely recover pending delivery.
 
