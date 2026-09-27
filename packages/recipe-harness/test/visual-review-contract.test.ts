@@ -174,6 +174,14 @@ test('reopening refuses malformed or stale feedback instead of storing part of i
     /invalid entries: annotations\[1\]/u,
   );
   assert.throws(
+    () =>
+      feedbackDraftFromDocument(
+        readyGateSource,
+        feedback([point, { ...point, id: 'e', color: 'invalid' }]),
+      ),
+    /invalid entries: annotations\[1\]/u,
+  );
+  assert.throws(
     () => feedbackDraftFromDocument(readyGateSource, feedback([point, { ...point, id: '' }])),
     /invalid entries: annotations\[1\]/u,
   );

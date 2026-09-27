@@ -58,6 +58,8 @@ export function feedbackDraftFromDocument(source, document) {
       !ids.has(annotation.id) &&
       typeof annotation.body === 'string' &&
       annotation.body.trim() !== '' &&
+      // Same #rrggbb rule as the protocol's feedback validator; this function cannot import it.
+      (annotation.color == null || /^#[0-9a-f]{6}$/iu.test(String(annotation.color))) &&
       (annotation.shape === 'point'
         ? isUnit(annotation.x) && isUnit(annotation.y)
         : annotation.shape === 'area' &&
