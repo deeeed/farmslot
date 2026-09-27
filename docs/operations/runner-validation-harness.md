@@ -11,8 +11,8 @@ Implementation: `scripts/runner-validation/`
 ```bash
 export FARMSLOT_GATEWAY=ws://127.0.0.1:7801/ws
 export FARMSLOT_QUALITY_PROOF_DIR=/tmp/worker-quality-proof
-export FARMSLOT_QUALITY_PROOF_RUN_ID=<run-id>
-export FARMSLOT_QUALITY_PROOF_CONTEXT_ID=<worker-context-id>
+export FARMSLOT_QUALITY_PROOF_RUN_ID='<run-id>'
+export FARMSLOT_QUALITY_PROOF_CONTEXT_ID='<worker-context-id>'
 yarn --cwd services/gateway exec tsx --tsconfig tsconfig.json ../../scripts/runner-validation/gateway/worker-quality-ownership.mts --snapshot
 ```
 
@@ -20,7 +20,7 @@ Snapshot requires matching slot and authoritative task contracts and saves the o
 
 After reviewing the project policy change, regenerate the contract through the canonical resolver and reconcile both saved copies. Preserve every coverage, evidence, acceptance and signal requirement. Have the worker complete through its normal `mark` command, then run the same command with `--verify` instead of `--snapshot`.
 
-Verification checks that only the quality requirement changed, both copies agree with the current project policy, and the same worker attempt completed and passed the gateway monitor. It rejects projects that still require worker-authored quality. Neither phase writes a completion signal or generates a quality verdict. If the snapshot came from an earlier recovery tool, retain that provenance with the proof rather than claiming the current script produced it.
+Verification checks that only the quality requirement changed, both copies agree with the current project policy, and the same worker attempt completed and passed the gateway monitor. Policy comparison ignores resolution timestamps and treats an absent quality flag as false, so normal contract regeneration does not invalidate the proof. It rejects projects that still require worker-authored quality. Neither phase writes a completion signal or generates a quality verdict. If the snapshot came from an earlier recovery tool, retain that provenance with the proof rather than claiming the current script produced it.
 
 ## Validation (live tmux E2E)
 

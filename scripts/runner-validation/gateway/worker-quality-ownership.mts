@@ -57,7 +57,20 @@ const localContract = JSON.parse(
     'utf8',
   ),
 );
-assert.deepEqual(contract, localContract, 'Slot and authoritative task contracts must agree');
+function contractPolicy(value: typeof contract) {
+  const policy = { ...value };
+  delete policy.resolvedAt;
+  policy.whenPresent = value.whenPresent.map((rule: Record<string, unknown>) => ({
+    ...rule,
+    requireRecipeQuality: rule.requireRecipeQuality === true,
+  }));
+  return policy;
+}
+assert.deepEqual(
+  contractPolicy(contract),
+  contractPolicy(localContract),
+  'Slot and authoritative task policies must agree',
+);
 const signalText = rpc('fs.read', { slotId: run.slotId, path: context.signalFile }).content;
 const proofPath = path.join(directory, 'proof.json');
 
@@ -93,7 +106,7 @@ if (process.argv.includes('--snapshot')) {
   assert.equal(proof.slotId, run.slotId);
   assert.equal(proof.contractPath, contractPath);
   const withoutQuality = (value: typeof contract) => ({
-    ...value,
+    ...contractPolicy(value),
     whenPresent: value.whenPresent.map((rule: Record<string, unknown>) => {
       const copy = { ...rule };
       delete copy.requireRecipeQuality;
