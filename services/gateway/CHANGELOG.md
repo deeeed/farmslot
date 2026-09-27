@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.17.0 - 2026-09-27
+
 - Verify the Farmslot Farm pack's gateway-owned quality policy while preserving worker coverage, evidence, acceptance and other projects' contracts.
 - Deliver slot-worker terminal messages as bounded, per-pane serialized pastes with the runner's submit key, preserving complete feedback documents while leaving raw input and submit-only actions unchanged.
 - Identify headless flags on the runner invocation only, so setup commands such as `mkdir -p` no longer block interactive worker recovery.
@@ -12,71 +16,42 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - Default Codex runs to GPT-6 Sol and offer GPT-6 Luna while accepting existing GPT-5.4/5.5 selections.
 - Load only run-shaped files whose payload id matches the filename, so other JSON in the runs directory, such as the runtime capability store, no longer appears as an id-less run or migrates into `undefined.json` on restart.
 - Observe the existing CI-fix signal and HEAD when a prompt send is unconfirmed; retry confirmed pre-send failures, but block another send when the outcome remains unknown.
-
 - Keep Grok retained-session delivery available after its event log exceeds the prompt-tail limit, so CI fixes reach the idle worker.
 - Require an exact prompt acknowledgement when recovering an in-place CI fix; a stored working status alone cannot prove delivery. A recovered self-review fix keeps waiting for its terminal signal after the acknowledgement window instead of failing a busy worker.
 - Identify each CI-fix attempt in its runner prompt and retain that exact prompt across gateway restarts, including pre-send recovery without charging another attempt.
 - Allow cold simulator startup to finish, check the exact booted device rather than a partial name, and identify UDID-configured simulators in inventory.
 - Keep unacknowledged retained prompts pending for structured re-probing without sending a duplicate.
-
 - Refuse new full-live independent review loops in run, queue, backlog and ready-gate requests. Queued legacy loops wait for operator repair, which `dispatch.queue.update` applies in place with a static `pendingReviewPlan`, and review continuation offers only static choices. Started and completed reviews keep their original depth.
 - Add provider-neutral, opt-in suggestion RPCs with bounded admitted text, per-call price limits and saved results for operator feedback.
-
 - Share the measured Responses request serializer and byte cap so navigation-study quotes can reject oversized requests before approval.
-
 - QA completion rejects recipe packages from a partial `stop-after-node` run.
 - Report assessment attempts, usage coverage, cost provenance and latency by consumer and requested provider/model from the full retained history, including failed requests.
-
 - Validate the owner, failed step and approved source before saving a failure-assessment reference alongside a chosen run action.
-
 - Add an opt-in, source-admitted textual acceptance-evidence assessment for recorded runs, with saved judgments, bounded spend and unchanged AC ledger authority.
-
 - Admit opt-in decision advice for any pending run decision with two described non-decline actions, keeping source admission and the human action gate. Retain the admitted decision packet with the assessment for later review.
-
 - Respect each project's effective prepare profile in profile-fit advice, keep `core` companion advice visible on slots without simulators, and report the exact missing Companion resource in dispatch preview. Continue remains the primary GRADE action.
-
 - Retain safe HTTP receipt metadata when a bounded TypeSafe response body exceeds its limit or cannot be read; received replies without verifiable usage lock the price snapshot instead of allowing a retry. Measure duration through the failed body read.
-
 - Support structured assessments through a regular language-model adapter with validated JSON answers, native cache usage including failed replies, and no automatic retry or fallback.
 - Add opt-in, source-admitted advice for pending run decisions, with bounded cost, saved assessments and human-only action selection.
-
 - Recheck GitHub after an invalid CI-fix signal, offer an operator decision, and preserve an Abort choice across gateway restarts instead of restarting CI-watch.
-
 - Report each runtime provider's last health-check time in run posture without revalidating or clearing unresolved cleanup.
-
 - Bind and validate a newer worker signal before replaying a blocked monitor, including clock-skewed completion; require current slot ownership and freshly checked proof resources, preserve proof acquisition on find-slot restart and owned-slot rollback, report rollback failures alongside the original replay error, and reroute blocked eval runs to prepare or find-slot as ownership requires.
-
 - Offer GPT-6 Sol in Codex native sessions and use Cursor's advertised Grok 4.7 model ID.
-
 - Add experimental, opt-in advice for recorded development failures with approved text, durable request limits, explicit retries and shared assessment history.
-
 - Add an offline-first, bounded failure-triage evaluation CLI with versioned, audited synthetic corpora, deterministic baselines, family-aware reporting and an explicit pilot/hold decision.
-
 - Keep PR matching deterministic: previews no longer invoke optional assessment models, and long source reads return resumable progress within a bounded attempt.
-
 - Preserve valid worker completion signals when monitoring resumes after a timeout; reject stale attempts by worker identity instead of the restarted monitor clock.
-
 - Deliver each Pi worker and reviewer task independently, acknowledge follow-up fix launches, and preserve completed fix attempts across gateway restarts so review loops cannot stall on an earlier session.
-
 - Record optional assessments durably with owner-scoped feedback, retention and reproducible effectiveness reports scoped to full history or a selected case; uncertain advice requests review without changing admission.
-
 - Add an opt-in, provider-neutral structured-assessment boundary with TypeSafe SDK transport, bounded/redacted inputs, typed answers, provenance hashes, read-only status/smoke RPCs, and advisory review-intake routing. Assessment output never admits, publishes, retries, or proves visual review.
 - Accept equivalent Markdown formatting for static-review metadata and recover completed reports after checkout cleanup without rerunning the reviewer or changing report content.
-
 - Recover static reviews from unchanged support-bundle republishes, initialize reviewer trust, and recognize native prompt acceptance without timing out while waiting for the first task mark.
 - Offer Grok 4.7 in Grok and Cursor model selection while preserving existing defaults.
-
 - Inventory runner accounts by provider, including Pi login readiness and OpenCode saved credentials on each execution host without copying secrets.
-
 - Recover prepare from deleted working directories and early branch/device failures without resetting existing work; require an owned startup signal before treating review sessions as working.
-
 - Keep passing reviews valid across Git object-ID display changes, repair verified historical snapshots on package refresh, and allow explicit publication overrides for any blocked review while retaining package and source freshness checks.
-
 - Support safe default-branch checkout updates that survive development restarts, preserve local edits and reject dependency changes requiring manual installation.
-
 - No behaviour change: the child-unit module's doc comment now cites the task directory contract, because the ADR-060 implementation plan it referenced was deleted when that ADR was accepted.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.16.0 - 2026-09-20
 

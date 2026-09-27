@@ -1,5 +1,11 @@
 {
-  "version": "0.16.0",
-  "date": "2026-09-20",
-  "items": ["Static review progress and child metrics now match slot-based reviews."]
+  "version": "0.17.0",
+  "date": "2026-09-27",
+  "items": [
+    "Deliver complete worker feedback messages with bounded, serialized pastes.",
+    "Honor preparation choices and recover valid completion and review sessions.",
+    "Show resource readiness and acceptance evidence explicitly.",
+    "Keep optional advice bounded, auditable and separate from operator approval.",
+    "Update clean checkouts safely while preserving local changes."
+  ]
 }

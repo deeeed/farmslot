@@ -2,13 +2,14 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-09-27
+
 - Resolve acceptance requirements per worker flow, so fix-bug tasks can require verdicts without blocking review runs.
-
 - Bind terminal-review task marks to the launch attempt so repeated bootstrap by delegated workers preserves parent identity and checklist progress.
-
 - Static Claude reviews initialize workspace trust with the launch environment and keep tool-runner scratch files writable inside the review sandbox.
 - The published `dist/` no longer carries compiled test modules. The build config excludes `src/**/*.test.ts`, matching the other workspace packages; 0.13.0 shipped 17 of them (`.js`, `.d.ts` and both maps each) including the native durability and review-sandbox suites.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.13.0 - 2026-09-20
 
