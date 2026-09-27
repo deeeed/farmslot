@@ -4,7 +4,7 @@ import type { TerminalData } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import { pasteTmuxText, shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { runnerPromptSubmitKey } from '../runners/registry.js';
 
 export type TerminalDataHandler = (data: TerminalData) => void;
@@ -122,19 +122,11 @@ export async function snapshot(slotId: string, session: string, lines = 200): Pr
   return content.split('\n');
 }
 
-export function buildSendKeysCommand(
-  session: string,
-  text: string,
-  enter = true,
-  runner?: string,
-): string {
-  // Raw operator PTY input omits runner identity and keeps normal Enter
-  // semantics. Semantic agent steering supplies the resolved runner and uses
-  // the shared runner capability.
+export function buildSendKeysCommand(session: string, text: string, enter = true): string {
   return enter
     ? tmuxSendTextCommand(session, text, {
         enter: true,
-        submitKey: runner ? runnerPromptSubmitKey(runner) : 'Enter',
+        submitKey: 'Enter',
       })
     : tmuxSendTextCommand(session, text);
 }
@@ -147,7 +139,13 @@ export async function sendKeys(
   runner?: string,
 ): Promise<void> {
   const vars = await loadSlotVars(slotId);
-  const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter, runner), {
+  if (runner) {
+    await pasteTmuxText(vars, session, text, {
+      submitKey: enter ? runnerPromptSubmitKey(runner) : undefined,
+    });
+    return;
+  }
+  const result = await execOnSlot(vars, buildSendKeysCommand(session, text, enter), {
     timeout: 5000,
   });
   // A discarded exit code is how a send into a window that no longer exists
