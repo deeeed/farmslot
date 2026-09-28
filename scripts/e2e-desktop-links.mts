@@ -161,7 +161,7 @@ await native(
 await waitFor(
   () =>
     execFileSync('/usr/bin/pbpaste', { encoding: 'utf8', timeout: 5000 }) ===
-    `farmslot://run/${runId}`,
+    `farmslot://view/#runs?run=${runId}`,
 );
 record('native menu copies a credential-free run link');
 await native('e.BrowserWindow.getAllWindows()[0].hide();return true;');

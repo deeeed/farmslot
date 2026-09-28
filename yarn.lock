@@ -4591,6 +4591,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/command-center-desktop@workspace:apps/command-center-desktop"
   dependencies:
+    "@farmslot/protocol": "workspace:*"
     electron: "npm:44.4.3"
     electron-builder: "npm:26.15.3"
   languageName: unknown

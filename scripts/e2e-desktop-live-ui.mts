@@ -214,7 +214,8 @@ try {
     `e.Menu.getApplicationMenu().getMenuItemById('copy-desktop-link').click(); return true;`,
   );
   await waitFor(
-    async () => (await native('return e.clipboard.readText();')) === 'farmslot-dev://decisions',
+    async () =>
+      (await native('return e.clipboard.readText();')) === 'farmslot-dev://view/#decisions',
     'copy Dev link',
   );
   const count = value('document.querySelector("farm-app").decisionCount');

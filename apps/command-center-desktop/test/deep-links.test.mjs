@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { deepLinkFromRoute, routeFromDeepLink } from '../src/deep-links.mjs';
+import { routeFromDeepLink } from '../src/deep-links.mjs';
 import { attentionBadge } from '../src/preferences.mjs';
+import { viewLinkFromRoute } from '../src/view-links.mjs';
 
 const run = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -45,23 +46,14 @@ test('external links cannot supply authority, credentials, actions or arbitrary 
     assert.equal(routeFromDeepLink(value), null, String(value));
 });
 
-test('copied view links round trip without copying unrelated query values', () => {
-  for (const [route, expected] of [
-    [`#runs?run=${run}&token=secret`, `farmslot://run/${run}`],
-    [`#run/${run}`, `farmslot://run/${run}`],
-    [`#slot/runner-1?runId=${run}&file=src/main.ts`, `farmslot://slot/runner-1?runId=${run}`],
-    ['#decisions', 'farmslot://decisions'],
-  ]) {
-    assert.equal(deepLinkFromRoute(route), expected);
-    assert(routeFromDeepLink(expected));
-  }
+test('full-view copy links reopen through the incoming OS link handler', () => {
   for (const route of [
-    '#config',
-    '#runs?run=bad%2Fid',
-    '#slot/id?runId=bad%20id',
-    'https://example.com',
+    `#runs?run=${run}&step=monitor`,
+    `#run/${run}?artifactRun=${run}&artifact=artifacts%2Freport.md`,
+    `#family/${run}?run=${run}&tokens=run`,
   ])
-    assert.equal(deepLinkFromRoute(route), null);
+    assert.equal(routeFromDeepLink(viewLinkFromRoute(route)), route);
+  assert.equal(routeFromDeepLink('farmslot://view/#runs?token=secret'), null);
 });
 
 test('Dock badge clears zero, disconnected and unhydrated counts', () => {

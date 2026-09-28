@@ -46,6 +46,12 @@ test('profiles isolate identity and remember the source when falling back to bun
   t.after(() => rm(directory, { recursive: true, force: true }));
   const prod = desktopProfile();
   const dev = desktopProfile('development');
+  const validation = desktopProfile('validation');
+  for (const key of ['name', 'scheme']) {
+    assert.notEqual(validation[key], prod[key]);
+    assert.notEqual(validation[key], dev[key]);
+  }
+  assert.equal(validation.development, true);
   for (const key of ['name', 'scheme', 'icon']) assert.notEqual(prod[key], dev[key]);
   assert.throws(() => desktopProfile('invalid'));
   assert.equal(createPreferencesStore(directory).load().development.enabled, false);

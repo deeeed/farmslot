@@ -26,6 +26,9 @@ test('preferences survive app replacement without storing credentials in routes'
   assert.deepEqual(createPreferencesStore(directory).load(), store.load());
   assert.equal(savedRoute('#fleet?token=private'), '#fleet');
   assert.equal(savedRoute('https://example.com'), '#fleet');
+  assert.equal(savedRoute('#family/f1?tokens=run&run=r1'), '#family/f1?tokens=run&run=r1');
+  assert.equal(savedRoute('#runs?run=r1&step=monitor'), '#runs?run=r1&step=monitor');
+  assert.equal(savedRoute('#runs?password=private'), '#fleet');
 });
 
 test('a removed display restores the entire window to the remaining display', () => {

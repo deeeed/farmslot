@@ -1,0 +1,79 @@
+// Full-view links preserve navigation state without exposing the app's private
+// loopback origin or accepting connection credentials from an external link.
+const routes = new Set([
+  'fleet',
+  'native',
+  'terminal',
+  'devices',
+  'dispatch',
+  'roadmap',
+  'backlog',
+  'work-graphs',
+  'prs',
+  'decisions',
+  'runs',
+  'runs/compare',
+  'evals',
+  'finetune',
+  'intelligence',
+  'analytics',
+  'config',
+  'doctor',
+  'violations',
+]);
+const entity =
+  /^(run|family|slot|terminal|config)\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/workspace)?$/;
+// Config uses nested paths such as config/pool/macwork and
+// config/flows/fix-bug/interactive/phase/metamask-farm. Keep every segment
+// constrained to the same identifier grammar used by entity routes.
+const config =
+  /^config\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}){0,4}$/;
+// These parameters select views or prefill forms. No link submits a form.
+export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set(
+  (
+    'a b activity artifact artifactRun assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
+    'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair reviewDrawer ' +
+    'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
+    'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +
+    'prPane prScope prSection prSort prTab prTarget publicationReviews q refresh qaInputs qaProfileId repo reviewMachine ' +
+    'reviewValidationDepth run runner runsTab slot sort start_ref startRef state status step suggestion tab tag ticket tokens trajectory transport ' +
+    'validationDepth variant view window worker group promote runnerPicker slotSelector spec workGraphProject wgSort wgDirection'
+  ).split(' '),
+);
+
+export function validViewRoute(route: unknown): route is string {
+  if (
+    typeof route !== 'string' ||
+    route.length > 4096 ||
+    !route.startsWith('#') ||
+    /[\s\\\u0000-\u001f]/.test(route)
+  )
+    return false;
+  const [path, ...queryParts] = route.slice(1).split('?');
+  if (
+    (!routes.has(path) && !entity.test(path) && !config.test(path)) ||
+    queryParts.length > 1 ||
+    route.slice(1).includes('#')
+  )
+    return false;
+  try {
+    decodeURIComponent(route); // Reject malformed escapes before URLSearchParams normalizes them.
+  } catch {
+    return false;
+  } // An invalid route cannot be shared or opened.
+  const params = new URLSearchParams(queryParts[0] ?? '');
+  for (const [key, value] of params) {
+    if (!VIEW_QUERY_PARAMETERS.has(key) || /[\u0000-\u001f]/.test(value)) return false;
+  }
+  return true;
+}
+
+export function viewLinkFromRoute(route: unknown): string | null {
+  return validViewRoute(route) ? `farmslot://view/${route}` : null;
+}
+
+export function viewRouteFromLink(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.startsWith('farmslot://view/')) return null;
+  const route = value.slice('farmslot://view/'.length);
+  return validViewRoute(route) ? route : null;
+}

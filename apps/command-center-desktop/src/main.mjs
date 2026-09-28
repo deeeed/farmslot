@@ -20,7 +20,7 @@ import {
 } from 'electron';
 
 import { createConnectionStore } from './connection.mjs';
-import { deepLinkFromRoute, routeFromDeepLink } from './deep-links.mjs';
+import { routeFromDeepLink } from './deep-links.mjs';
 import {
   attentionBadge,
   attentionLabel,
@@ -154,11 +154,6 @@ app.on('open-url', (event, url) => {
   receiveDeepLink(url);
 });
 
-function currentDeepLink(url = window?.webContents.getURL()) {
-  if (!url || !isUiPage(url, server.origin, developmentUrl())) return null;
-  return deepLinkFromRoute(new URL(url).hash)?.replace(/^farmslot:/, `${profile.scheme}:`) ?? null;
-}
-
 function currentViewLink(url = window?.webContents.getURL()) {
   if (!url || !isUiPage(url, server.origin, developmentUrl())) return null;
   return viewLinkFromRoute(new URL(url).hash || '#fleet')?.replace(
@@ -169,7 +164,7 @@ function currentViewLink(url = window?.webContents.getURL()) {
 
 function updateCopyLink(url) {
   const item = Menu.getApplicationMenu()?.getMenuItemById('copy-desktop-link');
-  if (item) item.enabled = Boolean(currentDeepLink(url));
+  if (item) item.enabled = Boolean(currentViewLink(url));
 }
 
 function savePreferences(change) {
@@ -593,7 +588,7 @@ if (!app.requestSingleInstanceLock()) {
                 label: 'Copy Link to Current View',
                 enabled: false,
                 click: () => {
-                  const link = currentDeepLink();
+                  const link = currentViewLink();
                   if (link)
                     clipboard
                       .writeText(link)

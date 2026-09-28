@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share the Command Center view-link contract between the UI and desktop copy, open and saved navigation.
+
 - Describe retained run output and digest-bound output-review decisions independently of publication.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

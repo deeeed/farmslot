@@ -196,3 +196,11 @@ node apps/command-center/scripts/agentic/run-recipe.mjs \
 ```
 
 The helper uses real inputs and gateway reads, deletes its temporary backlog item, and writes screenshots plus `temp/electron-client-live/result.json`. It validates synthetic H.264 decoding, not a physical device stream. Quit/relaunch, gateway restart, and OS sleep/resume are separate lifecycle checks. To stop this fixture, quit its app, stop its gateway terminal, and run `tmux kill-session -t farmslot-electron-validation`.
+
+## Navigation regression check
+
+The UI and desktop use `@farmslot/protocol/surfaces/view-links` for supported routes and query parameters. Native menu copying, the UI copy action, incoming full-view links and saved navigation must use this contract. The UI navigation-contract test checks actual route builders and declared hash parameters against it. Register new navigation state there; credentials and action parameters remain unsupported.
+
+Build the isolated validation app with `yarn workspace @farmslot/command-center-desktop package:validation`. Set `FARMSLOT_GATEWAY`, `FARMSLOT_UI_URL` and `FARMSLOT_TEST_RUN_ID` to an existing no-auth validation gateway, UI and retained run, then run `node scripts/e2e-desktop-run-view-links.mjs`. It exercises real desktop copy, native-menu copy, OS link reopening and saved state, plus credential rejection. It reads the gateway without dispatching work. The app uses a separate macOS bundle identifier and a temporary Electron profile; a temporary profile alone does not isolate macOS restore/crash state.
+
+A live Vite UI does not update installed native code. After a desktop contract change, build and replace the installed app. Older shells report an update-needed message when the UI supports a route they reject.
