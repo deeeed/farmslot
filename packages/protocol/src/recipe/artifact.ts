@@ -182,7 +182,28 @@ export function validateArtifactManifestDocument(
       );
     }
 
-    for (const optionalField of ['label', 'nodeId', 'mimeType', 'category', 'proofTarget']) {
+    if (
+      artifact.timelinePath != null &&
+      (artifact.type !== 'video' ||
+        !isNonEmptyString(artifact.timelinePath) ||
+        !isRelativeArtifactPath(artifact.timelinePath) ||
+        (artifactPathSet && !artifactPathSet.has(artifact.timelinePath)))
+    )
+      addFinding(
+        ctx,
+        'error',
+        'artifact_manifest.invalid_timeline_path',
+        `${path}.timelinePath`,
+        'A video timeline must reference a retained file inside the artifact package.',
+      );
+    for (const optionalField of [
+      'label',
+      'nodeId',
+      'mimeType',
+      'category',
+      'proofTarget',
+      'timelineUnavailableReason',
+    ]) {
       const value = artifact[optionalField];
       if (value != null && typeof value !== 'string') {
         addFinding(

@@ -4,9 +4,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Retain reports and output files for partial or failed workers, and review artifact-only output without resuming execution or changing its verdict.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-09-28
+
+- Prefer retained HTML reports, retain recording timelines, and derive compact report text for model consumers; close reviewed output while preserving partial or failed validation, resource cleanup and dependency guards.
+- Retain reports and output files for partial or failed workers, and review artifact-only output without resuming execution or changing its verdict.
 
 ## 0.17.0 - 2026-09-27
 

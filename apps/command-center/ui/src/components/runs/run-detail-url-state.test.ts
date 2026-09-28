@@ -42,6 +42,15 @@ test('step hash updates preserve unrelated params and evidence modal params', ()
   );
 });
 
+test('changing artifacts removes the previous recording marker selection', () => {
+  const next = runDetailEvidenceArtifactHash(
+    'run-1',
+    { path: 'second.mp4' },
+    '#run/run-1?artifact=first.mp4&artifactTrace=7&artifactPhase=end',
+  );
+  assert.ok(!next.includes('artifactTrace') && !next.includes('artifactPhase'));
+});
+
 test('artifact modal hash updates preserve step and unrelated params', () => {
   const hash = '#run/run-1?view=summary&step=review+with+spaces&artifactRun=old&artifact=old.png';
 

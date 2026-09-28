@@ -17,6 +17,7 @@ import {
   errorMessage,
   manifestTarget,
 } from '../recording/capture-helper.js';
+import { writeRecordingTimeline } from '../recording/timeline.js';
 import { RECIPE_HARNESS_VERSION } from '../version.js';
 
 import {
@@ -399,6 +400,7 @@ class DefaultRecipeRunner implements RecipeRunner {
               getOutput,
               artifactWriter,
               runFileOffsets,
+              recording: runRecording,
             }),
           registerArtifacts: (artifacts) => {
             for (const artifact of artifacts) artifactWriter.register(artifact);
@@ -453,8 +455,19 @@ class DefaultRecipeRunner implements RecipeRunner {
         const recordingToStop = runRecording;
         runRecording = undefined;
         try {
-          const videoArtifact = await this.#stopRunVideoRecording(recordingToStop);
+          const videoArtifact = await this.#stopRunVideoRecording(
+            recordingToStop,
+            traceWriter.list(),
+            artifactWriter,
+          );
           artifactWriter.register(videoArtifact);
+          if (videoArtifact.timelinePath)
+            artifactWriter.register({
+              path: videoArtifact.timelinePath,
+              type: 'json',
+              category: 'system',
+              label: 'Recording frames and action markers',
+            });
         } catch (error) {
           const message = errorMessage(error);
           await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
@@ -560,6 +573,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     getOutput,
     artifactWriter,
     runFileOffsets,
+    recording,
   }: {
     nodeId: string;
     recipe: unknown;
@@ -570,6 +584,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     getOutput: (nodeId: string) => unknown;
     artifactWriter: JsonArtifactWriter;
     runFileOffsets: ReadonlyMap<string, number>;
+    recording?: RunVideoRecording;
   }): Parameters<ActionAdapter['execute']>[1] {
     return {
       nodeId,
@@ -579,6 +594,22 @@ class DefaultRecipeRunner implements RecipeRunner {
       env,
       outputs,
       getOutput,
+      ...(recording?.recording.snapshot
+        ? {
+            captureRecordingSnapshot: async (relativePath: string) => {
+              const relative = normalizeRelativePath(relativePath);
+              if (!relative.endsWith('.png'))
+                throw new Error('Recording snapshots must use a PNG artifact path.');
+              const dir = await mkdtemp(path.join(recording.stagingRoot, 'snapshot-'));
+              const staged = path.join(dir, 'frame.png');
+              const evidence = await recording.recording.snapshot!(staged);
+              await copyFileWithinRoots(dir, 'frame.png', artifactsDir, relative);
+              // Keep the provider's source path in its raw sidecar; the action output
+              // maps it to the published artifact path without rewriting capture facts.
+              return { ...evidence, sourceOutput: evidence.output, output: relative };
+            },
+          }
+        : {}),
       resolveProjectPath(relativePath: string) {
         return path.join(projectRoot, normalizeRelativePath(relativePath));
       },
@@ -689,6 +720,8 @@ class DefaultRecipeRunner implements RecipeRunner {
 
   async #stopRunVideoRecording(
     runRecording: RunVideoRecording,
+    trace: import('./types.js').TraceEntry[],
+    artifactWriter: JsonArtifactWriter,
   ): Promise<RecipeArtifactManifestEntry> {
     const result = await runRecording.recording.stop();
     await assertVideoOutputReady(runRecording.outputPath);
@@ -698,13 +731,42 @@ class DefaultRecipeRunner implements RecipeRunner {
       runRecording.artifactsDir,
       runRecording.entry.path,
     );
+    if (result.timingEvidencePath && result.timing) {
+      const evidencePath = `${runRecording.entry.path}.capture.json`;
+      await copyFileWithinRoots(
+        runRecording.stagingRoot,
+        result.timingEvidencePath,
+        runRecording.artifactsDir,
+        evidencePath,
+      );
+      artifactWriter.register({
+        path: evidencePath,
+        type: 'json',
+        category: 'system',
+        label: 'Native recording and snapshot timing',
+      });
+    }
     await rm(runRecording.stagingRoot, { recursive: true, force: true });
-    return result.recorder
-      ? {
-          ...runRecording.entry,
-          recorder: result.recorder,
-        }
-      : runRecording.entry;
+    const entry = {
+      ...runRecording.entry,
+      ...(result.recorder ? { recorder: result.recorder } : {}),
+    };
+    if (result.timing) {
+      try {
+        entry.timelinePath = await writeRecordingTimeline(
+          runRecording.artifactsDir,
+          entry.path,
+          result.timing,
+          trace,
+        );
+      } catch (error) {
+        // Video is retained; its optional timing capability failed explicitly.
+        entry.timelineUnavailableReason = errorMessage(error);
+      }
+    } else
+      entry.timelineUnavailableReason =
+        result.timingUnavailableReason ?? 'Recorder does not provide timeline alignment.';
+    return entry;
   }
 
   #hudAction(): string | undefined {

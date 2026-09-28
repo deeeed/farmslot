@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,6 +18,17 @@ export async function readFileWithinRoot(root: string, relativePath: string): Pr
   const handle = await openExistingFileWithinRoot(root, relativePath);
   try {
     return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function digestFileWithinRoot(root: string, relativePath: string): Promise<string> {
+  const handle = await openExistingFileWithinRoot(root, relativePath);
+  try {
+    const hash = createHash('sha256');
+    for await (const bytes of handle.createReadStream({ autoClose: false })) hash.update(bytes);
+    return `sha256:${hash.digest('hex')}`;
   } finally {
     await handle.close();
   }

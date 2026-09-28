@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "description": "Prove optional recording timelines with real browser input and retained gateway artifacts. Use an isolated Agent Chrome CDP port and validation gateway. The recorder proof serves a temporary local app and composes one parameterized color journey. Retain its artifacts in a disposable-recording-viewer run before the viewer node, and supply FARMSLOT_GATEWAY, FARMSLOT_UI_URL and FARMSLOT_TEST_RUN_ID. No product release or real user run is modified. For primary physical-device coverage, scripts/e2e-android-recording.mts requires an already acquired exclusive device lease and a published capture-helper binary; run with a 190000 ms interval to validate sustained composed recording and concurrent screenshots. Release the reservation after the process finishes. This checks recording infrastructure, not application correctness.",
+  "workflow": {
+    "entry": "record",
+    "nodes": {
+      "record": {
+        "action": "command",
+        "cmd": "test -n \"$FARMSLOT_RECORDING_VIEWER_WORKER_ARTIFACTS\" && node --import tsx scripts/e2e-recording-timeline.mts",
+        "intent": "Record real composed browser interactions; decode frame pixels and prove unequal action intervals survive variable-frame encoding and align with trace markers.",
+        "next": "view"
+      },
+      "view": {
+        "action": "command",
+        "cmd": "FARMSLOT_RECORDING_REQUIRE_FRESH=1 node scripts/e2e-recording-viewer.mjs",
+        "intent": "Use the live gateway's recording metadata and real viewer clicks. Prove a capture marker displays the blue state, adjacent frame timestamps match actual presented frames, and slow playback is selectable.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

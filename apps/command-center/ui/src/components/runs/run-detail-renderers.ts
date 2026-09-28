@@ -8,6 +8,7 @@ import type {
   FamilyObservabilityArtifact,
   PRStatus,
   Run,
+  RunDecision,
   RunGrade,
   TaskProgressStructured,
 } from '@farmslot/protocol';
@@ -22,6 +23,7 @@ import {
   resolveRunSlotId,
   reviewChainForRun,
   reviewPublicationPolicyForRun,
+  runOutputCloseUnavailableReason,
 } from '@farmslot/protocol';
 
 import '../slot-view/worker-session-history.js';
@@ -204,6 +206,9 @@ export interface RunEvidenceRenderContext {
   refreshOutput?: () => void;
   refreshingOutput?: boolean;
   outputError?: string;
+  closingOutput?: boolean;
+  actionsBlocked?: boolean;
+  closeOutput?: (decision: RunDecision) => void;
 }
 
 export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unknown {
@@ -212,6 +217,15 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
   const artifacts = collectRunEvidenceArtifacts(run);
   const evidence = runEvidenceSummary(run, artifacts);
   if (!evidence.shouldRender) return nothing;
+  const review = [...run.decisions]
+    .reverse()
+    .find(
+      (decision) =>
+        decision.payload?.kind === 'output-review' &&
+        (decision.payload.manifestDigest === run.output?.manifestDigest ||
+          (run.output?.closedAt && decision.resolvedAction === 'close-run')) &&
+        decision.resolvedAction !== 'superseded',
+    );
   const openArtifact = (file: string) => {
     const index = artifacts.findIndex((artifact) => artifact.path === file);
     if (index >= 0)
@@ -250,7 +264,7 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
         ${ctx.refreshOutput
           ? html`<button
               class="evidence-link"
-              ?disabled=${ctx.refreshingOutput}
+              ?disabled=${ctx.refreshingOutput || ctx.closingOutput}
               @click=${ctx.refreshOutput}
             >
               ${ctx.refreshingOutput ? 'Retrieving files…' : 'Refresh output'}
@@ -273,6 +287,34 @@ export function renderRunEvidence(run: Run, ctx: RunEvidenceRenderContext): unkn
           : nothing}
       </div>
       ${ctx.outputError ? html`<p role="alert">${ctx.outputError}</p>` : nothing}
+      ${run.output?.closeError
+        ? html`<p role="alert">
+            Execution is closed, but resource cleanup needs attention: ${run.output.closeError}
+          </p>`
+        : nothing}
+      ${run.output?.cleanupPending
+        ? html`<p role="status">Execution is closed; resource cleanup is pending.</p>`
+        : nothing}
+      ${review?.resolvedAt &&
+      ctx.closeOutput &&
+      (!run.output?.closedAt || run.output.closeError || run.output.cleanupPending)
+        ? html`<button
+            class="evidence-link"
+            data-testid="close-run-output"
+            title=${runOutputCloseUnavailableReason(run) ??
+            'Keep the recorded verdict and close execution'}
+            ?disabled=${ctx.actionsBlocked ||
+            ctx.closingOutput ||
+            Boolean(runOutputCloseUnavailableReason(run))}
+            @click=${() => ctx.closeOutput!(review)}
+          >
+            ${ctx.closingOutput
+              ? 'Closing…'
+              : run.output?.closedAt
+                ? 'Retry resource cleanup'
+                : 'Close run'}
+          </button>`
+        : nothing}
       ${artifacts.length && run.output?.captureError
         ? html`<p role="alert">Could not retrieve worker files: ${run.output.captureError}</p>`
         : nothing}

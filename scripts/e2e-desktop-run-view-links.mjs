@@ -82,6 +82,7 @@ try {
     `#run/${runId}?step=monitor`,
     `#runs?run=${runId}&step=monitor`,
     `#run/${runId}?artifactRun=${runId}&artifact=artifacts%2Freport.md`,
+    `#run/${runId}?artifactRun=${runId}&artifact=artifacts%2Fvideos%2Frecipe-run.mp4&artifactTrace=7&artifactPhase=end`,
   ]) {
     // Normal URL navigation, followed by the real button and desktop IPC.
     cdp('eval', '-', `location.hash=${JSON.stringify(route)};return true;`);
@@ -116,6 +117,10 @@ try {
         '-e',
         `tell application "System Events" to tell (first process whose unix id is ${child.pid})
       set frontmost to true
+      repeat 50 times
+        if exists menu bar item "Farmslot Validation" of menu bar 1 then exit repeat
+        delay 0.1
+      end repeat
       click menu item "Copy Link to Current View" of menu 1 of menu bar item "Farmslot Validation" of menu bar 1
     end tell`,
       ],
@@ -142,6 +147,16 @@ try {
     ),
   ).rejected;
   assert.equal(rejected, true, 'Credential parameters must still be rejected');
+  if (process.env.FARMSLOT_TEST_HTML_REPORT) {
+    const htmlRoute = `run/${runId}?artifactRun=${runId}&artifact=${encodeURIComponent(process.env.FARMSLOT_TEST_HTML_REPORT)}`;
+    cdp('eval', '-', `location.hash=${JSON.stringify('#' + htmlRoute)};return true;`);
+    execFileSync(process.execPath, ['scripts/e2e-html-report.mjs'], {
+      env: { ...env, FARMSLOT_UI_URL: ui, FARMSLOT_HTML_REPORT_ROUTE: htmlRoute },
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 60_000,
+    });
+  }
   console.log(
     JSON.stringify({
       pass: true,
@@ -151,6 +166,7 @@ try {
       macOSLinksReopened: true,
       savedNavigationMatches: true,
       credentialsRejected: true,
+      htmlReportVerified: Boolean(process.env.FARMSLOT_TEST_HTML_REPORT),
     }),
   );
 } finally {

@@ -216,6 +216,71 @@ artifact-manifest.json
 
 `recipe-resolution.json` is execution provenance, not authored recipe syntax. It records the exact root and dependency digests, selected sources, adapter variants, artifact paths, and call edges. Artifact validation revalidates every recipe and rejects missing, extra, unreachable, or digest-mismatched dependencies.
 
+### Optional recording timelines
+
+A video artifact may name `timelinePath`, a package-relative JSON file implementing
+`RecipeRecordingTimelineDocument` from `@farmslot/protocol`. Recording and timeline
+support are optional for every project and runner. A recorder without timing support
+keeps its video and may provide `timelineUnavailableReason`; consumers must not invent
+timestamps or infer frame rate from `maxFps`.
+
+The timeline contains:
+
+| Field | Meaning |
+|---|---|
+| `version` | `1` |
+| `videoPath`, `videoDigest` | Package-relative video and `sha256:` digest of its bytes |
+| `traceDigest` | Canonical recipe digest of the trace entry array, excluding wrapper metadata |
+| `framesMs`, `durationMs` | Increasing measured presentation times and duration on the video's seek clock |
+| `clock` | `source`, `earliestZeroUnixMs`, `latestZeroUnixMs`: measured bounds for media time zero on the runner's clock |
+| `markers` | Trace index, namespaced node ID, action, optional intent/proof targets, recorded `ok`, start/end time ranges |
+
+Each marker's `startRangeMs` and `endRangeMs` are ordered two-number ranges. They
+retain clock uncertainty, including negative times and events beyond the footage.
+`traceIndex` distinguishes loop visits; the namespaced node ID preserves composed
+call paths. Separate video and trace digests distinguish attempts. Markers aid
+navigation; they do not establish that a claim passed or that a transient state was
+captured. Screenshots and state/log assertions retain their own proof boundaries.
+
+Recorders supply frame times and clock alignment; the recipe runtime derives markers
+from the retained execution trace. A continuous real-time recorder can bound media zero
+using its observed lifetime and first/last frame presentation times. It must label this
+as bounded alignment, not exact first-frame timing. Clock changes, compressed pauses or
+invalid frame times make that alignment unavailable. More precise providers may supply
+tighter measured bounds. Clients show uncertainty, seek only within recorded footage,
+and step using measured frame times. A held final image is not a new observation.
+Keep clock calibration uncertainty separate from visual sampling. A marker's midpoint
+may fall inside a long held frame from before the action result. Show that frame's
+presentation interval rather than implying the clock window measures visual accuracy.
+
+Consumers validate the timeline and its video/trace binding before treating markers
+as evidence navigation. Keep frame indexes in their sidecar so agents can consume the
+compact trace/summary without loading every frame timestamp. Recipe authors do not
+hand-author timestamps, recording clocks or duplicate node markers.
+
+HUD text and navigation labels reuse the executed node's `intent`, `proves`,
+namespaced ID and status. The existing `app.hud` adapter renders progress; capture
+providers record the selected window and its visible HUD without interpreting it.
+Turning off the visible HUD does not remove trace markers. Capture-helper's native
+timing sidecar supplies capture facts, including source screenshots that were not
+encoded; the recipe runtime adds semantic markers. Neither layer requires agent
+narration or a second event system. WebVTT can carry generated portable chapters
+when a consumer needs them, but is not the authoritative frame/provenance format.
+
+An active recorder may implement `snapshot(outputPath)`. The shared runtime exposes
+this to screenshot actions through `captureRecordingSnapshot`, stages the PNG safely,
+and retains its provider event beside the action's evidence. It does not change
+document-only `ui.capture_surface` semantics. A screenshot from a native window can
+include window chrome or a device mirror; its caption must identify that boundary.
+
+For physical Android, the caller first obtains exclusive device ownership. The
+optional Android mirror recorder starts its own non-controlling scrcpy process,
+resolves its exact PID and unique window title, and records with capture-helper.
+It tears down only its own process. An explicitly supplied fallback recorder is
+selected during readiness if the primary tooling is unavailable, and its reason
+is retained. A failure after primary capture begins fails the attempt rather than
+silently changing capture providers mid-proof.
+
 ## Validation order
 
 Before side effects, a conforming runner validates the root document, manifest compatibility, library resolution, complete static call graph, parameters, and trust plan. It then executes the recipe and validates the resulting evidence package.

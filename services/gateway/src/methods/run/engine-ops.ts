@@ -120,6 +120,10 @@ export async function runActivateOnSlot(
 ): Promise<RunActivateOnSlotResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (run.output?.closedAt)
+    throw new Error(
+      'Execution was closed after output review; start a fresh run for further validation',
+    );
   if (run.readOnly) {
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be activated on a slot`,

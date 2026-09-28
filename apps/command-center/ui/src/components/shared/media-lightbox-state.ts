@@ -19,6 +19,7 @@ export abstract class MediaLightboxState extends LitElement {
   @property({ type: Number }) totalItems = 0;
 
   @state() protected _zoom = 1;
+  @state() protected _maximized = false;
   @state() protected _panX = 0;
   @state() protected _panY = 0;
   @state() protected _broken = new Set<number>();

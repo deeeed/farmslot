@@ -1,7 +1,8 @@
+import { isolatedArtifactHtml } from '../../utils/artifact-html.js';
 import { sameOriginGatewayHttpUrl } from '../../utils/gateway-origin.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 
-export type MediaLightboxTextPreviewKind = 'markdown' | 'json' | 'diff';
+export type MediaLightboxTextPreviewKind = 'markdown' | 'json' | 'diff' | 'html';
 
 export interface SameOriginLightboxFetchUrlInput {
   url: string;
@@ -31,6 +32,7 @@ export function formatLightboxTextPreview(
   markdownRenderer: (markdown: string) => string = renderMarkdown,
 ): string {
   if (kind === 'markdown') return markdownRenderer(text);
+  if (kind === 'html') return isolatedArtifactHtml(text);
   if (kind === 'diff') return text;
 
   try {

@@ -64,8 +64,19 @@ export function familyLightboxItem(
     url: familyArtifactUrl(artifact),
     path: artifact.path,
     purpose: artifact.purpose,
+    viewUrl: `#run/${artifact.runId}?artifactRun=${encodeURIComponent(artifact.runId)}&artifact=${encodeURIComponent(artifact.path)}`,
     caption: familyArtifactCaption(artifact),
     provenance: familyArtifactProvenance(artifact, run),
-    ...(artifact.maxFps != null ? { frameRate: artifact.maxFps } : {}),
+    ...(artifact.timelinePath
+      ? {
+          sha256: artifact.sha256,
+          timelinePath: artifact.timelinePath,
+          resolveArtifactUrl: (path: string) =>
+            familyArtifactUrl({ ...artifact, path, sha256: undefined }),
+        }
+      : {}),
+    ...(artifact.timelineUnavailableReason
+      ? { timelineUnavailableReason: artifact.timelineUnavailableReason }
+      : {}),
   };
 }

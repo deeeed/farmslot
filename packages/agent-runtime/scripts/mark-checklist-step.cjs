@@ -35,6 +35,7 @@ const LEARNINGS_ARTIFACT = path.join('artifacts', 'learnings.md');
 const ARTIFACT_CONTRACT_SCRIPT = path.resolve(__dirname, 'check-task-artifact-contract.mjs');
 
 const FLOW_REPORT_ARTIFACTS = {
+  qa: ['report.html', 'qa-report.md', 'report.md'],
   'fix-bug': ['pr-description.md', 'report.md'],
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],

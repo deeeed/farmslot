@@ -1,5 +1,6 @@
 import {
   hasLiveRecipeEvidence,
+  isSuccessfulRun,
   isTerminalRunStatus,
   type Run,
   RUN_SELF_LEARNING_MISSING_SIGNALS,
@@ -14,10 +15,6 @@ import type { RunListResult } from '../rpc/index.js';
 
 function isTerminalRun(run: Run): boolean {
   return isTerminalRunStatus(run.status);
-}
-
-function isSuccessfulRun(run: Run): boolean {
-  return run.status === 'done' && run.metrics.outcome !== 'failure';
 }
 
 function hasPendingDecision(run: Run): boolean {

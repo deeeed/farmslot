@@ -4,11 +4,13 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- Explain when an older desktop shell cannot copy a supported view link.
-
-- Show run results, reports and browsable files in run details and family view before worker recovery; distinguish output review from comparison runs and publication.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.18.0 - 2026-09-28
+
+- Display retained HTML reports with inline recordings and proof links in an isolated viewer; navigate measured video frames and action markers, and close execution without changing validation results.
+- Explain when an older desktop shell cannot copy a supported view link.
+- Show run results, reports and browsable files in run details and family view before worker recovery; distinguish output review from comparison runs and publication.
 
 ## 0.17.0 - 2026-09-27
 

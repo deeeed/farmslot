@@ -122,8 +122,8 @@ const DEFAULT_RUN_FORCE_COMPLETE_DEPS: RunForceCompleteTransitionDependencies = 
   cancelEngine: cancelRunEngine,
   bumpGeneration: bumpRunGeneration,
   attachPrNumber: attachForceCompletePrNumber,
-  publish: publishForceCompletedRun,
-  releaseSlot: releaseForceCompletedSlot,
+  publish: publishCompletedRun,
+  releaseSlot: releaseCompletedRunSlot,
 };
 
 export async function runForceComplete(
@@ -323,7 +323,7 @@ async function attachForceCompletePrNumber(runId: string, prNumber: number): Pro
   }
 }
 
-async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean }> {
+export async function releaseCompletedRunSlot(run: Run): Promise<{ released: boolean }> {
   if (run.reviewWorkspace) {
     const { teardownReviewWorkspace } = await import('../../review-workspaces/pipeline.js');
     await teardownReviewWorkspace(run.id);
@@ -355,7 +355,7 @@ async function releaseForceCompletedSlot(run: Run): Promise<{ released: boolean 
   return result;
 }
 
-export async function publishForceCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
+export async function publishCompletedRun(run: Run, broadcast?: Emit): Promise<Run> {
   try {
     const emit = broadcast ?? (await import('../../server.js')).broadcastEvent;
     emit(Events.RUN_UPDATED, { run });

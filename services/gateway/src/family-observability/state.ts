@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import { isSuccessfulRun, type Run } from '@farmslot/protocol';
 
 export interface FamilyStateSummary {
   familyId: string;
@@ -54,12 +54,12 @@ export function buildFamilyStateSummary(familyRuns: Run[]): FamilyStateSummary |
     activeRunCount: orderedRuns.filter(isActiveFamilyRun).length,
     latestRunId: latestRun.id,
     latestPrNumber: latestRun.prNumber ?? null,
-    // Any-done wins: a family is considered complete the moment any run
-    // reached `done`. A later failed retry does not invalidate earlier
+    // Any success wins. Closing partial execution is not success.
+    // A later failed retry does not invalidate earlier
     // success — the merged PR / delivered fix is the outcome that matters.
     workflowState: orderedRuns.some(isActiveFamilyRun)
       ? 'active'
-      : orderedRuns.some((run) => run.status === 'done')
+      : orderedRuns.some(isSuccessfulRun)
         ? 'complete'
         : 'failed',
     ownedPrFamily,

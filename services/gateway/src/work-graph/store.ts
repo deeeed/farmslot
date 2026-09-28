@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   Events,
   isSchedulerAuthoritativeGraph,
+  isSuccessfulRun,
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
@@ -719,13 +720,19 @@ export async function pauseWorkGraph(
 function terminalFamilyOutcome(
   runs: readonly Run[],
   familyId: string | undefined,
-): 'success' | 'failure' | 'cancelled' | null {
+): 'success' | 'failure' | 'partial' | 'cancelled' | null {
   if (!familyId) return null;
   const familyRuns = runs.filter((run) => run.familyId === familyId || run.id === familyId);
   if (familyRuns.length === 0) return null;
   if (familyRuns.some((run) => !isTerminalRunStatus(run.status))) return null;
-  if (familyRuns.some((run) => run.status === 'failed')) return 'failure';
-  if (familyRuns.some((run) => run.status === 'cancelled')) return 'cancelled';
+  // Match family observability: a completed successful attempt supersedes
+  // earlier failed, cancelled or partially validated attempts in this family.
+  if (familyRuns.some(isSuccessfulRun)) return 'success';
+  if (familyRuns.some((run) => run.status === 'failed' || run.metrics.outcome === 'failure'))
+    return 'failure';
+  if (familyRuns.some((run) => run.status === 'cancelled' || run.metrics.outcome === 'cancelled'))
+    return 'cancelled';
+  if (familyRuns.some((run) => !isSuccessfulRun(run))) return 'partial';
   return 'success';
 }
 
@@ -840,8 +847,20 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
       ];
     } else if (latestRun.status === 'blocked' || latestRun.status === 'human-gating')
       node.status = 'gated';
-    else if (latestRun.status === 'done') node.status = 'succeeded';
-    else if (latestRun.status === 'failed') node.status = 'failed';
+    else if (latestRun.status === 'done') {
+      node.status = isSuccessfulRun(latestRun)
+        ? 'succeeded'
+        : latestRun.metrics.outcome === 'failure'
+          ? 'failed'
+          : 'needs-attention';
+      if (!isSuccessfulRun(latestRun))
+        node.waitingOn = [
+          {
+            kind: 'policy',
+            detail: `Execution closed with ${latestRun.metrics.outcome}; validation remains unresolved.`,
+          },
+        ];
+    } else if (latestRun.status === 'failed') node.status = 'failed';
     else if (resourceWait) {
       // The run holds a durable place in a scoped claim's queue. Reported as
       // `waiting` with a non-empty reason on purpose: an empty `waitingOn` is
@@ -1408,7 +1427,7 @@ export async function schedulerTick(
         const hasCompletedRun =
           node.status === 'succeeded' &&
           node.latestRunId !== undefined &&
-          runs.some((run) => run.id === node.latestRunId && run.status === 'done');
+          runs.some((run) => run.id === node.latestRunId && isSuccessfulRun(run));
         if (hasCompletedRun && !node.schedulerAuthorizedAt) {
           // Start dependencies decide whether work may begin. Once a durable run
           // completed without scheduler authorization, later reconciliation must

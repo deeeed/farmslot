@@ -38,6 +38,7 @@ import {
   Events,
   isResourcePostureWaitPolicy,
   isReviewValidationDepth,
+  isSuccessfulRun,
   isTerminalRunStatus,
   normalizeRunTags,
   type OkResult,
@@ -679,7 +680,12 @@ function projectionForCandidate(
 }
 
 function statusFromRun(run: Run): BacklogLaunchCandidateProjection['status'] {
-  if (run.status === 'done') return 'succeeded';
+  if (run.status === 'done')
+    return isSuccessfulRun(run)
+      ? 'succeeded'
+      : run.metrics.outcome === 'failure'
+        ? 'failed'
+        : 'blocked';
   if (run.status === 'failed') return 'failed';
   if (run.status === 'cancelled') return 'cancelled';
   if (run.status === 'human-gating') return 'gated';
@@ -855,7 +861,7 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   if (['done', 'failed', 'cancelled', 'blocked'].includes(run.status)) {
     delete item.queuedQueueItemId;
   }
-  if (run.status === 'done') {
+  if (isSuccessfulRun(run)) {
     // Multi-PR items span several slices: one merged run must not auto-close
     // the whole item. Return it to ready and clear the run
     // link — enqueue rejects run-linked items, so keeping runId would leave a
@@ -867,8 +873,13 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
     } else {
       item.status = 'done';
     }
-  } else if (run.status === 'failed') item.status = 'failed';
-  else if (run.status === 'cancelled' || run.status === 'blocked') item.status = 'needs-attention';
+  } else if (
+    run.status === 'failed' ||
+    (run.status === 'done' && run.metrics.outcome === 'failure')
+  )
+    item.status = 'failed';
+  else if (run.status === 'cancelled' || run.status === 'blocked' || run.status === 'done')
+    item.status = 'needs-attention';
   else item.status = 'running';
   const changed =
     previousStatus !== item.status ||

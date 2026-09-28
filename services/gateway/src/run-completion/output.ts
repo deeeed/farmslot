@@ -33,6 +33,7 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
   const decisions = structuredClone(run.decisions);
   const prior = decisions.filter((decision) => decision.payload?.kind === 'output-review');
   const eligible =
+    !output.closedAt &&
     output.workerFinished &&
     output.reportPath &&
     !output.captureError &&
@@ -46,7 +47,9 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
       (decision) =>
         decision.payload?.kind === 'output-review' &&
         decision.payload.manifestDigest === output.manifestDigest &&
-        (!decision.resolvedAt || decision.resolvedAction === 'mark-reviewed'),
+        decision.payload.reportPath === output.reportPath &&
+        (!decision.resolvedAt ||
+          ['mark-reviewed', 'close-run'].includes(decision.resolvedAction ?? '')),
     )
   )
     return decisions;
@@ -65,9 +68,16 @@ export function outputReviewDecisions(run: Run, output: RunOutput): RunDecision[
       'The worker has produced a report. Review its findings, gaps and evidence. Marking it reviewed does not approve a release, publish anything or change the worker outcome.',
     actions: [
       {
+        id: 'close-run',
+        label: 'Close run',
+        style: 'primary',
+        description:
+          'Close finished execution and release its resources. Keep the recorded verdict and all coverage gaps; do not publish or approve a release.',
+      },
+      {
         id: 'mark-reviewed',
         label: 'Mark reviewed',
-        style: 'primary',
+        style: 'secondary',
         description:
           'Acknowledge this exact report and evidence snapshot. The recorded verdict stays unchanged.',
       },
@@ -99,6 +109,13 @@ export function failRunOutputCapture(runId: string, error: unknown, workerFinish
   const output: RunOutput = {
     workerFinished: outputWorkerFinished(run, workerFinished),
     capturedAt: new Date().toISOString(),
+    ...(run.output?.closedAt
+      ? {
+          closedAt: run.output.closedAt,
+          closeError: run.output.closeError,
+          cleanupPending: run.output.cleanupPending,
+        }
+      : {}),
     artifactManifest: run.output?.artifactManifest ?? [],
     manifestDigest: run.output?.manifestDigest ?? '',
     reportPath: run.output?.reportPath,
@@ -122,6 +139,9 @@ export async function captureRunOutput(
   if (artifacts.some((artifact) => !artifact.sha256))
     throw new Error('Could not fingerprint all output files');
   const candidates = [
+    ...(FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md']).map((name) =>
+      artifacts.find((artifact) => artifact.path === `artifacts/${name.replace(/\.md$/, '.html')}`),
+    ),
     ...(FLOW_WORKER_REPORT_ARTIFACTS[run.flowType] ?? ['report.md']).map((name) =>
       artifacts.find((artifact) => artifact.path === `artifacts/${name}`),
     ),
@@ -148,6 +168,13 @@ export async function captureRunOutput(
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const output: RunOutput = {
     workerFinished: outputWorkerFinished(current, workerFinished),
+    ...(current.output?.closedAt
+      ? {
+          closedAt: current.output.closedAt,
+          closeError: current.output.closeError,
+          cleanupPending: current.output.cleanupPending,
+        }
+      : {}),
     capturedAt: new Date().toISOString(),
     artifactManifest: artifacts,
     manifestDigest: outputManifestDigest(artifacts),
@@ -162,16 +189,23 @@ export async function captureRunOutput(
   return copied;
 }
 
-export async function acknowledgeRunOutput(runId: string, decisionId: string): Promise<Run> {
+export async function verifyRunOutputReview(
+  runId: string,
+  decisionId: string,
+  allowReviewed = false,
+): Promise<Run> {
   const run = getRun(runId);
   const decision = run?.decisions.find((candidate) => candidate.id === decisionId);
   if (
     !run?.taskFile ||
     !run.output ||
     decision?.payload?.kind !== 'output-review' ||
-    decision.resolvedAt
+    (decision.resolvedAt &&
+      !(allowReviewed && ['mark-reviewed', 'close-run'].includes(decision.resolvedAction ?? '')))
   )
     throw new Error('Output review is no longer pending');
+  const taskFile = run.taskFile;
+  const generation = run.engineState?.generation;
   const expected = decision.payload.manifestDigest;
   const reportPath = decision.payload.reportPath;
   if (
@@ -179,21 +213,43 @@ export async function acknowledgeRunOutput(runId: string, decisionId: string): P
     reportPath.split(/[\\/]+/).some((segment) => segment === '..' || segment === '.')
   )
     throw new Error('Report path must stay inside retained output');
-  if (run.output.captureError || run.output.manifestDigest !== expected)
+  if (
+    run.output.captureError ||
+    run.output.manifestDigest !== expected ||
+    run.output.reportPath !== reportPath
+  )
     throw new Error('Run output changed; refresh the report before reviewing');
   // Verify the bytes, not just a previously stored manifest. New or removed files
   // also change the digest; a changed snapshot requires another review.
-  const artifacts = await scanArtifacts(path.dirname(run.taskFile));
+  const artifacts = await scanArtifacts(path.dirname(taskFile));
   if (outputManifestDigest(artifacts) !== expected)
     throw new Error('Run output changed; refresh the report before reviewing');
   if (!artifacts.some((artifact) => artifact.path === reportPath))
     throw new Error('Reviewed report is not in the retained output');
-  const report = await readFile(path.join(path.dirname(run.taskFile), reportPath), 'utf8');
+  const report = await readFile(path.join(path.dirname(taskFile), reportPath), 'utf8');
   if (!report.trim()) throw new Error('The report is empty');
   const current = getRun(runId);
   const pending = current?.decisions.find((candidate) => candidate.id === decisionId);
-  if (!current || pending?.resolvedAt || current.output?.manifestDigest !== expected)
+  if (
+    !current ||
+    !pending ||
+    (pending.resolvedAt &&
+      !(allowReviewed && ['mark-reviewed', 'close-run'].includes(pending.resolvedAction ?? ''))) ||
+    current.output?.captureError ||
+    current.output?.manifestDigest !== expected ||
+    current.output?.reportPath !== reportPath ||
+    pending.payload?.kind !== 'output-review' ||
+    pending.payload.manifestDigest !== expected ||
+    pending.payload.reportPath !== reportPath ||
+    current.taskFile !== taskFile ||
+    current.engineState?.generation !== generation
+  )
     throw new Error('Output review changed while it was being checked');
+  return current;
+}
+
+export async function acknowledgeRunOutput(runId: string, decisionId: string): Promise<Run> {
+  const current = await verifyRunOutputReview(runId, decisionId);
   const decisions = current.decisions.map((entry) =>
     entry.id === decisionId
       ? { ...entry, resolvedAt: new Date().toISOString(), resolvedAction: 'mark-reviewed' }

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.20.0 - 2026-09-28
+
+- Prefer capture-helper's native frame and snapshot timing, wait for its first recorded frame, and retain trace-linked action markers; preserve variable frame timing for browser recording fallback.
+- Use active recording-session screenshots and an owned Android mirror for physical-device capture, with explicit fallback provenance and process cleanup.
+
 ## 0.19.0 - 2026-09-27
 
 - The visual review board can reopen a downloaded or Companion-exported feedback JSON (`Open feedback JSON`), keeping surface and capture ids and refusing malformed feedback or feedback for another capture, and every page, the index included, shows whether the file opened. Drafts are stored per capture; `feedbackDraftFromDocument` exposes the same restore for tests and other renderers.

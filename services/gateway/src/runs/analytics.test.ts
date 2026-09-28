@@ -80,6 +80,19 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   } as Run;
 }
 
+test('closed partial execution retains its failure evidence in analytics', () => {
+  const run = makeRun({
+    error: 'runtime timeout',
+    steps: [{ name: 'monitor', status: 'failed' }],
+    metrics: { ...makeRun().metrics, outcome: 'partial' },
+  });
+  const record = buildAnalyticsRecord(run);
+  assert.equal(record.status, 'done');
+  assert.equal(record.outcome, 'partial');
+  assert.equal(record.failedStep, 'monitor');
+  assert.equal(record.failureReason, 'timeout');
+});
+
 test('buildAnalyticsRecord flattens a clean done run', () => {
   const rec = buildAnalyticsRecord(makeRun());
   assert.equal(rec.status, 'done');

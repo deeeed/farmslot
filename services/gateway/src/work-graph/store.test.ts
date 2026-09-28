@@ -151,6 +151,84 @@ test('work graph rejects cycles while authoring edges', async () => {
   );
 });
 
+test('closed partial execution keeps backlog attention and cannot satisfy a downstream dependency', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Validation with gaps');
+  const downstream = await createReadyBacklogItem(backlog, 'Depends on successful validation');
+  const result = await workGraph.createWorkGraph(
+    { project: 'farmslot-farm', title: 'Partial closeout' },
+    { kind: 'system' },
+  );
+  const graphId = result.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_partial', backlogItemId: upstream.item.id });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_downstream',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    fromNodeId: 'wn_partial',
+    toNodeId: 'wn_downstream',
+    condition: { kind: 'family-done' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === 'wn_partial')!;
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: upstream.item.sourceRef,
+    backlogItemId: upstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_partial',
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-started');
+  const closed = runs.updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: { ...run.metrics, outcome: 'partial' },
+  });
+  await backlog.markBacklogRunObserved(closed);
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(backlog.getBacklogItemSnapshot(upstream.item.id)?.status, 'needs-attention');
+  const graph = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(graph.nodes.find((node) => node.id === 'wn_partial')?.status, 'needs-attention');
+  assert.notEqual(graph.nodes.find((node) => node.id === 'wn_downstream')?.status, 'succeeded');
+  assert.ok(
+    !queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === 'wn_downstream'),
+  );
+  const sibling = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: upstream.item.sourceRef,
+    parentRunId: run.id,
+    familyId: run.familyId,
+    backlogItemId: upstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_partial',
+  });
+  const succeeded = runs.updateRun(sibling.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    metrics: { ...sibling.metrics, outcome: 'success' },
+  });
+  await backlog.markBacklogRunObserved(succeeded);
+  await workGraph.schedulerTick({ graphId });
+  assert.ok(
+    queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === 'wn_downstream'),
+    'A successful sibling satisfies family completion without rewriting the partial attempt',
+  );
+  assert.equal(runs.getRun(run.id)?.metrics.outcome, 'partial');
+});
+
 test('work graph can use an owner scope different from backlog project', async () => {
   const { backlog, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Gateway projection');

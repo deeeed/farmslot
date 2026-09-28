@@ -31,7 +31,7 @@ const config =
 // These parameters select views or prefill forms. No link submits a form.
 export const VIEW_QUERY_PARAMETERS: ReadonlySet<string> = new Set(
   (
-    'a b activity artifact artifactRun assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
+    'a b activity artifact artifactRun artifactTrace artifactPhase assessment backlogProject backlogStatus capture create demo dispatchConfig draft draftMode file item resource runId contextId history historyRun host recipeRun recipeDependency ' +
     'recipeNode recipeArtifact recipeEvidenceMode recipeViewer recipeViewerMode recipeViewerPair reviewDrawer ' +
     'cmpSort cmpTab diffArtifact diffRun direction evidence evidencePreview family familyId flow flowType focus gate graph intent lane ' +
     'layout lightboxIndex lightboxRecipeRunId machines modal mode model node panel parentRunId pr prDraft prEditor prHistory prHost project projects ' +

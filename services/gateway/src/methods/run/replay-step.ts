@@ -603,6 +603,10 @@ export async function runReplayStep(
     );
   }
   const startedFromDone = existing.status === 'done';
+  if (existing.output?.closedAt)
+    throw new Error(
+      'Execution was closed after output review; start a fresh run for further validation',
+    );
   if (existing.engineState?.operatorForceCompleted) {
     throw new Error(`Run ${params.runId} was force-completed and cannot be replayed`);
   }

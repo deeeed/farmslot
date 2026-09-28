@@ -81,14 +81,22 @@ export {
 export { RecipeTrustError } from './core/trust-error.js';
 export { RECIPE_TRUST_ENV, resolveRecipeTrustInput } from './core/trust-input.js';
 export type * from './core/types.js';
+export { createAndroidMirrorVideoRecorder } from './recording/android-mirror.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';
 export {
   createCaptureHelperVideoRecorder,
   errorMessage,
   manifestTarget,
 } from './recording/capture-helper.js';
+export { readCaptureHelperTiming } from './recording/capture-helper-timing.js';
 export type { CdpVideoRecorderOptions } from './recording/cdp-video-recorder.js';
 export { createCdpVideoRecorder } from './recording/cdp-video-recorder.js';
+export {
+  createRecordingTimeline,
+  optionalVideoTiming,
+  probeVideoTiming,
+  writeRecordingTimeline,
+} from './recording/timeline.js';
 export type {
   RecipeResolutionDependency,
   RecipeResolutionDocument,

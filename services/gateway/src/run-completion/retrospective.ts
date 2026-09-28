@@ -26,6 +26,8 @@ import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
+import { workerReportText } from './report-text.js';
+
 // ─── Worker report ───
 
 export interface WorkerReportArtifact {
@@ -45,7 +47,7 @@ export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportAr
     const localPath = path.join(taskDir, 'artifacts', fileName);
     if (existsSync(localPath)) {
       const text = await readFile(localPath, 'utf-8');
-      if (text.trim()) return { fileName, text };
+      if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
     }
   }
 
@@ -69,7 +71,7 @@ export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportAr
           );
           if (await slotFileExists(vars, workerReport)) {
             const text = await slotReadFile(vars, workerReport);
-            if (text.trim()) return { fileName, text };
+            if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
           }
         }
       }

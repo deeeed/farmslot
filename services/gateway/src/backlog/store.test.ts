@@ -1068,6 +1068,7 @@ test('run observation heals needs-attention when linked run completes', async ()
   await backlog.markBacklogRunObserved({
     id: 'blocked-then-done',
     status: 'done',
+    metrics: { nudgeCount: 0, model: null, runner: null },
     backlogItemId: created.item.id,
   } as never);
 
@@ -1097,6 +1098,7 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
   await backlog.markBacklogRunObserved({
     id: 'slice-1-run',
     status: 'done',
+    metrics: { nudgeCount: 0, model: null, runner: null },
     backlogItemId: created.item.id,
   } as never);
 
@@ -1332,6 +1334,7 @@ test('launch-plan observation from a foreign plan is ignored', async () => {
   await backlog.markBacklogRunObserved({
     id: 'foreign-run',
     status: 'done',
+    metrics: { nudgeCount: 0, model: null, runner: null },
     backlogItemId: created.item.id,
     launchPlanId: 'lp_other',
     launchCandidateId: 'baseline',
@@ -1871,6 +1874,7 @@ test('close-shipped finalizes a multi-PR item after its last slice', async () =>
   await backlog.markBacklogRunObserved({
     id: 'final-slice-run',
     status: 'done',
+    metrics: { nudgeCount: 0, model: null, runner: null },
     backlogItemId: created.item.id,
   } as never);
 
@@ -1983,6 +1987,7 @@ test('run observation can follow successor run by backlogItemId after parent can
   await backlog.markBacklogRunObserved({
     id: 'successor-run',
     status: 'done',
+    metrics: { nudgeCount: 0, model: null, runner: null },
     backlogItemId: created.item.id,
   } as never);
 
@@ -2765,6 +2770,7 @@ test('a failed backlog write rejects the settle instead of reporting a settled c
       backlog.markBacklogRunObserved({
         id: 'settle-persist-failure',
         status: 'done',
+        metrics: { nudgeCount: 0, model: null, runner: null },
         backlogItemId: created.item.id,
       } as never),
     'a backlog write failure must reach the transition router',

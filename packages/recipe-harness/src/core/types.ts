@@ -138,6 +138,7 @@ export interface RecordingTargetContext {
 }
 
 export type RecordingTarget =
+  | { kind: 'android-device'; serial: string }
   | { kind: 'window-id'; windowId: string }
   | { kind: 'pid'; pid: number }
   | { kind: 'app-window'; appName: string; windowName: string }
@@ -154,10 +155,16 @@ export interface VideoRecorderStartRequest {
 
 export interface ActiveVideoRecording {
   stop(): Promise<VideoRecordingResult>;
+  /** Capture a PNG from this recording's stream, if the provider supports it. */
+  snapshot?(outputPath: string): Promise<Record<string, unknown>>;
 }
 
 export interface VideoRecordingResult {
   recorder?: RecipeArtifactManifestEntry['recorder'];
+  timing?: import('@farmslot/protocol').RecipeVideoTiming;
+  timingUnavailableReason?: string;
+  /** Raw provider timing evidence, relative to the private video staging directory. */
+  timingEvidencePath?: string;
 }
 
 export interface VideoRecorder {
@@ -221,6 +228,7 @@ export interface ActionExecutionContext {
   resolveArtifactPath(relativePath: string): string;
   getRunFileOffset(relativePath: string): number | undefined;
   registerArtifact(entry: RecipeArtifactManifestEntry): void;
+  captureRecordingSnapshot?(relativePath: string): Promise<Record<string, unknown>>;
   logger: RecipeLogger;
 }
 

@@ -11,7 +11,7 @@ import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../../ru
 
 import {
   GATE_PARK_REPLAY_TRIGGER,
-  publishForceCompletedRun,
+  publishCompletedRun,
   runCancel,
   runForceComplete,
   runForceCompleteTransitionLocked,
@@ -566,7 +566,7 @@ test(
   },
 );
 
-test('publishForceCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async (t) => {
+test('publishCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
@@ -579,7 +579,7 @@ test('publishForceCompletedRun broadcasts RUN_UPDATED then RUN_COMPLETED', async
     metrics: { ...run.metrics, outcome: 'success' },
   });
   const events: string[] = [];
-  await publishForceCompletedRun(done, (event) => {
+  await publishCompletedRun(done, (event) => {
     events.push(event);
   });
   assert.equal(events[0], Events.RUN_UPDATED);

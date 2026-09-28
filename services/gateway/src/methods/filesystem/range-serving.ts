@@ -82,6 +82,16 @@ function parseRequestByteRange(req: IncomingMessage, size: number): ParsedByteRa
 
 function byteServingHeaders(mime: string, length: number): Record<string, string | number> {
   return {
+    ...(mime.startsWith('text/html')
+      ? {
+          // Direct artifact URLs download HTML instead of executing on the gateway
+          // origin. The viewer fetches text into a separate script-disabled frame.
+          'Content-Disposition': 'attachment',
+          'Content-Security-Policy':
+            "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+          'X-Content-Type-Options': 'nosniff',
+        }
+      : {}),
     'Content-Type': mime,
     'Content-Length': length,
     'Cache-Control': 'no-cache',
