@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
 import { writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { once } from 'node:events';
+
 import WebSocket from 'ws';
 
 const runId = process.env.FARMSLOT_TEST_RUN_ID;

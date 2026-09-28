@@ -1,13 +1,21 @@
 // Isolated gateway proof: a refused release must stay visible and retryable.
 import assert from 'node:assert/strict';
-import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = process.cwd();
-assert.equal(process.env.FARMSLOT_VALIDATION_ROOT, root, 'Explicitly identify the isolated validation checkout');
-assert.notEqual(execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim(), 'main', 'Never seed validation state on operator main');
+assert.equal(
+  process.env.FARMSLOT_VALIDATION_ROOT,
+  root,
+  'Explicitly identify the isolated validation checkout',
+);
+assert.notEqual(
+  execFileSync('git', ['branch', '--show-current'], { encoding: 'utf8' }).trim(),
+  'main',
+  'Never seed validation state on operator main',
+);
 const scratch = path.join(root, 'temp/output-close-retry-proof');
 const saved = path.join(scratch, 'fixture.json');
 const runsDir = path.join(root, 'temp/results-validation/runs');

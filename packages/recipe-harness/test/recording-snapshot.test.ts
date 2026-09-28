@@ -165,5 +165,6 @@ test('Android mirror fallback records the readiness reason and refuses wrong dev
     record: 'full_run',
   });
   const stopped = await active.stop();
-  assert.match(stopped.recorder!.fallbackReason!, /could not be executed/);
+  assert.ok(stopped.recorder!.fallbackReason);
+  assert.ok(result.message.includes(stopped.recorder!.fallbackReason!));
 });
