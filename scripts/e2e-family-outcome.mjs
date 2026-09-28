@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const root = process.cwd();
 assert.equal(process.env.FARMSLOT_VALIDATION_ROOT, root);
@@ -101,7 +102,15 @@ if (process.argv.includes('--seed')) {
   const cases = JSON.parse(await readFile(fixture, 'utf8'));
   const results = [];
   for (const scenario of cases) {
-    rpc('workGraph.schedulerTick', { graphId: scenario.graphId });
+    let evaluated = false;
+    // A restarted gateway must wait for the previous scheduler lease to expire.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const tick = rpc('workGraph.schedulerTick', { graphId: scenario.graphId });
+      evaluated = tick.graphs.some((projection) => projection.graph.id === scenario.graphId);
+      if (evaluated) break;
+      await delay(1000);
+    }
+    assert.ok(evaluated, 'Targeted scheduler must recompute the fixture, not return cached state');
     const graph = rpc('workGraph.get', { graphId: scenario.graphId }).graph;
     assert.ok(
       graph.nodes.every((node) => node.status !== 'dispatched'),
