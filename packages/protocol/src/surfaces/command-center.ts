@@ -218,9 +218,9 @@ export const COMMAND_CENTER_SURFACES: CommandCenterSurfaceDefinition[] = [
   },
   {
     surfaceId: 'decisions',
-    routePattern: '#decisions/:decisionId?',
-    routeRegex: '^decisions(?:/([^/?#]+))?$',
-    routeParamNames: ['decisionId'],
+    routePattern: '#decisions',
+    routeRegex: '^decisions$',
+    routeParamNames: [],
     queryParams: [],
     componentPath: 'apps/command-center/ui/src/components/decisions/decision-inbox.ts',
     componentSymbol: 'DecisionInbox',
@@ -237,7 +237,7 @@ export const COMMAND_CENTER_SURFACES: CommandCenterSurfaceDefinition[] = [
       'apps/command-center/ui/src/components/app-shell.ts:parseHash decisions route',
       'apps/command-center/ui/src/components/decisions/decision-inbox.ts:DecisionInbox',
     ],
-    sampleHash: '#decisions/decision-1',
+    sampleHash: '#decisions',
   },
   {
     surfaceId: 'runs-list',

@@ -5,5 +5,8 @@ const development = require('./development.cjs');
 module.exports = {
   ...development,
   appId: 'io.farmslot.command-center.validation',
+  productName: 'Farmslot Validation',
+  extraMetadata: { desktopProfile: 'validation' },
+  protocols: [{ name: 'Farmslot Validation links', schemes: ['farmslot-validation'] }],
   directories: { output: '../../temp/desktop-validation' },
 };

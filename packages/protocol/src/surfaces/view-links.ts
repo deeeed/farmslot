@@ -22,7 +22,7 @@ const routes = new Set([
   'violations',
 ]);
 const entity =
-  /^(run|family|slot|terminal|config|decisions)\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/workspace)?$/;
+  /^(run|family|slot|terminal|config)\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}(?:\/workspace)?$/;
 // Config uses nested paths such as config/pool/macwork and
 // config/flows/fix-bug/interactive/phase/metamask-farm. Keep every segment
 // constrained to the same identifier grammar used by entity routes.

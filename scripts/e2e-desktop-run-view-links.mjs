@@ -10,7 +10,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { confirmDesktopQuit } from './lib/desktop-quit.mjs';
 
 const app = path.resolve(
-  process.env.FARMSLOT_DESKTOP_TEST_APP ?? 'temp/desktop-validation/mac-arm64/Farmslot Dev.app',
+  process.env.FARMSLOT_DESKTOP_TEST_APP ??
+    'temp/desktop-validation/mac-arm64/Farmslot Validation.app',
 );
 assert.equal(
   execFileSync(
@@ -53,7 +54,7 @@ async function waitFor(check) {
   throw new Error('Desktop check timed out');
 }
 assert.equal(JSON.parse(cdp('gateway', 'run.get', JSON.stringify({ runId }))).run.id, runId);
-const child = spawn(path.join(app, 'Contents/MacOS/Farmslot Dev'), [], {
+const child = spawn(path.join(app, 'Contents/MacOS/Farmslot Validation'), [], {
   env: { ...env, FARMSLOT_DESKTOP_USER_DATA: profile, FARMSLOT_DESKTOP_CDP_PORT: port },
   stdio: 'ignore',
 });
@@ -91,18 +92,22 @@ try {
       const copied = JSON.parse(
         cdp('eval', '-', 'return {link:await window.farmslotDesktop.copyCurrentLink()};'),
       ).link;
-      assert.equal(copied, `farmslot-dev://view/${route}`);
+      assert.equal(copied, `farmslot-validation://view/${route}`);
     } else {
       cdp('screenshot', '-', '/tmp/desktop-run-copy-before.png');
       cdp('click', '-', 'button.copy-link');
       await waitFor(
-        () => execFileSync('pbpaste', { encoding: 'utf8' }) === `farmslot-dev://view/${route}`,
+        () =>
+          execFileSync('pbpaste', { encoding: 'utf8' }) === `farmslot-validation://view/${route}`,
       );
     }
-    assert.equal(execFileSync('pbpaste', { encoding: 'utf8' }), `farmslot-dev://view/${route}`);
+    assert.equal(
+      execFileSync('pbpaste', { encoding: 'utf8' }),
+      `farmslot-validation://view/${route}`,
+    );
     // Reopen through the macOS URL event, using the isolated validation bundle.
     cdp('eval', '-', 'location.hash="#fleet";return true;');
-    execFileSync('open', ['-a', app, `farmslot-dev://view/${route}`]);
+    execFileSync('open', ['-a', app, `farmslot-validation://view/${route}`]);
     await waitFor(() => value('location.hash') === route);
     execFileSync('pbcopy', { input: 'desktop-navigation-test', encoding: 'utf8' });
     execFileSync(
@@ -111,13 +116,13 @@ try {
         '-e',
         `tell application "System Events" to tell (first process whose unix id is ${child.pid})
       set frontmost to true
-      click menu item "Copy Link to Current View" of menu 1 of menu bar item "Farmslot Dev" of menu bar 1
+      click menu item "Copy Link to Current View" of menu 1 of menu bar item "Farmslot Validation" of menu bar 1
     end tell`,
       ],
       { timeout: 10000, stdio: 'pipe' },
     );
     await waitFor(
-      () => execFileSync('pbpaste', { encoding: 'utf8' }) === `farmslot-dev://view/${route}`,
+      () => execFileSync('pbpaste', { encoding: 'utf8' }) === `farmslot-validation://view/${route}`,
     );
     const preferences = JSON.parse(
       cdp('eval', '-', 'return {route:(await window.farmslotDesktop.loadPreferences()).route};'),

@@ -60,6 +60,11 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
   const checker = program.getTypeChecker();
   const missing = new Set<string>();
   function check(key: string, file: string) {
+    // Connection envelopes may carry credentials; replay belongs only to #dev.
+    if (['connect', 'replay'].includes(key)) {
+      assert.equal(VIEW_QUERY_PARAMETERS.has(key), false, `${key} must remain unshareable`);
+      return;
+    }
     // These two parameters version /api/run-artifact responses, not hash navigation.
     if (
       file.endsWith('/workspace/ready-workspace-action-presenter.ts') &&
@@ -68,12 +73,59 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
       return;
     if (!VIEW_QUERY_PARAMETERS.has(key)) missing.add(`${path.relative(root, file)}: ${key}`);
   }
+  function checkExpression(expression: ts.Expression, file: string) {
+    if (ts.isStringLiteralLike(expression)) return check(expression.text, file);
+    const type = checker.getTypeAtLocation(expression);
+    for (const member of type.isUnion() ? type.types : [type]) {
+      if (member.isStringLiteral()) check(member.value, file);
+    }
+  }
   for (const file of files) {
     const source = program.getSourceFile(file)!;
     const ownsHashState =
       file.endsWith('url-state.ts') ||
       /\b(?:parseHashRoute|hashParams|getHashParam)\b|location\.hash/.test(source.text);
     function visit(node: ts.Node) {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const name = node.expression.text;
+        const argument =
+          name === 'getHashParam'
+            ? node.arguments[0]
+            : ['findHashParam', 'withHashParam'].includes(name)
+              ? node.arguments[1]
+              : undefined;
+        if (argument) checkExpression(argument, file);
+      }
+      if (
+        ownsHashState &&
+        ts.isForOfStatement(node) &&
+        ts.isCallExpression(node.expression) &&
+        node.expression.expression.getText(source) === 'Object.entries' &&
+        node.expression.arguments[0] &&
+        ts.isObjectLiteralExpression(node.expression.arguments[0])
+      ) {
+        let writesQuery = false;
+        const inspect = (child: ts.Node) => {
+          if (
+            ts.isCallExpression(child) &&
+            ts.isPropertyAccessExpression(child.expression) &&
+            ['set', 'delete'].includes(child.expression.name.text) &&
+            checker.typeToString(checker.getTypeAtLocation(child.expression.expression)) ===
+              'URLSearchParams'
+          )
+            writesQuery = true;
+          ts.forEachChild(child, inspect);
+        };
+        inspect(node.statement);
+        if (writesQuery)
+          for (const property of node.expression.arguments[0].properties) {
+            if (
+              property.name &&
+              (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name))
+            )
+              check(property.name.text, file);
+          }
+      }
       // URL state helpers own dynamic query construction. Resolve constants and
       // literal unions, including loop keys such as keyof RunsHashState.
       if (
@@ -85,10 +137,7 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
         checker.typeToString(checker.getTypeAtLocation(node.expression.expression)) ===
           'URLSearchParams'
       ) {
-        const type = checker.getTypeAtLocation(node.arguments[0]);
-        for (const member of type.isUnion() ? type.types : [type]) {
-          if (member.isStringLiteral()) check(member.value, file);
-        }
+        checkExpression(node.arguments[0], file);
       }
       // Include hand-authored hash links outside the URL-state helpers. Only
       // hash navigation participates; API query parameters are a separate contract.
@@ -99,10 +148,27 @@ test('navigation parameter declarations cannot drift from desktop sharing', () =
         ts.isTemplateTail(node)
       ) {
         const text = node.text;
-        if (text.startsWith('#') || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) {
+        let parent: ts.Node | undefined = node.parent;
+        let assignedHash = false;
+        while (parent && !ts.isStatement(parent)) {
+          if (
+            ts.isBinaryExpression(parent) &&
+            parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            /(?:^|\.)location\.hash$/.test(parent.left.getText(source))
+          )
+            assignedHash = true;
+          parent = parent.parent;
+        }
+        if (
+          assignedHash ||
+          text.startsWith('#') ||
+          ts.isTemplateMiddle(node) ||
+          ts.isTemplateTail(node)
+        ) {
           const template =
             ts.isTemplateMiddle(node) || ts.isTemplateTail(node) ? node.parent.parent : null;
           const isHash =
+            assignedHash ||
             text.startsWith('#') ||
             (template && ts.isTemplateExpression(template) && template.head.text.startsWith('#'));
           if (isHash)
