@@ -6,6 +6,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.12.1 - 2026-09-28
+
+- Publish against protocol 0.32.0 and recipe-harness 0.20.0 so downstream installs share one protocol and recording runtime.
+
 ## 0.12.0 - 2026-09-27
 
 - Agent Device `ui.scroll` maps one-axis `delta_x`/`delta_y` to a relative direction and pixel scroll, and rejects absolute `offset_x`/`offset_y` instead of ignoring them.
