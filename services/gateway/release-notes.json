@@ -1,11 +1,8 @@
 {
-  "version": "0.17.0",
-  "date": "2026-09-27",
+  "version": "0.18.0",
+  "date": "2026-09-28",
   "items": [
-    "Deliver complete worker feedback messages with bounded, serialized pastes.",
-    "Honor preparation choices and recover valid completion and review sessions.",
-    "Show resource readiness and acceptance evidence explicitly.",
-    "Keep optional advice bounded, auditable and separate from operator approval.",
-    "Update clean checkouts safely while preserving local changes."
+    "Prefer retained HTML reports, retain recording timelines, and derive compact report text for model consumers; close reviewed output while preserving partial or failed validation, resource cleanup and dependency guards",
+    "Retain reports and output files for partial or failed workers, and review artifact-only output without resuming execution or changing its verdict"
   ]
 }

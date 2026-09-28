@@ -1,11 +1,9 @@
 {
-  "version": "0.17.0",
-  "date": "2026-09-27",
+  "version": "0.18.0",
+  "date": "2026-09-28",
   "items": [
-    "Keep static code review separate from runtime QA.",
-    "Recover blocked workers with explicit preparation and visible resource status.",
-    "Inspect acceptance-evidence assessments, decision advice and recorded costs.",
-    "Use updated model choices and host-specific account readiness.",
-    "Copy credential-free app links and preserve navigation across background updates."
+    "Display retained HTML reports with inline recordings and proof links in an isolated viewer; navigate measured video frames and action markers, and close execution without changing validation results",
+    "Explain when an older desktop shell cannot copy a supported view link",
+    "View run results, reports and browsable files in run details and family view before worker recovery; distinguish output review from comparison runs and publication"
   ]
 }

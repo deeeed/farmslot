@@ -4,15 +4,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Define optional project-neutral recording timelines for frame navigation and trace-linked action/proof markers, including clock uncertainty and artifact binding.
-
-- Separate reviewed execution closeout from successful validation when deriving run and dependency readiness.
-
-- Share the Command Center view-link contract between the UI and desktop copy, open and saved navigation.
-
-- Describe retained run output and digest-bound output-review decisions independently of publication.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.32.0 - 2026-09-28
+
+- Define optional project-neutral recording timelines for frame navigation and trace-linked action/proof markers, including clock uncertainty and artifact binding.
+- Separate reviewed execution closeout from successful validation when deriving run and dependency readiness.
+- Share the Command Center view-link contract between the UI and desktop copy, open and saved navigation.
+- Describe retained run output and digest-bound output-review decisions independently of publication.
 
 ## 0.31.0 - 2026-09-27
 
