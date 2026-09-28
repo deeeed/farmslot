@@ -353,6 +353,11 @@
       "types": "./dist/node/farmslot-home.d.ts",
       "import": "./dist/node/farmslot-home.js",
       "default": "./dist/node/farmslot-home.js"
+    },
+    "./surfaces/view-links": {
+      "types": "./dist/surfaces/view-links.d.ts",
+      "import": "./dist/surfaces/view-links.js",
+      "default": "./dist/surfaces/view-links.js"
     }
   },
   "scripts": {

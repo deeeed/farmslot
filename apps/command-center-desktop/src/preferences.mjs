@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { validateDevelopmentSource } from './ui-source.mjs';
+import { validViewRoute } from './view-links.mjs';
 
 export const DEFAULT_SHORTCUT = 'CommandOrControl+Shift+Space';
 
@@ -12,17 +13,7 @@ export function validateShortcut(value) {
 }
 
 export function savedRoute(value) {
-  if (typeof value !== 'string' || value.length > 4096 || !/^#[a-z][\w/=?&%.:+-]*$/i.test(value))
-    return '#fleet';
-  const query = value.split('?')[1];
-  if (
-    query &&
-    [...new URLSearchParams(query).keys()].some((key) =>
-      /token|password|secret|authorization/i.test(key),
-    )
-  )
-    return '#fleet';
-  return value;
+  return validViewRoute(value) ? value : '#fleet';
 }
 
 export function restoreBounds(bounds, displays) {

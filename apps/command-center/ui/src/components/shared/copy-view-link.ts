@@ -1,6 +1,8 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import { validViewRoute } from '@farmslot/protocol/surfaces/view-links';
+
 import '../../desktop-connection.js';
 
 @customElement('copy-view-link')
@@ -27,7 +29,11 @@ export class CopyViewLink extends LitElement {
         this.feedback = '';
       }, 2500);
     } catch (error) {
-      this.feedback = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.feedback =
+        validViewRoute(location.hash) && message.includes('URL parameters that cannot be shared')
+          ? 'This view is supported by the UI. Update and reopen the desktop app to copy its link.'
+          : message;
     } finally {
       this.busy = false;
     }

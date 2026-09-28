@@ -8,13 +8,14 @@
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
-    "build": "FARMSLOT_CC_BASE=/cc/ yarn workspace @farmslot/command-center-ui build --outDir ../../command-center-desktop/ui-dist",
+    "build": "yarn workspace @farmslot/protocol build && FARMSLOT_CC_BASE=/cc/ yarn workspace @farmslot/command-center-ui build --outDir ../../command-center-desktop/ui-dist",
     "start": "electron .",
-    "test": "node --test test/*.test.mjs",
+    "test": "yarn workspace @farmslot/protocol build && node --test test/*.test.mjs",
     "package:mac": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --config.mac.identity=null",
     "package:mac:signed": "node scripts/notarization.mjs preflight && yarn build && electron-builder --mac --arm64 -c.mac.notarize=true -c.forceCodeSigning=true && node scripts/notarization.mjs verify",
     "start:dev": "FARMSLOT_DESKTOP_PROFILE=development electron .",
-    "package:mac:dev": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config build/development.cjs --mac --arm64 --config.mac.identity=null"
+    "package:mac:dev": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config build/development.cjs --mac --arm64 --config.mac.identity=null",
+    "package:validation": "yarn build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config build/validation.cjs --mac --arm64 --dir --config.mac.identity=null"
   },
   "devDependencies": {
     "electron": "44.4.3",
@@ -58,5 +59,8 @@
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*"
   }
 }

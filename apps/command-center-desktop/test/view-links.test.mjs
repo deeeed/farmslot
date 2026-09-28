@@ -36,6 +36,19 @@ test('selected work graph nodes and filters are shareable', () => {
   assert.equal(viewRouteFromLink(link), route);
 });
 
+test('run steps, retained reports and family evidence round trip', () => {
+  for (const route of [
+    '#runs?run=run-1&step=monitor',
+    '#runs?runsTab=history&status=failed&run=run-1&step=complete',
+    '#run/run-1?artifactRun=run-1&artifact=artifacts%2Freport.md',
+    '#family/family-1?run=run-1&gate=max&lightboxIndex=2&lightboxRecipeRunId=recipe-1',
+    '#family/family-1?run=run-1&tokens=run&trajectory=all-runs',
+  ]) {
+    assert.equal(viewLinkFromRoute(route), `farmslot://view/${route}`);
+    assert.equal(viewRouteFromLink(`farmslot://view/${route}`), route);
+  }
+});
+
 test('view links reject credentials, actions and unknown parameters', () => {
   for (const route of [
     '#runs?token=secret',
