@@ -12,7 +12,7 @@
 - [ ] **6. Fix the reported PR follow-up issue** — keep changes minimal and scoped to the current follow-up.
 - [ ] **7. Validate** — run typecheck and focused tests:
   ```bash
-  (cd "{{REPO}}/apps/command-center && yarn typecheck)
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
   # Replace the example path with the affected gateway test files.
   cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
