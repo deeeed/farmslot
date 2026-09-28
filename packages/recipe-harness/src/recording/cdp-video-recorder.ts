@@ -11,7 +11,7 @@ import type {
 import { CdpSession, selectCdpTarget, sleep } from '../runtime/cdp.js';
 
 import { errorMessage } from './capture-helper.js';
-import { type CapturedFrame,RecordingFrameSampler } from './frame-sampler.js';
+import { type CapturedFrame, RecordingFrameSampler } from './frame-sampler.js';
 import { optionalVideoTiming } from './timeline.js';
 
 export interface CdpVideoRecorderOptions {
