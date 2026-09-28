@@ -208,6 +208,7 @@ test('closed partial execution keeps backlog attention and cannot satisfy a down
     project: 'farmslot-farm',
     ticketOrPr: upstream.item.sourceRef,
     parentRunId: run.id,
+    familyId: run.familyId,
     backlogItemId: upstream.item.id,
     workGraphId: graphId,
     workNodeId: 'wn_partial',
