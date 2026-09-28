@@ -34,6 +34,56 @@ export const mediaLightboxStyles = css`
     padding: ${unsafeCSS(spacing.md)};
     border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}22;
   }
+  .ml-backdrop.maximized {
+    padding: 0;
+  }
+  .maximized .ml-modal {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .maximized .ml-body {
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+    padding: 0;
+  }
+  .maximized .ml-html-shell,
+  .maximized .ml-md-shell {
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+  }
+  .maximized .ml-html-frame {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+  }
+  .maximized .ml-md-body {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
+  .maximized .ml-image-shell,
+  .maximized .ml-video-shell {
+    min-height: 0;
+  }
+  .maximized .ml-stage {
+    flex: 1;
+    min-height: 0;
+  }
+  .maximized .ml-expanded {
+    max-height: 100%;
+  }
+  .maximized .ml-video-shell .ml-video {
+    flex: 1;
+    min-height: 0;
+  }
+  .maximized .ml-filmstrip {
+    display: none;
+  }
   .ml-purpose-row {
     display: flex;
     align-items: center;
@@ -67,11 +117,24 @@ export const mediaLightboxStyles = css`
     background: ${unsafeCSS(colors.statusOk)}12;
   }
   .ml-file-type.markdown,
+  .ml-file-type.html,
   .ml-file-type.json,
   .ml-file-type.diff {
     border-color: ${unsafeCSS(colors.accent)}66;
     color: ${unsafeCSS(colors.accent)};
     background: ${unsafeCSS(colors.accent)}14;
+  }
+  .ml-html-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    width: 100%;
+  }
+  .ml-html-frame {
+    border: 0;
+    width: 100%;
+    height: 70vh;
+    background: white;
   }
   .ml-path {
     font-size: 11px;
@@ -215,6 +278,32 @@ export const mediaLightboxStyles = css`
   .ml-video-shell .ml-video {
     max-height: 68vh;
     background: #000;
+  }
+  .ml-video-markers {
+    width: 100%;
+    font-size: 12px;
+  }
+  .ml-video-markers summary {
+    cursor: pointer;
+    padding: 8px 0;
+  }
+  .ml-marker-list {
+    max-height: 200px;
+    overflow: auto;
+  }
+  .ml-marker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+  }
+  .ml-marker > span {
+    flex: 1;
+  }
+  .ml-marker small {
+    display: block;
+    opacity: 0.7;
+    font-size: 10px;
   }
   .ml-video-controls {
     width: min(100%, 960px);

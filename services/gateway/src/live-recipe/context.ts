@@ -475,6 +475,13 @@ function parseTypedArtifactManifestRefs(
       ...(typeof entry.label === 'string' ? { label: entry.label } : {}),
       ...(typeof entry.nodeId === 'string' ? { nodeId: entry.nodeId } : {}),
       ...(typeof entry.mimeType === 'string' ? { mimeType: entry.mimeType } : {}),
+      ...(typeof entry.timelinePath === 'string' &&
+      normalizeTypedArtifactManifestPath(entry.timelinePath)
+        ? { timelinePath: normalizeTypedArtifactManifestPath(entry.timelinePath)! }
+        : {}),
+      ...(typeof entry.timelineUnavailableReason === 'string'
+        ? { timelineUnavailableReason: entry.timelineUnavailableReason }
+        : {}),
       ...(typeof entry.maxFps === 'number' && Number.isFinite(entry.maxFps) && entry.maxFps > 0
         ? { maxFps: entry.maxFps }
         : {}),

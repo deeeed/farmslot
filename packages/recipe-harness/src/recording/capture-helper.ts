@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import path from 'node:path';
 
 import type { RecipeArtifactRecorderTarget } from '@farmslot/protocol';
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
@@ -11,6 +12,9 @@ import type {
   VideoRecorderDoctorResult,
   VideoRecorderStartRequest,
 } from '../core/types.js';
+
+import { readCaptureHelperTiming } from './capture-helper-timing.js';
+import { optionalVideoTiming } from './timeline.js';
 
 export interface CaptureHelperVideoRecorderOptions {
   captureHelperPath?: string;
@@ -105,18 +109,103 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
   }
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
+    const versionResult = await runCommand(this.#captureHelperPath, ['version', '--json'], {
+      timeoutMs: 10_000,
+    });
+    if (versionResult.exitCode !== 0) throw new Error('Capture-helper version probe failed.');
+    const version = JSON.parse(versionResult.stdout);
+    const nativeTiming =
+      Array.isArray(version.capabilities) &&
+      version.capabilities.includes('record_session_timing_v1');
+    const sessionSnapshots =
+      Array.isArray(version.capabilities) &&
+      version.capabilities.includes('record_session_snapshot');
     const args = ['record', ...targetArgs(request.target), '--output', request.outputPath];
+    if (sessionSnapshots) args.push('--framed');
     if (request.maxFps != null) args.push('--max-fps', String(request.maxFps));
     if (request.maxSize != null) args.push('--max-size', String(request.maxSize));
 
-    const child = spawn(this.#captureHelperPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const startedAtUnixMs = Date.now();
+    const child = spawn(this.#captureHelperPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     const stderr: string[] = [];
+    let ready = false;
+    let eventBuffer = '';
+    const snapshots = new Map<
+      string,
+      {
+        resolve(event: Record<string, unknown>): void;
+        reject(error: Error): void;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    >();
+    const usedSnapshotPaths = new Set<string>();
+    let recordingId: string | undefined;
     child.stderr.setEncoding('utf-8');
-    child.stderr.on('data', (chunk: string) => stderr.push(chunk));
+    child.stderr.on('data', (chunk: string) => {
+      stderr.push(chunk);
+      eventBuffer += chunk;
+      const lines = eventBuffer.split('\n');
+      eventBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue; /* legacy helper diagnostics may be plain text */
+        }
+        if (
+          event.type === 'record_ready' &&
+          typeof event.recording_id === 'string' &&
+          event.recording_id
+        ) {
+          recordingId = event.recording_id;
+          ready = true;
+        }
+        const snapshot = typeof event.output === 'string' ? snapshots.get(event.output) : undefined;
+        if (snapshot && ['snapshot', 'error'].includes(event.type)) {
+          clearTimeout(snapshot.timer);
+          snapshots.delete(event.output);
+          if (
+            event.type === 'snapshot' &&
+            nativeTiming &&
+            (event.recording_id !== recordingId ||
+              typeof event.media_time_ms !== 'number' ||
+              !Number.isFinite(event.media_time_ms) ||
+              event.media_time_ms < 0 ||
+              typeof event.source_time_ms !== 'number' ||
+              !Number.isFinite(event.source_time_ms) ||
+              typeof event.writer_accepted !== 'boolean' ||
+              (event.writer_accepted &&
+                (!Number.isInteger(event.writer_frame_index) || event.writer_frame_index < 0)))
+          )
+            snapshot.reject(
+              new Error('Recording snapshot omitted valid timing or recording identity.'),
+            );
+          else if (event.type === 'snapshot')
+            snapshot.resolve(
+              nativeTiming
+                ? event
+                : {
+                    ...event,
+                    timingUnavailableReason: 'Recorder does not advertise snapshot timing.',
+                  },
+            );
+          else snapshot.reject(new Error(event.message ?? 'Recording snapshot failed.'));
+        }
+      }
+    });
     child.stdout.resume();
 
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-      child.once('exit', (code, signal) => resolve({ code, signal }));
+      child.once('exit', (code, signal) => {
+        for (const snapshot of snapshots.values()) {
+          clearTimeout(snapshot.timer);
+          snapshot.reject(new Error('Recorder exited before the snapshot completed.'));
+        }
+        snapshots.clear();
+        resolve({ code, signal });
+      });
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -135,9 +224,58 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
       });
     });
 
+    if (nativeTiming) {
+      const deadline = Date.now() + 15_000;
+      while (
+        !ready &&
+        child.exitCode === null &&
+        child.signalCode === null &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      if (!ready) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGINT');
+        await waitForExit(exit, {
+          timeoutMs: this.#stopTimeoutMs,
+          onTimeout: () => child.kill('SIGKILL'),
+          message: 'Capture-helper did not stop after readiness failure.',
+        });
+        throw new Error(
+          `Capture-helper did not provide a recorded first frame: ${stderr.join('').trim()}`,
+        );
+      }
+    }
     const getVersion = () => this.version;
     const stopTimeoutMs = this.#stopTimeoutMs;
     return {
+      ...(sessionSnapshots
+        ? {
+            snapshot(outputPath: string): Promise<Record<string, unknown>> {
+              if (/[\r\n]/.test(outputPath))
+                return Promise.reject(new Error('Snapshot path cannot contain a newline.'));
+              if (child.exitCode !== null || child.signalCode !== null)
+                return Promise.reject(new Error('Recording is no longer active.'));
+              if (usedSnapshotPaths.has(outputPath))
+                return Promise.reject(
+                  new Error('This snapshot path was already used in this recording.'),
+                );
+              usedSnapshotPaths.add(outputPath);
+              return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  snapshots.delete(outputPath);
+                  reject(new Error('Recording snapshot timed out.'));
+                }, 15_000);
+                snapshots.set(outputPath, { resolve, reject, timer });
+                child.stdin.write(`snapshot ${outputPath}\n`, (error) => {
+                  if (!error) return;
+                  clearTimeout(timer);
+                  snapshots.delete(outputPath);
+                  reject(error);
+                });
+              });
+            },
+          }
+        : {}),
       async stop() {
         if (child.exitCode == null && child.signalCode == null) child.kill('SIGINT');
         const result = await waitForExit(exit, {
@@ -146,6 +284,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
           message: `capture-helper record did not stop within ${stopTimeoutMs}ms after SIGINT.`,
         });
         const expectedInterrupt = result.signal === 'SIGINT';
+        const stoppedAtUnixMs = Date.now();
         if (result.code !== 0 && !expectedInterrupt) {
           throw new Error(
             `capture-helper record failed (${formatExit(result.code, result.signal)}): ${stderr.join('').trim()}`,
@@ -154,6 +293,12 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         const stats = await stat(request.outputPath);
         if (stats.size <= 0) throw new Error(`Recording output is empty: ${request.outputPath}`);
         return {
+          ...(nativeTiming
+            ? { timingEvidencePath: `${path.basename(request.outputPath)}.timing.json` }
+            : {}),
+          ...(nativeTiming
+            ? await readCaptureHelperTiming(request.outputPath)
+            : await optionalVideoTiming(request.outputPath, { startedAtUnixMs, stoppedAtUnixMs })),
           recorder: {
             name: 'capture-helper',
             ...(getVersion() ? { version: getVersion() } : {}),
@@ -231,6 +376,8 @@ function waitForExit<T>(
 }
 
 function targetArgs(target: RecordingTarget): string[] {
+  if (target.kind === 'android-device')
+    throw new Error('A physical Android recording requires the owned mirror recorder.');
   if (target.kind === 'pid') return ['--pid', String(target.pid)];
   if (target.kind === 'window-id') return ['--window-id', target.windowId];
   if (target.kind === 'simulator') {
@@ -240,6 +387,7 @@ function targetArgs(target: RecordingTarget): string[] {
 }
 
 export function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderTarget {
+  if (target.kind === 'android-device') return { selector: 'adb-serial', value: target.serial };
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {
     return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };

@@ -7,8 +7,11 @@ import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
+import type { RecipeRecordingMarker,RecipeRecordingTimelineDocument } from '@farmslot/protocol';
+
 import '../diff-viewer/diff-review.js';
 
+import { isolatedArtifactHtml } from '../../utils/artifact-html.js';
 import { type ArtifactKind, artifactKind } from '../../utils/artifact-kind.js';
 import {
   buildArtifactUrlResolver,
@@ -30,12 +33,17 @@ import { MD_CACHE_LIMIT, MediaLightboxState } from './media-lightbox-state.js';
 import { mediaLightboxStyles } from './media-lightbox-styles.js';
 import type { LightboxItem, LightboxPair } from './media-lightbox-types.js';
 import {
-  mediaLightboxFrameRateForSelection,
-  mediaLightboxFrameStepSeconds,
+  adjacentVideoFrameMs,
+  displayedVideoFrameRangeMs,
+  loadVideoTimeline,
 } from './media-lightbox-video-model.js';
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
+  private _timelines = new Map<
+    string,
+    { data?: RecipeRecordingTimelineDocument; error?: string }
+  >();
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('keydown', this._onKeyDown);
@@ -45,9 +53,11 @@ export class MediaLightbox extends MediaLightboxState {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this._onKeyDown);
     this._mdCache.clear();
+    this._timelines.clear();
   }
 
   updated(changed: Map<string, unknown>): void {
+    if (changed.has('open') && this.open) this._timelines.clear();
     if (
       changed.has('selectedIndex') ||
       changed.has('open') ||
@@ -56,7 +66,15 @@ export class MediaLightbox extends MediaLightboxState {
     ) {
       this._resetView();
       this._divider = 50;
+      this._appliedVideoMarker = '';
     }
+    if (
+      this.open &&
+      ['open', 'items', 'pairs', 'selectedIndex', 'pairIndex', 'mode', '_kindFilter'].some((key) =>
+        changed.has(key),
+      )
+    )
+      void this._loadActiveVideoTimeline();
     if (changed.has('open') && this.open) {
       this.updateComplete.then(() => {
         this.renderRoot.querySelector<HTMLElement>('.ml-modal')?.focus();
@@ -78,7 +96,22 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _close() {
+    this._maximized = false;
     this.dispatchEvent(new CustomEvent('lightbox-close'));
+  }
+
+  private _renderMaximizeControl() {
+    return html`<button
+      class="ml-btn"
+      data-testid="artifact-maximize"
+      aria-pressed=${this._maximized}
+      title="Use the full application window"
+      @click=${() => {
+        this._maximized = !this._maximized;
+      }}
+    >
+      ${this._maximized ? 'Restore' : 'Maximize'}
+    </button>`;
   }
 
   private _visibleIndices(): number[] {
@@ -290,6 +323,7 @@ export class MediaLightbox extends MediaLightboxState {
     this._videoDuration = Number.isFinite(video.duration) ? video.duration : 0;
     this._videoPaused = video.paused;
     this._videoRate = video.playbackRate || 1;
+    this._applyInitialVideoMarker();
   }
 
   private _syncPrimaryVideoState(): void {
@@ -333,18 +367,141 @@ export class MediaLightbox extends MediaLightboxState {
     this._syncVideoState(video);
   }
 
-  private _activeVideoFrameRate(): number {
-    const item = this.mode === 'single' ? this.items[this.selectedIndex] : undefined;
-    return mediaLightboxFrameRateForSelection({
-      mode: this.mode,
-      item,
-      pair: this.mode === 'compare' ? this.pairs[this.pairIndex] : undefined,
-    });
+  private _activeVideoItem(): LightboxItem | undefined {
+    return this.mode === 'compare'
+      ? this.pairs[this.pairIndex]?.before
+      : (this.items.find((item) => item.url === this._primaryVideo()?.getAttribute('src')) ??
+          this.items[this.selectedIndex]);
   }
 
-  private _stepVideo(frames: -1 | 1): void {
-    for (const candidate of this._videoSet()) candidate.pause();
-    this._seekVideo(mediaLightboxFrameStepSeconds(frames, this._activeVideoFrameRate()));
+  private _timelineState() {
+    const item = this._activeVideoItem();
+    return item
+      ? this._timelines.get(`${item.url}:${item.sha256 ?? ''}:${item.timelinePath ?? ''}`)
+      : undefined;
+  }
+
+  private async _loadActiveVideoTimeline(): Promise<void> {
+    const item = this._activeVideoItem();
+    if (!item || !isVideoLightboxItem(item)) return;
+    const key = `${item.url}:${item.sha256 ?? ''}:${item.timelinePath ?? ''}`;
+    if (this._timelines.has(key)) return;
+    putCapped(this._timelines, key, {}, MD_CACHE_LIMIT);
+    try {
+      const data = await loadVideoTimeline(item, async (url) => {
+        const response = await gatewayHttpFetch(url);
+        if (!response.ok)
+          throw new Error(`Recording evidence could not be read (${response.status}).`);
+        return response.json();
+      });
+      putCapped(this._timelines, key, { data }, MD_CACHE_LIMIT);
+      this._applyInitialVideoMarker();
+    } catch (error) {
+      putCapped(
+        this._timelines,
+        key,
+        { error: error instanceof Error ? error.message : String(error) },
+        MD_CACHE_LIMIT,
+      );
+    }
+    this.requestUpdate();
+  }
+
+  private _stepVideo(direction: -1 | 1): void {
+    const video = this._primaryVideo();
+    const timing = this._timelineState()?.data;
+    if (!video || !timing) return;
+    const next = adjacentVideoFrameMs(timing.framesMs, video.currentTime * 1000, direction);
+    if (next === null) return;
+    this._pauseVideoPlayback();
+    this._scrubVideo(String(next / 1000));
+  }
+
+  private _seekMarker(marker: RecipeRecordingMarker, phase: 'start' | 'end'): void {
+    const range = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+    const duration = this._primaryVideo()?.duration;
+    if (!Number.isFinite(duration) || !duration || range[1] < 0 || range[0] >= duration * 1000)
+      return;
+    this._pauseVideoPlayback();
+    this._scrubVideo(String(Math.max(0, Math.min(duration, (range[0] + range[1]) / 2000))));
+  }
+
+  private _appliedVideoMarker = '';
+  private _applyInitialVideoMarker(): void {
+    const item = this._activeVideoItem();
+    const data = this._timelineState()?.data;
+    const video = this._primaryVideo();
+    if (item?.initialTraceIndex === undefined || !data || !video || video.readyState < 1) return;
+    const key = `${item.url}:${item.initialTraceIndex}:${item.initialTracePhase}`;
+    if (key === this._appliedVideoMarker) return;
+    const marker = data.markers.find((marker) => marker.traceIndex === item.initialTraceIndex);
+    if (!marker) return;
+    this._appliedVideoMarker = key;
+    this._seekMarker(marker, item.initialTracePhase ?? 'end');
+  }
+
+  private _renderVideoMarkers() {
+    const state = this._timelineState();
+    if (!state?.data)
+      return html`<p class="ml-count">${state?.error ?? 'Loading recording frame index…'}</p>`;
+    const timing = state.data;
+    const uncertainty = timing.clock.latestZeroUnixMs - timing.clock.earliestZeroUnixMs;
+    return html`<details class="ml-video-markers" data-testid="video-markers">
+      <summary>Actions and proof markers (${timing.markers.length})</summary>
+      <p class="ml-count">
+        ${timing.framesMs.length} decoded frames · clock calibration window
+        ${Math.ceil(uncertainty)} ms. Frame hold intervals below describe visual sampling,
+        separately from clock precision.
+      </p>
+      <div class="ml-marker-list">
+        ${timing.markers.map(
+          (marker) =>
+            html`<div class="ml-marker">
+              <span
+                >${marker.intent ?? marker.nodeId}<small
+                  >${marker.nodeId} ·
+                  ${marker.action}${marker.proves?.length
+                    ? ` · ${marker.proves.join(', ')}`
+                    : ''}</small
+                ></span
+              >
+              ${(['start', 'end'] as const).map((phase) => {
+                const bounds = phase === 'start' ? marker.startRangeMs : marker.endRangeMs;
+                const outside = bounds[1] < 0 || bounds[0] >= timing.durationMs;
+                const frame = displayedVideoFrameRangeMs(
+                  timing.framesMs,
+                  timing.durationMs,
+                  Math.max(0, (bounds[0] + bounds[1]) / 2),
+                );
+                return html`<button
+                  class="ml-btn"
+                  data-testid="video-marker"
+                  data-trace-index=${marker.traceIndex}
+                  data-phase=${phase}
+                  ?disabled=${outside}
+                  title=${outside
+                    ? 'Outside recorded footage'
+                    : `Action clock window ${bounds[0].toFixed(1)}–${bounds[1].toFixed(1)} ms. The displayed frame may precede the action result.`}
+                  @click=${() => this._seekMarker(marker, phase)}
+                >
+                  ${phase}
+                  ${outside
+                    ? 'unrecorded'
+                    : this._formatVideoTime(Math.max(0, (bounds[0] + bounds[1]) / 2000))}
+                  ${frame
+                    ? html`<small
+                        >frame held
+                        ${this._formatVideoTime(frame[0] / 1000)}–${this._formatVideoTime(
+                          frame[1] / 1000,
+                        )}</small
+                      >`
+                    : nothing}
+                </button>`;
+              })}
+            </div>`,
+        )}
+      </div>
+    </details>`;
   }
 
   private _scrubVideo(value: string): void {
@@ -377,7 +534,7 @@ export class MediaLightbox extends MediaLightboxState {
     const duration = this._videoDuration || 0;
     const time = duration ? Math.min(this._videoTime, duration) : this._videoTime;
     const RATES = [0.25, 0.5, 1, 2];
-    const frameRate = this._activeVideoFrameRate();
+    const hasFrameIndex = Boolean(this._timelineState()?.data);
     return html`
       <div class="ml-video-controls" data-testid="media-lightbox-video-controls">
         <div class="ml-video-control-row">
@@ -388,17 +545,21 @@ export class MediaLightbox extends MediaLightboxState {
           <button class="ml-btn" @click=${() => this._seekVideo(-0.1)}>−0.1s</button>
           <button
             class="ml-btn"
-            title=${`Step ${this._formatVideoTime(1 / frameRate)} at ${frameRate}fps`}
+            title="Step to the adjacent measured frame"
+            ?disabled=${!hasFrameIndex}
+            data-testid="video-previous-frame"
             @click=${() => this._stepVideo(-1)}
           >
-            −1 frame
+            Previous frame
           </button>
           <button
             class="ml-btn"
-            title=${`Step ${this._formatVideoTime(1 / frameRate)} at ${frameRate}fps`}
+            title="Step to the adjacent measured frame"
+            ?disabled=${!hasFrameIndex}
+            data-testid="video-next-frame"
             @click=${() => this._stepVideo(1)}
           >
-            +1 frame
+            Next frame
           </button>
           <button class="ml-btn" @click=${() => this._seekVideo(0.1)}>+0.1s</button>
           <button class="ml-btn" @click=${() => this._seekVideo(1)}>+1s</button>
@@ -406,6 +567,7 @@ export class MediaLightbox extends MediaLightboxState {
             (rate) => html`
               <button
                 class="ml-btn ${this._videoRate === rate ? 'active' : ''}"
+                data-testid=${`video-rate-${rate}`}
                 @click=${() => this._setVideoRate(rate)}
               >
                 ${rate}×
@@ -430,6 +592,7 @@ export class MediaLightbox extends MediaLightboxState {
             ${this._formatVideoTime(time)} / ${this._formatVideoTime(duration)}
           </span>
         </div>
+        ${this._renderVideoMarkers()}
       </div>
     `;
   }
@@ -464,7 +627,10 @@ export class MediaLightbox extends MediaLightboxState {
     const fileType = mediaLightboxFileType(item);
 
     return html`
-      <div class="ml-backdrop" @click=${() => this._close()}>
+      <div
+        class=${`ml-backdrop ${this._maximized ? 'maximized' : ''}`}
+        @click=${() => this._close()}
+      >
         <div class="ml-modal" tabindex="0" @click=${(e: Event) => e.stopPropagation()}>
           <div class="ml-header">
             <div>
@@ -548,6 +714,7 @@ export class MediaLightbox extends MediaLightboxState {
                     <button class="ml-btn" @click=${() => this._navigate(1)}>Next</button>
                   `
                 : nothing}
+              ${this._renderMaximizeControl()}
               <button class="ml-btn" @click=${() => this._close()}>Close</button>
             </div>
           </div>
@@ -621,19 +788,21 @@ export class MediaLightbox extends MediaLightboxState {
                         ${this._renderVideoControls(false)}
                       </div>
                     `
-                  : fileType === 'markdown'
-                    ? this._renderMarkdownItem(item)
-                    : fileType === 'json'
-                      ? this._renderJsonItem(item)
-                      : fileType === 'diff'
-                        ? this._renderDiffItem(item)
-                        : html` <div class="ml-fallback">
-                            <div>No inline preview for this artifact type.</div>
-                            <div class="ml-fallback-meta">${item.path} · ${item.purpose}</div>
-                            <a class="ml-btn" href=${item.url} target="_blank" rel="noopener"
-                              >Open raw</a
-                            >
-                          </div>`}
+                  : fileType === 'html'
+                    ? this._renderHtmlItem(item)
+                    : fileType === 'markdown'
+                      ? this._renderMarkdownItem(item)
+                      : fileType === 'json'
+                        ? this._renderJsonItem(item)
+                        : fileType === 'diff'
+                          ? this._renderDiffItem(item)
+                          : html` <div class="ml-fallback">
+                              <div>No inline preview for this artifact type.</div>
+                              <div class="ml-fallback-meta">${item.path} · ${item.purpose}</div>
+                              <a class="ml-btn" href=${item.url} target="_blank" rel="noopener"
+                                >Open raw</a
+                              >
+                            </div>`}
           </div>
           ${hasMultiple
             ? html`
@@ -721,7 +890,10 @@ export class MediaLightbox extends MediaLightboxState {
     const scoped = Boolean(this.scopeLabel);
     const totalItems = this.totalItems || this.items.length;
     return html`
-      <div class="ml-backdrop" @click=${() => this._close()}>
+      <div
+        class=${`ml-backdrop ${this._maximized ? 'maximized' : ''}`}
+        @click=${() => this._close()}
+      >
         <div class="ml-modal" tabindex="0" @click=${(e: Event) => e.stopPropagation()}>
           <div class="ml-header">
             <div>
@@ -784,6 +956,7 @@ export class MediaLightbox extends MediaLightboxState {
                     <button class="ml-btn" @click=${() => this._navigate(1)}>Next</button>
                   `
                 : nothing}
+              ${this._renderMaximizeControl()}
               <button class="ml-btn" @click=${() => this._close()}>Close</button>
             </div>
           </div>
@@ -869,7 +1042,22 @@ export class MediaLightbox extends MediaLightboxState {
         putCapped(
           this._mdCache,
           url,
-          { status: 'ok', data: formatLightboxTextPreview(kind, content) },
+          {
+            status: 'ok',
+            data:
+              kind === 'html'
+                ? isolatedArtifactHtml(content, (rawPath) => {
+                    const resolve = buildArtifactUrlResolver(
+                      byPath.keys(),
+                      (file) => file,
+                      document?.path,
+                    );
+                    const file = resolve(rawPath);
+                    const item = this.items.find((item) => item.path === file);
+                    return item ? { mediaUrl: item.url, viewUrl: item.viewUrl } : null;
+                  })
+                : formatLightboxTextPreview(kind, content),
+          },
           MD_CACHE_LIMIT,
         );
         this._mdCacheVersion += 1;
@@ -878,6 +1066,29 @@ export class MediaLightbox extends MediaLightboxState {
         putCapped(this._mdCache, url, { status: 'err', error: err.message }, MD_CACHE_LIMIT);
         this._mdCacheVersion += 1;
       });
+  }
+
+  private _renderHtmlItem(item: LightboxItem) {
+    void this._mdCacheVersion;
+    this._ensureTextPreview(item.url, 'html');
+    const entry = this._mdCache.get(item.url);
+    return html`<div class="ml-html-shell">
+      <div class="ml-toolbar">
+        <span class="ml-count">${item.path}</span>
+        <a class="ml-btn" href=${item.url} download=${item.path.split('/').pop()}>Download HTML</a>
+      </div>
+      ${entry?.status === 'ok'
+        ? html`<iframe
+            class="ml-html-frame"
+            title=${item.path}
+            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            referrerpolicy="no-referrer"
+            .srcdoc=${entry.data}
+          ></iframe>`
+        : entry?.status === 'err'
+          ? html`<div class="ml-fallback ml-broken">Failed to load: ${entry.error}</div>`
+          : html`<div class="ml-fallback">Loading report…</div>`}
+    </div>`;
   }
 
   private _renderMarkdownItem(item: LightboxItem) {

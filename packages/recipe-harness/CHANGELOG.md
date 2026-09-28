@@ -4,6 +4,9 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Prefer capture-helper's native frame and snapshot timing, wait for its first recorded frame, and retain trace-linked action markers; preserve variable frame timing for browser recording fallback.
+- Use active recording-session screenshots and an owned Android mirror for physical-device capture, with explicit fallback provenance and process cleanup.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-09-27

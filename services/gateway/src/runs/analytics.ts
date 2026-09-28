@@ -10,6 +10,7 @@ import {
   FAILURE_REASONS,
   type FailureReason,
   type HostLoadSnapshot,
+  isSuccessfulRun,
   isTerminalRunStatus,
   type LoopStats,
   PipelineSteps,
@@ -216,8 +217,8 @@ export function buildAnalyticsRecord(
   );
   const idleMs = wallMs != null ? Math.max(0, wallMs - stepSum) : null;
 
-  const failedStep = run.status === 'done' ? null : failingStep(run);
-  const failureReason = run.status === 'done' ? null : classifyFailureReason(run, failedStep);
+  const failedStep = isSuccessfulRun(run) ? null : failingStep(run);
+  const failureReason = isSuccessfulRun(run) ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);
   const tokens = workerTokens(run);
 

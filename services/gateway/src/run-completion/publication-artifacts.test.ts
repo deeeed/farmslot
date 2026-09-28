@@ -6,6 +6,27 @@ import test from 'node:test';
 
 import { collectUploadableMediaFiles, scanArtifacts } from './publication-artifacts.js';
 
+test('scanArtifacts retains package-relative recording timelines and rejects escaping metadata', async (t) => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-recording-artifacts-'));
+  t.after(() => rm(taskDir, { recursive: true, force: true }));
+  const dir = path.join(taskDir, 'artifacts/nested-proof');
+  await mkdir(path.join(dir, 'videos'), { recursive: true });
+  await writeFile(path.join(dir, 'videos/run.mp4'), 'recording fixture');
+  await writeFile(path.join(dir, 'timing.json'), '{}');
+  const entry = { path: 'videos/run.mp4', type: 'video', timelinePath: 'timing.json' };
+  const manifest = path.join(dir, 'artifact-manifest.json');
+  await writeFile(manifest, JSON.stringify({ version: 1, artifacts: [entry] }));
+  let video = (await scanArtifacts(taskDir)).find((ref) => ref.path.endsWith('/run.mp4'))!;
+  assert.equal(video.timelinePath, 'artifacts/nested-proof/timing.json');
+  assert.match(video.sha256!, /^[a-f0-9]{64}$/);
+  await writeFile(
+    manifest,
+    JSON.stringify({ version: 1, artifacts: [{ ...entry, timelinePath: '../timing.json' }] }),
+  );
+  video = (await scanArtifacts(taskDir)).find((ref) => ref.path.endsWith('/run.mp4'))!;
+  assert.equal(video.timelinePath, undefined);
+});
+
 test('scanArtifacts excludes internal launch artifacts from reviewable manifests', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-scan-artifacts-'));
   try {

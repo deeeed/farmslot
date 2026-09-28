@@ -96,6 +96,31 @@ export function createStandardUiAdapters(
       name: '@farmslot/recipe-harness',
     },
     async execute(node, context) {
+      if (
+        action === 'ui.screenshot' &&
+        node.fullPage !== true &&
+        context.captureRecordingSnapshot
+      ) {
+        const file =
+          typeof node.path === 'string'
+            ? node.path
+            : `screenshots/${context.nodeId.replaceAll('/', '-')}.png`;
+        const capture = await context.captureRecordingSnapshot(file);
+        const artifact = {
+          path: file,
+          type: 'screenshot',
+          mimeType: 'image/png',
+          nodeId: context.nodeId,
+          label: typeof node.label === 'string' ? node.label : context.nodeId,
+          category: typeof node.category === 'string' ? node.category : 'evidence',
+          ...(Array.isArray(node.covers) ? { covers: node.covers as string[] } : {}),
+          ...(typeof node.proofTarget === 'string' ? { proofTarget: node.proofTarget } : {}),
+        };
+        return {
+          output: { ...capture, captured: true, path: file, artifact },
+          artifacts: [artifact],
+        };
+      }
       if (action === 'ui.scroll_to') return executeScrollTo(options.transport, node, context);
       if (action === 'ui.scroll') assertScrollMovement(node);
       return normalizeUiTransportResult(await options.transport.execute(action, node, context));

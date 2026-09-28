@@ -72,6 +72,27 @@ assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(devSignal, 'utf8'));
 assert.equal(parsed.evidence?.reportPath, 'artifacts/pr-description.md');
 
+const qaDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-qa-html-'));
+writeManifest(qaDir, 'CHECKLIST.md');
+mkdirSync(path.join(qaDir, 'artifacts'));
+mkdirSync(path.join(qaDir, 'inputs'));
+writeFileSync(path.join(qaDir, 'CHECKLIST.md'), '# Worker: qa\n\n- [x] Validate selected checks\n');
+writeFileSync(
+  path.join(qaDir, 'artifacts/report.html'),
+  '<h1>QA report</h1><p>Proof retained.</p>',
+);
+writeFileSync(path.join(qaDir, 'artifacts/learnings.md'), 'Reused the existing smoke recipe.\n');
+const { resolveWorkerTerminalContract } = require('../scripts/worker-terminal-contract.cjs');
+writeFileSync(
+  path.join(qaDir, 'inputs/worker-terminal-contract.json'),
+  JSON.stringify(resolveWorkerTerminalContract(null, 'qa')),
+);
+result = spawnSync(process.execPath, [helper, qaDir, 'complete'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+const qaSignal = JSON.parse(readFileSync(path.join(qaDir, 'SIGNAL.json'), 'utf8'));
+assert.equal(qaSignal.evidence.reportPath, 'artifacts/report.html');
+assert.equal(existsSync(path.join(qaDir, 'artifacts/report.md')), false);
+
 const ciFixHyphenDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-ci-fix-hyphen-'));
 writeManifest(ciFixHyphenDir, 'CI-FIX.md');
 const ciFixHyphenTask = path.join(ciFixHyphenDir, 'CI-FIX.md');

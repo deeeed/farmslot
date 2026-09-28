@@ -53,6 +53,8 @@ export function runDetailEvidenceArtifactHash(
   hash: string = location.hash,
 ): string {
   const { route, params } = parseHashRoute(hash);
+  params.delete('artifactTrace');
+  params.delete('artifactPhase');
   if (item) {
     params.set(ARTIFACT_RUN_PARAM, runId);
     params.set(ARTIFACT_PARAM, item.path);
@@ -84,6 +86,8 @@ export function runInventoryHashFromDetail(hash: string = location.hash): string
     'step',
     'artifactRun',
     'artifact',
+    'artifactTrace',
+    'artifactPhase',
   ]) {
     params.delete(key);
   }

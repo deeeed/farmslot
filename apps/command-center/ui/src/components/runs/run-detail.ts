@@ -14,6 +14,7 @@ import type {
   RunGetResult,
   RunListResult,
   RunRereviewLatestHeadResult,
+  RunResolveDecisionResult,
   RunSessionCommandResult,
   RuntimePosturePreviewResult,
   RuntimePostureStatusResult,
@@ -186,6 +187,9 @@ export class RunDetail extends RunDetailState {
     if (changed.has('runId') || changed.has('mockData') || changed.has('mockRun')) {
       this.syncRun(getState());
     }
+    // The direct run.get snapshot may arrive after hashchange and after the
+    // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
+    if (changed.has('run')) this._applyEvidenceArtifactFromHash();
   }
 
   private _maybeRefreshTaskProgress(): void {
@@ -385,7 +389,6 @@ export class RunDetail extends RunDetailState {
       void this._refreshRecipeRunsForRun(this.run);
       this._applySelectedStepFromHash();
     }
-    if (this.run) this._applyEvidenceArtifactFromHash();
     this._maybeRefreshLiveTimeoutPrStatus();
     this._maybeRefreshPostureStatus();
     this._maybeResetPostureGate();
@@ -803,6 +806,7 @@ export class RunDetail extends RunDetailState {
 
   private _actionsBlocked(): boolean {
     return (
+      this._closingOutput ||
       this._connectionStale ||
       this._hydrating ||
       this._runBootstrapBlocked() ||
@@ -870,6 +874,15 @@ export class RunDetail extends RunDetailState {
     const index = artifacts.findIndex((candidate) => candidate.path === artifact);
     if (index < 0) return;
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
+    const params = new URLSearchParams(location.hash.split('?')[1]);
+    const traceIndex = params.get('artifactTrace');
+    if (traceIndex && /^\d+$/.test(traceIndex) && Number.isSafeInteger(Number(traceIndex))) {
+      this._evidenceLightboxItems[index] = {
+        ...this._evidenceLightboxItems[index],
+        initialTraceIndex: Number(traceIndex),
+        initialTracePhase: params.get('artifactPhase') === 'start' ? 'start' : 'end',
+      };
+    }
     this._evidenceLightboxIndex = index;
     this._evidenceLightboxOpen = true;
   }
@@ -1030,6 +1043,28 @@ export class RunDetail extends RunDetailState {
 
   @state() private _refreshingOutput = false;
   @state() private _outputError = '';
+  @state() private _closingOutput = false;
+
+  private async _closeOutput(run: Run, decision: RunDecision): Promise<void> {
+    if (this._closingOutput || this._actionsBlocked()) return;
+    this._closingOutput = true;
+    this._outputError = '';
+    try {
+      const result = await gateway.request<RunResolveDecisionResult>(
+        Methods.RUN_RESOLVE_DECISION,
+        { runId: run.id, decisionId: decision.id, actionId: 'close-run' },
+        120_000,
+      );
+      if (this.run?.id === run.id) {
+        this.run = result.run;
+        this._directRun = result.run;
+      }
+    } catch (error) {
+      this._outputError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._closingOutput = false;
+    }
+  }
 
   private async _refreshOutput(run: Run): Promise<void> {
     if (this._refreshingOutput) return;
@@ -1067,6 +1102,9 @@ export class RunDetail extends RunDetailState {
       refreshOutput: () => void this._refreshOutput(run),
       refreshingOutput: this._refreshingOutput,
       outputError: this._outputError,
+      closingOutput: this._closingOutput,
+      actionsBlocked: this._actionsBlocked(),
+      closeOutput: (decision) => void this._closeOutput(run, decision),
     });
   }
 
@@ -1435,6 +1473,10 @@ export class RunDetail extends RunDetailState {
     // A choice the Gateway already refused in preview must not be sent: the
     // decision would be consumed and the refusal repeated with nothing to undo.
     const outputReview = decision.payload?.kind === 'output-review';
+    if (outputReview && actionId === 'close-run') {
+      if (this.run?.id === runId) void this._closeOutput(this.run, decision);
+      return;
+    }
     if (!outputReview && !canResolveWithPostureChoice(this._postureGateStateForRender())) return;
     // Snapshot once: the request and the baseline must agree on what was sent.
     const forwardedChoice = outputReview

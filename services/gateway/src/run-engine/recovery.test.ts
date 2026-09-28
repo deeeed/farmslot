@@ -1643,6 +1643,36 @@ test("orphan reconcile leaves a terminal run's slot alone while its teardown run
   assert.deepEqual(reset, [], 'a slot mid-teardown is not orphaned');
 });
 
+test('orphan reconcile preserves a persisted closed-run cleanup obligation', async () => {
+  const owner = minimalActiveRun({ status: 'done', id: 'closed-partial' });
+  owner.output = {
+    workerFinished: true,
+    capturedAt: '2026-09-28T00:00:00Z',
+    manifestDigest: 'digest',
+    artifactManifest: [],
+    closedAt: '2026-09-28T00:00:00Z',
+    cleanupPending: true,
+    closeError: 'Release refused',
+  };
+  const reset: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'closed-slot', lifecycle: 'busy', phase: 'working' }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: async () => owner.id,
+    getRun: (id: string) => (id === owner.id ? owner : undefined),
+    resetSlot: async (slotId: string) => reset.push(slotId),
+  } as unknown as RunRecoveryCollaborators;
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, [], 'restart must not erase pending cleanup');
+  owner.output.cleanupPending = false;
+  owner.output.closeError = undefined;
+  await reconcileOrphanedSlots(deps);
+  assert.deepEqual(reset, ['closed-slot']);
+});
+
 test('orphan reconcile leaves a slot a release already fenced', async () => {
   // The same claim for a release this process did not start: `releasing` is the
   // marker every other teardown path already respects.

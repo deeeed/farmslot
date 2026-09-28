@@ -60,6 +60,17 @@ test('isActiveFamilyRun excludes terminal statuses', () => {
   assert.equal(isActiveFamilyRun(makeRun({ status: 'monitoring' })), true);
 });
 
+test('closing partial or failed execution does not complete a family', () => {
+  for (const outcome of ['partial', 'failure'] as const) {
+    const run = makeRun();
+    run.metrics.outcome = outcome;
+    assert.equal(buildFamilyStateSummary([run])?.workflowState, 'failed');
+    const successful = makeRun({ id: 'successful' });
+    successful.metrics.outcome = 'success';
+    assert.equal(buildFamilyStateSummary([run, successful])?.workflowState, 'complete');
+  }
+});
+
 test('sortRunsByFreshness prefers updatedAt then createdAt', () => {
   const sorted = sortRunsByFreshness([
     makeRun({ id: 'older', updatedAt: '2026-04-15T00:00:00.000Z' }),

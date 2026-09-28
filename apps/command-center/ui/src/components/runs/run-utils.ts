@@ -383,6 +383,8 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
     const existing = seen.get(key);
     if (existing) {
       existing.maxFps ??= artifact.maxFps;
+      existing.timelinePath ??= artifact.timelinePath;
+      existing.timelineUnavailableReason ??= artifact.timelineUnavailableReason;
       existing.sha256 ??= artifact.sha256;
       existing.sizeBytes ??= artifact.sizeBytes;
       return;
@@ -422,6 +424,8 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
       sizeBytes: artifact.sizeBytes,
       sha256: artifact.sha256,
       maxFps: artifact.maxFps,
+      timelinePath: artifact.timelinePath,
+      timelineUnavailableReason: artifact.timelineUnavailableReason,
       source: 'task-artifact',
     });
   }
@@ -447,6 +451,8 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
         sizeBytes: typeof row.sizeBytes === 'number' ? row.sizeBytes : undefined,
         sha256: typeof row.sha256 === 'string' ? row.sha256 : undefined,
         maxFps: row.maxFps,
+        timelinePath: row.timelinePath,
+        timelineUnavailableReason: row.timelineUnavailableReason,
         source: 'step-output',
       });
     }
@@ -497,6 +503,9 @@ function mergeArtifactMetadata(existing: ArtifactRef, incoming: ArtifactRef): Ar
   if (incoming.sizeBytes != null) artifact.sizeBytes = incoming.sizeBytes;
   if (incoming.sha256) artifact.sha256 = incoming.sha256;
   if (incoming.maxFps != null) artifact.maxFps = incoming.maxFps;
+  if (incoming.timelinePath) artifact.timelinePath = incoming.timelinePath;
+  if (incoming.timelineUnavailableReason)
+    artifact.timelineUnavailableReason = incoming.timelineUnavailableReason;
   if (incoming.type) artifact.type = incoming.type;
   if (incoming.label) artifact.label = incoming.label;
   if (incoming.mimeType) artifact.mimeType = incoming.mimeType;
@@ -581,6 +590,9 @@ function artifactRefFromUnknown(value: unknown): ArtifactRef | null {
   if (label) artifact.label = label;
   const mimeType = recordString(value, 'mimeType');
   if (mimeType) artifact.mimeType = mimeType;
+  if (typeof value.timelinePath === 'string') artifact.timelinePath = value.timelinePath;
+  if (typeof value.timelineUnavailableReason === 'string')
+    artifact.timelineUnavailableReason = value.timelineUnavailableReason;
   const maxFps = value.maxFps;
   if (typeof maxFps === 'number' && Number.isFinite(maxFps)) artifact.maxFps = maxFps;
   return artifact;

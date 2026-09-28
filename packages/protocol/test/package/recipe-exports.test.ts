@@ -42,6 +42,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'validateRecipeDocument',
     'validateRecipeParams',
     'validateRecipeParamsSchema',
+    'validateRecipeRecordingTimelineDocument',
     'validateRecipeSuitePackage',
     'validateRecipeSuiteResultDocument',
     'validateRecipeSuiteScopeDocument',

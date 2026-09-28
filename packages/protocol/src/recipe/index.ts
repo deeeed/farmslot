@@ -49,6 +49,12 @@ export {
   validateRecipeParamsSchema,
 } from './params.js';
 export {
+  type RecipeRecordingMarker,
+  type RecipeRecordingTimelineDocument,
+  type RecipeVideoTiming,
+  validateRecipeRecordingTimelineDocument,
+} from './recording.js';
+export {
   digestRecipeSuiteScope,
   RECIPE_SUITE_NON_EXECUTION_REASONS,
   RECIPE_SUITE_RESULT_SCHEMA_URL,

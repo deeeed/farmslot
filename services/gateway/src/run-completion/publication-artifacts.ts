@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ArtifactRef, Run } from '@farmslot/protocol';
+import { type ArtifactRef, type Run, validateArtifactManifestDocument } from '@farmslot/protocol';
 
 import { INTERNAL_ARTIFACT_COPY_EXCLUDES } from '../core/artifact-copy-policy.js';
 import { getProjectField, loadProjectVars } from '../core/config.js';
@@ -921,5 +921,32 @@ export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
     }
   }
   await walk(artifactsDir, '');
+  const byPath = new Map(refs.map((ref) => [ref.path, ref]));
+  for (const manifest of refs.filter(
+    (ref) => path.posix.basename(ref.path) === 'artifact-manifest.json',
+  )) {
+    let document;
+    try {
+      document = JSON.parse(await readFile(path.join(taskDir, manifest.path), 'utf8'));
+    } catch (error) {
+      // Raw files remain browsable when an optional manifest is malformed.
+      console.warn(
+        `[artifacts] cannot read recording metadata in ${manifest.path}: ${String(error)}`,
+      );
+      continue;
+    }
+    if (validateArtifactManifestDocument(document).status !== 'valid') continue;
+    const directory = path.posix.dirname(manifest.path);
+    for (const entry of document.artifacts) {
+      const ref = byPath.get(path.posix.join(directory, entry.path));
+      if (!ref || entry.type !== 'video') continue;
+      if (entry.timelinePath) {
+        const timelinePath = path.posix.join(directory, entry.timelinePath);
+        if (byPath.has(timelinePath)) ref.timelinePath = timelinePath;
+      }
+      if (entry.timelineUnavailableReason)
+        ref.timelineUnavailableReason = entry.timelineUnavailableReason;
+    }
+  }
   return refs;
 }

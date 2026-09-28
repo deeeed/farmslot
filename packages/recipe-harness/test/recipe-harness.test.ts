@@ -1207,6 +1207,7 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
         target: { selector: 'pid', value: '123' },
       },
       maxFps: 24,
+      timelineUnavailableReason: 'Recorder does not provide timeline alignment.',
     });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -1548,6 +1549,7 @@ test('capture-helper recorder stop sends SIGINT and returns recorder metadata', 
       helperPath,
       `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
+if (process.argv[2] === 'version') { console.log(JSON.stringify({ capabilities: [] })); process.exit(0); }
 const output = process.argv[process.argv.indexOf('--output') + 1];
 process.on('SIGINT', () => {
   writeFileSync(output, 'fake mp4');
@@ -1590,6 +1592,7 @@ test('capture-helper recorder stop times out when the helper ignores SIGINT', as
       helperPath,
       `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
+if (process.argv[2] === 'version') { console.log(JSON.stringify({ capabilities: [] })); process.exit(0); }
 process.on('SIGINT', () => {});
 writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 setInterval(() => {}, 1000);

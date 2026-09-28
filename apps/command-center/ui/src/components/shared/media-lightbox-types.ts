@@ -5,8 +5,13 @@ export interface LightboxItem {
   caption?: string;
   /** Capture provenance, e.g. "baseline @ main · abc123" or "fix @ feat/x · def456". */
   provenance?: string;
-  /** Source recording frame rate when the artifact manifest declares one. */
-  frameRate?: number;
+  sha256?: string;
+  timelinePath?: string;
+  timelineUnavailableReason?: string;
+  resolveArtifactUrl?: (path: string) => string;
+  viewUrl?: string;
+  initialTraceIndex?: number;
+  initialTracePhase?: 'start' | 'end';
 }
 
 export interface LightboxPair {

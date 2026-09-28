@@ -259,6 +259,7 @@ test('runEvidenceLightboxItems derives stable captions from artifact provenance'
       path: 'artifacts/final.png',
       purpose: 'screenshot',
       caption: 'step complete · step output',
+      viewUrl: '#run/run-1?artifactRun=run-1&artifact=artifacts%2Ffinal.png',
     },
   ]);
 });

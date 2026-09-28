@@ -16,6 +16,13 @@ assert.deepEqual(devContract.commands.complete.artifacts, [
 ]);
 assert.equal(devContract.commands.complete.report, 'artifacts/pr-description.md');
 
+const qaContract = resolveWorkerTerminalContract(null, 'qa');
+assert.equal(qaContract.commands.complete.report, 'artifacts/report.html');
+assert.deepEqual(qaContract.commands.complete.artifacts, [
+  'artifacts/learnings.md',
+  'artifacts/report.html',
+]);
+
 const interactivePrComplete = resolveWorkerTerminalContract(null, 'pr-complete', {
   mode: 'interactive',
 });

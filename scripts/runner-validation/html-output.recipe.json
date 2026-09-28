@@ -1,0 +1,32 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Readable retained HTML and honest execution closeout",
+  "description": "Use an isolated gateway/store with orchestration disabled. Seed a retained report containing readable sources, full criteria, PASS and unproved cases, embedded screenshots, sticky navigation and native details/filters. Open its run on the validation UI. Set FARMSLOT_GATEWAY, FARMSLOT_CDP_PORT, FARMSLOT_UI_URL and FARMSLOT_HTML_REPORT_ROUTE. For the hostile node select a separate retained hostile-report.html containing script, event-handler, remote image/CSS, iframe, form and javascript-link probes; set FARMSLOT_HTML_HOSTILE_ROUTE. For closeout seed a separate blocked artifact-only run titled disposable-partial-output-close with finished worker output, partial metrics and original failed/skipped steps; set FARMSLOT_OUTPUT_CLOSE_RUN_ID/FARMSLOT_OUTPUT_CLOSE_ROUTE. Never target a real user run. Tests read the real gateway and send real CDP input; they do not inject UI state.",
+  "workflow": {
+    "entry": "human-report",
+    "nodes": {
+      "human-report": {
+        "action": "command",
+        "cmd": "node scripts/e2e-html-report.mjs",
+        "intent": "Prove artifact deep links hydrate after the full run snapshot, expanded criteria, separate selected-plan versus full-AC coverage, embedded images, native collapsible/filter controls, contents and sticky navigation, opaque parent isolation and shared viewer maximize.",
+        "next": "hostile-report"
+      },
+      "hostile-report": {
+        "action": "command",
+        "cmd": "FARMSLOT_HTML_HOSTILE_PROOF=1 FARMSLOT_HTML_REPORT_ROUTE=\"$FARMSLOT_HTML_HOSTILE_ROUTE\" node scripts/e2e-html-report.mjs",
+        "intent": "Prove retained hostile HTML cannot execute scripts/handlers, access the parent, load remote images, render active forms/frames or redirect through meta refresh.",
+        "next": "close-execution"
+      },
+      "close-execution": {
+        "action": "command",
+        "cmd": "node scripts/e2e-output-close.mjs",
+        "intent": "Click Close run on the marked disposable fixture after the action hydrates; prove done/partial, unchanged criteria evidence and step history, retained downloadable report and visible closed copy. Also exercise refused cleanup, changed report bytes, retry and ownership guards through the corresponding gateway scenario before ship.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

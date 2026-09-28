@@ -42,6 +42,8 @@ export interface RecipeArtifactRecorderMetadata {
   version?: string;
   platform?: string;
   target?: RecipeArtifactRecorderTarget;
+  mirrorWindowId?: string;
+  fallbackReason?: string;
 }
 
 export interface RecipeArtifactManifestEntry {
@@ -56,6 +58,9 @@ export interface RecipeArtifactManifestEntry {
   record?: 'full_run';
   recorder?: RecipeArtifactRecorderMetadata;
   maxFps?: number;
+  /** Optional package-relative recording timeline; never required for recipe execution. */
+  timelinePath?: string;
+  timelineUnavailableReason?: string;
 }
 
 export interface RecipeRunnerProvenance {
@@ -85,6 +90,8 @@ export interface ArtifactRef {
   nodeId?: string;
   mimeType?: string;
   maxFps?: number;
+  timelinePath?: string;
+  timelineUnavailableReason?: string;
 }
 
 const PUBLISH_EVIDENCE_MEDIA_EXTS = /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i;

@@ -52,6 +52,21 @@ test('serveBufferWithRange serves full buffers without a range header', () => {
   assert.equal(response.body()?.toString(), 'abcdef');
 });
 
+test('retained HTML downloads with an origin-isolating policy for full and ranged reads', () => {
+  for (const headers of [{}, { range: 'bytes=0-4' }]) {
+    const response = makeResponse();
+    serveBufferWithRange(
+      makeRequest(headers),
+      response.res,
+      Buffer.from('<h1>Report</h1>'),
+      'text/html; charset=utf-8',
+    );
+    assert.equal(response.headers()?.['Content-Disposition'], 'attachment');
+    assert.match(String(response.headers()?.['Content-Security-Policy']), /^sandbox;/);
+    assert.equal(response.headers()?.['X-Content-Type-Options'], 'nosniff');
+  }
+});
+
 test('serveBufferWithRange serves inclusive byte ranges', () => {
   const response = makeResponse();
 

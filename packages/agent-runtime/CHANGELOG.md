@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- QA tasks complete with one HTML report and structured evidence, without requiring a duplicate Markdown report.
 
 ## 0.14.0 - 2026-09-27
 

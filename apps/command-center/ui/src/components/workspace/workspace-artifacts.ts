@@ -26,17 +26,26 @@ export function isWorkspaceDiffArtifact(artifact: Pick<ArtifactRef, 'path' | 'pu
 }
 
 /** Internal path template — always pair with gatewayAuthenticatedUrl or gatewayProxiedFetchUrl. */
-export function runArtifactApiPath(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
+export function runArtifactApiPath(
+  runId: string,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+): string {
   return `/api/run-artifact?runId=${encodeURIComponent(runId)}&path=${encodeURIComponent(
     artifact.path,
-  )}`;
+  )}${artifact.sha256 ? `&v=${encodeURIComponent(artifact.sha256)}` : ''}`;
 }
 
-export function runArtifactFetchUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
+export function runArtifactFetchUrl(
+  runId: string,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+): string {
   return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
 }
 
-export function runArtifactUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
+export function runArtifactUrl(
+  runId: string,
+  artifact: Pick<ArtifactRef, 'path' | 'sha256'>,
+): string {
   return runArtifactFetchUrl(runId, artifact);
 }
 

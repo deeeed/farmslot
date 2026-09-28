@@ -1076,6 +1076,15 @@ export async function reconcileOrphanedSlots(deps: RunRecoveryCollaborators): Pr
       );
       continue;
     }
+    // A closed output run retains ownership until explicit cleanup succeeds.
+    // This persisted guard also survives restart, unlike the in-flight registry.
+    // Releasing fences above still use their existing bounded recovery path.
+    const ownerId = await deps.readSlotField(slot.slot, 'current_run_id');
+    const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+    if (owner?.output?.closedAt && (owner.output.cleanupPending || owner.output.closeError)) {
+      console.log(`[run-engine] reconcile: ${slot.slot} awaits closed-run resource cleanup`);
+      continue;
+    }
     console.log(
       `[run-engine] reconcile: orphaned ${slot.slot} (${slot.lifecycle}/${slot.phase}) → ready`,
     );

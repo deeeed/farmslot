@@ -63,6 +63,14 @@ test('attachRunListSummaries preserves current shape when summary flags are omit
   assert.equal(result.projectAnalytics, undefined);
 });
 
+test('closed partial execution is terminal but is not a successful learning candidate', () => {
+  const run = makeRun({ status: 'done', metrics: { ...makeRun().metrics, outcome: 'partial' } });
+  const [family] = buildRunFamilyReadinessSummaries([run]);
+  assert.equal(family.activeRunCount, 0);
+  assert.equal(family.terminalRunCount, 1);
+  assert.ok(family.eligibility.reasons.includes('no-successful-run'));
+});
+
 test('family readiness groups by family and computes counts, completion, and latest run', () => {
   const summaries = buildRunFamilyReadinessSummaries([
     makeRun({

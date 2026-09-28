@@ -11,6 +11,8 @@ export interface LatestValidRecipeRunPointer {
 
 const EXACT_ARTIFACT_PURPOSES = new Map<string, string>([
   ['report.md', 'report'],
+  ['report.html', 'report'],
+  ['qa-report.html', 'report'],
   ['review.md', 'review'],
   ['line-comments.json', 'line-comments'],
   ['recipe.json', 'recipe'],

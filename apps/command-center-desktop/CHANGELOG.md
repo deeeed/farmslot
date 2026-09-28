@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow the isolated embedded HTML report viewer while retaining script and origin separation.
+
 - Use one shared navigation contract for the copy button, native menu, incoming links and saved views, covering run steps, reports, filters and family evidence.
 
 - Copy links to selected Backlog items and Work Graph nodes, preserving their filters and open panels.

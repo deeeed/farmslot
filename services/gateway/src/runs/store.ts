@@ -1267,6 +1267,8 @@ function assertNativeWorkersReleased(run: Run): void {
 export async function deleteRun(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
+  if (run.output?.cleanupPending || run.output?.closeError)
+    throw new Error(`Cannot delete run ${id} before output closeout cleanup finishes`);
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
@@ -1478,6 +1480,8 @@ export async function archiveRun(id: string): Promise<boolean> {
 async function archiveRunBody(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
+  if (run.output?.cleanupPending || run.output?.closeError)
+    throw new Error(`Cannot archive run ${id} before output closeout cleanup finishes`);
   // A settled blocked run counts as active for recovery and the inventory, but
   // nothing can advance it; archiving is the operator's way to close it while
   // keeping the blocked outcome (unlike cancel, which overwrites it).

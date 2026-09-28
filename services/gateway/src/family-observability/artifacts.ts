@@ -20,6 +20,11 @@ export function dedupeArtifacts(
       sizeBytes: preferred.sizeBytes ?? existing.sizeBytes ?? item.sizeBytes,
       sha256: preferred.sha256 ?? existing.sha256 ?? item.sha256,
       maxFps: preferred.maxFps ?? existing.maxFps ?? item.maxFps,
+      timelinePath: preferred.timelinePath ?? existing.timelinePath ?? item.timelinePath,
+      timelineUnavailableReason:
+        preferred.timelineUnavailableReason ??
+        existing.timelineUnavailableReason ??
+        item.timelineUnavailableReason,
     });
   }
   return [...byPath.values()];
@@ -36,7 +41,7 @@ export function inferPurpose(filename: string): string {
     if (filename.includes('after')) return 'video-after';
     return 'video';
   }
-  if (filename === 'report.md') return 'report';
+  if (['report.md', 'report.html', 'qa-report.html'].includes(filename)) return 'report';
   if (filename === 'review.md') return 'review';
   if (filename === 'recipe.json') return 'recipe';
   if (filename === 'recipe-quality.json') return 'recipe-quality';
@@ -75,6 +80,11 @@ export function stepArtifacts(
         purpose: typeof artifact.purpose === 'string' ? artifact.purpose : inferPurpose(pathValue),
         sizeBytes: typeof artifact.sizeBytes === 'number' ? artifact.sizeBytes : undefined,
         sha256: typeof artifact.sha256 === 'string' ? artifact.sha256 : undefined,
+        timelinePath: typeof artifact.timelinePath === 'string' ? artifact.timelinePath : undefined,
+        timelineUnavailableReason:
+          typeof artifact.timelineUnavailableReason === 'string'
+            ? artifact.timelineUnavailableReason
+            : undefined,
         maxFps:
           typeof artifact.maxFps === 'number' && Number.isFinite(artifact.maxFps)
             ? artifact.maxFps

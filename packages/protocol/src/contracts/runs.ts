@@ -63,6 +63,12 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
   return TERMINAL_RUN_STATUSES.includes(status);
 }
 
+/** A closed execution can retain partial or failed validation. Legacy done runs
+ * without an outcome keep their previous successful interpretation. */
+export function isSuccessfulRun(run: Pick<Run, 'status' | 'metrics'>): boolean {
+  return run.status === 'done' && (!run.metrics.outcome || run.metrics.outcome === 'success');
+}
+
 /**
  * Runs eligible for activate-on-slot re-bind (ADR-024 §7 addendum): terminal
  * runs plus `blocked` (a run parked at a gate the operator can re-engage).
@@ -1171,6 +1177,44 @@ export interface RunOutput {
   artifactManifestOmitted?: boolean;
   reportPath?: string;
   captureError?: string;
+  /** Operator closed execution without changing its validation verdict. */
+  closedAt?: string;
+  /** Execution is closed but owned-resource cleanup needs another attempt. */
+  closeError?: string;
+  cleanupPending?: boolean;
+}
+
+export function runOutputCloseUnavailableReason(run: Run): string | null {
+  if (!run.metrics.outcome) return 'Record the worker outcome before closing execution.';
+  if (run.park && !['restored', 'cancelled'].includes(run.park.phase))
+    return 'Restore or cancel the machine pause before closing this execution.';
+  if (
+    run.completionPolicy !== 'artifact-only' ||
+    run.lane === 'comparison' ||
+    run.engineState?.evalExperiment ||
+    run.reviewWorkspace ||
+    run.readOnly
+  )
+    return 'This workflow uses its existing completion gate.';
+  if (run.status === 'done' && run.output?.closedAt) return null;
+  if (
+    !run.output?.workerFinished ||
+    !['blocked', 'failed', 'paused', 'done'].includes(run.status) ||
+    run.steps.some((step) => step.status === 'running')
+  )
+    return 'Wait for the worker and its execution steps to finish.';
+  if (!run.output.reportPath || run.output.captureError)
+    return 'Refresh the retained report before closing execution.';
+  if (
+    run.decisions.some(
+      (decision) =>
+        !decision.resolvedAt &&
+        decision.payload?.kind !== 'output-review' &&
+        decision.type !== 'retrospective',
+    )
+  )
+    return 'Resolve the other pending run decisions first.';
+  return null;
 }
 
 export interface RunDecision {
@@ -2721,6 +2765,8 @@ export interface FamilyObservabilityArtifact {
   sha256?: string;
   sizeBytes?: number;
   maxFps?: number;
+  timelinePath?: string;
+  timelineUnavailableReason?: string;
   source:
     | 'artifact-manifest'
     | 'step-output'
@@ -2946,7 +2992,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
  * Falls back to `report.md` for any flow not listed.
  */
 export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
-  qa: ['qa-report.md', 'report.md'],
+  qa: ['report.html', 'qa-report.md', 'report.md'],
   'fix-bug': ['pr-description.md', 'report.md'],
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],

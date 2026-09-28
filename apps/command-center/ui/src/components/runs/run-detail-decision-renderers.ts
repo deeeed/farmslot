@@ -14,6 +14,7 @@ import {
   type ResourcePostureGateChoice,
   type Run,
   type RunDecision,
+  runOutputCloseUnavailableReason,
   type SlotPickerPayload,
 } from '@farmslot/protocol';
 
@@ -155,12 +156,26 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
     return html`<section class="gate-section" data-testid="output-review-gate">
       <div class="gate-header"><div class="gate-title">Review run output</div></div>
       <p class="gate-description">${pending.description}</p>
+      <p>
+        Read the report, then close execution when no more work is planned. The recorded
+        ${run.metrics.outcome ?? 'unknown'} result and any gaps remain unchanged.
+      </p>
       <div class="evidence-actions">
         <a
           class="evidence-link"
           href=${`#run/${run.id}?artifactRun=${encodeURIComponent(run.id)}&artifact=${encodeURIComponent(pending.payload.reportPath)}`}
           >Read report</a
         >
+        <button
+          class="gate-action-btn evidence-link"
+          data-testid="close-run-output"
+          title=${runOutputCloseUnavailableReason(run) ??
+          'Close execution without approving a release'}
+          ?disabled=${context.actionsBlocked || Boolean(runOutputCloseUnavailableReason(run))}
+          @click=${() => context.confirmResolve(run.id, pending, 'close-run')}
+        >
+          Close run
+        </button>
         <button
           class="gate-action-btn evidence-link"
           ?disabled=${context.actionsBlocked || Boolean(run.output?.captureError)}

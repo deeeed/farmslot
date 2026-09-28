@@ -24,6 +24,7 @@
     "@typesafe-ai/sdk": "^0.6.0",
     "ajv": "^8.20.0",
     "chokidar": "^4.0.0",
+    "htmlparser2": "^10.0.0",
     "node-pty": "^1.0.0",
     "shell-quote": "^1.8.4",
     "ws": "^8.18.0"

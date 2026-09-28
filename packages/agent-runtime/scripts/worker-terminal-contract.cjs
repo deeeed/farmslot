@@ -141,6 +141,14 @@ const BUILTIN_FLOW_COMMANDS = {
     },
     blocked: { artifacts: [] },
   },
+  qa: {
+    complete: { report: 'artifacts/report.html', artifacts: [LEARNINGS, 'artifacts/report.html'] },
+    'no-change': {
+      report: 'artifacts/report.html',
+      artifacts: [LEARNINGS, 'artifacts/report.html'],
+    },
+    blocked: { artifacts: [] },
+  },
   'validate-dep': {
     complete: { report: 'artifacts/report.md', artifacts: [LEARNINGS, 'artifacts/report.md'] },
     'no-change': {

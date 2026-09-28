@@ -1,6 +1,6 @@
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 
-export type LightboxFileType = 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'file';
+export type LightboxFileType = 'image' | 'video' | 'html' | 'markdown' | 'json' | 'diff' | 'file';
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
@@ -26,6 +26,7 @@ export function mediaLightboxFileType(item: LightboxTypedItem): LightboxFileType
   // treated media purposes as media even when the artifact path was generic.
   if (isImageLightboxItem(item)) return 'image';
   if (isVideoLightboxItem(item)) return 'video';
+  if (/\.html?$/i.test(item.path)) return 'html';
   if (MARKDOWN_EXTS.test(item.path)) return 'markdown';
   if (JSON_EXTS.test(item.path)) return 'json';
   if (DIFF_EXTS.test(item.path) || item.purpose.includes('diff')) return 'diff';
@@ -40,6 +41,8 @@ export function mediaLightboxFileTypeBadge(type: LightboxFileType): string {
       return 'VIDEO';
     case 'markdown':
       return 'MD';
+    case 'html':
+      return 'HTML';
     case 'json':
       return 'JSON';
     case 'diff':
