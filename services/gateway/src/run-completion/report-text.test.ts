@@ -3,13 +3,18 @@ import test from 'node:test';
 
 import { workerReportText } from './report-text.js';
 
-test('model report input retains proof content without HTML payloads or duplicate navigation', () => {
+test('model report input retains proof content without HTML payloads or duplicate navigation', async () => {
   const source =
     '<head><style>large css</style></head><nav>repeated contents</nav><h1>Smoke &amp; gaps</h1>' +
     '<details><summary>Unproved interaction</summary><p>Needs follow-up</p></details>' +
     `<img src="data:image/png;base64,${'A'.repeat(100_000)}" alt="Final wallet view">` +
     '<table><tr><td>AC1</td><td>PASS</td></tr></table><script>untrusted()</script><div hidden>hidden</div><p>Final conclusion</p>';
-  const text = workerReportText('report.html', source);
+  let yielded = false;
+  setImmediate(() => {
+    yielded = true;
+  });
+  const text = await workerReportText('report.html', source);
+  assert.equal(yielded, true, 'Large embedded payloads must not monopolize the gateway event loop');
   assert.match(text, /Smoke & gaps/);
   assert.match(text, /Unproved interaction\s+Needs follow-up/);
   assert.match(text, /Image: Final wallet view/);
@@ -19,7 +24,7 @@ test('model report input retains proof content without HTML payloads or duplicat
   assert.ok(text.length < 250);
 });
 
-test('plain reports retain their exact content', () => {
+test('plain reports retain their exact content', async () => {
   const markdown = '# Report\n\n`<actual>` evidence';
-  assert.equal(workerReportText('report.md', markdown), markdown);
+  assert.equal(await workerReportText('report.md', markdown), markdown);
 });

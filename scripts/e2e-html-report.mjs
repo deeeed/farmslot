@@ -162,6 +162,8 @@ try {
       executable: document.querySelectorAll('script,iframe,object,embed,form,meta[http-equiv="refresh"]').length,
       handlers: [...document.querySelectorAll('*')].some(el => [...el.attributes].some(a => a.name.startsWith('on'))),
       javascriptLinks: [...document.querySelectorAll('a[href]')].some(a => /^javascript:/i.test(a.getAttribute('href'))),
+      unsafeLinkTargets: [...document.querySelectorAll('a[href]')].some(a => a.target && a.target !== '_blank' || !a.rel.includes('noopener')),
+      authoredCredentialLinks: [...document.querySelectorAll('a[href]')].some(a => {try { const u=new URL(a.href);return Boolean(u.username || u.password) } catch {return false}}),
       csp: document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content,
       remoteImageLoaded: [...document.images].some(img => /^https?:/.test(img.src) && img.naturalWidth > 0),
       unresolvedMediaSources: [...document.querySelectorAll('video[src],audio[src],source[src]')].some(el => /^https?:/.test(el.src)),
@@ -173,6 +175,8 @@ try {
     assert.equal(hostile.executable, 0);
     assert.equal(hostile.handlers, false);
     assert.equal(hostile.javascriptLinks, false);
+    assert.equal(hostile.unsafeLinkTargets, false);
+    assert.equal(hostile.authoredCredentialLinks, false);
     assert.equal(hostile.remoteImageLoaded, false);
     assert.equal(hostile.unresolvedMediaSources, false);
     assert.equal(hostile.parentBlocked, true);
@@ -194,12 +198,15 @@ try {
     const media = await evaluate(
       `(() => {
       const v=document.querySelector('video'),a=document.querySelector('a[data-trace-index]');
-      return {ready:v?.readyState,duration:v?.duration,controls:v?.controls,href:a?.href,scriptCount:document.scripts.length,
+      return {ready:v?.readyState,duration:v?.duration,controls:v?.controls,src:v?.currentSrc,error:v?.error?.message,networkState:v?.networkState,href:a?.href,scriptCount:document.scripts.length,
         parentBlocked:(()=>{try{return !parent.document}catch{return true}})()};
     })()`,
       executionContextId,
     );
-    assert.ok(media.ready >= 1 && media.duration > 0, 'Retained inline video must load');
+    assert.ok(
+      media.ready >= 1 && media.duration > 0,
+      `Retained inline video must load: ${JSON.stringify(media)}`,
+    );
     assert.equal(media.controls, true);
     assert.equal(media.scriptCount, 0);
     assert.equal(media.parentBlocked, true);

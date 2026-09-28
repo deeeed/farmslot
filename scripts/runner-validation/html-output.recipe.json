@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Readable retained HTML and honest execution closeout",
-  "description": "Use an isolated gateway/store with orchestration disabled. Seed a retained report containing readable sources, full criteria, PASS and unproved cases, embedded screenshots, sticky navigation and native details/filters. Open its run on the validation UI. Set FARMSLOT_GATEWAY, FARMSLOT_CDP_PORT, FARMSLOT_UI_URL and FARMSLOT_HTML_REPORT_ROUTE. For the hostile node select a separate retained hostile-report.html containing script, event-handler, remote image/CSS, iframe, form and javascript-link probes; set FARMSLOT_HTML_HOSTILE_ROUTE. For closeout seed a separate blocked artifact-only run titled disposable-partial-output-close with finished worker output, partial metrics and original failed/skipped steps; set FARMSLOT_OUTPUT_CLOSE_RUN_ID/FARMSLOT_OUTPUT_CLOSE_ROUTE. Never target a real user run. Tests read the real gateway and send real CDP input; they do not inject UI state.",
+  "description": "Use an isolated gateway/store with orchestration disabled. Seed a retained report containing readable sources, full criteria, PASS and unproved cases, embedded screenshots, sticky navigation and native details/filters. Open its run on the validation UI. Set FARMSLOT_GATEWAY, FARMSLOT_CDP_PORT, FARMSLOT_UI_URL and FARMSLOT_HTML_REPORT_ROUTE. For the hostile node select a separate retained hostile-report.html containing script, event-handler, remote image/CSS, iframe, form and javascript-link probes; set FARMSLOT_HTML_HOSTILE_ROUTE. For closeout seed a separate blocked artifact-only run titled disposable-partial-output-close with finished worker output, partial metrics and original failed/skipped steps; set FARMSLOT_OUTPUT_CLOSE_RUN_ID/FARMSLOT_OUTPUT_CLOSE_ROUTE. Never target a real user run. Tests read the real gateway and send real CDP input; they do not inject UI state. For family outcomes set FARMSLOT_VALIDATION_ROOT to this isolated checkout, run node scripts/e2e-family-outcome.mjs --seed, then restart only its isolated gateway to load the disposable fixtures.",
   "workflow": {
     "entry": "human-report",
     "nodes": {
@@ -21,11 +21,17 @@
         "action": "command",
         "cmd": "node scripts/e2e-output-close.mjs",
         "intent": "Click Close run on the marked disposable fixture after the action hydrates; prove done/partial, unchanged criteria evidence and step history, retained downloadable report and visible closed copy. Also exercise refused cleanup, changed report bytes, retry and ownership guards through the corresponding gateway scenario before ship.",
-        "next": "done"
+        "next": "family-outcome"
       },
       "done": {
         "action": "end",
         "status": "pass"
+      },
+      "family-outcome": {
+        "action": "command",
+        "cmd": "node scripts/e2e-family-outcome.mjs",
+        "intent": "Prove closed partial/failure families do not satisfy success dependencies, successful terminal siblings recover the family consistently, and active siblings keep dependencies pending without dispatching work.",
+        "next": "done"
       }
     }
   }

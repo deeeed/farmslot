@@ -30,6 +30,7 @@ export function createAndroidMirrorVideoRecorder(options: {
   let selected: 'primary' | 'fallback' | undefined;
   let fallbackReason: string | undefined;
   async function doctor(): Promise<VideoRecorderDoctorResult> {
+    selected = undefined;
     const native = await primary.doctor!();
     if (native.ok) {
       try {
@@ -45,12 +46,12 @@ export function createAndroidMirrorVideoRecorder(options: {
         fallbackReason = `Android mirror unavailable: ${error instanceof Error ? error.message : String(error)}`;
       }
     } else fallbackReason = native.message;
-    selected = 'fallback';
     const result = (await options.fallback.doctor?.()) ?? {
       ok: true,
       code: 'ok',
       message: 'Fallback provider selected.',
     };
+    if (result.ok) selected = 'fallback';
     return {
       ...result,
       message: `${result.message} Primary recording path unavailable: ${fallbackReason}`,

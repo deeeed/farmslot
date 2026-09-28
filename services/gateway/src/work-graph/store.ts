@@ -725,6 +725,9 @@ function terminalFamilyOutcome(
   const familyRuns = runs.filter((run) => run.familyId === familyId || run.id === familyId);
   if (familyRuns.length === 0) return null;
   if (familyRuns.some((run) => !isTerminalRunStatus(run.status))) return null;
+  // Match family observability: a completed successful attempt supersedes
+  // earlier failed, cancelled or partially validated attempts in this family.
+  if (familyRuns.some(isSuccessfulRun)) return 'success';
   if (familyRuns.some((run) => run.status === 'failed' || run.metrics.outcome === 'failure'))
     return 'failure';
   if (familyRuns.some((run) => run.status === 'cancelled' || run.metrics.outcome === 'cancelled'))

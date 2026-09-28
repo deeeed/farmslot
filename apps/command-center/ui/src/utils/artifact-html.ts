@@ -54,9 +54,27 @@ export function isolatedArtifactHtml(
   }
   for (const anchor of isolated.querySelectorAll('a[href]')) {
     const href = anchor.getAttribute('href')!;
+    anchor.removeAttribute('target');
+    anchor.setAttribute('rel', 'noopener noreferrer');
     if (href.startsWith('#')) continue;
     const resolved = resolve(href.split('#')[0]);
-    if (!resolved?.viewUrl) continue;
+    if (!resolved?.viewUrl) {
+      // Source PR/docs links deliberately remain user-initiated web links.
+      // Never preserve named/opener targets or authored application schemes.
+      try {
+        const external = new URL(href);
+        if (
+          !['http:', 'https:'].includes(external.protocol) ||
+          external.username ||
+          external.password
+        )
+          anchor.removeAttribute('href');
+        else anchor.setAttribute('target', '_blank');
+      } catch {
+        anchor.removeAttribute('href'); /* unresolved relative links have no retained target */
+      }
+      continue;
+    }
     const url = new URL(resolved.viewUrl, location.href);
     const traceIndex = anchor.getAttribute('data-trace-index');
     if (traceIndex && /^\d+$/.test(traceIndex)) {

@@ -1,8 +1,10 @@
+import { setImmediate } from 'node:timers/promises';
+
 import { Parser } from 'htmlparser2';
 
 /** Derive model-readable content without base64 images, styles, navigation or
  * executable markup. The retained HTML remains the sole human report. */
-export function workerReportText(fileName: string, source: string): string {
+export async function workerReportText(fileName: string, source: string): Promise<string> {
   if (!/\.html?$/i.test(fileName)) return source;
   const omitted = new Set(['head', 'script', 'style', 'nav', 'template', 'svg']);
   const blocks = new Set([
@@ -49,7 +51,13 @@ export function workerReportText(fileName: string, source: string): string {
     },
     { decodeEntities: true },
   );
-  parser.write(source);
+  // Embedded screenshots can make a report large even when its readable text
+  // is short. Yield between chunks so parsing cannot monopolize gateway RPCs.
+  const chunkSize = 64 * 1024;
+  for (let offset = 0; offset < source.length; offset += chunkSize) {
+    parser.write(source.slice(offset, offset + chunkSize));
+    if (offset + chunkSize < source.length) await setImmediate();
+  }
   parser.end();
   return text
     .join('')

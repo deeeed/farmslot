@@ -47,7 +47,7 @@ export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportAr
     const localPath = path.join(taskDir, 'artifacts', fileName);
     if (existsSync(localPath)) {
       const text = await readFile(localPath, 'utf-8');
-      if (text.trim()) return { fileName, text: workerReportText(fileName, text) };
+      if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
     }
   }
 
@@ -71,7 +71,7 @@ export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportAr
           );
           if (await slotFileExists(vars, workerReport)) {
             const text = await slotReadFile(vars, workerReport);
-            if (text.trim()) return { fileName, text: workerReportText(fileName, text) };
+            if (text.trim()) return { fileName, text: await workerReportText(fileName, text) };
           }
         }
       }

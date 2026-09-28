@@ -168,3 +168,34 @@ test('Android mirror fallback records the readiness reason and refuses wrong dev
   assert.ok(stopped.recorder!.fallbackReason);
   assert.ok(result.message.includes(stopped.recorder!.fallbackReason!));
 });
+
+test('failed fallback readiness cannot be bypassed by retrying the recorder', async () => {
+  let starts = 0;
+  let checks = 0;
+  const recorder = createAndroidMirrorVideoRecorder({
+    serial: 'fixture',
+    captureHelperPath: '/missing-capture-helper',
+    fallback: {
+      name: 'unready',
+      async doctor() {
+        checks++;
+        return { ok: false, code: 'offline', message: 'Device is offline' };
+      },
+      async start() {
+        starts++;
+        throw new Error('Must not start an unready recorder');
+      },
+    },
+  });
+  const request = {
+    target: { kind: 'android-device' as const, serial: 'fixture' },
+    outputPath: '/tmp/unused',
+    nodeId: 'proof',
+    record: 'full_run' as const,
+  };
+  assert.equal((await recorder.doctor!()).ok, false);
+  await assert.rejects(recorder.start(request), /Device is offline/);
+  await assert.rejects(recorder.start(request), /Device is offline/);
+  assert.equal(starts, 0);
+  assert.equal(checks, 3);
+});
