@@ -35,7 +35,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     --cdp-port {{CDP_PORT}} \
     --gateway-port {{WATCHER_PORT}} \
     --slot-id {{SLOT}} || true
-  cd apps/command-center && yarn typecheck
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
   ```
 - [ ] **5. Locate the root cause** — identify the exact file(s) and line(s) causing the issue.
 - [ ] **6. Resolve task branch** — reuse the prepared task branch, or create it from the default branch:
@@ -64,8 +64,9 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     --cdp-port {{CDP_PORT}} \
     --gateway-port {{WATCHER_PORT}} \
     --slot-id {{SLOT}}
-  cd apps/command-center && yarn typecheck
-  cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
+  (cd "{{REPO}}/apps/command-center" && yarn typecheck)
+  # Replace the example path with the affected gateway test files.
+  cd "{{REPO}}" && node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json src/path/to/affected.test.ts
   ```
 - [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
   ```bash
