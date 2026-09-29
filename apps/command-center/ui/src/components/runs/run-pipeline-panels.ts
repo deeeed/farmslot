@@ -141,7 +141,7 @@ export function renderPipelineProgressPanel(
           >${label} ${progress.completedSteps}/${progress.totalSteps}
           ${progress.currentPhase ? ` — ${progress.currentPhase}` : ''}
         </span>
-        <button class="monitor-close" @click=${close}>x</button>
+        <button class="monitor-close" aria-label="Close worker progress" @click=${close}>x</button>
       </div>
       ${renderOperationPanel(progress, runId)}
       ${progress.phases.map((phase) => {
@@ -152,7 +152,7 @@ export function renderPipelineProgressPanel(
             <div class="phase-header">
               <span
                 style="color: ${hasRunning
-                  ? '#3b82f6'
+                  ? colors.accentHover
                   : allDone
                     ? colors.statusOk
                     : colors.textPrimary}"

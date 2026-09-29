@@ -10,7 +10,7 @@ import {
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
-import { OperationClock, renderOperationPanel } from './operation-panel.js';
+import { OperationClock, operationPanelStyles, renderOperationPanel } from './operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,
@@ -148,7 +148,7 @@ export class ProgressTracker extends LitElement {
       }
 
       .step.current {
-        border-left-color: ${unsafeCSS(colors.accent)};
+        border-left-color: ${unsafeCSS(colors.accentHover)};
         background: ${unsafeCSS(colors.accent)}0a;
       }
 
@@ -162,14 +162,14 @@ export class ProgressTracker extends LitElement {
         color: ${unsafeCSS(colors.statusOk)};
       }
       .step-check.pending {
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
       }
 
       .step-text {
-        color: ${unsafeCSS(colors.textSecondary)};
+        color: ${unsafeCSS(colors.textPrimary)};
       }
       .step.done .step-text {
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
       }
 
       /* --- Structured phase accordion --- */
@@ -203,7 +203,7 @@ export class ProgressTracker extends LitElement {
       .phase-arrow {
         flex-shrink: 0;
         width: 10px;
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
         font-size: 10px;
       }
 
@@ -233,16 +233,16 @@ export class ProgressTracker extends LitElement {
       }
 
       .phase-count {
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
         flex-shrink: 0;
         font-size: ${unsafeCSS(fonts.sizeXs)};
       }
 
       .phase.complete .phase-name {
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
       }
       .phase.active .phase-name {
-        color: ${unsafeCSS(colors.accent)};
+        color: ${unsafeCSS(colors.accentHover)};
       }
 
       .phase-steps {
@@ -272,23 +272,23 @@ export class ProgressTracker extends LitElement {
         color: ${unsafeCSS(colors.statusOk)};
       }
       .s-step-icon.running {
-        color: ${unsafeCSS(colors.accent)};
+        color: ${unsafeCSS(colors.accentHover)};
       }
-      .s-step-icon.pending {
-        color: ${unsafeCSS(colors.textMuted)};
-      }
+      .s-step-icon.pending,
       .s-step-icon.skipped {
-        color: ${unsafeCSS(colors.textMuted)};
+        color: ${unsafeCSS(colors.textSecondary)};
       }
 
       .s-step-name {
+        overflow-wrap: anywhere;
+        color: ${unsafeCSS(colors.textPrimary)};
+      }
+      .s-step.done .s-step-name,
+      .s-step.skipped .s-step-name {
         color: ${unsafeCSS(colors.textSecondary)};
       }
-      .s-step.done .s-step-name {
-        color: ${unsafeCSS(colors.textMuted)};
-      }
       .s-step.running .s-step-name {
-        color: ${unsafeCSS(colors.textPrimary)};
+        font-weight: 600;
       }
 
       .s-step.running {
@@ -311,6 +311,7 @@ export class ProgressTracker extends LitElement {
         animation: pulse-accent 1.5s ease-in-out infinite;
       }
     `,
+    operationPanelStyles,
     subtaskBlockStyles,
   ];
 

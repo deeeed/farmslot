@@ -148,7 +148,7 @@ export const subtaskBlockStyles = css`
     border-left: 2px solid ${unsafeCSS(colors.accent)};
     border-radius: 0 ${unsafeCSS(radii.sm)} ${unsafeCSS(radii.sm)} 0;
     background: ${unsafeCSS(colors.bgSurface)};
-    font-size: ${unsafeCSS(fonts.sizeXs)};
+    font-size: ${unsafeCSS(fonts.sizeSm)};
   }
   .st-unit.st-complete,
   .st-unit.st-done {
@@ -163,7 +163,6 @@ export const subtaskBlockStyles = css`
     border-left-style: dashed;
     border-left-color: ${unsafeCSS(colors.statusWarn)};
     background: ${unsafeCSS(colors.bgSurface)};
-    opacity: 0.85;
   }
 
   .st-summary {
@@ -185,7 +184,7 @@ export const subtaskBlockStyles = css`
   .st-caret {
     flex-shrink: 0;
     width: 8px;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
   }
   .st-caret::before {
     content: '\\25B8';
@@ -196,7 +195,7 @@ export const subtaskBlockStyles = css`
 
   .st-kind {
     flex-shrink: 0;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -212,7 +211,7 @@ export const subtaskBlockStyles = css`
 
   .st-id {
     flex-shrink: 0;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
   }
 
   .st-pill {
@@ -220,7 +219,7 @@ export const subtaskBlockStyles = css`
     padding: 0 5px;
     border-radius: 999px;
     border: 1px solid ${unsafeCSS(colors.accent)};
-    color: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.accentHover)};
     font-weight: 600;
   }
   .st-complete > .st-summary .st-pill,
@@ -248,7 +247,7 @@ export const subtaskBlockStyles = css`
   .st-current {
     flex: 1;
     min-width: 0;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

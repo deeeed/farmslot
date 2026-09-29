@@ -14,6 +14,22 @@ export const runDetailStyles = css`
     padding-bottom: 0;
     font-family: ${unsafeCSS(fonts.mono)};
   }
+  .context-read-link,
+  .context-read-link:visited {
+    align-self: flex-start;
+    color: ${unsafeCSS(colors.accentHover)};
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    line-height: 1.5;
+    margin-bottom: ${unsafeCSS(spacing.md)};
+    text-underline-offset: 3px;
+  }
+  .context-read-link:hover {
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .context-read-link:focus-visible {
+    outline: 2px solid ${unsafeCSS(colors.accentHover)};
+    outline-offset: 3px;
+  }
   .back {
     color: ${unsafeCSS(colors.textMuted)};
     cursor: pointer;
