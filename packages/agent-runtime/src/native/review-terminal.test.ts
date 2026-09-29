@@ -43,14 +43,14 @@ test('review receipt reuse binds runner and model without replacing the owned te
   for (const overrides of [{ runner: 'grok' }, { model: 'different-model' }]) {
     const rejected = invoke(overrides);
     assert.notEqual(rejected.status, 0);
-    assert.match(rejected.stderr, /runner or model changed/);
+    assert.match(rejected.stderr, /does not match the requested runner and model/);
     assert.equal(tmux('has-session', '-t', `=${session}`).status, 0);
     assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')), receipt);
     assert.equal(existsSync(path.join(directory, '.terminal-cancelled')), false);
   }
   const legacy = { ...receipt, runner: undefined, model: undefined };
   writeFileSync(marker, JSON.stringify(legacy));
-  assert.match(invoke().stderr, /runner or model changed/);
+  assert.match(invoke().stderr, /does not match the requested runner and model/);
   assert.equal(tmux('has-session', '-t', `=${session}`).status, 0);
   writeFileSync(marker, JSON.stringify(receipt));
   assert.equal(invoke({ action: 'stop' }).status, 0);

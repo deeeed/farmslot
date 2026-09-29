@@ -17,7 +17,7 @@ import {
   GatewayConnectionError,
   type GatewayConnection,
 } from '../packages/cli/src/gateway-client.js';
-import type { PRRulesListResult, PRTeamProfile } from '../packages/protocol/src/index.js';
+import type { PRRulesListResult, PRTeamProfile, Run } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
@@ -259,6 +259,8 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_GATEWAY_TOKEN: token,
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
+    NODE_TEST_CONTEXT: '1',
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     FARMSLOT_CDP_PORT: String(cdpPort),
     FARMSLOT_CDP_PROFILE: path.join(fixture, 'chrome'),
@@ -346,6 +348,29 @@ process.stdout.write(JSON.stringify(body));
       (name) => ({ name, status: name === 'dispatch' ? 'failed' : 'pending' }),
     ),
   });
+  const reviewRecovery = JSON.parse(
+    await readFile(path.join(fixture, 'runs/ui-review-recovery.json'), 'utf8'),
+  );
+  for (const state of ['live', 'cleaned']) {
+    await json(path.join(fixture, `runs/ui-monitor-${state}.json`), {
+      ...reviewRecovery,
+      id: `ui-monitor-${state}`,
+      status: 'blocked',
+      metrics: { ...reviewRecovery.metrics, disposition: 'blocked' },
+      taskFile: path.join(fixture, 'task/TASK.md'),
+      reviewWorkspace: {
+        ...reviewRecovery.reviewWorkspace,
+        cleanedAt: state === 'cleaned' ? runBase.updatedAt : undefined,
+      },
+      steps: reviewRecovery.steps.map((step: { name: string }) => ({
+        ...step,
+        status: step.name === 'human-gate' ? 'pending' : 'done',
+        ...(step.name === 'monitor'
+          ? { outputs: { workerSignal: { status: 'blocked', attemptId: 'original' } } }
+          : {}),
+      })),
+    });
+  }
   await json(path.join(fixture, 'runs/ui-qa-profile.json'), {
     ...runBase,
     id: 'ui-qa-profile',
@@ -502,6 +527,19 @@ process.stdout.write(JSON.stringify(body));
       beforeReplay,
     );
     await json(path.join(evidence, 'review-replay-unchanged.json'), beforeReplay);
+    for (const state of ['live', 'cleaned']) {
+      const runId = `ui-monitor-${state}`;
+      const before = await connection.call<{ run: Run }>('run.get', { runId });
+      await connection.call('run.replayStep', { runId, stepName: 'monitor' });
+      const after = await connection.call<{ run: Run }>('run.get', { runId });
+      assert.equal(after.run.status, 'monitoring');
+      assert.equal(after.run.engineState?.generation, 4);
+      assert.deepEqual(after.run.reviewWorkspace, before.run.reviewWorkspace);
+      assert.deepEqual(after.run.agentContexts, before.run.agentContexts);
+      assert.equal(after.run.metrics.runner, before.run.metrics.runner);
+      assert.equal(after.run.steps.find((step) => step.name === 'dispatch')?.status, 'done');
+      await json(path.join(evidence, `monitor-replay-${state}.json`), after);
+    }
     cdp('goto', `http://127.0.0.1:${uiPort}/#runs?run=ui-review-recovery&step=dispatch`);
     for (let attempt = 0; attempt < 100; attempt++) {
       if (
@@ -533,6 +571,13 @@ process.stdout.write(JSON.stringify(body));
       cdp('eval', 'runs', walk + `return find('[data-testid="review-request-replacement"]').path;`),
     );
     await waitUI(`return Boolean(find('[data-testid="pr-workspace-request-review"]'));`);
+    await waitUI(
+      `return find('pr-automation-panel')?.element.reviewBlockedReason === 'PR details are unavailable; review status could not be checked.';`,
+    );
+    assert.equal(
+      evaluate(`return find('[data-testid="pr-review-request-open"]').element.disabled;`),
+      true,
+    );
     click(selector('pr-workspace-request-review'));
     await waitUI(`return Boolean(find('pr-review-request-form'));`);
     assert.equal(
@@ -931,7 +976,14 @@ process.stdout.write(JSON.stringify(body));
         .map((run) => run.id)
         .filter((id) => !id.startsWith('ui-ownership-'))
         .sort(),
-      ['ui-automatic-qa', 'ui-publication-published', 'ui-qa-profile', 'ui-review-recovery'],
+      [
+        'ui-automatic-qa',
+        'ui-monitor-cleaned',
+        'ui-monitor-live',
+        'ui-publication-published',
+        'ui-qa-profile',
+        'ui-review-recovery',
+      ],
     );
     // Clearing the last slot is an incomplete draft, not a rejected edit.
     async function clearRepairDraft(kind: string) {

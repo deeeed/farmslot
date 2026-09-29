@@ -157,6 +157,8 @@ async function main(): Promise<void> {
     await import('../services/gateway/src/review-workspaces/task.js');
   const { executeReviewWorkspaceStep } =
     await import('../services/gateway/src/review-workspaces/pipeline.js');
+  const { REVIEW_STARTUP_TIMEOUT_MS } =
+    await import('../services/gateway/src/runners/review-tmux.js');
   const { taskProgress } = await import('../services/gateway/src/methods/task.js');
   const { runsDirectory } = await import('../services/gateway/src/runs/store.js');
 
@@ -307,7 +309,7 @@ async function main(): Promise<void> {
   updateRun(runId, {
     agentContexts: reviewContexts.map((context) => ({
       ...context,
-      promptDeliveryStartedAt: new Date(Date.now() - 120_001).toISOString(),
+      promptDeliveryStartedAt: new Date(Date.now() - REVIEW_STARTUP_TIMEOUT_MS - 1).toISOString(),
     })),
   });
   await assert.rejects(monitor('unacknowledged launch deadline'), {

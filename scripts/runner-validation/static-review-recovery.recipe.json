@@ -9,7 +9,7 @@
         "action": "command",
         "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-recovery-recipe recovery",
         "timeout_ms": 180000,
-        "intent": "Reject runner override and cleaned setup replay over RPC, compare the complete run before and after, hide unsafe Retry, and open a prefilled request for the same PR even when PR details fail to load.",
+        "intent": "Reject runner override and cleaned setup replay over RPC without mutation. Admit live and cleaned monitor replay without replacing the attempt; execution stays disabled in this fixture. Hide unsafe Retry and prefill the same PR request without claiming unknown review readiness.",
         "next": "startup-deadline"
       },
       "startup-deadline": {

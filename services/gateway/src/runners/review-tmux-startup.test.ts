@@ -4,7 +4,7 @@ import test from 'node:test';
 import type { RawPoolJson } from '../core/config.js';
 
 import { buildInteractiveRefinementRunnerCommand } from './launch-command.js';
-import { reviewTmuxStartupState } from './review-tmux.js';
+import { REVIEW_STARTUP_TIMEOUT_MS, reviewTmuxStartupState } from './review-tmux.js';
 
 const started = Date.parse('2026-09-21T09:35:00Z');
 
@@ -61,14 +61,14 @@ test('unacknowledged review startup blocks after its deadline without pretending
   assert.equal(
     reviewTmuxStartupState(null, null, {
       startedAt: new Date(started).toISOString(),
-      now: started + 119_999,
+      now: started + REVIEW_STARTUP_TIMEOUT_MS - 1,
     }),
     'starting',
   );
   assert.equal(
     reviewTmuxStartupState(null, null, {
       startedAt: new Date(started).toISOString(),
-      now: started + 120_000,
+      now: started + REVIEW_STARTUP_TIMEOUT_MS,
     }),
     'blocked',
   );
@@ -76,7 +76,7 @@ test('unacknowledged review startup blocks after its deadline without pretending
     reviewTmuxStartupState(
       { status: 'running', attemptId: 'fresh', timestamp: new Date(started).toISOString() },
       null,
-      { startedAt: new Date(started).toISOString(), now: started + 120_001 },
+      { startedAt: new Date(started).toISOString(), now: started + REVIEW_STARTUP_TIMEOUT_MS + 1 },
     ),
     'acknowledged',
   );

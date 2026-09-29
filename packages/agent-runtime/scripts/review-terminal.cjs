@@ -60,7 +60,9 @@ async function main() {
   if (fs.existsSync(cancelled)) throw new Error('Review terminal launch was cancelled');
   if (existing) {
     if (existing.runner !== input.runner || existing.model !== input.model)
-      throw Error('Review terminal runner or model changed; restart the review workspace');
+      throw Error(
+        'Review terminal receipt does not match the requested runner and model; request a new review',
+      );
     if (has.status !== 0) throw Error('Review terminal exited; explicit retry required');
     process.stdout.write(JSON.stringify(existing));
     return;

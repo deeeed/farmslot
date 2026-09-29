@@ -709,6 +709,7 @@ export async function runReplayStep(
   const previousMonitorSignal = existing.steps.find((step) => step.name === PS.MONITOR)?.outputs
     ?.workerSignal;
   const needsBlockedAttempt =
+    !existing.reviewWorkspaceTarget &&
     params.stepName === PS.MONITOR &&
     replayStepName === PS.MONITOR &&
     existing.status === 'blocked' &&

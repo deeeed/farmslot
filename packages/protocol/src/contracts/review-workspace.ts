@@ -1,7 +1,7 @@
 import type { RunReplayStepParams } from '../rpc/run.js';
 
 import type { ExecutionTemplateSourceRoot } from './execution-templates.js';
-import type { Run } from './runs.js';
+import { PipelineSteps, type Run } from './runs.js';
 
 export function staticReviewReplayBlock(
   run: Pick<Run, 'reviewWorkspaceTarget' | 'reviewWorkspace' | 'agentContexts'>,
@@ -16,7 +16,12 @@ export function staticReviewReplayBlock(
     (params.runner !== undefined || params.model !== undefined || params.freshDispatch)
   )
     return 'A different reviewer requires a new review request. The current attempt, runner and artifacts have not been changed.';
-  const launchSteps: readonly string[] = ['find-slot', 'write-task', 'prepare', 'dispatch'];
+  const launchSteps: readonly string[] = [
+    PipelineSteps.FIND_SLOT,
+    PipelineSteps.WRITE_TASK,
+    PipelineSteps.PREPARE,
+    PipelineSteps.DISPATCH,
+  ];
   if (ownsAttempt && launchSteps.includes(params.stepName))
     return 'This static review already owns a workspace. Request another review instead of replaying setup or dispatch.';
   if (params.stepName === 'monitor' && !run.reviewWorkspace)

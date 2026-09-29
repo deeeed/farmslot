@@ -48,6 +48,7 @@ export function blockedWorkerOwnsSlot(
 export function isRecoverableBlockedWorkerRun(run: Run): boolean {
   const monitor = run.steps.find((step) => step.name === 'monitor');
   return (
+    !run.reviewWorkspaceTarget &&
     run.status === 'blocked' &&
     run.metrics.disposition === 'blocked' &&
     !run.decisions.some((decision) => !decision.resolvedAt) &&

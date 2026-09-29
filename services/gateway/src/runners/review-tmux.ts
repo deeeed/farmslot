@@ -24,7 +24,7 @@ import {
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
 
-export const REVIEW_STARTUP_TIMEOUT_MS = 120_000;
+export const REVIEW_STARTUP_TIMEOUT_MS = 300_000;
 
 export interface ReviewTmuxOperationResult {
   exists?: boolean;
@@ -37,15 +37,11 @@ export interface ReviewTmuxOperationResult {
 export function reviewTmuxStartupState(
   signal: WorkerSignal | null,
   acceptance: RunnerPromptAcceptance | null,
-  timing?: { startedAt: string; now: number; timeoutMs?: number },
+  timing?: { startedAt: string; now: number },
 ): 'acknowledged' | 'starting' | 'blocked' {
   if (signal || acceptance) return 'acknowledged';
   const started = timing ? Date.parse(timing.startedAt) : NaN;
-  if (
-    timing &&
-    Number.isFinite(started) &&
-    timing.now - started >= (timing.timeoutMs ?? REVIEW_STARTUP_TIMEOUT_MS)
-  )
+  if (timing && Number.isFinite(started) && timing.now - started >= REVIEW_STARTUP_TIMEOUT_MS)
     return 'blocked';
   return 'starting';
 }
