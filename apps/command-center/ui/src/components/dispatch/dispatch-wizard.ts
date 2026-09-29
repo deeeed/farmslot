@@ -25,9 +25,11 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import {
   COMPARISON_LANE_RUNNERS,
-  DEFAULT_MODEL,
+  defaultModelForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import {
   deriveExecutionTemplatePickerView,
   pickCompatibleExecutionTemplateId,
@@ -117,6 +119,19 @@ import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
 export class DispatchWizard extends DispatchWizardState {
+  private _initialModelPending = true;
+  private _unsubVisibleModels?: () => void;
+
+  private _applyInitialModelDefault(): void {
+    if (
+      this.mockMode ||
+      !this._initialModelPending ||
+      rememberedDefaultModel(this._runner) === undefined
+    )
+      return;
+    this._model = defaultModelForRunner(this._runner);
+    this._initialModelPending = false;
+  }
   private readonly _templateOptionsCache = new Map<string, ConfigTemplateOptionsResult>();
 
   updated(changed: Map<string, unknown>) {
@@ -167,6 +182,12 @@ export class DispatchWizard extends DispatchWizardState {
     document.addEventListener('keydown', this._onComparePickerKeydown);
     this._parseHashParams();
     this._applyMockInitial();
+    if (!this.mockMode) {
+      this._unsubVisibleModels = watchVisibleModels((error) => {
+        if (!error) this._applyInitialModelDefault();
+      });
+      this._applyInitialModelDefault();
+    }
     this._syncFleet(getState());
     if (!this.mockMode && gateway.connectionState === 'connected') void this._loadNativeWorkers();
     if (this.mockMode && this.mockProjectConfigs) {
@@ -202,6 +223,7 @@ export class DispatchWizard extends DispatchWizardState {
     document.removeEventListener('keydown', this._onComparePickerKeydown);
     this._unsubConn?.();
     this._unsubState?.();
+    this._unsubVisibleModels?.();
     if (this._matchTimer) clearTimeout(this._matchTimer);
     if (this._scoringFetchTimer) clearTimeout(this._scoringFetchTimer);
   }
@@ -333,6 +355,7 @@ export class DispatchWizard extends DispatchWizardState {
     );
     this._runner = next.runner;
     this._model = next.model;
+    this._initialModelPending = false;
     this._comparisonParentEngineHydrated = true;
     this._recomputeVariantCollision();
   }
@@ -959,6 +982,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._comparisonVariant = next.comparisonVariant;
     this._runner = next.runner;
     this._model = next.model;
+    this._initialModelPending = false;
     this._ticketId = run.ticketOrPr;
     this._normalizedTicket = '';
     this._assignFlowType(
@@ -1078,7 +1102,8 @@ export class DispatchWizard extends DispatchWizardState {
       this._comparisonHashPinnedEngine = Boolean(runner && COMPARISON_LANE_RUNNERS.has(runner));
       if (runner && COMPARISON_LANE_RUNNERS.has(runner)) {
         this._runner = runner;
-        this._model = model || DEFAULT_MODEL[runner];
+        this._model = model || defaultModelForRunner(runner);
+        this._initialModelPending = false;
       }
       if (this._comparisonHashPinnedEngine) {
         this._comparisonParentEngineHydrated = true;
@@ -1433,6 +1458,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._reviewAutoFinish =
       project.workflowDefaults?.[this._flowType]?.review?.autoFinish === true;
     if (model && !this._comparisonLane) {
+      this._initialModelPending = false;
       this._runner = model.runner;
       this._model = model.model;
       this._effort = (model.effort ?? '') as typeof this._effort;
@@ -1680,6 +1706,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _setRunner(runner: string) {
+    this._initialModelPending = false;
     if (runner === this._runner) return;
     this._runner = runner;
     if (
@@ -1688,12 +1715,13 @@ export class DispatchWizard extends DispatchWizardState {
       !this._nativeWorkerRunners.includes(runner)
     )
       this._setTransport('tmux');
-    this._model = DEFAULT_MODEL[runner] ?? '';
+    this._model = defaultModelForRunner(runner);
     this._effort = '';
     this._recomputeVariantCollision();
   }
 
   private _setModel(model: string) {
+    this._initialModelPending = false;
     if (model === this._model) return;
     this._model = model;
     this._recomputeVariantCollision();
@@ -1748,6 +1776,7 @@ export class DispatchWizard extends DispatchWizardState {
               this._selectedTaskTemplateFileName,
             );
     const view = renderDispatchWizardView({
+      discoverModels: !this.mockMode,
       transport: this._transport,
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
       nativeCatalogError: this._nativeCatalogError,

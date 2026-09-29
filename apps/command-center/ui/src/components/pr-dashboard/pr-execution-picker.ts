@@ -192,6 +192,7 @@ export class PRExecutionPicker extends LitElement {
         ${this.value.models.map(
           (model, index) =>
             html`<runner-model-effort-picker
+              .personalPreferences=${false}
               .runner=${model.runner}
               .model=${model.model}
               .effort=${(model.effort ?? '') as EffortLevel}
@@ -257,6 +258,7 @@ export class PRExecutionPicker extends LitElement {
           html` <div class="card">
             <p class="muted">${index === 0 ? 'Preferred model' : `Alternative ${index}`}</p>
             <runner-model-effort-picker
+              .personalPreferences=${false}
               .runner=${model.runner}
               .model=${model.model}
               .effort=${(model.effort ?? '') as EffortLevel}

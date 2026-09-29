@@ -56,11 +56,12 @@ import { type AppState, getState, type GlobalFilters, subscribe } from '../../st
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import {
-  DEFAULT_MODEL,
+  defaultModelForRunner,
   modelForRunnerChange,
   modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
@@ -284,7 +285,7 @@ function slotsText(item: BacklogItem): string {
 
 function defaultCandidate(role: DraftLaunchCandidate['role'], index: number): DraftLaunchCandidate {
   const runner = role === 'baseline' ? 'claude' : index % 2 === 0 ? 'claude' : 'codex';
-  const model = role === 'baseline' ? 'opus' : DEFAULT_MODEL[runner];
+  const model = role === 'baseline' ? 'opus' : defaultModelForRunner(runner);
   return {
     id: role === 'baseline' ? 'baseline' : `comparison-${index}`,
     role,
@@ -381,6 +382,8 @@ export class BacklogPanel extends LitElement {
   @state() private _existingRefinementSession: BacklogRefinementSessionGetResult | null = null;
 
   private _unsub?: () => void;
+  private _unsubVisibleModels?: () => void;
+  @state() private _visibleModelsError = '';
   private _activityCacheItems: BacklogItem[] | null = null;
   private _activityCacheRuns: Run[] | null = null;
   private _activityCache = new Map<string, Run | undefined>();
@@ -1251,10 +1254,15 @@ export class BacklogPanel extends LitElement {
     window.addEventListener('hashchange', this._onHashChange);
     window.addEventListener('keydown', this._onKeydown);
     this._unsub = subscribe((s) => this._sync(s));
+    this._unsubVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      this.requestUpdate();
+    });
   }
 
   disconnectedCallback() {
     this._unsub?.();
+    this._unsubVisibleModels?.();
     this._confirmTimer.clear();
     this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
@@ -1947,7 +1955,7 @@ export class BacklogPanel extends LitElement {
           id: candidate.id,
           role: candidate.role,
           runner: candidate.runner ?? 'claude',
-          model: candidate.model ?? DEFAULT_MODEL[candidate.runner ?? 'claude'],
+          model: candidate.model ?? defaultModelForRunner(candidate.runner ?? 'claude'),
           effort: candidate.effort ?? '',
           variant: candidate.variant ?? '',
           slotPolicyKind: slotPolicy.kind,
@@ -2128,10 +2136,10 @@ export class BacklogPanel extends LitElement {
               index,
               {
                 runner,
-                model: DEFAULT_MODEL[runner],
+                model: defaultModelForRunner(runner),
                 variant:
                   candidate.role === 'comparison'
-                    ? `${runner}-${DEFAULT_MODEL[runner].replace(/[^a-z0-9]+/gi, '-')}`
+                    ? `${runner}-${defaultModelForRunner(runner).replace(/[^a-z0-9]+/gi, '-')}`
                     : '',
               },
               item,
@@ -2155,6 +2163,7 @@ export class BacklogPanel extends LitElement {
         >
           ${models.map((model) => html`<option value=${model}>${model}</option>`)}
         </select>
+        ${this._renderVisibleModelsError()}
       </label>
       ${candidate.role === 'comparison'
         ? html`<label
@@ -3099,14 +3108,22 @@ export class BacklogPanel extends LitElement {
     return [...new Set([...RUNNER_OPTIONS, ...slotRunners])].sort();
   }
 
+  private _renderVisibleModelsError() {
+    return this._visibleModelsError
+      ? html`<div class="muted" role="status" data-testid="backlog-visible-models-error">
+          Saved visible models could not be loaded: ${this._visibleModelsError}
+        </div>`
+      : nothing;
+  }
+
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-    return modelsForRunner(runner);
+    return modelsForRunner(runner, this._refineModel);
   }
 
   private get _refinementDefaultModelLabel(): string {
     const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-    return DEFAULT_MODEL[runner] ?? DEFAULT_BACKLOG_REFINEMENT_MODEL;
+    return defaultModelForRunner(runner) || DEFAULT_BACKLOG_REFINEMENT_MODEL;
   }
 
   private _setRunnerPickerOpen(open: boolean) {
@@ -3315,6 +3332,7 @@ export class BacklogPanel extends LitElement {
                 this._refineModel = model;
               },
             })}
+            ${this._renderVisibleModelsError()}
           </div>
           <div class="full">
             ${this._renderRefinementChoice({

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document runner catalog and visible-model preference RPCs.
+
 - Refresh the generated gateway API reference to protocol 0.32.0.
 
 - Update the Command Center ready-gate capture fixture to show static independent review.

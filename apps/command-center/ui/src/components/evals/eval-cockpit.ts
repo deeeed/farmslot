@@ -16,6 +16,9 @@ import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
+import { defaultModelForRunner } from '../../utils/runner-options.js';
+import { rememberedDefaultModel } from '../../utils/runner-visible-cache.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 
 import { renderEvalCockpitCandidateMatrix } from './eval-cockpit-candidate-renderer.js';
 import { renderEvalCockpitCaseBrowser } from './eval-cockpit-case-renderer.js';
@@ -84,9 +87,31 @@ import { type EvalLaunchCell, patchCell } from './eval-suite-launch-model.js';
 
 @customElement('eval-cockpit')
 export class EvalCockpit extends EvalCockpitState {
+  private _unsubVisibleModels?: () => void;
+  private _initialModelsPending = true;
+
+  private _applyInitialModelDefaults(): void {
+    if (
+      !this._initialModelsPending ||
+      this._candidateRows.some((row) => rememberedDefaultModel(row.runner) === undefined)
+    )
+      return;
+    this._candidateRows = this._candidateRows.map((row) => ({
+      ...row,
+      model: defaultModelForRunner(row.runner),
+    }));
+    this._initialModelsPending = false;
+  }
+
   connectedCallback(): void {
     super.connectedCallback();
+    this._unsubVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      if (!error) this._applyInitialModelDefaults();
+      this.requestUpdate();
+    });
     this._restoreUrlState();
+    this._applyInitialModelDefaults();
     window.addEventListener('hashchange', this._onHashChange);
     this._syncState(getState());
   }
@@ -95,6 +120,7 @@ export class EvalCockpit extends EvalCockpitState {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsub?.();
+    this._unsubVisibleModels?.();
   }
 
   protected firstUpdated(): void {
@@ -121,6 +147,7 @@ export class EvalCockpit extends EvalCockpitState {
   _restoreUrlState(): void {
     const restored = restoreEvalCockpitUrlViewState(this._lastUrlState);
     if (!restored) return;
+    this._initialModelsPending = false;
     this._urlRestoring = true;
     try {
       this._caseQuery = restored.state.caseQuery;
@@ -489,6 +516,7 @@ export class EvalCockpit extends EvalCockpitState {
   }
 
   private _updateRow(id: string, patch: Partial<CandidateRow>): void {
+    if ('model' in patch || 'runner' in patch) this._initialModelsPending = false;
     this._candidateRows = this._candidateRows.map((row) =>
       row.id === id ? { ...row, ...patch } : row,
     );
@@ -568,11 +596,12 @@ export class EvalCockpit extends EvalCockpitState {
     });
   }
 
-  private _candidateModelOptions(runner: string, selectedModel?: string): string[] {
-    return candidateModelOptions(runner, selectedModel);
+  private _candidateModelOptions(runner: string, selected?: string): string[] {
+    return candidateModelOptions(runner, selected);
   }
 
   private _setCandidateRunner(id: string, runner: string): void {
+    this._initialModelsPending = false;
     this._candidateRows = this._candidateRows.map((row) => {
       if (row.id !== id) return row;
       return applyCandidateRunner(row, runner);
@@ -818,6 +847,7 @@ export class EvalCockpit extends EvalCockpitState {
   private _renderCandidateMatrix() {
     return renderEvalCockpitCandidateMatrix({
       candidateRows: this._candidateRows,
+      visibleModelsError: this._visibleModelsError,
       selectedCaseCount: this._selectedCases.length,
       enabledCandidateCount: this._enabledCandidates().length,
       selectedTaskProfile: this._selectedCases[0]?.taskProfile ?? 'fix-bug',
@@ -834,8 +864,7 @@ export class EvalCockpit extends EvalCockpitState {
       },
       candidateLabel: (row) => this._candidateLabel(row),
       generatedCandidateLabel: (row) => this._generatedCandidateLabel(row),
-      candidateModelOptions: (runner, selectedModel) =>
-        this._candidateModelOptions(runner, selectedModel),
+      candidateModelOptions: (runner, selected) => this._candidateModelOptions(runner, selected),
       candidateTemplateChoices: (taskProfile) => this._candidateTemplateChoices(taskProfile),
       candidateTemplateSummary: (row) => this._candidateTemplateSummary(row),
       candidateVariant: (row) => this._candidateVariant(row),

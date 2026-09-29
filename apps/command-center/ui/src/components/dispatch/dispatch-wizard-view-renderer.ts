@@ -40,6 +40,7 @@ import {
 } from './dispatch-wizard-publication-review-renderer.js';
 
 interface DispatchWizardViewContext {
+  discoverModels?: boolean;
   transport: 'tmux' | 'native';
   nativeWorkerAvailable: boolean;
   nativeCatalogError: string;
@@ -196,6 +197,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
       ${showDispatchForm
         ? html`
             ${renderDispatchWizardPrimaryControls({
+              discoverModels: ctx.discoverModels,
               transport: ctx.transport,
               nativeWorkerAvailable: ctx.nativeWorkerAvailable,
               nativeCatalogError: ctx.nativeCatalogError,
