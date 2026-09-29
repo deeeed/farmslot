@@ -4,6 +4,8 @@ import test from 'node:test';
 import { configureCursorModel } from './cursor-model.js';
 
 for (const [alias, model, parameter, value] of [
+  ['claude-opus-5-5-medium', 'claude-opus-5-5', 'effort', 'medium'],
+  ['claude-opus-5-5-high', 'claude-opus-5-5', 'effort', 'high'],
   ['cursor-grok-4.6-xhigh', 'grok-4.6', 'effort', 'xhigh'],
   ['composer-2.5-fast', 'composer-2.5', 'fast', 'true'],
   ['claude-opus-5-thinking-high', 'claude-opus-5', 'thinking', 'true'],

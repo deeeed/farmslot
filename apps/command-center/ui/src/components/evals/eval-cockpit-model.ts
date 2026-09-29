@@ -13,9 +13,9 @@ import type {
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
 import {
-  DEFAULT_MODEL,
+  defaultModelForRunner,
   EVAL_CANDIDATE_RUNNERS,
-  MODELS_BY_RUNNER,
+  isRestorableModelId,
   modelsForRunner,
   runnerLabel,
 } from '../../utils/runner-options.js';
@@ -152,7 +152,7 @@ export function defaultRows(): CandidateRow[] {
       reviewName: '',
       reviewVersion: '',
       runner: DEFAULT_EVAL_CANDIDATE_RUNNER,
-      model: DEFAULT_MODEL[DEFAULT_EVAL_CANDIDATE_RUNNER] ?? DEFAULT_MODEL.codex,
+      model: defaultModelForRunner(DEFAULT_EVAL_CANDIDATE_RUNNER),
       repeat: false,
     },
   ];
@@ -167,16 +167,16 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
     const record = raw as Partial<Record<keyof CandidateRow, unknown>>;
     const id =
       typeof record.id === 'string' && record.id.trim() ? record.id : `candidate-${index + 1}`;
-    const runner =
+    const runnerRestored =
       typeof record.runner === 'string' &&
-      EVAL_CANDIDATE_RUNNERS.includes(record.runner as (typeof EVAL_CANDIDATE_RUNNERS)[number])
-        ? record.runner
-        : fallback.runner;
+      EVAL_CANDIDATE_RUNNERS.includes(record.runner as (typeof EVAL_CANDIDATE_RUNNERS)[number]);
+    const runner = runnerRestored ? (record.runner as string) : fallback.runner;
+    // Saved visibility may not be loaded yet, so a restored model is not checked
+    // against the visible list. Launch validation still rejects a wrong model.
     const model =
-      typeof record.model === 'string' &&
-      candidateModelOptions(runner, record.model).includes(record.model)
+      runnerRestored && isRestorableModelId(record.model)
         ? record.model
-        : (candidateModelOptions(runner)[0] ?? fallback.model);
+        : defaultModelForRunner(runner) || fallback.model;
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
     const label = rawLabel === 'Replay candidate' || rawLabel === id ? '' : rawLabel;
     const reviewMode =
@@ -424,20 +424,21 @@ export function candidateTemplateChoices(
   return dynamic.length > 0 ? dynamic : [...CANDIDATE_TEMPLATE_OPTIONS];
 }
 
-export function candidateModelOptions(runner: string, selectedModel?: string): string[] {
-  return MODELS_BY_RUNNER[runner]
-    ? modelsForRunner(runner, selectedModel)
-    : [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
+/** Visible models for a runner. A selected model outside the visible set stays listed. */
+export function candidateModelOptions(runner: string, selected?: string): string[] {
+  const models = modelsForRunner(runner, selected);
+  return models.length > 0 ? models : [runner ? 'default' : defaultModelForRunner('codex')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {
-  const models = candidateModelOptions(runner, row.model);
+  const models = candidateModelOptions(runner, runner === row.runner ? row.model : undefined);
   return {
     ...row,
     runner,
-    model: models.includes(row.model)
-      ? row.model
-      : (DEFAULT_MODEL[runner] ?? models[0] ?? row.model),
+    model:
+      runner === row.runner && models.includes(row.model)
+        ? row.model
+        : defaultModelForRunner(runner) || models[0] || row.model,
   };
 }
 

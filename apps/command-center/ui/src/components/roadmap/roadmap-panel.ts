@@ -39,11 +39,12 @@ import { type AppState, getState, type GlobalFilters, subscribe } from '../../st
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import {
-  DEFAULT_MODEL,
+  defaultModelForRunner,
   modelForRunnerChange,
   modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import { watchVisibleModels } from '../../utils/runner-visible-models-loader.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import {
   planningBadgeStyles,
@@ -274,6 +275,8 @@ export class RoadmapPanel extends LitElement {
   @state() private _promotionDrafts: PromotionDraft[] = [];
 
   private _unsubscribeConnection?: () => void;
+  private _unsubscribeVisibleModels?: () => void;
+  @state() private _visibleModelsError = '';
   private _unsubscribeState?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
   private _onKeydown = (event: KeyboardEvent) => {
@@ -819,11 +822,16 @@ export class RoadmapPanel extends LitElement {
       if (state === 'connected' && !this.items) void this._refresh();
     });
     if (gateway.connectionState === 'connected' && !this.items) void this._refresh();
+    this._unsubscribeVisibleModels = watchVisibleModels((error) => {
+      this._visibleModelsError = error;
+      this.requestUpdate();
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubscribeConnection?.();
+    this._unsubscribeVisibleModels?.();
     this._unsubscribeState?.();
     this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('keydown', this._onKeydown);
@@ -1076,12 +1084,12 @@ export class RoadmapPanel extends LitElement {
   /** Models for the selected (or default) runner only — never fleet-wide cross-runner models. */
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    return modelsForRunner(runner);
+    return modelsForRunner(runner, this._refineModel);
   }
 
   private get _refinementDefaultModelLabel(): string {
     const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    return DEFAULT_MODEL[runner] ?? DEFAULT_ROADMAP_REFINEMENT_MODEL;
+    return defaultModelForRunner(runner) || DEFAULT_ROADMAP_REFINEMENT_MODEL;
   }
 
   private _refinementChoiceValue(value: string, options: string[]): string {
@@ -2108,6 +2116,11 @@ export class RoadmapPanel extends LitElement {
                 this._refineModel = model;
               },
             })}
+            ${this._visibleModelsError
+              ? html`<div class="muted" role="status" data-testid="roadmap-visible-models-error">
+                  Saved visible models could not be loaded: ${this._visibleModelsError}
+                </div>`
+              : nothing}
           </div>
           <div class="field full">
             Permission mode

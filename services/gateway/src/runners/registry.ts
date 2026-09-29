@@ -18,6 +18,7 @@ import {
   isReviewerWindowName,
   normalizeRunner,
   RUNNER_ALIASES,
+  RUNNER_PICKER_MODELS,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -38,6 +39,13 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 import { claudeHookObservability } from './claude-observability.js';
 import { codexSessionObservability } from './codex-observability.js';
 import { grokLogObservability } from './grok-observability.js';
+import {
+  parseCodexModelCatalog,
+  parseCursorModelCatalog,
+  parseGrokModelCatalog,
+  parsePiModelCatalog,
+  type RunnerModelCatalogSource,
+} from './model-catalog.js';
 import {
   buildPendingDegradedAgreementEntry,
   buildRunnerObservabilityAgreementEntry,
@@ -146,6 +154,11 @@ export interface RunnerDefinition {
   /** Native task leases and saved-conversation recovery have been implemented for this runner. */
   supportsNativeTaskReuse?: boolean;
   nativeChoices?: { models: string[]; modes: Array<'default' | 'plan'>; defaultModel?: string };
+  /**
+   * Structured model catalog. Absent means this runner does not report one.
+   * The reader must not parse runner TUI or CLI help text.
+   */
+  modelCatalog?: RunnerModelCatalogSource;
   /**
    * Review-workspace launches run interactively in a brand-new git worktree the
    * runner has never seen, which can trigger a one-time "trust this folder?"
@@ -286,7 +299,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'claude',
     nativeTransport: 'claude-stream-json',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['sonnet', 'opus', 'haiku', 'fable'], modes: ['default'] },
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.claude], modes: ['default'] },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['claude'],
     headlessPrintFlags: ['-p', '--print'],
@@ -332,16 +345,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'codex',
     nativeTransport: 'codex-app-server',
     supportsNativeTaskReuse: true,
-    nativeChoices: {
-      models: [
-        DEFAULT_CODEX_MODEL,
-        'gpt-6-astra',
-        'gpt-6-luna',
-        'gpt-5.6-sol',
-        'gpt-5.6-terra',
-        'gpt-5.6-luna',
-      ],
-      modes: ['default', 'plan'],
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.codex], modes: ['default', 'plan'] },
+    modelCatalog: {
+      relativePath: '.codex/models_cache.json',
+      parse: parseCodexModelCatalog,
     },
     defaultLaunchMode: 'interactive',
     processMatchers: ['codex'],
@@ -391,12 +398,19 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   },
   cursor: {
     id: 'cursor',
+    modelCatalog: {
+      command: 'cursor-agent',
+      poolPathKey: 'cursor_path',
+      args: ['--list-models'],
+      parse: parseCursorModelCatalog,
+    },
     workspaceTerminalSession: 'create-chat',
     nativeTransport: 'cursor-acp',
     supportsNativeTaskReuse: true,
     nativeChoices: {
       models: [
         DEFAULT_CURSOR_MODEL,
+        'cursor-grok-4.6-high-fast',
         'composer-2.5',
         'cursor-grok-4.6-xhigh',
         'grok-4.7-xhigh',
@@ -453,7 +467,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'grok',
     nativeTransport: 'grok-acp',
     supportsNativeTaskReuse: true,
-    nativeChoices: { models: ['grok-4.6', 'grok-4.7'], modes: ['default'] },
+    nativeChoices: { models: [...RUNNER_PICKER_MODELS.grok], modes: ['default'] },
+    modelCatalog: {
+      relativePath: '.grok/models_cache.json',
+      parse: parseGrokModelCatalog,
+    },
     defaultLaunchMode: 'interactive',
     headlessPrintExecutables: ['grok'],
     headlessPrintFlags: ['-p', '--single', '--prompt-file', '--prompt-json'],
@@ -527,6 +545,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_PI_MODEL,
+    modelCatalog: {
+      relativePath: '.pi/agent/models-store.json',
+      parse: parsePiModelCatalog,
+    },
     acceptsEffort: (_model, effort) => isPiThinkingLevel(effort.trim().toLowerCase()),
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'event-driven',

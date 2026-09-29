@@ -3038,7 +3038,7 @@ export function codexReasoningEfforts(model?: string | null): readonly CodexReas
 export const DEFAULT_CODEX_EFFORT = 'high';
 
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
-export const DEFAULT_CURSOR_MODEL = 'cursor-grok-4.6-high-fast';
+export const DEFAULT_CURSOR_MODEL = 'claude-opus-5-5-high';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
 export const DEFAULT_GROK_MODEL = 'grok-4.6';

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 ## Unreleased
 
 - Show command stages and output freshness beside worker progress, with refreshable and followable operation logs.
+- Restore selectable runner catalogs and per-user visible models and default-model settings in Dispatch and related pickers; default Cursor to Claude Opus 5.5 high while preserving existing choices.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 

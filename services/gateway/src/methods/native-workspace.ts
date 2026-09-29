@@ -10,6 +10,7 @@ import {
   KNOWN_RUNNERS,
   runnerSupportsNativeTaskReuse,
 } from '../runners/registry.js';
+import { describeVisibleModels } from '../runners/visible-models.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 
 export {
@@ -62,7 +63,6 @@ export async function nativeCatalog(
           ? [
               {
                 runner: definition.id,
-                defaultModel: definition.defaultModel ?? '',
                 supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
                 supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
                 supportsWorkspaceReviews:
@@ -70,10 +70,33 @@ export async function nativeCatalog(
                   runnerSupportsNativeTaskReuse(definition.id) &&
                   runnerSupportsReadonlyReviewWorkspace(definition.id),
                 ...definition.nativeChoices,
+                ...nativeModelPreferences(
+                  definition.id,
+                  definition.nativeChoices.models,
+                  definition.nativeChoices.defaultModel ?? definition.defaultModel,
+                ),
               },
             ]
           : [],
       ),
     contexts,
+  };
+}
+
+/** A saved visible set replaces the native seed, but a new session's default model stays selectable. */
+function nativeModelPreferences(
+  runner: string,
+  seed: string[],
+  defaultModel: string | null | undefined,
+) {
+  const visible = describeVisibleModels(runner);
+  const effectiveDefault = visible.defaultModel || defaultModel;
+  const models = visible.configured ? visible.models : seed;
+  return {
+    defaultModel: effectiveDefault ?? '',
+    models:
+      effectiveDefault && !models.includes(effectiveDefault)
+        ? [effectiveDefault, ...models]
+        : models,
   };
 }
