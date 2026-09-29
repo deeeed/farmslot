@@ -9,11 +9,26 @@ import {
   extractStepCostInfo,
   isFreshDispatchRecovery,
   reviewLoopAttempts,
+  reviewRequestHref,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   stepDurationLabel,
   stepHasReviewLoop,
 } from './step-inspector-model.js';
+
+test('static review recovery points to the existing PR request interface', () => {
+  const run = {
+    ticketOrPr: 'https://github.com/example/repo/pull/42',
+    reviewWorkspaceTarget: { machine: 'local' },
+  } as Run;
+  const href = reviewRequestHref(run);
+  assert.ok(href);
+  const params = new URLSearchParams(href.split('?')[1]);
+  assert.equal(params.get('repo'), 'example/repo');
+  assert.equal(params.get('pr'), '42');
+  assert.equal(params.get('prPane'), 'review');
+  assert.equal(reviewRequestHref({ ...run, reviewWorkspaceTarget: undefined }), null);
+});
 
 test('retained handoff failure requires an explicit fresh dispatch replay', () => {
   const run = {

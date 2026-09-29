@@ -24,6 +24,8 @@ import {
 } from './launch-command.js';
 import { getRunnerDefinition } from './registry.js';
 
+export const REVIEW_STARTUP_TIMEOUT_MS = 120_000;
+
 export interface ReviewTmuxOperationResult {
   exists?: boolean;
   startedAt?: string;
@@ -35,8 +37,17 @@ export interface ReviewTmuxOperationResult {
 export function reviewTmuxStartupState(
   signal: WorkerSignal | null,
   acceptance: RunnerPromptAcceptance | null,
-): 'acknowledged' | 'starting' {
-  return signal || acceptance ? 'acknowledged' : 'starting';
+  timing?: { startedAt: string; now: number; timeoutMs?: number },
+): 'acknowledged' | 'starting' | 'blocked' {
+  if (signal || acceptance) return 'acknowledged';
+  const started = timing ? Date.parse(timing.startedAt) : NaN;
+  if (
+    timing &&
+    Number.isFinite(started) &&
+    timing.now - started >= (timing.timeoutMs ?? REVIEW_STARTUP_TIMEOUT_MS)
+  )
+    return 'blocked';
+  return 'starting';
 }
 
 /** Recover only a unique structured metadata match, never the newest unrelated conversation. */
@@ -173,6 +184,8 @@ export async function reviewTmuxOperation(
     session: reviewTmuxSession(run),
     cwd: w.checkoutPath,
     task: w.taskPath,
+    runner,
+    model: run.metrics.model,
   };
   if (action === 'launch') {
     const pool = await loadMachinePool(w.machine);
@@ -213,7 +226,10 @@ export async function reviewTmuxOperation(
       ? await execFileArgv([process.execPath, ...argv.slice(1)], { timeout: 30000 })
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, w.machine, argv, 30000);
   if (result.exitCode !== 0) throw new Error(result.stderr || 'Review terminal operation failed');
-  return JSON.parse(result.stdout);
+  const receipt = JSON.parse(result.stdout);
+  if (action === 'launch' && (receipt.runner !== runner || receipt.model !== run.metrics.model))
+    throw new Error('Review terminal did not confirm the requested runner and model');
+  return receipt;
 }
 
 export async function launchReviewTmux(

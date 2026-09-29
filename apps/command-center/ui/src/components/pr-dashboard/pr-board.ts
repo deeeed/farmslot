@@ -1767,7 +1767,7 @@ export class PRBoard extends LitElement {
               : ''}
             .mode=${management ? 'management' : 'context'}
             .pane=${this._pane}
-            .selectedPr=${selected?.key ?? null}
+            .selectedPr=${this._selectedPr}
             .selectedProject=${selected?.project ?? ''}
             .reviewBlockedReason=${selected
               ? this._reviewLookups.get(prWorkspaceKey(selected.key))?.error

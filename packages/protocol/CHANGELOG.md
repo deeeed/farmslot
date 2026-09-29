@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share static-review replay eligibility between clients and the gateway while preserving saved-report recovery.
+
 - Restore runner catalog and model preference contracts, including per-user default selection and reset; default Cursor to Claude Opus 5.5 high without Fast mode.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

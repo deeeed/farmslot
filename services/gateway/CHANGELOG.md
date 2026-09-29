@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.
+
 - Restore runner catalog and per-user model preference APIs, including editable defaults, Cursor catalog-command discovery through the runner capability and Claude Opus 5.5 high as its built-in default.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

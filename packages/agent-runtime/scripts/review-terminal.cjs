@@ -13,6 +13,16 @@ const check = (result) => {
 };
 const target = input.session;
 async function main() {
+  if (!['launch', 'inspect', 'stop'].includes(input.action))
+    throw Error('Unknown review terminal action');
+  if (
+    input.action === 'launch' &&
+    (typeof input.runner !== 'string' ||
+      !input.runner ||
+      typeof input.model !== 'string' ||
+      !input.model)
+  )
+    throw Error('Review terminal launch requires a runner and model');
   if (
     !/^[a-zA-Z0-9_-]+$/.test(input.session) ||
     !path.isAbsolute(input.task) ||
@@ -49,6 +59,8 @@ async function main() {
   }
   if (fs.existsSync(cancelled)) throw new Error('Review terminal launch was cancelled');
   if (existing) {
+    if (existing.runner !== input.runner || existing.model !== input.model)
+      throw Error('Review terminal runner or model changed; restart the review workspace');
     if (has.status !== 0) throw Error('Review terminal exited; explicit retry required');
     process.stdout.write(JSON.stringify(existing));
     return;
@@ -100,6 +112,8 @@ async function main() {
     runId: input.runId,
     workspaceId: input.workspaceId,
     session: input.session,
+    runner: input.runner,
+    model: input.model,
     startedAt: new Date().toISOString(),
     signalAttemptId: environment.FARMSLOT_SIGNAL_ATTEMPT_ID,
   };

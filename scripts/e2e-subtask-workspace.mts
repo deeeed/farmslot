@@ -303,6 +303,20 @@ async function main(): Promise<void> {
     );
   }
 
+  const reviewContexts = getRun(runId)!.agentContexts!;
+  updateRun(runId, {
+    agentContexts: reviewContexts.map((context) => ({
+      ...context,
+      promptDeliveryStartedAt: new Date(Date.now() - 120_001).toISOString(),
+    })),
+  });
+  await assert.rejects(monitor('unacknowledged launch deadline'), {
+    detail: 'review-startup-unacknowledged',
+  });
+  assert.equal(run('tmux', ['has-session', '-t', session]).status, 0);
+  updateRun(runId, { agentContexts: reviewContexts });
+  console.log('[e2e] unacknowledged review blocks without replacing the owned terminal');
+
   mark(['start']);
   const started = JSON.parse(readFileSync(path.join(taskPath, 'SIGNAL.json'), 'utf-8')) as {
     attemptId: string;

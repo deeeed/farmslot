@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Replace unsafe static-review setup retries with a link to request another review of the same PR.
+
 - Restore selectable runner catalogs and per-user visible models and default-model settings in Dispatch and related pickers; default Cursor to Claude Opus 5.5 high while preserving existing choices.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

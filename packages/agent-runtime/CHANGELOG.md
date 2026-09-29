@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refuse review terminal reuse when its recorded runner or model differs from the launch request.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.15.0 - 2026-09-28

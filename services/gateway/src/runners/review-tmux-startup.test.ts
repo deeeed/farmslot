@@ -57,6 +57,31 @@ test('a missing task mark does not time out or manufacture startup acknowledgmen
   assert.equal(reviewTmuxStartupState(null, null), 'starting');
 });
 
+test('unacknowledged review startup blocks after its deadline without pretending to know why', () => {
+  assert.equal(
+    reviewTmuxStartupState(null, null, {
+      startedAt: new Date(started).toISOString(),
+      now: started + 119_999,
+    }),
+    'starting',
+  );
+  assert.equal(
+    reviewTmuxStartupState(null, null, {
+      startedAt: new Date(started).toISOString(),
+      now: started + 120_000,
+    }),
+    'blocked',
+  );
+  assert.equal(
+    reviewTmuxStartupState(
+      { status: 'running', attemptId: 'fresh', timestamp: new Date(started).toISOString() },
+      null,
+      { startedAt: new Date(started).toISOString(), now: started + 120_001 },
+    ),
+    'acknowledged',
+  );
+});
+
 test('native exact-prompt acceptance acknowledges startup before a model-written task mark', () => {
   assert.equal(
     reviewTmuxStartupState(null, {

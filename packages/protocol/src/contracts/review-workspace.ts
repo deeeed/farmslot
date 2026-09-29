@@ -1,4 +1,28 @@
+import type { RunReplayStepParams } from '../rpc/run.js';
+
 import type { ExecutionTemplateSourceRoot } from './execution-templates.js';
+import type { Run } from './runs.js';
+
+export function staticReviewReplayBlock(
+  run: Pick<Run, 'reviewWorkspaceTarget' | 'reviewWorkspace' | 'agentContexts'>,
+  params: Pick<RunReplayStepParams, 'stepName' | 'runner' | 'model' | 'freshDispatch'>,
+): string | null {
+  if (!run.reviewWorkspaceTarget) return null;
+  const ownsAttempt = Boolean(
+    run.reviewWorkspace || run.agentContexts?.some((context) => context.id === 'review'),
+  );
+  if (
+    ownsAttempt &&
+    (params.runner !== undefined || params.model !== undefined || params.freshDispatch)
+  )
+    return 'A different reviewer requires a new review request. The current attempt, runner and artifacts have not been changed.';
+  const launchSteps: readonly string[] = ['find-slot', 'write-task', 'prepare', 'dispatch'];
+  if (ownsAttempt && launchSteps.includes(params.stepName))
+    return 'This static review already owns a workspace. Request another review instead of replaying setup or dispatch.';
+  if (params.stepName === 'monitor' && !run.reviewWorkspace)
+    return 'This static review has no workspace to resume. Request another review.';
+  return null;
+}
 
 export interface ReviewWorkspaceSupportSource {
   name: string;

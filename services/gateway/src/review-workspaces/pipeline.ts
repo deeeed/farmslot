@@ -468,7 +468,15 @@ export async function executeReviewWorkspaceStep(
           const context = current.agentContexts?.find((entry) => entry.id === 'review');
           const acceptance = await observeReviewPromptAcceptance(current);
           check();
-          const startup = reviewTmuxStartupState(signal, acceptance);
+          const startup = reviewTmuxStartupState(signal, acceptance, {
+            startedAt: context?.promptDeliveryStartedAt ?? started,
+            now: Date.now(),
+          });
+          if (startup === 'blocked')
+            throw new BlockedRunError(
+              'Reviewer has not acknowledged its task. Check workspace trust, sign-in or usage limits, then request a new review with the chosen runner.',
+              'review-startup-unacknowledged',
+            );
           const status = startup === 'acknowledged' ? 'working' : 'launching';
           if (
             context &&
