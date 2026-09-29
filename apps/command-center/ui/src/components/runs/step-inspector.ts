@@ -14,7 +14,11 @@ import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { OperationClock, renderOperationPanel } from '../progress-tracker/operation-panel.js';
+import {
+  OperationClock,
+  operationPanelStyles,
+  renderOperationPanel,
+} from '../progress-tracker/operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,
@@ -50,7 +54,7 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
   private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
-  static styles = [stepInspectorStyles, subtaskBlockStyles];
+  static styles = [operationPanelStyles, stepInspectorStyles, subtaskBlockStyles];
 
   /**
    * Command Center opens an unsettled child on first sight (the operator is

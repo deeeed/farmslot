@@ -387,7 +387,7 @@ export const stepInspectorStyles = css`
     display: flex;
     justify-content: space-between;
     color: ${unsafeCSS(colors.textSecondary)};
-    font-size: 10px;
+    font-size: ${unsafeCSS(fonts.sizeSm)};
     font-weight: 700;
     letter-spacing: 0.02em;
     margin-bottom: 4px;
@@ -398,10 +398,10 @@ export const stepInspectorStyles = css`
     display: flex;
     align-items: flex-start;
     gap: 5px;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 10px;
-    line-height: 1.35;
-    padding: 2px 0;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    line-height: 1.5;
+    padding: 4px 0;
   }
   .task-progress-step.done {
     color: ${unsafeCSS(colors.textSecondary)};
@@ -412,17 +412,18 @@ export const stepInspectorStyles = css`
   }
   .task-progress-step-icon {
     flex: 0 0 12px;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     text-align: center;
   }
   .task-progress-step.done .task-progress-step-icon {
     color: ${unsafeCSS(colors.statusOk)};
   }
   .task-progress-step.running .task-progress-step-icon {
-    color: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.accentHover)};
   }
   .task-progress-step-name {
     min-width: 0;
+    overflow-wrap: anywhere;
   }
   .review-loop {
     display: flex;

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Improve worker progress readability with higher-contrast checklist text and shared, visible operation-log links across run and slot views.
+
 - Replace unsafe static-review setup retries with a link to request another review of the same PR.
 
 - Active-development baseline; add user-facing changes here before release or package publication.

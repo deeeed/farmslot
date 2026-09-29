@@ -245,9 +245,9 @@ export const runPipelineStyles = css`
     cursor: default;
   }
   .monitor-detail-header {
-    font-size: 11px;
+    font-size: ${unsafeCSS(fonts.sizeSm)};
     font-weight: 600;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: ${unsafeCSS(spacing.sm)};
@@ -258,7 +258,7 @@ export const runPipelineStyles = css`
   .monitor-close {
     background: none;
     border: none;
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     cursor: pointer;
     font-family: inherit;
     font-size: 12px;
@@ -268,10 +268,10 @@ export const runPipelineStyles = css`
     color: ${unsafeCSS(colors.textPrimary)};
   }
   .phase {
-    margin-bottom: ${unsafeCSS(spacing.sm)};
+    margin-bottom: ${unsafeCSS(spacing.lg)};
   }
   .phase-header {
-    font-size: 11px;
+    font-size: ${unsafeCSS(fonts.sizeSm)};
     font-weight: 600;
     color: ${unsafeCSS(colors.textPrimary)};
     margin-bottom: 2px;
@@ -279,15 +279,17 @@ export const runPipelineStyles = css`
     justify-content: space-between;
   }
   .phase-count {
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     font-weight: 400;
   }
   .substep {
-    font-size: 10px;
-    color: ${unsafeCSS(colors.textMuted)};
-    padding: 1px 0 1px 12px;
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    padding: 4px 8px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: ${unsafeCSS(spacing.sm)};
   }
   .substep-icon {
@@ -299,12 +301,15 @@ export const runPipelineStyles = css`
     color: ${unsafeCSS(colors.statusOk)};
   }
   .substep.running .substep-icon {
-    color: #3b82f6;
+    color: ${unsafeCSS(colors.accentHover)};
   }
   .substep.done {
     color: ${unsafeCSS(colors.textSecondary)};
   }
   .substep.running {
+    border-left: 2px solid ${unsafeCSS(colors.accentHover)};
+    background: ${unsafeCSS(colors.bgSurface)};
+    border-radius: ${unsafeCSS(radii.sm)};
     color: ${unsafeCSS(colors.textPrimary)};
     font-weight: 600;
   }

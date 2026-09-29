@@ -1,8 +1,88 @@
-import { html, nothing, type ReactiveController, type ReactiveControllerHost } from 'lit';
+import {
+  css,
+  html,
+  nothing,
+  type ReactiveController,
+  type ReactiveControllerHost,
+  unsafeCSS,
+} from 'lit';
 
 import type { TaskProgressStructured } from '@farmslot/protocol';
 
+import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
+
+/** Include in every host's shadow-root styles alongside renderOperationPanel. */
+export const operationPanelStyles = css`
+  .operation-panel {
+    display: grid;
+    gap: ${unsafeCSS(spacing.md)};
+    margin-bottom: ${unsafeCSS(spacing.lg)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: ${unsafeCSS(fonts.sizeSm)};
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .operation-item {
+    padding: ${unsafeCSS(spacing.lg)};
+    border: 1px solid ${unsafeCSS(colors.textMuted)};
+    border-radius: ${unsafeCSS(radii.md)};
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+  .operation-heading,
+  .operation-freshness {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.lg)};
+  }
+  .operation-command {
+    font-size: ${unsafeCSS(fonts.sizeMd)};
+  }
+  .operation-status {
+    border: 1px solid currentColor;
+    border-radius: ${unsafeCSS(radii.sm)};
+    padding: 0 ${unsafeCSS(spacing.sm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+  .operation-status.running {
+    color: ${unsafeCSS(colors.accentHover)};
+  }
+  .operation-status.pass {
+    color: ${unsafeCSS(colors.statusOk)};
+  }
+  .operation-status.fail,
+  .operation-error {
+    color: ${unsafeCSS(colors.statusFail)};
+  }
+  .operation-stage,
+  .operation-freshness {
+    margin-top: ${unsafeCSS(spacing.sm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+  .operation-stale {
+    color: ${unsafeCSS(colors.statusWarn)};
+  }
+  .operation-log,
+  .operation-log:visited {
+    display: inline-block;
+    margin-top: ${unsafeCSS(spacing.md)};
+    padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    border: 1px solid ${unsafeCSS(colors.accentHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    color: ${unsafeCSS(colors.accentHover)};
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .operation-log:hover {
+    background: ${unsafeCSS(colors.bgCardHover)};
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .operation-log:focus-visible {
+    outline: 2px solid ${unsafeCSS(colors.accentHover)};
+    outline-offset: 3px;
+  }
+`;
 
 function age(at: string, now: number): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(at)) / 1000));
@@ -14,7 +94,8 @@ export function renderOperationPanel(
   runId?: string | null,
   now = Date.now(),
 ) {
-  if (progress.operationsError) return html`<p role="status">${progress.operationsError}</p>`;
+  if (progress.operationsError)
+    return html`<p class="operation-error" role="status">${progress.operationsError}</p>`;
   const operations = progress.operations ?? [];
   const active = operations.filter(
     (operation) =>
@@ -22,45 +103,55 @@ export function renderOperationPanel(
   );
   const selected = active.length ? active : operations.slice(-1);
   if (!selected.length) return nothing;
-  return html`<section aria-label="Command activity" data-testid="operation-panel">
+  return html`<section
+    class="operation-panel"
+    aria-label="Command activity"
+    data-testid="operation-panel"
+  >
     ${selected.map(
       (operation) =>
-        html`<div style="padding:8px 0; border-bottom:1px solid var(--border-color, #333)">
-          <strong>${operation.command}</strong>
-          <span
-            >${operation.status === 'running'
-              ? 'Running reported'
-              : operation.status === 'pass'
-                ? 'Completed'
-                : 'Failed'}</span
-          >
-          <span>
-            ·
-            ${age(
-              operation.startedAt,
-              operation.finishedAt ? Date.parse(operation.finishedAt) : now,
-            )}
-            elapsed</span
-          >
-          ${operation.parentId ? html`<small> · nested command</small>` : nothing}
+        html`<div class="operation-item">
+          <div class="operation-heading">
+            <strong class="operation-command">${operation.command}</strong>
+            <span class="operation-status ${operation.status}"
+              >${operation.status === 'running'
+                ? 'Running reported'
+                : operation.status === 'pass'
+                  ? 'Completed'
+                  : 'Failed'}</span
+            >
+            <span>
+              ${age(
+                operation.startedAt,
+                operation.finishedAt ? Date.parse(operation.finishedAt) : now,
+              )}
+              elapsed</span
+            >
+            ${operation.parentId ? html`<span>Nested command</span>` : nothing}
+          </div>
           ${operation.stage
-            ? html`<div>
+            ? html`<div class="operation-stage">
                 Stage:
                 ${operation.stage}${operation.stageStartedAt
                   ? ` · ${age(operation.stageStartedAt, operation.finishedAt ? Date.parse(operation.finishedAt) : now)} elapsed`
                   : nothing}
               </div>`
             : nothing}
-          <div>
-            Last output:
-            ${operation.lastOutputAt ? `${age(operation.lastOutputAt, now)} ago` : 'none recorded'}
-            · Status update: ${age(operation.updatedAt, now)} ago
+          <div class="operation-freshness">
+            <span
+              >Last output:
+              ${operation.lastOutputAt
+                ? `${age(operation.lastOutputAt, now)} ago`
+                : 'none recorded'}</span
+            >
+            <span>Status update: ${age(operation.updatedAt, now)} ago</span>
             ${operation.status === 'running' && now - Date.parse(operation.updatedAt) > 30_000
-              ? html`<strong> · No recent status update</strong>`
+              ? html`<strong class="operation-stale">No recent status update</strong>`
               : nothing}
           </div>
           ${runId
             ? html`<a
+                class="operation-log"
                 href=${runDetailEvidenceArtifactHash(
                   runId,
                   { path: operation.logPath },
