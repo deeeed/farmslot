@@ -7,6 +7,7 @@
  * would be resolved by module order rather than by design.
  */
 import { execLocal } from '../core/exec.js';
+import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
@@ -42,10 +43,13 @@ export async function execResourceCommand(
           timeout,
         })) as ResourceCommandResult;
       } catch (err) {
-        return { stdout: '', stderr: (err as Error).message, exitCode: 1 };
+        throw new ResourceCommandUnavailableError(
+          `Resource command unavailable on ${machine}: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
       }
     }
-    // No node — fall through to local exec, matching the legacy health path.
+    throw new ResourceCommandUnavailableError(`Resource node ${machine} is disconnected`);
   }
 
   return execLocal(cmd, { cwd, timeout });

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Show command stages and output freshness beside worker progress, with refreshable and followable operation logs.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.18.0 - 2026-09-28

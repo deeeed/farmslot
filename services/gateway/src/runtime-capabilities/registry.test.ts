@@ -3404,3 +3404,39 @@ test('an unenforced host-pressure conflict admits the acquire and rides along as
   assert.equal(released.ok, true);
   assert.equal((await registry.status({ slotId: SLOT })).pressure, undefined);
 });
+
+test('unavailable warm provider rolls back newly acquired dependencies without releasing the warm provider', async (t) => {
+  let unavailable = false;
+  const warm = { ...entry('app', 'exclusive', ['metro']), keepWarmMs: 60_000 };
+  const { registry, actions, store } = await fixture(t, [entry('metro'), warm], {
+    runAction: async (_slot, action) =>
+      unavailable && action.kind === 'slot-action' && action.actionId === 'app.health'
+        ? { ok: false, unavailable: true, detail: 'node disconnected' }
+        : { ok: true },
+  });
+  assert.equal((await acquire(registry, 'app', 'run-a')).ok, true);
+  await registry.release({ slotId: SLOT, ownerRunId: 'run-a' });
+  const existing = new Set(store.snapshot().leases.map((lease) => lease.id));
+  actions.length = 0;
+  unavailable = true;
+  const result = await acquire(registry, 'app', 'run-b');
+  assert.equal(result.ok, false);
+  if (result.ok) throw new Error('Expected unavailable warm provider');
+  assert.equal(result.conflict.kind, 'unavailable');
+  assert.ok(
+    actions.includes('metro.acquire'),
+    'The attempted acquire must exercise dependency creation',
+  );
+  assert.ok(!actions.includes('app.release'), 'Unknown health cannot release the warm provider');
+  const created = store.snapshot().leases.filter((lease) => !existing.has(lease.id));
+  assert.ok(created.length > 0, 'The fixture must create a dependency lease');
+  assert.ok(
+    created.every((lease) => lease.state === 'released'),
+    'Every new dependency must be released',
+  );
+  const preserved = store
+    .snapshot()
+    .leases.find((lease) => existing.has(lease.id) && lease.capabilityId === 'app');
+  assert.equal(preserved?.state, 'released');
+  assert.ok(preserved?.keepWarmUntil, 'Unavailable health must retain the existing warm deadline');
+});

@@ -111,6 +111,7 @@ interface WatchedRemoteFile {
 type WatchedFileKind =
   | 'task'
   | 'signal'
+  | 'operations'
   | 'acceptance-status'
   | 'subtask-index'
   | 'subtask-checklist'
@@ -434,8 +435,14 @@ export async function watchSlot(
         // Everything else in `artifacts/` is worker output this watch does not
         // report: only the ledger drives a progress update.
         const onArtifactsEntry = (entryPath: string) => {
-          if (path.basename(entryPath) !== ACCEPTANCE_STATUS_FILENAME) return;
-          debouncedAcceptanceUpdate(key);
+          if (
+            ![ACCEPTANCE_STATUS_FILENAME, 'operations-updated.json'].includes(
+              path.basename(entryPath),
+            )
+          )
+            return;
+          if (path.basename(entryPath) === 'operations-updated.json') throttledOperationUpdate(key);
+          else debouncedAcceptanceUpdate(key);
         };
         acceptanceWatcher.on('add', onArtifactsEntry);
         acceptanceWatcher.on('change', onArtifactsEntry);
@@ -553,6 +560,24 @@ export async function watchSlot(
               `[task-watcher] acceptance ledger not watchable for remote ${key}: ${(err as Error).message}`,
             );
           }
+          await sendNodeRequest(
+            node,
+            'fs.watch',
+            {
+              path: path.join(path.dirname(sw.acceptanceStatusFilePath), 'operations-updated.json'),
+            },
+            {
+              onRequestId: (id) =>
+                requestIds.push({
+                  requestId: id,
+                  kind: 'operations',
+                  path: path.join(
+                    path.dirname(sw.acceptanceStatusFilePath),
+                    'operations-updated.json',
+                  ),
+                }),
+            },
+          );
           // The node's fs.watch primitive watches the target's PARENT directory,
           // so `subtasks/` must exist before the index watch can attach — see
           // ensureSubtasksDir.
@@ -797,7 +822,12 @@ async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<vo
   // actually tore down — a successor re-registered mid-close owns the current
   // entry and timer.
   if (activeWatches.get(key) === sw) {
-    for (const timerKey of [key, subtaskDebounceKey(key), acceptanceDebounceKey(key)]) {
+    for (const timerKey of [
+      key,
+      subtaskDebounceKey(key),
+      acceptanceDebounceKey(key),
+      `${key}#operations`,
+    ]) {
       const timer = debounceTimers.get(timerKey);
       if (timer) clearTimeout(timer);
       debounceTimers.delete(timerKey);
@@ -832,6 +862,10 @@ export function handleAgentFsChanged(payload: {
     }
     if (request.kind === 'signal') {
       void handleSignalChange(key, payload.content);
+      return;
+    }
+    if (request.kind === 'operations') {
+      throttledOperationUpdate(key);
       return;
     }
     if (request.kind === 'acceptance-status') {
@@ -937,6 +971,20 @@ function debouncedAcceptanceUpdate(key: string): void {
   const existing = debounceTimers.get(timerKey);
   if (existing) clearTimeout(existing);
 
+  debounceTimers.set(
+    timerKey,
+    setTimeout(async () => {
+      debounceTimers.delete(timerKey);
+      await computeAndEmit(key, undefined, { fromAcceptance: true });
+    }, DEBOUNCE_MS),
+  );
+}
+
+// Output may arrive continuously. A separate fixed window prevents operation
+// chatter from starving this update or postponing acceptance-ledger updates.
+function throttledOperationUpdate(key: string): void {
+  const timerKey = `${key}#operations`;
+  if (debounceTimers.has(timerKey)) return;
   debounceTimers.set(
     timerKey,
     setTimeout(async () => {

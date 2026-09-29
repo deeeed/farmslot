@@ -189,7 +189,8 @@ export class RunDetail extends RunDetailState {
     }
     // The direct run.get snapshot may arrive after hashchange and after the
     // trimmed inventory snapshot. Apply the URL again when artifacts hydrate.
-    if (changed.has('run')) this._applyEvidenceArtifactFromHash();
+    if (changed.has('run') || changed.has('taskProgress'))
+      this._applyEvidenceArtifactFromHash(true);
   }
 
   private _maybeRefreshTaskProgress(): void {
@@ -858,7 +859,7 @@ export class RunDetail extends RunDetailState {
     return runEvidenceLightboxItems(artifacts, this._artifactUrl);
   }
 
-  private _applyEvidenceArtifactFromHash(): void {
+  private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
     if (!this.run) return;
     const { artifactRun, artifact } = artifactSelectionFromRunDetailHash();
     if (!artifact) {
@@ -870,7 +871,24 @@ export class RunDetail extends RunDetailState {
       return;
     }
     if (artifactRun && artifactRun !== this.runId) return;
+    if (
+      preserveCurrent &&
+      this._evidenceLightboxOpen &&
+      this._evidenceLightboxItems[this._evidenceLightboxIndex]?.path === artifact
+    )
+      return;
     const artifacts = collectRunEvidenceArtifacts(this.run);
+    for (const operation of this.taskProgress?.operations ?? []) {
+      if (!artifacts.some((entry) => entry.path === operation.logPath)) {
+        artifacts.push({
+          runId: this.runId,
+          familyId: this.run.familyId,
+          path: operation.logPath,
+          purpose: 'other',
+          source: 'task-artifact',
+        });
+      }
+    }
     const index = artifacts.findIndex((candidate) => candidate.path === artifact);
     if (index < 0) return;
     this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);

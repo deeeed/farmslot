@@ -98,6 +98,11 @@
       "types": "./visual-review/index.d.mts",
       "import": "./visual-review/index.mjs",
       "default": "./visual-review/index.mjs"
+    },
+    "./runtime/operation": {
+      "types": "./dist/runtime/operation.d.ts",
+      "import": "./dist/runtime/operation.js",
+      "default": "./dist/runtime/operation.js"
     }
   },
   "scripts": {

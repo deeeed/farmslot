@@ -1,3 +1,4 @@
+import { renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import { html, nothing, type TemplateResult } from 'lit';
 
 import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
@@ -130,6 +131,7 @@ export function renderPipelineProgressPanel(
   close: () => void,
   openScope: SubtaskOpenScope,
   activeTaskBasename?: string | null,
+  runId?: string | null,
 ) {
   const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
   return html`
@@ -141,6 +143,7 @@ export function renderPipelineProgressPanel(
         </span>
         <button class="monitor-close" @click=${close}>x</button>
       </div>
+      ${renderOperationPanel(progress, runId)}
       ${progress.phases.map((phase) => {
         const allDone = phase.completedSteps === phase.totalSteps;
         const hasRunning = phase.steps.some((step) => step.status === 'running');

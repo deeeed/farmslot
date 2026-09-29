@@ -3,6 +3,7 @@
 // TASK.md is the task document and is never enumerated. The progress-path
 // resolver falls back to TASK.md only for task dirs written before the split.
 
+import { attachOperations } from '../tasks/operations.js';
 import path from 'node:path';
 
 import {
@@ -53,6 +54,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       structured,
     };
     await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+    await attachOperations(source.io, source.checklistPath, structured);
     await attachAcceptanceStatus(source.io, source.checklistPath, result);
     return result;
   }
@@ -83,6 +85,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       result.structured = joinSchemaWithMarkdown(schema, markdown);
       await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
     }
+    if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
     await attachAcceptanceStatus(vars, effectiveMdPath, result);
     return result;
   }
@@ -139,6 +142,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       reconcileFinalStepFromSignal(result.structured);
     }
   }
+  if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
   await attachAcceptanceStatus(vars, effectiveMdPath, result);
 
   return result;

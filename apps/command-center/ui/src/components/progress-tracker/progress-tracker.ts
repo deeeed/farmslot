@@ -1,3 +1,4 @@
+import { renderOperationPanel, OperationClock } from './operation-panel.js';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -69,6 +70,7 @@ export function renderTrackerStepRow(
 
 @customElement('progress-tracker')
 export class ProgressTracker extends LitElement {
+  private readonly _operationClock = new OperationClock(this, () => this.structured);
   @property() markdown = '';
   @property({ type: Boolean }) compact = false;
   @property({ type: Object }) structured?: TaskProgressStructured;
@@ -392,6 +394,7 @@ export class ProgressTracker extends LitElement {
         ? nothing
         : html`
             <div class="phase-list">
+              ${renderOperationPanel(s, this.runId)}
               ${s.phases.map((phase) => this._renderPhase(phase, s.currentPhase))}
             </div>
           `}

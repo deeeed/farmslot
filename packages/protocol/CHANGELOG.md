@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Add optional task operation observations alongside checklist progress.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.32.0 - 2026-09-28

@@ -44,7 +44,7 @@ export function mimeForPath(filePath: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
-function parseRequestByteRange(req: IncomingMessage, size: number): ParsedByteRange {
+export function parseRequestByteRange(req: IncomingMessage, size: number): ParsedByteRange {
   const rawRange = req.headers.range;
   const rangeHeader = Array.isArray(rawRange) ? rawRange[0] : rawRange;
   if (!rangeHeader) return null;
@@ -80,7 +80,7 @@ function parseRequestByteRange(req: IncomingMessage, size: number): ParsedByteRa
   return { start, end };
 }
 
-function byteServingHeaders(mime: string, length: number): Record<string, string | number> {
+export function byteServingHeaders(mime: string, length: number): Record<string, string | number> {
   return {
     ...(mime.startsWith('text/html')
       ? {
@@ -99,7 +99,7 @@ function byteServingHeaders(mime: string, length: number): Record<string, string
   };
 }
 
-function sendUnsatisfiableRange(res: ServerResponse, size: number): void {
+export function sendUnsatisfiableRange(res: ServerResponse, size: number): void {
   res.writeHead(416, {
     'Content-Type': 'text/plain',
     'Content-Range': `bytes */${size}`,
@@ -157,6 +157,10 @@ export function serveLocalFileWithRange(
     stream.once('end', closeHandle);
     stream.once('error', closeHandle);
     stream.once('close', closeHandle);
+    res.once('close', () => {
+      stream.destroy();
+      closeHandle();
+    });
     stream.pipe(res);
   };
   const range = parseRequestByteRange(req, size);

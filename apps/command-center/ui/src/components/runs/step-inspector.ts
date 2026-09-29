@@ -1,3 +1,4 @@
+import { renderOperationPanel, OperationClock } from '../progress-tracker/operation-panel.js';
 import { html, nothing, type TemplateResult } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
@@ -46,6 +47,7 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
+  private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
   static styles = [stepInspectorStyles, subtaskBlockStyles];
 
   /**
@@ -319,6 +321,7 @@ export class StepInspector extends StepInspectorState {
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>
+        ${renderOperationPanel(tp, this.run?.id)}
         ${tp.phases.map(
           (phase) => html`
             <div class="task-phase">

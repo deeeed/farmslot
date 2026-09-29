@@ -4,6 +4,10 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Keep remote resource commands on their owning node and retain device leases when restart health checks cannot reach that node.
+
+- Project task-local command activity and refresh clients as operation records change.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.18.0 - 2026-09-28

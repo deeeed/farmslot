@@ -1,3 +1,4 @@
+import { OperationClock } from '../progress-tracker/operation-panel.js';
 import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -66,6 +67,7 @@ import { effectiveStepStatus } from './run-utils.js';
 
 @customElement('run-pipeline')
 export class RunPipeline extends LitElement {
+  private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
   @property({ attribute: false }) run!: Run;
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   /** The run's acceptance ledger (ADR-060); the panel is hidden without one. */
@@ -311,6 +313,7 @@ export class RunPipeline extends LitElement {
       },
       this.subtaskOpen.scope(this.run?.id),
       this.run.activeTaskFile?.split('/').pop(),
+      this.run.id,
     );
   }
 

@@ -254,6 +254,7 @@ test('a remote watch registers the registry and every child file, and unwatch st
       'CHECKLIST.md',
       'SIGNAL.json',
       'artifacts/acceptance-status.json',
+      'artifacts/operations-updated.json',
       'subtasks/index.json',
       'subtasks/perps-review-SIGNAL.json',
       'subtasks/perps-review.md',
@@ -277,6 +278,21 @@ test('a remote watch registers the registry and every child file, and unwatch st
     assert.ok(
       progressUpdates.some((update) => update.parentChecklist === 'CHECKLIST.md'),
       'a remote child event emits a child-tagged progress update',
+    );
+
+    const operationCall = watchCalls.find((call) => call.path.endsWith('operations-updated.json'));
+    assert.ok(operationCall);
+    progressUpdates.length = 0;
+    handleAgentFsChanged({
+      requestId: operationCall.requestId,
+      machine: MACHINE,
+      path: operationCall.path,
+      content: '{}',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    assert.ok(
+      progressUpdates.some((update) => !update.parentChecklist),
+      'remote operation notifications emit parent task progress',
     );
 
     // ── rebind: the registry gains a second unit ──

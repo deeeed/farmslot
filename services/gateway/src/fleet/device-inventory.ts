@@ -410,7 +410,7 @@ export async function readDeviceInventory(
   // the sum of three. Routed through the resource exec path, so a slot on
   // another machine has its own node answer. A missing tool exits non-zero here
   // rather than throwing, which is exactly the "did not answer" case the rule
-  // fails open on.
+  // fails open on. An unavailable node/transport throws; its devices cannot be inferred locally.
   const answers = await Promise.all(
     TOOL_RUNS.map(async (run) => {
       const result = await deps.exec(slotId, slotVars.repo, run.cmd, TOOL_TIMEOUT_MS);
