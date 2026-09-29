@@ -1,10 +1,16 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import type {
   RunnerModelCatalogResult,
   RunnerVisibleModelsGetResult,
   RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
 
+import { loadMachinePool } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { loadPoolConfigs } from '../fleet/state.js';
 import { queryRunnerModelCatalog } from '../runners/model-catalog.js';
 import {
   getRunnerDefinition,
@@ -22,17 +28,31 @@ import {
   writeVisibleModelFile,
 } from '../runners/visible-models.js';
 
-export function runnerModelCatalog(params: unknown): Promise<RunnerModelCatalogResult> {
+export async function runnerModelCatalog(params: unknown): Promise<RunnerModelCatalogResult> {
   const runner = runnerParam(params);
   const definition = getRunnerDefinition(runner);
-  return queryRunnerModelCatalog(runner, definition.modelCatalog);
+  let source = definition.modelCatalog;
+  if (source && 'command' in source && source.poolPathKey) {
+    const pools = await loadPoolConfigs();
+    for (const pool of pools.filter((entry) => isLocal(entry.host, entry.machine))) {
+      const configured = (await loadMachinePool(pool.machine))[source.poolPathKey]?.trim();
+      if (configured) {
+        source = {
+          ...source,
+          command: configured.startsWith('~/') ? join(homedir(), configured.slice(2)) : configured,
+        };
+        break;
+      }
+    }
+  }
+  return queryRunnerModelCatalog(runner, source);
 }
 
 export function runnerVisibleModelsGet(params: unknown): RunnerVisibleModelsGetResult {
   const record = recordParams(params);
   const selected = optionalString(record.selectedModel);
-  if (typeof record.runner === 'string' && record.runner.trim()) {
-    return { runners: [describeVisibleModels(record.runner.trim(), selected)] };
+  if (record.runner !== undefined) {
+    return { runners: [describeVisibleModels(runnerParam(record), selected)] };
   }
   return { runners: visibleRunners().map((runner) => describeVisibleModels(runner)) };
 }

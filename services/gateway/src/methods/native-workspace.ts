@@ -70,8 +70,7 @@ export async function nativeCatalog(
                   runnerSupportsNativeTaskReuse(definition.id) &&
                   runnerSupportsReadonlyReviewWorkspace(definition.id),
                 ...definition.nativeChoices,
-                defaultModel: describeVisibleModels(definition.id).defaultModel,
-                models: visibleNativeModels(
+                ...nativeModelPreferences(
                   definition.id,
                   definition.nativeChoices.models,
                   definition.nativeChoices.defaultModel ?? definition.defaultModel,
@@ -85,15 +84,19 @@ export async function nativeCatalog(
 }
 
 /** A saved visible set replaces the native seed, but a new session's default model stays selectable. */
-function visibleNativeModels(
+function nativeModelPreferences(
   runner: string,
   seed: string[],
   defaultModel: string | null | undefined,
-): string[] {
+) {
   const visible = describeVisibleModels(runner);
   const effectiveDefault = visible.defaultModel || defaultModel;
   const models = visible.configured ? visible.models : seed;
-  return effectiveDefault && !models.includes(effectiveDefault)
-    ? [effectiveDefault, ...models]
-    : models;
+  return {
+    defaultModel: effectiveDefault ?? '',
+    models:
+      effectiveDefault && !models.includes(effectiveDefault)
+        ? [effectiveDefault, ...models]
+        : models,
+  };
 }

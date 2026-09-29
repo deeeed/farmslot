@@ -30,6 +30,7 @@ const FLOW_OPTIONS: readonly FlowOption[] = [
 ];
 
 export interface DispatchWizardPrimaryControlsRenderContext {
+  discoverModels?: boolean;
   transport: 'tmux' | 'native';
   nativeWorkerAvailable: boolean;
   nativeCatalogError: string;
@@ -247,6 +248,7 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
     <runner-model-effort-picker
+      .discover=${ctx.discoverModels !== false}
       .runner=${ctx.runner}
       .model=${ctx.model}
       .effort=${ctx.effort}

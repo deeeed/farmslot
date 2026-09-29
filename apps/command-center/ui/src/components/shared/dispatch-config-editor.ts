@@ -538,6 +538,7 @@ export class DispatchConfigEditor extends LitElement {
   private renderRunnerModelEffort() {
     if (!this.resolvedControls().runnerModelEffort) return nothing;
     return html`<runner-model-effort-picker
+      .personalPreferences=${false}
       .runner=${this.runner}
       .model=${this.model}
       .effort=${this.effort}

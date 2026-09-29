@@ -48,7 +48,11 @@ export const RUNNER_PICKER_MODELS: Readonly<Record<string, readonly string[]>> =
 };
 
 /** How a runner model catalog was obtained. */
-export type RunnerModelCatalogSource = 'structured-file' | 'catalog-command' | 'unsupported';
+export type RunnerModelCatalogSource =
+  | 'structured-file'
+  | 'catalog-command'
+  | 'unsupported'
+  | 'unavailable';
 
 export type RunnerModelCatalogStatus = 'ready' | 'unavailable' | 'unsupported';
 

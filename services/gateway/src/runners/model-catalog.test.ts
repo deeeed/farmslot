@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import {
 import { runWithSessionOriginator } from '../security/work-originator.js';
 
 import {
+  ModelCatalogFormatError,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
@@ -118,7 +119,80 @@ test('catalog command execution uses the capability and fails closed when unavai
     parse: parseCursorModelCatalog,
   });
   assert.equal(missing.status, 'unavailable');
+  assert.match(missing.detail ?? '', /ENOENT/);
   assert.deepEqual(missing.models, []);
+});
+
+test('catalog failures expose exit status and parser errors without swallowing programming errors', async () => {
+  const exited = await queryRunnerModelCatalog('example', {
+    command: process.execPath,
+    args: ['-e', 'process.exit(7)'],
+    parse: parseCursorModelCatalog,
+  });
+  assert.equal(exited.status, 'unavailable');
+  assert.match(exited.detail ?? '', /code: 7/);
+  const malformed = await queryRunnerModelCatalog('example', {
+    command: process.execPath,
+    args: ['-e', 'process.stdout.write("bad catalog")'],
+    parse: parseCursorModelCatalog,
+  });
+  assert.equal(malformed.status, 'unavailable');
+  assert.match(malformed.detail ?? '', /header/);
+  await assert.rejects(
+    queryRunnerModelCatalog('example', {
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write("output")'],
+      parse: () => {
+        throw new TypeError('unexpected parser bug');
+      },
+    }),
+    /unexpected parser bug/,
+  );
+  assert.ok(new ModelCatalogFormatError('invalid') instanceof Error);
+});
+
+test('concurrent catalog requests share one command without caching later requests', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'runner-catalog-concurrent-'));
+  const marker = join(directory, 'calls');
+  const source = {
+    command: process.execPath,
+    args: [
+      '-e',
+      "require('node:fs').appendFileSync(process.argv[1], 'called\\n'); setTimeout(() => process.stdout.write('Available models\\nexample - Example\\n'), 50)",
+      marker,
+    ],
+    parse: parseCursorModelCatalog,
+  };
+  try {
+    const [first, second] = await Promise.all([
+      queryRunnerModelCatalog('concurrent', source),
+      queryRunnerModelCatalog('concurrent', source),
+    ]);
+    assert.equal(first.status, 'ready');
+    assert.deepEqual(first, second);
+    assert.equal(readFileSync(marker, 'utf8'), 'called\n');
+    await queryRunnerModelCatalog('concurrent', source);
+    assert.equal(readFileSync(marker, 'utf8'), 'called\ncalled\n');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('visible preference GET normalizes aliases like SET and rejects invalid runner types', () => {
+  const previous = process.env.FARMSLOT_HOME;
+  process.env.FARMSLOT_HOME = mkdtempSync(join(tmpdir(), 'runner-alias-'));
+  try {
+    runnerVisibleModelsSet({ runner: 'claude-code', models: ['haiku'], defaultModel: 'haiku' });
+    const read = runnerVisibleModelsGet({ runner: 'claude-code' }).runners[0];
+    assert.equal(read.runner, 'claude');
+    assert.equal(read.defaultModel, 'haiku');
+    assert.deepEqual(read.models, ['haiku']);
+    assert.throws(() => runnerVisibleModelsGet({ runner: 4 }));
+    assert.throws(() => runnerVisibleModelsGet({ runner: '' }));
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previous;
+  }
 });
 
 test('saved visible models keep an explicit selection and do not invent catalog entries', () => {

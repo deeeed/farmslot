@@ -15,6 +15,7 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import {
   DEFAULT_EFFORT,
+  DEFAULT_MODEL,
   defaultModelForRunner,
   type EffortLevel,
   effortsForRunner,
@@ -22,7 +23,11 @@ import {
   PI_COMPAT_MODEL_HINT,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
-import { clearVisibleModels, rememberVisibleModels } from '../../utils/runner-visible-cache.js';
+import {
+  clearVisibleModels,
+  rememberedDefaultModel,
+  rememberVisibleModels,
+} from '../../utils/runner-visible-cache.js';
 
 const CATALOG_LOADING = 'Loading model catalog.';
 
@@ -45,12 +50,14 @@ export class RunnerModelEffortPicker extends LitElement {
   @property({ attribute: false }) catalog?: NativeRunnerOption[];
   /** Ask the gateway for visible defaults and, on request, the runner catalog. */
   @property({ type: Boolean }) discover = true;
+  @property({ type: Boolean }) personalPreferences = true;
 
   @state() private visibleState: RunnerVisibleModelState | null = null;
   @state() private loadedCatalog: RunnerModelCatalogResult | null = null;
   @state() private catalogOpen = false;
   @state() private catalogChecks: string[] = [];
   @state() private catalogStatus = '';
+  @state() private selectionWarning = '';
   @state() private modelsReady = false;
   @state() private saving = false;
   @state() private catalogFilter = '';
@@ -209,7 +216,6 @@ export class RunnerModelEffortPicker extends LitElement {
 
   override updated(changed: PropertyValues): void {
     if (this.catalog || !this.discover) {
-      this.modelsReady = true;
       return;
     }
     if (changed.has('runner')) {
@@ -221,7 +227,12 @@ export class RunnerModelEffortPicker extends LitElement {
       this.catalogFilter = '';
       this.modelsReady = false;
     }
-    if (changed.has('runner') || changed.has('model')) void this.loadVisible();
+    if (
+      this.personalPreferences &&
+      (changed.has('runner') ||
+        (changed.has('model') && !this.visibleState?.pickerModels.includes(this.model)))
+    )
+      void this.loadVisible();
   }
 
   private modelOptions(): string[] {
@@ -230,7 +241,8 @@ export class RunnerModelEffortPicker extends LitElement {
       return [...new Set([...models, this.model].filter(Boolean))];
     }
     if (!this.runner) return this.model ? [this.model] : [];
-    if (this.visibleState?.runner === this.runner) return [...this.visibleState.pickerModels];
+    if (this.discover && this.personalPreferences && this.visibleState?.runner === this.runner)
+      return [...this.visibleState.pickerModels];
     return [...new Set([...(MODELS_BY_RUNNER[this.runner] ?? []), this.model].filter(Boolean))];
   }
 
@@ -263,37 +275,48 @@ export class RunnerModelEffortPicker extends LitElement {
 
   private async selectRunner(runner: string) {
     const request = ++this.selectionRequest;
+    this.selectionWarning = '';
     if (runner === this.runner) return;
     if (!runner) {
       this.emitChange({ runner: '', model: '', effort: '' });
       return;
     }
     const option = this.catalog?.find((entry) => entry.runner === runner);
-    if (runner !== this.runner && !this.catalog && this.discover) {
+    const previousModel = this.model;
+    if (
+      runner !== this.runner &&
+      !this.catalog &&
+      this.discover &&
+      this.personalPreferences &&
+      rememberedDefaultModel(runner) === undefined
+    ) {
       try {
         const result = await gateway.request<RunnerVisibleModelsGetResult>(
           Methods.RUNNER_VISIBLE_MODELS_GET,
           { runner },
         );
-        if (request !== this.selectionRequest) return;
+        if (request !== this.selectionRequest || this.model !== previousModel) return;
         const state = result.runners[0];
         if (state) rememberVisibleModels(runner, state.models, state.defaultModel);
       } catch (error) {
-        if (request === this.selectionRequest)
-          this.catalogStatus =
-            error instanceof Error ? error.message : 'Runner defaults could not be loaded.';
-        return;
+        if (request !== this.selectionRequest || this.model !== previousModel) return;
+        this.selectionWarning = `Saved defaults unavailable; using the built-in default. ${error instanceof Error ? error.message : 'Request failed.'}`;
       }
     }
     this.emitChange({
       runner,
-      model: option?.defaultModel ?? defaultModelForRunner(runner),
+      model:
+        option?.defaultModel ??
+        (this.discover && this.personalPreferences
+          ? defaultModelForRunner(runner)
+          : (DEFAULT_MODEL[runner] ?? '')),
       effort: '',
     });
   }
 
   private selectModel(model: string) {
     this.selectionRequest++;
+    this.selectionWarning = '';
     const efforts = this.effortsForModel(model);
     const preferred = DEFAULT_EFFORT[this.runner] ?? '';
     const fallback = this.showDefaultEffort
@@ -313,7 +336,7 @@ export class RunnerModelEffortPicker extends LitElement {
   }
 
   private async loadVisible() {
-    if (!this.runner || this.catalog || !this.discover) {
+    if (!this.runner || this.catalog || !this.discover || !this.personalPreferences) {
       this.modelsReady = true;
       return;
     }
@@ -357,25 +380,25 @@ export class RunnerModelEffortPicker extends LitElement {
       result = {
         runner,
         status: 'unavailable',
-        source: 'structured-file',
+        source: 'unavailable',
         detail: err instanceof Error ? err.message : 'Model catalog request failed.',
         models: [],
       };
     }
     // The checks start from the saved set. If it has not loaded yet, prefilling
     // from the built-in list would let a save overwrite the operator's set.
-    if (this.visibleState?.runner !== runner) await this.loadVisible();
+    if (this.personalPreferences && this.visibleState?.runner !== runner) await this.loadVisible();
     // The operator switched runners, or closed or reopened the catalog, while a
     // request was in flight. Its models must not replace the current checks.
     if (request !== this.catalogRequest || this.runner !== runner || !this.catalogOpen) return;
-    if (this.visibleState?.runner !== runner) {
+    if (this.personalPreferences && this.visibleState?.runner !== runner) {
       // loadVisible reports a gateway error itself; a missing socket leaves this.
       if (this.catalogStatus === CATALOG_LOADING)
         this.catalogStatus = 'Visible models could not be loaded.';
       return;
     }
     this.loadedCatalog = result;
-    this.catalogChecks = [...this.visibleState.models];
+    this.catalogChecks = this.visibleState?.runner === runner ? [...this.visibleState.models] : [];
     this.catalogStatus = result.detail ?? '';
   }
 
@@ -449,26 +472,29 @@ export class RunnerModelEffortPicker extends LitElement {
               }}
             />
             <div class="hint">
-              Select a name to use it. Check models to keep them visible by default.
+              Select a name to use it.
+              ${this.personalPreferences ? 'Check models to keep them visible by default.' : ''}
             </div>`
         : nothing}
       <div class="catalog-options">
         ${rows.map(
           (model) =>
             html`<label class="catalog-row">
-              <input
-                type="checkbox"
-                aria-label=${`Show ${model.label ?? model.id} by default`}
-                data-testid=${`runner-catalog-default-${model.id}`}
-                .checked=${this.catalogChecks.includes(model.id)}
-                ?disabled=${this.disabled}
-                @change=${(event: Event) => {
-                  const checked = (event.target as HTMLInputElement).checked;
-                  this.catalogChecks = checked
-                    ? [...new Set([...this.catalogChecks, model.id])]
-                    : this.catalogChecks.filter((id) => id !== model.id);
-                }}
-              />
+              ${this.personalPreferences
+                ? html`<input
+                    type="checkbox"
+                    aria-label=${`Show ${model.label ?? model.id} by default`}
+                    data-testid=${`runner-catalog-default-${model.id}`}
+                    .checked=${this.catalogChecks.includes(model.id)}
+                    ?disabled=${this.disabled}
+                    @change=${(event: Event) => {
+                      const checked = (event.target as HTMLInputElement).checked;
+                      this.catalogChecks = checked
+                        ? [...new Set([...this.catalogChecks, model.id])]
+                        : this.catalogChecks.filter((id) => id !== model.id);
+                    }}
+                  />`
+                : nothing}
               <button
                 class="link"
                 type="button"
@@ -485,7 +511,7 @@ export class RunnerModelEffortPicker extends LitElement {
             </label>`,
         )}
       </div>
-      ${this.loadedCatalog?.status === 'ready'
+      ${this.personalPreferences && this.loadedCatalog?.status === 'ready'
         ? html`<button
             class="link"
             type="button"
@@ -502,9 +528,9 @@ export class RunnerModelEffortPicker extends LitElement {
 
   private catalogRows(): RunnerCatalogModel[] {
     const reported = this.loadedCatalog?.models ?? [];
-    const extras = (this.visibleState?.models ?? []).filter(
-      (id) => !reported.some((model) => model.id === id),
-    );
+    const extras = (
+      (this.personalPreferences ? this.visibleState?.models : MODELS_BY_RUNNER[this.runner]) ?? []
+    ).filter((id) => !reported.some((model) => model.id === id));
     return [...reported, ...extras.map((id) => ({ id, reasoningModes: [], listed: true }))];
   }
 
@@ -538,7 +564,12 @@ export class RunnerModelEffortPicker extends LitElement {
           ${models.length
             ? html`<div
                 class="pill-row"
-                data-testid=${this.modelsReady || this.catalog ? 'runner-models-ready' : nothing}
+                data-testid=${this.modelsReady ||
+                this.catalog ||
+                !this.discover ||
+                !this.personalPreferences
+                  ? 'runner-models-ready'
+                  : nothing}
               >
                 ${this.allowDefault
                   ? html`<button
@@ -577,7 +608,7 @@ export class RunnerModelEffortPicker extends LitElement {
               </button>`
             : nothing}
           ${this.catalogOpen ? this.renderCatalog() : nothing}
-          ${this.discover && !this.catalog && this.runner
+          ${this.discover && this.personalPreferences && !this.catalog && this.runner
             ? html`<div class="catalog">
                 <div class="hint" data-testid="runner-default-model">
                   Default:
@@ -615,7 +646,7 @@ export class RunnerModelEffortPicker extends LitElement {
                 </div>
                 ${!this.catalogOpen
                   ? html`<div class="hint" data-testid="runner-model-preference-status">
-                      ${this.catalogStatus}
+                      ${this.selectionWarning || this.catalogStatus}
                     </div>`
                   : nothing}
               </div>`

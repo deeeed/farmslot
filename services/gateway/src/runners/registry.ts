@@ -400,6 +400,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'cursor',
     modelCatalog: {
       command: 'cursor-agent',
+      poolPathKey: 'cursor_path',
       args: ['--list-models'],
       parse: parseCursorModelCatalog,
     },

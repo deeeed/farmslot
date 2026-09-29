@@ -1776,6 +1776,7 @@ export class DispatchWizard extends DispatchWizardState {
               this._selectedTaskTemplateFileName,
             );
     const view = renderDispatchWizardView({
+      discoverModels: !this.mockMode,
       transport: this._transport,
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
       nativeCatalogError: this._nativeCatalogError,

@@ -176,7 +176,7 @@ export function sanitizeCandidateRows(rows: unknown): CandidateRow[] {
     const model =
       runnerRestored && isRestorableModelId(record.model)
         ? record.model
-        : (candidateModelOptions(runner)[0] ?? fallback.model);
+        : defaultModelForRunner(runner) || fallback.model;
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : '';
     const label = rawLabel === 'Replay candidate' || rawLabel === id ? '' : rawLabel;
     const reviewMode =

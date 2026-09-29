@@ -6,6 +6,8 @@ import { promisify, stripVTControlCharacters } from 'node:util';
 
 import type { RunnerCatalogModel, RunnerModelCatalogResult } from '@farmslot/protocol';
 
+export class ModelCatalogFormatError extends Error {}
+
 /** A runner that can read a structured model catalog. Absent means the capability is unsupported. */
 export interface RunnerModelCatalogFileSource {
   /** Path relative to the operator's home directory. Not runner stdout. */
@@ -15,6 +17,7 @@ export interface RunnerModelCatalogFileSource {
 
 export interface RunnerModelCatalogCommandSource {
   command: string;
+  poolPathKey?: 'cursor_path' | 'claude_path' | 'codex_path' | 'grok_path' | 'pi_path';
   args: string[];
   parse: (output: string) => RunnerCatalogModel[];
 }
@@ -23,29 +26,71 @@ export type RunnerModelCatalogSource =
   | RunnerModelCatalogFileSource
   | RunnerModelCatalogCommandSource;
 
+const pendingCommands = new Map<string, Promise<RunnerModelCatalogResult>>();
+
 export async function queryRunnerModelCatalog(
   runner: string,
   source: RunnerModelCatalogSource | undefined,
   home = homedir(),
 ): Promise<RunnerModelCatalogResult> {
   if (!source || !('command' in source)) return readRunnerModelCatalog(runner, source, home);
+  const key = JSON.stringify([runner, source.command, source.args]);
+  const pending = pendingCommands.get(key);
+  if (pending) return pending;
+  const request = queryCommandCatalog(runner, source);
+  pendingCommands.set(key, request);
+  try {
+    return await request;
+  } finally {
+    pendingCommands.delete(key);
+  }
+}
+
+async function queryCommandCatalog(
+  runner: string,
+  source: RunnerModelCatalogCommandSource,
+): Promise<RunnerModelCatalogResult> {
+  let output: string;
   try {
     const { stdout } = await promisify(execFile)(source.command, source.args, {
       timeout: 15000,
+      killSignal: 'SIGKILL',
       maxBuffer: 1024 * 1024,
       env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
       encoding: 'utf8',
     });
-    return { runner, status: 'ready', source: 'catalog-command', models: source.parse(stdout) };
+    output = stdout;
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    const failure = error as Omit<NodeJS.ErrnoException, 'code'> & {
+      code?: string | number;
+      killed?: boolean;
+      signal?: string;
+    };
+    const code = failure.code;
+    if (
+      !failure.killed &&
+      typeof code !== 'number' &&
+      !['ENOENT', 'EACCES', 'EPERM', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(String(code))
+    )
+      throw error;
     return {
       runner,
       status: 'unavailable',
       source: 'catalog-command',
-      detail:
-        error instanceof Error && 'code' in error && error.code === 'ENOENT'
-          ? 'Runner catalog command is not installed on the gateway host.'
-          : 'Runner catalog query failed or returned an invalid model list. Retry when the runner is available.',
+      detail: `Runner catalog command failed (code: ${code ?? 'none'}, signal: ${failure.signal ?? 'none'}, timeout: ${failure.killed === true}). Check the runner installation and authentication on the gateway host.`,
+      models: [],
+    };
+  }
+  try {
+    return { runner, status: 'ready', source: 'catalog-command', models: source.parse(output) };
+  } catch (error) {
+    if (!(error instanceof ModelCatalogFormatError)) throw error;
+    return {
+      runner,
+      status: 'unavailable',
+      source: 'catalog-command',
+      detail: error.message,
       models: [],
     };
   }
@@ -55,7 +100,8 @@ export function parseCursorModelCatalog(output: string): RunnerCatalogModel[] {
   const lines = stripVTControlCharacters(output)
     .split(/\r?\n/)
     .map((line) => line.trim());
-  if (!lines.includes('Available models')) throw new Error('Missing Cursor model catalog header.');
+  if (!lines.includes('Available models'))
+    throw new ModelCatalogFormatError('Missing Cursor model catalog header.');
   const models = new Map<string, RunnerCatalogModel>();
   for (const line of lines.slice(lines.indexOf('Available models') + 1)) {
     const match = /^([a-zA-Z0-9][a-zA-Z0-9._/-]*) - (.+)$/.exec(line);
@@ -63,7 +109,7 @@ export function parseCursorModelCatalog(output: string): RunnerCatalogModel[] {
     const [, id, label] = match;
     models.set(id, { id, label, reasoningModes: [], listed: true });
   }
-  if (!models.size) throw new Error('Cursor model catalog listed no models.');
+  if (!models.size) throw new ModelCatalogFormatError('Cursor model catalog listed no models.');
   return [...models.values()];
 }
 
@@ -99,7 +145,8 @@ export function readRunnerModelCatalog(
   let data: unknown;
   try {
     data = JSON.parse(raw);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
     // The file exists but is not JSON. Treat that as unavailable rather than
     // guessing models from any other runner output.
     return unavailable(runner, 'Structured model catalog is not valid JSON.');
@@ -113,8 +160,8 @@ export function readRunnerModelCatalog(
     };
   } catch (err) {
     // The parser rejects a file that is not this runner's catalog shape.
-    const detail = err instanceof Error ? err.message : 'Structured model catalog is not usable.';
-    return unavailable(runner, detail);
+    if (!(err instanceof ModelCatalogFormatError)) throw err;
+    return unavailable(runner, err.message);
   }
 }
 
@@ -141,13 +188,14 @@ export function parseCodexModelCatalog(data: unknown): RunnerCatalogModel[] {
       },
     ];
   });
-  if (parsed.length === 0) throw new Error('Structured model catalog listed no models.');
+  if (parsed.length === 0)
+    throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }
 
 export function parseGrokModelCatalog(data: unknown): RunnerCatalogModel[] {
   if (!isRecord(data) || !isRecord(data.models)) {
-    throw new Error('Structured model catalog has no models object.');
+    throw new ModelCatalogFormatError('Structured model catalog has no models object.');
   }
   const parsed = Object.entries(data.models).flatMap(([id, value]) => {
     if (!id.trim() || !isRecord(value)) return [];
@@ -159,12 +207,14 @@ export function parseGrokModelCatalog(data: unknown): RunnerCatalogModel[] {
     });
     return [{ id, reasoningModes, listed: info.hidden !== true }];
   });
-  if (parsed.length === 0) throw new Error('Structured model catalog listed no models.');
+  if (parsed.length === 0)
+    throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }
 
 export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
-  if (!isRecord(data)) throw new Error('Structured model catalog is not an object.');
+  if (!isRecord(data))
+    throw new ModelCatalogFormatError('Structured model catalog is not an object.');
   const parsed: RunnerCatalogModel[] = [];
   for (const [provider, value] of Object.entries(data)) {
     if (!isRecord(value) || !Array.isArray(value.models)) continue;
@@ -177,13 +227,14 @@ export function parsePiModelCatalog(data: unknown): RunnerCatalogModel[] {
       parsed.push({ id, reasoningModes, listed: true });
     }
   }
-  if (parsed.length === 0) throw new Error('Structured model catalog listed no models.');
+  if (parsed.length === 0)
+    throw new ModelCatalogFormatError('Structured model catalog listed no models.');
   return parsed;
 }
 
 function arrayField(data: unknown, key: string): unknown[] {
   if (!isRecord(data) || !Array.isArray(data[key])) {
-    throw new Error(`Structured model catalog has no ${key} array.`);
+    throw new ModelCatalogFormatError(`Structured model catalog has no ${key} array.`);
   }
   return data[key];
 }

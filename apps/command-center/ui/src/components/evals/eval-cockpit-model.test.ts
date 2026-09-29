@@ -10,6 +10,8 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
+import { clearVisibleModels, rememberVisibleModels } from '../../utils/runner-visible-cache.js';
+
 import {
   activeEvalRunCount,
   applyCandidateRunner,
@@ -463,6 +465,16 @@ test('sanitizeCandidateRows preserves saved model ids for launch validation', ()
     assert.equal(applyCandidateRunner(row, 'codex').model, model);
   }
   assert.equal(sanitizeCandidateRows([{ runner: 'codex', model: 'unknown' }])[0].model, 'unknown');
+});
+
+test('missing restored model uses the saved default rather than the first visible shortcut', () => {
+  try {
+    rememberVisibleModels('cursor', ['composer-2.5'], 'claude-opus-5-5-high');
+    const [row] = sanitizeCandidateRows([{ id: 'no-model', runner: 'cursor' }]);
+    assert.equal(row.model, 'claude-opus-5-5-high');
+  } finally {
+    clearVisibleModels();
+  }
 });
 
 test('switching runners uses the new default even when the prior model exists in both catalogs', () => {
