@@ -12,30 +12,36 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // This proves generated service documents, not remote installation or runner execution.
 for (const platform of ['Darwin', 'Linux']) {
   for (const native of [false, true]) {
-    test(`deploy-node renders ${platform} service with native=${native}`, () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-render-'));
-      try {
-        const write = (relative, content, executable = false) => {
-          const target = path.join(root, relative);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, content, { mode: executable ? 0o700 : 0o600 });
-        };
-        write('scripts/deploy-node.sh', fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh')));
-        write(
-          'services/node/package.json',
-          fs.readFileSync(path.join(repo, 'services/node/package.json')),
-        );
-        for (const name of ['protocol', 'capabilities', 'agent-runtime']) {
+    for (const captureMode of platform === 'Darwin'
+      ? ['bundled', 'retained', 'override']
+      : ['bundled']) {
+      test(`deploy-node renders ${platform} service with native=${native}, capture=${captureMode}`, () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-render-'));
+        try {
+          const write = (relative, content, executable = false) => {
+            const target = path.join(root, relative);
+            fs.mkdirSync(path.dirname(target), { recursive: true });
+            fs.writeFileSync(target, content, { mode: executable ? 0o700 : 0o600 });
+          };
           write(
-            `packages/${name}/package.json`,
-            fs.readFileSync(path.join(repo, 'packages', name, 'package.json')),
+            'scripts/deploy-node.sh',
+            fs.readFileSync(path.join(repo, 'scripts/deploy-node.sh')),
           );
-          fs.mkdirSync(path.join(root, 'packages', name, 'dist'));
-        }
-        write('node-token', 'fixture-node-credential');
-        write(
-          'bin/ssh',
-          `#!/usr/bin/env python3
+          write(
+            'services/node/package.json',
+            fs.readFileSync(path.join(repo, 'services/node/package.json')),
+          );
+          for (const name of ['protocol', 'capabilities', 'agent-runtime']) {
+            write(
+              `packages/${name}/package.json`,
+              fs.readFileSync(path.join(repo, 'packages', name, 'package.json')),
+            );
+            fs.mkdirSync(path.join(root, 'packages', name, 'dist'));
+          }
+          write('node-token', 'fixture-node-credential');
+          write(
+            'bin/ssh',
+            `#!/usr/bin/env python3
 import os,sys
 from pathlib import Path
 command=' '.join(sys.argv[2:])
@@ -49,107 +55,125 @@ elif command=='id -u': print('501')
 elif 'SHELL:-/bin/sh' in command: print('/bin/zsh' if os.environ['RENDER_OS']=='Darwin' else '/bin/bash')
 elif 'which yarn' in command: print('no')
 elif command.startswith('test -d '): sys.exit(1)
+elif command.startswith('test -f ') and '.plist' in command: sys.exit(0 if os.environ.get('RENDER_CAPTURE_MODE')=='retained' else 1)
+elif command.startswith('/usr/bin/python3 -c ') and '.plist' in command: print('/opt/homebrew/bin/capture-helper')
 `,
-          true,
-        );
-        for (const command of ['rsync', 'yarn', 'sleep'])
-          write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
-        const env = {
-          ...process.env,
-          PATH: `${root}/bin:${process.env.PATH}`,
-          RENDER_ROOT: root,
-          RENDER_OS: platform,
-          FARMSLOT_NODE_PATH: platform === 'Darwin' ? '/opt/homebrew/bin/node' : '/usr/bin/node',
-          FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: native ? 'fixture-owner' : '',
-          FARMSLOT_NODE_INSTANCE: 'prod',
-        };
-        execFileSync(
-          'bash',
-          [
-            path.join(root, 'scripts/deploy-node.sh'),
-            'fixture-machine',
-            '127.0.0.1',
-            '--node-token-file',
-            path.join(root, 'node-token'),
-          ],
-          {
-            env,
-            cwd: root,
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeout: 30000,
-          },
-        );
-        let args;
-        let servicePath;
-        if (platform === 'Darwin') {
-          const document = JSON.parse(
-            execFileSync(
-              'python3',
-              [
-                '-c',
-                'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
-                path.join(root, 'service.plist'),
-              ],
-              { encoding: 'utf8' },
-            ),
+            true,
           );
-          args = document.ProgramArguments;
-          servicePath = document.EnvironmentVariables.PATH;
+          for (const command of ['rsync', 'yarn', 'sleep'])
+            write(`bin/${command}`, '#!/bin/sh\nexit 0\n', true);
+          const env = {
+            ...process.env,
+            PATH: `${root}/bin:${process.env.PATH}`,
+            RENDER_ROOT: root,
+            RENDER_OS: platform,
+            RENDER_CAPTURE_MODE: captureMode,
+            CAPTURE_HELPER_PATH:
+              captureMode === 'override' ? '/opt/qa & helpers/capture-helper' : '',
+            FARMSLOT_NODE_PATH: platform === 'Darwin' ? '/opt/homebrew/bin/node' : '/usr/bin/node',
+            FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: native ? 'fixture-owner' : '',
+            FARMSLOT_NODE_INSTANCE: 'prod',
+          };
+          execFileSync(
+            'bash',
+            [
+              path.join(root, 'scripts/deploy-node.sh'),
+              'fixture-machine',
+              '127.0.0.1',
+              '--node-token-file',
+              path.join(root, 'node-token'),
+            ],
+            {
+              env,
+              cwd: root,
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'pipe'],
+              timeout: 30000,
+            },
+          );
+          let args;
+          let servicePath;
+          if (platform === 'Darwin') {
+            const document = JSON.parse(
+              execFileSync(
+                'python3',
+                [
+                  '-c',
+                  'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb"))))',
+                  path.join(root, 'service.plist'),
+                ],
+                { encoding: 'utf8' },
+              ),
+            );
+            assert.equal(
+              document.EnvironmentVariables.CAPTURE_HELPER_PATH,
+              captureMode === 'override'
+                ? '/opt/qa & helpers/capture-helper'
+                : captureMode === 'retained'
+                  ? '/opt/homebrew/bin/capture-helper'
+                  : '/home/node-validation/farmslot-node/node_modules/@siteed/capture-helper/native/capture-helper',
+            );
+            args = document.ProgramArguments;
+            servicePath = document.EnvironmentVariables.PATH;
+            assert.equal(
+              document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID,
+              native ? 'fixture-owner' : undefined,
+            );
+          } else {
+            const unit = fs.readFileSync(path.join(root, 'service.unit'), 'utf8');
+            const command = unit
+              .split('\n')
+              .find((line) => line.startsWith('ExecStart='))
+              .slice(10);
+            args = JSON.parse(
+              execFileSync(
+                'python3',
+                [
+                  '-c',
+                  'import shlex,json,sys; print(json.dumps(shlex.split(sys.argv[1])))',
+                  command,
+                ],
+                { encoding: 'utf8' },
+              ),
+            );
+            servicePath = unit
+              .split('\n')
+              .find((line) => line.startsWith('Environment=PATH='))
+              .slice(17);
+            assert.equal(unit.includes('FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=fixture-owner'), native);
+          }
+          assert.equal(new Set(servicePath.split(':')).size, servicePath.split(':').length);
+          // The bundled capture-helper floor. A deployed lockfile keeps whatever
+          // satisfied the previous range (0.2.1 was observed pinned on a live node
+          // while the operator binary was 0.2.6), and 0.2.1 rejects the node's
+          // `+match <app>\t<window>` probe as a structured error, so screen probes
+          // never start. Only a raised range makes a repeated install upgrade.
+          const standalone = JSON.parse(
+            fs.readFileSync(path.join(root, 'standalone-package.json'), 'utf8'),
+          );
           assert.equal(
-            document.EnvironmentVariables.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID,
-            native ? 'fixture-owner' : undefined,
+            standalone.dependencies['@siteed/capture-helper'],
+            platform === 'Darwin' ? '^0.2.6' : undefined,
+            'macOS nodes bundle capture-helper at the supported floor; Linux nodes bundle none',
           );
-        } else {
-          const unit = fs.readFileSync(path.join(root, 'service.unit'), 'utf8');
-          const command = unit
-            .split('\n')
-            .find((line) => line.startsWith('ExecStart='))
-            .slice(10);
-          args = JSON.parse(
-            execFileSync(
-              'python3',
-              ['-c', 'import shlex,json,sys; print(json.dumps(shlex.split(sys.argv[1])))', command],
-              { encoding: 'utf8' },
-            ),
-          );
-          servicePath = unit
-            .split('\n')
-            .find((line) => line.startsWith('Environment=PATH='))
-            .slice(17);
-          assert.equal(unit.includes('FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID=fixture-owner'), native);
+          if (native) {
+            assert.deepEqual(args.slice(0, 2), [
+              platform === 'Darwin' ? '/bin/zsh' : '/bin/bash',
+              '-lc',
+            ]);
+            assert.equal(args.length, 3);
+            assert.ok(args[2].startsWith(`exec ${env.FARMSLOT_NODE_PATH} --require `));
+            assert.ok(servicePath.includes('/home/node-validation/.npm-global/bin'));
+          } else {
+            assert.equal(args[0], env.FARMSLOT_NODE_PATH);
+            assert.equal(args[1], '--require');
+            assert.equal(args.length, 6);
+          }
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
         }
-        assert.equal(new Set(servicePath.split(':')).size, servicePath.split(':').length);
-        // The bundled capture-helper floor. A deployed lockfile keeps whatever
-        // satisfied the previous range (0.2.1 was observed pinned on a live node
-        // while the operator binary was 0.2.6), and 0.2.1 rejects the node's
-        // `+match <app>\t<window>` probe as a structured error, so screen probes
-        // never start. Only a raised range makes a repeated install upgrade.
-        const standalone = JSON.parse(
-          fs.readFileSync(path.join(root, 'standalone-package.json'), 'utf8'),
-        );
-        assert.equal(
-          standalone.dependencies['@siteed/capture-helper'],
-          platform === 'Darwin' ? '^0.2.6' : undefined,
-          'macOS nodes bundle capture-helper at the supported floor; Linux nodes bundle none',
-        );
-        if (native) {
-          assert.deepEqual(args.slice(0, 2), [
-            platform === 'Darwin' ? '/bin/zsh' : '/bin/bash',
-            '-lc',
-          ]);
-          assert.equal(args.length, 3);
-          assert.ok(args[2].startsWith(`exec ${env.FARMSLOT_NODE_PATH} --require `));
-          assert.ok(servicePath.includes('/home/node-validation/.npm-global/bin'));
-        } else {
-          assert.equal(args[0], env.FARMSLOT_NODE_PATH);
-          assert.equal(args[1], '--require');
-          assert.equal(args.length, 6);
-        }
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    });
+      });
+    }
   }
 }
 

@@ -13,6 +13,8 @@
 # distinct install dir, service name, gateway URL, and IPC state. Default
 # instance is "prod" (identical to the original single-instance behavior).
 # Select the other with --instance dev or FARMSLOT_NODE_INSTANCE=dev.
+# Set CAPTURE_HELPER_PATH to select an existing helper executable on the target.
+# An existing launchd capture-helper override is retained when this is unset.
 # Set FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID to opt this node into native sessions
 # for that gateway principal. Runner installation and login remain node-owned.
 #
@@ -495,10 +497,20 @@ if [[ "$HAS_YARN" == *"yes" ]]; then
 else
   run "cd $REMOTE_DIR && PATH=$NODE_DIR:\$PATH npm install 2>&1 | tail -5"
 fi
-CAPTURE_HELPER_REMOTE="$REMOTE_DIR/node_modules/@siteed/capture-helper/native/capture-helper"
+CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_PATH:-}"
+if [[ "$REMOTE_OS" == "Darwin" && -z "$CAPTURE_HELPER_REMOTE" ]]; then
+  existing_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
+  if run "test -f $(printf '%q' "$existing_plist")"; then
+    helper_reader='import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb")).get("EnvironmentVariables", {}).get("CAPTURE_HELPER_PATH", ""))'
+    CAPTURE_HELPER_REMOTE=$(run "/usr/bin/python3 -c $(printf '%q' "$helper_reader") $(printf '%q' "$existing_plist")")
+  fi
+fi
+CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_REMOTE:-$REMOTE_DIR/node_modules/@siteed/capture-helper/native/capture-helper}"
+CAPTURE_HELPER_REMOTE_QUOTED=$(printf '%q' "$CAPTURE_HELPER_REMOTE")
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  run "test -x $CAPTURE_HELPER_REMOTE"
-  if run "PATH=$NODE_DIR:\$PATH $NODE_PATH -e 'const { spawnSync } = require(\"node:child_process\"); const bin = process.argv[1]; const result = spawnSync(bin, [\"doctor\", \"--json\"], { encoding: \"utf8\", timeout: 15000, maxBuffer: 1024 * 1024 }); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout || (result.error && result.error.message) || \"capture-helper doctor failed\"); process.exit(1); }' $CAPTURE_HELPER_REMOTE"; then
+  [[ "$CAPTURE_HELPER_REMOTE" == /* ]] || { echo '[deploy] capture-helper path must be absolute' >&2; exit 1; }
+  run "test -x $CAPTURE_HELPER_REMOTE_QUOTED"
+  if run "PATH=$NODE_DIR:\$PATH $NODE_PATH -e 'const { spawnSync } = require(\"node:child_process\"); const bin = process.argv[1]; const result = spawnSync(bin, [\"doctor\", \"--json\"], { encoding: \"utf8\", timeout: 15000, maxBuffer: 1024 * 1024 }); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout || (result.error && result.error.message) || \"capture-helper doctor failed\"); process.exit(1); }' $CAPTURE_HELPER_REMOTE_QUOTED"; then
     echo "[deploy] capture-helper doctor ok"
   else
     echo "[deploy] WARNING: capture-helper doctor failed on $MACHINE; grant Screen Recording permission or run: $CAPTURE_HELPER_REMOTE doctor --open-permissions" >&2
@@ -566,7 +578,7 @@ $(launchd_node_arguments)
         <key>MACHINE_NAME</key>
         <string>${NODE_MACHINE_NAME}</string>
         <key>CAPTURE_HELPER_PATH</key>
-        <string>${CAPTURE_HELPER_REMOTE}</string>
+        <string>$(printf '%s' "$CAPTURE_HELPER_REMOTE" | xml_escape)</string>
 $(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
         <string>$(printf '%s' "$NODE_SERVICE_PATH" | xml_escape)</string>
     </dict>
