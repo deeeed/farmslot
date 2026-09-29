@@ -166,7 +166,7 @@ export class ProgressTracker extends LitElement {
       }
 
       .step-text {
-        color: ${unsafeCSS(colors.textSecondary)};
+        color: ${unsafeCSS(colors.textPrimary)};
       }
       .step.done .step-text {
         color: ${unsafeCSS(colors.textSecondary)};
@@ -274,22 +274,21 @@ export class ProgressTracker extends LitElement {
       .s-step-icon.running {
         color: ${unsafeCSS(colors.accentHover)};
       }
-      .s-step-icon.pending {
-        color: ${unsafeCSS(colors.textSecondary)};
-      }
+      .s-step-icon.pending,
       .s-step-icon.skipped {
         color: ${unsafeCSS(colors.textSecondary)};
       }
 
       .s-step-name {
         overflow-wrap: anywhere;
-        color: ${unsafeCSS(colors.textSecondary)};
+        color: ${unsafeCSS(colors.textPrimary)};
       }
-      .s-step.done .s-step-name {
+      .s-step.done .s-step-name,
+      .s-step.skipped .s-step-name {
         color: ${unsafeCSS(colors.textSecondary)};
       }
       .s-step.running .s-step-name {
-        color: ${unsafeCSS(colors.textPrimary)};
+        font-weight: 600;
       }
 
       .s-step.running {

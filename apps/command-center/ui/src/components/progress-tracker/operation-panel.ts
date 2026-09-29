@@ -25,7 +25,7 @@ export const operationPanelStyles = css`
   }
   .operation-item {
     padding: ${unsafeCSS(spacing.lg)};
-    border: 1px solid ${unsafeCSS(colors.textMuted)};
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
     border-radius: ${unsafeCSS(radii.md)};
     background: ${unsafeCSS(colors.bgSurface)};
   }
@@ -43,7 +43,6 @@ export const operationPanelStyles = css`
     border: 1px solid currentColor;
     border-radius: ${unsafeCSS(radii.sm)};
     padding: 0 ${unsafeCSS(spacing.sm)};
-    color: ${unsafeCSS(colors.textSecondary)};
   }
   .operation-status.running {
     color: ${unsafeCSS(colors.accentHover)};
@@ -121,13 +120,14 @@ export function renderOperationPanel(
                   : 'Failed'}</span
             >
             <span>
+              ·
               ${age(
                 operation.startedAt,
                 operation.finishedAt ? Date.parse(operation.finishedAt) : now,
               )}
               elapsed</span
             >
-            ${operation.parentId ? html`<span>Nested command</span>` : nothing}
+            ${operation.parentId ? html`<span>· Nested command</span>` : nothing}
           </div>
           ${operation.stage
             ? html`<div class="operation-stage">
@@ -144,9 +144,9 @@ export function renderOperationPanel(
                 ? `${age(operation.lastOutputAt, now)} ago`
                 : 'none recorded'}</span
             >
-            <span>Status update: ${age(operation.updatedAt, now)} ago</span>
+            <span>· Status update: ${age(operation.updatedAt, now)} ago</span>
             ${operation.status === 'running' && now - Date.parse(operation.updatedAt) > 30_000
-              ? html`<strong class="operation-stale">No recent status update</strong>`
+              ? html`<strong class="operation-stale">· No recent status update</strong>`
               : nothing}
           </div>
           ${runId

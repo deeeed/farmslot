@@ -284,7 +284,8 @@ export const runPipelineStyles = css`
   }
   .substep {
     font-size: ${unsafeCSS(fonts.sizeSm)};
-    color: ${unsafeCSS(colors.textSecondary)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    border-left: 2px solid transparent;
     padding: 4px 8px;
     line-height: 1.5;
     overflow-wrap: anywhere;
@@ -303,14 +304,14 @@ export const runPipelineStyles = css`
   .substep.running .substep-icon {
     color: ${unsafeCSS(colors.accentHover)};
   }
-  .substep.done {
+  .substep.done,
+  .substep.skipped {
     color: ${unsafeCSS(colors.textSecondary)};
   }
   .substep.running {
-    border-left: 2px solid ${unsafeCSS(colors.accentHover)};
+    border-left-color: ${unsafeCSS(colors.accentHover)};
     background: ${unsafeCSS(colors.bgSurface)};
     border-radius: ${unsafeCSS(radii.sm)};
-    color: ${unsafeCSS(colors.textPrimary)};
     font-weight: 600;
   }
 

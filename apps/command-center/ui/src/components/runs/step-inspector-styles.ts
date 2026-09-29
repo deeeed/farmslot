@@ -398,16 +398,16 @@ export const stepInspectorStyles = css`
     display: flex;
     align-items: flex-start;
     gap: 5px;
-    color: ${unsafeCSS(colors.textSecondary)};
+    color: ${unsafeCSS(colors.textPrimary)};
     font-size: ${unsafeCSS(fonts.sizeSm)};
     line-height: 1.5;
     padding: 4px 0;
   }
-  .task-progress-step.done {
+  .task-progress-step.done,
+  .task-progress-step.skipped {
     color: ${unsafeCSS(colors.textSecondary)};
   }
   .task-progress-step.running {
-    color: ${unsafeCSS(colors.textPrimary)};
     font-weight: 700;
   }
   .task-progress-step-icon {

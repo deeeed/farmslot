@@ -476,6 +476,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ${backToRuns}
     <file-transfer-progress-banner inline run-id=${r.id}></file-transfer-progress-banner>
     <a
+      class="context-read-link"
       href=${`#intelligence?tab=assessments&suggestion=copilot-context&run=${encodeURIComponent(r.id)}`}
       >Suggest a next context read</a
     >
