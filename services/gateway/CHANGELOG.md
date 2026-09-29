@@ -4,9 +4,13 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Restore runner catalog and per-user model preference APIs, including editable defaults, Cursor catalog-command discovery through the runner capability and Claude Opus 5.5 high as its built-in default.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.19.0 - 2026-09-29
+
+- Keep remote resource commands on their owning node and retain device leases when restart health checks cannot reach that node.
+- Project task-local command activity and refresh clients as operation records change.
+- Restore runner catalog and per-user model preference APIs, including editable defaults, Cursor catalog-command discovery through the runner capability and Claude Opus 5.5 high as its built-in default.
 
 ## 0.18.0 - 2026-09-28
 

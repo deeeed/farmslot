@@ -4,6 +4,7 @@ import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/pr
 import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import { renderSubtaskBlock, type SubtaskOpenScope } from '../progress-tracker/subtask-block.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';
@@ -130,6 +131,7 @@ export function renderPipelineProgressPanel(
   close: () => void,
   openScope: SubtaskOpenScope,
   activeTaskBasename?: string | null,
+  runId?: string | null,
 ) {
   const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
   return html`
@@ -141,6 +143,7 @@ export function renderPipelineProgressPanel(
         </span>
         <button class="monitor-close" @click=${close}>x</button>
       </div>
+      ${renderOperationPanel(progress, runId)}
       ${progress.phases.map((phase) => {
         const allDone = phase.completedSteps === phase.totalSteps;
         const hasRunning = phase.steps.some((step) => step.status === 'running');

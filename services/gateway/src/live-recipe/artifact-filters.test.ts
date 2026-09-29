@@ -82,6 +82,9 @@ test('artifact scan filters skip hidden files and allow referenced files under e
     ),
     false,
   );
+  for (const file of ['operations/build.log', 'operations-updated.json']) {
+    assert.equal(shouldIncludeArtifactFile(file, excludedTopLevel, includedRelativePaths), false);
+  }
   assert.equal(
     shouldIncludeArtifactFile('screenshots/after.png', excludedTopLevel, includedRelativePaths),
     true,

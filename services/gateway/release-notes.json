@@ -1,8 +1,9 @@
 {
-  "version": "0.18.0",
-  "date": "2026-09-28",
+  "version": "0.19.0",
+  "date": "2026-09-29",
   "items": [
-    "Prefer retained HTML reports, retain recording timelines, and derive compact report text for model consumers; close reviewed output while preserving partial or failed validation, resource cleanup and dependency guards",
-    "Retain reports and output files for partial or failed workers, and review artifact-only output without resuming execution or changing its verdict"
+    "Keep remote resource commands on their owning node and retain device leases when restart health checks cannot reach that node",
+    "Project task-local command activity and refresh clients as operation records change",
+    "Restore runner catalog and per-user model preference APIs, including editable defaults, Cursor catalog-command discovery through the runner capability and Claude Opus 5.5 high as its built-in default"
   ]
 }

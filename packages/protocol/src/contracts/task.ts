@@ -38,6 +38,9 @@ export interface TaskProgressStructured {
   phases: TaskPhaseProgress[];
   completedSteps: number;
   totalSteps: number;
+  /** Optional task-local command observations from the harness. */
+  operations?: TaskOperation[];
+  operationsError?: string;
   currentPhase: string | null;
   currentStep: string | null;
 }
@@ -70,4 +73,52 @@ export interface TaskStepSubtaskProgress {
   /** Recursive: the child's own step projection, built by the same parser. */
   progress: TaskProgressStructured;
   lastEventAt: string | null;
+}
+
+/** Observed command execution; checklist completion and proof verdicts are separate. */
+export interface TaskOperation {
+  schemaVersion: 1;
+  id: string;
+  parentId?: string;
+  command: string;
+  target: string;
+  pid: number;
+  processStartedAt: string;
+  startedAt: string;
+  updatedAt: string;
+  stage?: string;
+  stageStartedAt?: string;
+  lastOutputAt?: string;
+  finishedAt?: string;
+  status: 'running' | 'pass' | 'fail';
+  exitCode?: number;
+  logPath: string;
+}
+
+/** Reject malformed observations before observers calculate ages or inspect owners. */
+export function validateOperationRecord(value: TaskOperation, id: string): void {
+  if (
+    !value ||
+    value.schemaVersion !== 1 ||
+    value.id !== id ||
+    !['running', 'pass', 'fail'].includes(value.status) ||
+    typeof value.command !== 'string' ||
+    typeof value.target !== 'string' ||
+    !Number.isInteger(value.pid) ||
+    value.pid <= 0 ||
+    typeof value.processStartedAt !== 'string' ||
+    !value.processStartedAt ||
+    typeof value.startedAt !== 'string' ||
+    typeof value.updatedAt !== 'string' ||
+    (value.parentId !== undefined && typeof value.parentId !== 'string') ||
+    (value.stage !== undefined && typeof value.stage !== 'string') ||
+    [value.stageStartedAt, value.lastOutputAt, value.finishedAt].some(
+      (at) => at !== undefined && (typeof at !== 'string' || !Number.isFinite(Date.parse(at))),
+    ) ||
+    (value.status !== 'running' && (!value.finishedAt || !Number.isInteger(value.exitCode))) ||
+    !Number.isFinite(Date.parse(value.startedAt)) ||
+    !Number.isFinite(Date.parse(value.updatedAt)) ||
+    typeof value.logPath !== 'string'
+  )
+    throw new Error(`Invalid operation record: ${id}`);
 }

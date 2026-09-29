@@ -24,6 +24,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
+import { attachOperations } from '../tasks/operations.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import {
   attachSubtaskToStep,
@@ -53,6 +54,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       structured,
     };
     await attachSubtaskProgress(source.io, source.checklistPath, 'review-pr', structured);
+    await attachOperations(source.io, source.checklistPath, structured);
     await attachAcceptanceStatus(source.io, source.checklistPath, result);
     return result;
   }
@@ -83,6 +85,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       result.structured = joinSchemaWithMarkdown(schema, markdown);
       await attachSubtaskProgress(vars, effectiveMdPath, flowType, result.structured);
     }
+    if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
     await attachAcceptanceStatus(vars, effectiveMdPath, result);
     return result;
   }
@@ -139,6 +142,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
       reconcileFinalStepFromSignal(result.structured);
     }
   }
+  if (result.structured) await attachOperations(vars, effectiveMdPath, result.structured);
   await attachAcceptanceStatus(vars, effectiveMdPath, result);
 
   return result;

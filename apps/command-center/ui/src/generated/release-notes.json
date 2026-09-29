@@ -1,9 +1,8 @@
 {
-  "version": "0.18.0",
-  "date": "2026-09-28",
+  "version": "0.19.0",
+  "date": "2026-09-29",
   "items": [
-    "Display retained HTML reports with inline recordings and proof links in an isolated viewer; navigate measured video frames and action markers, and close execution without changing validation results",
-    "Explain when an older desktop shell cannot copy a supported view link",
-    "View run results, reports and browsable files in run details and family view before worker recovery; distinguish output review from comparison runs and publication"
+    "View command stages and output freshness beside worker progress, with refreshable and followable operation logs",
+    "Restore selectable runner catalogs and per-user visible models and default-model settings in Dispatch and related pickers; default Cursor to Claude Opus 5.5 high while preserving existing choices"
   ]
 }

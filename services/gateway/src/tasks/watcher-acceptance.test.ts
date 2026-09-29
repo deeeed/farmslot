@@ -297,3 +297,32 @@ test('the watcher emits the acceptance ledger as verdicts land, without a parent
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('continuous operation output cannot starve operation or acceptance updates', async () => {
+  const root = writeTaskDir();
+  emitted.length = 0;
+  let chatter: ReturnType<typeof setInterval> | undefined;
+  try {
+    await watchSlot(SLOT_ID, { runId: RUN_ID });
+    chatter = setInterval(
+      () =>
+        writeFileSync(
+          path.join(taskDirAbs(), 'artifacts/operations-updated.json'),
+          JSON.stringify({ updatedAt: new Date().toISOString() }),
+        ),
+      100,
+    );
+    await waitFor('operation update during continuous output', () => true, 10_000);
+    emitted.length = 0;
+    writeLedger(taskDirAbs(), [criterion('AC-9', 'proven')]);
+    await waitFor(
+      'acceptance update during continuous output',
+      (entry) => entry.progress.acceptanceStatus?.criteria[0]?.verdict === 'proven',
+      10_000,
+    );
+  } finally {
+    if (chatter) clearInterval(chatter);
+    await unwatchSlot(SLOT_ID);
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -235,6 +235,25 @@ export const mediaLightboxStyles = css`
     justify-content: center;
     background: ${unsafeCSS(colors.bgBase)};
   }
+  .ml-log-body {
+    align-items: stretch;
+    min-height: 0;
+  }
+  .ml-log-body .ml-md-shell {
+    min-height: 0;
+  }
+  .ml-log-body .ml-md-toolbar {
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .ml-log-body .ml-count {
+    overflow-wrap: anywhere;
+  }
+  .ml-log-body .ml-md-body {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
   .ml-cmp-body {
     flex-direction: column;
     gap: ${unsafeCSS(spacing.sm)};

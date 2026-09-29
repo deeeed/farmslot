@@ -4,9 +4,12 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Restore runner catalog and model preference contracts, including per-user default selection and reset; default Cursor to Claude Opus 5.5 high without Fast mode.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.33.0 - 2026-09-29
+
+- Add optional task operation observations alongside checklist progress.
+- Restore runner catalog and model preference contracts, including per-user default selection and reset; default Cursor to Claude Opus 5.5 high without Fast mode.
 
 ## 0.32.0 - 2026-09-28
 

@@ -680,3 +680,47 @@ test('recovery releasing an unhealthy holder drains the waiter behind it', async
   );
   assert.deepEqual(grants, ['run-b']);
 });
+
+test('restart retains an exclusive claim while remote observation is unavailable, then adopts on explicit reconciliation after reconnect', async (t) => {
+  const store = await seededStore(t);
+  let available = false;
+  const actions: string[] = [];
+  const registry = recoveringRegistry(store, [browser()], async (_slot, action) => {
+    const name = action.kind === 'slot-action' ? action.actionId : action.action;
+    actions.push(name);
+    return available ? { ok: true } : { ok: false, unavailable: true, detail: 'node disconnected' };
+  });
+  await registry.recover();
+  let lease = store.snapshot().leases.find((entry) => entry.id === 'lease-browser')!;
+  assert.equal(lease.state, 'acquired');
+  assert.equal(lease.health.state, 'unknown');
+  assert.equal(lease.releasedAt, undefined);
+  assert.deepEqual(actions, ['browser.health']);
+  const competing = await registry.acquire({
+    slotId: 'slot-a',
+    capabilityId: 'browser',
+    ownerRunId: 'run-b',
+    proofRequirement: { capabilityId: 'browser', reason: 'competing proof', mode: 'visual' },
+  });
+  assert.equal(competing.ok, false);
+  const retained = await registry.acquire({
+    slotId: 'slot-a',
+    capabilityId: 'browser',
+    ownerRunId: 'run-a',
+    revalidateHealth: true,
+    proofRequirement: { capabilityId: 'browser', reason: 'check after reconnect', mode: 'visual' },
+  });
+  assert.equal(retained.ok, false);
+  assert.equal(
+    store.snapshot().leases.find((entry) => entry.id === 'lease-browser')!.state,
+    'acquired',
+  );
+  assert.ok(!actions.includes('browser.release'));
+  available = true;
+  await registry.recover();
+  lease = store.snapshot().leases.find((entry) => entry.id === 'lease-browser')!;
+  assert.equal(lease.state, 'acquired');
+  assert.equal(lease.health.state, 'healthy');
+  assert.equal(lease.owner.runId, 'run-a');
+  assert.ok(!actions.includes('browser.release'));
+});

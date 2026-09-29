@@ -40,6 +40,12 @@ import {
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
+  private _logTimer?: ReturnType<typeof setInterval>;
+  private _logLoading = false;
+  private _logText = '';
+  private _logError = '';
+  private _logUrl = '';
+  private _logFollow = false;
   private _timelines = new Map<
     string,
     { data?: RecipeRecordingTimelineDocument; error?: string }
@@ -52,11 +58,25 @@ export class MediaLightbox extends MediaLightboxState {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('keydown', this._onKeyDown);
+    if (this._logTimer) clearInterval(this._logTimer);
     this._mdCache.clear();
     this._timelines.clear();
   }
 
   updated(changed: Map<string, unknown>): void {
+    const logItem =
+      this.open && this.mode === 'single' ? this.items[this.selectedIndex] : undefined;
+    const logUrl = logItem && mediaLightboxFileType(logItem) === 'log' ? logItem.url : '';
+    if (logUrl !== this._logUrl) {
+      if (this._logTimer) clearInterval(this._logTimer);
+      this._logTimer = undefined;
+      this._logUrl = logUrl;
+      this._logText = '';
+      this._logError = '';
+      this._logFollow = false;
+      if (logUrl) void this._refreshLog(logUrl);
+    }
+
     if (changed.has('open') && this.open) this._timelines.clear();
     if (
       changed.has('selectedIndex') ||
@@ -718,7 +738,7 @@ export class MediaLightbox extends MediaLightboxState {
               <button class="ml-btn" @click=${() => this._close()}>Close</button>
             </div>
           </div>
-          <div class="ml-body">
+          <div class="ml-body ${fileType === 'log' ? 'ml-log-body' : ''}">
             ${broken
               ? html`<div class="ml-fallback ml-broken">This media could not be loaded.</div>`
               : fileType === 'image'
@@ -788,21 +808,23 @@ export class MediaLightbox extends MediaLightboxState {
                         ${this._renderVideoControls(false)}
                       </div>
                     `
-                  : fileType === 'html'
-                    ? this._renderHtmlItem(item)
-                    : fileType === 'markdown'
-                      ? this._renderMarkdownItem(item)
-                      : fileType === 'json'
-                        ? this._renderJsonItem(item)
-                        : fileType === 'diff'
-                          ? this._renderDiffItem(item)
-                          : html` <div class="ml-fallback">
-                              <div>No inline preview for this artifact type.</div>
-                              <div class="ml-fallback-meta">${item.path} · ${item.purpose}</div>
-                              <a class="ml-btn" href=${item.url} target="_blank" rel="noopener"
-                                >Open raw</a
-                              >
-                            </div>`}
+                  : fileType === 'log'
+                    ? this._renderLogItem(item)
+                    : fileType === 'html'
+                      ? this._renderHtmlItem(item)
+                      : fileType === 'markdown'
+                        ? this._renderMarkdownItem(item)
+                        : fileType === 'json'
+                          ? this._renderJsonItem(item)
+                          : fileType === 'diff'
+                            ? this._renderDiffItem(item)
+                            : html` <div class="ml-fallback">
+                                <div>No inline preview for this artifact type.</div>
+                                <div class="ml-fallback-meta">${item.path} · ${item.purpose}</div>
+                                <a class="ml-btn" href=${item.url} target="_blank" rel="noopener"
+                                  >Open raw</a
+                                >
+                              </div>`}
           </div>
           ${hasMultiple
             ? html`
@@ -1130,6 +1152,82 @@ export class MediaLightbox extends MediaLightboxState {
         </div>
       </div>
     `;
+  }
+
+  private async _refreshLog(url: string): Promise<void> {
+    if (this._logLoading) return;
+    this._logLoading = true;
+    this.requestUpdate();
+    try {
+      const response = await gatewayHttpFetch(url, {
+        cache: 'no-store',
+        headers: { Range: 'bytes=-65536' },
+      });
+      // A zero-byte log has no satisfiable suffix range yet.
+      if (response.status === 416 && response.headers.get('Content-Range') === 'bytes */0') {
+        if (this._logUrl === url) {
+          this._logText = '';
+          this._logError = '';
+        }
+      } else {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        if (this._logUrl === url) {
+          this._logText = text;
+          this._logError = '';
+        }
+      }
+    } catch (error) {
+      if (this._logUrl === url) this._logError = (error as Error).message;
+    } finally {
+      this._logLoading = false;
+      this.requestUpdate();
+      if (this._logUrl && this._logUrl !== url) void this._refreshLog(this._logUrl);
+      if (this._logFollow && this._logUrl === url) {
+        await this.updateComplete;
+        const body = this.renderRoot.querySelector('.ml-log-body .ml-md-body');
+        if (body) body.scrollTop = body.scrollHeight;
+      }
+    }
+  }
+
+  private _renderLogItem(item: LightboxItem) {
+    return html`<div class="ml-md-shell">
+      <div class="ml-toolbar ml-md-toolbar">
+        <span class="ml-count">${item.path} · latest 64 KiB</span>
+        <button
+          class="ml-btn"
+          ?disabled=${this._logLoading}
+          @click=${() => this._refreshLog(item.url)}
+        >
+          Refresh
+        </button>
+        <button
+          class="ml-btn"
+          data-testid="operation-log-follow"
+          aria-pressed=${this._logFollow}
+          @click=${() => {
+            this._logFollow = !this._logFollow;
+            if (this._logTimer) clearInterval(this._logTimer);
+            this._logTimer = this._logFollow
+              ? setInterval(() => {
+                  if (this.open && this._logUrl) void this._refreshLog(this._logUrl);
+                }, 2000)
+              : undefined;
+            this.requestUpdate();
+          }}
+        >
+          ${this._logFollow ? 'Stop following' : 'Follow log'}
+        </button>
+        <a class="ml-btn" href=${item.url} target="_blank" rel="noopener">Open full log</a>
+      </div>
+      <div class="ml-md-body">
+        ${this._logError ? html`<p role="status">Log unavailable: ${this._logError}</p>` : nothing}
+        <pre class="ml-json-content">
+${this._logText || (this._logLoading ? 'Loading…' : 'No output recorded yet.')}</pre
+        >
+      </div>
+    </div>`;
   }
 
   private _renderJsonItem(item: LightboxItem) {
