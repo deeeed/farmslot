@@ -1,0 +1,17 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Observe a live command and follow its log",
+  "description": "Use an isolated gateway and disposable task/checkout. Start node scripts/runner-validation/gateway/command-operation-producer.mjs <checkout> <task-dir>; it prints the operation ID and writes continuously. Set FARMSLOT_GATEWAY, FARMSLOT_CDP_PORT, FARMSLOT_OPERATION_RUN_ID, FARMSLOT_OPERATION_SLOT_ID, FARMSLOT_OPERATION_ID and FARMSLOT_OPERATION_ROUTE. Open the run dispatch inspector first, with the artifact viewer closed. The script reads task.progress, checks the corresponding UI, clicks its log link and follows new bytes. Negative controls: an absent operation ID must fail. In the disposable gateway only, temporarily disable attachOperations and confirm the unchanged proof fails its gateway projection assertion, then restore the exact source and rerun. No device or measured worker is involved.",
+  "workflow": {
+    "entry": "observe-command",
+    "nodes": {
+      "observe-command": {
+        "action": "command",
+        "cmd": "node scripts/runner-validation/gateway/command-operation.mjs",
+        "intent": "Prove operation projection and live log navigation through the actual gateway and browser without injecting UI state.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

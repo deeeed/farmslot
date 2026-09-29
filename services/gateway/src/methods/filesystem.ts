@@ -1,11 +1,12 @@
 // methods/filesystem.ts — fs.list, fs.read, fs.write, fs.rename, fs.delete, fs.reveal, fs.mkdir, serveFile, serveRunArtifact
-
 import { execFile as execFileCb, spawn } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { serveRemoteRange } from './filesystem/remote-range-serving.js';
 
 const execFile = promisify(execFileCb);
 import {
@@ -712,6 +713,16 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
       const remoteRoot = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
       const remoteRel = filePath.replace(/^\/+/, '');
       const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+      if (
+        await serveRemoteRange(
+          req,
+          res,
+          { machine: vars.machine, root: remoteRoot, relPath: remoteRel },
+          mime,
+          MAX_REMOTE_RUN_ARTIFACT_BYTES,
+        )
+      )
+        return;
       let transferMode = 'unknown';
       let readChunkCount = 0;
       const buf = await slotReadFileBuffer(
@@ -920,6 +931,16 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
         const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
         const remoteRel = slotRelativePath.replace(/^\/+/, '');
         const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+        if (
+          await serveRemoteRange(
+            req,
+            res,
+            { machine: vars.machine, root: remoteRoot, relPath: remoteRel },
+            mime,
+            MAX_REMOTE_RUN_ARTIFACT_BYTES,
+          )
+        )
+          return;
         let transferMode = 'unknown';
         let readChunkCount = 0;
         const buffer = await slotReadFileBuffer(
@@ -1043,6 +1064,16 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     const remoteRoot = normalizedRemoteBasePath.replace(/\\/g, '/').replace(/\/+$/, '');
     const remoteRel = relativePath.replace(/^\/+/, '');
     const remoteAbs = path.posix.join(remoteRoot, remoteRel);
+    if (
+      await serveRemoteRange(
+        req,
+        res,
+        { machine: vars.machine, root: remoteRoot, relPath: remoteRel },
+        mime,
+        MAX_REMOTE_RUN_ARTIFACT_BYTES,
+      )
+    )
+      return;
     let transferMode = 'unknown';
     let readChunkCount = 0;
     const buffer = await slotReadFileBuffer(

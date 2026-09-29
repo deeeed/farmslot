@@ -259,8 +259,9 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_GATEWAY_TOKEN: token,
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
-    FARMSLOT_DISABLE_RUN_ENGINE_START: '1',
-    NODE_TEST_CONTEXT: '1',
+    ...(process.argv[3] === 'recovery'
+      ? { FARMSLOT_DISABLE_RUN_ENGINE_START: '1', NODE_TEST_CONTEXT: '1' }
+      : {}),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     FARMSLOT_CDP_PORT: String(cdpPort),
     FARMSLOT_CDP_PROFILE: path.join(fixture, 'chrome'),
@@ -527,7 +528,7 @@ process.stdout.write(JSON.stringify(body));
       beforeReplay,
     );
     await json(path.join(evidence, 'review-replay-unchanged.json'), beforeReplay);
-    for (const state of ['live', 'cleaned']) {
+    for (const state of process.argv[3] === 'recovery' ? ['live', 'cleaned'] : []) {
       const runId = `ui-monitor-${state}`;
       const before = await connection.call<{ run: Run }>('run.get', { runId });
       await connection.call('run.replayStep', { runId, stepName: 'monitor' });

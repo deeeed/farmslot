@@ -27,6 +27,8 @@ import {
   widerRuntimeCapabilityClaimScope,
 } from '@farmslot/protocol';
 
+import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
+
 import { claimsDevice } from './device-target.js';
 import { sameCapabilityParameters, stableJson } from './parameters.js';
 import {
@@ -69,6 +71,8 @@ export interface WarmSweepSummary {
 
 export interface RuntimeCapabilityActionResult {
   ok: boolean;
+  /** Observation/transport unavailable; do not interpret as a stopped provider. */
+  unavailable?: boolean;
   detail?: string;
 }
 
@@ -589,6 +593,7 @@ export class RuntimeCapabilityRegistry {
     } catch (error) {
       return {
         ok: false,
+        ...(error instanceof ResourceCommandUnavailableError ? { unavailable: true } : {}),
         detail: `Provider action threw: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
@@ -967,6 +972,29 @@ export class RuntimeCapabilityRegistry {
             idempotent: true,
           };
         }
+        if (health.unavailable) {
+          sameOwner.health = {
+            state: 'unknown',
+            checkedAt: sameOwner.updatedAt,
+            detail: health.detail,
+          };
+          this.recordEvent(snapshot, {
+            kind: 'health-changed',
+            slotId: params.slotId,
+            capabilityId: entry.id,
+            leaseId: sameOwner.id,
+            owner: sameOwner.owner,
+            detail: 'Provider observation unavailable; retaining ownership',
+          });
+          return {
+            ok: false,
+            conflict: {
+              kind: 'unavailable',
+              capabilityId: entry.id,
+              reason: health.detail ?? 'Provider observation unavailable',
+            },
+          };
+        }
         // Unhealthy: clean the provider up before anything reuses it. A failed
         // cleanup is durable as an error lease and blocks the action.
         sameOwner.health = {
@@ -1265,7 +1293,7 @@ export class RuntimeCapabilityRegistry {
       warmLease !== undefined && !sameCapabilityParameters(warmLease.parameters, parameters);
     let warmProviderHealthy = false;
     if (active.length === 0 && warmLease) {
-      const warmHealth = warmProvenanceChanged
+      const warmHealth: RuntimeCapabilityActionResult = warmProvenanceChanged
         ? { ok: false, detail: 'warm provider predates the current provider definition' }
         : warmParametersDiffer
           ? {
@@ -1277,6 +1305,28 @@ export class RuntimeCapabilityRegistry {
           : // Probed with the WARM lease's own parameters: the question is
             // whether THAT provider is still up, not whether the requested one is.
             await this.runAction(params.slotId, entry.actions.health, warmLease.parameters, entry);
+      if (warmHealth.unavailable) {
+        await this.rollbackLeases(
+          snapshot,
+          catalog,
+          snapshot.leases
+            .filter((lease) => !existingLeaseIds.has(lease.id))
+            .map((lease) => lease.id),
+        );
+        warmLease.health = {
+          state: 'unknown',
+          checkedAt: this.timestamp(),
+          detail: warmHealth.detail,
+        };
+        return {
+          ok: false,
+          conflict: {
+            kind: 'unavailable',
+            capabilityId: entry.id,
+            reason: warmHealth.detail ?? 'Warm provider observation unavailable',
+          },
+        };
+      }
       warmProviderHealthy = warmHealth.ok;
       if (warmHealth.ok) {
         warmLease.keepWarmUntil = undefined;
@@ -3116,6 +3166,19 @@ export class RuntimeCapabilityRegistry {
             lease.parameters,
             entry,
           );
+          if (health.unavailable) {
+            lease.updatedAt = this.timestamp();
+            lease.health = { state: 'unknown', checkedAt: lease.updatedAt, detail: health.detail };
+            this.recordEvent(snapshot, {
+              kind: 'health-changed',
+              slotId,
+              capabilityId: lease.capabilityId,
+              leaseId: lease.id,
+              owner: lease.owner,
+              detail: `Provider observation unavailable; retaining ownership: ${health.detail ?? 'unknown health'}`,
+            });
+            continue;
+          }
           if (health.ok) {
             lease.state = 'acquired';
             lease.updatedAt = this.timestamp();

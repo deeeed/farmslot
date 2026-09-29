@@ -103,6 +103,8 @@ export const INTERNAL_RUN_ARTIFACT_TOP_LEVELS = [
   'runner-blockers',
   'runtime-launch',
   'runtime-relaunch',
+  'operations',
+  'operations-updated.json',
 ] as const;
 
 const INTERNAL_RUN_ARTIFACT_TOP_LEVEL_SET = new Set<string>(INTERNAL_RUN_ARTIFACT_TOP_LEVELS);

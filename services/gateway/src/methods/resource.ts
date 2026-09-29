@@ -101,7 +101,8 @@ export async function resourceHealth(params: ResourceHealthParams): Promise<Reso
  * Read-only, and it deliberately does NOT fail when a tool is missing: a host
  * with no Xcode still has its Android devices enumerated, and each source says
  * for itself whether it answered. Clients poll this, so it is served from a
- * short per-machine cache unless `refresh` is set.
+ * short per-machine cache unless `refresh` is set. A disconnected node or failed
+ * transport rejects the read rather than substituting the operator's devices.
  */
 export async function resourceDeviceInventory(
   params: DeviceInventoryParams,

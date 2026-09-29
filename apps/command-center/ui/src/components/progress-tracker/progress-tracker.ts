@@ -10,6 +10,7 @@ import {
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { OperationClock, renderOperationPanel } from './operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,
@@ -69,6 +70,7 @@ export function renderTrackerStepRow(
 
 @customElement('progress-tracker')
 export class ProgressTracker extends LitElement {
+  private readonly _operationClock = new OperationClock(this, () => this.structured);
   @property() markdown = '';
   @property({ type: Boolean }) compact = false;
   @property({ type: Object }) structured?: TaskProgressStructured;
@@ -392,6 +394,7 @@ export class ProgressTracker extends LitElement {
         ? nothing
         : html`
             <div class="phase-list">
+              ${renderOperationPanel(s, this.runId)}
               ${s.phases.map((phase) => this._renderPhase(phase, s.currentPhase))}
             </div>
           `}

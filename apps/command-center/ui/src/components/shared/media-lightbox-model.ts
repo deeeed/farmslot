@@ -1,6 +1,14 @@
 import { JSON_EXTS, MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 
-export type LightboxFileType = 'image' | 'video' | 'html' | 'markdown' | 'json' | 'diff' | 'file';
+export type LightboxFileType =
+  | 'image'
+  | 'video'
+  | 'html'
+  | 'markdown'
+  | 'json'
+  | 'diff'
+  | 'log'
+  | 'file';
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
@@ -30,6 +38,7 @@ export function mediaLightboxFileType(item: LightboxTypedItem): LightboxFileType
   if (MARKDOWN_EXTS.test(item.path)) return 'markdown';
   if (JSON_EXTS.test(item.path)) return 'json';
   if (DIFF_EXTS.test(item.path) || item.purpose.includes('diff')) return 'diff';
+  if (/\.log$/i.test(item.path)) return 'log';
   return 'file';
 }
 
@@ -47,6 +56,8 @@ export function mediaLightboxFileTypeBadge(type: LightboxFileType): string {
       return 'JSON';
     case 'diff':
       return 'DIFF';
+    case 'log':
+      return 'LOG';
     case 'file':
       return 'FILE';
   }

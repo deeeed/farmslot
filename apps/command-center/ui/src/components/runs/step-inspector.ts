@@ -14,6 +14,7 @@ import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { OperationClock, renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,
@@ -48,6 +49,7 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
+  private readonly _operationClock = new OperationClock(this, () => this.taskProgress);
   static styles = [stepInspectorStyles, subtaskBlockStyles];
 
   /**
@@ -336,6 +338,7 @@ export class StepInspector extends StepInspectorState {
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>
+        ${renderOperationPanel(tp, this.run?.id)}
         ${tp.phases.map(
           (phase) => html`
             <div class="task-phase">

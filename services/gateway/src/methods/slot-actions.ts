@@ -1,5 +1,4 @@
 // methods/slot-actions.ts — project-configured slot/resource shortcut actions
-
 import { execFile } from 'node:child_process';
 
 import type {
@@ -22,6 +21,7 @@ import {
   resolveSlot,
 } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
+import { ResourceCommandUnavailableError } from '../core/resource-command-error.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import {
@@ -173,7 +173,7 @@ async function executeExpandedCommand(
   if (!isLocal) {
     const node = getNode(machine);
     if (!node) {
-      return { ok: false, detail: `No node connected for ${machine}` };
+      throw new ResourceCommandUnavailableError(`Resource node ${machine} is disconnected`);
     }
     const execResult = (await sendNodeRequest(
       node,
@@ -184,7 +184,12 @@ async function executeExpandedCommand(
         timeout: timeoutMs,
       },
       { timeout: timeoutMs },
-    )) as { stdout: string; stderr: string; exitCode?: unknown; code?: unknown; signal?: unknown };
+    ).catch((error: unknown) => {
+      throw new ResourceCommandUnavailableError(
+        `Resource command unavailable on ${machine}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    })) as { stdout: string; stderr: string; exitCode?: unknown; code?: unknown; signal?: unknown };
     const exitCode = normalizeExecExitCode(
       execResult.exitCode ?? execResult.code,
       execResult.signal,

@@ -205,6 +205,7 @@ async function runProviderAction(
       const probe = await probeResourceStatus(slotId, ref.resourceId, extraVars);
       return {
         ok: probe.status === 'running',
+        ...(probe.status === 'error' ? { unavailable: true } : {}),
         detail: `${ref.resourceId} is ${probe.status}${probe.detail ? `: ${probe.detail}` : ''}`,
       };
     }
@@ -213,6 +214,7 @@ async function runProviderAction(
     if (!resource) return { ok: false, detail: `Resource '${ref.resourceId}' is unavailable` };
     return {
       ok: resource.status === 'running',
+      ...(resource.status === 'error' ? { unavailable: true } : {}),
       detail: `${ref.resourceId} is ${resource.status}`,
     };
   }
