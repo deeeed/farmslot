@@ -4,9 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- Retain invocation-scoped command stages, timings and logs for live operation observers.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.21.0 - 2026-09-29
+
+- Retain invocation-scoped command stages, timings and logs for live operation observers.
 
 ## 0.20.0 - 2026-09-28
 
