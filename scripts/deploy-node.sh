@@ -501,7 +501,10 @@ CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_PATH:-}"
 if [[ "$REMOTE_OS" == "Darwin" && -z "$CAPTURE_HELPER_REMOTE" ]]; then
   existing_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
   if run "test -f $(printf '%q' "$existing_plist")"; then
-    run "/usr/bin/plutil -lint $(printf '%q' "$existing_plist")" >/dev/null
+    if ! run "/usr/bin/plutil -lint $(printf '%q' "$existing_plist")" >/dev/null; then
+      echo "[deploy] cannot read a valid service plist: $existing_plist" >&2
+      exit 1
+    fi
     # A valid existing plist may omit the optional helper override.
     if existing_helper=$(run "/usr/bin/plutil -extract EnvironmentVariables.CAPTURE_HELPER_PATH raw -o - $(printf '%q' "$existing_plist")" 2>/dev/null); then
       CAPTURE_HELPER_REMOTE="$existing_helper"

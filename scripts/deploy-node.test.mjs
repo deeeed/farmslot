@@ -96,7 +96,10 @@ elif command.startswith('/usr/bin/plutil -extract '):
               },
             );
           if (captureMode === 'corrupt') {
-            assert.throws(deploy);
+            assert.throws(deploy, (error) => {
+              assert.match(String(error.stderr), /cannot read a valid service plist/);
+              return true;
+            });
             assert.equal(fs.existsSync(path.join(root, 'service.plist')), false);
             return;
           }
