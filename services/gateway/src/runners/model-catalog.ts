@@ -70,6 +70,7 @@ async function queryCommandCatalog(
     const code = failure.code;
     if (
       !failure.killed &&
+      typeof failure.signal !== 'string' &&
       typeof code !== 'number' &&
       !['ENOENT', 'EACCES', 'EPERM', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(String(code))
     )
@@ -78,7 +79,7 @@ async function queryCommandCatalog(
       runner,
       status: 'unavailable',
       source: 'catalog-command',
-      detail: `Runner catalog command failed (code: ${code ?? 'none'}, signal: ${failure.signal ?? 'none'}, timeout: ${failure.killed === true}). Check the runner installation and authentication on the gateway host.`,
+      detail: `Runner catalog command failed (code: ${code ?? 'none'}, signal: ${failure.signal ?? 'none'}, killed: ${failure.killed === true}). Check the runner installation and authentication on the gateway host.`,
       models: [],
     };
   }

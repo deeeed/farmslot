@@ -124,6 +124,15 @@ test('catalog command execution uses the capability and fails closed when unavai
 });
 
 test('catalog failures expose exit status and parser errors without swallowing programming errors', async () => {
+  const signalled = await queryRunnerModelCatalog('example', {
+    command: process.execPath,
+    args: ['-e', 'process.kill(process.pid, "SIGTERM")'],
+    parse: parseCursorModelCatalog,
+  });
+  assert.equal(signalled.status, 'unavailable');
+  assert.match(signalled.detail ?? '', /signal: SIGTERM/);
+  assert.match(signalled.detail ?? '', /killed: false/);
+  assert.doesNotMatch(signalled.detail ?? '', /timeout:/);
   const exited = await queryRunnerModelCatalog('example', {
     command: process.execPath,
     args: ['-e', 'process.exit(7)'],
