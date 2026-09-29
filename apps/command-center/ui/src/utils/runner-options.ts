@@ -12,49 +12,21 @@ import {
   PI_THINKING_LEVELS,
   type PiThinkingLevel,
   type ReviewRunnerId,
+  RUNNER_PICKER_MODELS,
 } from '@farmslot/protocol';
+
+import { rememberedDefaultModel, rememberedVisibleModels } from './runner-visible-cache.js';
 
 export type EffortLevel = '' | CodexReasoningEffort | PiThinkingLevel;
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok', 'pi'];
 
-// Pi's Anthropic OAuth provider uses Anthropic model IDs. Keep the provider
-// prefix so launch-command.ts cannot mistake them for xAI's bare model IDs.
-export const PI_ANTHROPIC_MODELS = [
-  'anthropic/claude-opus-5',
-  'anthropic/claude-sonnet-5',
-  'anthropic/claude-haiku-4-5',
-  'anthropic/claude-fable-5-1',
-] as const;
+export { PI_ANTHROPIC_MODELS } from '@farmslot/protocol';
 
-export const MODELS_BY_RUNNER: Record<string, string[]> = {
-  claude: ['sonnet', 'opus', 'haiku', 'fable'],
-  // Keep Astra selectable when Sol is the default.
-  codex: [
-    DEFAULT_CODEX_MODEL,
-    'gpt-6-astra',
-    'gpt-6-luna',
-    'gpt-5.6-sol',
-    'gpt-5.6-terra',
-    'gpt-5.6-luna',
-  ],
-  // Cursor Agent IDs from `cursor-agent --list-models`. The first entry is the
-  // shared protocol default used by every client.
-  cursor: [
-    DEFAULT_CURSOR_MODEL,
-    'composer-2.5',
-    'composer-2.5-fast',
-    'cursor-grok-4.6-high',
-    'cursor-grok-4.6-xhigh',
-    'grok-4.7-high',
-    'grok-4.7-xhigh',
-    'gpt-5.6-sol-medium',
-    'gpt-5.6-sol-high',
-    'gpt-5.6-sol-max',
-  ],
-  grok: [DEFAULT_GROK_MODEL, 'grok-4.7'],
-  pi: [DEFAULT_PI_MODEL, ...PI_ANTHROPIC_MODELS],
-};
+/** Built-in picker models, shared with the gateway's visible-model seed. */
+export const MODELS_BY_RUNNER: Record<string, string[]> = Object.fromEntries(
+  Object.entries(RUNNER_PICKER_MODELS).map(([runner, models]) => [runner, [...models]]),
+);
 
 /** Dispatch hint: PI accepts OpenAI-compatible ids once the worker registers them. */
 export const PI_COMPAT_MODEL_HINT =
@@ -68,13 +40,27 @@ export const DEFAULT_MODEL: Record<string, string> = {
   pi: DEFAULT_PI_MODEL,
 };
 
-/** Canonical selectable models for a runner. Never mixes models across runners. */
-export function modelsForRunner(runner: string, selectedModel?: string): string[] {
-  const models = [...(MODELS_BY_RUNNER[runner] ?? [])];
-  if (runner === 'codex' && (selectedModel === 'gpt-5.5' || selectedModel === 'gpt-5.4')) {
-    models.push(selectedModel);
-  }
-  return models;
+export function defaultModelForRunner(runner: string): string {
+  return rememberedDefaultModel(runner) ?? DEFAULT_MODEL[runner] ?? '';
+}
+
+/**
+ * Selectable models for a runner. A saved visible set from this page wins over the
+ * built-in seed, and a selected model outside that set stays listed.
+ */
+export function modelsForRunner(runner: string, selected?: string): string[] {
+  const models = rememberedVisibleModels(runner) ?? [...(MODELS_BY_RUNNER[runner] ?? [])];
+  const defaultModel = defaultModelForRunner(runner);
+  return [
+    ...new Set(
+      [...models, defaultModel, selected].filter((model): model is string => Boolean(model)),
+    ),
+  ];
+}
+
+/** A model id restored from a URL or draft: kept as typed, and validated again at launch. */
+export function isRestorableModelId(model: unknown): model is string {
+  return typeof model === 'string' && /^[A-Za-z0-9][^\s]*$/.test(model);
 }
 
 /** Keep a selected model when still valid; otherwise fall back to the runner default. */
@@ -91,7 +77,7 @@ export function modelForRunnerChange(
   }
   const allowed = modelsForRunner(runner);
   if (currentModel && allowed.includes(currentModel)) return currentModel;
-  return DEFAULT_MODEL[runner] ?? allowed[0] ?? '';
+  return defaultModelForRunner(runner) || allowed[0] || '';
 }
 
 // Effort: claude/cursor don't use it. Codex and Grok are runner-specific.
@@ -104,11 +90,20 @@ export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   pi: [...PI_THINKING_LEVELS],
 };
 
-/** Select efforts supported by the runner and the selected model. */
-export function effortsForRunner(runner: string, model: string): EffortLevel[] {
-  return runner === 'codex'
-    ? [...codexReasoningEfforts(model)]
-    : [...(EFFORT_BY_RUNNER[runner] ?? [])];
+/**
+ * Efforts the gateway accepts for the runner and model. When the runner's catalog
+ * lists reasoning modes for the model, only accepted modes it also lists are offered.
+ */
+export function effortsForRunner(
+  runner: string,
+  model: string,
+  catalogModes?: readonly string[],
+): EffortLevel[] {
+  const accepted =
+    runner === 'codex' ? [...codexReasoningEfforts(model)] : [...(EFFORT_BY_RUNNER[runner] ?? [])];
+  return catalogModes?.length
+    ? accepted.filter((effort) => catalogModes.includes(effort))
+    : accepted;
 }
 
 /** Launch default when effort is omitted (matches gateway resolveRunnerEffort). */

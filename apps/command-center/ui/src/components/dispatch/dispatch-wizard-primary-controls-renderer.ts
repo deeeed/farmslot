@@ -78,7 +78,9 @@ export function renderDispatchWizardPrimaryControls(
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${ctx.workflowControls}
     <details class="config-group" data-testid="dispatch-execution-options">
-      <summary>Execution options · ${ctx.runner} / ${ctx.model}</summary>
+      <summary data-testid="dispatch-execution-summary">
+        Execution options · ${ctx.runner} / ${ctx.model}
+      </summary>
       ${renderRunnerModelConfig(ctx)}
       ${html`<div>
           <div

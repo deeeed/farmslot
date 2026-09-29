@@ -93,6 +93,10 @@ const privilegedReasons = {
   'analytics.query': 'enumerates and reads analytics paths directly',
   'analytics.backfill': 'writes analytics records and updates runs',
   'operator.snapshot': 'transitively invokes decision.list',
+  'runner.modelCatalog':
+    'queries a runner catalog capability using a local cache or bounded catalog command',
+  'runner.visibleModels.get': 'reads the operator visible-model file',
+  'runner.visibleModels.set': 'writes the operator visible-model file',
 };
 
 const registry = registryMethods();

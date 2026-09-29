@@ -32,6 +32,7 @@ export * from './resource-pressure-selection.js';
 export * from './resources.js';
 export * from './roadmap.js';
 export * from './run.js';
+export * from './runner-models.js';
 export * from './runtime-capabilities.js';
 export * from './search.js';
 export * from './slot.js';

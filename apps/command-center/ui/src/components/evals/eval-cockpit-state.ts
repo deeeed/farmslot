@@ -88,6 +88,7 @@ export abstract class EvalCockpitState extends LitElement {
   _lastUrlState = '';
   readonly _onHashChange = () => this._restoreUrlState();
   _unsub?: () => void;
+  @state() _visibleModelsError = '';
   _catalogCache: {
     override: EvalCaseCatalogItem[] | null;
     runs: Run[];

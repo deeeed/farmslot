@@ -14,6 +14,7 @@ import {
   COMPARISON_LANE_RUNNERS,
   DEFAULT_EFFORT,
   DEFAULT_MODEL,
+  defaultModelForRunner,
   EFFORT_BY_RUNNER,
   effortsForRunner,
   EVAL_CANDIDATE_RUNNERS,
@@ -23,6 +24,20 @@ import {
   PI_ANTHROPIC_MODELS,
   PI_COMPAT_MODEL_HINT,
 } from './runner-options.js';
+import { clearVisibleModels, rememberVisibleModels } from './runner-visible-cache.js';
+
+test('saved default controls new choices without rewriting an explicit model', () => {
+  try {
+    rememberVisibleModels('cursor', ['composer-2.5'], 'claude-opus-5-5-medium');
+    assert.equal(defaultModelForRunner('cursor'), 'claude-opus-5-5-medium');
+    assert.equal(modelForRunnerChange('cursor', ''), 'claude-opus-5-5-medium');
+    assert.ok(modelsForRunner('cursor').includes('claude-opus-5-5-medium'));
+    assert.equal(modelForRunnerChange('cursor', 'composer-2.5'), 'composer-2.5');
+  } finally {
+    clearVisibleModels();
+  }
+  assert.equal(defaultModelForRunner('cursor'), 'claude-opus-5-5-high');
+});
 
 test('eval candidates expose Cursor and Grok through the shared comparison runner allowlist', () => {
   assert.equal(COMPARISON_LANE_RUNNERS.has('cursor'), true);
@@ -31,6 +46,7 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
   assert.equal(EVAL_CANDIDATE_RUNNERS.includes('grok'), true);
   assert.deepEqual(MODELS_BY_RUNNER.cursor, [
     DEFAULT_CURSOR_MODEL,
+    'cursor-grok-4.6-high-fast',
     'composer-2.5',
     'composer-2.5-fast',
     'cursor-grok-4.6-high',
@@ -44,6 +60,12 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
   assert.deepEqual(MODELS_BY_RUNNER.grok, [DEFAULT_GROK_MODEL, 'grok-4.7']);
   assert.equal(DEFAULT_GROK_MODEL, 'grok-4.6');
   assert.equal(DEFAULT_MODEL.cursor, DEFAULT_CURSOR_MODEL);
+  assert.equal(DEFAULT_CURSOR_MODEL, 'claude-opus-5-5-high');
+  assert.equal(modelForRunnerChange('cursor', ''), 'claude-opus-5-5-high');
+  assert.equal(
+    modelForRunnerChange('cursor', 'cursor-grok-4.6-high-fast'),
+    'cursor-grok-4.6-high-fast',
+  );
   assert.equal(MODELS_BY_RUNNER.cursor.includes('gpt-5.6-sol-max'), true);
   assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high-fast'), false);
   assert.equal(MODELS_BY_RUNNER.cursor.includes('cursor-grok-4.5-high'), false);
@@ -93,8 +115,8 @@ test('saved legacy Codex models stay selectable without appearing in new model l
   assert.equal(modelsForRunner('codex').includes('gpt-5.4'), false);
   assert.equal(modelsForRunner('codex', 'gpt-5.5').at(-1), 'gpt-5.5');
   assert.equal(modelsForRunner('codex', 'gpt-5.4').at(-1), 'gpt-5.4');
-  assert.deepEqual(modelsForRunner('codex', 'unsupported'), modelsForRunner('codex'));
-  assert.deepEqual(modelsForRunner('claude', 'gpt-5.4'), modelsForRunner('claude'));
+  assert.equal(modelsForRunner('codex', 'unsupported').at(-1), 'unsupported');
+  assert.equal(modelsForRunner('claude', 'gpt-5.4').at(-1), 'gpt-5.4');
 });
 
 test('Codex defaults to GPT-6 Sol and retains Astra alongside the 5.6 family', () => {
@@ -168,4 +190,25 @@ test('effort options respect the selected Codex model', () => {
   assert.deepEqual(effortsForRunner('codex', 'custom'), ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(effortsForRunner('codex', ''), ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(effortsForRunner('grok', 'grok-4.6'), EFFORT_BY_RUNNER.grok);
+});
+
+test('catalog reasoning modes narrow efforts but never add ones the gateway rejects', () => {
+  // A catalog-only Codex model lists max and ultra; launch validation accepts only the legacy set.
+  assert.deepEqual(
+    effortsForRunner('codex', 'gpt-7-preview', ['low', 'high', 'xhigh', 'max', 'ultra']),
+    ['low', 'high', 'xhigh'],
+  );
+  assert.deepEqual(effortsForRunner('codex', 'gpt-6-astra', ['high', 'ultra']), ['high', 'ultra']);
+  assert.deepEqual(effortsForRunner('pi', 'grok-4.6', ['high', 'turbo']), ['high']);
+  assert.deepEqual(effortsForRunner('codex', 'gpt-5.5', []), ['low', 'medium', 'high', 'xhigh']);
+});
+
+test('modelsForRunner keeps a selected model outside the visible list', () => {
+  assert.deepEqual(modelsForRunner('grok', 'grok-5-preview'), [
+    DEFAULT_GROK_MODEL,
+    'grok-4.7',
+    'grok-5-preview',
+  ]);
+  assert.deepEqual(modelsForRunner('grok', 'grok-4.7'), [DEFAULT_GROK_MODEL, 'grok-4.7']);
+  assert.deepEqual(modelsForRunner('grok', ''), [DEFAULT_GROK_MODEL, 'grok-4.7']);
 });

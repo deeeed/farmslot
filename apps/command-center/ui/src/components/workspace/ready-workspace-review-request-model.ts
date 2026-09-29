@@ -2,7 +2,7 @@ import type { ReviewLoopRequest, ReviewSessionIntent } from '@farmslot/protocol'
 
 import {
   DEFAULT_EFFORT,
-  DEFAULT_MODEL,
+  defaultModelForRunner,
   type EffortLevel,
   effortsForRunner,
   modelForRunnerChange,
@@ -11,7 +11,7 @@ import {
 import type { ReviewLoopDraft, ReviewRunnerChoice } from './ready-workspace-modal-renderers.js';
 
 function defaultsForRunner(runner: string): { model: string; effort: EffortLevel } {
-  const model = DEFAULT_MODEL[runner] ?? modelForRunnerChange(runner, '');
+  const model = defaultModelForRunner(runner) || modelForRunnerChange(runner, '');
   const efforts = effortsForRunner(runner, model);
   const preferred = DEFAULT_EFFORT[runner] ?? '';
   return {

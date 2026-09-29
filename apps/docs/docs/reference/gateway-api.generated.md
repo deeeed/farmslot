@@ -326,6 +326,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.slotHistory`                       | run              | bounded-write | —      | —      | Run SlotHistory gateway method.                       |
 | `run.tags.list`                         | run              | read-only     | —      | —      | Run Tags List gateway method.                         |
 | `run.tags.set`                          | run              | bounded-write | —      | —      | Run Tags Set gateway method.                          |
+| `runner.modelCatalog`                   | runner           | bounded-write | —      | —      | Runner ModelCatalog gateway method.                   |
+| `runner.visibleModels.get`              | runner           | read-only     | —      | —      | Runner VisibleModels Get gateway method.              |
+| `runner.visibleModels.set`              | runner           | bounded-write | —      | —      | Runner VisibleModels Set gateway method.              |
 | `runtime.capability.acquire`            | runtime          | bounded-write | —      | —      | Runtime Capability Acquire gateway method.            |
 | `runtime.capability.list`               | runtime          | read-only     | —      | —      | Runtime Capability List gateway method.               |
 | `runtime.capability.release`            | runtime          | lifecycle     | —      | —      | Runtime Capability Release gateway method.            |

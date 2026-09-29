@@ -10,8 +10,6 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
-import { DEFAULT_MODEL } from '../../utils/runner-options.js';
-
 import {
   activeEvalRunCount,
   applyCandidateRunner,
@@ -456,7 +454,7 @@ test('sanitizeCandidateRows restores valid URL rows and drops invalid labels/mod
   assert.equal(rows[0].repeat, true);
 });
 
-test('sanitizeCandidateRows preserves saved legacy Codex choices without accepting unknown models', () => {
+test('sanitizeCandidateRows preserves saved model ids for launch validation', () => {
   for (const model of ['gpt-5.4', 'gpt-5.5']) {
     const [row] = sanitizeCandidateRows([{ id: `legacy-${model}`, runner: 'codex', model }]);
     assert.equal(row.model, model);
@@ -464,10 +462,14 @@ test('sanitizeCandidateRows preserves saved legacy Codex choices without accepti
     assert.equal(candidateModelOptions('codex').includes(model), false);
     assert.equal(applyCandidateRunner(row, 'codex').model, model);
   }
-  assert.equal(
-    sanitizeCandidateRows([{ runner: 'codex', model: 'unknown' }])[0].model,
-    DEFAULT_MODEL.codex,
-  );
+  assert.equal(sanitizeCandidateRows([{ runner: 'codex', model: 'unknown' }])[0].model, 'unknown');
+});
+
+test('switching runners uses the new default even when the prior model exists in both catalogs', () => {
+  const [row] = sanitizeCandidateRows([{ id: 'shared-model', runner: 'pi', model: 'grok-4.7' }]);
+  const changed = applyCandidateRunner(row, 'grok');
+  assert.equal(changed.model, 'grok-4.6');
+  assert.equal(applyCandidateRunner(row, 'pi').model, 'grok-4.7');
 });
 
 test('sanitizeSelectedCases keeps restorable URL cases and omits malformed entries', () => {
@@ -497,4 +499,14 @@ test('sanitizeSelectedCases keeps restorable URL cases and omits malformed entri
   assert.equal(rows[0].sourceStatusLabel, 'manual');
   assert.equal(rows[0].runStatusLabel, 'done');
   assert.equal(rows[0].packagePath, '/tmp/pkg.json');
+});
+
+test('sanitizeCandidateRows keeps a restored model for a valid runner before visibility loads', () => {
+  const [row] = sanitizeCandidateRows([
+    { id: 'candidate-a', runner: 'codex', model: 'gpt-6-luna' },
+  ]);
+  assert.equal(row.runner, 'codex');
+  assert.equal(row.model, 'gpt-6-luna');
+  const [unsafe] = sanitizeCandidateRows([{ id: 'candidate-b', runner: 'codex', model: '--yolo' }]);
+  assert.equal(unsafe.model, defaultRows()[0].model);
 });

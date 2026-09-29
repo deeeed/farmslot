@@ -302,6 +302,18 @@ export const AUTHORIZATION_METHOD_CLASSIFICATION = {
   'run.slotHistory': { classification: 'admin' },
   'run.tags.list': { classification: 'admin' },
   'run.tags.set': { classification: 'admin' },
+  'runner.modelCatalog': {
+    classification: 'admin',
+    reason: 'queries a runner catalog capability using a local cache or bounded catalog command',
+  },
+  'runner.visibleModels.get': {
+    classification: 'admin',
+    reason: 'reads the operator visible-model file',
+  },
+  'runner.visibleModels.set': {
+    classification: 'admin',
+    reason: 'writes the operator visible-model file',
+  },
   'runtime.capability.acquire': { classification: 'admin' },
   'runtime.capability.list': { classification: 'admin' },
   'runtime.capability.release': { classification: 'admin' },
