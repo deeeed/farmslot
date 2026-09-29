@@ -13,7 +13,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 for (const platform of ['Darwin', 'Linux']) {
   for (const native of [false, true]) {
     for (const captureMode of platform === 'Darwin'
-      ? ['bundled', 'retained', 'override']
+      ? ['bundled', 'retained', 'override', 'missing-key', 'corrupt']
       : ['bundled']) {
       test(`deploy-node renders ${platform} service with native=${native}, capture=${captureMode}`, () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-deploy-render-'));
@@ -55,8 +55,11 @@ elif command=='id -u': print('501')
 elif 'SHELL:-/bin/sh' in command: print('/bin/zsh' if os.environ['RENDER_OS']=='Darwin' else '/bin/bash')
 elif 'which yarn' in command: print('no')
 elif command.startswith('test -d '): sys.exit(1)
-elif command.startswith('test -f ') and '.plist' in command: sys.exit(0 if os.environ.get('RENDER_CAPTURE_MODE')=='retained' else 1)
-elif command.startswith('/usr/bin/python3 -c ') and '.plist' in command: print('/opt/homebrew/bin/capture-helper')
+elif command.startswith('test -f ') and '.plist' in command: sys.exit(0 if os.environ.get('RENDER_CAPTURE_MODE') in ['retained','missing-key','corrupt'] else 1)
+elif command.startswith('/usr/bin/plutil -lint '): sys.exit(1 if os.environ.get('RENDER_CAPTURE_MODE')=='corrupt' else 0)
+elif command.startswith('/usr/bin/plutil -extract '):
+  if os.environ.get('RENDER_CAPTURE_MODE')=='retained': print('/opt/homebrew/bin/capture-helper')
+  else: sys.exit(1)
 `,
             true,
           );
@@ -74,23 +77,30 @@ elif command.startswith('/usr/bin/python3 -c ') and '.plist' in command: print('
             FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: native ? 'fixture-owner' : '',
             FARMSLOT_NODE_INSTANCE: 'prod',
           };
-          execFileSync(
-            'bash',
-            [
-              path.join(root, 'scripts/deploy-node.sh'),
-              'fixture-machine',
-              '127.0.0.1',
-              '--node-token-file',
-              path.join(root, 'node-token'),
-            ],
-            {
-              env,
-              cwd: root,
-              encoding: 'utf8',
-              stdio: ['ignore', 'pipe', 'pipe'],
-              timeout: 30000,
-            },
-          );
+          const deploy = () =>
+            execFileSync(
+              'bash',
+              [
+                path.join(root, 'scripts/deploy-node.sh'),
+                'fixture-machine',
+                '127.0.0.1',
+                '--node-token-file',
+                path.join(root, 'node-token'),
+              ],
+              {
+                env,
+                cwd: root,
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                timeout: 30000,
+              },
+            );
+          if (captureMode === 'corrupt') {
+            assert.throws(deploy);
+            assert.equal(fs.existsSync(path.join(root, 'service.plist')), false);
+            return;
+          }
+          deploy();
           let args;
           let servicePath;
           if (platform === 'Darwin') {

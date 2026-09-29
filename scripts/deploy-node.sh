@@ -501,8 +501,11 @@ CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_PATH:-}"
 if [[ "$REMOTE_OS" == "Darwin" && -z "$CAPTURE_HELPER_REMOTE" ]]; then
   existing_plist="$REMOTE_HOME/Library/LaunchAgents/com.farmslot.node${LAUNCHD_LABEL_SUFFIX}.plist"
   if run "test -f $(printf '%q' "$existing_plist")"; then
-    helper_reader='import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb")).get("EnvironmentVariables", {}).get("CAPTURE_HELPER_PATH", ""))'
-    CAPTURE_HELPER_REMOTE=$(run "/usr/bin/python3 -c $(printf '%q' "$helper_reader") $(printf '%q' "$existing_plist")")
+    run "/usr/bin/plutil -lint $(printf '%q' "$existing_plist")" >/dev/null
+    # A valid existing plist may omit the optional helper override.
+    if existing_helper=$(run "/usr/bin/plutil -extract EnvironmentVariables.CAPTURE_HELPER_PATH raw -o - $(printf '%q' "$existing_plist")" 2>/dev/null); then
+      CAPTURE_HELPER_REMOTE="$existing_helper"
+    fi
   fi
 fi
 CAPTURE_HELPER_REMOTE="${CAPTURE_HELPER_REMOTE:-$REMOTE_DIR/node_modules/@siteed/capture-helper/native/capture-helper}"
@@ -513,7 +516,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   if run "PATH=$NODE_DIR:\$PATH $NODE_PATH -e 'const { spawnSync } = require(\"node:child_process\"); const bin = process.argv[1]; const result = spawnSync(bin, [\"doctor\", \"--json\"], { encoding: \"utf8\", timeout: 15000, maxBuffer: 1024 * 1024 }); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout || (result.error && result.error.message) || \"capture-helper doctor failed\"); process.exit(1); }' $CAPTURE_HELPER_REMOTE_QUOTED"; then
     echo "[deploy] capture-helper doctor ok"
   else
-    echo "[deploy] WARNING: capture-helper doctor failed on $MACHINE; grant Screen Recording permission or run: $CAPTURE_HELPER_REMOTE doctor --open-permissions" >&2
+    echo "[deploy] WARNING: capture-helper doctor failed on $MACHINE; grant Screen Recording permission or run: $CAPTURE_HELPER_REMOTE_QUOTED doctor --open-permissions" >&2
   fi
 fi
 
