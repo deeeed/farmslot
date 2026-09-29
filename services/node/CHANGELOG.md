@@ -4,6 +4,8 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- Preserve configured capture-helper executables during node deployment, with an explicit target-path override.
+
 - fix(auth): the node reports itself connected only after the gateway ACKs `node.connect`. Registration refusals (native-owner mismatch, machine assigned to another principal) now surface the gateway code and message and reconnect with bounded backoff instead of sitting silently on an open socket; gateway requests time out and settle on socket close or error with their listeners removed, a superseded handshake never touches the newer socket, and backoff resets on registration rather than on auth. Proof: `docs/examples/recipes/farmslot/node-registration-handshake.recipe.json`.
 - fix(deploy): raise the bundled `@siteed/capture-helper` floor to `^0.2.6` so a deployed lockfile that kept 0.2.1 upgrades on the next install; 0.2.1 rejects the node's `+match <app>\t<window>` probe, so screen probes never started. The helper's release version is independent of the gateway protocol version the node registers with.
 

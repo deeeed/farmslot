@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.21.1 - 2026-09-29
+
+- Keep operation records, logs and newly created runtime directories readable under restrictive inherited umasks.
+
 ## 0.21.0 - 2026-09-29
 
 - Retain invocation-scoped command stages, timings and logs for live operation observers.

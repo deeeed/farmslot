@@ -45,8 +45,9 @@ export class OperationRecord {
       ...(options.mirrorDirectory ? [path.join(options.mirrorDirectory, `${id}.json`)] : []),
     ];
     const logPath = path.join(options.mirrorDirectory ?? directory, `${id}.log`);
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    ensureRuntimeDirectory(path.dirname(logPath));
     fs.writeFileSync(logPath, '', { flag: 'wx', mode: 0o600 });
+    fs.chmodSync(logPath, 0o600);
     const identity = processIdentity(process.pid);
     if (!identity) throw new Error('Cannot identify the operation owner process');
     this.value = {
@@ -62,7 +63,7 @@ export class OperationRecord {
       status: 'running',
       logPath,
     };
-    for (const file of this.files) fs.mkdirSync(path.dirname(file), { recursive: true });
+    for (const file of this.files) ensureRuntimeDirectory(path.dirname(file));
     this.flush();
     this.timer = setInterval(() => this.observe(() => this.flush()), 5000);
     this.timer.unref();
@@ -113,6 +114,7 @@ export class OperationRecord {
     for (const file of this.files) {
       const temporary = `${file}.${process.pid}.tmp`;
       fs.writeFileSync(temporary, `${JSON.stringify(this.value)}\n`, { mode: 0o600 });
+      fs.chmodSync(temporary, 0o600);
       fs.renameSync(temporary, file);
     }
     if (this.notification) {
@@ -120,9 +122,24 @@ export class OperationRecord {
       fs.writeFileSync(temporary, JSON.stringify({ updatedAt: this.value.updatedAt }), {
         mode: 0o600,
       });
+      fs.chmodSync(temporary, 0o600);
       fs.renameSync(temporary, this.notification);
     }
   }
+}
+
+// New observation directories must remain traversable even under a restrictive umask.
+export function ensureRuntimeDirectory(directory: string): void {
+  if (fs.existsSync(directory)) return;
+  ensureRuntimeDirectory(path.dirname(directory));
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+  } catch (error) {
+    // Another invocation can create the shared directory first.
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+    throw error;
+  }
+  fs.chmodSync(directory, 0o700);
 }
 
 export function readOperations(

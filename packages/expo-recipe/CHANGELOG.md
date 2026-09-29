@@ -6,6 +6,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.12.2 - 2026-09-29
+
+- Publish with protocol 0.33.0 and recipe-harness 0.21.1 so consumers share one protocol and runtime.
+
 ## 0.12.1 - 2026-09-28
 
 - Publish against protocol 0.32.0 and recipe-harness 0.20.0 so downstream installs share one protocol and recording runtime.

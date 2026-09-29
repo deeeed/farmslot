@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Refuse review terminal reuse when its recorded runner or model differs from the launch request.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.15.1 - 2026-09-29
+
+- Publish with protocol 0.33.0 so consumers share the current task and runner contracts.
+
+- Refuse review terminal reuse when its recorded runner or model differs from the launch request.
 
 ## 0.15.0 - 2026-09-28
 
