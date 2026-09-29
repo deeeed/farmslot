@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { mock } from 'node:test';
-import fs from 'node:fs';
+
 import type { TaskProgressStructured } from '@farmslot/protocol';
+
 import {
-  OperationRecord,
   OperationOutputTail,
+  OperationRecord,
   readOperations,
 } from '../../../../packages/recipe-harness/src/runtime/operation.js';
+
 import { attachOperations } from './operations.js';
 
 function progress(): TaskProgressStructured {
@@ -80,10 +82,17 @@ test('concurrent pruning between directory listing and record read is harmless',
   const operation = new OperationRecord(root, 'build', root);
   operation.finish(0);
   const read = fs.readFileSync;
-  const stub = mock.method(fs, 'readFileSync', (file: Parameters<typeof fs.readFileSync>[0], options?: Parameters<typeof fs.readFileSync>[1]) => {
-    if (file === operation.file) rmSync(operation.file);
-    return read(file, options);
-  });
+  const stub = mock.method(
+    fs,
+    'readFileSync',
+    (
+      file: Parameters<typeof fs.readFileSync>[0],
+      options?: Parameters<typeof fs.readFileSync>[1],
+    ) => {
+      if (file === operation.file) rmSync(operation.file);
+      return read(file, options);
+    },
+  );
   try {
     assert.deepEqual(readOperations(root), []);
   } finally {

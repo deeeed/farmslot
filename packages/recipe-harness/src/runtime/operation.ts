@@ -1,9 +1,10 @@
 // Invocation records keep concurrent command observations independent of locks.
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { validateOperationRecord, type TaskOperation } from '@farmslot/protocol';
+
+import { type TaskOperation, validateOperationRecord } from '@farmslot/protocol';
 
 export function processIdentity(pid: number): string | undefined {
   try {

@@ -3,7 +3,6 @@
 // TASK.md is the task document and is never enumerated. The progress-path
 // resolver falls back to TASK.md only for task dirs written before the split.
 
-import { attachOperations } from '../tasks/operations.js';
 import path from 'node:path';
 
 import {
@@ -25,6 +24,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { readReviewWorkspaceProgress } from '../review-workspaces/task.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { readAcceptanceStatusForDisplay } from '../tasks/acceptance-status.js';
+import { attachOperations } from '../tasks/operations.js';
 import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import {
   attachSubtaskToStep,

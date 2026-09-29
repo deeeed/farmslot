@@ -1,8 +1,13 @@
 // Operation records are optional task artifacts emitted by command runtimes.
 import path from 'node:path';
-import { validateOperationRecord } from '@farmslot/protocol';
-import type { TaskOperation, TaskProgressStructured } from '@farmslot/protocol';
-import { slotFileExists, slotListDir, slotReadFile, type SlotLocality } from '../core/slot-io.js';
+
+import {
+  type TaskOperation,
+  type TaskProgressStructured,
+  validateOperationRecord,
+} from '@farmslot/protocol';
+
+import { slotFileExists, slotListDir, type SlotLocality, slotReadFile } from '../core/slot-io.js';
 
 export async function attachOperations(
   ctx: SlotLocality,

@@ -1,10 +1,10 @@
-import { renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import { html, nothing, type TemplateResult } from 'lit';
 
 import type { Run, TaskProgressStructured, TaskStepProgress } from '@farmslot/protocol';
 import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import { renderSubtaskBlock, type SubtaskOpenScope } from '../progress-tracker/subtask-block.js';
 
 import { isInteractiveCompletionAwaitingOperator } from './run-detail-model.js';

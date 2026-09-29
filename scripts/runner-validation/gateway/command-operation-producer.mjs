@@ -1,5 +1,6 @@
 // Emit a disposable command observation for the companion gateway/CDP recipe.
 import path from 'node:path';
+
 import { OperationRecord } from '../../../packages/recipe-harness/dist/runtime/operation.js';
 
 const [targetArg, taskArg] = process.argv.slice(2);

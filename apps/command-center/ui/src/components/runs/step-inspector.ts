@@ -1,4 +1,3 @@
-import { renderOperationPanel, OperationClock } from '../progress-tracker/operation-panel.js';
 import { html, nothing, type TemplateResult } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
@@ -14,6 +13,7 @@ import '../shared/step-artifacts.js';
 import '../shared/slot-prepare-options.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { OperationClock, renderOperationPanel } from '../progress-tracker/operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,

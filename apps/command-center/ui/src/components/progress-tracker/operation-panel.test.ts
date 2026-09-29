@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import type { TaskOperation, TaskProgressStructured } from '@farmslot/protocol';
+
 import { litText } from '../../testing/lit-text.js';
+
 import { renderOperationPanel } from './operation-panel.js';
 
 const now = Date.parse('2026-09-29T01:00:40Z');

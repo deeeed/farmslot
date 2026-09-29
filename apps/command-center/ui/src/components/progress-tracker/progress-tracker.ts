@@ -1,4 +1,3 @@
-import { renderOperationPanel, OperationClock } from './operation-panel.js';
 import { css, html, LitElement, nothing, type TemplateResult, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -11,6 +10,7 @@ import {
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { OperationClock, renderOperationPanel } from './operation-panel.js';
 import {
   renderSubtaskBlock,
   subtaskBlockStyles,

@@ -1,5 +1,7 @@
 import { html, nothing, type ReactiveController, type ReactiveControllerHost } from 'lit';
+
 import type { TaskProgressStructured } from '@farmslot/protocol';
+
 import { runDetailEvidenceArtifactHash } from '../runs/run-detail-url-state.js';
 
 function age(at: string, now: number): string {

@@ -1,12 +1,15 @@
 // Read HTTP byte ranges at the node so following a large log never downloads it all.
 import type { IncomingMessage, ServerResponse } from 'node:http';
+
 import {
   FILE_TRANSFER_CHUNK_MAX_BYTES,
   FILE_TRANSFER_CHUNK_RPC_TIMEOUT_MS,
   type NodeFsReadChunkResult,
 } from '@farmslot/protocol';
+
 import { getNode } from '../../fleet/machine-registry.js';
 import { sendNodeRequest } from '../../fleet/node-rpc.js';
+
 import {
   byteServingHeaders,
   parseRequestByteRange,

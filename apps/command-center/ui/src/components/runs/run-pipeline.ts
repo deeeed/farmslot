@@ -1,4 +1,3 @@
-import { OperationClock } from '../progress-tracker/operation-panel.js';
 import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
@@ -18,6 +17,7 @@ import {
   acceptancePanelStyles,
   renderAcceptancePanel,
 } from '../progress-tracker/acceptance-panel.js';
+import { OperationClock } from '../progress-tracker/operation-panel.js';
 import { subtaskBlockStyles, SubtaskOpenState } from '../progress-tracker/subtask-block.js';
 import type { FileTransferUiEntry } from '../shared/file-transfer-progress-model.js';
 import {

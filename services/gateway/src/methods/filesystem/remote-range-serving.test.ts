@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import test from 'node:test';
+
 import { serveRemoteRange } from './remote-range-serving.js';
 
 test('a tail of a large remote file requests only those bytes from the node', async () => {
