@@ -5,6 +5,7 @@ import {
   type FamilyObservabilityArtifact,
   resolveRunSlotId,
   type RunStep,
+  staticReviewReplayBlock,
   type TaskStepProgress,
 } from '@farmslot/protocol';
 
@@ -35,6 +36,7 @@ import {
   LOG_KEYS,
   OUTPUT_KEYS,
   reviewLoopAttempts,
+  reviewRequestHref,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   type StepCostInfo,
@@ -102,6 +104,8 @@ export class StepInspector extends StepInspectorState {
     // Extract cost info for prominent display
     const costInfo = this._extractCostInfo(s);
     const freshDispatchRecovery = isFreshDispatchRecovery(this.run, s.name);
+    const reviewBlock = this.run ? staticReviewReplayBlock(this.run, { stepName: s.name }) : null;
+    const reviewHref = this.run && reviewBlock ? reviewRequestHref(this.run) : null;
 
     return html`
       <div class="inspector">
@@ -109,7 +113,20 @@ export class StepInspector extends StepInspectorState {
           <span class="step-name">${s.name}</span>
           <span class="status" style="background:${sc}22; color:${sc}">${s.status}</span>
           ${duration ? html`<span class="duration">${duration}</span>` : nothing}
-          ${this.allowReplay
+          ${reviewBlock &&
+          this.run &&
+          ['failed', 'cancelled', 'blocked', 'done'].includes(this.run.status)
+            ? html`<span class="muted" data-testid="review-replay-explanation">${reviewBlock}</span>
+                ${reviewHref
+                  ? html`<a
+                      class="retry-btn"
+                      data-testid="review-request-replacement"
+                      href=${reviewHref}
+                      >Open PR review requests</a
+                    >`
+                  : nothing}`
+            : nothing}
+          ${this.allowReplay && !reviewBlock
             ? html`
                 <button class="retry-btn" @click=${this._onReplay}>
                   ${freshDispatchRecovery ? 'Abandon handoff + launch fresh' : 'Retry from here'}

@@ -43,6 +43,10 @@ test('recovery follows a blocked worker monitor regardless of project', () => {
     false,
   );
   assert.equal(isRecoverableBlockedWorkerRun({ ...run, steps: [] }), false);
+  assert.equal(
+    isRecoverableBlockedWorkerRun({ ...run, reviewWorkspaceTarget: { machine: 'local' } }),
+    false,
+  );
 });
 
 test('monitor replay requires a fresh timestamped non-blocked worker signal', () => {

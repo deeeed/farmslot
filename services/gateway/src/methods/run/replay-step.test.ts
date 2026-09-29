@@ -59,6 +59,64 @@ test('rollback release keeps a blocked replay eligible to acquire proof again', 
   assert.equal(rollbackReclaimedSlotReleaseOptions('failed', 'run-1'), undefined);
 });
 
+test('workspace replay rejects launch and runner changes without mutating the attempt', async (context) => {
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'replay-test-owner';
+  const run = createRun(
+    {
+      flowType: 'review-pr',
+      project: 'replay-test',
+      ticketOrPr: 'example/app#42',
+      transport: 'tmux',
+      reviewWorkspaceTarget: { machine: 'local' },
+      runner: 'grok',
+      model: 'grok-4.6',
+    },
+    { nativeOwnerPrincipalId: 'replay-test-owner' },
+  );
+  context.after(async () => {
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+    await evictTestRun(run.id, 'failed');
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    reviewWorkspaceTarget: { machine: 'local' },
+    reviewWorkspace: {
+      workspaceId: 'owned',
+      machine: 'local',
+      executionNodeId: 'local',
+      checkoutPath: '/source',
+      taskPath: '/task',
+      artifactPath: '/task/artifacts',
+      cleanedAt: new Date().toISOString(),
+    },
+    engineState: { generation: 4 },
+  });
+  const before = structuredClone(getRun(run.id));
+  const events: unknown[] = [];
+  for (const params of [
+    { stepName: 'dispatch', runner: 'cursor', model: 'claude-opus-5-5-high' },
+    { stepName: 'find-slot' },
+    { stepName: 'write-task' },
+    { stepName: 'prepare' },
+    { stepName: 'monitor', runner: 'cursor' },
+  ]) {
+    await assert.rejects(
+      runReplayStep({ runId: run.id, ...params }, (...event) => events.push(event)),
+      { code: 'REVIEW_RESTART_REQUIRED' },
+    );
+    assert.deepEqual(getRun(run.id), before);
+    assert.deepEqual(events, []);
+  }
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'another-owner';
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'dispatch' }, () => {}),
+    { code: 'AUTH_FORBIDDEN' },
+  );
+  assert.deepEqual(getRun(run.id), before);
+});
+
 test('fresh dispatch replay drops only retained-handoff flags', () => {
   assert.deepEqual(
     freshDispatchEngineStateForReplay(

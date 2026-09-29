@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Replace unsafe static-review setup retries with a link to request another review of the same PR.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-09-29

@@ -17,7 +17,7 @@ import {
   GatewayConnectionError,
   type GatewayConnection,
 } from '../packages/cli/src/gateway-client.js';
-import type { PRRulesListResult, PRTeamProfile } from '../packages/protocol/src/index.js';
+import type { PRRulesListResult, PRTeamProfile, Run } from '../packages/protocol/src/index.js';
 import {
   createRecipeRunner,
   createStandardCoreAdapters,
@@ -95,7 +95,10 @@ async function main() {
     const result = await runner.run({
       recipeDocument: JSON.parse(
         await readFile(
-          path.join(root, 'docs/examples/recipes/farmslot/static-review-interface.recipe.json'),
+          path.resolve(
+            root,
+            process.argv[4] ?? 'docs/examples/recipes/farmslot/static-review-interface.recipe.json',
+          ),
           'utf8',
         ),
       ),
@@ -256,6 +259,9 @@ process.stdout.write(JSON.stringify(body));
     FARMSLOT_GATEWAY_TOKEN: token,
     FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID: 'legacy-env',
     FARMSLOT_DISABLE_ORCHESTRATION: '1',
+    ...(process.argv[3] === 'recovery'
+      ? { FARMSLOT_DISABLE_RUN_ENGINE_START: '1', NODE_TEST_CONTEXT: '1' }
+      : {}),
     FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
     FARMSLOT_CDP_PORT: String(cdpPort),
     FARMSLOT_CDP_PROFILE: path.join(fixture, 'chrome'),
@@ -320,6 +326,52 @@ process.stdout.write(JSON.stringify(body));
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+  await json(path.join(fixture, 'runs/ui-review-recovery.json'), {
+    ...runBase,
+    id: 'ui-review-recovery',
+    flowType: 'review-pr',
+    status: 'failed',
+    transport: 'tmux',
+    nativeOwnerPrincipalId: 'legacy-env',
+    reviewWorkspaceTarget: { machine: 'review-one' },
+    reviewWorkspace: {
+      workspaceId: 'ui-review-workspace',
+      machine: 'review-one',
+      executionNodeId: 'local',
+      checkoutPath: path.join(fixture, 'source'),
+      taskPath: path.join(fixture, 'task'),
+      artifactPath: path.join(fixture, 'task/artifacts'),
+      cleanedAt: runBase.updatedAt,
+    },
+    metrics: { runner: 'grok', model: 'grok-4.6' },
+    engineState: { generation: 3 },
+    steps: ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor', 'human-gate'].map(
+      (name) => ({ name, status: name === 'dispatch' ? 'failed' : 'pending' }),
+    ),
+  });
+  const reviewRecovery = JSON.parse(
+    await readFile(path.join(fixture, 'runs/ui-review-recovery.json'), 'utf8'),
+  );
+  for (const state of ['live', 'cleaned']) {
+    await json(path.join(fixture, `runs/ui-monitor-${state}.json`), {
+      ...reviewRecovery,
+      id: `ui-monitor-${state}`,
+      status: 'blocked',
+      metrics: { ...reviewRecovery.metrics, disposition: 'blocked' },
+      taskFile: path.join(fixture, 'task/TASK.md'),
+      reviewWorkspace: {
+        ...reviewRecovery.reviewWorkspace,
+        cleanedAt: state === 'cleaned' ? runBase.updatedAt : undefined,
+      },
+      steps: reviewRecovery.steps.map((step: { name: string }) => ({
+        ...step,
+        status: step.name === 'human-gate' ? 'pending' : 'done',
+        ...(step.name === 'monitor'
+          ? { outputs: { workerSignal: { status: 'blocked', attemptId: 'original' } } }
+          : {}),
+      })),
+    });
+  }
   await json(path.join(fixture, 'runs/ui-qa-profile.json'), {
     ...runBase,
     id: 'ui-qa-profile',
@@ -455,6 +507,88 @@ process.stdout.write(JSON.stringify(body));
     }
     throw new Error(`Expected ${count} persisted PR submissions`);
   }
+  async function validateRecovery() {
+    assert(connection);
+    const beforeReplay = await connection.call('run.get', { runId: 'ui-review-recovery' });
+    await assert.rejects(
+      connection.call('run.replayStep', {
+        runId: 'ui-review-recovery',
+        stepName: 'dispatch',
+        runner: 'cursor',
+        model: 'claude-opus-5-5-high',
+      }),
+      /new review request/,
+    );
+    await assert.rejects(
+      connection.call('run.replayStep', { runId: 'ui-review-recovery', stepName: 'find-slot' }),
+      /already owns a workspace/,
+    );
+    assert.deepEqual(
+      await connection.call('run.get', { runId: 'ui-review-recovery' }),
+      beforeReplay,
+    );
+    await json(path.join(evidence, 'review-replay-unchanged.json'), beforeReplay);
+    for (const state of process.argv[3] === 'recovery' ? ['live', 'cleaned'] : []) {
+      const runId = `ui-monitor-${state}`;
+      const before = await connection.call<{ run: Run }>('run.get', { runId });
+      await connection.call('run.replayStep', { runId, stepName: 'monitor' });
+      const after = await connection.call<{ run: Run }>('run.get', { runId });
+      assert.equal(after.run.status, 'monitoring');
+      assert.equal(after.run.engineState?.generation, 4);
+      assert.deepEqual(after.run.reviewWorkspace, before.run.reviewWorkspace);
+      assert.deepEqual(after.run.agentContexts, before.run.agentContexts);
+      assert.equal(after.run.metrics.runner, before.run.metrics.runner);
+      assert.equal(after.run.steps.find((step) => step.name === 'dispatch')?.status, 'done');
+      await json(path.join(evidence, `monitor-replay-${state}.json`), after);
+    }
+    cdp('goto', `http://127.0.0.1:${uiPort}/#runs?run=ui-review-recovery&step=dispatch`);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        JSON.parse(
+          cdp(
+            'eval',
+            'runs',
+            walk + `return Boolean(find('[data-testid="review-request-replacement"]'));`,
+          ),
+        )
+      )
+        break;
+      await delay(200);
+    }
+    const recovery = JSON.parse(
+      cdp(
+        'eval',
+        'runs',
+        walk +
+          `return {href:find('[data-testid="review-request-replacement"]')?.element.getAttribute('href'),retry:find('step-inspector')?.element.shadowRoot.textContent.includes('Retry from here')};`,
+      ),
+    );
+    assert.equal(recovery.retry, false);
+    assert.match(recovery.href, /repo=example%2Fapp&pr=42/);
+    cdp('screenshot', 'runs', path.join(evidence, 'review-recovery.png'));
+    cdp(
+      'click',
+      'runs',
+      cdp('eval', 'runs', walk + `return find('[data-testid="review-request-replacement"]').path;`),
+    );
+    await waitUI(`return Boolean(find('[data-testid="pr-workspace-request-review"]'));`);
+    await waitUI(
+      `return find('pr-automation-panel')?.element.reviewBlockedReason === 'PR details are unavailable; review status could not be checked.';`,
+    );
+    assert.equal(
+      evaluate(`return find('[data-testid="pr-review-request-open"]').element.disabled;`),
+      true,
+    );
+    click(selector('pr-workspace-request-review'));
+    await waitUI(`return Boolean(find('pr-review-request-form'));`);
+    assert.equal(
+      evaluate(
+        `return find('pr-review-request-form').element.shadowRoot.querySelector('[data-testid="pr-review-request-url"]').value;`,
+      ),
+      'https://github.com/example/app/pull/42',
+    );
+    await screenshot('review-recovery-request');
+  }
   try {
     const client = new GatewayClient({
       url: `ws://127.0.0.1:${gatewayPort}`,
@@ -523,6 +657,11 @@ process.stdout.write(JSON.stringify(body));
       `const modal=find('whats-new-modal')?.element;modal?.shadowRoot?.querySelector('button.primary')?.click();return true;`,
     );
     click(selector('pr-automation-tab-reviews'));
+    if (process.argv[3] === 'recovery') {
+      await validateRecovery();
+      console.log(JSON.stringify({ passed: true, evidence, scope: 'static-review-recovery' }));
+      return;
+    }
     await waitUI(
       `return Boolean(find(${JSON.stringify(selector('pr-workspace-request-review'))}));`,
     );
@@ -838,7 +977,14 @@ process.stdout.write(JSON.stringify(body));
         .map((run) => run.id)
         .filter((id) => !id.startsWith('ui-ownership-'))
         .sort(),
-      ['ui-automatic-qa', 'ui-publication-published', 'ui-qa-profile'],
+      [
+        'ui-automatic-qa',
+        'ui-monitor-cleaned',
+        'ui-monitor-live',
+        'ui-publication-published',
+        'ui-qa-profile',
+        'ui-review-recovery',
+      ],
     );
     // Clearing the last slot is an incomplete draft, not a rejected edit.
     async function clearRepairDraft(kind: string) {
@@ -1061,6 +1207,7 @@ process.stdout.write(JSON.stringify(body));
     );
     cdp('screenshot', 'runs', path.join(evidence, 'publication-published.png'));
 
+    await validateRecovery();
     console.log(
       JSON.stringify({
         passed: true,

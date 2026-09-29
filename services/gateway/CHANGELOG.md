@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.19.0 - 2026-09-29

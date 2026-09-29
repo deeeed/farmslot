@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Share static-review replay eligibility between clients and the gateway while preserving saved-report recovery.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.33.0 - 2026-09-29

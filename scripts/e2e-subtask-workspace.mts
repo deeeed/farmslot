@@ -157,6 +157,8 @@ async function main(): Promise<void> {
     await import('../services/gateway/src/review-workspaces/task.js');
   const { executeReviewWorkspaceStep } =
     await import('../services/gateway/src/review-workspaces/pipeline.js');
+  const { REVIEW_STARTUP_TIMEOUT_MS } =
+    await import('../services/gateway/src/runners/review-tmux.js');
   const { taskProgress } = await import('../services/gateway/src/methods/task.js');
   const { runsDirectory } = await import('../services/gateway/src/runs/store.js');
 
@@ -302,6 +304,20 @@ async function main(): Promise<void> {
         `last seen ${JSON.stringify(publishedChild(step))}`,
     );
   }
+
+  const reviewContexts = getRun(runId)!.agentContexts!;
+  updateRun(runId, {
+    agentContexts: reviewContexts.map((context) => ({
+      ...context,
+      promptDeliveryStartedAt: new Date(Date.now() - REVIEW_STARTUP_TIMEOUT_MS - 1).toISOString(),
+    })),
+  });
+  await assert.rejects(monitor('unacknowledged launch deadline'), {
+    detail: 'review-startup-unacknowledged',
+  });
+  assert.equal(run('tmux', ['has-session', '-t', session]).status, 0);
+  updateRun(runId, { agentContexts: reviewContexts });
+  console.log('[e2e] unacknowledged review blocks without replacing the owned terminal');
 
   mark(['start']);
   const started = JSON.parse(readFileSync(path.join(taskPath, 'SIGNAL.json'), 'utf-8')) as {

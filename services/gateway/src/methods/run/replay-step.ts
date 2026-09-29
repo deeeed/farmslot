@@ -20,6 +20,7 @@ import {
   type RunReplayStepResult,
   type RunStatus,
   type RuntimeCapabilityStatusResult,
+  staticReviewReplayBlock,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -33,6 +34,7 @@ import {
 } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
 import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
+import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
@@ -58,6 +60,7 @@ import {
 } from '../../runners/registry.js';
 import { clearedRunnerSessionContextPatch } from '../../runners/session-record.js';
 import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
+import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { resolveContextFilePath } from '../../tasks/watcher.js';
 import { normalizeWorkerSignal, parseStrictIsoMs } from '../../tasks/worker-signals.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
@@ -577,6 +580,14 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  if (existing.reviewWorkspaceTarget) assertNativeRunOwner(existing);
+  const reviewBlock = staticReviewReplayBlock(existing, params);
+  if (reviewBlock)
+    throw new GatewayMethodError('REVIEW_RESTART_REQUIRED', reviewBlock, {
+      userAction:
+        'Open the PR and choose Request review / QA to select a runner for a new review round. Cancel a still-active old attempt first.',
+      details: { runId: existing.id, ticketOrPr: existing.ticketOrPr, action: 'request-review' },
+    });
   const initialNativeStatus = existing.transport === 'native' ? existing.status : undefined;
   const hasRunnerOverride = params.runner !== undefined || params.model !== undefined;
   if (existing.transport === 'native' && hasRunnerOverride && params.stepName !== PS.DISPATCH)
@@ -698,6 +709,7 @@ export async function runReplayStep(
   const previousMonitorSignal = existing.steps.find((step) => step.name === PS.MONITOR)?.outputs
     ?.workerSignal;
   const needsBlockedAttempt =
+    !existing.reviewWorkspaceTarget &&
     params.stepName === PS.MONITOR &&
     replayStepName === PS.MONITOR &&
     existing.status === 'blocked' &&

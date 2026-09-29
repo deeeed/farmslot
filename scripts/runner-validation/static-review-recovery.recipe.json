@@ -1,0 +1,25 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Static review replay recovery",
+  "description": "Isolated production gateway and real browser controls prove replay refusal without run mutation and a usable same-PR recovery path. A real task workspace and tmux session prove the unacknowledged-start deadline and accepted task progress. No paid reviewer is launched by this recipe.",
+  "workflow": {
+    "entry": "replay-and-request",
+    "nodes": {
+      "replay-and-request": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-static-review-interface.mts temp/static-review-recovery-recipe recovery",
+        "timeout_ms": 180000,
+        "intent": "Reject runner override and cleaned setup replay over RPC without mutation. Admit live and cleaned monitor replay without replacing the attempt; execution stays disabled in this fixture. Hide unsafe Retry and prefill the same PR request without claiming unknown review readiness.",
+        "next": "startup-deadline"
+      },
+      "startup-deadline": {
+        "action": "command",
+        "cmd": "node --import tsx scripts/e2e-subtask-workspace.mts",
+        "timeout_ms": 180000,
+        "intent": "Block an unacknowledged terminal after its recorded launch deadline without replacing it; accept a real task mark and preserve child progress, evidence checks and completion.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

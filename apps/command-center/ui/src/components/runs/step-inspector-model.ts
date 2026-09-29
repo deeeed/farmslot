@@ -4,11 +4,30 @@ import type {
   RunStep,
   SelfReviewIssue,
 } from '@farmslot/protocol';
+import { parseGitHubPullUrl, parseGitHubRef } from '@farmslot/protocol';
 
 import { hasMeaningfulReviewFixDelta } from '../../utils/review-gate-display.js';
+import { buildHash } from '../../utils/url-state.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { formatDuration } from './run-utils.js';
+
+export function reviewRequestHref(run: Run): string | null {
+  if (!run.reviewWorkspaceTarget) return null;
+  const reference = parseGitHubRef(run.ticketOrPr) ?? parseGitHubPullUrl(run.ticketOrPr);
+  if (!reference) return null;
+  return buildHash(
+    'prs',
+    new URLSearchParams({
+      view: 'detail',
+      repo: reference.repo,
+      pr: String(reference.number),
+      prPane: 'review',
+      prSection: 'reviews',
+      prScope: 'all',
+    }),
+  );
+}
 
 // Keys to render as command blocks with copy button
 export const COMMAND_KEYS = new Set(['cliCommand', 'failedCommand', 'launchCommand']);

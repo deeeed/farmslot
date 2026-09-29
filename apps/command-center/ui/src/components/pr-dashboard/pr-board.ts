@@ -1767,13 +1767,15 @@ export class PRBoard extends LitElement {
               : ''}
             .mode=${management ? 'management' : 'context'}
             .pane=${this._pane}
-            .selectedPr=${selected?.key ?? null}
+            .selectedPr=${this._selectedPr}
             .selectedProject=${selected?.project ?? ''}
             .reviewBlockedReason=${selected
               ? this._reviewLookups.get(prWorkspaceKey(selected.key))?.error
                 ? 'Review status could not be checked; refresh before starting.'
                 : (prReviewReadiness(selected).blockedReason ?? '')
-              : ''}
+              : this._selectedPr
+                ? 'PR details are unavailable; review status could not be checked.'
+                : ''}
             .reviewStatusLoading=${!!selected && this._reviewLoading(selected)}
             .showHistory=${this._showHistory}
             @pr-automation-inventory=${(event: CustomEvent<PRAutomationInventory>) =>
