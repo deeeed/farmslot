@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ROOT } from '../lib/common.mjs';
-import { ensureShellSession, killSession } from '../lib/tmux.mjs';
+import { ROOT, shSingleQuote, sleepMs } from '../lib/common.mjs';
+import { installHooks } from '../lib/install.mjs';
+import { ensureShellSession, killSession, sendShellScript, tmux } from '../lib/tmux.mjs';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-warm-publication-proof-'));
 const repo = path.join(fixture, 'repo');
@@ -49,7 +50,7 @@ Remain idle after completing the checklist so the gateway can verify the native 
 fs.mkdirSync(repo, { recursive: true });
 const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
 git('init', '-b', 'main');
-write(path.join(repo, '.git/info/exclude'), 'tasks/\n.agent/\n');
+write(path.join(repo, '.git/info/exclude'), 'tasks/\n.agent/\n.observability\n.omc/\n.omx/\n');
 write(path.join(repo, 'message.txt'), 'base\n');
 git('add', '.');
 git(
@@ -149,6 +150,52 @@ trust.projects[trustedRepo] = { ...(priorTrust ?? {}), hasTrustDialogAccepted: t
 fs.writeFileSync(trustFile, JSON.stringify(trust), { mode: 0o600 });
 try {
   ensureShellSession(session, repo);
+  installHooks('claude', repo, '.agent', 'warm-proof-slot');
+  const bootstrapPane = tmux([
+    'new-window',
+    '-d',
+    '-t',
+    session,
+    '-n',
+    'rev-claude',
+    '-P',
+    '-F',
+    '#{pane_id}',
+    '-c',
+    repo,
+    'bash',
+    '--noprofile',
+    '--norc',
+  ]);
+  sleepMs(500);
+  sendShellScript(bootstrapPane, repo, [
+    `DISABLE_OMC=1 DISABLE_OMX=1 ${shSingleQuote(path.join(os.homedir(), '.npm-global/bin/claude'))} --dangerously-skip-permissions --model opus --settings ${shSingleQuote(path.join(repo, '.agent/.observability/claude-settings.json'))} 'Reply exactly READY and remain available for another task.'`,
+  ]);
+  const bootstrapState = path.join(
+    repo,
+    '.agent/.observability/panes',
+    `${encodeURIComponent(bootstrapPane)}.json`,
+  );
+  const bootstrapDeadline = Date.now() + 90_000;
+  let bootstrapCompleted = false;
+  while (Date.now() < bootstrapDeadline) {
+    if (fs.existsSync(bootstrapState)) {
+      const state = JSON.parse(fs.readFileSync(bootstrapState));
+      if (
+        state.hook_event_name === 'Stop' &&
+        state.transcript_path &&
+        fs.existsSync(state.transcript_path)
+      ) {
+        bootstrapCompleted = true;
+        break;
+      }
+    }
+    sleepMs(500);
+  }
+  assert.ok(
+    bootstrapCompleted,
+    'Bootstrap runner must finish a real turn before publication review',
+  );
   const driver = path.join(ROOT, 'scripts/runner-validation/gateway/warm-publication-review.mts');
   const execute = (phase, extraEnv = {}) => {
     const logFile = path.join(fixture, `${phase}.log`);
