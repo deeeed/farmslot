@@ -221,6 +221,9 @@ export function renderTmuxToolbar(ctx: TmuxToolbarContext) {
 }
 
 export interface TerminalChromeContext {
+  retiredTarget: boolean;
+  retryAvailable: boolean;
+  slotTerminal: boolean;
   showInputBar: boolean;
   isWorkerTarget: boolean;
   lifecycle: string;
@@ -259,6 +262,7 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
   return html`
     <div class="header" @click=${ctx.onHeaderClick}>
       <span class="slot-id">${ctx.targetLabel}</span>
+      ${ctx.slotTerminal ? html`<span class="badge mode-poll">SLOT TERMINAL</span>` : ''}
       ${ctx.isWorkerTarget ? html`<span class="badge mode-pty">worker</span>` : ''}
       ${!ctx.isWorkerTarget && ctx.lifecycle
         ? html` <span class="badge ${ctx.lifecycle}">${ctx.lifecycle}</span> `
@@ -329,8 +333,15 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
           ? html`
               <div class="loading-overlay">
                 <div class="spinner">
-                  <span class="spinner-dots">...</span>
+                  ${(ctx.retiredTarget && !ctx.reconnecting) || ctx.retryAvailable
+                    ? ''
+                    : html`<span class="spinner-dots">...</span>`}
                   <span class="spinner-text">${overlay.message}</span>
+                  ${ctx.retryAvailable && !ctx.exited
+                    ? html`<button class="reconnect-btn" @click=${ctx.onReconnect}>
+                        Retry terminal
+                      </button>`
+                    : ''}
                 </div>
               </div>
             `
@@ -343,9 +354,24 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
     ${ctx.exited
       ? html`
           <div class="exit-bar">
-            <span class="exit-msg">Session ended</span>
+            <span class="exit-msg"
+              >${ctx.retiredTarget
+                ? 'Worker terminal closed'
+                : ctx.retryAvailable
+                  ? 'Terminal unavailable'
+                  : 'Session ended'}</span
+            >
+            ${ctx.retiredTarget && ctx.runId
+              ? html`<a class="slot-link" href=${`#run/${encodeURIComponent(ctx.runId)}`}
+                  >View run</a
+                >`
+              : ''}
             <button class="reconnect-btn" ?disabled=${ctx.reconnecting} @click=${ctx.onReconnect}>
-              ${ctx.reconnecting ? 'Reconnecting...' : 'Reconnect'}
+              ${ctx.retiredTarget
+                ? 'Open current slot terminal'
+                : ctx.reconnecting
+                  ? 'Reconnecting...'
+                  : 'Reconnect'}
             </button>
           </div>
         `

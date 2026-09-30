@@ -22,6 +22,7 @@ import {
   SKIP_ACTIVE_RUN_SELECTION,
 } from '../core/active-run-selection.js';
 import { loadSlotVars } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { updateSlotStatus, updateSlotStatusIf } from '../core/state.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
@@ -130,6 +131,13 @@ export function selectAgentContext(run: Run, selector?: AgentContextSelector): A
   const contexts = getAgentContexts(run);
   if (selector?.contextId) {
     return contexts.find((ctx) => ctx.id === selector.contextId) ?? null;
+  }
+  if (selector?.target?.trim()) {
+    const target = canonicalExplicitTarget(selector.target.trim());
+    return (
+      contexts.find((ctx) => ctx.target && canonicalAgentContextTarget(ctx.target) === target) ??
+      null
+    );
   }
   // Explicit non-primary role: exact match only. For self-review / reviewer tabs,
   // prefer the latest reviewer when multiple coexist on the same run.
@@ -297,7 +305,10 @@ export async function resolveAgentTarget(
     const requested = selector?.contextId
       ? `context ${selector.contextId}`
       : `role ${selector?.role}`;
-    throw new Error(`No active agent ${requested} for slot ${slotId}`);
+    throw new GatewayMethodError(
+      'AGENT_CONTEXT_UNAVAILABLE',
+      `No active agent ${requested} for slot ${slotId}`,
+    );
   }
   if (ctx?.target?.target) {
     return {

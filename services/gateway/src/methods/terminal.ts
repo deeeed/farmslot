@@ -4,6 +4,7 @@ import {
   AGENT_ROLES,
   type AgentRole,
   contextIdFor,
+  isTerminalRunStatus,
   type TerminalData,
   type TerminalInputParams,
   type TerminalReinitParams,
@@ -14,13 +15,19 @@ import {
   type TerminalSubscribeParams,
 } from '@farmslot/protocol';
 
-import { resolveAgentTarget } from '../agents/contexts.js';
+import {
+  resolveAgentTarget,
+  selectAgentContext,
+  TERMINAL_AGENT_STATUSES,
+} from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { getRun } from '../runs/store.js';
 import {
   hasPty,
   type PtyAttachOptions,
@@ -166,13 +173,43 @@ async function assertInteractiveTargetReady(
   target: string,
   session: string,
   role?: AgentRole,
+  selector?: Parameters<typeof resolveAgentTarget>[1],
 ): Promise<void> {
   if (!(await isInteractiveTargetReady(slotId, target, session))) {
-    const roleSuffix = role ? ` for role ${role}` : '';
-    throw new Error(
-      `Tmux target ${target}${roleSuffix} is not available yet; wait for that worker window to start and reopen the terminal.`,
+    throw unavailableTerminalTarget(target, role, selector);
+  }
+}
+
+export function unavailableTerminalTarget(
+  target: string,
+  role?: AgentRole,
+  selector?: Parameters<typeof resolveAgentTarget>[1],
+): GatewayMethodError {
+  const run = selector?.runId ? getRun(selector.runId) : null;
+  if (selector?.runId && !run) {
+    return new GatewayMethodError(
+      'TERMINAL_TARGET_RETIRED',
+      'The selected run is no longer available. Open the current slot terminal to continue.',
     );
   }
+  const context = run ? selectAgentContext(run, selector) : null;
+  if (
+    run &&
+    (isTerminalRunStatus(run.status) ||
+      (context &&
+        TERMINAL_AGENT_STATUSES.has(context.status) &&
+        (context.status !== 'idle' || context.completedAt)))
+  ) {
+    return new GatewayMethodError(
+      'TERMINAL_TARGET_RETIRED',
+      'This worker has finished and its terminal is no longer available. View its saved history and artifacts, or open the current slot terminal.',
+    );
+  }
+  const roleSuffix = role ? ` for role ${role}` : '';
+  return new GatewayMethodError(
+    'TERMINAL_TARGET_PENDING',
+    `Worker terminal ${target}${roleSuffix} is not available yet; wait for that worker window to start and reopen the terminal.`,
+  );
 }
 
 async function resolveBareSession(slotId: string): Promise<{ target: string; session: string }> {
@@ -200,7 +237,23 @@ export async function resolveAgentOrBareTarget(
   runner?: string;
 }> {
   if (params?.bareSession === true) return resolveBareSession(slotId);
-  return resolveAgentTarget(slotId, params);
+  // An explicit run pin must never fall through to another run or the slot's current session.
+  if (params?.runId && !getRun(params.runId)) {
+    throw unavailableTerminalTarget(params?.target ?? slotId, params?.role, params);
+  }
+  try {
+    return await resolveAgentTarget(slotId, params);
+  } catch (error) {
+    // A removed context is another missing terminal target, not a transport failure.
+    if (error instanceof GatewayMethodError && error.code === 'AGENT_CONTEXT_UNAVAILABLE') {
+      throw unavailableTerminalTarget(
+        params?.contextId ?? params?.role ?? slotId,
+        params?.role,
+        params,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function terminalSubscribe(
@@ -249,7 +302,7 @@ export async function terminalSubscribe(
     // Ensure the base tmux session exists before attaching to a role/window target.
     const repoDir = await resolveRepoDir(params.slotId);
     await reinitTmuxSession(resolved.session, repoDir, sshTarget);
-    await assertInteractiveTargetReady(params.slotId, target, resolved.session, role);
+    await assertInteractiveTargetReady(params.slotId, target, resolved.session, role, params);
 
     const ptyHandler: PtyDataHandler = (data: string) => {
       emit('terminal.data', {
@@ -343,6 +396,7 @@ export async function terminalInput(params: TerminalInputParams): Promise<void> 
     resolved.target,
     resolved.session,
     resolved.role,
+    params,
   );
   const machine = await resolveMachine(params.slotId);
   if (machine && getNode(machine)) {
@@ -407,6 +461,7 @@ export async function terminalSend(params: TerminalSendParams): Promise<void> {
     resolved.target,
     resolved.session,
     resolved.role,
+    params,
   );
   await sendKeys(
     params.slotId,
