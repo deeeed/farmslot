@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { EXTRA_REVIEW_SOURCE } from '../../../services/gateway/src/quality/review-sources.js';
 import { loadSlotVars } from '../../../services/gateway/src/core/config.js';
 import {
   createRun,
@@ -22,6 +23,8 @@ const [phase, fixture] = process.argv.slice(2);
 assert.ok(fixture);
 const vars = await loadSlotVars('warm-proof-slot');
 const taskDir = 'tasks/review';
+const priorReviewScope = EXTRA_REVIEW_SOURCE.artifactRefs(1).id;
+const currentReviewScope = EXTRA_REVIEW_SOURCE.artifactRefs(2).id;
 let runId: string;
 if (phase === 'first') {
   const run = createRun({
@@ -145,9 +148,9 @@ const result = await runReviewAgent(
   120_000,
   1,
   'static-code',
-  phase === 'first' ? 'review-1' : 'review-2',
+  phase === 'first' ? priorReviewScope : currentReviewScope,
   'warm-per-reviewer',
-  phase === 'first' ? 'reset' : 'resume',
+  'resume',
 );
 assert.equal(result.verdict, 'pass');
 const after = getRun(runId)!;
@@ -167,7 +170,7 @@ if (phase === 'first') {
         publicationStatus: 'not_published',
         independentReviews: [
           {
-            id: 'review-1',
+            id: priorReviewScope,
             source: 'human-gate',
             runner: 'claude',
             model: 'opus',
@@ -189,7 +192,7 @@ if (phase === 'first') {
     priorSessionId,
     'Explicit warm publication review must reuse the persisted session after gateway restart',
   );
-  assert.equal(context.artifactScope, 'review-2');
+  assert.equal(context.artifactScope, currentReviewScope);
   assert.equal(after.engineState!.publishGate!.publicationStatus, 'not_published');
   assert.ok(prior?.runnerSessionId);
 }
