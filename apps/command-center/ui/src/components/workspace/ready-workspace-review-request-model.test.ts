@@ -120,7 +120,7 @@ test('ready workspace review request model builds ordered request payload', () =
   );
 });
 
-test('review request progress spans acceptance, startup, execution, and package refresh', () => {
+test('review request progress spans acceptance, startup, execution, and remaining review preparation', () => {
   const requestedAt = '2026-09-30T03:20:00.000Z';
   const run: NonNullable<Parameters<typeof readyReviewRequestProgress>[0]> = {
     status: 'human-gating',
@@ -182,4 +182,33 @@ test('Fresh remains an explicit review request choice', () => {
   assert.equal(loop.sessionIntent, 'resume');
   const fresh = setReadyReviewLoopSessionIntent([loop], 1, 'reset');
   assert.equal(readyReviewLoopRequestPayload(fresh, 'claude').loops[0]?.sessionIntent, 'reset');
+});
+
+test('a newer publication gate clears old request progress and rejections', () => {
+  const run: NonNullable<Parameters<typeof readyReviewRequestProgress>[0]> = {
+    status: 'human-gating',
+    decisions: [
+      {
+        id: 'request',
+        type: 'engine_human_gate',
+        title: '',
+        description: '',
+        actions: [],
+        createdAt: '2026-09-30T00:00:00Z',
+        resolvedAt: '2026-09-30T00:01:00Z',
+        resolvedAction: 'request-extra-review',
+      },
+      {
+        id: 'publish',
+        type: 'engine_human_gate',
+        title: '',
+        description: '',
+        actions: [],
+        createdAt: '2026-09-30T00:02:00Z',
+        resolvedAt: '2026-09-30T00:03:00Z',
+        resolvedAction: 'approve-publish',
+      },
+    ],
+  };
+  assert.equal(readyReviewRequestProgress(run), '');
 });

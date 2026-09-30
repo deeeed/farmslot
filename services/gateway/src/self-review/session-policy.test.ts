@@ -4,6 +4,7 @@ import { beforeEach, test } from 'node:test';
 import {
   claimWarmReviewerSession,
   DEFAULT_REVIEW_SESSION_POLICY,
+  effectiveReviewSessionIntent,
   invalidateWarmReviewerSessions,
   invalidateWarmReviewerSessionsForSlot,
   parseReviewSessionPolicy,
@@ -260,4 +261,11 @@ test('explicit continuation recovers a completed same-run reviewer after registr
   register(2);
   invalidateWarmReviewerSessions(scope.runId);
   assert.equal(persistedWarmReviewerSession(nextScope, run), null);
+});
+
+test('first-time reviewers receive a full review instead of a fabricated continuation', () => {
+  assert.equal(effectiveReviewSessionIntent('resume', 1, false), 'reset');
+  assert.equal(effectiveReviewSessionIntent('resume', 1, true), 'resume');
+  assert.equal(effectiveReviewSessionIntent('resume', 2, false), 'resume');
+  assert.equal(effectiveReviewSessionIntent('reset', 1, true), 'reset');
 });

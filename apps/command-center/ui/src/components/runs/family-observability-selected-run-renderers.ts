@@ -167,6 +167,7 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
     ? `Resolved · ${decision.resolvedAction ?? 'done'}`
     : 'Pending';
   const maximized = options.gateOpen && options.gateMaximized;
+  const reviewProgress = readyReviewRequestProgress(options.fullRun);
   return html`
     <div
       class="detail-section publish-gate-reopen ${maximized ? 'maximized' : ''}"
@@ -177,9 +178,11 @@ function renderFamilyPublishGateReopen(options: FamilySelectedRunDetailRenderOpt
     >
       <div class="publish-gate-reopen-head">
         <div class="detail-title">Publish gate</div>
-        <span class="muted" role="status" data-testid="rdy-review-progress"
-          >${readyReviewRequestProgress(options.fullRun) || resolvedLabel}</span
-        >
+        ${reviewProgress
+          ? html`<span class="muted" role="status" data-testid="rdy-review-progress"
+              >${reviewProgress}</span
+            >`
+          : html`<span class="muted">${resolvedLabel}</span>`}
         <span class="publish-gate-reopen-actions">
           ${options.gateOpen
             ? html`

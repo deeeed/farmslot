@@ -4,7 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- Default Codex to GPT-6.1 Sol with reasoning levels through ultra while retaining GPT-6 Sol in model pickers.
+- Default Codex to GPT-6.1 Sol with reasoning levels through ultra while retaining GPT-6 Sol in model pickers. GPT-6.1 Sol cost remains unavailable until a verified rate is configured.
 
 - Share static-review replay eligibility between clients and the gateway while preserving saved-report recovery.
 

@@ -13,6 +13,7 @@ import {
   DEFAULT_REVIEW_SESSION_POLICY,
   isGateParkInFlightOrFreed,
   REVIEW_SESSION_POLICIES,
+  type ReviewSessionIntent,
   type ReviewSessionPolicy,
   type Run,
 } from '@farmslot/protocol';
@@ -214,4 +215,13 @@ export function persistedWarmReviewerSession(
     lastReviewedHeadSha: review.reviewSnapshot?.headSha ?? null,
     forensicOnly: false,
   };
+}
+
+/** A requested continuation without prior review context must run a full first-look review. */
+export function effectiveReviewSessionIntent(
+  intent: ReviewSessionIntent,
+  loopNumber: number,
+  hasPriorReview: boolean,
+): ReviewSessionIntent {
+  return intent === 'resume' && loopNumber === 1 && !hasPriorReview ? 'reset' : intent;
 }

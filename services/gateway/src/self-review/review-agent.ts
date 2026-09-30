@@ -91,10 +91,11 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
-import { startProgressWatcher } from './progress.js';
+import { broadcastSelfReviewRun, startProgressWatcher } from './progress.js';
 import {
   claimWarmReviewerSession,
   DEFAULT_REVIEW_SESSION_POLICY,
+  effectiveReviewSessionIntent,
   invalidateWarmReviewerSessions,
   persistedWarmReviewerSession,
   registerWarmReviewerSession,
@@ -964,7 +965,17 @@ export async function runReviewAgent(
     runner,
     subjectRef: parentRunForAlloc?.branch ?? null,
   };
-  const continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
+  const priorExtraReview = [
+    ...(parentRunForAlloc?.engineState?.publishGate?.independentReviews ?? []),
+  ]
+    .reverse()
+    .find(
+      (review) =>
+        review.runner === runner &&
+        review.id !== artifactScope &&
+        (review.verdict === 'issues' || review.verdict === 'pass'),
+    );
+  let continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
   const retainReviewerSession = sessionPolicy === 'warm-per-reviewer' || continuingPriorGeneration;
   if (sessionIntent === 'reset' && loopNumber === 1) {
     invalidateWarmReviewerSessions(_runId, runner);
@@ -981,6 +992,12 @@ export async function runReviewAgent(
   if (!warmSession && runnerCanResume && continuingPriorGeneration && parentRunForAlloc) {
     warmSession = persistedWarmReviewerSession(warmScope, parentRunForAlloc);
   }
+  sessionIntent = effectiveReviewSessionIntent(
+    sessionIntent,
+    loopNumber,
+    Boolean(priorExtraReview || warmSession),
+  );
+  continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
   const allocated = allocateReviewerContext({
     runId: _runId,
     runner,
@@ -1018,6 +1035,7 @@ export async function runReviewAgent(
     ...(launchEffort ? { effort: launchEffort } : {}),
     target: null,
   });
+  broadcastSelfReviewRun(_runId);
 
   try {
     // 1. Keep one stable window per runner. Reset versus resume changes runner
@@ -1078,14 +1096,6 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    const priorExtraReview = [...(parentRun?.engineState?.publishGate?.independentReviews ?? [])]
-      .reverse()
-      .find(
-        (review) =>
-          review.runner === runner &&
-          review.id !== artifactScope &&
-          (review.verdict === 'issues' || review.verdict === 'pass'),
-      );
     if (loopNumber > 1 || sessionIntent === 'resume') {
       const priorScope =
         loopNumber > 1
@@ -1554,6 +1564,8 @@ export async function runReviewAgent(
           status: 'working',
         })) ?? reviewContext;
     }
+
+    broadcastSelfReviewRun(_runId);
 
     // 6. Watch the reviewer-specific checklist for progress + wait for completion
     const selfReviewPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.checklist);

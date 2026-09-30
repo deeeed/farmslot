@@ -108,15 +108,13 @@ export function readyReviewRequestProgress(
 ): string {
   if (!run || ['done', 'failed', 'cancelled'].includes(run.status)) return '';
   const request = [...run.decisions]
-    .filter(
-      (decision) =>
-        decision.type === 'engine_human_gate' &&
-        decision.resolvedAt &&
-        ['request-extra-review', 'request-cross-runner-review'].includes(
-          decision.resolvedAction ?? '',
-        ),
-    )
-    .sort((left, right) => (right.resolvedAt ?? '').localeCompare(left.resolvedAt ?? ''))[0];
+    .reverse()
+    .find((decision) => decision.type === 'engine_human_gate');
+  if (
+    !request ||
+    !['request-extra-review', 'request-cross-runner-review'].includes(request.resolvedAction ?? '')
+  )
+    return '';
   if (!request?.resolvedAt) return '';
   const gate = run.engineState?.publishGate;
   const contexts = (run.agentContexts ?? []).filter(

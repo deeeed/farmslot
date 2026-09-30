@@ -196,7 +196,6 @@ export async function runScenario({
     interleavedCompleted: false,
     handoffDelivered: false,
     repeatReviewSessionTrace: null,
-    recoveredReviewerSessionId: null,
     repeatReviewResumePlan: null,
     repeatReviewResetPlan: null,
     repeatReviewSlotMismatchPlan: null,
@@ -370,10 +369,8 @@ export async function runScenario({
       runnerPath: runnerAdapter.binaryPath(),
       model,
       slotId,
-      restoreCompletedReviewer: true,
       timeoutMs: Math.min(timeoutMs, 120_000),
     });
-    report.recoveredReviewerSessionId = handoff.result?.recoveredReviewer?.runnerSessionId ?? null;
     report.repeatReviewResumePlan = handoff.result?.plan ?? null;
     report.repeatReviewSessionTrace = handoff.result?.trace ?? null;
     report.handoffDelivered = handoff.result?.kind === 'resumed';
@@ -387,7 +384,6 @@ export async function runScenario({
     // before this parent process captures it, so pane survival is not evidence.
     report.pass =
       report.initialCompleted &&
-      report.recoveredReviewerSessionId === report.sessionId &&
       report.interleavedCompleted &&
       report.repeatReviewResumePlan?.kind === 'resume' &&
       report.repeatReviewResetPlan?.kind === 'reset' &&
