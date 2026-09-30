@@ -126,7 +126,11 @@ if (process.env.FARMSLOT_WARM_PROOF_GATEWAY === '1') {
   const loop = (
     request.selectionData?.reviewRequest as { loops?: Array<{ sessionIntent?: string }> }
   )?.loops?.[0];
-  assert.equal(loop?.sessionIntent, 'resume', 'Browser must submit the default warm review choice');
+  assert.equal(
+    loop?.sessionIntent,
+    'resume',
+    'Review request must preserve the warm review choice',
+  );
 }
 const before = getRun(runId)!;
 const priorSessionId = await readFile(path.join(fixture, 'prior-session'), 'utf8').catch(
