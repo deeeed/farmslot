@@ -175,6 +175,8 @@ if (phase === 'negative') {
       if (snapshot) {
         const hook = JSON.parse(snapshot);
         if (hook.session_id) {
+          if (hook.session_id === expectedSession)
+            throw new Error('Removed recovery unexpectedly reused the saved reviewer session');
           assert.equal(
             hook.session_id,
             expectedSession,

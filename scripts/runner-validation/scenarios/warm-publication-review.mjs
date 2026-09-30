@@ -13,7 +13,23 @@ import { ensureShellSession, killSession, sendShellScript, tmux } from '../lib/t
 export const SCENARIO_ID = 'warm-publication-review';
 
 export async function runScenario({ runnerAdapter, outDir }) {
-  assert.equal(runnerAdapter.RUNNER_ID, 'claude', 'Warm publication proof requires Claude');
+  if (runnerAdapter.RUNNER_ID !== 'claude') {
+    const report = {
+      runner: runnerAdapter.RUNNER_ID,
+      skipped: true,
+      skipReason: 'Warm publication proof requires Claude',
+      pass: true,
+    };
+    const outPath = writeEvidence(report, SCENARIO_ID, runnerAdapter.RUNNER_ID, outDir);
+    return {
+      scenario: SCENARIO_ID,
+      runner: runnerAdapter.RUNNER_ID,
+      outPath,
+      pass: true,
+      skipped: true,
+      report,
+    };
+  }
   fs.mkdirSync(path.join(ROOT, 'temp'), { recursive: true });
   const fixture = fs.mkdtempSync(path.join(ROOT, 'temp', 'warm-publication-proof-'));
   const repo = path.join(fixture, 'repo');
