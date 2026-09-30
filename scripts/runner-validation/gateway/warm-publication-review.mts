@@ -160,7 +160,10 @@ if (phase === 'negative') {
   const expectedSession = await readFile(path.join(fixture, 'prior-session'), 'utf8');
   for (let attempt = 0; attempt < 900; attempt++) {
     const current = getRun(runId)?.agentContexts?.find(
-      (candidate) => candidate.role === 'self-review',
+      (candidate) =>
+        candidate.role === 'self-review' &&
+        candidate.artifactScope === currentReviewScope &&
+        ['launching', 'working'].includes(candidate.status),
     );
     if (current?.target?.pane) {
       const snapshot = await readFile(
