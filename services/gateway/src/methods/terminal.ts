@@ -237,6 +237,10 @@ export async function resolveAgentOrBareTarget(
   runner?: string;
 }> {
   if (params?.bareSession === true) return resolveBareSession(slotId);
+  // An explicit run pin must never fall through to another run or the slot's current session.
+  if (params?.runId && !getRun(params.runId)) {
+    throw unavailableTerminalTarget(params?.target ?? slotId, params?.role, params);
+  }
   try {
     return await resolveAgentTarget(slotId, params);
   } catch (error) {

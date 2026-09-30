@@ -19,7 +19,7 @@ import {
 
 import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
 import { poolDir } from '../core/config.js';
-import { unavailableTerminalTarget } from '../methods/terminal.js';
+import { resolveAgentOrBareTarget, unavailableTerminalTarget } from '../methods/terminal.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -641,6 +641,18 @@ test('raw target selection does not borrow the primary worker context', async (t
   ];
   assert.equal(selectAgentContext(run, { target: 'mme-1:review.1' })?.id, 'review');
   assert.equal(selectAgentContext(run, { target: 'mme-1:missing' }), null);
+});
+
+test('a missing explicit run cannot fall back to the current slot without a bare-session action', async () => {
+  await assert.rejects(
+    () => resolveAgentOrBareTarget('runner-browser-1', { runId: 'removed-history-run' }),
+    { code: 'TERMINAL_TARGET_RETIRED' },
+  );
+  const bare = await resolveAgentOrBareTarget('runner-browser-1', {
+    runId: 'removed-history-run',
+    bareSession: true,
+  });
+  assert.equal(bare.target, 'mme-1');
 });
 
 test('resolveAgentTarget falls back to bare session for persisted contexts without captured targets', async (t) => {

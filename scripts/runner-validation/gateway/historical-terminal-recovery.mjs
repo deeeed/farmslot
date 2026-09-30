@@ -81,7 +81,6 @@ assert.equal(removedContext.error.code, 'TERMINAL_TARGET_RETIRED');
 const removedRun = await rpc('terminal.subscribe', {
   slotId: run.slotId,
   runId: randomUUID(),
-  contextId: context.id,
   interactive: true,
 });
 assert.equal(removedRun.ok, false);
