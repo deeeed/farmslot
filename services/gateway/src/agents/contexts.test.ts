@@ -19,6 +19,7 @@ import {
 
 import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
 import { poolDir } from '../core/config.js';
+import { unavailableTerminalTarget } from '../methods/terminal.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -568,8 +569,78 @@ test('resolveAgentTarget rejects missing explicit non-primary roles', async (t) 
 
   await assert.rejects(
     () => resolveAgentTarget('runner-browser-1', { runId: run.id, role: 'review' }),
-    /No active agent role review/,
+    { code: 'AGENT_CONTEXT_UNAVAILABLE', message: /No active agent role review/ },
   );
+});
+
+test('missing terminal targets distinguish completed work from idle workers awaiting launch', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-terminal-availability`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+  // Use an independent reviewer so run-status synchronization does not rewrite its state.
+  const context: AgentContext = {
+    ...synthesizePrimaryContext(run)!,
+    id: 'review',
+    role: 'review',
+    label: 'Review',
+  };
+  for (const [status, completedAt, expected] of [
+    ['idle', undefined, 'TERMINAL_TARGET_PENDING'],
+    ['launching', undefined, 'TERMINAL_TARGET_PENDING'],
+    ['idle', new Date().toISOString(), 'TERMINAL_TARGET_RETIRED'],
+    ['complete', undefined, 'TERMINAL_TARGET_RETIRED'],
+    ['blocked', undefined, 'TERMINAL_TARGET_RETIRED'],
+    ['failed', undefined, 'TERMINAL_TARGET_RETIRED'],
+  ] as const) {
+    updateRun(run.id, {
+      status: 'monitoring',
+      agentContexts: [{ ...context, status, completedAt }],
+    });
+    assert.equal(
+      unavailableTerminalTarget('mme-1:review', 'review', { runId: run.id, contextId: context.id })
+        .code,
+      expected,
+    );
+  }
+  updateRun(run.id, {
+    status: 'done',
+    agentContexts: [{ ...context, status: 'working' }],
+  });
+  assert.equal(
+    unavailableTerminalTarget('mme-1:review', 'review', { runId: run.id, contextId: context.id })
+      .code,
+    'TERMINAL_TARGET_RETIRED',
+  );
+  assert.equal(
+    unavailableTerminalTarget('mme-1:review', 'review', { runId: 'removed-history-run' }).code,
+    'TERMINAL_TARGET_RETIRED',
+  );
+});
+
+test('raw target selection does not borrow the primary worker context', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-raw-terminal-target`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+  const primary = synthesizePrimaryContext(run)!;
+  run.agentContexts = [
+    { ...primary, target: { session: 'mme-1', window: 'dev', pane: null, target: 'mme-1:dev' } },
+    {
+      ...primary,
+      id: 'review',
+      role: 'review',
+      target: { session: 'mme-1', window: 'review', pane: null, target: 'mme-1:review' },
+    },
+  ];
+  assert.equal(selectAgentContext(run, { target: 'mme-1:review.1' })?.id, 'review');
+  assert.equal(selectAgentContext(run, { target: 'mme-1:missing' }), null);
 });
 
 test('resolveAgentTarget falls back to bare session for persisted contexts without captured targets', async (t) => {

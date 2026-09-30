@@ -27,7 +27,10 @@ import {
   renderTerminalDropOverlay,
   terminalAttachmentStyles,
 } from './terminal-attachment-renderers.js';
-import { isRetryableTerminalSubscribeError, isRoleWindowMissingError } from './terminal-errors.js';
+import {
+  isRetiredTerminalTargetError,
+  isRetryableTerminalSubscribeError,
+} from './terminal-errors.js';
 import {
   extractOsc52Clipboard,
   parseWorkerRef,
@@ -147,6 +150,7 @@ export class TerminalView extends TerminalViewState {
       `target=${this._targetLabel()} run=${this.runId || '-'} role=${this.role || '-'} context=${this.contextId || '-'}`,
     );
     this._postmortem = false;
+    this._retiredTarget = false;
     this._lastSubscribeError = '';
     this._subscribeOkAt = 0;
     this._attachPhase = 'idle';
@@ -179,7 +183,7 @@ export class TerminalView extends TerminalViewState {
    * advertise a feature whose every request must fail, so the whole surface is disabled.
    */
   private _attachmentsSupported(): boolean {
-    return !this._workerRef() && Boolean(this.slotId);
+    return !this._retiredTarget && !this._workerRef() && Boolean(this.slotId);
   }
 
   private _initAttachmentQueue() {
@@ -397,6 +401,7 @@ export class TerminalView extends TerminalViewState {
       };
       this._activeSubscribePostmortem = this._postmortem;
       this._lastSubscribeError = '';
+      this._retiredTarget = false;
       this._subscribeOkAt = Date.now();
       this._reconnecting = false;
       this._recoveryMessage = '';
@@ -411,18 +416,24 @@ export class TerminalView extends TerminalViewState {
     } catch (err) {
       if (subscribeSeq !== this._subscribeSeq) return;
       this._lastSubscribeError = err instanceof Error ? err.message : String(err);
+      this._retiredTarget = isRetiredTerminalTargetError(err);
       this._log('subscribe FAILED', String(err));
       this._attachPhase = 'idle';
       this._terminal?.writeln(`\x1b[31m[Failed to subscribe to ${this._targetLabel()}]\x1b[0m`);
-      this._reconnecting = gateway.connectionState === 'connected';
-      this._recoveryMessage =
-        gateway.connectionState === 'connected'
-          ? 'Terminal recovery failed — retry or wait for the gateway'
+      this._reconnecting = !this._retiredTarget && gateway.connectionState === 'connected';
+      this._exited = this._retiredTarget;
+      this._recoveryMessage = this._retiredTarget
+        ? this._lastSubscribeError
+        : gateway.connectionState === 'connected'
+          ? isRetryableTerminalSubscribeError(err)
+            ? this._lastSubscribeError
+            : 'Terminal connection failed. Retry to reconnect.'
           : 'Waiting for gateway';
       // Bubble only non-retryable failures so the slot-view tab strip does not
       // permanently disable role windows that are still starting or had a slow attach.
       if (
         !worker &&
+        !this._retiredTarget &&
         gateway.connectionState === 'connected' &&
         !isRetryableTerminalSubscribeError(err)
       ) {
@@ -854,7 +865,12 @@ export class TerminalView extends TerminalViewState {
   }
 
   private async _handleReconnect() {
-    if (!this._hasTarget() || this._reconnecting) return;
+    if (!this._hasTarget() || this._attachPhase === 'connecting' || this._attachPhase === 'sizing')
+      return;
+    if (this._retiredTarget) {
+      await this._enterPostmortem('operator opened current slot terminal');
+      return;
+    }
     this._reconnecting = true;
     this._attachPhase = 'connecting';
     this._recoveryMessage = 'Reinitializing terminal…';
@@ -873,6 +889,10 @@ export class TerminalView extends TerminalViewState {
       } catch (err) {
         this._log('reinit FAILED', String(err));
         this._terminal?.writeln(`\x1b[31m[Reinit failed: ${err}]\x1b[0m`);
+        this._attachPhase = 'idle';
+        this._lastSubscribeError = err instanceof Error ? err.message : String(err);
+        this._retiredTarget = isRetiredTerminalTargetError(err);
+        this._recoveryMessage = this._lastSubscribeError;
         this._reconnecting = false;
         this._exited = true;
         return;
@@ -884,26 +904,18 @@ export class TerminalView extends TerminalViewState {
     this._terminal?.clear();
     this._mode = 'none';
     await this._subscribe();
-
-    // Role pane is gone (worker exited on terminal run state); reinit only restores the bare session.
-    if (
-      this._reconnecting &&
-      (this.role || this.contextId) &&
-      !this._postmortem &&
-      isRoleWindowMissingError(this._lastSubscribeError)
-    ) {
-      this._log('postmortem-fallback', `error="${this._lastSubscribeError.slice(0, 200)}"`);
-      await this._enterPostmortem(`reconnect error: ${this._lastSubscribeError.slice(0, 80)}`);
-    }
   }
 
-  // Drop the role/contextId binding and re-attach to the bare tmux session. Both fast-fail
-  // (TERMINAL_EXITED handler) and reconnect-error paths funnel through here so the user-visible
-  // message and resubscribe sequence stay in lockstep — one of them drifting is the kind of bug
-  // that only shows up after a real blocked-run incident, which is the worst time to debug.
+  // Explicit slot-terminal actions and an immediately closed role attachment share the same
+  // bare-session routing. A pending worker's retry must keep its original context binding.
   private async _enterPostmortem(_reason: string): Promise<void> {
     this._postmortem = true;
-    this._recoveryMessage = 'Role pane closed — viewing bare session';
+    this._retiredTarget = false;
+    this._exited = false;
+    this._reconnecting = gateway.connectionState !== 'connected';
+    this._recoveryMessage = this._reconnecting
+      ? 'Waiting for gateway'
+      : 'Opening current slot terminal';
     this._terminal?.writeln(
       '\x1b[2m[Role pane closed — attaching to bare session for postmortem]\x1b[0m',
     );
@@ -1164,7 +1176,14 @@ export class TerminalView extends TerminalViewState {
         : undefined;
 
     return renderTerminalChrome({
-      showInputBar: !this.compact && this._mode !== 'pty',
+      showInputBar: !this._retiredTarget && !this.compact && this._mode !== 'pty',
+      retiredTarget: this._retiredTarget,
+      retryAvailable:
+        !this._retiredTarget &&
+        this._connected &&
+        this._attachPhase === 'idle' &&
+        Boolean(this._lastSubscribeError),
+      slotTerminal: this._postmortem,
       isWorkerTarget: Boolean(worker),
       lifecycle: this._lifecycle,
       mode: this._mode,
@@ -1172,9 +1191,11 @@ export class TerminalView extends TerminalViewState {
       agent: workspaceRun?.status ?? this._agent,
       runner: workspaceRun?.metrics.runner ?? this._runner,
       model: workspaceRun?.metrics.model ?? this._model,
-      summary: workspaceRun?.summary ?? this._summary,
+      summary: this._postmortem
+        ? 'Current slot terminal'
+        : (workspaceRun?.summary ?? this._summary),
       slotId: this.slotId,
-      runId: this.runId,
+      runId: this._postmortem ? '' : this.runId,
       targetLabel: workspaceRun?.ticketOrPr || this._targetLabel(),
       hasTarget: this._hasTarget(),
       taskMarkdown: this._taskMarkdown,

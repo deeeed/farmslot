@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isRetryableTerminalSubscribeError, isRoleWindowMissingError } from './terminal-errors.js';
+import {
+  isRetiredTerminalTargetError,
+  isRetryableTerminalSubscribeError,
+} from './terminal-errors.js';
+
+test('retired targets are terminal failures even when the message suggests retry', () => {
+  const error = Object.assign(new Error('timeout; wait for the worker'), {
+    code: 'TERMINAL_TARGET_RETIRED',
+  });
+  assert.equal(isRetiredTerminalTargetError(error), true);
+  assert.equal(isRetryableTerminalSubscribeError(error), false);
+});
+
+test('pending targets use the gateway code independently of message wording', () => {
+  const error = Object.assign(new Error('Window still starting'), {
+    code: 'TERMINAL_TARGET_PENDING',
+  });
+  assert.equal(isRetiredTerminalTargetError(error), false);
+  assert.equal(isRetryableTerminalSubscribeError(error), true);
+});
 
 test('isRetryableTerminalSubscribeError treats worker-window startup as retryable', () => {
   assert.equal(
@@ -25,26 +44,4 @@ test('isRetryableTerminalSubscribeError treats subscribe timeout as retryable', 
 
 test('isRetryableTerminalSubscribeError leaves hard subscribe failures non-retryable', () => {
   assert.equal(isRetryableTerminalSubscribeError(new Error('permission denied')), false);
-});
-
-test('isRoleWindowMissingError matches role-not-available and missing-context messages', () => {
-  assert.equal(
-    isRoleWindowMissingError(
-      'Tmux target mm-2:fix-bug for role fix-bug is not available yet; wait for that worker window to start and reopen the terminal.',
-    ),
-    true,
-  );
-  assert.equal(
-    isRoleWindowMissingError('No active agent context fix-bug for slot runner-browser-2'),
-    true,
-  );
-  assert.equal(
-    isRoleWindowMissingError('No active agent role review for slot runner-browser-2'),
-    true,
-  );
-  assert.equal(
-    isRoleWindowMissingError('Request terminal.subscribe timed out after 15000ms'),
-    false,
-  );
-  assert.equal(isRoleWindowMissingError(''), false);
 });

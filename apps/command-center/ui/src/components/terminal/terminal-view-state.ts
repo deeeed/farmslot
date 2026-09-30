@@ -45,6 +45,7 @@ export abstract class TerminalViewState extends LitElement {
   @state() protected _recoveryMessage = '';
   // Drops role/contextId/runId from subscribe so a dead role pane falls back to bare-session postmortem view.
   @state() protected _postmortem = false;
+  @state() protected _retiredTarget = false;
   protected _lastSubscribeError = '';
   protected _subscribeOkAt = 0;
   @state() protected _tmuxWindows: TmuxWindowSummary[] = [];

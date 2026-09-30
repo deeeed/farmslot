@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Distinguish retired worker terminals from windows that are still starting when terminal attachment finds a missing target.
+
 - Reject static-review setup and runner replay before changing the attempt, and stop waiting indefinitely for an unacknowledged reviewer launch.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
