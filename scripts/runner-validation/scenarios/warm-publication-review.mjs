@@ -96,7 +96,7 @@ write(
     machine: os.hostname(),
     project: 'warm-proof',
     platform: 'macos',
-    os: 'macos',
+    os: process.platform,
     host: 'localhost',
     ssh_user: os.userInfo().username,
     claude_path: path.join(os.homedir(), '.npm-global/bin/claude'),

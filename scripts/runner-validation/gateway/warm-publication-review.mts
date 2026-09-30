@@ -152,6 +152,11 @@ const after = getRun(runId)!;
 const context = after.agentContexts!.find((candidate) => candidate.runner === 'claude')!;
 assert.ok(context.runnerSessionId);
 if (phase === 'first') {
+  const checklist = await readFile(
+    path.join(vars.remoteRepo, taskDir, 'SELF-REVIEW.rev-claude.md'),
+    'utf8',
+  );
+  assert.doesNotMatch(checklist, /This is an incremental continuation/);
   updateRun(runId, {
     engineState: {
       publishGate: {
