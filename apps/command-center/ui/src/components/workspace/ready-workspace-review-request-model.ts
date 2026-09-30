@@ -1,4 +1,4 @@
-import type { ReviewLoopRequest, ReviewSessionIntent } from '@farmslot/protocol';
+import type { ReviewLoopRequest, ReviewSessionIntent, Run } from '@farmslot/protocol';
 
 import {
   DEFAULT_EFFORT,
@@ -30,7 +30,7 @@ export function createReadyReviewLoop(id: number, currentRunner: string): Review
   return {
     id,
     runner: currentRunner as ReviewRunnerChoice,
-    sessionIntent: 'reset',
+    sessionIntent: 'resume',
     ...defaultsForRunner(currentRunner),
   };
 }
@@ -100,4 +100,48 @@ export function readyReviewLoopRequestPayload(
     loops: requests,
     requireCrossRunner: requests.some((loop) => loop.runner !== currentRunner),
   };
+}
+
+/** Publication review progress comes from accepted requests and current agent attempts. */
+export function readyReviewRequestProgress(
+  run: Pick<Run, 'status' | 'decisions' | 'agentContexts' | 'engineState'> | null | undefined,
+): string {
+  if (!run || ['done', 'failed', 'cancelled'].includes(run.status)) return '';
+  const request = [...run.decisions]
+    .reverse()
+    .find((decision) => decision.type === 'engine_human_gate');
+  if (
+    !request ||
+    !['request-extra-review', 'request-cross-runner-review'].includes(request.resolvedAction ?? '')
+  )
+    return '';
+  if (!request?.resolvedAt) return '';
+  const gate = run.engineState?.publishGate;
+  const contexts = (run.agentContexts ?? []).filter(
+    (context) =>
+      ['self-review', 'self-review-fix'].includes(context.role) &&
+      (['launching', 'working', 'waiting'].includes(context.status) ||
+        (context.attemptStartedAt ?? '') >= request.resolvedAt!),
+  );
+  const active = contexts.find((context) =>
+    ['launching', 'working', 'waiting'].includes(context.status),
+  );
+  if (active) {
+    const runner = active.runner || 'reviewer';
+    if (active.status === 'launching')
+      return `Starting ${runner} review; waiting for prompt acceptance.`;
+    if (active.role === 'self-review-fix') return 'Worker is fixing review findings.';
+    return active.status === 'waiting'
+      ? `${runner} review is waiting.`
+      : `${runner} review is running.`;
+  }
+  if (gate?.reviewLaunchRejection) return gate.reviewLaunchRejection.message;
+  if (gate?.pendingReviewPlan?.length) {
+    return contexts.some((context) => context.status === 'complete')
+      ? 'Review finished; preparing the next review or refreshing the publication package.'
+      : 'Review requested; preparing the reviewer.';
+  }
+  return request.context?.reviewRequestConsumedAt
+    ? ''
+    : 'Review requested; waiting for processing.';
 }

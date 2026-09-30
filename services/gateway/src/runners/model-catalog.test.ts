@@ -215,7 +215,7 @@ test('saved visible models keep an explicit selection and do not invent catalog 
     assert.deepEqual(saved.runner.models, ['gpt-5.4']);
     const read = runnerVisibleModelsGet({ runner: 'codex', selectedModel: 'gpt-6-astra' });
     assert.equal(read.runners[0]?.retainedModel, 'gpt-6-astra');
-    assert.deepEqual(read.runners[0]?.pickerModels, ['gpt-5.4', 'gpt-6-sol', 'gpt-6-astra']);
+    assert.deepEqual(read.runners[0]?.pickerModels, ['gpt-5.4', 'gpt-6.1-sol', 'gpt-6-astra']);
     const seed = runnerVisibleModelsGet({ runner: 'claude' });
     assert.equal(seed.runners[0]?.configured, false);
     assert.ok(seed.runners[0]?.models.includes('opus'));

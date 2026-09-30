@@ -65,7 +65,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _reviewFlowModalOpen = false;
   @state() _reviewFlowSelection: 'overall' | string = 'overall';
   @state() _reviewFlowView: 'chronological' | 'reviewer' = 'chronological';
-  @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '', sessionIntent: 'reset' }];
+  @state() _reviewLoops: ReviewLoopDraft[] = [{ id: 1, runner: '', sessionIntent: 'resume' }];
   @state() _inputArtifactViewerOpen = false;
   @state() _selectedInputArtifactId = '';
   @state() _legacyTaskPromptText = '';

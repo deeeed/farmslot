@@ -150,7 +150,7 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
                           @click=${() => ctx.setSessionIntent(loop.id, candidate)}
                           aria-pressed=${loop.sessionIntent === candidate ? 'true' : 'false'}
                         >
-                          ${candidate === 'resume' ? 'Continue' : 'Fresh'}
+                          ${candidate === 'resume' ? 'Warm recheck' : 'Fresh review'}
                         </button>
                       `,
                     )}
@@ -209,6 +209,7 @@ export interface ReadyReviewFlowModalContext {
   unresolvedFindings: number;
   staleIgnoredReviews: number;
   continuationActive: boolean;
+  reviewProgress?: string;
   activeReviewIds: ReadonlySet<string>;
   view: 'chronological' | 'reviewer';
   selected: 'overall' | string;
@@ -270,6 +271,9 @@ export function renderReadyReviewFlowModal(ctx: ReadyReviewFlowModalContext) {
           </div>
           <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
         </header>
+        ${ctx.reviewProgress
+          ? html`<p role="status" data-testid="rdy-review-progress">${ctx.reviewProgress}</p>`
+          : nothing}
         <div class="rdy-review-flow-summary">
           <span><strong>${ctx.reviews.length}</strong> review checks</span>
           <span><strong>${roundCount}</strong> rounds</span>

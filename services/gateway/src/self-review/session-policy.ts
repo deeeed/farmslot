@@ -6,14 +6,16 @@
 // completes, cancels, or releases its slot (it is deleted or kept only as a
 // forensic-only record).
 //
-// The registry is process-local BY DESIGN: a gateway restart drops all claims,
-// so the next pass falls back to a cold fresh launch (safe degradation — no
-// resumable session handles are ever persisted).
+// The registry is process-local. Explicit continuation may recover a completed
+// same-run reviewer from its persisted context and matching review result.
 
 import {
   DEFAULT_REVIEW_SESSION_POLICY,
+  isGateParkInFlightOrFreed,
   REVIEW_SESSION_POLICIES,
+  type ReviewSessionIntent,
   type ReviewSessionPolicy,
+  type Run,
 } from '@farmslot/protocol';
 
 export { DEFAULT_REVIEW_SESSION_POLICY, REVIEW_SESSION_POLICIES, type ReviewSessionPolicy };
@@ -142,4 +144,92 @@ export function invalidateWarmReviewerSessionsForSlot(slotId: string): number {
 
 export function resetWarmReviewerSessionsForTest(): void {
   warmSessions.clear();
+}
+
+/** Recover only an explicitly continued, completed same-run reviewer after restart. */
+export function persistedWarmReviewerSession(
+  scope: WarmReviewerScope,
+  run: Pick<
+    Run,
+    | 'id'
+    | 'status'
+    | 'slotId'
+    | 'branch'
+    | 'agentContexts'
+    | 'engineState'
+    | 'park'
+    | 'resourcePosture'
+  >,
+): WarmReviewerSession | null {
+  // A consumed or invalidated in-process claim must never be revived from disk.
+  if (warmSessions.has(sessionKey(scope.runId, scope.runner))) return null;
+  if (
+    run.id !== scope.runId ||
+    !run.slotId ||
+    !scope.subjectRef ||
+    run.branch !== scope.subjectRef ||
+    isGateParkInFlightOrFreed(run) ||
+    run.resourcePosture?.posture === 'terminal' ||
+    ['done', 'failed', 'cancelled'].includes(run.status)
+  )
+    return null;
+  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const review = [...reviews]
+    .reverse()
+    .find((candidate) => candidate.runner === scope.runner && candidate.id !== scope.artifactScope);
+  if (
+    !review ||
+    !['pass', 'issues'].includes(review.verdict) ||
+    review.reviewSnapshot?.headRef !== scope.subjectRef
+  )
+    return null;
+  const artifactScope = review.source === 'self-review' ? null : review.id;
+  const context = [...(run.agentContexts ?? [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.runId === run.id &&
+        candidate.slotId === run.slotId &&
+        candidate.role === 'self-review' &&
+        candidate.runner === scope.runner &&
+        candidate.status === 'complete' &&
+        (candidate.artifactScope ?? null) === artifactScope &&
+        candidate.taskFile?.startsWith(`${scope.taskDir}/`) &&
+        candidate.runnerSessionId &&
+        candidate.runnerSessionPath &&
+        candidate.runnerSessionCapturedAt &&
+        candidate.target?.window &&
+        (!review.reviewerSessionId || candidate.runnerSessionId === review.reviewerSessionId),
+    );
+  if (!context) return null;
+  return {
+    ...scope,
+    artifactScope,
+    contextId: context.id,
+    windowName: context.target!.window!,
+    slotId: run.slotId,
+    runnerSessionId: context.runnerSessionId!,
+    runnerSessionPath: context.runnerSessionPath!,
+    lastLoopNumber:
+      context.reviewLoopNumber ?? review.attempts?.at(-1)?.loopNumber ?? review.loopNumber,
+    lastReviewedHeadSha: review.reviewSnapshot?.headSha ?? null,
+    forensicOnly: false,
+  };
+}
+
+/** A requested continuation without prior review context must run a full first-look review. */
+export function effectiveReviewSessionIntent(
+  intent: ReviewSessionIntent,
+  loopNumber: number,
+  hasPriorReview: boolean,
+): ReviewSessionIntent {
+  return intent === 'resume' && loopNumber === 1 && !hasPriorReview ? 'reset' : intent;
+}
+
+export function shouldRetainCompletedReviewer(
+  policy: ReviewSessionPolicy,
+  intent: ReviewSessionIntent | null | undefined,
+  hasReusableResult: boolean,
+): boolean {
+  return hasReusableResult && (policy === 'warm-per-reviewer' || intent === 'resume');
 }

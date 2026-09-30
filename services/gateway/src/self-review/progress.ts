@@ -20,6 +20,11 @@ import { debugSelfReviewLog } from './snapshots.js';
 type BroadcastFn = (event: string, payload: unknown) => void;
 let broadcastFn: BroadcastFn = () => {};
 
+/** Publish persisted launch/acceptance state before checklist progress begins. */
+export function broadcastSelfReviewRun(runId: string): void {
+  broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+}
+
 export function initSelfReviewProgress(broadcast: BroadcastFn): void {
   broadcastFn = broadcast;
 }

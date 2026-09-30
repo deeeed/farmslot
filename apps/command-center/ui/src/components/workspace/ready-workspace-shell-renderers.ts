@@ -25,6 +25,7 @@ export function renderReadyTopBar(input: {
   diffArtifact?: ArtifactRef;
   fileDiffAvailable: boolean;
   actionMessage: string;
+  reviewProgress?: string;
   actionTone: 'success' | 'error' | '';
   openDiff: (title: string, artifact?: ArtifactRef) => void;
   openReviewRequestModal: () => void;
@@ -75,7 +76,10 @@ export function renderReadyTopBar(input: {
         <span class="rdy-stat-del">-${diffStat.deletions}</span>
         <span class="rdy-stat-files">${diffStat.files} files</span>
       </button>
-      ${input.actionMessage
+      ${input.reviewProgress
+        ? html`<span role="status" data-testid="rdy-review-progress">${input.reviewProgress}</span>`
+        : nothing}
+      ${input.actionMessage && (!input.reviewProgress || input.actionTone === 'error')
         ? html`
             <div
               class="rdy-action-feedback ${input.actionTone === 'error'
@@ -96,7 +100,9 @@ export function renderReadyTopBar(input: {
              resolved decision. Users revisiting the slot still get the full
              report / diff / recipe / artifacts panes for post-hoc review. -->
             <span class="rdy-resolved-badge" title="Resolved at ${input.decision.resolvedAt}">
-              Resolved · ${input.decision.resolvedAction ?? 'done'}
+              ${input.reviewProgress
+                ? 'Review in progress'
+                : `Resolved · ${input.decision.resolvedAction ?? 'done'}`}
             </span>
           `
         : html`

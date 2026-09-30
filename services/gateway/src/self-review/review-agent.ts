@@ -42,7 +42,10 @@ import {
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
 import { readNativeWorkerSnapshot } from '../runners/native/worker-control.js';
-import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
+import {
+  launchAckSignalAdvanced,
+  readLaunchAckSignalSnapshot,
+} from '../runners/prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
   retainedReviewerDeliveryPlan,
@@ -88,11 +91,13 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { readReviewFeedback } from './feedback.js';
-import { startProgressWatcher } from './progress.js';
+import { broadcastSelfReviewRun, startProgressWatcher } from './progress.js';
 import {
   claimWarmReviewerSession,
   DEFAULT_REVIEW_SESSION_POLICY,
+  effectiveReviewSessionIntent,
   invalidateWarmReviewerSessions,
+  persistedWarmReviewerSession,
   registerWarmReviewerSession,
   type ReviewSessionPolicy,
   shouldAttemptWarmResume,
@@ -305,7 +310,8 @@ export function reReviewChecklistPrefix(params: {
 }): string | null {
   if (params.loopNumber <= 1 && !params.resume) return null;
   const priorLoopNumber = params.priorLoopNumber ?? Math.max(1, params.loopNumber - 1);
-  const priorScope = params.priorArtifactScope ?? params.artifactScope;
+  const priorScope =
+    params.priorArtifactScope === undefined ? params.artifactScope : params.priorArtifactScope;
   const priorArtifactDir = `${params.taskDir}/${reviewArtifactDir(priorLoopNumber, priorScope)}`;
   return [
     continuationReviewScope({
@@ -959,7 +965,17 @@ export async function runReviewAgent(
     runner,
     subjectRef: parentRunForAlloc?.branch ?? null,
   };
-  const continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
+  const priorExtraReview = [
+    ...(parentRunForAlloc?.engineState?.publishGate?.independentReviews ?? []),
+  ]
+    .reverse()
+    .find(
+      (review) =>
+        review.runner === runner &&
+        review.id !== artifactScope &&
+        (review.verdict === 'issues' || review.verdict === 'pass'),
+    );
+  let continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
   const retainReviewerSession = sessionPolicy === 'warm-per-reviewer' || continuingPriorGeneration;
   if (sessionIntent === 'reset' && loopNumber === 1) {
     invalidateWarmReviewerSessions(_runId, runner);
@@ -973,6 +989,15 @@ export async function runReviewAgent(
           consume: true,
         })
       : null;
+  if (!warmSession && runnerCanResume && continuingPriorGeneration && parentRunForAlloc) {
+    warmSession = persistedWarmReviewerSession(warmScope, parentRunForAlloc);
+  }
+  sessionIntent = effectiveReviewSessionIntent(
+    sessionIntent,
+    loopNumber,
+    Boolean(priorExtraReview || warmSession),
+  );
+  continuingPriorGeneration = sessionIntent === 'resume' && loopNumber === 1;
   const allocated = allocateReviewerContext({
     runId: _runId,
     runner,
@@ -1010,6 +1035,7 @@ export async function runReviewAgent(
     ...(launchEffort ? { effort: launchEffort } : {}),
     target: null,
   });
+  broadcastSelfReviewRun(_runId);
 
   try {
     // 1. Keep one stable window per runner. Reset versus resume changes runner
@@ -1070,17 +1096,15 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    const priorExtraReview = [...(parentRun?.engineState?.publishGate?.independentReviews ?? [])]
-      .reverse()
-      .find(
-        (review) =>
-          review.source !== 'self-review' &&
-          review.id !== artifactScope &&
-          (review.verdict === 'issues' || review.verdict === 'pass'),
-      );
     if (loopNumber > 1 || sessionIntent === 'resume') {
       const priorScope =
-        loopNumber > 1 ? artifactScope : (priorExtraReview?.id ?? warmSession?.artifactScope);
+        loopNumber > 1
+          ? artifactScope
+          : priorExtraReview
+            ? priorExtraReview.source === 'self-review'
+              ? null
+              : priorExtraReview.id
+            : warmSession?.artifactScope;
       const priorLoop =
         loopNumber > 1
           ? loopNumber - 1
@@ -1091,9 +1115,10 @@ export async function runReviewAgent(
                 warmSession?.lastLoopNumber ??
                 1,
             );
-      const previous = priorScope
-        ? await readPersistedReviewSnapshot(vars, taskDir, priorLoop, priorScope)
-        : null;
+      const previous =
+        priorExtraReview || warmSession || loopNumber > 1
+          ? await readPersistedReviewSnapshot(vars, taskDir, priorLoop, priorScope)
+          : null;
       const prefix = reReviewChecklistPrefix({
         taskDir,
         loopNumber,
@@ -1171,6 +1196,7 @@ export async function runReviewAgent(
         : `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, warmSession.artifactScope)}/review-feedback.md. The worker has applied fixes since — read ${taskDir}/artifacts/report.md Self-Review Fixes before re-filing anything. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
       : coldReReviewPrompt;
     let taskPrompt = warmPrompt;
+    let promptAccepted = false;
 
     // 4. Reuse the live reviewer when possible. The runner capability decides
     // whether the next turn is a safe in-place send or a native resume that
@@ -1203,7 +1229,7 @@ export async function runReviewAgent(
       await upsertAgentContext(_runId, 'self-review', {
         id: allocated.id,
         label: allocated.label,
-        status: 'working',
+        status: 'launching',
       });
       reviewContext =
         (await recordRunnerSessionForRole({
@@ -1312,6 +1338,7 @@ export async function runReviewAgent(
           `Retained ${runner} reviewer did not accept the review task: ${delivery.reason}`,
         );
       }
+      promptAccepted = true;
       if (
         resetContext &&
         runnerCanResume &&
@@ -1349,6 +1376,9 @@ export async function runReviewAgent(
       prompt: string,
       claimed: typeof warmSession,
     ): Promise<void> => {
+      const launchAckBaseline = runnerNeedsPostLaunchPrompt(runner)
+        ? null
+        : await readLaunchAckSignalSnapshot(vars, signalPath);
       const handoffAckSinceMs = Date.now();
       let bindingObservedNotBeforeMs = handoffAckSinceMs;
       debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
@@ -1369,7 +1399,7 @@ export async function runReviewAgent(
       const launchedContext = await upsertAgentContext(_runId, 'self-review', {
         id: allocated.id,
         label: allocated.label,
-        status: 'working',
+        status: 'launching',
       });
       // One hook owns session identity, including on the cold-launch path. It
       // records nothing when the capture produced no complete pair, so fall
@@ -1438,6 +1468,15 @@ export async function runReviewAgent(
         }
       }
 
+      if (runnerNeedsPostLaunchPrompt(runner)) {
+        promptAccepted = true;
+      } else {
+        const acknowledgement = await readLaunchAckSignalSnapshot(vars, signalPath);
+        promptAccepted = Boolean(
+          acknowledgement && launchAckSignalAdvanced(launchAckBaseline, acknowledgement),
+        );
+      }
+
       // Some interactive runners emit SessionStart before creating their
       // transcript file. The pre-prompt capture correctly refuses that
       // incomplete identity; retry only after exact prompt acceptance, when
@@ -1469,7 +1508,7 @@ export async function runReviewAgent(
             (await upsertAgentContext(_runId, 'self-review', {
               id: allocated.id,
               label: allocated.label,
-              status: 'working',
+              status: 'launching',
               // Cold relaunch destroys the old session; clear its identity as
               // one unit so no stale capture timestamp survives the respawn.
               ...clearedRunnerSessionContextPatch(),
@@ -1515,6 +1554,18 @@ export async function runReviewAgent(
     } else {
       await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
     }
+
+    // Session binding and process launch do not prove prompt acceptance.
+    if (promptAccepted) {
+      reviewContext =
+        (await upsertAgentContext(_runId, 'self-review', {
+          id: allocated.id,
+          label: allocated.label,
+          status: 'working',
+        })) ?? reviewContext;
+    }
+
+    broadcastSelfReviewRun(_runId);
 
     // 6. Watch the reviewer-specific checklist for progress + wait for completion
     const selfReviewPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.checklist);
