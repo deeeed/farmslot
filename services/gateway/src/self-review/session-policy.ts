@@ -228,7 +228,7 @@ export function effectiveReviewSessionIntent(
 
 export function shouldRetainCompletedReviewer(
   policy: ReviewSessionPolicy,
-  intent: ReviewSessionIntent | undefined,
+  intent: ReviewSessionIntent | null | undefined,
   hasReusableResult: boolean,
 ): boolean {
   return hasReusableResult && (policy === 'warm-per-reviewer' || intent === 'resume');

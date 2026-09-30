@@ -275,5 +275,6 @@ test('valid base and publication reviewers retain the same continuation policy',
   assert.equal(shouldRetainCompletedReviewer('warm-per-reviewer', undefined, true), true);
   assert.equal(shouldRetainCompletedReviewer('fresh-per-pass', 'resume', true), true);
   assert.equal(shouldRetainCompletedReviewer('fresh-per-pass', undefined, true), false);
+  assert.equal(shouldRetainCompletedReviewer('fresh-per-pass', null, true), false);
   assert.equal(shouldRetainCompletedReviewer('warm-per-reviewer', 'resume', false), false);
 });
