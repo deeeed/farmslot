@@ -14,10 +14,10 @@ import {
   persistRunNow,
   updateRun,
 } from '../../../services/gateway/src/runs/store.js';
-const { runReviewAgent } = await import(
+const reviewModulePath =
   process.env.FARMSLOT_WARM_PROOF_REVIEW_MODULE ??
-    '../../../services/gateway/src/self-review/review-agent.js'
-);
+  '../../../services/gateway/src/self-review/review-agent.js';
+const { runReviewAgent } = await import(reviewModulePath);
 
 const [phase, fixture] = process.argv.slice(2);
 assert.ok(fixture);
@@ -138,7 +138,7 @@ const priorSessionId = await readFile(path.join(fixture, 'prior-session'), 'utf8
 const prior = before.agentContexts?.find(
   (context) => context.role === 'self-review' && context.runner === 'claude',
 );
-const result = await runReviewAgent(
+const reviewPromise = runReviewAgent(
   vars,
   'claude',
   'opus',
@@ -152,6 +152,32 @@ const result = await runReviewAgent(
   'warm-per-reviewer',
   'resume',
 );
+if (phase === 'negative') {
+  const expectedSession = await readFile(path.join(fixture, 'prior-session'), 'utf8');
+  const { resolveRunnerSessionBinding } =
+    await import('../../../services/gateway/src/runners/session-process.js');
+  for (let attempt = 0; attempt < 900; attempt++) {
+    const current = getRun(runId)?.agentContexts?.find(
+      (candidate) => candidate.role === 'self-review',
+    );
+    if (current?.target?.pane) {
+      const binding = await resolveRunnerSessionBinding(vars, 'claude', [], {
+        paneId: current.target.pane,
+        slotId: vars.slotId,
+      });
+      if (binding?.runnerSessionId) {
+        assert.equal(
+          binding.runnerSessionId,
+          expectedSession,
+          'Explicit warm publication review must reuse the persisted session after gateway restart',
+        );
+      }
+    }
+    await delay(100);
+  }
+  throw new Error('Negative proof did not establish a native reviewer binding');
+}
+const result = await reviewPromise;
 assert.equal(result.verdict, 'pass');
 const after = getRun(runId)!;
 const context = after.agentContexts!.find(
